@@ -22,7 +22,7 @@ class Inputs:
 class RandBuffer:
     "RandBuffer stores a number if items, providing them in random order"
     def __init__(self, cap):
-        if cap <= 0: raise ValueError("Requirement failed: cap > 0")
+        if cap < 0: raise ValueError("Requirement failed: cap non-negative")
         self.buf = []
         self.cap = cap
     def empty(self):
@@ -33,7 +33,7 @@ class RandBuffer:
         if self.full(): raise IndexError("RandBuffer Full")
         self.buf.append(item)
     def some(self):
-        "Removes the chosen item."
+        "Removes and returns a randomly chosen item."
         if self.empty(): raise IndexError("RandBuffer Empty")
         i = random.randrange(len(self.buf))
         item = self.buf[i]
@@ -51,7 +51,7 @@ def randomize(inputs, outfile, cap):
             if not buf.full():
                 buf.add(line)
                 continue
-            if random.random() <= (1.0/n):
+            if random.random() <= (1.0/n) or buf.cap == 0:
                 outfile.write(line)
                 continue
         if buf.empty(): break
