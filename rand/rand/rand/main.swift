@@ -131,16 +131,16 @@ func randomize(ins: [FileHandle], out: FileHandle) {
 }
 
 // Make fake filehandle for testing
-func somemain() {
+func main(argv : [String], stdin: FileHandle, stdout: FileHandle) {
     var filehandles = [FileHandle]()
     // FIXME parse -b flag
-    for arg in CommandLine.arguments {
+    for arg in argv {
        filehandles.append(FileHandle(forReadingAtPath: arg)!)
     }
     if filehandles.count == 0 {
-        filehandles.append(FileHandle.standardInput)
+        filehandles.append(stdin)
     }
-    randomize(ins: filehandles, out: FileHandle.standardOutput)
+    randomize(ins: filehandles, out: stdout)
 }
 
-
+main(argv: CommandLine.arguments, stdin: FileHandle.standardInput, stdout: FileHandle.standardOutput)
