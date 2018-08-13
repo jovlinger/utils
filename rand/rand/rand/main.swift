@@ -95,18 +95,18 @@ struct Buffer {
         self.inputs = inputs
         self.cap = cap
     }
-    // If line && full : return random existing entry, replacing with line.
-    // if line && !full : append line to buffer
-    // if !line: return random entry.
     mutating func procline(line: String?) -> String? {
         if let theline = line {
             lines.append(theline)
         }
-        let idx = Int.random(in: 0 ..< cap)
-        let l = lines[idx]
-        lines[idx] = lines[-1]
-        lines[-1] = l
-        if line == nil || lines.count > cap {
+        if lines.count > cap {
+            let idx = Int.random(in: 0 ..< cap)
+            let l = lines[idx]
+            lines[idx] = lines[-1]
+            lines[-1] = l
+            return lines.popLast()
+        }
+        if line == nil {
             return lines.popLast()
         }
         return nil
