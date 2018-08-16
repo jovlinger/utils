@@ -50,12 +50,12 @@ struct Input {
             if tmpData.count > 0 {
                 buffer.append(tmpData)
             } else {
+                close()
                 // EOF or read error.
                 if buffer.count > 0 {
                     // Buffer contains last line in file (not terminated by delimiter).
                     let line = String(data: buffer, encoding: .utf8)! + "\n"
                     buffer.count = 0
-                    close()
                     return line
                 }
             }
@@ -67,6 +67,7 @@ struct Input {
 struct Inputs {
     var inputs : [Input]
     var i = 0
+    
     init(filehandles : [FileHandle]) {
         inputs = filehandles.map({fh in return Input(filehandle: fh)})
     }
@@ -95,38 +96,45 @@ struct Buffer {
         self.inputs = inputs
         self.cap = cap
     }
+    
     mutating func procline(line: String?) -> String? {
         if let theline = line {
             lines.append(theline)
         }
-        if lines.count > cap {
-            let idx = Int.random(in: 0 ..< cap)
-            let l = lines[idx]
-            lines[idx] = lines[-1]
-            lines[-1] = l
-            return lines.popLast()
-        }
-        if line == nil {
+        if line == nil || lines.count > cap {
+            if lines.endIndex > 0 {
+                let last = lines.endIndex-1
+                let idx = Int.random(in: lines.startIndex ..< lines.endIndex)
+                let l = lines[idx]
+                lines[idx] = lines[last]
+                lines[last] = l
+            }
             return lines.popLast()
         }
         return nil
     }
     
-    mutating func choose() -> String? {
+    // returns String?, more-to-come
+    mutating func choose() -> (String?, Bool) {
         count += 1
         let line = inputs.line()
-        if (lines.count == cap) && (Int.random(in: 0 ..< cap) == 0) {
+        if line != nil && (lines.count == cap) && (Int.random(in: 0 ..< cap) == 0) {
             // output next line directly
-            return line
+            return (line, true)
         }
-        return procline(line: line)
+        let ret = procline(line: line)
+        return (ret, line != nil || ret != nil)
     }
 }
 
 func randomize(ins: [FileHandle], out: FileHandle) {
     var buffer = Buffer(inputs: Inputs(filehandles: ins))
-    while let line = buffer.choose() {
-        out.write(line.data(using: .utf8)!)
+    while true {
+        let (line, more) = buffer.choose()
+        if !more { break }
+        if let theline = line {
+            out.write(theline.data(using: .utf8)!)
+        }
     }
 }
 
@@ -135,7 +143,7 @@ func main(argv : [String], stdin: FileHandle, stdout: FileHandle) {
     var filehandles = [FileHandle]()
     // FIXME parse -b flag
     for arg in argv {
-       filehandles.append(FileHandle(forReadingAtPath: arg)!)
+        filehandles.append(FileHandle(forReadingAtPath: arg)!)
     }
     if filehandles.count == 0 {
         filehandles.append(stdin)
@@ -143,4 +151,4 @@ func main(argv : [String], stdin: FileHandle, stdout: FileHandle) {
     randomize(ins: filehandles, out: stdout)
 }
 
-main(argv: CommandLine.arguments, stdin: FileHandle.standardInput, stdout: FileHandle.standardOutput)
+main(argv: Array(CommandLine.arguments[1...]), stdin: FileHandle.standardInput, stdout: FileHandle.standardOutput)
