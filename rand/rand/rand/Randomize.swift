@@ -129,7 +129,7 @@ struct Buffer {
     }
 }
 
-func randomize(ins: [FileHandle], out: FileHandle) {
+func randomize(opts: [Option], ins: [FileHandle], out: FileHandle) {
     var buffer = Buffer(inputs: Inputs(filehandles: ins))
     while true {
         let (line, more) = buffer.choose()
