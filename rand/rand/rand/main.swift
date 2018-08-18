@@ -39,6 +39,12 @@ func main(opts: [Option], paths : [String], stdin: FileHandle, stdout: FileHandl
     var filehandles = paths.map({ FileHandle(forReadingAtPath: $0)! })
     filehandles.append(stdin)
     randomize(opts: opts, ins: filehandles, out: stdout)
+    // FIXME debug
+    rnd = {(range: CountableRange<Int>) -> Int in
+        let r = rnd(range)
+        print("ramdom: \(r)")
+        return r
+    }
 }
 
 let (filePaths, opts) = parseArgs(args: CommandLine.arguments)

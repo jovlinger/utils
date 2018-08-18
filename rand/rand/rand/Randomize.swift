@@ -1,6 +1,5 @@
 //
 //  Randomize.swift
-//  rand
 //
 //  Created by Johan on 8/17/18.
 //  Copyright © 2018 Johan Ovlinger. All rights reserved.
@@ -8,12 +7,9 @@
 
 import Foundation
 
-import Foundation
-
-extension Int {
-    static func random(in range: CountableRange<Int>) -> Int {
+// Varible for unit test support.
+var rnd = { (range: CountableRange<Int>) -> Int in
         return range.lowerBound + Int(arc4random_uniform(UInt32(range.upperBound - range.lowerBound)))
-    }
 }
 
 struct Input {
@@ -27,6 +23,11 @@ struct Input {
         self.filehandle = filehandle
     }
     
+    init() {
+        buffer = Data(capacity: readSize)
+        self.filehandle = nil
+    } // FIXME: testing scoping.
+
     mutating func close() {
         if filehandle == nil {
             return
@@ -106,7 +107,7 @@ struct Buffer {
         if line == nil || lines.count > cap {
             if lines.endIndex > 0 {
                 let last = lines.endIndex-1
-                let idx = Int.random(in: lines.startIndex ..< lines.endIndex)
+                let idx = rnd(lines.startIndex ..< lines.endIndex)
                 let l = lines[idx]
                 lines[idx] = lines[last]
                 lines[last] = l
@@ -120,7 +121,7 @@ struct Buffer {
     mutating func choose() -> (String?, Bool) {
         count += 1
         let line = inputs.line()
-        if line != nil && (lines.count == cap) && (Int.random(in: 0 ..< cap) == 0) {
+        if line != nil && (lines.count == cap) && (rnd(0 ..< cap) == 0) {
             // output next line directly
             return (line, true)
         }

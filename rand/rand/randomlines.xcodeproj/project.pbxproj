@@ -9,7 +9,18 @@
 /* Begin PBXBuildFile section */
 		0456084D2119B3680046A57A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0456084C2119B3680046A57A /* main.swift */; };
 		045751E421273F0800B521A5 /* Randomize.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045751E321273F0800B521A5 /* Randomize.swift */; };
+		045751EF2127668900B521A5 /* randtest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045751EE2127668900B521A5 /* randtest.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		045751F62127C98000B521A5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 045608412119B3680046A57A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 045608482119B3680046A57A;
+			remoteInfo = rand;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		045608472119B3680046A57A /* CopyFiles */ = {
@@ -24,13 +35,23 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		045608492119B3680046A57A /* rand */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = rand; sourceTree = BUILT_PRODUCTS_DIR; };
+		045608492119B3680046A57A /* randomlines */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = randomlines; sourceTree = BUILT_PRODUCTS_DIR; };
 		0456084C2119B3680046A57A /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		045751E321273F0800B521A5 /* Randomize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Randomize.swift; sourceTree = "<group>"; };
+		045751EC2127668900B521A5 /* randomlinestest.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = randomlinestest.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		045751EE2127668900B521A5 /* randtest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = randtest.swift; sourceTree = "<group>"; };
+		045751F02127668900B521A5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		045608462119B3680046A57A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		045751E92127668900B521A5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -44,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				0456084B2119B3680046A57A /* rand */,
+				045751ED2127668900B521A5 /* randtest */,
 				0456084A2119B3680046A57A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -51,7 +73,8 @@
 		0456084A2119B3680046A57A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				045608492119B3680046A57A /* rand */,
+				045608492119B3680046A57A /* randomlines */,
+				045751EC2127668900B521A5 /* randomlinestest.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -65,12 +88,21 @@
 			path = rand;
 			sourceTree = "<group>";
 		};
+		045751ED2127668900B521A5 /* randtest */ = {
+			isa = PBXGroup;
+			children = (
+				045751EE2127668900B521A5 /* randtest.swift */,
+				045751F02127668900B521A5 /* Info.plist */,
+			);
+			path = randtest;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		045608482119B3680046A57A /* rand */ = {
+		045608482119B3680046A57A /* randomlines */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 045608502119B3680046A57A /* Build configuration list for PBXNativeTarget "rand" */;
+			buildConfigurationList = 045608502119B3680046A57A /* Build configuration list for PBXNativeTarget "randomlines" */;
 			buildPhases = (
 				045608452119B3680046A57A /* Sources */,
 				045608462119B3680046A57A /* Frameworks */,
@@ -80,10 +112,28 @@
 			);
 			dependencies = (
 			);
-			name = rand;
+			name = randomlines;
 			productName = rand;
-			productReference = 045608492119B3680046A57A /* rand */;
+			productReference = 045608492119B3680046A57A /* randomlines */;
 			productType = "com.apple.product-type.tool";
+		};
+		045751EB2127668900B521A5 /* randomlinestest */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 045751F12127668900B521A5 /* Build configuration list for PBXNativeTarget "randomlinestest" */;
+			buildPhases = (
+				045751E82127668900B521A5 /* Sources */,
+				045751E92127668900B521A5 /* Frameworks */,
+				045751EA2127668900B521A5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				045751F72127C98000B521A5 /* PBXTargetDependency */,
+			);
+			name = randomlinestest;
+			productName = randtest;
+			productReference = 045751EC2127668900B521A5 /* randomlinestest.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -98,9 +148,12 @@
 					045608482119B3680046A57A = {
 						CreatedOnToolsVersion = 9.4.1;
 					};
+					045751EB2127668900B521A5 = {
+						CreatedOnToolsVersion = 9.4.1;
+					};
 				};
 			};
-			buildConfigurationList = 045608442119B3680046A57A /* Build configuration list for PBXProject "rand" */;
+			buildConfigurationList = 045608442119B3680046A57A /* Build configuration list for PBXProject "randomlines" */;
 			compatibilityVersion = "Xcode 9.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -112,10 +165,21 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				045608482119B3680046A57A /* rand */,
+				045608482119B3680046A57A /* randomlines */,
+				045751EB2127668900B521A5 /* randomlinestest */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		045751EA2127668900B521A5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		045608452119B3680046A57A /* Sources */ = {
@@ -127,7 +191,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		045751E82127668900B521A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				045751EF2127668900B521A5 /* randtest.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		045751F72127C98000B521A5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 045608482119B3680046A57A /* randomlines */;
+			targetProxy = 045751F62127C98000B521A5 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		0456084E2119B3680046A57A /* Debug */ = {
@@ -261,10 +341,44 @@
 			};
 			name = Release;
 		};
+		045751F22127668900B521A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = randtest/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.randtest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 4.0;
+			};
+			name = Debug;
+		};
+		045751F32127668900B521A5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = randtest/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.randtest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 4.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		045608442119B3680046A57A /* Build configuration list for PBXProject "rand" */ = {
+		045608442119B3680046A57A /* Build configuration list for PBXProject "randomlines" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				0456084E2119B3680046A57A /* Debug */,
@@ -273,11 +387,20 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		045608502119B3680046A57A /* Build configuration list for PBXNativeTarget "rand" */ = {
+		045608502119B3680046A57A /* Build configuration list for PBXNativeTarget "randomlines" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				045608512119B3680046A57A /* Debug */,
 				045608522119B3680046A57A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		045751F12127668900B521A5 /* Build configuration list for PBXNativeTarget "randomlinestest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				045751F22127668900B521A5 /* Debug */,
+				045751F32127668900B521A5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
