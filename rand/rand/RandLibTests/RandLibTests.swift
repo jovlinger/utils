@@ -1,16 +1,15 @@
 //
-//  randtest.swift
-//  randtest
+//  RandLibTests.swift
+//  RandLibTests
 //
-//  Created by Johan on 8/17/18.
+//  Created by Johan on 8/18/18.
 //  Copyright © 2018 Johan Ovlinger. All rights reserved.
 //
 
-//import Foundation
 import XCTest
-@testable import rand
+@testable import RandLib
 
-class randtest: XCTestCase {
+class RandLibTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
@@ -25,17 +24,17 @@ class randtest: XCTestCase {
     func testExample() {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct results.
+        
         /*
-        rnd = {(range: CountableRange<Int>) -> Int in
-            return range.upperBound - 1
-        }
-        */
+         rnd = {(range: CountableRange<Int>) -> Int in
+         return range.upperBound - 1
+         }
+         */
         // Create a few fileHandle-ish objects to read from, and an output one to write to.
         let inputs = [[1, 2, 3], [4], [5, 6, 7, 8, 9]].map({"\($0)"})
-
+        
         var i = Input()
         //var ins = Inputs(filehandles: [FileHandle]())
-        
     }
     
     func testPerformanceExample() {

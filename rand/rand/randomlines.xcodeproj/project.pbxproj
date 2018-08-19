@@ -7,12 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		040D99A3212901FD005630BB /* RandLib.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 040D999A212901FC005630BB /* RandLib.framework */; };
+		040D99A8212901FD005630BB /* RandLibTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040D99A7212901FD005630BB /* RandLibTests.swift */; };
+		040D99AA212901FD005630BB /* RandLib.h in Headers */ = {isa = PBXBuildFile; fileRef = 040D999C212901FC005630BB /* RandLib.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		040D99B121290388005630BB /* Randomize.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045751E321273F0800B521A5 /* Randomize.swift */; };
 		0456084D2119B3680046A57A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0456084C2119B3680046A57A /* main.swift */; };
-		045751E421273F0800B521A5 /* Randomize.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045751E321273F0800B521A5 /* Randomize.swift */; };
-		045751EF2127668900B521A5 /* randtest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045751EE2127668900B521A5 /* randtest.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		040D99A4212901FD005630BB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 045608412119B3680046A57A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 040D9999212901FC005630BB;
+			remoteInfo = RandLib;
+		};
 		045751F62127C98000B521A5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 045608412119B3680046A57A /* Project object */;
@@ -35,15 +44,34 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		040D999A212901FC005630BB /* RandLib.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = RandLib.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		040D999C212901FC005630BB /* RandLib.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RandLib.h; sourceTree = "<group>"; };
+		040D999D212901FC005630BB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		040D99A2212901FD005630BB /* RandLibTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RandLibTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		040D99A7212901FD005630BB /* RandLibTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RandLibTests.swift; sourceTree = "<group>"; };
+		040D99A9212901FD005630BB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		045608492119B3680046A57A /* randomlines */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = randomlines; sourceTree = BUILT_PRODUCTS_DIR; };
 		0456084C2119B3680046A57A /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		045751E321273F0800B521A5 /* Randomize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Randomize.swift; sourceTree = "<group>"; };
 		045751EC2127668900B521A5 /* randomlinestest.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = randomlinestest.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		045751EE2127668900B521A5 /* randtest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = randtest.swift; sourceTree = "<group>"; };
-		045751F02127668900B521A5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		040D9996212901FC005630BB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		040D999F212901FD005630BB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				040D99A3212901FD005630BB /* RandLib.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		045608462119B3680046A57A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -61,11 +89,31 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		040D999B212901FC005630BB /* RandLib */ = {
+			isa = PBXGroup;
+			children = (
+				045751E321273F0800B521A5 /* Randomize.swift */,
+				040D999C212901FC005630BB /* RandLib.h */,
+				040D999D212901FC005630BB /* Info.plist */,
+			);
+			path = RandLib;
+			sourceTree = "<group>";
+		};
+		040D99A6212901FD005630BB /* RandLibTests */ = {
+			isa = PBXGroup;
+			children = (
+				040D99A7212901FD005630BB /* RandLibTests.swift */,
+				040D99A9212901FD005630BB /* Info.plist */,
+			);
+			path = RandLibTests;
+			sourceTree = "<group>";
+		};
 		045608402119B3680046A57A = {
 			isa = PBXGroup;
 			children = (
 				0456084B2119B3680046A57A /* rand */,
-				045751ED2127668900B521A5 /* randtest */,
+				040D999B212901FC005630BB /* RandLib */,
+				040D99A6212901FD005630BB /* RandLibTests */,
 				0456084A2119B3680046A57A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,6 +123,8 @@
 			children = (
 				045608492119B3680046A57A /* randomlines */,
 				045751EC2127668900B521A5 /* randomlinestest.xctest */,
+				040D999A212901FC005630BB /* RandLib.framework */,
+				040D99A2212901FD005630BB /* RandLibTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -83,23 +133,60 @@
 			isa = PBXGroup;
 			children = (
 				0456084C2119B3680046A57A /* main.swift */,
-				045751E321273F0800B521A5 /* Randomize.swift */,
 			);
 			path = rand;
 			sourceTree = "<group>";
 		};
-		045751ED2127668900B521A5 /* randtest */ = {
-			isa = PBXGroup;
-			children = (
-				045751EE2127668900B521A5 /* randtest.swift */,
-				045751F02127668900B521A5 /* Info.plist */,
-			);
-			path = randtest;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
+/* Begin PBXHeadersBuildPhase section */
+		040D9997212901FC005630BB /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				040D99AA212901FD005630BB /* RandLib.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
 /* Begin PBXNativeTarget section */
+		040D9999212901FC005630BB /* RandLib */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 040D99AF212901FD005630BB /* Build configuration list for PBXNativeTarget "RandLib" */;
+			buildPhases = (
+				040D9995212901FC005630BB /* Sources */,
+				040D9996212901FC005630BB /* Frameworks */,
+				040D9997212901FC005630BB /* Headers */,
+				040D9998212901FC005630BB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RandLib;
+			productName = RandLib;
+			productReference = 040D999A212901FC005630BB /* RandLib.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		040D99A1212901FD005630BB /* RandLibTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 040D99B0212901FD005630BB /* Build configuration list for PBXNativeTarget "RandLibTests" */;
+			buildPhases = (
+				040D999E212901FD005630BB /* Sources */,
+				040D999F212901FD005630BB /* Frameworks */,
+				040D99A0212901FD005630BB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				040D99A5212901FD005630BB /* PBXTargetDependency */,
+			);
+			name = RandLibTests;
+			productName = RandLibTests;
+			productReference = 040D99A2212901FD005630BB /* RandLibTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		045608482119B3680046A57A /* randomlines */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 045608502119B3680046A57A /* Build configuration list for PBXNativeTarget "randomlines" */;
@@ -145,6 +232,12 @@
 				LastUpgradeCheck = 0940;
 				ORGANIZATIONNAME = "Johan Ovlinger";
 				TargetAttributes = {
+					040D9999212901FC005630BB = {
+						CreatedOnToolsVersion = 9.4.1;
+					};
+					040D99A1212901FD005630BB = {
+						CreatedOnToolsVersion = 9.4.1;
+					};
 					045608482119B3680046A57A = {
 						CreatedOnToolsVersion = 9.4.1;
 					};
@@ -167,11 +260,27 @@
 			targets = (
 				045608482119B3680046A57A /* randomlines */,
 				045751EB2127668900B521A5 /* randomlinestest */,
+				040D9999212901FC005630BB /* RandLib */,
+				040D99A1212901FD005630BB /* RandLibTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		040D9998212901FC005630BB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		040D99A0212901FD005630BB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		045751EA2127668900B521A5 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -182,12 +291,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		040D9995212901FC005630BB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				040D99B121290388005630BB /* Randomize.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		040D999E212901FD005630BB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				040D99A8212901FD005630BB /* RandLibTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		045608452119B3680046A57A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				0456084D2119B3680046A57A /* main.swift in Sources */,
-				045751E421273F0800B521A5 /* Randomize.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,13 +319,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				045751EF2127668900B521A5 /* randtest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		040D99A5212901FD005630BB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 040D9999212901FC005630BB /* RandLib */;
+			targetProxy = 040D99A4212901FD005630BB /* PBXContainerItemProxy */;
+		};
 		045751F72127C98000B521A5 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 045608482119B3680046A57A /* randomlines */;
@@ -210,6 +338,98 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		040D99AB212901FD005630BB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				FRAMEWORK_VERSION = A;
+				INFOPLIST_FILE = RandLib/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.RandLib;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 4.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		040D99AC212901FD005630BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				FRAMEWORK_VERSION = A;
+				INFOPLIST_FILE = RandLib/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.RandLib;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 4.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
+		};
+		040D99AD212901FD005630BB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = RandLibTests/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.RandLibTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 4.0;
+			};
+			name = Debug;
+		};
+		040D99AE212901FD005630BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = RandLibTests/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jovlinger.RandLibTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 4.0;
+			};
+			name = Release;
+		};
 		0456084E2119B3680046A57A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -378,6 +598,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		040D99AF212901FD005630BB /* Build configuration list for PBXNativeTarget "RandLib" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				040D99AB212901FD005630BB /* Debug */,
+				040D99AC212901FD005630BB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		040D99B0212901FD005630BB /* Build configuration list for PBXNativeTarget "RandLibTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				040D99AD212901FD005630BB /* Debug */,
+				040D99AE212901FD005630BB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		045608442119B3680046A57A /* Build configuration list for PBXProject "randomlines" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

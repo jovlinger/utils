@@ -4,19 +4,34 @@
 <dict>
 	<key>SchemeUserState</key>
 	<dict>
+		<key>RandLib.xcscheme</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>1</integer>
+		</dict>
+		<key>RandLibTests.xcscheme</key>
+		<dict>
+			<key>orderHint</key>
+			<integer>2</integer>
+		</dict>
 		<key>rand.xcscheme</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>0</integer>
 		</dict>
-		<key>randtest.xcscheme</key>
-		<dict>
-			<key>orderHint</key>
-			<integer>1</integer>
-		</dict>
 	</dict>
 	<key>SuppressBuildableAutocreation</key>
 	<dict>
+		<key>040D9999212901FC005630BB</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>040D99A1212901FD005630BB</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
 		<key>045608482119B3680046A57A</key>
 		<dict>
 			<key>primary</key>

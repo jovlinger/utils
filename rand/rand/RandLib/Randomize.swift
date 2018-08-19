@@ -12,6 +12,10 @@ var rnd = { (range: CountableRange<Int>) -> Int in
         return range.lowerBound + Int(arc4random_uniform(UInt32(range.upperBound - range.lowerBound)))
 }
 
+public enum Option {
+    case bufferSize(Int)
+}
+
 struct Input {
     let readSize = 1024
     var filehandle : FileHandle!
@@ -130,7 +134,7 @@ struct Buffer {
     }
 }
 
-func randomize(opts: [Option], ins: [FileHandle], out: FileHandle) {
+public func randomize(opts: [Option], ins: [FileHandle], out: FileHandle) {
     var buffer = Buffer(inputs: Inputs(filehandles: ins))
     while true {
         let (line, more) = buffer.choose()
