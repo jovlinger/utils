@@ -63,17 +63,19 @@ struct Input {
             let tmpData = filehandle.readData(ofLength: readSize)
             if tmpData.count > 0 {
                 buffer.append(tmpData)
-            } else { // FIXME once we have tests, move this out of loop for clarity.
-                close()
-                // EOF or read error.
-                if buffer.count > 0 {
-                    // Buffer contains last line in file (not terminated by delimiter).
-                    let line = String(data: buffer, encoding: .utf8)! + "\n"
-                    buffer.count = 0
-                    return line
-                }
+            } else {
+                // EOF or read error -> output last line if any.
+                break
             }
         }
+        close()
+        if buffer.count > 0 {
+            // Buffer contains last line in file (not terminated by delimiter).
+            let line = String(data: buffer, encoding: .utf8)! + "\n"
+            buffer.count = 0
+            return line
+        }
+        // Input ended with a delimiter, so we are done.
         return nil
     }
 }
