@@ -31,7 +31,7 @@ class WriteDataProtocolMock : WriteDataProtocol {
 }
 
 class RandLibTests: XCTestCase {
-    func testExample() {
+    func testRandomize() {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct results.
         
@@ -44,5 +44,19 @@ class RandLibTests: XCTestCase {
         randomize(opts: [], ins: rpds, out: wdp)
         XCTAssertEqual(wdp.strs,
                        ["\n", "five\n", "four\n", "tre\n", "three\n", "tva\n", "dos\n", "two\n", "un\n", "ett\n", "uno\n", "one\n"])
+    }
+    func testBufferSize() {
+        // This is an example of a functional test case.
+        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        
+        // mutate the rnd function to be deterministic
+        rnd = {(range: CountableRange<Int>) -> Int in return range.endIndex - 1 }
+        
+        let rpds = ["one\ntwo\nthree\nfour\nfive\n\n", "uno\ndos", "ett\ntva\ntre", "un"].map({ReadDataProtocolMock(str: $0)})
+        
+        let wdp = WriteDataProtocolMock()
+        randomize(opts: [.bufferSize(3)], ins: rpds, out: wdp)
+        XCTAssertEqual(wdp.strs,
+                       ["un\n", "two\n", "dos\n", "tva\n", "three\n", "tre\n", "four\n", "five\n", "\n", "ett\n", "uno\n", "one\n"])
     }
 }

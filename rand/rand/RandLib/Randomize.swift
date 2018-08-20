@@ -107,7 +107,7 @@ struct Buffer {
     var inputs : Inputs
     let cap : Int
     
-    init(inputs : Inputs, cap :Int = 1000) {
+    init(inputs : Inputs, cap: Int) {
         self.inputs = inputs
         self.cap = cap
     }
@@ -143,7 +143,13 @@ struct Buffer {
 }
 
 public func randomize(opts: [Option], ins: [ReadDataProtocol], out: WriteDataProtocol) {
-    var buffer = Buffer(inputs: Inputs(filehandles: ins))
+    var bufferSize = 1024
+    for opt in opts {
+        switch opt {
+        case let .bufferSize(n): bufferSize = n
+        }
+    }
+    var buffer = Buffer(inputs: Inputs(filehandles: ins), cap: bufferSize)
     while true {
         let (line, more) = buffer.choose()
         if !more { break }
