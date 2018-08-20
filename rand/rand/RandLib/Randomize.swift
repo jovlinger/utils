@@ -16,22 +16,24 @@ public enum Option {
     case bufferSize(Int)
 }
 
+// These support testing. We can now create a ReadDataMock class in our tests and use that.
+protocol ReadDataProtocol { // Aka a go interface
+    func readData(ofLength: Int) -> Data
+    func closeFile() -> Void
+}
+extension FileHandle : ReadDataProtocol { } // In swift we explicitly declare interface conformance
+
 struct Input {
     let readSize = 1024
-    var filehandle : FileHandle!
+    var filehandle : ReadDataProtocol!
     var buffer : Data
     let delim = "\n".data(using: .utf8)! // why is it wrong to say String.Encoding.utf8 ?
     
-    init(filehandle : FileHandle) {
+    init(filehandle : ReadDataProtocol) {
         buffer = Data(capacity: readSize)
         self.filehandle = filehandle
     }
     
-    init() {
-        buffer = Data(capacity: readSize)
-        self.filehandle = nil
-    } // FIXME: testing scoping.
-
     mutating func close() {
         if filehandle == nil {
             return
