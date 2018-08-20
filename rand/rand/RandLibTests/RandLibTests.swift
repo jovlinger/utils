@@ -25,13 +25,10 @@ class RandLibTests: XCTestCase {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct results.
         
-        /*
-         rnd = {(range: CountableRange<Int>) -> Int in
-         return range.upperBound - 1
-         }
-         */
-        // Create a few fileHandle-ish objects to read from, and an output one to write to.
-        let inputs = [[1, 2, 3], [4], [5, 6, 7, 8, 9]].map({"\($0)"})
+        // mutate the rnd function to be deterministic
+        rnd = {(range: CountableRange<Int>) -> Int in
+            return range.upperBound - 1
+        }
         
         var rdp = ReadDataProtocolMock(str: "hello")
         //var ins = Inputs(filehandles: [FileHandle]())
