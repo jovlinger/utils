@@ -15,9 +15,19 @@ class ReadDataProtocolMock : ReadDataProtocol {
         data = str.data(using: .utf8)!
     }
     func readData(ofLength: Int) -> Data {
-        return data.subdata(in: 0 ..< ofLength)
+        let end = data.count < ofLength ? data.count :ofLength
+        let out = data.subdata(in: 0 ..< end)
+        data = data.subdata(in: end ..< data.count)
+        return out
     }
-    func closeFile() -> Void {}
+    func closeFile() {}
+}
+class WriteDataProtocolMock : WriteDataProtocol {
+    var strs: [String] = []
+    func write(_ data: Data) {
+        strs.append(String(data: data, encoding: .utf8)!)
+    }
+    func closeFile() {}
 }
 
 class RandLibTests: XCTestCase {
@@ -26,11 +36,13 @@ class RandLibTests: XCTestCase {
         // Use XCTAssert and related functions to verify your tests produce the correct results.
         
         // mutate the rnd function to be deterministic
-        rnd = {(range: CountableRange<Int>) -> Int in
-            return range.upperBound - 1
-        }
+        rnd = {(range: CountableRange<Int>) -> Int in return range.endIndex - 1 }
         
-        var rdp = ReadDataProtocolMock(str: "hello")
-        //var ins = Inputs(filehandles: [FileHandle]())
+        let rpds = ["one\ntwo\nthree\nfour\nfive\n\n", "uno\ndos", "ett\ntva\ntre", "un"].map({ReadDataProtocolMock(str: $0)})
+        
+        let wdp = WriteDataProtocolMock()
+        randomize(opts: [], ins: rpds, out: wdp)
+        XCTAssertEqual(wdp.strs,
+                       ["\n", "five\n", "four\n", "tre\n", "three\n", "tva\n", "dos\n", "two\n", "un\n", "ett\n", "uno\n", "one\n"])
     }
 }

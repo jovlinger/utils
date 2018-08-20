@@ -17,11 +17,16 @@ public enum Option {
 }
 
 // These support testing. We can now create a ReadDataMock class in our tests and use that.
-protocol ReadDataProtocol { // Aka a go interface
+public protocol ReadDataProtocol { // Aka a go interface
     func readData(ofLength: Int) -> Data
     func closeFile() -> Void
 }
-extension FileHandle : ReadDataProtocol { } // In swift we explicitly declare interface conformance
+public protocol WriteDataProtocol {
+    func write(_: Data) -> Void
+    func closeFile() -> Void
+}
+extension FileHandle : ReadDataProtocol, WriteDataProtocol {
+} // In swift we explicitly declare interface conformance
 
 struct Input {
     let readSize = 1024
@@ -58,7 +63,7 @@ struct Input {
             let tmpData = filehandle.readData(ofLength: readSize)
             if tmpData.count > 0 {
                 buffer.append(tmpData)
-            } else {
+            } else { // FIXME once we have tests, move this out of loop for clarity.
                 close()
                 // EOF or read error.
                 if buffer.count > 0 {
@@ -75,9 +80,9 @@ struct Input {
 
 struct Inputs {
     var inputs : [Input]
-    var i = 0
+    var i = -1 // Least bad way to read from first input file first. 
     
-    init(filehandles : [FileHandle]) {
+    init(filehandles : [ReadDataProtocol]) {
         inputs = filehandles.map({fh in return Input(filehandle: fh)})
     }
     
@@ -86,6 +91,7 @@ struct Inputs {
         while inputs.count > 0 {
             i = (i + 1) % inputs.count
             if let nl = inputs[i].nextLine() {
+                print("DEBUG: input \(i) had line '\(nl)'")
                 return nl
             } else {
                 inputs.remove(at: i)
@@ -136,7 +142,7 @@ struct Buffer {
     }
 }
 
-public func randomize(opts: [Option], ins: [FileHandle], out: FileHandle) {
+public func randomize(opts: [Option], ins: [ReadDataProtocol], out: WriteDataProtocol) {
     var buffer = Buffer(inputs: Inputs(filehandles: ins))
     while true {
         let (line, more) = buffer.choose()
@@ -145,4 +151,5 @@ public func randomize(opts: [Option], ins: [FileHandle], out: FileHandle) {
             out.write(theline.data(using: .utf8)!)
         }
     }
+    out.closeFile()
 }
