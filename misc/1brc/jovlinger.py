@@ -77,7 +77,7 @@ def seek_next_line(f) -> int:
 def gen_chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
     """ 
     yield [lo, hi) positions for each chunk. 
-    both lo and hi will point to the beginning of a field
+    both lo and hi will point to the beginning of a field (or EOF)
     """
     f = open(filename, 'rb')
     sz = file_size(f)
@@ -125,7 +125,7 @@ def main(filename, chunk_count):
     acc.out(10)
 
 """
-on 1 billion rows split 1000 wants. Try per CPU instead:
+on 1 billion rows split 1000 ways. 
 Abha=-37.2/18.0/69.9
 Abidjan=-24.9/26.0/77.2
 Abéché=-18.8/29.4/81.0
@@ -140,8 +140,9 @@ Alexandra=-38.9/11.0/61.1
 RES 999 / 1000 in 194.36387419700623
 ( python3 jovlinger.py; )  1258.74s user 37.60s system 666% cpu 3:14.46 total
 
+--
 
-using 8 cpus (reported by mp.cpu_count()) yields 
+using 8 cpus (as reported by mp.cpu_count()) yields 
 RES 7 / 8 in 184.41525411605835  <- BEST
 ( python3 jovlinger.py; )  1148.30s user 32.67s system 640% cpu 3:04.48 total
 """
