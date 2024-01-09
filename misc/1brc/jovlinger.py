@@ -17,6 +17,49 @@ class SerialPool:
         for x in it:
             yield(func(x))
 
+
+def merge_dict(acc: dict, new: dict, fn:"callable"):
+    for k, v in new.items():
+        if k in acc:
+            acc[k] = fn(acc[k], v)
+        else:
+            acc[k] = v
+
+class State:
+    def __init__(self):
+        self.mins = defaultdict(lambda : float('inf'))
+        self.maxs = defaultdict(lambda : float('-inf'))
+        self.tots = defaultdict(lambda : 0.0)
+        self.cnts = defaultdict(lambda : 0)
+
+    def out(self, n=-1):
+        if n == 0:
+            # don't waste time on output for optimizing
+            return
+        names = sorted(self.cnts.keys())
+        for name in names[:n]:
+            avg = self.tots[name] / self.cnts[name]
+            print(f"{name}={self.mins[name]:.1f}/{avg:.1f}/{self.maxs[name]:.1f}")
+
+    def proc(self, name, temp):
+        self.cnts[name] += 1
+        self.tots[name] += temp
+        self.mins[name] = min(self.mins[name], temp)
+        self.maxs[name] = max(self.maxs[name], temp)
+
+    def freeze(self):
+        """Default dicts are awkward to pickle, due to the default function. """
+        for d in [self.mins, self.maxs, self.tots, self.cnts]:
+            if isinstance(d, defaultdict):
+                d.default_factory = None
+
+    def merge(self, st):
+        merge_dict(self.cnts, st.cnts, add)
+        merge_dict(self.tots, st.tots, add)
+        merge_dict(self.mins, st.mins, min)
+        merge_dict(self.maxs, st.maxs, max)
+
+
 def file_size(f) -> int:
     x = f.tell()
     ret = f.seek(0, SEEK_END)
@@ -31,7 +74,7 @@ def seek_next_line(f) -> int:
     x = f.readline()
     return f.tell()
 
-def chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
+def gen_chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
     """ 
     yield [lo, hi) positions for each chunk. 
     both lo and hi will point to the beginning of a field
@@ -43,79 +86,43 @@ def chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
     x = 0
     f.seek(x)
     while x < sz:
-        y = min(x+chunk_sz, sz)
-        if y == sz:
-            yield (x, y)
+        y = x+chunk_sz
+        if y >= sz:
+            yield (x, sz)
             return
         f.seek(y)
         y = seek_next_line(f)
         yield (x, y)
         x = y
 
-def out(n=-1, *, cnts, tots, mins, maxs):
-    names = sorted(cnts.keys())
-    for name in names[:n]:
-        avg = tots[name] / cnts[name]
-        print(f"{name}={mins[name]:.1f}/{avg:.1f}/{maxs[name]:.1f}")
- 
-def un_dd(d):
-    """
-    Default dicts are awkward to pick, due to the default function. 
-    """
-    
-    if isinstance(d, defaultdict):
-        d.default_factory = None
-    return d
-
-def dochunk( tup) -> "tuple[cnts,tots,mins,maxs]":
-    # signature is multiprocessing.Pool compatible
+def dochunk(tup) -> State:
     filename, lo, hi = tup 
     f = open(filename)
     f.seek(lo)
-    x = lo
-    mins = defaultdict(lambda : float('inf'))
-    maxs = defaultdict(lambda : float('-inf'))
-    tots = defaultdict(lambda : 0.0)
-    cnts = defaultdict(lambda : 0)
+    st = State()
     while lo < hi:
         line = f.readline()
         name, tempstr = line.split(';')
         lo += len(line.encode('utf-8'))
-        cnts[name] += 1
         temp = float(tempstr)
-        tots[name] += temp
-        mins[name] = min(mins[name], temp)
-        maxs[name] = max(maxs[name], temp)
+        st.proc(name, temp)
     print(f"end lo: {lo} {f.tell()}")
-    return (un_dd(cnts), un_dd(tots), un_dd(mins), un_dd(maxs))
+    st.freeze()
+    return st
 
 
-def merge_dict(acc: dict, new: dict, fn:"callable"):
-    for k, v in new.items():
-        if k in acc:
-            acc[k] = fn(acc[k], v)
-        else:
-            acc[k] = v
-
-def main():
+def main(filename, chunk_count):
+    print(f"Reading from {filename}. chunks: {chunk_count}")
     start = time()
-    n = "measurements.txt"
     # pool = SerialPool()
     pool = mp.Pool()
-    mins = {}
-    maxs = {}
-    tots = {}
-    cnts = {}
-    tups = ( (n, lo, hi) for lo, hi in chunks(n, CHUNKS))
-    for i, res in enumerate(pool.imap(dochunk, tups)):
-        print(f"RES {i} / {CHUNKS} in {time() - start}")
-        cnts1, tots1, mins1, maxs1 = res
-        merge_dict(cnts, cnts1, add)
-        merge_dict(tots, tots1, add)
-        merge_dict(mins, mins1, min)
-        merge_dict(maxs, maxs1, max)
+    acc = State()
+    tups = ( (filename, lo, hi) for lo, hi in gen_chunks(filename, chunk_count))
+    for i, st in enumerate(pool.imap(dochunk, tups)):
+        print(f"RES {i} / {chunk_count} in {time() - start}")
+        acc.merge(st)
         
-    out(10, cnts=cnts, tots=tots, mins=mins, maxs=maxs)
+    acc.out(10)
 
 """
 on 1 billion rows split 1000 wants. Try per CPU instead:
@@ -140,5 +147,12 @@ RES 7 / 8 in 184.41525411605835  <- BEST
 """
     
 if __name__ == "__main__":
-    main()
+    from sys import argv
+    filename = "measurements.txt"    
+    chunk_count = mp.cpu_count() 
+    if len(argv) > 1:
+        filename = argv[1]
+    if len(argv) > 2:
+        chunk_count = int(argv[2])
+    main(filename, chunk_count)
 
