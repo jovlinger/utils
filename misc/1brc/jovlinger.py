@@ -97,7 +97,6 @@ def merge_dict(acc: dict, new: dict, fn:"callable"):
         else:
             acc[k] = v
 
-CHUNKS = mp.cpu_count() 
 def main():
     start = time()
     n = "measurements.txt"
