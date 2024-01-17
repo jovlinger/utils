@@ -42,6 +42,5 @@ class AppTest(TestCase):
         
     def test_environment(self):
         res = app.environment()
-        # make test equalish function
         want = {'hum': {'percent': 54.12}, 'temp': {'centigrade': 37.67}}
         self.assertTrue(equalish(want, res))

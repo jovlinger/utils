@@ -11,7 +11,7 @@ from constants import help_msg
 from datetime import datetime
 from collections import defaultdict
 
-from flask import Flask, request, send_from_directory
+from flask import Flask, request
 
 app = Flask(__name__) 
 
