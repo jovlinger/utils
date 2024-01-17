@@ -1,0 +1,19 @@
+version: "3.9" 
+services:
+  dmz:
+    image: dmz
+    ports:
+      - "123:456"
+    # probably want to graft in a DB 
+
+  onboard:
+    image: onboard
+    ports: 
+      - "8080:8080" # flasky 
+
+  test-driver:
+      image: testclient
+      depends_on:
+        - dmz
+        - onboard
+        # also the DB in that case
