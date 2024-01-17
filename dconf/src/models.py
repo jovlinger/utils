@@ -91,6 +91,14 @@ class Entry(BaseModel):
         return other
 
 class Entries:
+    """This is the main entrypoint for the client. The client would
+    load a list of entries somehow
+      `(SELECT entry FROM entries where kind="foo")`
+    and instantiate a new `Entries` object with that list. Do this at
+    some cadence: that cadence is the min-latency of changes going
+    live. (that assumes reasonably synced clocks between servers."""
+
+    
     entries: List[Entry] # sorted
     key: str
 
