@@ -98,7 +98,9 @@ def _append_and_trim(lst, item):
         # we call this on every append
         del lst[0]
         
-
+# FIXME: soonish, make separate endpoints for external client vs internal zones/
+# require different auth for each 
+# and restrict who can update what.
  
 @app.route("/backend/<string:zonename>", methods=['POST'])
 def update_backends(zonename:str):
