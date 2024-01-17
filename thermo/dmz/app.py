@@ -56,22 +56,12 @@ class UpdateBackend(BaseModel):
 
 app = Flask(__name__) 
 
-# @app.route("/backend/<token:str>", methods=['POST'])
-# def wait_backend(token: str):
-#     """
-#     Start a long-poll connection. 
-#     Accept a `BackedRequest` json object.
-#     Eventually, time out or send outside request as reply
-#     """
-#     pass
-
 def assertAuthAzBackend(req):
     # skip auth for now, but let's treat house info as 'sensitive', later. 
     assert req
 
 commands = defaultdict(list) # {zonename -> [IRCommand]}
 sensors = defaultdict(list) # {zonename -> [ Sensors]}
-
 
 def _lastor(lst, default=None):
     if not lst: return default
