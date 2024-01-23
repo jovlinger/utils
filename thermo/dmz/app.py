@@ -12,6 +12,7 @@ Long-term, make the backend connection into a TCP based queue (connection is awk
 
 from collections import defaultdict
 from datetime import datetime
+import os
 from typing import Dict, Union, Optional
 
 from flask import Flask, request, send_from_directory
@@ -116,3 +117,9 @@ def get_backends():
     assertAuthAzBackend(request)
     res = {zonename: _backend_response(zonename, False) for zonename in sensors}
     return res
+
+
+
+if __name__ == "__main__":
+    # LOG starting / port
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

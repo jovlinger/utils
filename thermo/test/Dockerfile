@@ -1,7 +1,7 @@
 # use like so. 
 # > cd <here>
-# > docker build -q -t jovlinger/thermo/dmz .  # add -q for use in emacs, too chatty otherwise
-# > docker run --rm -it jovlinger/thermo/dmz sh test.sh # test it
+# > docker build -q -t jovlinger/thermo/test .  # add -q for use in emacs, too chatty otherwise
+# > docker run --rm -it jovlinger/thermo/test sh test.sh # test it
 
 FROM python:3.11.6-slim
 
@@ -14,5 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # need to specify exact port. 5000 is default in app.py
 EXPOSE 5000 
 
-CMD ["bash", "./run.sh"]
-
+CMD ["bash", "./test.sh"]

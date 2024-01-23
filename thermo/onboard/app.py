@@ -57,7 +57,8 @@ def set_daikin():
 
 
 if __name__ == "__main__":
-    import sys
-    log(LOG_EVERY, "use the `flask --app main run` instead")
-    sys.exit(1)
+    # LOG starting / port
+    # log(LOG_EVERY, "use the `flask --app main run` instead")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 

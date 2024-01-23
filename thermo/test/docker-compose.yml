@@ -1,18 +1,18 @@
 version: "3.9" 
 services:
   dmz:
-    image: dmz
-    ports:
-      - "123:456"
+    image: jovlinger/thermo/dmz
+    #ports:
+    #  - "5000:5000"
     # probably want to graft in a DB 
 
   onboard:
-    image: onboard
-    ports: 
-      - "8080:8080" # flasky 
+    image: jovlinger/thermo/onboard
+    #ports: 
+    #  - "8080:8080" # flasky 
 
   test-driver:
-      image: testclient
+      image: jovlinger/thermo/test
       depends_on:
         - dmz
         - onboard

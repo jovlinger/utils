@@ -1,11 +1,18 @@
+# use like so. 
+# > cd <here>
+# > docker build -q -t jovlinger/thermo/onboard .  # add -q for use in emacs, too chatty otherwise
+# > docker run --rm -it jovlinger/thermo/onboard sh test.sh # test it
+
 FROM python:3.11.6-slim
 
 WORKDIR /app
-ADD *py requirements.txt
+# copy everything, including this file... why not?
+COPY . . 
 
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# -d means this will fork and exit. FIXME. Add local host:port and remote host:port
-RUN python pingpong.py -d 
-# need to specify exact port
-RUN flask run 
+# need to specify exact port. 5000 is default in app.py
+EXPOSE 5000 
+
+CMD ["bash", "./run.sh"]
+
