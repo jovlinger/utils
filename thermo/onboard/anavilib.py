@@ -8,9 +8,19 @@ This library will require system libraries like i2c to be installed,
 and hopefully described in onboard/README.md
 """
 
-# where does this come from? presumably python-rpi.gpio. Also this is not I2C, but seems to work
-# actually, looks like python3-smbus according to web pages
-import smbus  
+from common import is_test_env
+
+
+def get_smbus():
+    if is_test_env():
+        import smbus_fake  
+        return smbus_fake.SMBus(1)
+    # where does this come from? presumably python-rpi.gpio. Also this is not I2C, but seems to work
+    # actually, looks like python3-smbus according to web pages
+    import smbus  
+    # Rev 2 of Raspberry Pi and all newer use bus 1
+    return smbus.SMBus(1)
+
 
 ### <<< start theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py
 
@@ -34,9 +44,8 @@ class HTU21D(object):
         return x
 
     def __init__(self):
-       # Rev 2 of Raspberry Pi and all newer use bus 1
-       self.bus = smbus.SMBus(1)
-       
+       self.bus = get_smbus()
+
     def reset(self):
         self.bus.write_byte(self.HTU21D_ADDR, self.CMD_RESET)
            

@@ -3,4 +3,6 @@
 hostname
 whoami
 
+echo dmz ENV "${ENV:-idk}"
+
 python app.py

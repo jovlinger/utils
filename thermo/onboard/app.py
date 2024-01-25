@@ -5,7 +5,7 @@ Use as an import for testing. Must use the flask cmd line to start
 """
 
 from anavilib import HTU21D
-from common import log, LOG_EVERY, LOG_INFO
+from common import log, LOG_EVERY, LOG_INFO, is_test_env
 from constants import help_msg
 
 from datetime import datetime

@@ -3,4 +3,6 @@
 hostname
 whoami
 
+echo env is "${ENV:-idk}"
+
 python app.py

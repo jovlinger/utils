@@ -1,14 +1,7 @@
-#/bin/bash
+#!/bin/bash
 
-# this is the driver for the dockerized tests, rather than a local set
-# of unittests. we will connect to the various docker-composed
-# endpoints and call them, letting them ping each other.
-#
-# Environment variables will
-# - set up fakes inside the containers (factory methods will choose between real I2C and fake)
-# - tell us what hosts to contact (service names in the docker-compose net)
+# This is the command-line test driver. 
+# This composes a docker container and runs it. This is run OUTSIDE the container
 
-# pytest
-
-ping dmz
-ping onboard
+# | cat to convince the script that we are not a tty, and to skip the color and redraws
+docker compose up --timestamps --abort-on-container-exit --always-recreate-deps --build --exit-code-from  test-driver 2>&1  | cat

@@ -2,12 +2,16 @@ version: "3.9"
 services:
   dmz:
     image: jovlinger/thermo/dmz
+    environment:
+       ENV: 'DOCKERTEST'
     #ports:
     #  - "5000:5000"
     # probably want to graft in a DB 
 
   onboard:
     image: jovlinger/thermo/onboard
+    environment:
+       ENV: 'DOCKERTEST'
     #ports: 
     #  - "8080:8080" # flasky 
 

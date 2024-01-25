@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # need to specify exact port. 5000 is default in app.py
 EXPOSE 5000 
 
-CMD ["bash", "./test.sh"]
+CMD ["bash", "./run.sh"]
