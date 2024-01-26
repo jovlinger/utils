@@ -15,9 +15,9 @@ services:
     #ports: 
     #  - "8080:8080" # flasky 
 
-  test-driver:
+  testdriver:
       image: jovlinger/thermo/test
       depends_on:
         - dmz
         - onboard
-        # also the DB in that case
+        # also the DB in that case  

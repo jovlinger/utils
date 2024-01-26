@@ -11,6 +11,10 @@ COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# start temptest
+RUN apt-get update ; apt-get install -y iputils-ping wget curl
+# end temptest
+
 # need to specify exact port. 5000 is default in app.py
 EXPOSE 5000 
 
