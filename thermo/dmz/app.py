@@ -20,13 +20,13 @@ from pydantic import BaseModel
 
 JSON = Union[Dict, str, int]
 
-class BackendRequest(BaseModel):
+class ZoneRequest(BaseModel):
     security_token: str
     zone_name: str
     threading_id: str
     payload: JSON
     
-class BackendReply(BaseModel):
+class ZoneReply(BaseModel):
     threading_id: str
     method: str  # enum Timeout | ReadEnv | SendTemp
 
@@ -51,31 +51,33 @@ class IRCommand(BaseModel):
     def model_mark_accessed(self) -> None:
         self.last_access_dt = datetime.now().isoformat()
 
-class UpdateBackend(BaseModel):
+class ZoneState(BaseModel):
     command: Optional[IRCommand] = None
     sensors: Optional[Sensors] = None
 
 app = Flask(__name__) 
 
-def assertAuthAzBackend(req):
+def assertAuthAzZone(req):
     # skip auth for now, but let's treat house info as 'sensitive', later. 
     assert req
 
+### BEGIN STATE (make this sqlite)
 commands = defaultdict(list) # {zonename -> [IRCommand]}
 sensors = defaultdict(list) # {zonename -> [ Sensors]}
+### END STATE 
 
 def _lastor(lst, default=None):
     if not lst: return default
     return lst[-1]
 
-def _backend_response(zonename, update_access) -> JSON:
+def _zone_response(zonename, update_access) -> JSON:
     """Craft the json for one zone's response"""
-    # which happens to be exactly the UpdateBackend model
+    # which happens to be exactly the UpdateZone model
     cmd = _lastor(commands[zonename])
     sns = _lastor(sensors[zonename])
     if cmd and update_access:
         cmd.model_mark_accessed()
-    return UpdateBackend(command = cmd, sensors= sns).model_dump()
+    return ZoneState(command = cmd, sensors= sns).model_dump()
 
 MAXLEN = 10000
 
@@ -93,30 +95,56 @@ def _append_and_trim(lst, item):
 # require different auth for each 
 # and restrict who can update what.
  
-@app.route("/backend/<string:zonename>", methods=['POST'])
-def update_backends(zonename:str):
+@app.route("/zone/<string:zonename>/sensors", methods=['POST'])
+def update_sensors(zonename:str):
     """
-    Update a zone with UpdateBackend. Read this zone's states. 
+    Update a zone with UpdateZone. Read this zone's states. 
     Register the zone if not already there
     """
-    assertAuthAzBackend(request)
-    ub = UpdateBackend(**request.json)
-    if cmd := ub.command:
-        # eventually, we will store these and subsample them 
-        _append_and_trim(commands[zonename], cmd) 
-    if sen := ub.sensors:
-        _append_and_trim(sensors[zonename], sen) 
-    return _backend_response(zonename, True)
+    assertAuthAzZone(request)
+    sns = Sensors(**request.json)
+    _append_and_trim(sensors[zonename], sns) 
+    return _zone_response(zonename, True)
+
+@app.route("/zone/<string:zonename>/command", methods=['POST'])
+def update_command(zonename:str):
+    """
+    Update a zone with UpdateZone. Read this zone's states. 
+    Register the zone if not already there
+    """
+    assertAuthAzZone(request)
+    cmd = IRCommand(**request.json)
+    # eventually, we will store these and subsample them 
+    _append_and_trim(commands[zonename], cmd) 
+    return _zone_response(zonename, True)
 
     
-@app.route("/backends", methods=['GET'])
-def get_backends():
+@app.route("/zones", methods=['GET'])
+def get_zones():
     """
-    Stateless query.  Read ALL backend states, including pending commands.
+    Stateless query.  Read ALL zone states, including pending commands.
     """
-    assertAuthAzBackend(request)
-    res = {zonename: _backend_response(zonename, False) for zonename in sensors}
+    assertAuthAzZone(request)
+    res = {zonename: _zone_response(zonename, False) for zonename in sensors}
     return res
+
+
+@app.route("/_test_reset", methods=['POST'])
+def _test_reset():
+    """
+    Update the zone state for testing.
+    """
+    assertAuthAzZone(request)
+    # assert running in container
+    updates = request.json
+    if cmds := updates.get('commands'):
+        commands.clear()
+        commands.update(cmds)
+    if snrs := updates.get('commands'):
+        sensors.clear()
+        sensors.update(snrs)
+    print(f"Updated to\nsensors {sensors}\ncommands {commands}")
+    return "ok"
 
 
 

@@ -12,35 +12,22 @@ class DMZTest(TestCase):
 
     def test_update_backendz1(self):
         with app.test_client() as c:
-            res = c.post('/backend/z3', json={})
-            js0 = res.get_json()
-            self.assertIsNone(js0['command'], "expected to handle empty data gracefully")
-            
             # now accumulate some traffic
-            res = c.post('/backend/z1', 
-                         json={
-                             'command': {'lolidk': 'what'},
-                             'sensors': {'temp_centigrade': 11.45}
-                         })
-            res = c.post('/backend/z2', 
-                         json={
-                             'sensors': {'temp_centigrade': 21.34, 'humid_percent': 99.99 }
-                         })
-            res = c.post('/backend/z1', 
-                         json={
-                             'command': {'lolidk': 'make it so' }
-                         })
+            res = c.post('/zone/z1/command', json={'lolidk': 'what'})
+            res = c.post('/zone/z1/sensors', json={'temp_centigrade': 11.45})
+            res = c.post('/zone/z2/sensors', 
+                         json={'temp_centigrade': 21.34, 'humid_percent': 99.99 })
+            res = c.post('/zone/z1/command', json={'lolidk': 'make it so'})
             js12 = res.get_json()
+            res = c.post('/zone/z3/command', json={'lolidk': 'who'})
 
             # now we have something to read
-            res = c.post('/backend/z1', 
-                         json={
-                             'sensors': {'temp_centigrade': 13.34 }
-                         })
+            res = c.post('/zone/z1/sensors', 
+                         json={ 'temp_centigrade': 13.34 })
             js13 = res.get_json()
             
             self.assertNotEqual(js12['command']['last_access_dt'], js13['command']['last_access_dt'],
-                                "Expected access times to be updated on /backend/ endpoint")
+                                "Expected access times to be updated on /zone/ endpoint")
 
             self.assertEqual('make it so', js13['command']['lolidk'], 
                              "expected most recent command for zone")
@@ -48,7 +35,7 @@ class DMZTest(TestCase):
                              "expected most recent sensor for zone")
 
             # now we have something to read
-            res = c.get('/backends')
+            res = c.get('/zones')
             js = res.get_json()
             print(f"js : {js}")
             self.assertEqual(['z1', 'z2', 'z3'], sorted(js.keys()))

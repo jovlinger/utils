@@ -33,9 +33,9 @@ def help():
 @app.route("/environment", methods=['GET'])
 def environment():
     htu = HTU21D.singleton()
-    temp = htu.temperature()
-    hum  = htu.humidity()
-    return {"temp" : temp, "hum": hum}
+    temp = htu.temperature_centigrade()
+    hum  = htu.humidity_percent()
+    return {"temperature_centigrade" : temp, "humidity_percent": hum}
 
 cmds = { "2023-01-10T12:34:56.78":
              { "temp": { 'unit': 'centigrade', 'value': 20.5},
@@ -52,14 +52,19 @@ def get_daikin():
 @app.route("/daikin", methods=['PUT'])
 def set_daikin():
     js = request.json
+    cmd = js.get('command')
+    if not cmd:
+        print("Empty command")
+        return
     k = datetime.now().isoformat()
     assert k not in cmds, "why are we asserting?"
-    cmds[k] = js
+    cmds[k] = cmd
 
 
 if __name__ == "__main__":
     # LOG starting / port
     # log(LOG_EVERY, "use the `flask --app main run` instead")
+    start_poll()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 

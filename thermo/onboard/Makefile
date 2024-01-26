@@ -7,3 +7,6 @@ clean:
 	docker image rm "${SHA}"
 	rm .image
 	# fi
+
+test:
+	./test.sh

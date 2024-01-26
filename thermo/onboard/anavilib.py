@@ -56,12 +56,19 @@ class HTU21D(object):
         val = -46.85 + 175.72 * unit_float(msb, lsb)
         return {"centigrade": val}
 
+    def temperature_centigrade(self):
+        # intentionally brittle so that we don't get None if we start returning farenheit
+        return self.temperature()['centigrade']
+
     def humidity(self):
         """We model humidity sensor as having linear output from -6% to 119% in 65536 steps"""
         self.reset()
         msb, lsb, crc = self.bus.read_i2c_block_data(self.HTU21D_ADDR, self.CMD_READ_HUM, 3)
         val = -6 + 125 * unit_float(msb, lsb)
         return {"percent": val}
+    
+    def humidity_percent(self):
+        return self.humidity()['percent']
 
 ### end theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py >>>
 

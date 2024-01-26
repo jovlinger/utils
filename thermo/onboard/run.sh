@@ -3,6 +3,6 @@
 hostname
 whoami
 
-echo env is "${ENV:-idk}"
+python twoway.py "http://onboard/environment" "http://dmz/zone/zoneyzone/sensors" "http://onboard/daikin" &
 
 python app.py

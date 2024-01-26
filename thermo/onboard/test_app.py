@@ -37,10 +37,10 @@ class AppTest(TestCase):
     # the help message is uniquely stupid to test, but it is a start
     def test_help(self):
         """Test using local call"""
-        msg = app.help()
+        msg = app.help().get('msg')
         self.assertEqual(constants.help_msg, msg)
         
     def test_environment(self):
         res = app.environment()
-        want = {'hum': {'percent': 54.12}, 'temp': {'centigrade': 37.67}}
+        want = {'humidity_percent':  54.12, 'temperature_centigrade': 37.67}
         self.assertTrue(equalish(want, res))

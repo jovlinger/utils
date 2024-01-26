@@ -7,19 +7,61 @@ hint. After a run, do
 
 import requests
 
+b = "http://dmz:5000/backends"
+o = "http://onboard:5000"
 
-def test_simple():
-    """Simple first test. No state is changed."""
-    res_o = requests.get("http://onboard:5000/help")
-    print(f"XXX Onboard: {res_o.text}")
+name_supply = ["bob", "jill", "jack", "annie", "mark", "mary", "paul", "stella"]
 
-    res_d = requests.get("http://dmz:5000/backends")
-    print(f"XXX DMZ: {res_d.text}")
+class Zone:
+    def __init__():
+        # what about multiple zones?
+        pass
+    
 
+    def set_fake_readings(self, temp, humid):
+        r = requests.post(f"{o}/_test_readings", 
+                          {'temp_centigrade': temp, 'humid_percent': humid})
+        assert r.status_code == 200
+        return r.json()
+
+class External:
+
+    def issue_command(self, zone, *, lolidk):
+        r = requests.post(f"{b}/zone/{self.name}/command", {'lolidk': lolidk})
+        assert r.status_code == 200
+        return r.json()
+
+    def all_backends(self):
+        r = requests.get(b)
+        assert r.status_code == 200
+        return r.json()
+        
+
+def reset_dmz():
+    r = request.post(f"{b}/_test_reset", {'commands':{}, 'sensors': {}})
+    assert r.status_code == 200
+    assert r.text == "ok"
+
+def test_onboard_help():
+    """Tests that we can reach onboard, and that the app is running"""
+    res_o = requests.get(f"{o}/help")
     js_o = res_o.json()
-    print(f"XXX Onboard json {js_o}")
-    js_d = res_d.json()
-    print(f"XXX DMZ json {js_d}")
+    assert 'msg' in js_o
+    # this is not very good, but frankly unlikely to change often
+    assert 'help -> this message' in js_o['msg']
+
+def test_dmz_backend():
+    """Simple first test."""
+    reset_dmz()
+    
+    e1 = External()
+    o1 = Onboard()
+
+    js = e1.all_backends()
+    assert js == {}, f"XXX json {js} != {}"
+    
+    o1.set_fake_readings(12, 34)
+    
 
 
 
