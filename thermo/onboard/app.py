@@ -28,7 +28,7 @@ def root(path):
 @app.route("/help")
 @app.route("/about")
 def help():
-    return help_msg
+    return {"msg": help_msg}
 
 @app.route("/environment", methods=['GET'])
 def environment():

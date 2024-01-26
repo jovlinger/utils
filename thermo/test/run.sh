@@ -11,10 +11,7 @@
 ping -c2 dmz
 ping -c2 onboard
 
-echo "onboard"
-wget -O - http://onboard:5000/help
+echo "this is the run.sh script, about to invoke pytest"
 
-echo "dmz"
-wget -O - http://dmz:5000/backends
-
-python runtest.py
+# -s un-suppresses output to stdout
+pytest -s testcases/
