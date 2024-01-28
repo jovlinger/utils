@@ -129,22 +129,25 @@ def get_zones():
     return res
 
 
-@app.route("/_test_reset", methods=['POST'])
-def _test_reset():
+@app.route("/test_reset", methods=['POST'])
+def test_reset():
     """
     Update the zone state for testing.
     """
     assertAuthAzZone(request)
     # assert running in container
     updates = request.json
+    print(f"updates {updates}")
     if cmds := updates.get('commands'):
         commands.clear()
         commands.update(cmds)
-    if snrs := updates.get('commands'):
+        print(f"commands {cmds}")
+    if snrs := updates.get('sensors'):
         sensors.clear()
         sensors.update(snrs)
+        print(f"sensors {snrs}")
     print(f"Updated to\nsensors {sensors}\ncommands {commands}")
-    return "ok"
+    return '"ok"'
 
 
 

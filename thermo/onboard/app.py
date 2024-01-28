@@ -64,7 +64,6 @@ def set_daikin():
 if __name__ == "__main__":
     # LOG starting / port
     # log(LOG_EVERY, "use the `flask --app main run` instead")
-    start_poll()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 

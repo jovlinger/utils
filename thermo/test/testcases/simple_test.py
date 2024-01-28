@@ -7,40 +7,46 @@ hint. After a run, do
 
 import requests
 
-b = "http://dmz:5000/backends"
+b = "http://dmz:5000"
 o = "http://onboard:5000"
 
 name_supply = ["bob", "jill", "jack", "annie", "mark", "mary", "paul", "stella"]
 
-class Zone:
-    def __init__():
-        # what about multiple zones?
-        pass
+JSON = "JSON data type"
+
+def post_json(url, body) -> JSON:
+    headers={
+        'Content-type':'application/json', 
+        'Accept':'application/json'
+    }
+    r = requests.post(f"{b}/test_reset", json={'commands':{}, 'sensors': {}}, headers=headers)
+    assert r.status_code == 200
+    return r.json()
     
 
+class Zone:
+    def __init__(self):
+        # what about multiple zones?
+        pass
+
     def set_fake_readings(self, temp, humid):
-        r = requests.post(f"{o}/_test_readings", 
-                          {'temp_centigrade': temp, 'humid_percent': humid})
-        assert r.status_code == 200
-        return r.json()
+        return post_json(f"{o}/test_readings",  {'temp_centigrade': temp, 'humid_percent': humid})
+
 
 class External:
 
     def issue_command(self, zone, *, lolidk):
-        r = requests.post(f"{b}/zone/{self.name}/command", {'lolidk': lolidk})
-        assert r.status_code == 200
-        return r.json()
+        return post_json(f"{b}/zone/{self.name}/command", {'lolidk': lolidk})
 
     def all_backends(self):
-        r = requests.get(b)
+        r = requests.get(f"{b}/zones")
         assert r.status_code == 200
         return r.json()
         
 
 def reset_dmz():
-    r = request.post(f"{b}/_test_reset", {'commands':{}, 'sensors': {}})
-    assert r.status_code == 200
-    assert r.text == "ok"
+    r = post_json(f"{b}/test_reset", {'commands':{}, 'sensors': {}})
+    assert r == "ok"
 
 def test_onboard_help():
     """Tests that we can reach onboard, and that the app is running"""
@@ -55,12 +61,12 @@ def test_dmz_backend():
     reset_dmz()
     
     e1 = External()
-    o1 = Onboard()
+    z1 = Zone()
 
     js = e1.all_backends()
-    assert js == {}, f"XXX json {js} != {}"
+    assert js == {}, f"XXX json {js} != empty"
     
-    o1.set_fake_readings(12, 34)
+    z1.set_fake_readings(12, 34)
     
 
 
