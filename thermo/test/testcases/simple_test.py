@@ -6,6 +6,7 @@ hint. After a run, do
 """
 
 import requests
+import time
 
 b = "http://dmz:5000"
 o = "http://onboard:5000"
@@ -67,7 +68,10 @@ def test_dmz_backend():
     assert js == {}, f"XXX json {js} != empty"
     
     z1.set_fake_readings(12, 34)
-    
+    print("Sleeping for side=effect")
+    time.sleep(10)
+    print("Sleept for side=effect")
+
 
 
 

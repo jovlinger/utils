@@ -12,6 +12,8 @@ services:
     image: jovlinger/thermo/onboard
     environment:
        ENV: 'DOCKERTEST'
+    depends_on:
+       - dmz
     #ports: 
     #  - "8080:8080" # flasky 
 
