@@ -1,3 +1,7 @@
+# this probably wants its own docker container
+
+print("twoway  line 2")
+
 usage = """
 <name> [-d] URL1 URL2 URL3
 
@@ -18,7 +22,14 @@ A small standalone binary that:
 There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
 """
 
-import sys, requests
+import os
+import sys
+import time
+
+print("twoway line 29")
+
+import requests
+
 
 print(f"Nothing to see here, yet... {sys.argv}")
 
@@ -29,24 +40,46 @@ dmz = sys.argv[2]
 writeto = sys.argv[3]
 
 
-
 def poll_once() -> bool:
-    r1 = requests.get(readfrom)
-    if r1.status_code != 200: return False
-    r2 = requests.post(dmz, r1.text)
-    if r2.status_cpode != 200: return False
-    r3 = requests.post(writeto, r2.text)
-    if r3.status_code != 200: return False
-    return True
+    try:
+        r1 = requests.get(readfrom)
+        print(f"twoway r1 {r1}")
+        if r1.status_code != 200: return False
+        r2 = requests.post(dmz, r1.text)
+        print(f"twoway r2 {r2}")
+        if r2.status_cpode != 200: return False
+        r3 = requests.post(writeto, r2.text)
+        print(f"twoway r3 {r3}")
+        if r3.status_code != 200: return False
+        return True
+    except Exception as e:
+        print(f"twoway failed to connect: {e}")
+        return False
 
 MAXFAIL = 100
+PERIOD_SECS = 5
 
 def poll_forever():
     attempts = MAXFAIL
+    slp = PERIOD_SECS
     while attempts > 0:
-        if poll_once():
+        print(f"twoway sleep: {slp}, attempts left {attempts}")
+        time.sleep(slp) 
+        print(f"twoway poll go, attempts left {attempts}")
+        ok = poll_once()
+        print(f"twoway poll result: {ok}, attempts left {attempts}")
+        if ok:
             attempts = MAXFAIL
+            slp = PERIOD_SECS
         else:
             attempts -= 1
-    time.sleep(1) # control this for test
-    print("TOO many fail; exit")
+            slp *= 1.5
+    print("twoway too many fail; exit")
+
+print("twoway enter")
+if __name__ == "__main__":
+    # LOG starting / port
+    if os.environ.get("ENV") in ['DOCKERTEST']:
+        PERIOD_SECS = 0.1
+    poll_forever()
+print("twoway exit")
