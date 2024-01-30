@@ -1,4 +1,4 @@
-.image: *py *sh 
+.image: *py *sh  requirements.txt
 	docker build -q -t jovlinger/thermo/dmz . > .image
 
 clean:

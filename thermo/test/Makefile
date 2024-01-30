@@ -3,7 +3,7 @@ dockertest: .image
 	$(MAKE) -C ../onboard .image
 	./dockertest.sh
 
-.image: testcases/*.py *.sh
+.image: testcases/*.py *.sh  requirements.txt
 	docker build -q -t jovlinger/thermo/test . > .image
 
 clean:
