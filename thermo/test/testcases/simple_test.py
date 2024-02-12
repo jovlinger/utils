@@ -46,6 +46,7 @@ class External:
         
 
 def reset_dmz():
+    print("reset dmz")
     r = post_json(f"{b}/test_reset", {'commands':{}, 'sensors': {}})
     assert r == "ok"
 
@@ -66,7 +67,8 @@ def test_dmz_backend():
 
     js = e1.all_backends()
     assert js == {}, f"XXX json {js} != empty"
-    
+
+    print("set readings")
     z1.set_fake_readings(12, 34)
     print("Sleeping for side=effect")
     time.sleep(10)

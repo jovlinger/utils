@@ -3,6 +3,6 @@
 hostname
 whoami
 
-python twoway.py "http://onboard/environment" "http://dmz/zone/zoneyzone/sensors" "http://onboard/daikin" &
+(python twoway.py "http://onboard/environment" "http://dmz/zone/zoneyzone/sensors" "http://onboard/daikin"  > twoway.out &)
 
 python app.py
