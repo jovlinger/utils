@@ -40,7 +40,7 @@ class Sensors(BaseModel):
             self.created_dt = datetime.now().isoformat()
 
 class IRCommand(BaseModel):
-    lolidk: str
+    lolidk: str = ""
     created_dt: str = ""
     last_access_dt: str = "" 
 
