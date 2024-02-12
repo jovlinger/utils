@@ -1,8 +1,9 @@
 # common entry point, invoked by container, per Dockerfile
 
-hostname
-whoami
+echo "starting twoway"
+echo "starting twoway" > twoway.out
+date >> twoway.out
+python twoway.py "http://onboard:5000/environment" "http://dmz:5000/zone/zoneymczoneface/sensors" "http://onboard:5000/daikin" &
 
-(python twoway.py "http://onboard/environment" "http://dmz/zone/zoneyzone/sensors" "http://onboard/daikin"  > twoway.out &)
-
+echo "starting app"
 python app.py

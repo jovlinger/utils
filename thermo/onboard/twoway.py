@@ -30,22 +30,19 @@ import sys
 import time
 
 
-c = 0
-def log(x):
-    """Open afresh every write"""
-    global c
-    with open("twoway.log", "a") as f:
-        c += 1
-        f.write(f"twoway {c}: {x}\n")
+def out(msg):
+    with open("twoway.out", "a") as f:
+        f.write("twoway: ")
+        f.write(msg)
+        f.write("\n")
         f.flush()
 
-log("twoway line 39")
-log("twoway line 40")
-
-
-log(f"Nothing to see here, yet... {sys.argv}")
+out(f"Nothing to see here, yet... {sys.argv}")
 
 assert len(sys.argv) == 4
+
+
+out("out ")
 
 readfrom = sys.argv[1]
 dmz = sys.argv[2]
@@ -55,17 +52,17 @@ def poll_once() -> bool:
     import requests
     try:
         r1 = requests.get(readfrom)
-        log(f"twoway r1 {r1}")
+        out(f"r1 {r1}")
         if r1.status_code != 200: return False
         r2 = requests.post(dmz, r1.text)
-        log(f"twoway r2 {r2}")
+        out(f"r2 {r2}")
         if r2.status_cpode != 200: return False
         r3 = requests.post(writeto, r2.text)
-        log(f"twoway r3 {r3}")
+        out(f"r3 {r3}")
         if r3.status_code != 200: return False
         return True
     except Exception as e:
-        log(f"twoway failed to connect: {e}")
+        out(f"failed to connect: {e}")
         return False
 
 MAXFAIL = 100
@@ -76,23 +73,24 @@ def poll_forever():
     attempts = MAXFAIL
     slp = PERIOD_SECS
     while attempts > 0:
-        log(f"twoway sleep: {slp}, attempts left {attempts}")
+        out(f"sleep: {slp}, attempts left {attempts}")
         time.sleep(slp) 
-        log(f"twoway poll go, attempts left {attempts}")
+        out(f"poll go, attempts left {attempts}")
         ok = poll_once()
-        log(f"twoway poll result: {ok}, attempts left {attempts}")
+        out(f"poll result: {ok}, attempts left {attempts}")
         if ok:
             attempts = MAXFAIL
             slp = PERIOD_SECS
         else:
             attempts -= 1
             slp *= 1.5
-    log("twoway too many fail; exit")
+    out("too many fail; exit")
 
-log("twoway enter")
+out("enter")
 if __name__ == "__main__":
     # LOG starting / port
     if os.environ.get("ENV") in ['DOCKERTEST']:
         PERIOD_SECS = 0.1
     poll_forever()
-log("twoway exit")
+out("exit")
+

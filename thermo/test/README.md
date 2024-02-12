@@ -23,3 +23,17 @@ not to overload the machine.
 
 The main test target will be `dmz`, as it is the publically visible
 part of the application.
+
+# and some canned commands
+
+- run tests:
+> make dockertest
+
+- copy file from container (doesn't have to be running)
+> docker cp f1c711b7e058:/app/twoway.out -
+
+- log into stopped container (that is: run bash interactively)
+> docker start  f1c711b7e058
+> docker exec -it f1c711b7e058 bash 
+
+- 
