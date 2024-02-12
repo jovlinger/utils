@@ -30,12 +30,17 @@ import sys
 import time
 
 
-def out(msg):
+def out_file(msg):
     with open("twoway.out", "a") as f:
         f.write("twoway: ")
         f.write(msg)
         f.write("\n")
         f.flush()
+
+def out_stderr(msg):
+    print(msg, file=sys.stderr)
+
+out = out_stderr
 
 out(f"Nothing to see here, yet... {sys.argv}")
 
@@ -56,7 +61,7 @@ def poll_once() -> bool:
         if r1.status_code != 200: return False
         r2 = requests.post(dmz, r1.text)
         out(f"r2 {r2}")
-        if r2.status_cpode != 200: return False
+        if r2.status_code != 200: return False
         r3 = requests.post(writeto, r2.text)
         out(f"r3 {r3}")
         if r3.status_code != 200: return False
@@ -69,7 +74,7 @@ MAXFAIL = 100
 PERIOD_SECS = 5
 
 def poll_forever():
-    log("twoway poll forever start")
+    out("twoway poll forever start")
     attempts = MAXFAIL
     slp = PERIOD_SECS
     while attempts > 0:
