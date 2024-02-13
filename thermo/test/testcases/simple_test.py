@@ -20,7 +20,7 @@ def post_json(url, body) -> JSON:
         'Content-type':'application/json', 
         'Accept':'application/json'
     }
-    r = requests.post(f"{b}/test_reset", json={'commands':{}, 'sensors': {}}, headers=headers)
+    r = requests.post(url, json={'commands':{}, 'sensors': {}}, headers=headers)
     assert r.status_code == 200
     return r.json()
     

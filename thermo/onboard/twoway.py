@@ -25,21 +25,26 @@ There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
 import os
 import sys
 import time
+import requests
 
 print("twoway line 29")
 
-import requests
 
 print(f"Nothing to see here, yet... {sys.argv}")
-
 assert len(sys.argv) == 4
 
-def out(msg):
+def _outfile(msg):
+    # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
     with open("twoway.out", "a") as f:
         f.write("twoway: ")
         f.write(msg)
         f.write("\n")
         f.flush()
+
+def _outstderr(msg):
+    print(msg, file=sys.stderr)
+
+out = _outstderr
 
 out("out ")
 
@@ -47,17 +52,25 @@ readfrom = sys.argv[1]
 dmz = sys.argv[2]
 writeto = sys.argv[3]
 
+def post_json(url, body) -> requests.Response:
+    headers={
+        'Content-type':'application/json', 
+        'Accept':'application/json'
+    }
+    r = requests.post(url, json={'commands':{}, 'sensors': {}}, headers=headers)
+    return r
+
 
 def poll_once() -> bool:
     try:
         r1 = requests.get(readfrom)
-        out(f"r1 {r1}")
+        out(f"r1 {r1} -> {r1.text}")
         if r1.status_code != 200: return False
-        r2 = requests.post(dmz, r1.text)
-        out(f"r2 {r2}")
+        r2 = post_json(dmz, r1.text)
+        out(f"r2 {r2} -> {r2.text}")
         if r2.status_code != 200: return False
-        r3 = requests.post(writeto, r2.text)
-        out(f"r3 {r3}")
+        r3 = post_json(writeto, r2.text)
+        out(f"r3 {r3} -> {r3.text}")
         if r3.status_code != 200: return False
         return True
     except Exception as e:
