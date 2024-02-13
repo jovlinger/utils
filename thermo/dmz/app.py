@@ -40,7 +40,7 @@ class Sensors(BaseModel):
             self.created_dt = datetime.now().isoformat()
 
 class IRCommand(BaseModel):
-    lolidk: str
+    lolidk: str = ""
     created_dt: str = ""
     last_access_dt: str = "" 
 
@@ -77,7 +77,9 @@ def _zone_response(zonename, update_access) -> JSON:
     sns = _lastor(sensors[zonename])
     if cmd and update_access:
         cmd.model_mark_accessed()
-    return ZoneState(command = cmd, sensors= sns).model_dump()
+    ret = ZoneState(command = cmd, sensors= sns).model_dump()
+    print(f"_zone_response({zonename}, {update_access}) -> {ret}")
+    return ret
 
 MAXLEN = 10000
 
@@ -113,7 +115,9 @@ def update_command(zonename:str):
     Register the zone if not already there
     """
     assertAuthAzZone(request)
-    cmd = IRCommand(**request.json)
+    # assumes body exists, even if it is just {}
+    js = request.json
+    cmd = IRCommand(**js)
     # eventually, we will store these and subsample them 
     _append_and_trim(commands[zonename], cmd) 
     return _zone_response(zonename, True)

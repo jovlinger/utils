@@ -20,6 +20,9 @@ A small standalone binary that:
 5. take a breath, and repeat.
 
 There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
+
+> make dockertest
+> docker cp test-onboard-1:/app/twoway.out -  
 """
 
 import os
@@ -27,11 +30,6 @@ import sys
 import time
 import requests
 
-print("twoway line 29")
-
-
-print(f"Nothing to see here, yet... {sys.argv}")
-assert len(sys.argv) == 4
 
 def _outfile(msg):
     # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
@@ -41,16 +39,24 @@ def _outfile(msg):
         f.write("\n")
         f.flush()
 
+
 def _outstderr(msg):
+    # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
     print(msg, file=sys.stderr)
 
 out = _outstderr
+
+
+out(f"Nothing to see here, yet... {sys.argv}")
+
+assert len(sys.argv) == 4
 
 out("out ")
 
 readfrom = sys.argv[1]
 dmz = sys.argv[2]
 writeto = sys.argv[3]
+
 
 def post_json(url, body) -> requests.Response:
     headers={
@@ -62,6 +68,7 @@ def post_json(url, body) -> requests.Response:
 
 
 def poll_once() -> bool:
+    import requests
     try:
         r1 = requests.get(readfrom)
         out(f"r1 {r1} -> {r1.text}")
@@ -81,6 +88,7 @@ MAXFAIL = 100
 PERIOD_SECS = 5
 
 def poll_forever():
+    out("twoway poll forever start")
     attempts = MAXFAIL
     slp = PERIOD_SECS
     while attempts > 0:
@@ -104,3 +112,4 @@ if __name__ == "__main__":
         PERIOD_SECS = 0.1
     poll_forever()
 out("exit")
+
