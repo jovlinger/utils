@@ -11,6 +11,7 @@ from constants import help_msg
 from datetime import datetime
 from collections import defaultdict
 import os
+from sys import stderr
 
 from flask import Flask, request
 
@@ -49,16 +50,18 @@ def get_daikin():
     """Return a dict of {time : command} sent."""
     return cmds
 
-@app.route("/daikin", methods=['PUT'])
+@app.route("/daikin", methods=['PUT', 'POST']) # post not really the right request type
 def set_daikin():
     js = request.json
+    print(f"SET_DAIKIN: {js}", file=stderr)
     cmd = js.get('command')
     if not cmd:
-        print("Empty command")
-        return
+        print("Empty command", file=stderr)
+        return "error"
     k = datetime.now().isoformat()
     assert k not in cmds, "why are we asserting?"
     cmds[k] = cmd
+    return cmds
 
 
 if __name__ == "__main__":
