@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  merklefuse:
+    build: .
+    volumes:
+      - .:/app
+      - /tmp/merklefuse:/mnt/merklefuse
+    privileged: true  # Required for FUSE
+    environment:
+      - PYTHONPATH=/app
+    working_dir: /app
+    command: /bin/sh
