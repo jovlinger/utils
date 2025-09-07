@@ -1,20 +1,35 @@
-.PHONY: install test lint format clean help
+.PHONY: install test lint black clean help docker docker-test
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  install     - Install requirements"
+	@echo "  setup       - Create virtual environment"
+	@echo "  install     - Install requirements (requires activated venv)"
 	@echo "  test        - Run all tests"
 	@echo "  test-unit   - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  lint        - Run pylint"
-	@echo "  format      - Run black formatter"
+	@echo "  black       - Run black formatter"
 	@echo "  clean       - Clean up temporary files"
 	@echo "  mount       - Mount filesystem (requires sudo)"
+	@echo "  docker      - Build and run in Docker container"
+	@echo "  docker-test - Run tests in Docker container"
+
+# Setup virtual environment and install dependencies
+setup:
+	@echo "Creating virtual environment..."
+	python3 -m venv venv
+	@echo ""
+	@echo "Virtual environment created!"
+	@echo "IMPORTANT: You must activate it before running 'make install':"
+	@echo "  source venv/bin/activate"
+	@echo "  make install"
+	@echo ""
 
 # Install dependencies
 install:
-	pip install -r requirements.txt
+	@which pip3 > /dev/null || (echo "Run 'make setup' to create a virtual environment, then 'source venv/bin/activate' to activate it." && exit 1)
+	pip3 install -r requirements.txt 2>/dev/null || (echo "Run 'make setup' to create a virtual environment, then 'source venv/bin/activate' to activate it." && exit 1)
 
 # Run all tests
 test: test-unit test-integration
@@ -32,7 +47,7 @@ lint:
 	pylint merklefuse/ tests/
 
 # Format code
-format:
+black:
 	black merklefuse/ tests/
 
 # Clean up
@@ -45,6 +60,15 @@ clean:
 # Mount filesystem (example - requires sudo)
 mount:
 	sudo python -m merklefuse.cli /mnt/merklefuse --foreground
+
+# Docker commands
+docker:
+	docker-compose build
+	docker-compose run --rm merklefuse
+
+docker-test:
+	docker-compose build
+	docker-compose run --rm merklefuse make test
 
 # Development setup
 dev-setup: install
