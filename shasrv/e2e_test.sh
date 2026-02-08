@@ -114,7 +114,7 @@ extract_archive() {
 run_dedup() {
     info "Running dedup on $INPUT_DIR -> $DEDUP_DIR..."
     
-    if ! python3 dedup/dedup.py "$INPUT_DIR" "$DEDUP_DIR"; then
+    if ! python3 shasrv/dedup.py "$INPUT_DIR" "$DEDUP_DIR"; then
         error "Dedup failed"
     fi
     
@@ -125,7 +125,7 @@ run_dedup() {
 run_redup() {
     info "Running redup on $DEDUP_DIR -> $REDUP_DIR..."
     
-    if ! ./dedup/redup.sh "$DEDUP_DIR" "$REDUP_DIR"; then
+    if ! ./shasrv/redup.sh "$DEDUP_DIR" "$REDUP_DIR"; then
         error "Redup failed"
     fi
     

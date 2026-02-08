@@ -31,11 +31,11 @@ mv "$(dirname "$INPUT_DIR")/simple_test" "$INPUT_DIR"
 
 # Run dedup
 echo "Running dedup..."
-python3 dedup.py "$INPUT_DIR" "$DEDUP_DIR"
+python3 "$(dirname "$0")/dedup.py" "$INPUT_DIR" "$DEDUP_DIR"
 
 # Run redup
 echo "Running redup..."
-./redup.sh "$DEDUP_DIR" "$REDUP_DIR"
+"$(dirname "$0")/redup.sh" "$DEDUP_DIR" "$REDUP_DIR"
 
 # Create archive from redup output
 echo "Creating redup archive..."
