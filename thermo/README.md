@@ -13,6 +13,46 @@ I also have a raspberry pi zero W and an anavi IR pi hat with temperature sensor
 
 So let's pull them together and see what we get. 
 
+## Architecture diagrams
+
+### High-level flow
+
+```mermaid
+flowchart LR
+  user[User / automation] --> dmz[DMZ API]
+  dmz --> onboard[Onboard API]
+  onboard --> irtx[IR TX (GPIO)]
+  irtx --> headunit[Daikin head unit]
+  onboard --> i2c[I2C bus /dev/i2c-1]
+  i2c --> htu[HTU21D temp/humidity]
+```
+
+### Twoway relay
+
+```mermaid
+sequenceDiagram
+  participant env as Onboard /environment
+  participant tw as twoway.py
+  participant dmz as DMZ /zone/.../sensors
+  participant daikin as Onboard /daikin
+  tw->>env: GET /environment
+  env-->>tw: JSON sensors
+  tw->>dmz: POST sensors
+  dmz-->>tw: 200 OK (+ optional command)
+  tw->>daikin: POST command
+  daikin-->>tw: 200 OK
+```
+
+### Onboard I2C flow
+
+```mermaid
+flowchart TD
+  app[Flask app] -->|/environment| htu[HTU21D singleton]
+  htu --> bus{is_test_env?}
+  bus -->|false| smbus[smbus.SMBus(1)]
+  bus -->|true| fake[smbus_fake.SMBus(1)]
+```
+
 # Ingredients
 
 This is very flexible, so you can almost certainly get the same results with any variations. But
