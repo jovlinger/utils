@@ -1,7 +1,7 @@
 """
 Main entry point.
 
-Use as an import for testing. Must use the flask cmd line to start  
+Use as an import for testing. Must use the flask cmd line to start
 """
 
 from anavilib import HTU21D
@@ -15,9 +15,10 @@ from sys import stderr
 
 from flask import Flask, request
 
-app = Flask(__name__) 
+app = Flask(__name__)
 
-c = defaultdict(lambda : 0)
+c = defaultdict(lambda: 0)
+
 
 @app.route("/<path:path>")
 def root(path):
@@ -26,35 +27,42 @@ def root(path):
     c[path] += 1
     return f"<P>Hello my name is {path} / {c} </P>"
 
+
 @app.route("/help")
 @app.route("/about")
 def help():
     return {"msg": help_msg}
 
-@app.route("/environment", methods=['GET'])
+
+@app.route("/environment", methods=["GET"])
 def environment():
     htu = HTU21D.singleton()
     temp = htu.temperature_centigrade()
-    hum  = htu.humidity_percent()
-    return {"temperature_centigrade" : temp, "humidity_percent": hum}
+    hum = htu.humidity_percent()
+    return {"temperature_centigrade": temp, "humidity_percent": hum}
 
-cmds = { "2023-01-10T12:34:56.78":
-             { "temp": { 'unit': 'centigrade', 'value': 20.5},
-               "mode": "COOL",
-               "time": "2023-01-10T12:34:50"
-               # .... many more 
-               }}
 
-@app.route("/daikin", methods=['GET'])
+cmds = {
+    "2023-01-10T12:34:56.78": {
+        "temp": {"unit": "centigrade", "value": 20.5},
+        "mode": "COOL",
+        "time": "2023-01-10T12:34:50",
+        # .... many more
+    }
+}
+
+
+@app.route("/daikin", methods=["GET"])
 def get_daikin():
     """Return a dict of {time : command} sent."""
     return cmds
 
-@app.route("/daikin", methods=['PUT', 'POST']) # post not really the right request type
+
+@app.route("/daikin", methods=["PUT", "POST"])  # post not really the right request type
 def set_daikin():
     js = request.json
     print(f"SET_DAIKIN: {js}", file=stderr)
-    cmd = js.get('command')
+    cmd = js.get("command")
     if not cmd:
         print("Empty command", file=stderr)
         return "error"
@@ -68,5 +76,3 @@ if __name__ == "__main__":
     # LOG starting / port
     # log(LOG_EVERY, "use the `flask --app main run` instead")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-

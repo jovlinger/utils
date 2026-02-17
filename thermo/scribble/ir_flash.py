@@ -17,7 +17,7 @@ import tempfile
 import time
 import sys
 
-LIRC_TX = '/dev/lirc0'
+LIRC_TX = "/dev/lirc0"
 
 
 def send_pulse_train(pulses_us):
@@ -26,12 +26,12 @@ def send_pulse_train(pulses_us):
     pulses_us is a list of ints: [pulse, space, pulse, space, ...].
     ir-ctl expects a text file with lines like 'pulse 9000' / 'space 4500'.
     """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         for i, val in enumerate(pulses_us):
-            kind = 'pulse' if i % 2 == 0 else 'space'
-            f.write(f'{kind} {val}\n' if i < len(pulses_us) - 1 else f'{kind} {val}')
+            kind = "pulse" if i % 2 == 0 else "space"
+            f.write(f"{kind} {val}\n" if i < len(pulses_us) - 1 else f"{kind} {val}")
         fname = f.name
-    subprocess.run(['ir-ctl', '-d', LIRC_TX, '--send', fname], check=True)
+    subprocess.run(["ir-ctl", "-d", LIRC_TX, "--send", fname], check=True)
 
 
 def make_burst(on_us=500, off_us=500, count=10):
@@ -44,6 +44,7 @@ def make_burst(on_us=500, off_us=500, count=10):
 
 
 # --- patterns ---
+
 
 def short_blip():
     """Single short blip."""
@@ -66,20 +67,20 @@ def sos():
         time.sleep(0.2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     patterns = {
-        'blip': short_blip,
-        'blink': slow_blink,
-        'sos': sos,
+        "blip": short_blip,
+        "blink": slow_blink,
+        "sos": sos,
     }
 
-    name = sys.argv[1] if len(sys.argv) > 1 else 'blink'
+    name = sys.argv[1] if len(sys.argv) > 1 else "blink"
     if name not in patterns:
-        avail = ', '.join(patterns.keys())
-        print(f'Unknown pattern: {name}')
-        print(f'Available: {avail}')
+        avail = ", ".join(patterns.keys())
+        print(f"Unknown pattern: {name}")
+        print(f"Available: {avail}")
         sys.exit(1)
 
-    print(f'Flashing IR LEDs: {name}  (view through phone camera)')
+    print(f"Flashing IR LEDs: {name}  (view through phone camera)")
     patterns[name]()
-    print('Done.')
+    print("Done.")

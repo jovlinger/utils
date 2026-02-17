@@ -1,5 +1,5 @@
 """
-These are just the constants we use everywhere.  
+These are just the constants we use everywhere.
 
 Tests may import this file to verify expected errors / help is parrotted back
 """
@@ -17,6 +17,3 @@ GET
 
 /history -> history of commands
 """
-
- 
-

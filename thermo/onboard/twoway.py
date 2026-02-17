@@ -44,6 +44,7 @@ def _outstderr(msg):
     # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
     print(msg, file=sys.stderr)
 
+
 out = _outstderr
 
 
@@ -59,33 +60,36 @@ writeto = sys.argv[3]
 
 
 def post_json(url, body) -> requests.Response:
-    headers={
-        'Content-type':'application/json', 
-        'Accept':'application/json'
-    }
-    r = requests.post(url, json={'commands':{}, 'sensors': {}}, headers=headers)
+    headers = {"Content-type": "application/json", "Accept": "application/json"}
+    r = requests.post(url, json={"commands": {}, "sensors": {}}, headers=headers)
     return r
 
 
 def poll_once() -> bool:
     import requests
+
     try:
         r1 = requests.get(readfrom)
         out(f"r1 {r1} -> {r1.text}")
-        if r1.status_code != 200: return False
+        if r1.status_code != 200:
+            return False
         r2 = post_json(dmz, r1.text)
         out(f"r2 {r2} -> {r2.text}")
-        if r2.status_code != 200: return False
+        if r2.status_code != 200:
+            return False
         r3 = post_json(writeto, r2.text)
         out(f"r3 {r3} -> {r3.text}")
-        if r3.status_code != 200: return False
+        if r3.status_code != 200:
+            return False
         return True
     except Exception as e:
         out(f"failed to connect: {e}")
         return False
 
+
 MAXFAIL = 100
 PERIOD_SECS = 5
+
 
 def poll_forever():
     out("twoway poll forever start")
@@ -93,7 +97,7 @@ def poll_forever():
     slp = PERIOD_SECS
     while attempts > 0:
         out(f"sleep: {slp}, attempts left {attempts}")
-        time.sleep(slp) 
+        time.sleep(slp)
         out(f"poll go, attempts left {attempts}")
         ok = poll_once()
         out(f"poll result: {ok}, attempts left {attempts}")
@@ -105,11 +109,11 @@ def poll_forever():
             slp *= 1.5
     out("too many fail; exit")
 
+
 out("enter")
 if __name__ == "__main__":
     # LOG starting / port
-    if os.environ.get("ENV") in ['DOCKERTEST']:
+    if os.environ.get("ENV") in ["DOCKERTEST"]:
         PERIOD_SECS = 0.1
     poll_forever()
 out("exit")
-

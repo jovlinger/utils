@@ -55,7 +55,10 @@ def _emit_lspath_machine(entries: list[tuple[str, str, bool]]) -> None:
 def _emit_lspath_pretty(
     entries: list[tuple[str, str, bool]], show_deleted: bool
 ) -> None:
-    formatted = [(_format_pretty_path(path), shasum, deleted) for path, shasum, deleted in entries]
+    formatted = [
+        (_format_pretty_path(path), shasum, deleted)
+        for path, shasum, deleted in entries
+    ]
     max_len = max(len(path) for path, _shasum, _deleted in formatted)
     for path, shasum, deleted in formatted:
         if show_deleted:
@@ -68,7 +71,13 @@ def _emit_lspath_pretty(
                 kind="data",
             )
         else:
-            out("{path} {shasum}", 0, path=path.ljust(max_len), shasum=shasum, kind="data")
+            out(
+                "{path} {shasum}",
+                0,
+                path=path.ljust(max_len),
+                shasum=shasum,
+                kind="data",
+            )
 
 
 def _emit_lshash_machine(
@@ -793,7 +802,12 @@ def handle_fixlinks(
             target_exists = os.path.isfile(canonical_target)
             target_hash_ok = True
             if paranoia >= 1 and not target_exists:
-                out("missing target {path} -> {target}", 0, path=link_path, target=canonical_target)
+                out(
+                    "missing target {path} -> {target}",
+                    0,
+                    path=link_path,
+                    target=canonical_target,
+                )
                 continue
             if paranoia >= 2 and target_exists:
                 actual = sha256_file(canonical_target)
@@ -808,7 +822,9 @@ def handle_fixlinks(
                     )
                     continue
 
-            needs_fix = os.path.abspath(current_target) != os.path.abspath(canonical_target)
+            needs_fix = os.path.abspath(current_target) != os.path.abspath(
+                canonical_target
+            )
             if not needs_fix and paranoia == 0:
                 continue
             if not needs_fix and paranoia > 0 and target_exists and target_hash_ok:
@@ -999,7 +1015,6 @@ def handle_extract(
     out("extracted bytes: {extracted_bytes}", 0, extracted_bytes=extracted_bytes)
 
 
-
 def handle_ls(
     conn: sqlite3.Connection,
     prefixes: list[str],
@@ -1023,8 +1038,12 @@ def handle_ls(
                 continue
             dirpath = os.path.dirname(path)
             dir_counts[dirpath] = dir_counts.get(dirpath, 0) + 1
-        allowed_dirs = {dirpath for dirpath, count in dir_counts.items() if count >= mindup}
-        entries = [entry for entry in entries if os.path.dirname(entry[0]) in allowed_dirs]
+        allowed_dirs = {
+            dirpath for dirpath, count in dir_counts.items() if count >= mindup
+        }
+        entries = [
+            entry for entry in entries if os.path.dirname(entry[0]) in allowed_dirs
+        ]
     if not entries:
         return
     if OUTPUT_MODE == "machine":
@@ -1043,7 +1062,9 @@ def handle_lshash(
     """Print list entries grouped by sha256 hash."""
     entries = list_db_entries(conn, show_deleted)
     if hashes:
-        normalized = {value for value in (normalize_hash_arg(shadir, h) for h in hashes) if value}
+        normalized = {
+            value for value in (normalize_hash_arg(shadir, h) for h in hashes) if value
+        }
         entries = [entry for entry in entries if entry[1] in normalized]
     if not entries:
         return
@@ -1052,9 +1073,7 @@ def handle_lshash(
         grouped.setdefault(shasum, []).append((path, deleted))
     if mindup > 1:
         grouped = {
-            shasum: paths
-            for shasum, paths in grouped.items()
-            if len(paths) >= mindup
+            shasum: paths for shasum, paths in grouped.items() if len(paths) >= mindup
         }
         if not grouped:
             return
@@ -1151,11 +1170,11 @@ def delete_from_db(
     return len(target_rows)
 
 
-def delete_by_hashes(
-    conn: sqlite3.Connection, shasums: list[str], shadir: str
-) -> int:
+def delete_by_hashes(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> int:
     """Mark all entries with matching shasums as deleted and return count."""
-    normalized = [value for value in (normalize_hash_arg(shadir, h) for h in shasums) if value]
+    normalized = [
+        value for value in (normalize_hash_arg(shadir, h) for h in shasums) if value
+    ]
     if not normalized:
         return 0
     placeholders = ",".join("?" for _ in normalized)
@@ -1219,13 +1238,28 @@ def handle_reindex_files(
             target = os.path.realpath(link_path)
             digest = os.path.basename(target).lower()
             if not HASH_RE.match(digest):
-                out("skip non-hash symlink {path} -> {target}", 1, path=link_path, target=target)
+                out(
+                    "skip non-hash symlink {path} -> {target}",
+                    1,
+                    path=link_path,
+                    target=target,
+                )
                 continue
             if not is_under_dir(target, shadir_abs):
-                out("skip target outside shadir {path} -> {target}", 1, path=link_path, target=target)
+                out(
+                    "skip target outside shadir {path} -> {target}",
+                    1,
+                    path=link_path,
+                    target=target,
+                )
                 continue
             if not os.path.isfile(target):
-                out("skip missing target {path} -> {target}", 0, path=link_path, target=target)
+                out(
+                    "skip missing target {path} -> {target}",
+                    0,
+                    path=link_path,
+                    target=target,
+                )
                 continue
             rel_dir = os.path.relpath(os.path.dirname(link_path), abs_files_root)
             if rel_dir == ".":

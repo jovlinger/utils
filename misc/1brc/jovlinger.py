@@ -6,31 +6,34 @@ The task is to write a Java program which reads the file, calculates the min, me
 
 import sys
 from collections import defaultdict
-import multiprocessing as mp 
+import multiprocessing as mp
 from operator import add
 from os import SEEK_END
 from time import time
 
+
 class SerialPool:
     """Just serial Pool, like multiprocessing.Pool but simpler, also many fewer methods"""
+
     def imap(self, func, it, chunksize="ignored"):
         for x in it:
-            yield(func(x))
+            yield (func(x))
 
 
-def merge_dict(acc: dict, new: dict, fn:"callable"):
+def merge_dict(acc: dict, new: dict, fn: "callable"):
     for k, v in new.items():
         if k in acc:
             acc[k] = fn(acc[k], v)
         else:
             acc[k] = v
 
+
 class State:
     def __init__(self):
-        self.mins = defaultdict(lambda : float('inf'))
-        self.maxs = defaultdict(lambda : float('-inf'))
-        self.tots = defaultdict(lambda : 0.0)
-        self.cnts = defaultdict(lambda : 0)
+        self.mins = defaultdict(lambda: float("inf"))
+        self.maxs = defaultdict(lambda: float("-inf"))
+        self.tots = defaultdict(lambda: 0.0)
+        self.cnts = defaultdict(lambda: 0)
 
     def out(self, n=-1):
         if n == 0:
@@ -48,7 +51,7 @@ class State:
         self.maxs[name] = max(self.maxs[name], temp)
 
     def freeze(self):
-        """Default dicts are awkward to pickle, due to the default function. """
+        """Default dicts are awkward to pickle, due to the default function."""
         for d in [self.mins, self.maxs, self.tots, self.cnts]:
             if isinstance(d, defaultdict):
                 d.default_factory = None
@@ -66,27 +69,29 @@ def file_size(f) -> int:
     f.seek(x)
     return ret
 
+
 def seek_next_line(f) -> int:
     """
-    find the next line in. Return offset of char following next '\n', or EOF 
-    Leave f seeked to that pos. 
+    find the next line in. Return offset of char following next '\n', or EOF
+    Leave f seeked to that pos.
     """
     x = f.readline()
     return f.tell()
 
+
 def gen_chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
-    """ 
-    yield [lo, hi) positions for each chunk. 
+    """
+    yield [lo, hi) positions for each chunk.
     both lo and hi will point to the beginning of a field (or EOF)
     """
-    f = open(filename, 'rb')
+    f = open(filename, "rb")
     sz = file_size(f)
     chunk_sz = sz // chunks
     print(f"file size: {sz}, chunks {chunks}")
     x = 0
     f.seek(x)
     while x < sz:
-        y = x+chunk_sz
+        y = x + chunk_sz
         if y >= sz:
             yield (x, sz)
             return
@@ -95,15 +100,16 @@ def gen_chunks(filename: str, chunks: int) -> "Generator[tuple[int,int]]":
         yield (x, y)
         x = y
 
+
 def dochunk(tup) -> State:
-    filename, lo, hi = tup 
+    filename, lo, hi = tup
     f = open(filename)
     f.seek(lo)
     st = State()
     while lo < hi:
         line = f.readline()
-        name, tempstr = line.split(';')
-        lo += len(line.encode('utf-8'))
+        name, tempstr = line.split(";")
+        lo += len(line.encode("utf-8"))
         temp = float(tempstr)
         st.proc(name, temp)
     print(f"end lo: {lo} {f.tell()}")
@@ -117,12 +123,13 @@ def main(filename, chunk_count):
     # pool = SerialPool()
     pool = mp.Pool()
     acc = State()
-    tups = ( (filename, lo, hi) for lo, hi in gen_chunks(filename, chunk_count))
+    tups = ((filename, lo, hi) for lo, hi in gen_chunks(filename, chunk_count))
     for i, st in enumerate(pool.imap(dochunk, tups)):
         print(f"RES {i} / {chunk_count} in {time() - start}")
         acc.merge(st)
-        
+
     acc.out(10)
+
 
 """
 on 1 billion rows split 1000 ways. 
@@ -146,14 +153,14 @@ using 8 cpus (as reported by mp.cpu_count()) yields
 RES 7 / 8 in 184.41525411605835  <- BEST
 ( python3 jovlinger.py; )  1148.30s user 32.67s system 640% cpu 3:04.48 total
 """
-    
+
 if __name__ == "__main__":
     from sys import argv
-    filename = "measurements.txt"    
-    chunk_count = mp.cpu_count() 
+
+    filename = "measurements.txt"
+    chunk_count = mp.cpu_count()
     if len(argv) > 1:
         filename = argv[1]
     if len(argv) > 2:
         chunk_count = int(argv[2])
     main(filename, chunk_count)
-
