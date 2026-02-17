@@ -203,6 +203,14 @@ def parse_args() -> argparse.Namespace:
         metavar="DIR",
         help="Fix broken symlink targets under directories",
     )
+    mode.add_argument(
+        "--reindex-files",
+        nargs="?",
+        metavar="DIR",
+        const="__AUTO__",
+        dest="reindex_files",
+        help="Rebuild DB entries by scanning symlinks under files/ tree",
+    )
     parser.add_argument(
         "--shadir",
         help="Directory to store files by sha256",
@@ -1186,6 +1194,63 @@ def handle_rmhash(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> 
     out("deleted entries: {deleted}", 0, deleted=deleted)
 
 
+def handle_reindex_files(
+    conn: sqlite3.Connection, shadir: str, files_root: str, skip_dotfiles: bool
+) -> None:
+    """Rebuild/refresh DB entries from a files/ symlink tree."""
+    abs_files_root = os.path.abspath(files_root)
+    if not os.path.isdir(abs_files_root):
+        raise SystemExit(f"--reindex-files directory not found: {files_root}")
+    shadir_abs = os.path.abspath(shadir)
+    store_cwd = os.getcwd()
+    root_rel = os.path.relpath(abs_files_root, store_cwd)
+    scanned = 0
+    indexed = 0
+    for dirpath, dirnames, filenames in os.walk(abs_files_root, followlinks=False):
+        if skip_dotfiles:
+            dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        for name in filenames:
+            if skip_dotfiles and name.startswith("."):
+                continue
+            link_path = os.path.join(dirpath, name)
+            if not os.path.islink(link_path):
+                continue
+            scanned += 1
+            target = os.path.realpath(link_path)
+            digest = os.path.basename(target).lower()
+            if not HASH_RE.match(digest):
+                out("skip non-hash symlink {path} -> {target}", 1, path=link_path, target=target)
+                continue
+            if not is_under_dir(target, shadir_abs):
+                out("skip target outside shadir {path} -> {target}", 1, path=link_path, target=target)
+                continue
+            if not os.path.isfile(target):
+                out("skip missing target {path} -> {target}", 0, path=link_path, target=target)
+                continue
+            rel_dir = os.path.relpath(os.path.dirname(link_path), abs_files_root)
+            if rel_dir == ".":
+                rel_dir = ""
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO stored_files
+                (shasum, root, root_rel, dirpath, filename, deleted)
+                VALUES (?, ?, ?, ?, ?, 0)
+                """,
+                (digest, abs_files_root, root_rel, rel_dir, name),
+            )
+            conn.execute(
+                """
+                UPDATE stored_files
+                SET deleted = 0
+                WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+                """,
+                (digest, root_rel, rel_dir, name),
+            )
+            indexed += 1
+    out("reindexed symlinks scanned: {count}", 0, count=scanned)
+    out("reindexed entries active: {count}", 0, count=indexed)
+
+
 def main() -> int:
     """Entry point for command execution."""
     args = parse_args()
@@ -1217,6 +1282,8 @@ def main() -> int:
         raise SystemExit("--mindup must be >= 1")
     if args.mindup != 1 and args.lspath is None and args.lshash is None:
         raise SystemExit("--mindup is only valid with --lspath/--ls or --lshash")
+    if args.reindex_files and args.recursive:
+        raise SystemExit("--reindex-files does not accept --recursive")
     db_path = os.path.abspath(args.db) if args.db else None
     with open_db(shadir, db_path) as conn:
         if args.store:
@@ -1279,6 +1346,14 @@ def main() -> int:
                 recursive=args.recursive,
                 paranoia=args.paranoia,
             )
+            return 0
+        if args.reindex_files is not None:
+            if args.reindex_files == "__AUTO__":
+                files_root = os.path.join(os.path.dirname(shadir), "files")
+            else:
+                files_root = args.reindex_files
+            out("reindex-files {files_root}", 1, files_root=files_root)
+            handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
             return 0
         for root in args.dedup:
             out("dedup {root}", 1, root=root)
