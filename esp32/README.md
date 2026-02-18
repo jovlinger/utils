@@ -87,6 +87,46 @@ flowchart LR
    - Connect board via Type-C; identify USB-UART port; put board in download mode (BOOT button + power-on if required).
    - Flash a “blink” or “WiFi scan” sketch to confirm toolchain and USB.
 
+### 4a. some prelim results
+
+Finding two distinct ESP32 SoCs—specifically the ESP32-S3R8 and the ESP32-U4WDH—on a single board with a screen and rotary encoder is a specialized configuration used in advanced development hardware like some Waveshare or LilyGo "Smart Knob" panels. 
+The primary rationale for having two separate SoCs in this context is to offload complex tasks and manage different peripherals simultaneously without performance bottlenecks.
+Component Roles
+In these high-end "Smart Knob" or embedded panel kits, the two chips typically divide labor as follows:
+ESP32-S3R8 (Main Application Processor): This chip features 8MB of PSRAM and is optimized for the user interface. It handles the high-resolution graphical display, often using the LVGL library, and manages the rotary encoder inputs. It also supports Wi-Fi and Bluetooth 5 (LE).
+ESP32-U4WDH (Secondary/IO Processor): This variant typically includes 4MB of Flash and focuses on communication or specific I/O tasks. On some boards, it acts as a dedicated controller for wireless protocols (like "Classic" Bluetooth) or handles auxiliary functions like audio through an I2S interface to a DAC. 
+Rationale for Dual-SoC Designs
+Memory and Performance Segregation: Driving a high-resolution color screen (e.g., a 1.9-inch or 2.1-inch IPS display) while managing complex UI transitions requires significant PSRAM and CPU cycles. Using the S3R8 for the screen ensures smooth visuals, while the second chip handles background data transmission or external communication without causing "stuttering" in the UI.
+Protocol Flexibility: While the ESP32-S3 is a newer, more powerful chip, some older ESP32 variants (like the U4WDH) are used to maintain support for specific legacy Bluetooth modes or to provide a secondary radio channel.
+Dedicated Hardware Peripherals: Some boards use one chip specifically to handle hardware-intensive tasks like high-speed quadrature decoding for the rotary encoder or acting as a server/client for other resource-rich devices.
+Debugging and Programming: Development boards with multiple SoCs often include multiple USB ports (one native USB and one UART). This allows you to use one port for programming and debugging the primary application while the other port remains open for power supply or serial communication from the second chip. 
+Summary Table
+
+| Feature | ESP32-S3R8 | ESP32-U4WDH |
++---------+------------+-------------+
+| Typical Role |	UI, Graphics (LVGL), Encoder Input | 	Communication, Audio, Auxiliary IO |
+| Memory |	8MB PSRAM / 16MB Flash	 | 4MB Flash |
+| Clock Speed | 	240 MHz (Xtensa LX7) | 	240 MHz (Xtensa LX6) |
+| Connectivity	| Wi-Fi & Bluetooth 5 (LE) |	Wi-Fi & Classic Bluetooth |
+
+The Waveshare ESP32-S3 1.8-inch Knob Display Development Board features a dual-MCU design with an 
+ESP32-S3R8 and an ESP32-U4WDH to support both modern and legacy wireless protocols. 
+The ESP32-S3 handles high-performance tasks like the GUI and BLE 5.0, 
+while the ESP32-U4WDH provides Classic Bluetooth connectivity which the S3 lacks. For more details, visit Waveshare. 
+
+This site describes it:
+https://www.cnx-software.com/2025/06/25/battery-powered-knob-display-board-pairs-esp32-s3-and-esp32-wireless-socs-features-audio-dac-for-audio-visualization/
+
+### 4b. speculation about SoC
+
+How They Communicate
+The communication between the two chips is handled in specific ways depending on the task: 
+Internal Communication (I2C/SPI): The chips communicate using standard serial communication protocols. The ESP32-S3 acts as the main processor, managing high-level functions like the display and UI, and likely communicates with the auxiliary ESP32-U4WDH chip via an I2C or SPI bus to send commands or receive specific data from peripherals it controls.
+Wireless Connectivity: Each chip has its own wireless capabilities, but they are used for external communication with other devices (e.g., your smartphone, a home assistant hub, or another computer).
+ESP32-S3R8: Handles modern Bluetooth 5 (LE) and Wi-Fi connectivity.
+ESP32-U4WDH: Specifically included to provide support for Classic Bluetooth, which the S3 lacks. This allows the device to connect to older Bluetooth audio sources or other legacy devices. 
+ +4
+
 ---
 
 ## 5. Development flow (software)
