@@ -32,6 +32,10 @@
 - **Board:** ESP32-S3 + second ESP32, dual rotary encoder, Wi-Fi, USB, 16 MB Flash.
 - **ESP32 development:** Arduino (C++) or ESP-IDF (C); PlatformIO/VS Code or Arduino IDE.
 
+This is the exact hardware: 
+https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm?srsltid=AfmBOor0E83SR6nVx12fN1Q0V5WqgtDQKckmf8HIA-bk5XiqchYyprpb
+
+
 ### To research
 
 - Exact **pinout** of the dual encoder (which GPIOs, common vs separate for S3 vs U4WDH).
