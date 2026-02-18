@@ -30,8 +30,11 @@ import sys
 import time
 import requests
 
+NOISY=True
 
-def _outfile(msg):
+def _outfile(msg, force=False):
+    if not (NOISY or force):
+        return
     # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
     with open("twoway.out", "a") as f:
         f.write("twoway: ")
@@ -39,14 +42,13 @@ def _outfile(msg):
         f.write("\n")
         f.flush()
 
-
-def _outstderr(msg):
+def _outstderr(msg, force=False):
+    if not (NOISY or force):
+        return
     # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
-    print(msg, file=sys.stderr)
-
+    print("twoway: "+msg, file=sys.stderr)
 
 out = _outstderr
-
 
 out(f"Nothing to see here, yet... {sys.argv}")
 
@@ -58,34 +60,28 @@ readfrom = sys.argv[1]
 dmz = sys.argv[2]
 writeto = sys.argv[3]
 
-
-def post_json(url, body) -> requests.Response:
-    headers = {"Content-type": "application/json", "Accept": "application/json"}
-    r = requests.post(url, json={"commands": {}, "sensors": {}}, headers=headers)
-    return r
+def post_json(url, body) -> str:
+    headers={
+        'Content-type':'application/json', 
+        'Accept':'application/json'
+    }
+    r = requests.post(url, json={'commands':{}, 'sensors': {}}, headers=headers)
+    assert r.status_code == 200, f"POST {url} -[{r.status_code}]-> {r.text}"
+    return r.text
 
 
 def poll_once() -> bool:
-    import requests
-
     try:
-        r1 = requests.get(readfrom)
-        out(f"r1 {r1} -> {r1.text}")
-        if r1.status_code != 200:
-            return False
-        r2 = post_json(dmz, r1.text)
-        out(f"r2 {r2} -> {r2.text}")
-        if r2.status_code != 200:
-            return False
-        r3 = post_json(writeto, r2.text)
-        out(f"r3 {r3} -> {r3.text}")
-        if r3.status_code != 200:
-            return False
-        return True
+        res1 = requests.get(readfrom)
+        out(f"r1 {readfrom} -> {res1}")
+        res2 = post_json(dmz, res1)
+        out(f"r2 {dmz} -> {res2}")
+        res3 = post_json(writeto, res2)
+        out(f"r3 {writeto} -> {res3}")
     except Exception as e:
         out(f"failed to connect: {e}")
         return False
-
+    return True
 
 MAXFAIL = 100
 PERIOD_SECS = 5
@@ -97,10 +93,8 @@ def poll_forever():
     slp = PERIOD_SECS
     while attempts > 0:
         out(f"sleep: {slp}, attempts left {attempts}")
-        time.sleep(slp)
-        out(f"poll go, attempts left {attempts}")
+        time.sleep(slp) 
         ok = poll_once()
-        out(f"poll result: {ok}, attempts left {attempts}")
         if ok:
             attempts = MAXFAIL
             slp = PERIOD_SECS

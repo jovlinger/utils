@@ -11,11 +11,17 @@ from constants import help_msg
 from datetime import datetime
 from collections import defaultdict
 import os
-from sys import stderr
+import sys
 
 from flask import Flask, request
 
-app = Flask(__name__)
+app = Flask(__name__) 
+
+def _outstderr(msg):
+    # For reasons unknown, stdout doesn't get propagated to docker logs / stdout
+    print("onboard: "+msg, file=sys.stderr)
+
+out=_outstderr
 
 c = defaultdict(lambda: 0)
 
@@ -61,11 +67,11 @@ def get_daikin():
 @app.route("/daikin", methods=["PUT", "POST"])  # post not really the right request type
 def set_daikin():
     js = request.json
-    print(f"SET_DAIKIN: {js}", file=stderr)
-    cmd = js.get("command")
+    out(f"SET_DAIKIN: {js}")
+    cmd = js.get('command')
     if not cmd:
-        print("Empty command", file=stderr)
-        return "error"
+        out("Empty command")
+        return '"EmptyCmd"'
     k = datetime.now().isoformat()
     assert k not in cmds, "why are we asserting?"
     cmds[k] = cmd
