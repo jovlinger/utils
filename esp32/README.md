@@ -33,8 +33,12 @@
 - **ESP32 development:** Arduino (C++) or ESP-IDF (C); PlatformIO/VS Code or Arduino IDE.
 
 This is the exact hardware: 
-https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm?srsltid=AfmBOor0E83SR6nVx12fN1Q0V5WqgtDQKckmf8HIA-bk5XiqchYyprpb
+https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm
 
+#### side note; horse switch
+
+The home-assistant community says to abandon our knob and move this fully supported one (for home assistant)
+https://devices.esphome.io/devices/m5stack-dial/
 
 ### To research
 
@@ -42,6 +46,15 @@ https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm?srsltid=AfmBOor0E83SR6
 - Which **MCU drives the encoder** you want to use (S3 vs U4WDH) and how the board switches between them (CH445P, Type-C orientation).
 - **Volumio hostname/IP** on your network (fixed IP vs mDNS `volumio.local`).
 - Whether you want **WebSocket** (push state) in addition to REST (simpler: REST only first).
+
+#### sources:
+
+Some of these look very useful!
+
+- **this project is very similar: for roon rather than volumeio. success** https://www.reddit.com/r/esp32/comments/1pt2wnz/lessons_from_an_esp32s3knobtouchlcd18_build_avrcp/
+- **Wiki from dev community:** https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8
+- **another project targeting same hardware:** https://github.com/arendst/Tasmota/discussions/23737
+- **yet another project, with some potential solutions:** https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702
 
 ---
 
