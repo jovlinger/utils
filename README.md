@@ -1,25 +1,34 @@
 # utils
 
-These are all mananged as their own virtual env / requirements.txt
+Sub-projects are each run in their own virtualenv and `requirements.txt`. Create an `env` in each and ignore it in git.
 
-## make an env
+## Prereq (once)
 
-### Setup (once)
+```bash
+python3 -m venv --help
+```
 
-> cd utils/foo
-> python3 -m pip --version 
-Should say something nice, else you need to (python3 -m pip install --user --upgrade pip)
+If that fails, use Python 3.3+ or install `python3-venv`. No need to install `virtualenv`; `venv` is standard.
 
-> python3 -m pip install --user virtualenv 
-This is needed once, and then we should be able to make more envs like so:
+## Create envs in all sub-projects
 
-### Per project
+From the repo root:
 
-> python3 -m venv env
-This makes an env for `CWD`.  If we have several sub-projects in one checkout, we would cd into each and make an env in each. 
-This makes directory utils/foo/env. This should be git-ignored.
-> echo env >> .gitignore
+```bash
+for d in */; do
+  [ -f "$d/requirements.txt" ] && (cd "$d" && python3 -m venv env && (grep -qxF 'env' .gitignore 2>/dev/null || echo env >> .gitignore))
+done
+```
 
-> source env/bin/activate
-This turns on our install, for this shell. (deactivate) to leave, or just close the shell.
+Runs in every subdirectory that has a top-level `requirements.txt`. For subdirs whose deps live in a subpath (e.g. `esp32/volctrl/requirements.txt`), create the venv there manually: `cd esp32 && python3 -m venv env && ... && pip install -r volctrl/requirements.txt`.
+
+## Use a project’s env
+
+```bash
+cd esp32
+source env/bin/activate
+pip install -r volctrl/requirements.txt
+# ... run stuff ...
+deactivate
+```
 

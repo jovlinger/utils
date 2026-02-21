@@ -4,6 +4,36 @@
 
 ---
 
+## Development setup (Python)
+
+Per repo convention (see [utils/README.md](../README.md)): each util sub-project has its own virtualenv in an `env` directory, git-ignored. For esp32 (e.g. volctrl):
+
+```bash
+cd esp32
+python3 -m venv env
+echo env >> .gitignore   # if not already ignored
+source env/bin/activate
+pip install volctrl/requirements.txt
+python -m volctrl discover
+```
+
+---
+
+## Progress summary
+
+| Item | Status |
+|------|--------|
+| **Research complete** | ~70% |
+| **Board identified** | Waveshare ESP32-S3-Knob-Touch-LCD-1.8 (dual MCU: ESP32-S3R8 + ESP32-U4WDH) |
+| **Dev methodology** | Attach via Type-C USB; iterate with Arduino or ESP-IDF; no simulator needed |
+| **Upload** | Type-C orientation selects which MCU is connected; ESP32-S3: hold BOOT, power on for download mode; flash via esptool or IDE |
+| **Encoder GPIOs** | In schematic/demo source (04_Encoder_Test); community hw-reference available |
+| **Volumio API** | Documented; not yet tested from this machine |
+
+**Next steps:** (1) Download [schematic](https://files.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8/ESP32-S3-Knob-Touch-LCD-1.8-schematic.zip) and confirm encoder GPIOs for S3. (2) On a PC: verify `http://volumio.local/api/v1/getState` and one `commands/?cmd=volume&volume=plus`. (3) Create PlatformIO project; WiFi + HTTP client to Volumio. (4) Wire encoder to HTTP commands on device.
+
+---
+
 ## 1. Hardware summary (known)
 
 | Component | Description |
@@ -11,66 +41,104 @@
 | **ESP32-S3R8** | Wi-Fi + Bluetooth SoC, 240 MHz, 8 MB PSRAM |
 | **ESP32-U4WDH** | Wi-Fi + Classic Bluetooth, 240 MHz, 4 MB Flash |
 | **PCM5100A** | Stereo DAC (I²S) — audio out on device |
-| **Dual encoder** | One for ESP32-S3, one for ESP32 — ideal for volume/track |
+| **Rotary encoder** | One physical knob; encoder inputs on both MCUs, Type-C orientation selects which MCU sees it |
 | **USB to UART** | Flashing and serial debug |
 | **16 MB Flash** | Plenty for firmware |
 | **DRV2605** | Vibration motor driver (I2C) — haptic feedback |
 | **TF card, MIC, 3.5 mm jack, Type-C** | Extra features; not required for remote |
+| **Display** | 1.8" IPS 360×360, QSPI, driver ST77916; touch CST816 (I2C) |
 
-**Connectivity:** Board has **Wi-Fi and Bluetooth** on both SoCs. For “remote to Volumio on network,” **Wi-Fi is the right choice**; Volumio is a network player and is controlled over HTTP/WebSocket on the LAN.
+**Connectivity:** Board has **Wi-Fi and Bluetooth** on both SoCs. For “remote to Volumio on network,” **Wi-Fi is the right choice**; Volumio is controlled over HTTP/WebSocket on the LAN.
 
 ---
 
-## 2. What is known vs what needs research
+## 2. Q/A — Known and from research
 
-### Known
+### Board and product
 
-- **Volumio control:** REST API on port 3000 (or via `volumio.local`). Commands include:
-  - `GET /api/v1/getState` — current state (volume, track, play/pause)
-  - `GET /api/v1/commands/?cmd=volume&volume=plus|minus|mute|unmute|<0–100>`
-  - `GET /api/v1/commands/?cmd=play|pause|toggle|stop|prev|next`
-- **Board:** ESP32-S3 + second ESP32, dual rotary encoder, Wi-Fi, USB, 16 MB Flash.
-- **ESP32 development:** Arduino (C++) or ESP-IDF (C); PlatformIO/VS Code or Arduino IDE.
+- **Q: Exact board?**  
+  **A:** Waveshare [ESP32-S3-Knob-Touch-LCD-1.8](https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm) (product); [Wiki](https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8) (setup, demos, schematic, BIN flashing).
 
-This is the exact hardware: 
-https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm
+- **Q: Development methodology — attach and iterate?**  
+  **A:** Yes. Connect via Type-C USB; no simulator. Use Arduino IDE or ESP-IDF (VS Code/CLion). Board appears as COM/serial port; flash with esptool or IDE upload.
 
-#### side note; horse switch
+- **Q: Easiest way to incorporate Cursor (AI coding agent) into the iteration cycle? CLI tools?**  
+  **A:** Work in Cursor with the ESP32 repo open: edit code, ask Cursor to run build/flash/monitor (PlatformIO CLI or `pio run -t upload && pio device monitor`). Cursor can trigger terminal commands (with your approval). No separate “Cursor CLI” for the agent; the loop is: edit in Cursor → run `pio run -t upload` (or Arduino/IDF equivalent) in the integrated terminal → test on device → repeat. Add a rule or short doc in the repo (e.g. “run `pio run -t upload` to flash”) so the agent knows the exact commands.
 
-The home-assistant community says to abandon our knob and move this fully supported one (for home assistant)
-https://devices.esphome.io/devices/m5stack-dial/
+- **Q: How to attach / upload?**  
+  **A:** Type-C plug **orientation** selects which MCU is connected (CH445P switch): one way = ESP32-S3, other = ESP32. For ESP32-S3: hold **BOOT**, power on to enter download mode, then flash. Flashing: esptool (`esptool.py --chip esp32s3 --port COMx write_flash 0x0 firmware.bin`) or Arduino/PlatformIO/ESP-IDF flash button.
 
-### To research
+- **Q: Do we need a simulator?**  
+  **A:** No. Develop on host, flash to device, use serial monitor for debug.
 
-- Exact **pinout** of the dual encoder (which GPIOs, common vs separate for S3 vs U4WDH).
-- Which **MCU drives the encoder** you want to use (S3 vs U4WDH) and how the board switches between them (CH445P, Type-C orientation).
+### Volumio API
+
+- **Q: How is Volumio controlled?**  
+  **A:** REST API on port 3000 (e.g. `volumio.local`). Key endpoints: `GET /api/v1/getState` (state); `GET /api/v1/commands/?cmd=volume&volume=plus|minus|mute|unmute|<0–100>`; `GET /api/v1/commands/?cmd=play|pause|toggle|stop|prev|next`.
+
+### SoC roles and dual-MCU
+
+- **Q: Why two SoCs?**  
+  **A:** S3 handles UI, display (LVGL), encoder; U4WDH adds Classic Bluetooth (S3 has BLE only) and can handle audio/I2S. Split avoids UI stutter while doing wireless/audio.
+
+- **Q: Which MCU drives the encoder?**  
+  **A:** There is one knob. Its encoder lines are connected to both MCUs; Type-C orientation selects which MCU is active (and thus which one sees the knob). Demos use **ESP32-S3** (04_Encoder_Test); for our firmware use S3 so the same knob is read by the S3.
+
+- **Q: How does Type-C choose MCU?**  
+  **A:** CH445P 4-pole double-throw switch routes USB to either ESP32-S3 or ESP32 depending on plug orientation.
+
+- **Q: Given the S3 handles UI / encoder / WiFi, do we need the other chip? Reasonable to target only the S3 initially?**  
+  **A:** For a Volumio remote (WiFi + HTTP + one knob, optional display/haptic) you don’t need the other chip. Target **only the ESP32-S3** initially: it has WiFi, the demos use it for the knob and display, and one firmware keeps the loop simple. The U4WDH is the same single knob when USB is flipped, plus Classic Bluetooth; add it later only if you want BT audio sink or to run a second role on the other MCU.  
+
+### Display and touch (from wiki + community)
+
+- **Q: Display IC and interface?**  
+  **A:** ST77916, 360×360, QSPI. Arduino demo pins (S3): CS=14, PCLK=13, DATA0–3=15,16,17,18, RST=21, Backlight=47. Touch: CST816 (I2C).
+
+- **Q: LVGL rotation?**  
+  **A:** 180° is fast (pixel reversal in flush). 90°/270° need matrix transpose and are slow on S3; MADCTL (esp_lcd) may allow hardware rotation — worth trying (Reddit).
+
+- **Q: Display colors wrong?**  
+  **A:** Panel can be big-endian; LVGL flush may need byte-swap (SH8601/QSPI byte-swap noted in community).
+
+- **Q: LVGL fonts?**  
+  **A:** TinyTTF runtime TTF on S3 is problematic (heap/PSRAM). Pre-render bitmap fonts at build with lv_font_conv is recommended.
+
+### Encoder and pins
+
+- **Q: Encoder GPIOs?**  
+  **A:** Not listed in wiki text; come from [schematic](https://files.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8/ESP32-S3-Knob-Touch-LCD-1.8-schematic.zip) or demo source (04_Encoder_Test). Community hw-reference: [muness/roon-knob docs/esp/hw-reference](https://github.com/muness/roon-knob/tree/master/docs/esp/hw-reference) (CST816, DRV2605, battery ADC, encoder).
+
+### Still to decide / test
+
 - **Volumio hostname/IP** on your network (fixed IP vs mDNS `volumio.local`).
-- Whether you want **WebSocket** (push state) in addition to REST (simpler: REST only first).
-
-#### sources:
-
-Some of these look very useful!
-
-- **this project is very similar: for roon rather than volumeio. success** https://www.reddit.com/r/esp32/comments/1pt2wnz/lessons_from_an_esp32s3knobtouchlcd18_build_avrcp/
-- **Wiki from dev community:** https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8
-- **another project targeting same hardware:** https://github.com/arendst/Tasmota/discussions/23737
-- **yet another project, with some potential solutions:** https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702
+- **WebSocket** (push state) vs REST-only for first version (REST only is simpler).
 
 ---
 
-## 3. High-level steps (investigation → develop → test)
+## 3. Sources used
+
+- **Waveshare product:** https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm  
+- **Waveshare Wiki:** https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8 (setup, Arduino/ESP-IDF demos, schematic, BIN, FAQ)  
+- **Similar project (Roon knob):** https://www.reddit.com/r/esp32/comments/1pt2wnz/lessons_from_an_esp32s3knobtouchlcd18_build_avrcp/ — AVRCP-only hack, LVGL rotation, fonts, hw-reference; [muness/roon-knob](https://github.com/muness/roon-knob)  
+- **Tasmota (same hardware):** https://github.com/arendst/Tasmota/discussions/23737 — ST77916 + CST816; display.ini / QSPI pin definitions  
+- **ESPHome/HA (similar 1.85"):** https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702 — PSRAM config for LVGL, I2S pins for mic/speaker  
+
+---
+
+## 4. High-level steps (investigation → develop → test)
 
 ```mermaid
 flowchart LR
-  subgraph phase1[Phase 1: Investigate]
+  subgraph phase1["Phase 1: Investigate"]
     A[Board pinout & encoder] --> B[Volumio API on network]
     B --> C[Toolchain & IDE choice]
   end
-  subgraph phase2[Phase 2: Develop]
-    D[WiFi + HTTP client] --> E[Encoder → volume/commands]
+  subgraph phase2["Phase 2: Develop"]
+    D[WiFi + HTTP client] --> E[Encoder to volume/commands]
     E --> F[Optional: display/haptic]
   end
-  subgraph phase3[Phase 3: Test]
+  subgraph phase3["Phase 3: Test"]
     G[Unit/mock] --> H[Hardware + real Volumio]
   end
   phase1 --> phase2 --> phase3
@@ -78,75 +146,16 @@ flowchart LR
 
 ---
 
-## 4. Detailed investigation steps
+## 5. Detailed investigation steps
 
-1. **Identify board model and docs**  
-   Find the exact product name (e.g. “ESP32-S3 + ESP32 dual encoder dev board”) and manufacturer. Search for schematic, pinout, or “encoder GPIO” in PDF/docs.
-
-2. **Encoder wiring**  
-   From schematic or silkscreen:
-   - Which GPIOs: CLK, DT, SW (button) for each encoder.
-   - Which MCU each encoder is connected to (S3 vs U4WDH).
-   - Whether both encoders can be used from one firmware (e.g. only S3).
-
-3. **Volumio reachability**  
-   - From a PC on same network: `ping volumio.local` or open `http://volumio.local:3000`.
-   - Test: `curl "http://volumio.local/api/v1/getState"` and `curl "http://volumio.local/api/v1/commands/?cmd=volume&volume=plus"`.
-   - Note if you use fixed IP (e.g. `192.168.1.22`) or mDNS; ESP32 can use either.
-
-4. **Toolchain choice**  
-   - **Arduino (C++)** + Arduino IDE or PlatformIO: faster to start, many examples (WiFi, HTTP, encoder).
-   - **ESP-IDF (C)** + VS Code/CLion: more control, smaller binary; steeper learning curve.
-   - Recommendation: start with **Arduino + PlatformIO** (or Arduino IDE 2.x) for speed; move to ESP-IDF only if you need it.
-
-5. **Build/flash/debug path**  
-   - Install ESP32 board support (Arduino or ESP-IDF).
-   - Connect board via Type-C; identify USB-UART port; put board in download mode (BOOT button + power-on if required).
-   - Flash a “blink” or “WiFi scan” sketch to confirm toolchain and USB.
-
-### 4a. some prelim results
-
-Finding two distinct ESP32 SoCs—specifically the ESP32-S3R8 and the ESP32-U4WDH—on a single board with a screen and rotary encoder is a specialized configuration used in advanced development hardware like some Waveshare or LilyGo "Smart Knob" panels. 
-The primary rationale for having two separate SoCs in this context is to offload complex tasks and manage different peripherals simultaneously without performance bottlenecks.
-Component Roles
-In these high-end "Smart Knob" or embedded panel kits, the two chips typically divide labor as follows:
-ESP32-S3R8 (Main Application Processor): This chip features 8MB of PSRAM and is optimized for the user interface. It handles the high-resolution graphical display, often using the LVGL library, and manages the rotary encoder inputs. It also supports Wi-Fi and Bluetooth 5 (LE).
-ESP32-U4WDH (Secondary/IO Processor): This variant typically includes 4MB of Flash and focuses on communication or specific I/O tasks. On some boards, it acts as a dedicated controller for wireless protocols (like "Classic" Bluetooth) or handles auxiliary functions like audio through an I2S interface to a DAC. 
-Rationale for Dual-SoC Designs
-Memory and Performance Segregation: Driving a high-resolution color screen (e.g., a 1.9-inch or 2.1-inch IPS display) while managing complex UI transitions requires significant PSRAM and CPU cycles. Using the S3R8 for the screen ensures smooth visuals, while the second chip handles background data transmission or external communication without causing "stuttering" in the UI.
-Protocol Flexibility: While the ESP32-S3 is a newer, more powerful chip, some older ESP32 variants (like the U4WDH) are used to maintain support for specific legacy Bluetooth modes or to provide a secondary radio channel.
-Dedicated Hardware Peripherals: Some boards use one chip specifically to handle hardware-intensive tasks like high-speed quadrature decoding for the rotary encoder or acting as a server/client for other resource-rich devices.
-Debugging and Programming: Development boards with multiple SoCs often include multiple USB ports (one native USB and one UART). This allows you to use one port for programming and debugging the primary application while the other port remains open for power supply or serial communication from the second chip. 
-Summary Table
-
-| Feature | ESP32-S3R8 | ESP32-U4WDH |
-+---------+------------+-------------+
-| Typical Role |	UI, Graphics (LVGL), Encoder Input | 	Communication, Audio, Auxiliary IO |
-| Memory |	8MB PSRAM / 16MB Flash	 | 4MB Flash |
-| Clock Speed | 	240 MHz (Xtensa LX7) | 	240 MHz (Xtensa LX6) |
-| Connectivity	| Wi-Fi & Bluetooth 5 (LE) |	Wi-Fi & Classic Bluetooth |
-
-The Waveshare ESP32-S3 1.8-inch Knob Display Development Board features a dual-MCU design with an 
-ESP32-S3R8 and an ESP32-U4WDH to support both modern and legacy wireless protocols. 
-The ESP32-S3 handles high-performance tasks like the GUI and BLE 5.0, 
-while the ESP32-U4WDH provides Classic Bluetooth connectivity which the S3 lacks. For more details, visit Waveshare. 
-
-This site describes it:
-https://www.cnx-software.com/2025/06/25/battery-powered-knob-display-board-pairs-esp32-s3-and-esp32-wireless-socs-features-audio-dac-for-audio-visualization/
-
-### 4b. speculation about SoC
-
-How They Communicate
-The communication between the two chips is handled in specific ways depending on the task: 
-Internal Communication (I2C/SPI): The chips communicate using standard serial communication protocols. The ESP32-S3 acts as the main processor, managing high-level functions like the display and UI, and likely communicates with the auxiliary ESP32-U4WDH chip via an I2C or SPI bus to send commands or receive specific data from peripherals it controls.
-Wireless Connectivity: Each chip has its own wireless capabilities, but they are used for external communication with other devices (e.g., your smartphone, a home assistant hub, or another computer).
-ESP32-S3R8: Handles modern Bluetooth 5 (LE) and Wi-Fi connectivity.
-ESP32-U4WDH: Specifically included to provide support for Classic Bluetooth, which the S3 lacks. This allows the device to connect to older Bluetooth audio sources or other legacy devices. 
- +4
+1. **Encoder GPIOs** — From schematic or demo: CLK, DT, SW for S3 encoder; confirm which MCU the chosen encoder is on.
+2. **Volumio reachability** — From PC: `ping volumio.local`, `curl "http://volumio.local/api/v1/getState"` and `curl "http://volumio.local/api/v1/commands/?cmd=volume&volume=plus"`. Note fixed IP vs mDNS.
+3. **Toolchain** — Arduino (ESP32 ≥3.2.0) + PlatformIO or Arduino IDE 2.x recommended to start; ESP-IDF if needed later.
+4. **First run** — Flash 04_Encoder_Test or WiFi STA demo; confirm serial and upload path.
 
 ---
 
-## 5. Development flow (software)
+## 6. Development flow (software)
 
 ```mermaid
 flowchart TD
@@ -170,65 +179,35 @@ flowchart TD
   API -->|getState for feedback| HTTP
 ```
 
-**Suggested mapping (to be refined):**
-
-- Encoder rotate CW → `volume=plus` (or next track, configurable).
-- Encoder rotate CCW → `volume=minus` (or prev track).
-- Encoder button → `toggle` (play/pause) or mute.
-
-Optional later: small display (I2C/SPI) showing volume/now-playing from `getState`; DRV2605 haptic on button press.
+**Suggested mapping:** Encoder CW → `volume=plus` (or next); CCW → `volume=minus` (or prev); button → `toggle` (play/pause) or mute. Optional later: display (getState), DRV2605 haptic.
 
 ---
 
-## 6. Toolchain, language, IDE
+## 7. Toolchain, language, IDE
 
-| Aspect | Option A (recommended to start) | Option B |
-|--------|----------------------------------|----------|
-| **Framework** | Arduino (ESP32 core) | ESP-IDF |
+| Aspect | Option A (recommended) | Option B |
+|--------|------------------------|----------|
+| **Framework** | Arduino (ESP32 core ≥3.2.0) | ESP-IDF |
 | **Language** | C++ | C |
-| **IDE** | VS Code + PlatformIO, or Arduino IDE 2.x | VS Code + ESP-IDF extension, or CLion |
-| **Board package** | “esp32” by Espressif (Arduino) | ESP-IDF v5.x |
-| **Key libraries** | `WiFi`, `HTTPClient`, encoder (e.g. `ESP32Encoder` or rotary library) | `esp_wifi`, `esp_http_client`, driver for GPIO/encoder |
-
-**Rough install steps (Arduino + PlatformIO):**
-
-1. Install [PlatformIO](https://platformio.org/) (VS Code extension or standalone).
-2. New project → Board: “ESP32-S3 Dev Module” (or exact board if listed); Framework: Arduino.
-3. Add libraries: WiFi (built-in), HTTPClient (built-in), encoder library from Library Manager.
-4. Configure `platformio.ini`: correct board, upload port, 8MB PSRAM if needed.
+| **IDE** | VS Code + PlatformIO, or Arduino IDE 2.x | VS Code + ESP-IDF extension |
+| **Board** | ESP32-S3 Dev Module (or exact if listed) | ESP-IDF v5.x |
+| **Libraries** | WiFi, HTTPClient, encoder (e.g. ESP32Encoder) | esp_wifi, esp_http_client, GPIO/encoder |
 
 ---
 
-## 7. Testing strategy
-
-```mermaid
-flowchart LR
-  subgraph T1[Stage 1]
-    T1a[WiFi connect]
-    T1b[HTTP GET to Volumio]
-  end
-  subgraph T2[Stage 2]
-    T2a[Encoder → serial log]
-    T2b[Encoder → HTTP volume]
-  end
-  subgraph T3[Stage 3]
-    T3a[Full UX on device]
-    T3b[Stability / reconnect]
-  end
-  T1 --> T2 --> T3
-```
+## 8. Testing strategy
 
 | Stage | What | How |
 |-------|------|-----|
-| **1** | Network + API | Connect ESP32 to WiFi; call `getState` and `volume&volume=plus` from code; check serial output and actual Volumio behavior. |
-| **2** | Encoder → Volumio | Read encoder in loop; send volume/play-pause commands via HTTP; verify on Volumio and optionally with serial logs. |
-| **3** | Integration | Power from battery/USB; test at distance; WiFi reconnect after sleep; optional display/haptic. |
+| **1** | Network + API | WiFi connect; call getState and volume from code; check serial and Volumio. |
+| **2** | Encoder → Volumio | Read encoder; send volume/play-pause via HTTP; verify on Volumio. |
+| **3** | Integration | Power, range, reconnect; optional display/haptic. |
 
-**Without hardware:** Mock Volumio with a simple HTTP server (e.g. Python `http.server` or Flask) that prints received `GET /api/v1/commands/?cmd=...` and returns fake `getState` JSON; run on same LAN and point ESP32 to that IP.
+**Without hardware:** Mock Volumio with HTTP server returning fake getState and echoing commands.
 
 ---
 
-## 8. Mermaid — end-to-end flow
+## 9. End-to-end flow
 
 ```mermaid
 sequenceDiagram
@@ -248,36 +227,32 @@ sequenceDiagram
 
 ---
 
-## 9. Rough timeline and effort
+## 10. Rough timeline
 
-| Phase | Tasks | Time (rough) | Effort |
-|-------|--------|--------------|--------|
-| **Investigate** | Find board docs; pinout; test Volumio API from PC; choose Arduino vs ESP-IDF; get one blink/WiFi sketch running | 0.5–1 day | Low–medium |
-| **Prototype** | WiFi + HTTP to Volumio (getState + volume); then add encoder → commands | 1–2 days | Medium |
-| **Integrate** | Map all actions; debounce; optional display/haptic; power/battery | 0.5–1 day | Medium |
-| **Test & tune** | Range, reconnect, UX; mock server if needed | 0.5–1 day | Low–medium |
+| Phase | Tasks | Time (rough) |
+|-------|--------|---------------|
+| **Investigate** | Schematic encoder pins; test Volumio API from PC; toolchain; one blink/WiFi sketch | 0.5–1 day |
+| **Prototype** | WiFi + HTTP to Volumio; encoder → commands | 1–2 days |
+| **Integrate** | All actions; debounce; optional display/haptic | 0.5–1 day |
+| **Test & tune** | Range, reconnect, mock server | 0.5–1 day |
 
-**Total rough estimate:** **3–5 days** (assuming a few hours per day and no major board or Volumio surprises).
-
-Blockers that could add time: no schematic (reverse‑engineering pins), Volumio not on same network or behind strict firewall, or needing to move to ESP-IDF for a specific hardware feature.
+**Total:** ~3–5 days (few hours per day). Blockers: no schematic (reverse-engineering pins), Volumio not reachable, or need for ESP-IDF for a specific feature.
 
 ---
 
-## 10. References
+## 11. References
 
 - **Volumio REST API:** [developers.volumio.com — Rest API](https://developers.volumio.com/api/rest-api)  
-  Key: `volumio.local/api/v1/commands/?cmd=volume&volume=plus|minus|mute|unmute|<0–100>`, `getState`, `play`, `pause`, `toggle`, `prev`, `next`.
-- **ESP32 Arduino:** [ESP32 Arduino core](https://github.com/espressif/arduino-esp32)  
+- **ESP32 Arduino:** [ESP32 Arduino core](https://github.com/espressif/arduino-esp32) (≥3.2.0 for this board)  
 - **ESP-IDF:** [ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/)  
-- **Board:** Pinout/schematic from vendor or product page (to be filled when you have the exact model).
+- **Waveshare schematic / demo / BIN:** [Wiki Resources](https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8) (schematic, demo zip, BIN zip)  
+- **Roon-knob hw-reference (encoder, DRV2605, etc.):** [muness/roon-knob docs/esp/hw-reference](https://github.com/muness/roon-knob/tree/master/docs/esp/hw-reference)  
 
 ---
 
-## 11. Next actions
+## 12. Next actions
 
-1. Identify exact board name and get pinout (encoder GPIOs and which MCU).
-2. On a PC: verify `http://volumio.local/api/v1/getState` and one `commands/?cmd=volume&volume=plus`.
-3. Create a PlatformIO (or Arduino) project; run WiFi + HTTP client to Volumio.
-4. Wire encoder in code to HTTP commands; test on device with real Volumio.
-
-Once the board and Volumio are confirmed, the rest is straightforward firmware work (WiFi, HTTP, encoder handling).
+1. Get encoder GPIOs from schematic or 04_Encoder_Test demo source.  
+2. On PC: verify `http://volumio.local/api/v1/getState` and one `commands/?cmd=volume&volume=plus`.  
+3. Create PlatformIO (or Arduino) project; WiFi + HTTP client to Volumio.  
+4. Map encoder to HTTP commands; test on device with real Volumio.

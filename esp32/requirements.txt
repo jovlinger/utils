@@ -1,0 +1,2 @@
+# Optional: for mDNS discovery (discover_zeroconf). Core API has no deps.
+zeroconf>=0.38.0

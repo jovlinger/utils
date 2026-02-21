@@ -1,0 +1,2 @@
+# Per repo convention: venv lives in env/ and is not committed
+env
