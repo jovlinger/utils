@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from typing import List, Optional, Sequence, Tuple
+import time
+from typing import Iterator, List, Optional, Sequence, Tuple
 
 # LIRC RX device on Pi Zero 2W with ANAVI IR pHAT (GPIO 17).
 LIRC_RX: str = "/dev/lirc1"
@@ -29,6 +30,8 @@ SPACE_ONE_MIN, SPACE_ONE_MAX = 1000, 1600
 GAP_MIN: int = 15_000
 START_PULSE_MIN, START_PULSE_MAX = 2500, 4500
 START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
+# After this many seconds with no data, reset decoder state so garbled input doesn't leave us stuck.
+GAP_LINE_SEC: float = 2.0
 
 
 def parse_line(line: str) -> Optional[Tuple[str, int]]:
@@ -43,6 +46,24 @@ def parse_line(line: str) -> Optional[Tuple[str, int]]:
         # Mode2-style: single number; caller must assign kind via alternating state.
         return ("_mode2_", int(line))
     return None
+
+
+def iter_pulse_space_pairs(line: str) -> Iterator[Tuple[str, int]]:
+    """Yield (kind, us) from one line. Handles multi-token lines: 'pulse 3400 space 1750 ...' or '3400 1750 ...'."""
+    tokens = line.strip().split()
+    i = 0
+    next_kind = "pulse"
+    while i < len(tokens):
+        t = tokens[i]
+        if t.lower() in ("pulse", "space") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+            yield t.lower(), int(tokens[i + 1])
+            i += 2
+        elif t.isdigit():
+            yield next_kind, int(t)
+            next_kind = "space" if next_kind == "pulse" else "pulse"
+            i += 1
+        else:
+            i += 1
 
 
 def decode_bits(sequences: List[Tuple[int, int]]) -> List[int]:
@@ -129,6 +150,8 @@ def run_from_stdin() -> None:
                 frame1 = raw
             elif raw[4] == 0x42:
                 frame2 = raw
+            else:
+                frame1 = frame2 = None
         elif len(raw) == 19 and checksum_ok(raw):
             frame3 = raw
             if frame1 is not None and frame2 is not None:
@@ -138,33 +161,35 @@ def run_from_stdin() -> None:
                 print("  F3:", " ".join(f"{b:02x}" for b in frame3))
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
+        else:
+            frame1 = frame2 = frame3 = None
 
-    next_kind: str = "pulse"  # for mode2 (bare number) lines
+    last_line_time = 0.0
     for line in sys.stdin:
-        parsed = parse_line(line)
-        if not parsed:
-            continue
-        kind, us = parsed
-        if kind == "_mode2_":
-            kind = next_kind
-            next_kind = "space" if next_kind == "pulse" else "pulse"
-        if kind == "pulse":
-            if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
-                current = []
-                in_gap = False
-            last_pulse_us = us
-            last_was_pulse = True
-            continue
-        if kind == "space":
-            if us >= GAP_MIN:
-                flush_current()
-                current = []
-                in_gap = True
-            elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
-                current.append((last_pulse_us, us))
-                in_gap = False
-            last_was_pulse = False
-            continue
+        now = time.time()
+        if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
+            flush_current()
+            current.clear()
+            in_gap = True
+            frame1 = frame2 = frame3 = None
+        last_line_time = now
+        for kind, us in iter_pulse_space_pairs(line):
+            if kind == "pulse":
+                if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
+                    current.clear()
+                    in_gap = False
+                last_pulse_us = us
+                last_was_pulse = True
+                continue
+            if kind == "space":
+                if us >= GAP_MIN:
+                    flush_current()
+                    current.clear()
+                    in_gap = True
+                elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
+                    current.append((last_pulse_us, us))
+                    in_gap = False
+                last_was_pulse = False
 
     flush_current()
 
@@ -208,6 +233,8 @@ def run_subprocess() -> None:
                 frame1 = raw
             elif raw[4] == 0x42:
                 frame2 = raw
+            else:
+                frame1 = frame2 = None
         elif len(raw) == 19 and checksum_ok(raw):
             frame3 = raw
             if frame1 is not None and frame2 is not None:
@@ -217,33 +244,36 @@ def run_subprocess() -> None:
                 print("  F3:", " ".join(f"{b:02x}" for b in frame3))
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
+        else:
+            frame1 = frame2 = frame3 = None
 
-    next_kind = "pulse"  # for mode2 (bare number) lines
+    last_line_time: float = 0.0
     try:
         for line in proc.stdout:
-            parsed = parse_line(line)
-            if not parsed:
-                continue
-            kind, us = parsed
-            if kind == "_mode2_":
-                kind = next_kind
-                next_kind = "space" if next_kind == "pulse" else "pulse"
-            if kind == "pulse":
-                if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
-                    current.clear()
-                    in_gap = False
-                last_pulse_us = us
-                last_was_pulse = True
-                continue
-            if kind == "space":
-                if us >= GAP_MIN:
-                    flush_current()
-                    current.clear()
-                    in_gap = True
-                elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
-                    current.append((last_pulse_us, us))
-                    in_gap = False
-                last_was_pulse = False
+            now = time.time()
+            if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
+                flush_current()
+                current.clear()
+                in_gap = True
+                frame1 = frame2 = frame3 = None
+            last_line_time = now
+            for kind, us in iter_pulse_space_pairs(line):
+                if kind == "pulse":
+                    if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
+                        current.clear()
+                        in_gap = False
+                    last_pulse_us = us
+                    last_was_pulse = True
+                    continue
+                if kind == "space":
+                    if us >= GAP_MIN:
+                        flush_current()
+                        current.clear()
+                        in_gap = True
+                    elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
+                        current.append((last_pulse_us, us))
+                        in_gap = False
+                    last_was_pulse = False
     except KeyboardInterrupt:
         pass
     finally:
