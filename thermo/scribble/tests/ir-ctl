@@ -1,0 +1,45 @@
+#!/bin/sh
+# Fake ir-ctl for testing: --send FILE writes FILE content to /tmp/fake-ir-ctl-send.log;
+# --receive prints a hardcoded Daikin 3-frame pulse/space sequence to stdout.
+set -e
+SEND_LOG="/tmp/fake-ir-ctl-send.log"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d)  shift; [ -n "$1" ] && shift ;;
+    --send)
+      shift
+      if [ -n "$1" ] && [ -f "$1" ]; then
+        cp "$1" "$SEND_LOG"
+      fi
+      exit 0
+      ;;
+    --receive)
+      shift
+      # Emit pulse/space lines for 3 Daikin frames (F1 8 bytes, F2 8 bytes, F3 19 bytes).
+      # Timing: start 3400/1750, pulse 430, space 420 (0) or 1320 (1), gap 30000.
+      exec python3 -c '
+f1 = [0x11, 0xDA, 0x27, 0x00, 0xC5, 0x00, 0x00, 0xD7]
+f2 = [0x11, 0xDA, 0x27, 0x00, 0x42, 0x00, 0x00, 0x54]
+f3 = [0x11, 0xDA, 0x27, 0x00, 0x00, 0x49, 0x3C, 0x00, 0x50, 0x00, 0x00, 0x06, 0x60, 0x00, 0x00, 0xC1, 0x80, 0x00, 0x8E]
+PULSE, SPACE0, SPACE1 = 430, 420, 1320
+START_P, START_S = 3400, 1750
+GAP = 30000
+
+def frame_lines(frame):
+    out = [f"pulse {START_P}", f"space {START_S}"]
+    for b in frame:
+        for i in range(8):
+            out.append(f"pulse {PULSE}")
+            out.append(f"space {SPACE1 if (b >> i) & 1 else SPACE0}")
+    return out
+
+lines = frame_lines(f1) + [f"space {GAP}"] + frame_lines(f2) + [f"space {GAP}"] + frame_lines(f3) + [f"space {GAP}"]
+for line in lines:
+    print(line)
+'
+      ;;
+    *) shift ;;
+  esac
+done
+exit 0

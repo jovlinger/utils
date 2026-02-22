@@ -88,23 +88,34 @@ Rationale:
 
 We need a reproducible way to generate IR commands for Daikin head units.
 
-Requirements and approach:
-1. Capture reference codes from the original remote:
-   - Use an IR receiver on the pHAT to record raw pulse timings.
-   - Store captures in a raw format (e.g., JSON with pulse widths).
-2. Determine the protocol and payload structure:
-   - Identify header, bit encoding, and checksum fields.
-   - Confirm carrier frequency (likely 38kHz).
-3. Build an encoder that can generate commands from structured inputs:
-   - Inputs: mode, target temperature, fan speed, swing, power, etc.
-   - Output: pulse timings for the IR LED transmitter.
-4. Validate:
-   - Replay raw captures and confirm the head unit responds.
-   - Compare generated commands to captured commands.
+**Note:** Daikin IR pulses are reported to contain unexpected pauses that confuse
+many learning remotes. Relying on raw capture/replay with a learning remote is
+therefore a last resort; generating protocol-correct frames is preferred.
 
-Notes:
-- If protocol decoding is too slow initially, we can ship using raw replays as
-  a stopgap, then replace with a proper encoder.
+### Plan (hierarchical checklist)
+
+- **THEN** 1. Obtain Daikin protocol and timing
+  - **OR** 1a. Use a reverse‑engineered spec (e.g. blafois/Daikin-IR-Reverse)
+  - **OR** 1b. Capture from original remote and decode (receiver on pHAT, store raw pulse widths)
+- **THEN** 2. Implement decoder (receive path)
+  - **OR** 2a. Decode live from IR receiver (e.g. `scribble/daikin-recv.py`)
+  - **OR** 2b. Decode from stored raw capture files
+- **THEN** 3. Implement encoder (send path)
+  - **OR** 3a. Generate frames from structured inputs and send (e.g. `scribble/daikin-send.py`)
+  - **OR** 3b. Replay stored raw captures as stopgap
+- **THEN** 4. Validate
+  - Replay or send generated commands and confirm head unit responds.
+  - Optionally compare generated vs captured byte frames.
+
+### Facts (for implementation)
+
+- **Hardware (Pi Zero 2W + ANAVI IR pHAT):** `/dev/lirc0` = TX (GPIO 18), `/dev/lirc1` = RX (GPIO 17). Carrier is 38kHz (handled by hardware when using LIRC/ir-ctl).
+- **Daikin protocol (from blafois/Daikin-IR-Reverse, remote ARC470A1):** Each keypress sends **3 frames**. Frames 1 and 2 are 8 bytes each, frame 3 is 19 bytes. Frames are separated by long gaps (~30 ms+). Encoding is **pulse distance**: HIGH ~430–452 µs, LOW short = bit 0 (~419–420 µs), LOW long = bit 1 (~1286–1320 µs). Bytes are LSB first. **Checksum:** last byte of each frame = sum of all previous bytes in that frame, masked with 0xFF.
+- **Frame 1 (code 0xc5):** Header `11 da 27 00`, then `c5`, then byte 6 = comfort (0x00 or 0x10), byte 7 = checksum.
+- **Frame 2 (code 0x42):** Fixed `11 da 27 00 42 00 00 54`.
+- **Frame 3 (code 0x00):** Header `11 da 27 00 00`; then byte 5 = mode/on-off/timer, byte 6 = temperature×2, byte 8 = fan/swing, bytes 0a–0c = timer delay, byte 0d = powerful, byte 0x10 = econo (low nibble); last byte = checksum. Mode nibble: 0=AUTO, 2=DRY, 3=COOL, 4=HEAT, 6=FAN. On/off/timer bits in byte 5: bit 0 = always 1, bit 1 = timer OFF, bit 2 = timer ON, bit 3 = power (1=On, 0=Off). Temperature: Celsius × 2 in hex. Fan nibble: 3–7 = fan 1–5, 0xA = Auto, 0xB = Silent. Swing: 0 = off, 0xF = on (in fan byte low nibble).
+- **Other remotes/variants:** Different Daikin models use different frame lengths or layouts (e.g. ARC433A46: 8+8+19; ARC423A5: 7+13; some docs use different bit order or checksum). The blafois layout may not match every unit; decoder/sender may need tuning per remote/head unit.
+- **Research links (uncertain match to our units):** [blafois/Daikin-IR-Reverse](https://github.com/blafois/Daikin-IR-Reverse) (START HERE), [OpenMQTTGateway Daikin dump](https://community.openmqttgateway.com/t/my-daikin-ac-irrecvdumpv2-work-corretly-but-omg-no/415), [Reddit re remote codes](https://www.reddit.com/r/hvacadvice/comments/15z4aly/remote_code_for_daikin_ac_unit/), [rdlab Daikin IR protocol](https://rdlab.cdmt.vn/experience/daikin-ir-protocol) (ARC433A46 timing and layout).
 
 ## Open questions / TODOs
 

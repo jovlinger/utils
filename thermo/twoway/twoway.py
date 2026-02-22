@@ -20,7 +20,16 @@ A small standalone binary that:
 5. take a breath, and repeat.
 
 There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
+This will take the form of two-legged machine-to-machine OAuth2.
+Creds to be provided in environment variables. 
+(special sentinel for no creds)
 """
+
+# What that means in practice is that Twoway will GET from the dmz (URL 1)
+# and POST it to the Onboard (URL 2).
+# Twoway will then POST that the dmz update (URL 3).
+#
+# repeat, respecting rate limits
 
 import os
 import sys
