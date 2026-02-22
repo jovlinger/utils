@@ -2,12 +2,14 @@
 # Test daikin-send.py with a fake ir-ctl at head of PATH. Asserts the fake received
 # a pulse/space file with expected Daikin-like content (start pulse, gap, etc.).
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+THERMO_DIR="$(cd "$TEST_DIR/../.." && pwd)"
+SCRIBBLE="$THERMO_DIR/scribble"
 SEND_LOG="/tmp/fake-ir-ctl-send.log"
 rm -f "$SEND_LOG"
 
-export PATH="${SCRIPT_DIR}/tests:${PATH}"
-cd "$SCRIPT_DIR"
+export PATH="${TEST_DIR}:${PATH}"
+cd "$SCRIBBLE"
 
 # Run send (no --dry-run) so it invokes ir-ctl; fake will copy sent file to $SEND_LOG.
 python3 daikin-send.py --power on --mode heat --temp 22

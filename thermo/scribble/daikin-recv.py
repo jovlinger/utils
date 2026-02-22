@@ -32,13 +32,16 @@ START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
 
 
 def parse_line(line: str) -> Optional[Tuple[str, int]]:
-    """Return ('pulse', us) or ('space', us) or None."""
+    """Return ('pulse', us) or ('space', us) or None. Accepts 'pulse N', 'space N', or bare N (mode2)."""
     line = line.strip()
     if not line:
         return None
     m = re.match(r"(pulse|space)\s+(\d+)", line, re.I)
     if m:
         return m.group(1).lower(), int(m.group(2))
+    if line.isdigit():
+        # Mode2-style: single number; caller must assign kind via alternating state.
+        return ("_mode2_", int(line))
     return None
 
 
@@ -136,11 +139,15 @@ def run_from_stdin() -> None:
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
 
+    next_kind: str = "pulse"  # for mode2 (bare number) lines
     for line in sys.stdin:
         parsed = parse_line(line)
         if not parsed:
             continue
         kind, us = parsed
+        if kind == "_mode2_":
+            kind = next_kind
+            next_kind = "space" if next_kind == "pulse" else "pulse"
         if kind == "pulse":
             if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
                 current = []
@@ -164,12 +171,24 @@ def run_from_stdin() -> None:
 
 def run_subprocess() -> None:
     """Spawn ir-ctl --receive and run decoder on its stdout."""
-    proc = subprocess.Popen(
+    # Force line-buffered stdout so we see each pulse/space line as it arrives (ir-ctl
+    # uses full buffer when stdout is a pipe, so otherwise we'd see nothing until 4KB+).
+    for cmd in (
+        ["stdbuf", "-oL", "ir-ctl", "-d", LIRC_RX, "--receive"],
         ["ir-ctl", "-d", LIRC_RX, "--receive"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
+    ):
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            break
+        except FileNotFoundError:
+            continue
+    else:
+        raise FileNotFoundError("ir-ctl not found in PATH")
     # Re-use decoder logic by feeding lines
     current: List[Tuple[int, int]] = []
     in_gap = True
@@ -199,12 +218,16 @@ def run_subprocess() -> None:
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
 
+    next_kind = "pulse"  # for mode2 (bare number) lines
     try:
         for line in proc.stdout:
             parsed = parse_line(line)
             if not parsed:
                 continue
             kind, us = parsed
+            if kind == "_mode2_":
+                kind = next_kind
+                next_kind = "space" if next_kind == "pulse" else "pulse"
             if kind == "pulse":
                 if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
                     current.clear()
@@ -225,7 +248,16 @@ def run_subprocess() -> None:
         pass
     finally:
         proc.terminate()
-        proc.wait()
+        try:
+            proc.wait(timeout=2)
+        except KeyboardInterrupt:
+            pass
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait()
+            except KeyboardInterrupt:
+                pass
     flush_current()
 
 

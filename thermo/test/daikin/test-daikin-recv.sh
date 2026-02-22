@@ -2,9 +2,11 @@
 # Test daikin-recv.py with a fake ir-ctl at head of PATH. Fake echoes a hardcoded
 # Daikin 3-frame pulse/space sequence; we assert the decoder prints the expected frames.
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export PATH="${SCRIPT_DIR}/tests:${PATH}"
-cd "$SCRIPT_DIR"
+TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+THERMO_DIR="$(cd "$TEST_DIR/../.." && pwd)"
+SCRIBBLE="$THERMO_DIR/scribble"
+export PATH="${TEST_DIR}:${PATH}"
+cd "$SCRIBBLE"
 
 out="$(python3 daikin-recv.py 2>/dev/null)" || true
 # Recv runs until fake ir-ctl exits (after printing the sequence); decoder then flushes.
