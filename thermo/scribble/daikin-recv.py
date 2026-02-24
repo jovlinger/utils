@@ -45,8 +45,8 @@ DEBUG_RECV: bool = True
 
 
 def _ts() -> str:
-    """Current time prefix for log/parse output (HH:MM:SS)."""
-    return time.strftime("%H:%M:%S")
+    """Current time prefix for log/parse output (HH:MM:SS.fff)."""
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 
 # Capture file: scribble/captures/daikin_recv_YYYY-MM-DD.pkl (binary name + date).
@@ -138,19 +138,34 @@ def read_units_by_pause(
     fd = stream.fileno()
     while True:
         r, _, _ = select.select([fd], [], [], read_timeout)
+        now = time.time()
         if not r:
-            if buffer and (time.time() - last_activity) > pause_sec:
+            idle = now - last_activity
+            if buffer and idle > pause_sec:
                 unit = buffer
                 buffer = []
+                if DEBUG_RECV:
+                    sys.stderr.write(
+                        "[%s] [daikin-recv] unit ended: no data for %.3fs (>= PAUSE_SEC %.1f) -> yielded %d lines\n"
+                        % (_ts(), idle, pause_sec, len(unit))
+                    )
+                    sys.stderr.flush()
                 yield unit
             continue
         line = stream.readline()
         if not line:
             break
         now = time.time()
-        if buffer and (now - last_activity) > pause_sec:
+        gap = now - last_activity
+        if buffer and gap > pause_sec:
             unit = buffer
             buffer = []
+            if DEBUG_RECV:
+                sys.stderr.write(
+                    "[%s] [daikin-recv] unit ended: gap since last line %.3fs (>= PAUSE_SEC %.1f) before new line -> yielded %d lines\n"
+                    % (_ts(), gap, pause_sec, len(unit))
+                )
+                sys.stderr.flush()
             yield unit
         buffer.append(line)
         last_activity = now
@@ -160,6 +175,12 @@ def read_units_by_pause(
             )
             sys.stderr.flush()
     if buffer:
+        if DEBUG_RECV:
+            sys.stderr.write(
+                "[%s] [daikin-recv] unit ended: EOF -> yielded %d lines\n"
+                % (_ts(), len(buffer))
+            )
+            sys.stderr.flush()
         yield buffer
 
 
@@ -452,7 +473,7 @@ def run_subprocess() -> None:
     consumer.start()
     last_desc: Optional[str] = None
     capture_path = _capture_path_for_date()
-    session: List[Any] = _load_capture_session(capture_path)
+    session: List[Any] = []  # One new file per run; only this session's units go in
     if DEBUG_RECV:
         sys.stderr.write(
             "[%s] [daikin-recv] subprocess started; consumer thread feeding queue; capture %s\n"
