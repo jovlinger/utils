@@ -9,7 +9,7 @@ temperature/humidity sensor.
 The onboard service:
 - Exposes a simple HTTP API for environment data and IR commands.
 - Reads temperature/humidity from the ANAVI IR pHAT (HTU21D via I2C).
-- Will transmit and receive IR to control a Daikin heat-pump head unit.
+- Transmits and receives IR to control a Daikin heat-pump head unit.
 
 ## Existing behavior (current repo state)
 
@@ -27,105 +27,159 @@ From `onboard/app.py` and `onboard/anavilib.py`:
 
 ### I2C (temperature/humidity)
 
-Known from the current implementation:
-- I2C bus: `1` (i.e., `/dev/i2c-1` on Raspberry Pi).
-- Sensor: HTU21D.
-- I2C address: `0x40`.
-- Commands used:
-  - `0xE3` for temperature.
-  - `0xE5` for humidity.
-  - `0xFE` for reset.
+- I2C bus: `1` (`/dev/i2c-1`).
+- Sensor: HTU21D, address `0x40`.
+- Commands: `0xE3` temperature, `0xE5` humidity, `0xFE` reset.
 
-Requirements:
-- Keep the current smbus-based read path as the default.
-- Preserve the `smbus_fake` fallback for unit tests and container tests.
-- Add retries and clearer error messages if I2C reads fail.
+### IR transceiver (ANAVI IR pHAT)
 
-### IR transceiver (TX/RX)
+- `/dev/lirc0` = TX (GPIO 18).
+- `/dev/lirc1` = RX (GPIO 17).
+- Carrier: 38 kHz (handled by hardware/LIRC).
+- The RX device cannot measure carrier frequency (hardware limitation).
+- **Critical:** The default LIRC receiver timeout is **5000 µs (5 ms)**.
+  Daikin inter-frame gaps are ~30 ms, so the default fragments every
+  transmission. Must set `--timeout 200000` (200 ms) when receiving.
 
-Not yet implemented in the codebase.
+## Daikin IR protocol — ARC452A9
 
-Requirements:
-- IR transmit: generate a modulated carrier (likely 38kHz, confirm).
-- IR receive: sample demodulated pulses for learning/verification.
-- Define precise GPIO pins once confirmed from ANAVI IR pHAT docs/schematics.
-  - TODO: document the exact GPIO BCM pins for TX/RX and any enable pins.
+Target remote: **ARC452A9**. All facts below are confirmed by captures
+(`scribble/captures/`) unless noted otherwise.
+
+### Encoding
+
+- Pulse-distance, 38 kHz carrier, LSB-first bytes.
+- Start mark: pulse ~3490 µs, space ~1750 µs.
+- Bit 0: pulse ~420 µs, space ~420 µs.
+- Bit 1: pulse ~420 µs, space ~1300 µs.
+- Checksum: last byte of each frame = `sum(preceding bytes) & 0xFF`.
+
+### Frame structure
+
+Each button press sends **2 frames** separated by a ~30 ms gap:
+
+| Frame | Bytes | Content |
+|-------|-------|---------|
+| F1 | 8 | Fixed: `11 da 27 f0 00 00 00 02` |
+| F3 | 19 | Full unit state (mode, temp, fan, etc.) |
+
+No Frame 2 (`0x42`) is sent. This differs from the ARC470A1 (blafois)
+which sends 3 frames (F1 + F2 + F3).
+
+F1 is identical in every ARC452A9 capture: `11 da 27 f0 00 00 00 02`.
+Byte 3 = `0xf0` (vs `0x00` in blafois) identifies the ARC452A9 variant.
+Comfort mode may be encoded in F1 byte 6 bit 4, but we have no captures
+with comfort enabled.
+
+### F3 byte map (19 bytes, 0-indexed)
+
+| Byte | Field | Decode | Status |
+|------|-------|--------|--------|
+| 0-2 | Header | `11 da 27` | ✅ confirmed |
+| 3 | Fixed | `0x00` | ✅ confirmed |
+| 4 | Fixed | `0x00` | ✅ confirmed |
+| 5[7:4] | Mode | 0=AUTO 2=DRY 3=COOL 4=HEAT 6=FAN | ✅ confirmed HEAT, FAN |
+| 5[0] | Power | 0=OFF, 1=ON | ✅ confirmed |
+| 5[1] | Timer OFF enable | per blafois | ❓ no captures with timers |
+| 5[2] | Timer ON enable | per blafois | ❓ no captures with timers |
+| 5[3] | Unknown | always 0 in captures | ❓ blafois says "always 1" for ARC470A1 |
+| 6 | Temp × 2 | e.g. 0x2c = 22 °C | ✅ confirmed 22 °C, 25 °C |
+| 7 | Unknown | always `0x00` | ❓ |
+| 8[7:4] | Fan speed | 3-7 = 1/5-5/5, A=Auto, B=Silent | ✅ confirmed 5/5, Silent |
+| 8[3:0] | Swing (vertical) | 0=off, F=on per blafois | ❓ only seen off |
+| 9 | Unknown | always `0x00` | ❓ horizontal swing? |
+| 0x0a | Timer ON low | 12-bit minutes per blafois | ❓ always 0x00 |
+| 0x0b | Timer hi/lo | shared by ON and OFF timers | ❓ always 0x00 |
+| 0x0c | Timer OFF high | 12-bit minutes per blafois | ❓ always 0x00 |
+| 0x0d | Powerful | bit 0 per blafois | ❌ "powerful" press showed 0x00 |
+| 0x0e | Unknown | always `0x00` | ❓ |
+| 0x0f | Fixed? | always `0xc0` (blafois: `0xc1`) | ❓ ARC452A9 difference |
+| 0x10 | Econo | bit 2 per blafois | ❓ always 0x00, no captures |
+| 0x11 | Unknown | always `0x00` | ❓ |
+| 0x12 | Checksum | sum(0x00..0x11) & 0xFF | ✅ confirmed |
+
+Legend: ✅ = confirmed by ARC452A9 captures. ❓ = from blafois (ARC470A1),
+not yet confirmed. ❌ = blafois mapping appears wrong for this remote.
+
+### Known discrepancies vs blafois (ARC470A1)
+
+1. **Frame count:** ARC452A9 sends 2 frames (F1+F3). ARC470A1 sends 3 (F1+F2+F3).
+2. **F1 byte 3:** `0xf0` (ARC452A9) vs `0x00` (ARC470A1).
+3. **F3 byte 5 bit 1:** Always 0 in captures. Blafois says "always 1" for ARC470A1.
+4. **F3 byte 0x0f:** `0xc0` (ARC452A9) vs `0xc1` (blafois).
+5. **Powerful bit:** Pressing "powerful" on ARC452A9 did not set byte 0x0d.
+   The bit may be at a different location, or the capture was taken at the
+   wrong moment. Needs targeted captures.
+
+### Captures needed to resolve unknowns
+
+| Test | Purpose | Bytes to watch |
+|------|---------|----------------|
+| Swing on/off | Confirm vertical swing bit | byte 8 low nibble |
+| Swing + examine H/V | Horizontal swing? | byte 9 |
+| Powerful on vs off | Find the powerful bit | diff all bytes |
+| Econo on vs off | Find the econo bit | byte 0x10 |
+| Comfort on vs off | Find comfort encoding | F1 byte 6, or F3 |
+| Set ON timer (e.g. 2h) | Timer encoding + enable bits | byte 5[1:3], 0x0a-0x0c |
+| Set OFF timer | Timer encoding + enable bits | byte 5[1:3], 0x0a-0x0c |
+| Set clock/time on remote | Does clock data appear? | bytes 0x0a-0x0c or elsewhere |
+| Mode AUTO/DRY/COOL | Confirm remaining mode nibbles | byte 5 |
+
+Each test: capture baseline, change ONE setting, capture again, diff.
+Use `ir_capture.py -t 200000` for reliable full-frame capture.
+
+### daikin-send.py known issues
+
+The send code (`scribble/daikin-send.py`) was written from the blafois spec
+before we had captures. Known issues vs ARC452A9 reality:
+
+1. **byte5 power encoding:** Send uses `0x09` (bit0 + bit3) for ON.
+   Captures show `0x01` (bit0 only). bit3 is not used on ARC452A9.
+2. **F1 header:** Send uses `11 da 27 00 c5`. ARC452A9 uses `11 da 27 f0 00`.
+3. **Frame 2:** Send includes F2 (`11 da 27 00 42 ...`). ARC452A9 omits it.
+4. **byte 0x0f:** Send uses `0xc1`. ARC452A9 captures show `0xc0`.
+
+These must be fixed before sending to the head unit.
+
+### Timing and receiver configuration
+
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Start mark pulse | ~3490 µs | captures |
+| Start mark space | ~1750 µs | captures |
+| Bit pulse | ~420 µs | captures |
+| Bit 0 space | ~420 µs | captures |
+| Bit 1 space | ~1300 µs | captures |
+| Inter-frame gap | ~30 ms | captures (29974 µs) |
+| LIRC receiver timeout | 200000 µs | required (default 5000 fragments) |
+| Full transmission | ~50 ms | F1 + gap + F3 |
+
+### Tools
+
+| Tool | Purpose |
+|------|---------|
+| `scribble/ir_capture.py` | Low-level capture (mode2 format, verbatim, no decoding) |
+| `scribble/daikin-recv.py` | Capture + decode (live or from log via `--parse-log`) |
+| `scribble/daikin-send.py` | Generate and send IR (needs fixes, see above) |
+
+Capture files: `scribble/captures/` — plain text `.log` files, one per run.
+
+### Reference links
+
+- [blafois/Daikin-IR-Reverse](https://github.com/blafois/Daikin-IR-Reverse) — ARC470A1 protocol (primary reference, differs from ARC452A9)
+- [rdlab Daikin IR protocol](https://rdlab.cdmt.vn/experience/daikin-ir-protocol) — ARC433A46 timing and layout
+- [IRremoteESP8266](https://github.com/crankyoldgit/IRremoteESP8266) — ARC433 timing constants (ARC452A9 not in supported list)
 
 ## Ports and endpoints
 
-Network ports:
 - Onboard Flask API: `5000` (configurable via `PORT` env var).
-
-Hardware ports:
 - I2C: `/dev/i2c-1` (bus 1).
-- GPIO: TBD for IR TX/RX (must be confirmed from ANAVI IR pHAT docs).
-
-## ANAVI library customization
-
-We currently use a shim (`onboard/anavilib.py`) that copies the HTU21D logic.
-Requirements for the final approach:
-- Keep the dependency surface small (avoid unmaintained libraries).
-- Provide a stable `HTU21D` interface with:
-  - explicit bus selection,
-  - injection of a fake bus for tests,
-  - error handling that explains how to fix missing I2C packages.
-- Introduce a new `IRTransceiver` interface with `send()` and `receive()`.
-- Avoid hidden globals to make testing straightforward.
-
-## Direct bus access vs. ANAVI libraries
-
-Decision (current recommendation):
-- Temperature/humidity: keep direct I2C access via `smbus` (already working).
-- IR TX/RX: use direct GPIO access via a stable library (`pigpio` or `lirc`),
-  rather than relying on the ANAVI examples.
-
-Rationale:
-- The ANAVI examples are simple and often copy-pasted; direct bus access is
-  easier to audit and test.
-- For IR, precise timing matters; `pigpio`/`lirc` are purpose-built for this.
-
-## Daikin IR code generation
-
-We need a reproducible way to generate IR commands for Daikin head units.
-
-**Note:** Daikin IR pulses are reported to contain unexpected pauses that confuse
-many learning remotes. Relying on raw capture/replay with a learning remote is
-therefore a last resort; generating protocol-correct frames is preferred.
-
-### Plan (hierarchical checklist)
-
-- **THEN** 1. Obtain Daikin protocol and timing
-  - **OR** 1a. Use a reverse-engineered spec (e.g. blafois/Daikin-IR-Reverse)
-  - **OR** 1b. Capture from original remote and decode (receiver on pHAT, store raw pulse widths)
-- **THEN** 2. Implement decoder (receive path)
-  - **OR** 2a. Decode live from IR receiver (e.g. `scribble/daikin-recv.py`)
-  - **OR** 2b. Decode from stored raw capture files
-- **THEN** 3. Implement encoder (send path)
-  - **OR** 3a. Generate frames from structured inputs and send (e.g. `scribble/daikin-send.py`)
-  - **OR** 3b. Replay stored raw captures as stopgap
-- **THEN** 4. Validate
-  - Replay or send generated commands and confirm head unit responds.
-  - Optionally compare generated vs captured byte frames.
-
-### Facts (for implementation)
-
-- **Remote naming:** Daikin remote models are named **ARC** + model (e.g. ARC452A9, ARC470A1). Our target remote for capture/decoder work is **ARC452A9**.
-- **Hardware (Pi Zero 2W + ANAVI IR pHAT):** `/dev/lirc0` = TX (GPIO 18), `/dev/lirc1` = RX (GPIO 17). Carrier is 38kHz (handled by hardware when using LIRC/ir-ctl).
-- **Daikin protocol (from blafois/Daikin-IR-Reverse, remote ARC470A1):** Each keypress sends **3 frames**. Frames 1 and 2 are 8 bytes each, frame 3 is 19 bytes. Frames are separated by long gaps (~30 ms+). Encoding is **pulse distance**: HIGH ~430-452 us, LOW short = bit 0 (~419-420 us), LOW long = bit 1 (~1286-1320 us). Bytes are LSB first. **Checksum:** last byte of each frame = sum of all previous bytes in that frame, masked with 0xFF.
-- **Frame 1 (code 0xc5):** Header `11 da 27 00`, then `c5`, then byte 6 = comfort (0x00 or 0x10), byte 7 = checksum.
-- **Frame 2 (code 0x42):** Fixed `11 da 27 00 42 00 00 54`.
-- **Frame 3 (code 0x00):** Header `11 da 27 00 00`; then byte 5 = mode/on-off/timer, byte 6 = temperature x 2, byte 8 = fan/swing, bytes 0a-0c = timer delay, byte 0d = powerful, byte 0x10 = econo (low nibble); last byte = checksum. Mode nibble: 0=AUTO, 2=DRY, 3=COOL, 4=HEAT, 6=FAN. On/off/timer bits in byte 5: bit 0 = always 1, bit 1 = timer OFF, bit 2 = timer ON, bit 3 = power (1=On, 0=Off). Temperature: Celsius x 2 in hex. Fan nibble: 3-7 = fan 1-5, 0xA = Auto, 0xB = Silent. Swing: 0 = off, 0xF = on (in fan byte low nibble).
-- **Other remotes/variants:** Different Daikin models use different frame lengths or layouts (e.g. ARC433A46: 8+8+19; ARC423A5: 7+13; some docs use different bit order or checksum). The blafois layout may not match every unit; decoder/sender may need tuning per remote/head unit.
-- **Research links (uncertain match to our units):** [blafois/Daikin-IR-Reverse](https://github.com/blafois/Daikin-IR-Reverse) (START HERE), [OpenMQTTGateway Daikin dump](https://community.openmqttgateway.com/t/my-daikin-ac-irrecvdumpv2-work-corretly-but-omg-no/415), [Reddit re remote codes](https://www.reddit.com/r/hvacadvice/comments/15z4aly/remote_code_for_daikin_ac_unit/), [rdlab Daikin IR protocol](https://rdlab.cdmt.vn/experience/daikin-ir-protocol) (ARC433A46 timing and layout).
-- **IRremoteESP8266 Daikin (ARC433) timing (for comparison):** `kDaikinHdrMark` 3650 us, `kDaikinHdrSpace` 1623 us, `kDaikinBitMark` 428 us, `kDaikinZeroSpace` 428 us, `kDaikinOneSpace` 1280 us, `kDaikinGap` 29000 us. ARC452A9 is **not** in their supported model list; use as reference only.
-- **ARC452A9 capture findings:** The ARC452A9 sends **2 frames** (not 3 like ARC470A1): F1 (8 bytes) and F3 (19 bytes), with a ~10 ms gap between them. No Frame 2 (0x42) is sent. F1 header is `11 da 27 f0` (byte 3 = 0xf0, not 0x00 as in blafois). F3 follows the blafois Frame 3 layout exactly: byte 5 = mode/power/timer, byte 6 = temp*2, byte 8 = fan/swing, byte 0xd = powerful, byte 0x10 = econo, last byte = checksum. Both frame checksums pass when we split at the inter-frame gap (space >= 10 ms). Example decoded: mode=FAN, power=ON, temp=25C, fan=Silent, swing=off, powerful=off, econo=off.
-- **Captures (scribble/captures/):** Each run of `daikin-recv` opens one new capture file (timestamped to the second: `daikin_recv_YYYY-MM-DDTHHMMSS.pkl`). Only units captured in that run are written. Each record has `timestamp`, `label` ("expected" | "unexpected"), `description`, `raw_lines`.
-- **Unit splitting:** PAUSE_SEC = 0.5 s (Daikin inter-frame gap is ~10-30 ms; entire burst is < 200 ms).
-- **Comparison with blafois/Daikin-IR-Reverse (ARC470A1):** In agreement: (1) Timing -- blafois measures HIGH 424-500 us, LOW short (0) 396-436 us, LOW long (1) 1264-1300 us; our thresholds (pulse 250-650, space0 300-550, space1 1000-1600) contain these. (2) Checksum -- blafois: sum of all but last byte, mask 0xFF, equals last byte; our `checksum_ok()` matches. (3) Header -- `11 da 27`; we decode that. (4) Frame layout -- blafois Frame 1 code 0xc5, Frame 2 code 0x42, Frame 3 code 0x00; our decoder splits at gaps and classifies by length and header. (5) LSB first -- both.
+- IR TX: `/dev/lirc0` (GPIO 18).
+- IR RX: `/dev/lirc1` (GPIO 17).
 
 ## Open questions / TODOs
 
-- Confirm the exact ANAVI IR pHAT GPIO pins for IR TX/RX.
-- Confirm IR carrier frequency used by the Daikin head unit.
-- Decide between `pigpio` and `lirc` based on availability in the target OS.
+- Fix `daikin-send.py` for ARC452A9 (see known issues above).
+- Capture the remaining unknowns (swing, powerful, econo, timers, clock).
 - Define the command schema that `POST /daikin` should accept.
+- Validate: send a generated command and confirm the head unit responds.

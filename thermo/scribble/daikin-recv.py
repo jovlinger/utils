@@ -30,6 +30,9 @@ START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
 PAUSE_SEC: float = 0.5
 READ_TIMEOUT_SEC: float = 1.0
 GAP_LINE_SEC: float = 2.0
+# LIRC receiver idle timeout (µs). Must exceed the Daikin inter-frame gap (~30ms).
+# Default kernel value is 5000µs which fragments Daikin transmissions.
+LIRC_TIMEOUT_US: int = 200_000
 DEBUG_RECV: bool = True
 
 _SCRIBBLE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -482,8 +485,26 @@ def run_from_stdin() -> None:
 
 def run_subprocess() -> None:
     for cmd in (
-        ["stdbuf", "-oL", "ir-ctl", "-d", LIRC_RX, "--receive"],
-        ["ir-ctl", "-d", LIRC_RX, "--receive"],
+        [
+            "stdbuf",
+            "-oL",
+            "ir-ctl",
+            "-d",
+            LIRC_RX,
+            "--receive",
+            "--mode2",
+            "--timeout",
+            str(LIRC_TIMEOUT_US),
+        ],
+        [
+            "ir-ctl",
+            "-d",
+            LIRC_RX,
+            "--receive",
+            "--mode2",
+            "--timeout",
+            str(LIRC_TIMEOUT_US),
+        ],
     ):
         try:
             proc = subprocess.Popen(
