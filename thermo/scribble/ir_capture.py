@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Capture IR from the remote with descriptions; save session as JSON for later analysis.
+"""Capture IR from the remote with descriptions; save session as pickle for later analysis.
 
 Flow: 1) Enter description (what you will press). 2) Press remote. 3) Press Enter to stop.
-4) Repeat. Empty description exits and saves the session.
+4) Repeat. Empty description exits and saves. Ctrl-C flushes and closes the file.
 
-Handles Ctrl-C cleanly: saves session and exits without traceback.
-Uses ir-ctl -d /dev/lirc1 --receive (Pi Zero 2W + ANAVI IR pHAT).
+Saves to scribble dir so you can push for analysis. Uses ir-ctl -d /dev/lirc1 --receive.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import os
+import pickle
 import re
 import select
 import subprocess
 import sys
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Tuple
+from typing import Any, List
 
 # LIRC RX device on Pi Zero 2W with ANAVI IR pHAT (GPIO 17).
 LIRC_RX: str = "/dev/lirc1"
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_OUTPUT = os.path.join(SCRIPT_DIR, "ir_capture.pkl")
 
 
 def iter_ir_pairs(line: str) -> List[List[Any]]:
@@ -31,7 +34,11 @@ def iter_ir_pairs(line: str) -> List[List[Any]]:
     next_kind = "pulse"
     while i < len(tokens):
         t = tokens[i]
-        if t.lower() in ("pulse", "space") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+        if (
+            t.lower() in ("pulse", "space")
+            and i + 1 < len(tokens)
+            and tokens[i + 1].isdigit()
+        ):
             out.append([t.lower(), int(tokens[i + 1])])
             i += 2
         elif t.isdigit():
@@ -63,73 +70,83 @@ def capture_one_record(proc_stdout: Any, stdin_fd: int) -> List[List[Any]]:
                 sys.stderr.flush()
 
 
+def save_session(out_path: str, session: List[dict]) -> None:
+    """Write session to pickle file; flush and close."""
+    if not session:
+        return
+    with open(out_path, "wb") as f:
+        pickle.dump(session, f, protocol=pickle.HIGHEST_PROTOCOL)
+        f.flush()
+        os.fsync(f.fileno())
+    sys.stderr.write(f"[ir_capture] saved {len(session)} record(s) to {out_path}\n")
+    sys.stderr.flush()
+
+
 def run_capture(out_path: str, lirc_rx: str) -> None:
     session: List[dict] = []
 
-    while True:
-        try:
-            desc = input("Description (empty to exit): ").strip()
-        except (KeyboardInterrupt, EOFError):
-            break
-        if not desc:
-            break
-
-        print("Press remote now; press Enter when done.")
-        sys.stderr.write("[ir_capture] started ir-ctl --receive\n")
-        sys.stderr.flush()
-        proc = subprocess.Popen(
-            ["ir-ctl", "-d", lirc_rx, "--receive"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        try:
-            raw_ir = capture_one_record(proc.stdout, sys.stdin.fileno())
-        except (KeyboardInterrupt, EOFError):
-            raw_ir = []
-        finally:
-            sys.stderr.write(f"\n[ir_capture] stopping ir-ctl (captured {len(raw_ir)} pairs)\n")
-            sys.stderr.flush()
-            proc.terminate()
+    try:
+        while True:
             try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+                desc = input("Description (empty to exit): ").strip()
+            except (KeyboardInterrupt, EOFError):
+                break
+            if not desc:
+                break
+
+            print("Press remote now; press Enter when done.")
+            sys.stderr.write("[ir_capture] started ir-ctl --receive\n")
+            sys.stderr.flush()
+            proc = subprocess.Popen(
+                ["ir-ctl", "-d", lirc_rx, "--receive"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            try:
+                raw_ir = capture_one_record(proc.stdout, sys.stdin.fileno())
+            except (KeyboardInterrupt, EOFError):
+                raw_ir = []
+            finally:
+                sys.stderr.write(
+                    f"\n[ir_capture] stopping (captured {len(raw_ir)} pairs)\n"
+                )
+                sys.stderr.flush()
+                proc.terminate()
                 try:
-                    proc.wait()
-                except KeyboardInterrupt:
-                    pass
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait()
+                    except KeyboardInterrupt:
+                        pass
 
-        sys.stderr.write("\n")
+            record = {
+                "description": desc,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "raw_ir": raw_ir,
+            }
+            session.append(record)
+            print(f"  Captured {len(raw_ir)} pulse/space pairs.")
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[ir_capture] Ctrl-C, flushing session to file\n")
         sys.stderr.flush()
-        record = {
-            "description": desc,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "raw_ir": raw_ir,
-        }
-        session.append(record)
-        print(f"  Captured {len(raw_ir)} pulse/space pairs.")
-
-    if session:
-        try:
-            with open(out_path, "w") as f:
-                json.dump({"records": session}, f, indent=2)
-            print(f"Saved {len(session)} record(s) to {out_path}")
-        except (KeyboardInterrupt, OSError) as e:
-            print(f"Could not save: {e}", file=sys.stderr)
-    else:
-        print("No records to save.")
+    finally:
+        save_session(out_path, session)
+        if not session:
+            print("No records to save.")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Capture IR with descriptions; save session as JSON."
+        description="Capture IR with descriptions; save session as pickle (scribble dir)."
     )
     ap.add_argument(
         "-o",
         "--output",
-        default="ir_capture.json",
-        help="Output JSON path (default: ir_capture.json)",
+        default=DEFAULT_OUTPUT,
+        help=f"Output pickle path (default: {DEFAULT_OUTPUT})",
     )
     ap.add_argument(
         "-d",
@@ -142,10 +159,8 @@ def main() -> None:
     try:
         run_capture(args.output, args.device)
     except KeyboardInterrupt:
-        print(
-            "\nInterrupted; session saved if any records were captured.",
-            file=sys.stderr,
-        )
+        sys.stderr.write("Interrupted.\n")
+        sys.stderr.flush()
         sys.exit(0)
 
 

@@ -14,10 +14,11 @@ Usage:
 from __future__ import annotations
 
 import re
+import select
 import subprocess
 import sys
 import time
-from typing import Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Iterator, List, Optional, Sequence, Tuple
 
 # LIRC RX device on Pi Zero 2W with ANAVI IR pHAT (GPIO 17).
 LIRC_RX: str = "/dev/lirc1"
@@ -30,9 +31,14 @@ SPACE_ONE_MIN, SPACE_ONE_MAX = 1000, 1600
 GAP_MIN: int = 15_000
 START_PULSE_MIN, START_PULSE_MAX = 2500, 4500
 START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
-# Lines arriving this long after the previous: reset state and skip feeding (likely phantom/EOF).
+# Pause between "units" (e.g. keypresses): no data for this long -> yield unit.
+PAUSE_SEC: float = 0.5
+# Select timeout so we never block forever; we log when we see no data.
+READ_TIMEOUT_SEC: float = 1.0
+# For --stdin line loop: gap after this many sec -> reset and skip line (phantom/EOF).
 GAP_LINE_SEC: float = 2.0
-DEBUG_RECV: bool = False  # stderr: when lines/pairs received, even if not parsed
+# Always print debug to stderr so you see data flow.
+DEBUG_RECV: bool = True
 
 
 def parse_line(line: str) -> Optional[Tuple[str, int]]:
@@ -56,7 +62,11 @@ def iter_pulse_space_pairs(line: str) -> Iterator[Tuple[str, int]]:
     next_kind = "pulse"
     while i < len(tokens):
         t = tokens[i]
-        if t.lower() in ("pulse", "space") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+        if (
+            t.lower() in ("pulse", "space")
+            and i + 1 < len(tokens)
+            and tokens[i + 1].isdigit()
+        ):
             yield t.lower(), int(tokens[i + 1])
             i += 2
         elif t.isdigit():
@@ -65,6 +75,105 @@ def iter_pulse_space_pairs(line: str) -> Iterator[Tuple[str, int]]:
             i += 1
         else:
             i += 1
+
+
+def read_units_by_pause(
+    stream: Any,
+    pause_sec: float = PAUSE_SEC,
+    read_timeout: float = READ_TIMEOUT_SEC,
+) -> Iterator[List[str]]:
+    """Yield units (list of lines) split by pause: no data for pause_sec -> yield buffer."""
+    buffer: List[str] = []
+    last_activity: float = 0.0
+    fd = stream.fileno()
+    while True:
+        r, _, _ = select.select([fd], [], [], read_timeout)
+        if not r:
+            if DEBUG_RECV:
+                sys.stderr.write(
+                    "[daikin-recv] no data for %.1fs (buffer=%d lines)\n"
+                    % (read_timeout, len(buffer))
+                )
+                sys.stderr.flush()
+            if buffer and (time.time() - last_activity) > pause_sec:
+                unit = buffer
+                buffer = []
+                yield unit
+            continue
+        line = stream.readline()
+        if not line:
+            break
+        now = time.time()
+        if buffer and (now - last_activity) > pause_sec:
+            unit = buffer
+            buffer = []
+            yield unit
+        buffer.append(line)
+        last_activity = now
+        if DEBUG_RECV:
+            sys.stderr.write("[daikin-recv] got line len=%d\n" % len(line))
+            sys.stderr.flush()
+    if buffer:
+        yield buffer
+
+
+def lines_to_pairs(lines: List[str]) -> List[Tuple[int, int]]:
+    """Convert lines (ir-ctl format) to list of (pulse_us, space_us) for decode_bits."""
+    pairs: List[Tuple[int, int]] = []
+    next_kind = "pulse"
+    last_pulse_us: Optional[int] = None
+    for line in lines:
+        for kind, us in iter_pulse_space_pairs(line):
+            if kind == "_mode2_":
+                kind = next_kind
+                next_kind = "space" if next_kind == "pulse" else "pulse"
+            if kind == "pulse":
+                last_pulse_us = us
+            elif kind == "space" and last_pulse_us is not None:
+                pairs.append((last_pulse_us, us))
+                last_pulse_us = None
+    return pairs
+
+
+def parse_unit(lines: List[str]) -> None:
+    """Parse one unit (list of lines between pauses); try as frame(s); print if valid."""
+    pairs = lines_to_pairs(lines)
+    if DEBUG_RECV:
+        sys.stderr.write(
+            "[daikin-recv] unit: %d lines -> %d pairs\n" % (len(lines), len(pairs))
+        )
+        sys.stderr.flush()
+    if not pairs:
+        return
+    raw = decode_bits(pairs)
+    if DEBUG_RECV:
+        sys.stderr.write("[daikin-recv] decoded %d bytes\n" % len(raw))
+        sys.stderr.flush()
+    # One frame: 8 bytes (0xc5 or 0x42) or 19 bytes.
+    if len(raw) == 8 and checksum_ok(raw):
+        if raw[4] == 0xC5:
+            print("Daikin frame1:", " ".join(f"{b:02x}" for b in raw))
+        elif raw[4] == 0x42:
+            print("Daikin frame2:", " ".join(f"{b:02x}" for b in raw))
+        return
+    if len(raw) == 19 and checksum_ok(raw):
+        print("Daikin frame3:", " ".join(f"{b:02x}" for b in raw))
+        interpret_frames([0] * 5, [0] * 5, raw)  # minimal f1/f2 for interpret
+        return
+    # Three frames: 8+8+19
+    if (
+        len(raw) >= 35
+        and checksum_ok(raw[:8])
+        and checksum_ok(raw[8:16])
+        and checksum_ok(raw[16:35])
+    ):
+        f1, f2, f3 = raw[:8], raw[8:16], raw[16:35]
+        if f1[4] == 0xC5 and f2[4] == 0x42:
+            print("Daikin 3-frame:")
+            print("  F1:", " ".join(f"{b:02x}" for b in f1))
+            print("  F2:", " ".join(f"{b:02x}" for b in f2))
+            print("  F3:", " ".join(f"{b:02x}" for b in f3))
+            interpret_frames(f1, f2, f3)
 
 
 def decode_bits(sequences: List[Tuple[int, int]]) -> List[int]:
@@ -166,7 +275,9 @@ def run_from_stdin() -> None:
         now = time.time()
         if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
             if DEBUG_RECV:
-                sys.stderr.write("[daikin-recv] gap > %.1fs, reset and skip line\n" % GAP_LINE_SEC)
+                sys.stderr.write(
+                    "[daikin-recv] gap > %.1fs, reset and skip line\n" % GAP_LINE_SEC
+                )
                 sys.stderr.flush()
             flush_current()
             current.clear()
@@ -194,16 +305,16 @@ def run_from_stdin() -> None:
                     in_gap = False
                 last_was_pulse = False
         if DEBUG_RECV and npairs > 0:
-            sys.stderr.write("[daikin-recv] line len=%d -> %d pairs\n" % (len(line), npairs))
+            sys.stderr.write(
+                "[daikin-recv] line len=%d -> %d pairs\n" % (len(line), npairs)
+            )
             sys.stderr.flush()
 
     flush_current()
 
 
 def run_subprocess() -> None:
-    """Spawn ir-ctl --receive and run decoder on its stdout."""
-    # Force line-buffered stdout so we see each pulse/space line as it arrives (ir-ctl
-    # uses full buffer when stdout is a pipe, so otherwise we'd see nothing until 4KB+).
+    """Spawn ir-ctl --receive; split input by pauses; parse each unit as frame(s)."""
     for cmd in (
         ["stdbuf", "-oL", "ir-ctl", "-d", LIRC_RX, "--receive"],
         ["ir-ctl", "-d", LIRC_RX, "--receive"],
@@ -220,73 +331,25 @@ def run_subprocess() -> None:
             continue
     else:
         raise FileNotFoundError("ir-ctl not found in PATH")
-    # Re-use decoder logic by feeding lines
-    current: List[Tuple[int, int]] = []
-    in_gap = True
-    last_was_pulse = False
-    last_pulse_us = 0
-    frame1: Optional[List[int]] = None
-    frame2: Optional[List[int]] = None
-    frame3: Optional[List[int]] = None
 
-    def flush_current() -> None:
-        nonlocal frame1, frame2, frame3
-        if not current:
-            return
-        raw = decode_bits(current)
-        if len(raw) == 8 and checksum_ok(raw):
-            if raw[4] == 0xC5:
-                frame1 = raw
-            elif raw[4] == 0x42:
-                frame2 = raw
-        elif len(raw) == 19 and checksum_ok(raw):
-            frame3 = raw
-            if frame1 is not None and frame2 is not None:
-                print("Daikin 3-frame:")
-                print("  F1:", " ".join(f"{b:02x}" for b in frame1))
-                print("  F2:", " ".join(f"{b:02x}" for b in frame2))
-                print("  F3:", " ".join(f"{b:02x}" for b in frame3))
-                interpret_frames(frame1, frame2, frame3)
-            frame1 = frame2 = frame3 = None
-
-    last_line_time: float = 0.0
+    if DEBUG_RECV:
+        sys.stderr.write(
+            "[daikin-recv] subprocess started (fd=%d). You should see 'no data for 1s' until you press remote.\n"
+            % proc.stdout.fileno()
+        )
+        sys.stderr.flush()
     try:
-        for line in proc.stdout:
-            now = time.time()
-            if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
-                if DEBUG_RECV:
-                    sys.stderr.write("[daikin-recv] gap > %.1fs, reset and skip line\n" % GAP_LINE_SEC)
-                    sys.stderr.flush()
-                flush_current()
-                current.clear()
-                in_gap = True
-                last_line_time = now
-                continue
-            last_line_time = now
-            npairs = 0
-            for kind, us in iter_pulse_space_pairs(line):
-                npairs += 1
-                if kind == "pulse":
-                    if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
-                        current.clear()
-                        in_gap = False
-                    last_pulse_us = us
-                    last_was_pulse = True
-                    continue
-                if kind == "space":
-                    if us >= GAP_MIN:
-                        flush_current()
-                        current.clear()
-                        in_gap = True
-                elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
-                    current.append((last_pulse_us, us))
-                    in_gap = False
-                last_was_pulse = False
-            if DEBUG_RECV and npairs > 0:
-                sys.stderr.write("[daikin-recv] line len=%d -> %d pairs\n" % (len(line), npairs))
+        for unit in read_units_by_pause(proc.stdout):
+            if DEBUG_RECV:
+                sys.stderr.write(
+                    "[daikin-recv] yielded unit with %d lines\n" % len(unit)
+                )
                 sys.stderr.flush()
+            parse_unit(unit)
     except KeyboardInterrupt:
-        pass
+        if DEBUG_RECV:
+            sys.stderr.write("[daikin-recv] Ctrl-C\n")
+            sys.stderr.flush()
     finally:
         proc.terminate()
         try:
@@ -299,7 +362,9 @@ def run_subprocess() -> None:
                 proc.wait()
             except KeyboardInterrupt:
                 pass
-    flush_current()
+        if DEBUG_RECV:
+            sys.stderr.write("[daikin-recv] subprocess stopped\n")
+            sys.stderr.flush()
 
 
 if __name__ == "__main__":
