@@ -1,58 +1,111 @@
 #!/usr/bin/env python3
-"""Capture raw IR from the remote with descriptions; save as plain text log.
+"""Low-level IR capture: preserve everything ir-ctl can report.
 
-Flow: 1) Enter description. 2) Press remote. 3) Press Enter to stop capture.
-4) Repeat. Empty description exits. Ctrl-C saves and exits.
+Uses mode2 format (one event per line) so nothing is truncated. Optionally
+enables carrier measurement and wideband (learning) mode. Logs ir-ctl
+--features at the top of the capture file for hardware diagnostics.
 
-Output: scribble/captures/ir_capture_<timestamp>.log (plain text, one section
-per capture, raw ir-ctl lines verbatim).
+Output: scribble/captures/ir_capture_<timestamp>.log (plain text, verbatim
+ir-ctl output, no decoding or processing).
+
+Usage:
+  ./ir_capture.py                       # normal capture
+  ./ir_capture.py -m                    # also measure carrier frequency
+  ./ir_capture.py -w -m                 # wideband (learning, ~5cm range)
+  ./ir_capture.py -t 200000             # 200ms idle timeout
+  ./ir_capture.py --features-only       # just print hardware features
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import select
 import subprocess
 import sys
+import select
 from datetime import datetime, timezone
-from typing import Any, TextIO
+from typing import TextIO
 
 LIRC_RX: str = "/dev/lirc1"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURES_DIR = os.path.join(SCRIPT_DIR, "captures")
 
 
-def open_capture_log(out_path: str) -> TextIO:
-    d = os.path.dirname(out_path)
+def query_features(device: str) -> str:
+    """Run ir-ctl --features and return the output (or error text)."""
+    try:
+        r = subprocess.run(
+            ["ir-ctl", "-d", device, "--features"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return (r.stdout + r.stderr).strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return "ir-ctl --features failed: %s" % e
+
+
+def open_log(path: str) -> TextIO:
+    d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    f = open(out_path, "a")
-    sys.stderr.write("[ir_capture] logging to %s\n" % out_path)
-    sys.stderr.flush()
-    return f
+    return open(path, "a")
 
 
-def capture_one_record(proc_stdout: Any, stdin_fd: int, log_file: TextIO) -> int:
-    """Read from proc_stdout until stdin becomes readable (user pressed Enter). Returns pair count."""
-    pair_count = 0
+def build_recv_cmd(
+    device: str,
+    measure_carrier: bool,
+    wideband: bool,
+    timeout_us: int | None,
+) -> list[str]:
+    cmd = ["ir-ctl", "-d", device, "--receive", "--mode2"]
+    if measure_carrier:
+        cmd.append("--measure-carrier")
+    if wideband:
+        cmd.append("--wideband")
+    if timeout_us is not None:
+        cmd.extend(["--timeout", str(timeout_us)])
+    return cmd
+
+
+def capture_one_record(proc_stdout, stdin_fd: int, log_file: TextIO) -> int:
+    """Pipe ir-ctl stdout to log verbatim until user presses Enter. Returns line count."""
+    lines = 0
     while True:
         r, _, _ = select.select([stdin_fd, proc_stdout], [], [], 0.25)
         if stdin_fd in r:
-            return pair_count
+            sys.stdin.readline()
+            return lines
         if proc_stdout in r:
             line = proc_stdout.readline()
             if not line:
-                return pair_count
+                return lines
             log_file.write(line)
-            pair_count += line.count("pulse") + line.count("space")
-            if pair_count > 0:
-                sys.stderr.write("\r  received ~%d values  " % pair_count)
+            lines += 1
+            if lines % 50 == 0:
+                sys.stderr.write("\r  %d lines captured  " % lines)
                 sys.stderr.flush()
 
 
-def run_capture(out_path: str, lirc_rx: str) -> None:
-    log_file = open_capture_log(out_path)
+def run_capture(args: argparse.Namespace) -> None:
+    log_file = open_log(args.output)
+    features = query_features(args.device)
+
+    log_file.write("# ir_capture log — %s\n" % datetime.now(timezone.utc).isoformat())
+    log_file.write("# device: %s\n" % args.device)
+    cmd = build_recv_cmd(args.device, args.measure_carrier, args.wideband, args.timeout)
+    log_file.write("# command: %s\n" % " ".join(cmd))
+    log_file.write("#\n# --- features ---\n")
+    for fline in features.splitlines():
+        log_file.write("# %s\n" % fline)
+    log_file.write("# --- end features ---\n\n")
+    log_file.flush()
+
+    sys.stderr.write("[ir_capture] logging to %s\n" % args.output)
+    sys.stderr.write("[ir_capture] command: %s\n" % " ".join(cmd))
+    sys.stderr.write("[ir_capture] features:\n%s\n\n" % features)
+    sys.stderr.flush()
+
     record_count = 0
     try:
         while True:
@@ -67,51 +120,60 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
 
             print("Press remote now; press Enter when done.")
             sys.stdout.flush()
+
             proc = subprocess.Popen(
-                ["ir-ctl", "-d", lirc_rx, "--receive"],
+                cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 text=True,
             )
+
             log_file.write(
                 "# %s  description=%s\n"
                 % (datetime.now(timezone.utc).isoformat(), desc)
             )
             log_file.flush()
+
             try:
-                pair_count = capture_one_record(
-                    proc.stdout, sys.stdin.fileno(), log_file
-                )
+                nlines = capture_one_record(proc.stdout, sys.stdin.fileno(), log_file)
             except (KeyboardInterrupt, EOFError):
-                pair_count = 0
+                nlines = 0
             finally:
+                proc.terminate()
+                try:
+                    stderr_tail = proc.stderr.read()
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    stderr_tail = ""
+                    proc.wait()
+
+                if stderr_tail and stderr_tail.strip():
+                    log_file.write("# stderr: %s\n" % stderr_tail.strip())
+
                 log_file.write("\n")
                 log_file.flush()
                 sys.stderr.write("\n")
                 sys.stderr.flush()
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
+
             record_count += 1
-            print("  Captured ~%d values." % pair_count)
+            print("  Captured %d lines." % nlines)
+
     except KeyboardInterrupt:
         sys.stderr.write("\n[ir_capture] Ctrl-C\n")
         sys.stderr.flush()
     finally:
         log_file.close()
-        print("Saved %d record(s) to %s" % (record_count, out_path))
+        print("Saved %d record(s) to %s" % (record_count, args.output))
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Capture raw IR with descriptions; save as plain text log."
-    )
     default_path = os.path.join(
         CAPTURES_DIR,
         "ir_capture_%s.log" % datetime.now().strftime("%Y-%m-%dT%H%M%S"),
+    )
+    ap = argparse.ArgumentParser(
+        description="Low-level IR capture. Preserves verbatim ir-ctl mode2 output."
     )
     ap.add_argument(
         "-o",
@@ -125,10 +187,39 @@ def main() -> None:
         default=LIRC_RX,
         help="LIRC receive device (default: %s)" % LIRC_RX,
     )
+    ap.add_argument(
+        "-m",
+        "--measure-carrier",
+        action="store_true",
+        help="Report carrier frequency (may enable wideband on some hardware)",
+    )
+    ap.add_argument(
+        "-w",
+        "--wideband",
+        action="store_true",
+        help="Wideband/learning mode (~5cm range, higher precision)",
+    )
+    ap.add_argument(
+        "-t",
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="US",
+        help="Receiver idle timeout in microseconds (e.g. 200000 = 200ms)",
+    )
+    ap.add_argument(
+        "--features-only",
+        action="store_true",
+        help="Print hardware features and exit",
+    )
     args = ap.parse_args()
 
+    if args.features_only:
+        print(query_features(args.device))
+        return
+
     try:
-        run_capture(args.output, args.device)
+        run_capture(args)
     except KeyboardInterrupt:
         sys.exit(0)
 

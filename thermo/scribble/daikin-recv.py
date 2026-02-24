@@ -24,7 +24,7 @@ LIRC_RX: str = "/dev/lirc1"
 PULSE_MIN, PULSE_MAX = 250, 650
 SPACE_ZERO_MIN, SPACE_ZERO_MAX = 300, 550
 SPACE_ONE_MIN, SPACE_ONE_MAX = 1000, 1600
-GAP_MIN: int = 10_000
+GAP_MIN: int = 5_000
 START_PULSE_MIN, START_PULSE_MAX = 2500, 4500
 START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
 PAUSE_SEC: float = 0.5
@@ -246,12 +246,30 @@ def classify_frame(raw: List[int]) -> Optional[str]:
     return None
 
 
+def try_split_combined(raw: List[int]) -> Optional[List[Tuple[str, List[int]]]]:
+    """If raw contains multiple concatenated Daikin frames, split at header boundaries."""
+    HEADER = [0x11, 0xDA, 0x27]
+    positions = [i for i in range(len(raw)) if raw[i : i + 3] == HEADER]
+    if len(positions) < 2:
+        return None
+    result: List[Tuple[str, List[int]]] = []
+    for idx, pos in enumerate(positions):
+        end = positions[idx + 1] if idx + 1 < len(positions) else len(raw)
+        frame = raw[pos:end]
+        kind = classify_frame(frame)
+        if kind:
+            result.append((kind, frame))
+    return result if result else None
+
+
 def decode_f1(f1: List[int]) -> List[str]:
     """Decode Frame 1 (8 bytes). Returns list of 'key=value' strings."""
     parts: List[str] = []
     comfort = bool(f1[6] & 0x10) if len(f1) > 6 else False
     parts.append("comfort=%s" % ("on" if comfort else "off"))
-    if f1[3] != 0x00:
+    if f1[3] == 0xF0:
+        parts.append("variant=ARC452A9")
+    elif f1[3] != 0x00:
         parts.append("byte3=0x%02x" % f1[3])
     if f1[4] not in (0x00, 0xC5):
         parts.append("id=0x%02x" % f1[4])
@@ -309,6 +327,10 @@ def decode_f3(f3: List[int]) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
+def _hex(raw: Sequence[int]) -> str:
+    return " ".join("%02x" % b for b in raw)
+
+
 def parse_unit(lines: List[str], description: str = "") -> None:
     pairs = lines_to_pairs(lines)
     t = _ts()
@@ -323,40 +345,46 @@ def parse_unit(lines: List[str], description: str = "") -> None:
     frames: List[Tuple[str, List[int]]] = []
     for sf_pairs in sub_frame_pairs:
         raw = decode_bits(sf_pairs)
-        if raw:
-            kind = classify_frame(raw)
-            frames.append((kind or "?", raw))
+        if not raw:
+            continue
+        kind = classify_frame(raw)
+        if kind:
+            frames.append((kind, raw))
+        else:
+            combined = try_split_combined(raw)
+            if combined:
+                frames.extend(combined)
+            elif len(raw) >= 2:
+                frames.append(("?", raw))
 
     total_bytes = sum(len(r) for _, r in frames)
     n_frames = len(frames)
-    print("[%s] %d sub-frame(s), %d bytes" % (t, n_frames, total_bytes))
-
-    if not frames:
+    if n_frames == 0:
+        print("[%s] (noise — %d pairs, no valid frames)" % (t, len(pairs)))
         return
+
+    print("[%s] %d frame(s), %d bytes" % (t, n_frames, total_bytes))
 
     decoded_count = 0
     for kind, raw in frames:
         if kind == "f1":
             parts = decode_f1(raw)
-            print("[%s] F1(%d): %s" % (_ts(), len(raw), " ".join(parts)))
+            print("[%s]   F1: %s  [%s]" % (_ts(), " ".join(parts), _hex(raw)))
             decoded_count += len(raw)
         elif kind == "f2":
-            print("[%s] F2(%d): (fixed)" % (_ts(), len(raw)))
+            print("[%s]   F2: (fixed)  [%s]" % (_ts(), _hex(raw)))
             decoded_count += len(raw)
         elif kind == "f3":
             parts = decode_f3(raw)
-            print("[%s] F3(%d): %s" % (_ts(), len(raw), " ".join(parts)))
+            print("[%s]   F3: %s  [%s]" % (_ts(), " ".join(parts), _hex(raw)))
             decoded_count += len(raw)
         else:
             chk = checksum_ok(raw)
-            print(
-                "[%s] ?(%d): %s chk=%s"
-                % (_ts(), len(raw), " ".join("%02x" % b for b in raw), chk)
-            )
+            print("[%s]   ?(%d): %s chk=%s" % (_ts(), len(raw), _hex(raw), chk))
 
     opaque = total_bytes - decoded_count
     if opaque > 0:
-        print("[%s] Opaque: %d of %d bytes" % (_ts(), opaque, total_bytes))
+        print("[%s]   Opaque: %d of %d bytes" % (_ts(), opaque, total_bytes))
 
 
 # ---------------------------------------------------------------------------
@@ -492,9 +520,29 @@ def run_subprocess() -> None:
             proc.wait()
 
 
+def run_from_log(path: str) -> None:
+    """Parse a capture log file and decode each record."""
+    with open(path) as f:
+        desc = ""
+        data_lines: List[str] = []
+        for line in f:
+            if line.startswith("#"):
+                if data_lines:
+                    parse_unit(data_lines, desc)
+                    data_lines = []
+                m = re.search(r"description=(.+?)\s{2,}lines=", line)
+                desc = m.group(1) if m else ""
+            elif line.strip():
+                data_lines.append(line)
+        if data_lines:
+            parse_unit(data_lines, desc)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
         run_from_stdin()
+    elif len(sys.argv) > 2 and sys.argv[1] == "--parse-log":
+        run_from_log(sys.argv[2])
     else:
         print("Listening on", LIRC_RX, "(Ctrl+C to stop)...")
         run_subprocess()
