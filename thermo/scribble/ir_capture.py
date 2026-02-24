@@ -23,7 +23,13 @@ from typing import Any, List
 LIRC_RX: str = "/dev/lirc1"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_OUTPUT = os.path.join(SCRIPT_DIR, "ir_capture.pkl")
+CAPTURES_DIR = os.path.join(SCRIPT_DIR, "captures")
+
+
+def capture_path_for_date() -> str:
+    """Path for today's capture file: scribble/captures/ir_capture_YYYY-MM-DD.pkl."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    return os.path.join(CAPTURES_DIR, f"ir_capture_{date_str}.pkl")
 
 
 def iter_ir_pairs(line: str) -> List[List[Any]]:
@@ -70,10 +76,24 @@ def capture_one_record(proc_stdout: Any, stdin_fd: int) -> List[List[Any]]:
                 sys.stderr.flush()
 
 
+def load_session(out_path: str) -> List[dict]:
+    """Load session list from pickle file; return [] if missing or invalid."""
+    if not os.path.isfile(out_path):
+        return []
+    try:
+        with open(out_path, "rb") as f:
+            return pickle.load(f)
+    except (pickle.PickleError, OSError):
+        return []
+
+
 def save_session(out_path: str, session: List[dict]) -> None:
-    """Write session to pickle file; flush and close."""
+    """Write full session to pickle file; flush and close. No-op if session is empty."""
     if not session:
         return
+    d = os.path.dirname(out_path)
+    if d:
+        os.makedirs(d, exist_ok=True)
     with open(out_path, "wb") as f:
         pickle.dump(session, f, protocol=pickle.HIGHEST_PROTOCOL)
         f.flush()
@@ -83,7 +103,7 @@ def save_session(out_path: str, session: List[dict]) -> None:
 
 
 def run_capture(out_path: str, lirc_rx: str) -> None:
-    session: List[dict] = []
+    session: List[dict] = load_session(out_path)
 
     try:
         while True:
@@ -126,8 +146,9 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
                         pass
 
             record = {
-                "description": desc,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "label": "expected",
+                "description": desc,
                 "raw_ir": raw_ir,
             }
             session.append(record)
@@ -148,8 +169,8 @@ def main() -> None:
     ap.add_argument(
         "-o",
         "--output",
-        default=DEFAULT_OUTPUT,
-        help=f"Output pickle path (default: {DEFAULT_OUTPUT})",
+        default=None,
+        help="Output pickle path (default: scribble/captures/ir_capture_YYYY-MM-DD.pkl)",
     )
     ap.add_argument(
         "-d",
@@ -158,9 +179,10 @@ def main() -> None:
         help=f"LIRC receive device (default: {LIRC_RX})",
     )
     args = ap.parse_args()
+    out_path = args.output if args.output is not None else capture_path_for_date()
 
     try:
-        run_capture(args.output, args.device)
+        run_capture(out_path, args.device)
     except KeyboardInterrupt:
         sys.stderr.write("Interrupted.\n")
         sys.stderr.flush()

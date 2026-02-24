@@ -8,6 +8,8 @@ listen for one unit, report decoded fields + opaque byte count. Two units per de
 
 from __future__ import annotations
 
+import os
+import pickle
 import queue
 import re
 import select
@@ -15,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Iterator, List, Optional, Sequence, Tuple
 
 # LIRC RX device on Pi Zero 2W with ANAVI IR pHAT (GPIO 17).
@@ -31,7 +34,7 @@ START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
 # Pause between "units" (e.g. keypresses): no data for this long -> yield unit.
 # Use ~2s so one keypress (often 2 lines) stays one unit; phantom data later is separate.
 PAUSE_SEC: float = 2.0
-# Select timeout so we never block forever; we log when we see no data.
+# Select timeout so we never block forever.
 READ_TIMEOUT_SEC: float = 1.0
 # For --stdin line loop: gap after this many sec -> reset and skip line (phantom/EOF).
 GAP_LINE_SEC: float = 2.0
@@ -39,6 +42,45 @@ GAP_LINE_SEC: float = 2.0
 RECV_TIMEOUT_SEC: float = 10.0
 # Always print debug to stderr so you see data flow.
 DEBUG_RECV: bool = True
+
+
+def _ts() -> str:
+    """Current time prefix for log/parse output (HH:MM:SS)."""
+    return time.strftime("%H:%M:%S")
+
+
+# Capture file: scribble/captures/daikin_recv_YYYY-MM-DD.pkl (binary name + date).
+_SCRIBBLE_DIR = os.path.dirname(os.path.abspath(__file__))
+_CAPTURES_DIR = os.path.join(_SCRIBBLE_DIR, "captures")
+
+
+def _capture_path_for_date() -> str:
+    """Path for today's capture file: scribble/captures/daikin_recv_YYYY-MM-DD.pkl."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    return os.path.join(_CAPTURES_DIR, "daikin_recv_%s.pkl" % date_str)
+
+
+def _load_capture_session(path: str) -> List[Any]:
+    """Load session list from pickle file; return [] if missing or invalid."""
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except (pickle.PickleError, OSError):
+        return []
+
+
+def _append_and_save_capture(path: str, session: List[Any], record: Any) -> None:
+    """Append one record to session and save to path."""
+    session.append(record)
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(session, f, protocol=pickle.HIGHEST_PROTOCOL)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def parse_line(line: str) -> Optional[Tuple[str, int]]:
@@ -97,12 +139,6 @@ def read_units_by_pause(
     while True:
         r, _, _ = select.select([fd], [], [], read_timeout)
         if not r:
-            if DEBUG_RECV:
-                sys.stderr.write(
-                    "[daikin-recv] no data for %.1fs (buffer=%d lines)\n"
-                    % (read_timeout, len(buffer))
-                )
-                sys.stderr.flush()
             if buffer and (time.time() - last_activity) > pause_sec:
                 unit = buffer
                 buffer = []
@@ -119,7 +155,9 @@ def read_units_by_pause(
         buffer.append(line)
         last_activity = now
         if DEBUG_RECV:
-            sys.stderr.write("[daikin-recv] got line len=%d\n" % len(line))
+            sys.stderr.write(
+                "[%s] [daikin-recv] got line len=%d\n" % (_ts(), len(line))
+            )
             sys.stderr.flush()
     if buffer:
         yield buffer
@@ -144,22 +182,31 @@ def lines_to_pairs(lines: List[str]) -> List[Tuple[int, int]]:
 
 
 def parse_unit(lines: List[str], description: str = "") -> None:
-    """Parse one unit; print description, decoded fields only, and opaque N of M bytes."""
+    """Parse one unit; print timestamped description, input correlation, decoded fields, and opaque N of M bytes."""
+    n_lines = len(lines)
+    line_lens = ", ".join(str(len(l)) for l in lines)
     pairs = lines_to_pairs(lines)
     raw = decode_bits(pairs) if pairs else []
     total = len(raw)
+    t = _ts()
     if description:
-        print("Description: %s" % description)
+        print("[%s] Description: %s" % (t, description))
+    # Correlation: same line count and lengths as "got line len=..." so total= matches later.
+    print(
+        "[%s] input: %d lines (len %s) -> total=%d bytes"
+        % (t, n_lines, line_lens, total)
+    )
 
     if not pairs:
-        print("Decoded: (none — no pulse/space pairs)")
-        print("Opaque: 0 of 0 bytes")
+        print("[%s] Decoded: (none — no pulse/space pairs)" % _ts())
+        print("[%s] Opaque: 0 of 0 bytes" % _ts())
         return
     if not raw:
-        print("Decoded: (none — pairs did not decode to bytes)")
-        print("Opaque: 0 of 0 bytes")
+        print("[%s] Decoded: (none — pairs did not decode to bytes)" % _ts())
+        print("[%s] Opaque: 0 of 0 bytes" % _ts())
         return
 
+    t = _ts()
     # Full 3-frame
     if (
         total >= 35
@@ -172,10 +219,9 @@ def parse_unit(lines: List[str], description: str = "") -> None:
         f1, f2, f3 = raw[:8], raw[8:16], raw[16:35]
         decoded_lines, _ = decoded_fields_from_frames(f1, f2, f3)
         for line in decoded_lines:
-            print("Decoded: %s" % line)
-        # We decode main fields; timers/time etc. still opaque
+            print("[%s] Decoded: %s" % (_ts(), line))
         opaque = 13  # F3 bytes we don't yet interpret (timers, etc.)
-        print("Opaque: %d of %d bytes" % (opaque, total))
+        print("[%s] Opaque: %d of %d bytes" % (_ts(), opaque, total))
         return
 
     # Single frame
@@ -191,13 +237,13 @@ def parse_unit(lines: List[str], description: str = "") -> None:
     if f1 or f2 or f3:
         decoded_lines, _ = decoded_fields_from_frames(f1, f2, f3)
         for line in decoded_lines:
-            print("Decoded: %s" % line)
-        print("Opaque: 0 of %d bytes" % total)
+            print("[%s] Decoded: %s" % (_ts(), line))
+        print("[%s] Opaque: 0 of %d bytes" % (_ts(), total))
         return
 
     # Partial or failure: we have bytes but no valid frame
-    print("Decoded: (none — len=%d, checksum or id mismatch)" % total)
-    print("Opaque: %d of %d bytes" % (total, total))
+    print("[%s] Decoded: (none — len=%d, checksum or id mismatch)" % (_ts(), total))
+    print("[%s] Opaque: %d of %d bytes" % (_ts(), total, total))
 
 
 def decode_bits(sequences: List[Tuple[int, int]]) -> List[int]:
@@ -405,9 +451,12 @@ def run_subprocess() -> None:
     )
     consumer.start()
     last_desc: Optional[str] = None
+    capture_path = _capture_path_for_date()
+    session: List[Any] = _load_capture_session(capture_path)
     if DEBUG_RECV:
         sys.stderr.write(
-            "[daikin-recv] subprocess started; consumer thread feeding queue.\n"
+            "[%s] [daikin-recv] subprocess started; consumer thread feeding queue; capture %s\n"
+            % (_ts(), capture_path)
         )
         sys.stderr.flush()
     try:
@@ -436,30 +485,49 @@ def run_subprocess() -> None:
                     break
             if unexpected:
                 sys.stderr.write(
-                    "[daikin-recv] unexpected data (received while typing?); clearing and summarizing:\n"
+                    "[%s] [daikin-recv] unexpected data (received while typing?); clearing and summarizing:\n"
+                    % _ts()
                 )
                 sys.stderr.flush()
                 for u in unexpected:
+                    record = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "label": "unexpected",
+                        "description": "(unexpected)",
+                        "raw_lines": u,
+                    }
+                    _append_and_save_capture(capture_path, session, record)
                     parse_unit(u, "(unexpected)")
             # Block up to RECV_TIMEOUT_SEC for one unit.
             try:
                 unit = unit_queue.get(timeout=RECV_TIMEOUT_SEC)
             except queue.Empty:
                 sys.stderr.write(
-                    "[daikin-recv] nothing received (timeout %.0fs); press remote after Enter.\n"
-                    % RECV_TIMEOUT_SEC
+                    "[%s] [daikin-recv] nothing received (timeout %.0fs); press remote after Enter.\n"
+                    % (_ts(), RECV_TIMEOUT_SEC)
                 )
                 sys.stderr.flush()
                 continue
             if DEBUG_RECV:
-                sys.stderr.write("[daikin-recv] unit (%d lines)\n" % len(unit))
+                lens = ", ".join(str(len(l)) for l in unit)
+                sys.stderr.write(
+                    "[%s] [daikin-recv] unit: %d lines (len %s)\n"
+                    % (_ts(), len(unit), lens)
+                )
                 sys.stderr.flush()
+            record = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "label": "expected",
+                "description": desc,
+                "raw_lines": unit,
+            }
+            _append_and_save_capture(capture_path, session, record)
             parse_unit(unit, desc)
     except KeyboardInterrupt:
         pass
     finally:
         if DEBUG_RECV:
-            sys.stderr.write("[daikin-recv] exiting\n")
+            sys.stderr.write("[%s] [daikin-recv] exiting\n" % _ts())
             sys.stderr.flush()
         proc.terminate()
         try:
