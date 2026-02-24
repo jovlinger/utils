@@ -23,23 +23,29 @@ from typing import Any, List, Optional, Tuple
 LIRC_RX: str = "/dev/lirc1"
 
 
-def parse_ir_line(line: str) -> Optional[Tuple[str, int]]:
-    """Return ('pulse', us) or ('space', us) or None. Accepts 'pulse N', 'space N', or bare N (mode2)."""
-    line = line.strip()
-    if not line:
-        return None
-    m = re.match(r"(pulse|space)\s+(\d+)", line, re.I)
-    if m:
-        return m.group(1).lower(), int(m.group(2))
-    if line.isdigit():
-        return ("_mode2_", int(line))
-    return None
+def iter_ir_pairs(line: str) -> List[List[Any]]:
+    """Parse one line into [(kind, us), ...]. Handles 'pulse N space N ...' or 'N N ...' (alternating)."""
+    tokens = line.strip().split()
+    out: List[List[Any]] = []
+    i = 0
+    next_kind = "pulse"
+    while i < len(tokens):
+        t = tokens[i]
+        if t.lower() in ("pulse", "space") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+            out.append([t.lower(), int(tokens[i + 1])])
+            i += 2
+        elif t.isdigit():
+            out.append([next_kind, int(t)])
+            next_kind = "space" if next_kind == "pulse" else "pulse"
+            i += 1
+        else:
+            i += 1
+    return out
 
 
 def capture_one_record(proc_stdout: Any, stdin_fd: int) -> List[List[Any]]:
     """Read from proc_stdout until stdin becomes readable (user pressed Enter). Returns raw_ir list."""
     raw_ir: List[List[Any]] = []
-    next_kind = "pulse"  # for mode2 (bare number) lines
 
     while True:
         r, _, _ = select.select([stdin_fd, proc_stdout], [], [], 0.25)
@@ -49,14 +55,12 @@ def capture_one_record(proc_stdout: Any, stdin_fd: int) -> List[List[Any]]:
             line = proc_stdout.readline()
             if not line:
                 return raw_ir
-            parsed = parse_ir_line(line)
-            if parsed:
-                kind, us = parsed
-                if kind == "_mode2_":
-                    kind = next_kind
-                    next_kind = "space" if next_kind == "pulse" else "pulse"
-                if kind in ("pulse", "space"):
-                    raw_ir.append([kind, us])
+            pairs = iter_ir_pairs(line)
+            for kind, us in pairs:
+                raw_ir.append([kind, us])
+            if pairs:
+                sys.stderr.write(f"\r  received {len(raw_ir)} pairs  ")
+                sys.stderr.flush()
 
 
 def run_capture(out_path: str, lirc_rx: str) -> None:
@@ -71,6 +75,8 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
             break
 
         print("Press remote now; press Enter when done.")
+        sys.stderr.write("[ir_capture] started ir-ctl --receive\n")
+        sys.stderr.flush()
         proc = subprocess.Popen(
             ["ir-ctl", "-d", lirc_rx, "--receive"],
             stdout=subprocess.PIPE,
@@ -82,6 +88,8 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
         except (KeyboardInterrupt, EOFError):
             raw_ir = []
         finally:
+            sys.stderr.write(f"\n[ir_capture] stopping ir-ctl (captured {len(raw_ir)} pairs)\n")
+            sys.stderr.flush()
             proc.terminate()
             try:
                 proc.wait(timeout=2)
@@ -92,9 +100,11 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
                 except KeyboardInterrupt:
                     pass
 
+        sys.stderr.write("\n")
+        sys.stderr.flush()
         record = {
             "description": desc,
-            "timestamp": datetime.now(timezone.utc()).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "raw_ir": raw_ir,
         }
         session.append(record)

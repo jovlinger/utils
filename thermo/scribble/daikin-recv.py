@@ -30,8 +30,9 @@ SPACE_ONE_MIN, SPACE_ONE_MAX = 1000, 1600
 GAP_MIN: int = 15_000
 START_PULSE_MIN, START_PULSE_MAX = 2500, 4500
 START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
-# After this many seconds with no data, reset decoder state so garbled input doesn't leave us stuck.
+# Lines arriving this long after the previous: reset state and skip feeding (likely phantom/EOF).
 GAP_LINE_SEC: float = 2.0
+DEBUG_RECV: bool = False  # stderr: when lines/pairs received, even if not parsed
 
 
 def parse_line(line: str) -> Optional[Tuple[str, int]]:
@@ -150,8 +151,6 @@ def run_from_stdin() -> None:
                 frame1 = raw
             elif raw[4] == 0x42:
                 frame2 = raw
-            else:
-                frame1 = frame2 = None
         elif len(raw) == 19 and checksum_ok(raw):
             frame3 = raw
             if frame1 is not None and frame2 is not None:
@@ -161,19 +160,23 @@ def run_from_stdin() -> None:
                 print("  F3:", " ".join(f"{b:02x}" for b in frame3))
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
-        else:
-            frame1 = frame2 = frame3 = None
 
     last_line_time = 0.0
     for line in sys.stdin:
         now = time.time()
         if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
+            if DEBUG_RECV:
+                sys.stderr.write("[daikin-recv] gap > %.1fs, reset and skip line\n" % GAP_LINE_SEC)
+                sys.stderr.flush()
             flush_current()
             current.clear()
             in_gap = True
-            frame1 = frame2 = frame3 = None
+            last_line_time = now
+            continue
         last_line_time = now
+        npairs = 0
         for kind, us in iter_pulse_space_pairs(line):
+            npairs += 1
             if kind == "pulse":
                 if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
                     current.clear()
@@ -190,6 +193,9 @@ def run_from_stdin() -> None:
                     current.append((last_pulse_us, us))
                     in_gap = False
                 last_was_pulse = False
+        if DEBUG_RECV and npairs > 0:
+            sys.stderr.write("[daikin-recv] line len=%d -> %d pairs\n" % (len(line), npairs))
+            sys.stderr.flush()
 
     flush_current()
 
@@ -233,8 +239,6 @@ def run_subprocess() -> None:
                 frame1 = raw
             elif raw[4] == 0x42:
                 frame2 = raw
-            else:
-                frame1 = frame2 = None
         elif len(raw) == 19 and checksum_ok(raw):
             frame3 = raw
             if frame1 is not None and frame2 is not None:
@@ -244,20 +248,24 @@ def run_subprocess() -> None:
                 print("  F3:", " ".join(f"{b:02x}" for b in frame3))
                 interpret_frames(frame1, frame2, frame3)
             frame1 = frame2 = frame3 = None
-        else:
-            frame1 = frame2 = frame3 = None
 
     last_line_time: float = 0.0
     try:
         for line in proc.stdout:
             now = time.time()
             if last_line_time > 0 and (now - last_line_time) > GAP_LINE_SEC:
+                if DEBUG_RECV:
+                    sys.stderr.write("[daikin-recv] gap > %.1fs, reset and skip line\n" % GAP_LINE_SEC)
+                    sys.stderr.flush()
                 flush_current()
                 current.clear()
                 in_gap = True
-                frame1 = frame2 = frame3 = None
+                last_line_time = now
+                continue
             last_line_time = now
+            npairs = 0
             for kind, us in iter_pulse_space_pairs(line):
+                npairs += 1
                 if kind == "pulse":
                     if in_gap and START_PULSE_MIN <= us <= START_PULSE_MAX:
                         current.clear()
@@ -270,10 +278,13 @@ def run_subprocess() -> None:
                         flush_current()
                         current.clear()
                         in_gap = True
-                    elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
-                        current.append((last_pulse_us, us))
-                        in_gap = False
-                    last_was_pulse = False
+                elif last_was_pulse and PULSE_MIN <= last_pulse_us <= PULSE_MAX:
+                    current.append((last_pulse_us, us))
+                    in_gap = False
+                last_was_pulse = False
+            if DEBUG_RECV and npairs > 0:
+                sys.stderr.write("[daikin-recv] line len=%d -> %d pairs\n" % (len(line), npairs))
+                sys.stderr.flush()
     except KeyboardInterrupt:
         pass
     finally:

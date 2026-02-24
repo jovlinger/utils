@@ -8,8 +8,8 @@ SCRIBBLE="$THERMO_DIR/scribble"
 export PATH="${TEST_DIR}:${PATH}"
 cd "$SCRIBBLE"
 
-out="$(python3 daikin-recv.py 2>/dev/null)" || true
-# Recv runs until fake ir-ctl exits (after printing the sequence); decoder then flushes.
+# Pipe fake ir-ctl into decoder (avoids subprocess stdout buffering issues in test env).
+out="$("$TEST_DIR/ir-ctl" -d /dev/lirc1 --receive 2>/dev/null | python3 daikin-recv.py --stdin 2>/dev/null)" || true
 
 if ! echo "$out" | grep -q "Daikin 3-frame:"; then
   echo "FAIL: expected 'Daikin 3-frame:' in decoder output" >&2
