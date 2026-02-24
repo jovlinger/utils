@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import select
+import time
 from datetime import datetime, timezone
 from typing import TextIO
 
@@ -68,13 +69,30 @@ def build_recv_cmd(
     return cmd
 
 
+def _drain_remaining(proc_stdout, log_file: TextIO, timeout: float = 0.5) -> int:
+    """Read any remaining buffered output from ir-ctl after user presses Enter."""
+    count = 0
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r, _, _ = select.select([proc_stdout], [], [], 0.05)
+        if not r:
+            break
+        line = proc_stdout.readline()
+        if not line:
+            break
+        log_file.write(line)
+        count += 1
+    return count
+
+
 def capture_one_record(proc_stdout, stdin_fd: int, log_file: TextIO) -> int:
-    """Pipe ir-ctl stdout to log verbatim until user presses Enter. Returns line count."""
+    """Pipe ir-ctl stdout to log verbatim until user presses Enter, then drain remaining."""
     lines = 0
     while True:
         r, _, _ = select.select([stdin_fd, proc_stdout], [], [], 0.25)
         if stdin_fd in r:
             sys.stdin.readline()
+            lines += _drain_remaining(proc_stdout, log_file)
             return lines
         if proc_stdout in r:
             line = proc_stdout.readline()

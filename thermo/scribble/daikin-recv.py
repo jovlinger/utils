@@ -90,7 +90,20 @@ def _token_number(t: str) -> Optional[int]:
 
 
 def iter_pulse_space_pairs(line: str) -> Iterator[Tuple[str, int]]:
-    tokens = line.strip().split()
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return
+    tokens = stripped.split()
+    first = tokens[0].lower()
+    # mode2 "timeout N" → treat as a space (it IS the inter-frame gap)
+    if first == "timeout" and len(tokens) > 1:
+        n = _token_number(tokens[1])
+        if n is not None:
+            yield "space", n
+        return
+    # mode2 "carrier N" → metadata, skip
+    if first in ("carrier", "scancode"):
+        return
     i = 0
     next_kind = "pulse"
     while i < len(tokens):
@@ -232,17 +245,21 @@ def checksum_ok(frame: Sequence[int]) -> bool:
 
 
 def classify_frame(raw: List[int]) -> Optional[str]:
-    """Return 'f1', 'f2', or 'f3' for a known Daikin frame, else None."""
-    if not checksum_ok(raw):
+    """Return 'f1', 'f2', 'f3', or 'f3~' (truncated F3) for a Daikin frame, else None."""
+    has_header = len(raw) >= 5 and raw[:3] == [0x11, 0xDA, 0x27]
+    chk = checksum_ok(raw)
+    if not has_header:
         return None
-    if len(raw) == 8 and raw[:3] == [0x11, 0xDA, 0x27]:
+    if len(raw) == 8 and chk:
         if raw[4] == 0xC5:
             return "f1"
         if raw[4] == 0x42:
             return "f2"
         return "f1"  # ARC452A9 variant (byte4=0x00)
-    if len(raw) == 19 and raw[:3] == [0x11, 0xDA, 0x27]:
-        return "f3"
+    if len(raw) == 19:
+        return "f3" if chk else "f3~"
+    if 9 <= len(raw) <= 18:
+        return "f3~"
     return None
 
 
@@ -277,46 +294,49 @@ def decode_f1(f1: List[int]) -> List[str]:
 
 
 def decode_f3(f3: List[int]) -> List[str]:
-    """Decode Frame 3 (19 bytes) per blafois layout. Returns list of 'key=value' strings."""
+    """Decode Frame 3 per blafois layout. Safe for truncated frames (>= 9 bytes)."""
+    n = len(f3)
     parts: List[str] = []
-    b5 = f3[5]
-    mode_nib = (b5 >> 4) & 0x0F
-    power = bool(b5 & 0x01)
-    timer_on = bool(b5 & 0x02)
-    timer_off = bool(b5 & 0x04)
 
-    parts.append("power=%s" % ("ON" if power else "OFF"))
-    parts.append("mode=%s" % MODE_NAMES.get(mode_nib, "0x%x" % mode_nib))
+    if n > 5:
+        b5 = f3[5]
+        mode_nib = (b5 >> 4) & 0x0F
+        parts.append("power=%s" % ("ON" if (b5 & 0x01) else "OFF"))
+        parts.append("mode=%s" % MODE_NAMES.get(mode_nib, "0x%x" % mode_nib))
 
-    temp_raw = f3[6]
-    temp_c = temp_raw / 2
-    if 10 <= temp_c <= 32:
-        parts.append("temp=%.0fC" % temp_c)
-    else:
-        parts.append("temp_raw=0x%02x" % temp_raw)
+    if n > 6:
+        temp_raw = f3[6]
+        temp_c = temp_raw / 2
+        if 10 <= temp_c <= 32:
+            parts.append("temp=%.0fC" % temp_c)
+        else:
+            parts.append("temp_raw=0x%02x" % temp_raw)
 
-    fan_byte = f3[8]
-    fan_nib = (fan_byte >> 4) & 0x0F
-    swing_nib = fan_byte & 0x0F
-    parts.append("fan=%s" % FAN_NAMES.get(fan_nib, "0x%x" % fan_nib))
-    parts.append("swing=%s" % ("on" if swing_nib == 0x0F else "off"))
+    if n > 8:
+        fan_byte = f3[8]
+        fan_nib = (fan_byte >> 4) & 0x0F
+        swing_nib = fan_byte & 0x0F
+        parts.append("fan=%s" % FAN_NAMES.get(fan_nib, "0x%x" % fan_nib))
+        parts.append("swing=%s" % ("on" if swing_nib == 0x0F else "off"))
 
-    # Timers (bytes 0x0a-0x0c)
-    if timer_on:
-        timer_min = (0x100 * f3[0x0B] + f3[0x0A]) // 60
-        parts.append("timer_on=%dh" % timer_min if timer_min else "timer_on")
-    if timer_off:
-        timer_min = ((f3[0x0C] << 4) | (f3[0x0B] >> 4)) // 60
-        parts.append("timer_off=%dh" % timer_min if timer_min else "timer_off")
+    if n > 0x0C:
+        b5 = f3[5]
+        timer_on = bool(b5 & 0x02)
+        timer_off = bool(b5 & 0x04)
+        if timer_on:
+            timer_min = (f3[0x0B] & 0x0F) << 8 | f3[0x0A]
+            parts.append("timer_on=%dm" % timer_min if timer_min else "timer_on")
+        if timer_off:
+            timer_min = (f3[0x0C] << 4) | (f3[0x0B] >> 4)
+            parts.append("timer_off=%dm" % timer_min if timer_min else "timer_off")
 
-    powerful = bool(f3[0x0D] & 0x01) if len(f3) > 0x0D else False
-    parts.append("powerful=%s" % ("on" if powerful else "off"))
+    if n > 0x0D:
+        parts.append("powerful=%s" % ("on" if (f3[0x0D] & 0x01) else "off"))
 
-    econo = bool(f3[0x10] & 0x04) if len(f3) > 0x10 else False
-    parts.append("econo=%s" % ("on" if econo else "off"))
+    if n > 0x10:
+        parts.append("econo=%s" % ("on" if (f3[0x10] & 0x04) else "off"))
 
-    # Byte 0x0f (often 0xc1): unknown but constant in blafois
-    if len(f3) > 0x0F:
+    if n > 0x0F:
         parts.append("byte0f=0x%02x" % f3[0x0F])
 
     return parts
@@ -374,9 +394,10 @@ def parse_unit(lines: List[str], description: str = "") -> None:
         elif kind == "f2":
             print("[%s]   F2: (fixed)  [%s]" % (_ts(), _hex(raw)))
             decoded_count += len(raw)
-        elif kind == "f3":
+        elif kind in ("f3", "f3~"):
             parts = decode_f3(raw)
-            print("[%s]   F3: %s  [%s]" % (_ts(), " ".join(parts), _hex(raw)))
+            tag = "F3" if kind == "f3" else "F3~(%d/%d)" % (len(raw), 19)
+            print("[%s]   %s: %s  [%s]" % (_ts(), tag, " ".join(parts), _hex(raw)))
             decoded_count += len(raw)
         else:
             chk = checksum_ok(raw)
