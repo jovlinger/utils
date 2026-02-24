@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
-"""Receive IR from the Daikin remote and attempt to decode to 3-frame Daikin bytes.
+"""Receive IR from the Daikin remote; decode to human-readable frame (mode, temp, fan, ...).
 
-Runs on Pi Zero 2W with ANAVI IR pHAT: reads from /dev/lirc1 (RX) via ir-ctl.
-Uses pulse-distance decoding; frame lengths 8, 8, 19 bytes (blafois/Daikin-IR-Reverse).
-Checksum = sum of bytes in frame & 0xff. We may need to adjust thresholds for your remote.
-
-Usage:
-  ir-ctl -d /dev/lirc1 --receive | python3 daikin-recv.py
-  or (if your system supports it):
-  python3 daikin-recv.py   # runs ir-ctl as subprocess and reads stdin
+Pi Zero 2W + ANAVI IR pHAT (/dev/lirc1). Prompt for description (Enter=reuse, empty=exit),
+listen for one unit, report decoded fields + opaque byte count. Two units per description
+= error (gap too short). Ctrl-C exits.
 """
 
 from __future__ import annotations
 
+import queue
 import re
 import select
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Iterator, List, Optional, Sequence, Tuple
 
@@ -32,11 +29,14 @@ GAP_MIN: int = 15_000
 START_PULSE_MIN, START_PULSE_MAX = 2500, 4500
 START_SPACE_MIN, START_SPACE_MAX = 1200, 2200
 # Pause between "units" (e.g. keypresses): no data for this long -> yield unit.
-PAUSE_SEC: float = 0.5
+# Use ~2s so one keypress (often 2 lines) stays one unit; phantom data later is separate.
+PAUSE_SEC: float = 2.0
 # Select timeout so we never block forever; we log when we see no data.
 READ_TIMEOUT_SEC: float = 1.0
 # For --stdin line loop: gap after this many sec -> reset and skip line (phantom/EOF).
 GAP_LINE_SEC: float = 2.0
+# Subprocess mode: wait up to this long for one unit after description entered.
+RECV_TIMEOUT_SEC: float = 10.0
 # Always print debug to stderr so you see data flow.
 DEBUG_RECV: bool = True
 
@@ -55,26 +55,34 @@ def parse_line(line: str) -> Optional[Tuple[str, int]]:
     return None
 
 
+def _token_number(t: str) -> Optional[int]:
+    """Extract integer from token; accept plain digits or trailing junk (e.g. '3400,' or '3400us')."""
+    if t.isdigit():
+        return int(t)
+    m = re.search(r"\d+", t)
+    return int(m.group(0)) if m else None
+
+
 def iter_pulse_space_pairs(line: str) -> Iterator[Tuple[str, int]]:
-    """Yield (kind, us) from one line. Handles multi-token lines: 'pulse 3400 space 1750 ...' or '3400 1750 ...'."""
+    """Yield (kind, us) from one line. Handles 'pulse 3400 space 1750 ...', '3400 1750 ...', or tokens with trailing junk."""
     tokens = line.strip().split()
     i = 0
     next_kind = "pulse"
     while i < len(tokens):
         t = tokens[i]
-        if (
-            t.lower() in ("pulse", "space")
-            and i + 1 < len(tokens)
-            and tokens[i + 1].isdigit()
-        ):
-            yield t.lower(), int(tokens[i + 1])
-            i += 2
-        elif t.isdigit():
-            yield next_kind, int(t)
+        if t.lower() in ("pulse", "space") and i + 1 < len(tokens):
+            n = _token_number(tokens[i + 1])
+            if n is not None:
+                yield t.lower(), n
+                i += 2
+                continue
+        n = _token_number(t)
+        if n is not None:
+            yield next_kind, n
             next_kind = "space" if next_kind == "pulse" else "pulse"
             i += 1
-        else:
-            i += 1
+            continue
+        i += 1
 
 
 def read_units_by_pause(
@@ -135,45 +143,61 @@ def lines_to_pairs(lines: List[str]) -> List[Tuple[int, int]]:
     return pairs
 
 
-def parse_unit(lines: List[str]) -> None:
-    """Parse one unit (list of lines between pauses); try as frame(s); print if valid."""
+def parse_unit(lines: List[str], description: str = "") -> None:
+    """Parse one unit; print description, decoded fields only, and opaque N of M bytes."""
     pairs = lines_to_pairs(lines)
-    if DEBUG_RECV:
-        sys.stderr.write(
-            "[daikin-recv] unit: %d lines -> %d pairs\n" % (len(lines), len(pairs))
-        )
-        sys.stderr.flush()
+    raw = decode_bits(pairs) if pairs else []
+    total = len(raw)
+    if description:
+        print("Description: %s" % description)
+
     if not pairs:
+        print("Decoded: (none — no pulse/space pairs)")
+        print("Opaque: 0 of 0 bytes")
         return
-    raw = decode_bits(pairs)
-    if DEBUG_RECV:
-        sys.stderr.write("[daikin-recv] decoded %d bytes\n" % len(raw))
-        sys.stderr.flush()
-    # One frame: 8 bytes (0xc5 or 0x42) or 19 bytes.
-    if len(raw) == 8 and checksum_ok(raw):
-        if raw[4] == 0xC5:
-            print("Daikin frame1:", " ".join(f"{b:02x}" for b in raw))
-        elif raw[4] == 0x42:
-            print("Daikin frame2:", " ".join(f"{b:02x}" for b in raw))
+    if not raw:
+        print("Decoded: (none — pairs did not decode to bytes)")
+        print("Opaque: 0 of 0 bytes")
         return
-    if len(raw) == 19 and checksum_ok(raw):
-        print("Daikin frame3:", " ".join(f"{b:02x}" for b in raw))
-        interpret_frames([0] * 5, [0] * 5, raw)  # minimal f1/f2 for interpret
-        return
-    # Three frames: 8+8+19
+
+    # Full 3-frame
     if (
-        len(raw) >= 35
+        total >= 35
         and checksum_ok(raw[:8])
         and checksum_ok(raw[8:16])
         and checksum_ok(raw[16:35])
+        and raw[4] == 0xC5
+        and raw[12] == 0x42
     ):
         f1, f2, f3 = raw[:8], raw[8:16], raw[16:35]
-        if f1[4] == 0xC5 and f2[4] == 0x42:
-            print("Daikin 3-frame:")
-            print("  F1:", " ".join(f"{b:02x}" for b in f1))
-            print("  F2:", " ".join(f"{b:02x}" for b in f2))
-            print("  F3:", " ".join(f"{b:02x}" for b in f3))
-            interpret_frames(f1, f2, f3)
+        decoded_lines, _ = decoded_fields_from_frames(f1, f2, f3)
+        for line in decoded_lines:
+            print("Decoded: %s" % line)
+        # We decode main fields; timers/time etc. still opaque
+        opaque = 13  # F3 bytes we don't yet interpret (timers, etc.)
+        print("Opaque: %d of %d bytes" % (opaque, total))
+        return
+
+    # Single frame
+    f1, f2, f3 = None, None, None
+    if total == 8 and checksum_ok(raw):
+        if raw[4] == 0xC5:
+            f1 = raw
+        elif raw[4] == 0x42:
+            f2 = raw
+    elif total == 19 and checksum_ok(raw):
+        f3 = raw
+
+    if f1 or f2 or f3:
+        decoded_lines, _ = decoded_fields_from_frames(f1, f2, f3)
+        for line in decoded_lines:
+            print("Decoded: %s" % line)
+        print("Opaque: 0 of %d bytes" % total)
+        return
+
+    # Partial or failure: we have bytes but no valid frame
+    print("Decoded: (none — len=%d, checksum or id mismatch)" % total)
+    print("Opaque: %d of %d bytes" % (total, total))
 
 
 def decode_bits(sequences: List[Tuple[int, int]]) -> List[int]:
@@ -206,38 +230,68 @@ def checksum_ok(frame: Sequence[int]) -> bool:
     return frame[-1] == expected
 
 
-def interpret_frames(f1: Sequence[int], f2: Sequence[int], f3: Sequence[int]) -> None:
-    """Print human-readable summary of the three Daikin frames."""
-    if len(f1) >= 5 and f1[4] == 0xC5:
+def decoded_fields_from_frames(
+    f1: Optional[Sequence[int]],
+    f2: Optional[Sequence[int]],
+    f3: Optional[Sequence[int]],
+) -> Tuple[List[str], int]:
+    """Build list of decoded field strings and count of bytes we do not yet interpret. Returns (decoded_lines, opaque_byte_count)."""
+    lines: List[str] = []
+    decoded_bytes = 0
+    if f1 is not None and len(f1) >= 8:
+        decoded_bytes += 8
         comfort = "comfort on" if len(f1) > 6 and (f1[6] & 0x10) else "comfort off"
-        print(f"  Frame1: 0xc5  {comfort}")
-    if len(f2) >= 5 and f2[4] == 0x42:
-        print("  Frame2: 0x42 (fixed)")
-    if len(f3) >= 19:
+        lines.append("F1: %s" % comfort)
+    if f2 is not None and len(f2) >= 8:
+        decoded_bytes += 8
+        lines.append("F2: (fixed)")
+    if f3 is not None and len(f3) >= 19:
+        decoded_bytes += 19
         b5 = f3[5]
         mode_nib = (b5 >> 4) & 0x0F
         power = "ON" if (b5 & 0x01) else "OFF"
         mode = {"0": "AUTO", "2": "DRY", "3": "COOL", "4": "HEAT", "6": "FAN"}.get(
-            str(mode_nib), f"0x{mode_nib:x}"
+            str(mode_nib), "0x%x" % mode_nib
         )
         temp_c = f3[6] // 2 if 10 <= f3[6] // 2 <= 30 else None
         fan_byte = f3[8]
         fan_nib = (fan_byte >> 4) & 0x0F
         swing = "swing" if (fan_byte & 0x0F) == 0x0F else "no swing"
         fan = (
-            f"fan{fan_nib}"
+            "fan%d" % fan_nib
             if 3 <= fan_nib <= 7
             else (
                 "Auto"
                 if fan_nib == 0xA
-                else "Silent" if fan_nib == 0xB else f"0x{fan_nib:x}"
+                else "Silent" if fan_nib == 0xB else "0x%x" % fan_nib
             )
         )
         powerful = (f3[0x0D] & 0x01) != 0 if len(f3) > 0x0D else False
         econo = (f3[0x10] & 0x0F) == 0x04 if len(f3) > 0x10 else False
-        print(
-            f"  Frame3: power={power} mode={mode} temp={temp_c}C fan={fan} {swing} powerful={powerful} econo={econo}"
+        parts = ["power=%s" % power, "mode=%s" % mode]
+        if temp_c is not None:
+            parts.append("temp=%dC" % temp_c)
+        parts.extend(
+            ["fan=%s" % fan, swing, "powerful=%s" % powerful, "econo=%s" % econo]
         )
+        lines.append("F3: " + " ".join(parts))
+    total = (8 if f1 else 0) + (8 if f2 else 0) + (19 if f3 else 0)
+    opaque = max(0, total - decoded_bytes)
+    return lines, opaque
+
+
+def interpret_frames(
+    f1: Optional[Sequence[int]],
+    f2: Optional[Sequence[int]],
+    f3: Optional[Sequence[int]],
+) -> None:
+    """Print human-readable frame summary (used by run_from_stdin)."""
+    decoded_lines, _ = decoded_fields_from_frames(f1, f2, f3)
+    for line in decoded_lines:
+        if line.startswith("F3: "):
+            print("  Frame3:" + line[3:])
+        else:
+            print("  ", line)
 
 
 def run_from_stdin() -> None:
@@ -313,8 +367,20 @@ def run_from_stdin() -> None:
     flush_current()
 
 
+def _consumer(
+    unit_iter: Iterator[List[str]], unit_queue: queue.Queue[List[str]]
+) -> None:
+    """Run in thread: push each unit from the split-by-pause generator into the queue."""
+    try:
+        for unit in unit_iter:
+            unit_queue.put(unit)
+    except Exception:
+        pass
+
+
 def run_subprocess() -> None:
-    """Spawn ir-ctl --receive; split input by pauses; parse each unit as frame(s)."""
+    """Thread consumes split-by-pause into a queue. After description, assert queue empty (drain and complain if not);
+    then block 10s for one unit; parse or complain timeout. Ctrl-C exits."""
     for cmd in (
         ["stdbuf", "-oL", "ir-ctl", "-d", LIRC_RX, "--receive"],
         ["ir-ctl", "-d", LIRC_RX, "--receive"],
@@ -332,25 +398,69 @@ def run_subprocess() -> None:
     else:
         raise FileNotFoundError("ir-ctl not found in PATH")
 
+    unit_queue: queue.Queue[List[str]] = queue.Queue()
+    unit_iter = read_units_by_pause(proc.stdout)
+    consumer = threading.Thread(
+        target=_consumer, args=(unit_iter, unit_queue), daemon=True
+    )
+    consumer.start()
+    last_desc: Optional[str] = None
     if DEBUG_RECV:
         sys.stderr.write(
-            "[daikin-recv] subprocess started (fd=%d). You should see 'no data for 1s' until you press remote.\n"
-            % proc.stdout.fileno()
+            "[daikin-recv] subprocess started; consumer thread feeding queue.\n"
         )
         sys.stderr.flush()
     try:
-        for unit in read_units_by_pause(proc.stdout):
-            if DEBUG_RECV:
+        while True:
+            try:
+                sys.stdout.write("Description (Enter=reuse, empty=exit): ")
+                sys.stdout.flush()
+                desc = sys.stdin.readline()
+                if desc is None:
+                    break
+                desc = desc.strip()
+                if not desc:
+                    if last_desc is None:
+                        break
+                    desc = last_desc
+                else:
+                    last_desc = desc
+            except KeyboardInterrupt:
+                break
+            # Assert queue empty after user pressed Enter (no data while typing).
+            unexpected: List[List[str]] = []
+            while True:
+                try:
+                    unexpected.append(unit_queue.get_nowait())
+                except queue.Empty:
+                    break
+            if unexpected:
                 sys.stderr.write(
-                    "[daikin-recv] yielded unit with %d lines\n" % len(unit)
+                    "[daikin-recv] unexpected data (received while typing?); clearing and summarizing:\n"
                 )
                 sys.stderr.flush()
-            parse_unit(unit)
+                for u in unexpected:
+                    parse_unit(u, "(unexpected)")
+            # Block up to RECV_TIMEOUT_SEC for one unit.
+            try:
+                unit = unit_queue.get(timeout=RECV_TIMEOUT_SEC)
+            except queue.Empty:
+                sys.stderr.write(
+                    "[daikin-recv] nothing received (timeout %.0fs); press remote after Enter.\n"
+                    % RECV_TIMEOUT_SEC
+                )
+                sys.stderr.flush()
+                continue
+            if DEBUG_RECV:
+                sys.stderr.write("[daikin-recv] unit (%d lines)\n" % len(unit))
+                sys.stderr.flush()
+            parse_unit(unit, desc)
     except KeyboardInterrupt:
-        if DEBUG_RECV:
-            sys.stderr.write("[daikin-recv] Ctrl-C\n")
-            sys.stderr.flush()
+        pass
     finally:
+        if DEBUG_RECV:
+            sys.stderr.write("[daikin-recv] exiting\n")
+            sys.stderr.flush()
         proc.terminate()
         try:
             proc.wait(timeout=2)
@@ -362,9 +472,6 @@ def run_subprocess() -> None:
                 proc.wait()
             except KeyboardInterrupt:
                 pass
-        if DEBUG_RECV:
-            sys.stderr.write("[daikin-recv] subprocess stopped\n")
-            sys.stderr.flush()
 
 
 if __name__ == "__main__":

@@ -88,13 +88,16 @@ def run_capture(out_path: str, lirc_rx: str) -> None:
     try:
         while True:
             try:
-                desc = input("Description (empty to exit): ").strip()
+                sys.stdout.write("Description (empty to exit): ")
+                sys.stdout.flush()
+                desc = input().strip()
             except (KeyboardInterrupt, EOFError):
                 break
             if not desc:
                 break
 
             print("Press remote now; press Enter when done.")
+            sys.stdout.flush()
             sys.stderr.write("[ir_capture] started ir-ctl --receive\n")
             sys.stderr.flush()
             proc = subprocess.Popen(
