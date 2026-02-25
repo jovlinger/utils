@@ -115,20 +115,17 @@ def listen_for_ir() -> State | None:
 
 
 def main() -> None:
-    state = State().set_power(False).set_mode(Mode.HEAT).set_temp(22).set_fan(Fan.AUTO)
+    state = State().set_power(False).set_mode(Mode.HEAT).set_temp(22.0).set_fan(Fan.AUTO)
     menu = "0 auto ` whisper 1-5 fan | h/c/f/d/a mode | Space power | ↑↓ temp | Enter send | ? listen / stop | q quit"
 
     first = True
     while True:
-        p = "ON" if state.power else "OFF"
-        m = state.mode.name
-        t = state.temp_c
-        fa = "Auto" if state.fan == Fan.AUTO else "Silent" if state.fan == Fan.SILENT else str(state.fan.value - 2)
+        line = "  " + state.summary()
         if first:
-            print("  %s  %s  %d°C  fan=%s\n  %s" % (p, m, t, fa, menu), end="", flush=True)
+            print("%s\n  %s" % (line, menu), end="", flush=True)
             first = False
         else:
-            print("\n  %s  %s  %d°C  fan=%s\n  %s" % (p, m, t, fa, menu), end="", flush=True)
+            print("\n%s\n  %s" % (line, menu), end="", flush=True)
 
         k = getkey()
         if k.lower() == "q":
@@ -151,10 +148,10 @@ def main() -> None:
             state.set_mode(MODE_KEY[k.lower()])
             continue
         if k == "UP":
-            state.set_temp(state.temp_c + 1)
+            state.half_c = min(64, state.half_c + 1)
             continue
         if k == "DOWN":
-            state.set_temp(state.temp_c - 1)
+            state.half_c = max(20, state.half_c - 1)
             continue
         if k == "?":
             s = listen_for_ir()

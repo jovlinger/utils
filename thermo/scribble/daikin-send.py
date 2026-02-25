@@ -63,10 +63,10 @@ def main() -> None:
     )
     ap.add_argument(
         "--temp",
-        type=int,
-        default=22,
+        type=float,
+        default=22.0,
         metavar="C",
-        help="Temperature 10-32 °C (default: 22)",
+        help="Temperature 10-32 °C, half-degree OK (default: 22)",
     )
     ap.add_argument(
         "--fan",

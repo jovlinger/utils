@@ -17,13 +17,13 @@ echo "DEBUG: TEST_DIR=$TEST_DIR"
 echo "DEBUG: SCRIBBLE=$SCRIBBLE"
 echo "DEBUG: which ir-ctl => $(which ir-ctl)"
 echo "DEBUG: running daikin-send.py --dry-run first..."
-_timeout 10 python3 daikin-send.py --power on --mode heat --temp 22 --dry-run || {
+_timeout 2 python3 daikin-send.py --power on --mode heat --temp 22 --dry-run || {
   echo "FAIL: --dry-run failed (exit $?), import or arg problem" >&2
   exit 1
 }
 echo "DEBUG: --dry-run OK, now running real send..."
 
-if ! _timeout 10 python3 daikin-send.py --power on --mode heat --temp 22 2>&1; then
+if ! _timeout 2 python3 daikin-send.py --power on --mode heat --temp 22 2>&1; then
   echo "FAIL: daikin-send.py timed out or failed (exit $?)" >&2
   echo "DEBUG: SEND_LOG exists=$(test -f "$SEND_LOG" && echo yes || echo no)" >&2
   exit 1

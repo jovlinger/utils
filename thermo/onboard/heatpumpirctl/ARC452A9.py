@@ -88,7 +88,7 @@ def dump(state: State) -> Tuple[List[int], List[int]]:
     if state.timer_on_minutes is not None:
         byte5 |= 0x04
 
-    temp_byte = max(10, min(32, state.temp_c)) * 2
+    temp_byte = max(20, min(64, state.half_c))
     fan_byte = (_FAN_TO_NIB.get(state.fan, 0xA) << 4) | (0x0F if state.swing else 0x00)
 
     timer_on_min = state.timer_on_minutes or 0
@@ -141,7 +141,7 @@ def load(f3: Sequence[int], f1: Optional[Sequence[int]] = None) -> State:
         s.mode = _NIB_TO_MODE.get(nib, Mode.AUTO)
 
     if n > 6:
-        s.temp_c = f3[6] // 2
+        s.half_c = f3[6]
 
     if n > 8:
         fan_nib = (f3[8] >> 4) & 0x0F
@@ -413,7 +413,7 @@ def round_trip_ok(state: State) -> bool:
     return (
         s2.power == state.power
         and s2.mode == state.mode
-        and s2.temp_c == state.temp_c
+        and s2.half_c == state.half_c
         and s2.fan == state.fan
         and s2.swing == state.swing
         and s2.powerful == state.powerful

@@ -48,11 +48,13 @@ class State:
     All setters return *self* so calls can be chained::
 
         s = State().set_power(True).set_mode(Mode.HEAT).set_temp(22)
+
+    half_c: temperature × 2 in °C. E.g. 49 half_c = 24.5°C, 44 = 22°C.
     """
 
     power: bool = False
     mode: Mode = Mode.AUTO
-    temp_c: int = 25
+    half_c: int = 50  # temp × 2; 50 = 25°C, 49 = 24.5°C
     fan: Fan = Fan.AUTO
     swing: bool = False
     powerful: bool = False
@@ -80,9 +82,15 @@ class State:
         self.mode = mode
         return self
 
-    def set_temp(self, temp_c: int) -> State:
-        self.temp_c = max(10, min(32, temp_c))
+    def set_temp(self, temp_c: int | float) -> State:
+        h = max(20, min(64, round(float(temp_c) * 2)))
+        self.half_c = h
         return self
+
+    @property
+    def temp_c(self) -> float:
+        """Temperature in °C (half_c / 2)."""
+        return self.half_c / 2
 
     def set_fan(self, fan: Fan) -> State:
         self.fan = fan
@@ -116,7 +124,7 @@ class State:
         parts = [
             "power=%s" % ("ON" if self.power else "OFF"),
             "mode=%s" % self.mode.name,
-            "temp=%dC" % self.temp_c,
+            "temp=%sC" % (self.temp_c if self.half_c % 2 else self.half_c // 2),
             "fan=%s" % _FAN_LABELS.get(self.fan, self.fan.name),
             "swing=%s" % ("on" if self.swing else "off"),
         ]
