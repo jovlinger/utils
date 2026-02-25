@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Low-level IR capture: preserve everything ir-ctl can report.
 
+No interpretation: this script does not decode, parse, or infer protocol.
+Logs are raw ir-ctl output only, so improved parsing (e.g. in daikin-recv
+or heatpumpirctl) can be applied to existing logs without re-capturing.
+
 Uses mode2 format (one event per line) so nothing is truncated. Optionally
 enables carrier measurement and wideband (learning) mode. Logs ir-ctl
 --features at the top of the capture file for hardware diagnostics.
