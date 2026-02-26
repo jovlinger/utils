@@ -8,10 +8,37 @@ This library will require system libraries like i2c to be installed,
 and hopefully described in onboard/README.md
 """
 
+import os
+import subprocess
+import sys
+import tempfile
+
 from common import is_test_env
+
+LIRC_TX = "/dev/lirc0"
+
+
+def send_daikin_state(state) -> bool:
+    """Send Daikin IR state via ir-ctl. Return True if sent, False on error."""
+    from heatpumpirctl import ARC452A9 as proto
+
+    try:
+        mode2 = proto.dumps(state)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(mode2)
+            path = f.name
+        try:
+            subprocess.run(["ir-ctl", "-d", LIRC_TX, "--send", path], check=True)
+            return True
+        finally:
+            os.unlink(path)
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError) as e:
+        print("Daikin send error: %s" % e, file=sys.stderr)
+        return False
 
 
 def get_smbus():
+    """Return SMBus(1) for I2C, or smbus_fake when ENV=TEST/DOCKERTEST."""
     if is_test_env():
         import smbus_fake
 
@@ -27,7 +54,8 @@ def get_smbus():
 ### <<< start theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py
 
 
-def unit_float(msb, lsb) -> float:
+def unit_float(msb: int, lsb: int) -> float:
+    """Convert MSB/LSB pair to unit [0,1) for HTU21D raw readings."""
     return (msb * 256.0 + lsb) / 65536.0
 
 
@@ -41,6 +69,7 @@ class HTU21D(object):
 
     @classmethod
     def singleton(cls) -> "HTU21D":
+        """Return singleton HTU21D instance."""
         if x := cls.instance:
             return x
         x = cls()
@@ -48,9 +77,11 @@ class HTU21D(object):
         return x
 
     def __init__(self):
+        """Initialize I2C bus for HTU21D at 0x40."""
         self.bus = get_smbus()
 
-    def reset(self):
+    def reset(self) -> None:
+        """Send soft reset to sensor."""
         self.bus.write_byte(self.HTU21D_ADDR, self.CMD_RESET)
 
     def temperature(self):
@@ -62,8 +93,8 @@ class HTU21D(object):
         val = -46.85 + 175.72 * unit_float(msb, lsb)
         return {"centigrade": val}
 
-    def temperature_centigrade(self):
-        # intentionally brittle so that we don't get None if we start returning farenheit
+    def temperature_centigrade(self) -> float:
+        """Return temperature in °C. Intentionally brittle on unit change."""
         return self.temperature()["centigrade"]
 
     def humidity(self):
@@ -75,7 +106,8 @@ class HTU21D(object):
         val = -6 + 125 * unit_float(msb, lsb)
         return {"percent": val}
 
-    def humidity_percent(self):
+    def humidity_percent(self) -> float:
+        """Return relative humidity in percent."""
         return self.humidity()["percent"]
 
 

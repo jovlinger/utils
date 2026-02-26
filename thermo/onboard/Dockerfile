@@ -3,7 +3,8 @@
 # > docker build -q -t jovlinger/thermo/onboard .  # add -q for use in emacs, too chatty otherwise
 # > docker run --rm -it jovlinger/thermo/onboard sh test.sh # test it
 
-FROM python:3.11.6-slim
+# Pi Zero 2 W: arm64 only (armhf/armv7 not supported)
+FROM --platform=linux/arm64 python:3.11-slim
 
 WORKDIR /app
 # copy everything, including this file... why not?

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class Mode(Enum):
@@ -119,6 +119,60 @@ class State:
     def set_timer_off(self, minutes: Optional[int]) -> State:
         self.timer_off_minutes = minutes
         return self
+
+    def to_json(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict. Use from_json to reconstruct."""
+        d: Dict[str, Any] = {
+            "power": self.power,
+            "mode": self.mode.name,
+            "half_c": self.half_c,
+            "fan": self.fan.name,
+            "swing": self.swing,
+            "powerful": self.powerful,
+            "econo": self.econo,
+            "comfort": self.comfort,
+        }
+        if self.timer_on_minutes is not None:
+            d["timer_on_minutes"] = self.timer_on_minutes
+        if self.timer_off_minutes is not None:
+            d["timer_off_minutes"] = self.timer_off_minutes
+        return d
+
+    @classmethod
+    def from_json(cls, obj: Dict[str, Any]) -> State:
+        """Build State from a dict (e.g. from json.loads). Accepts temp_c or half_c."""
+        s = cls()
+        if obj.get("power") is not None:
+            s.power = bool(obj["power"])
+        if "mode" in obj and obj["mode"] is not None:
+            s.mode = Mode[obj["mode"].upper()]
+        if "temp_c" in obj and obj["temp_c"] is not None:
+            s.set_temp(float(obj["temp_c"]))
+        elif "half_c" in obj and obj["half_c"] is not None:
+            s.half_c = max(20, min(64, int(obj["half_c"])))
+        if "fan" in obj and obj["fan"] is not None:
+            s.fan = Fan[obj["fan"].upper()]
+        if obj.get("swing") is not None:
+            s.swing = bool(obj["swing"])
+        if obj.get("powerful") is not None:
+            s.powerful = bool(obj["powerful"])
+        if obj.get("econo") is not None:
+            s.econo = bool(obj["econo"])
+        if obj.get("comfort") is not None:
+            s.comfort = bool(obj["comfort"])
+        if "timer_on_minutes" in obj:
+            s.timer_on_minutes = (
+                int(obj["timer_on_minutes"])
+                if obj["timer_on_minutes"] is not None
+                else None
+            )
+        if "timer_off_minutes" in obj:
+            s.timer_off_minutes = (
+                int(obj["timer_off_minutes"])
+                if obj["timer_off_minutes"] is not None
+                else None
+            )
+        return s
 
     def summary(self) -> str:
         parts = [

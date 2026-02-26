@@ -1,6 +1,19 @@
 # this probably wants its own docker container
 
-print("twoway  line 2")
+import os
+import sys
+import time
+import requests
+
+# Same logging as app (configured in common)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import log
+
+
+def out(msg: str, force: bool = False, **kwargs) -> None:
+    """Log via common.log (same format as app)."""
+    log("twoway", msg, **kwargs)
+
 
 usage = """
 <name> [-d] URL1 URL2 URL3
@@ -22,35 +35,9 @@ A small standalone binary that:
 There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
 
 > make dockertest
-> docker cp test-onboard-1:/app/twoway.out -  
 """
 
-import os
-import sys
-import time
-import requests
-
-NOISY=True
-
-def _outfile(msg, force=False):
-    if not (NOISY or force):
-        return
-    # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
-    with open("twoway.out", "a") as f:
-        f.write("twoway: ")
-        f.write(msg)
-        f.write("\n")
-        f.flush()
-
-def _outstderr(msg, force=False):
-    if not (NOISY or force):
-        return
-    # For reasons unknown, stdout doesn't get propagated to docker logs / stdoutx
-    print("twoway: "+msg, file=sys.stderr)
-
-out = _outstderr
-
-out(f"Nothing to see here, yet... {sys.argv}")
+out("start", argv=sys.argv)
 
 assert len(sys.argv) == 4
 
@@ -60,12 +47,10 @@ readfrom = sys.argv[1]
 dmz = sys.argv[2]
 writeto = sys.argv[3]
 
-def post_json(url, body) -> str:
-    headers={
-        'Content-type':'application/json', 
-        'Accept':'application/json'
-    }
-    r = requests.post(url, json={'commands':{}, 'sensors': {}}, headers=headers)
+
+def post_json(url: str, body: dict) -> str:
+    headers = {"Content-type": "application/json", "Accept": "application/json"}
+    r = requests.post(url, json={"commands": {}, "sensors": {}}, headers=headers)
     assert r.status_code == 200, f"POST {url} -[{r.status_code}]-> {r.text}"
     return r.text
 
@@ -73,15 +58,16 @@ def post_json(url, body) -> str:
 def poll_once() -> bool:
     try:
         res1 = requests.get(readfrom)
-        out(f"r1 {readfrom} -> {res1}")
-        res2 = post_json(dmz, res1)
-        out(f"r2 {dmz} -> {res2}")
-        res3 = post_json(writeto, res2)
-        out(f"r3 {writeto} -> {res3}")
+        out("r1 get", url=readfrom, status=res1.status_code)
+        res2 = post_json(dmz, res1.json() if res1.ok else {})
+        out("r2 post dmz", url=dmz)
+        res3 = post_json(writeto, res2 if isinstance(res2, dict) else {})
+        out("r3 post writeto", url=writeto)
     except Exception as e:
-        out(f"failed to connect: {e}")
+        out("failed", error=str(e))
         return False
     return True
+
 
 MAXFAIL = 100
 PERIOD_SECS = 5
@@ -93,7 +79,7 @@ def poll_forever():
     slp = PERIOD_SECS
     while attempts > 0:
         out(f"sleep: {slp}, attempts left {attempts}")
-        time.sleep(slp) 
+        time.sleep(slp)
         ok = poll_once()
         if ok:
             attempts = MAXFAIL

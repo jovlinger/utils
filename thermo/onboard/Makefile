@@ -9,4 +9,4 @@ clean:
 	# fi
 
 test:
-	./test.sh
+	./test/run.sh
