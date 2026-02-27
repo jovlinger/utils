@@ -156,17 +156,13 @@ def test_reset():
     """
     assertAuthAzZone(request)
     # assert running in container
-    updates = request.json
-    print(f"updates {updates}")
-    if cmds := updates.get("commands"):
+    updates = request.json or {}
+    if "commands" in updates:
         commands.clear()
-        commands.update(cmds)
-        print(f"commands {cmds}")
-    if snrs := updates.get("sensors"):
+        commands.update(updates.get("commands", {}))
+    if "sensors" in updates:
         sensors.clear()
-        sensors.update(snrs)
-        print(f"sensors {snrs}")
-    print(f"Updated to\nsensors {sensors}\ncommands {commands}")
+        sensors.update(updates.get("sensors", {}))
     return '"ok"'
 
 

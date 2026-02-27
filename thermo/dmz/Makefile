@@ -1,12 +1,13 @@
-.image: *py *sh  requirements.txt
+.PHONY: all clean test
+
+all: .image
+
+.image: Dockerfile requirements.txt $(wildcard *.py) $(wildcard *.sh)
 	docker build -q -t jovlinger/thermo/dmz . > .image
 
 clean:
-	# if .image; then
-	SHA=$(cat .image)
-	docker image rm "${SHA}"
-	rm .image
-	# fi
+	@[ -f .image ] && docker image rm $$(cat .image) 2>/dev/null || true
+	@rm -f .image
 
-test: 
-	./test.sh
+test: .image
+	./test/run.sh
