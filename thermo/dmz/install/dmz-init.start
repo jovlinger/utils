@@ -1,0 +1,48 @@
+#!/bin/sh
+# OpenRC boot script for DMZ on Pi 1B (Alpine diskless).
+# Install to /etc/local.d/dmz-init.start on the Pi, then: lbu add /etc/local.d/dmz-init.start && lbu commit -d
+#
+# Prerequisites: apk add bubblewrap haveged chrony iptables (or ntpdate, rng-tools)
+#
+# SD_MOUNT: adjust if your SD partition differs (e.g. /media/mmcblk0p1, /media/sda1)
+# See plan.md.
+
+set -e
+
+SD_MOUNT="${SD_MOUNT:-/media/mmcblk0p1}"
+ROOTFS_TAR="dmz_rootfs.tar"
+ROOTFS_DIR="/tmp/dmz_rootfs"
+
+# 1. Entropy (TLS/keygen can block without it)
+if command -v haveged >/dev/null 2>&1; then
+    haveged -w 1024 -F &
+fi
+
+# 2. Clock sync (no RTC; TLS certs need valid time)
+if command -v chronyd >/dev/null 2>&1; then
+    chronyd -q -f /etc/chrony/chrony.conf 2>/dev/null || true
+elif command -v ntpdate >/dev/null 2>&1; then
+    ntpdate -q pool.ntp.org 2>/dev/null || true
+fi
+
+# 3. iptables redirect 80 -> 8080
+modprobe iptable_nat 2>/dev/null || true
+iptables -t nat -F 2>/dev/null || true
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+
+# 4. Unprivileged user
+if ! getent passwd dmzuser >/dev/null 2>&1; then
+    adduser -D -s /bin/sh dmzuser
+fi
+
+# 5. Extract rootfs to tmpfs
+mkdir -p "$ROOTFS_DIR"
+tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR"
+
+# 6. Launch sandboxed app (background)
+su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" &
+
+# 7. Unmount SD (runtime has no access; ensure we are not cwd on SD)
+sleep 2
+cd /
+umount "$SD_MOUNT" 2>/dev/null || true

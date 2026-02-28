@@ -12,7 +12,7 @@
 # For Pi 1B (ARMv6), build the image first with:
 #   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .
 #
-# See PISEC.md and README-dmz.md. To run the rootfs without Docker, use run_raw.sh.
+# See plan.md and README.md. To run the rootfs without Docker, use run_raw.sh.
 
 set -e
 

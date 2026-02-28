@@ -15,7 +15,7 @@
 # The app listens on port 8080. Use iptables to redirect 80->8080:
 #   iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
 #
-# See PISEC.md, README-dmz.md. Rootfs is produced by export_rootfs.sh.
+# See plan.md, README.md. Rootfs is produced by export_rootfs.sh.
 
 set -e
 
@@ -50,7 +50,7 @@ if ! command -v bwrap >/dev/null 2>&1; then
 fi
 
 # Sandbox: read-only rootfs, tmpfs for /tmp, proc, dev, share net, unshare rest.
-# App listens on 8080 (unprivileged); iptables redirects 80->8080 on host.
+# tini as PID 1 reaps zombies. App listens on 8080; iptables redirects 80->8080 on host.
 if [ -n "$DEBUG" ]; then
     exec bwrap --ro-bind "$ROOTFS" / --tmpfs /tmp --proc /proc --dev /dev \
         --unshare-all --share-net --hostname dmz-isolation --setenv PORT 8080 \
@@ -58,5 +58,5 @@ if [ -n "$DEBUG" ]; then
 else
     exec bwrap --ro-bind "$ROOTFS" / --tmpfs /tmp --proc /proc --dev /dev \
         --unshare-all --share-net --hostname dmz-isolation --setenv PORT 8080 \
-        --chdir /app -- /bin/sh ./run.sh
+        --chdir /app -- /sbin/tini -- sh ./run.sh
 fi
