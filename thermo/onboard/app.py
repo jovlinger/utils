@@ -50,16 +50,37 @@ _fake_temp: Optional[float] = None
 _fake_humid: Optional[float] = None
 
 
+def _round1(x: Optional[float]) -> Optional[float]:
+    return round(x, 1) if x is not None else None
+
+
 @app.route("/environment", methods=["GET"])
 def environment():
-    """Return current temperature and humidity from HTU21D sensor."""
+    """Return current temperature and humidity from HTU21D sensor (1 decimal)."""
     global _fake_temp, _fake_humid
+    ts = datetime.now()
     if _fake_temp is not None and _fake_humid is not None:
-        return {"temperature_centigrade": _fake_temp, "humidity_percent": _fake_humid}
-    htu = HTU21D.singleton()
-    temp = htu.temperature_centigrade()
-    hum = htu.humidity_percent()
-    return {"temperature_centigrade": temp, "humidity_percent": hum}
+        return {
+            "temperature_centigrade": _round1(_fake_temp),
+            "humidity_percent": _round1(_fake_humid),
+            "time": ts.isoformat(),
+        }
+    try:
+        htu = HTU21D.singleton()
+        temp = htu.temperature_centigrade()
+        hum = htu.humidity_percent()
+        return {
+            "temperature_centigrade": _round1(temp),
+            "humidity_percent": _round1(hum),
+            "time": ts.isoformat(),
+        }
+    except Exception as e:
+        out("environment", error=str(e))
+        return {
+            "temperature_centigrade": None,
+            "humidity_percent": None,
+            "time": ts.isoformat(),
+        }
 
 
 @app.route("/test/inject_readings", methods=["POST"])
@@ -85,6 +106,20 @@ def get_daikin():
         {"time": ts.isoformat(), "command": s.to_json()}
         for ts, s, _ in reversed(list(daikin_cmds))
     ]
+
+
+@app.route("/logs", methods=["GET"])
+def logs():
+    """Return last N lines from LOG_PATH (rolling buffer). JSON {lines} or 404 if no log file."""
+    path = os.environ.get("LOG_PATH")
+    if not path or not os.path.isfile(path):
+        return {"lines": [], "path": path}, 200
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+        return {"lines": [ln.rstrip("\n") for ln in lines[-200:]]}
+    except OSError:
+        return {"lines": []}, 200
 
 
 @app.route("/daikin", methods=["PUT", "POST"])

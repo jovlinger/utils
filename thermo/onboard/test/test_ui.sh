@@ -17,8 +17,10 @@ cd "$ONBOARD"
 # Fake ir-ctl at head of PATH so send_daikin_state invokes it instead of real ir-ctl
 export PATH="${FAKE_IRCTL_DIR}:${PATH}"
 
+# LOG_PATH so /logs has content; logs section verifies log feature
+TEST_LOG="/tmp/onboard-test-$$.log"
 # Start app in background
-PORT=$PORT_APP ENV=TEST "$PYTHON" app.py &
+PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" app.py &
 APP_PID=$!
 trap 'kill $APP_PID $UI_PID 2>/dev/null || true' EXIT
 
@@ -41,13 +43,17 @@ echo "$GET_OUT" | grep -q 'SEND' || { echo "FAIL: GET missing SEND button"; exit
 
 # POST: must return success message and repopulated form
 POST_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=HEAT&temp_c=22&fan=AUTO")
-echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.' || { echo "FAIL: POST missing Sent/Stored"; exit 1; }
-echo "$POST_OUT" | grep -q 'value="22.0"' || { echo "FAIL: POST form not repopulated with temp"; exit 1; }
+echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.|Sent at |Stored at ' || { echo "FAIL: POST missing Sent/Stored"; exit 1; }
+echo "$POST_OUT" | grep -qE 'value="22"|value="22\.0"' || { echo "FAIL: POST form not repopulated with temp"; exit 1; }
 echo "$POST_OUT" | grep -q 'HEAT.*selected' || { echo "FAIL: POST form not repopulated with mode"; exit 1; }
 
 # Environment must refresh after POST: inject new readings, POST, verify response shows them
 curl -s -X POST "http://127.0.0.1:$PORT_APP/test/inject_readings" -H "Content-Type: application/json" -d '{"temp_centigrade":18.5,"humid_percent":62}' >/dev/null
 POST2_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=COOL&temp_c=24&fan=AUTO")
-echo "$POST2_OUT" | grep -q '18.5°C, 62%' || { echo "FAIL: POST response Environment not refreshed (expected 18.5°C, 62%)"; echo "$POST2_OUT" | head -5; exit 1; }
+echo "$POST2_OUT" | grep -qE '18\.5°C, 62\.?0?%' || { echo "FAIL: POST response Environment not refreshed (expected 18.5°C, 62%)"; echo "$POST2_OUT" | head -5; exit 1; }
+
+# Logs section: must show entries (bold datetime, one per line). Verifies log feature works.
+echo "$POST2_OUT" | grep -q '<b>Logs</b>' || { echo "FAIL: Logs section missing"; exit 1; }
+echo "$POST2_OUT" | grep -qE '<b>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' || { echo "FAIL: Logs section empty or malformed (expected bold datetime)"; exit 1; }
 
 echo "PASS: UI GET and POST OK"

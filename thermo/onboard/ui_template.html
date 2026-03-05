@@ -2,21 +2,25 @@
 <html>
 <head><meta charset="utf-8"><title>Thermo</title></head>
 <body>
+<p>banana</p>
 <h1>Thermo</h1>
 <p><b>Environment:</b> $env</p>
 <p>$msg</p>
 <form method="post" action="/">
   <label>Power <input type="checkbox" name="power" $power_checked></label><br>
   <label>Mode <select name="mode">$mode_options</select></label><br>
-  <label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="4"></label><br>
+  <label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="5" inputmode="decimal" pattern="[0-9.]*" title="18–32°C" autocomplete="off"></label><br>
   <label>Fan <select name="fan">$fan_options</select></label><br>
   <label>Swing <input type="checkbox" name="swing" $swing_checked></label>
   <label>Powerful <input type="checkbox" name="powerful" $powerful_checked></label>
   <label>Econo <input type="checkbox" name="econo" $econo_checked></label>
   <label>Comfort <input type="checkbox" name="comfort" $comfort_checked></label><br>
-  <label>Timer on <input type="text" name="timer_on_minutes" value="$timer_on" size="4"></label>
-  <label>Timer off <input type="text" name="timer_off_minutes" value="$timer_off" size="4"></label><br>
+  <label>Turn on at <input type="checkbox" name="timer_on_enable" $timer_on_checked> <input type="text" name="timer_on_minutes" value="$timer_on" size="5" placeholder="06:30" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)" $timer_on_disabled></label>
+  <label>Turn off at <input type="checkbox" name="timer_off_enable" $timer_off_checked> <input type="text" name="timer_off_minutes" value="$timer_off" size="5" placeholder="20:00" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)" $timer_off_disabled></label><br>
   <input type="submit" value="SEND">
 </form>
+<hr>
+<p><b>Logs</b></p>
+<p>$logs</p>
 </body>
 </html>

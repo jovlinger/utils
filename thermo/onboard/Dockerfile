@@ -8,8 +8,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 # Build deps for cryptography/cffi on armhf (no pre-built wheels)
+# v4l-utils provides ir-ctl for LIRC IR transmit
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev libssl-dev python3-dev \
+    gcc libffi-dev libssl-dev python3-dev v4l-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # copy everything, including this file... why not?

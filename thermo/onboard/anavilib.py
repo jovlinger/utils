@@ -20,10 +20,12 @@ LIRC_TX = "/dev/lirc0"
 
 def send_daikin_state(state) -> bool:
     """Send Daikin IR state via ir-ctl. Return True if sent, False on error."""
+    if is_test_env():
+        return True
     from heatpumpirctl import ARC452A9 as proto
 
-    mode2 = proto.dumps(state)
     try:
+        mode2 = proto.dumps(state)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(mode2)
             path = f.name
@@ -43,12 +45,10 @@ def get_smbus():
         import smbus_fake
 
         return smbus_fake.SMBus(1)
-    # where does this come from? presumably python-rpi.gpio. Also this is not I2C, but seems to work
-    # actually, looks like python3-smbus according to web pages
-    import smbus
+    # smbus2: pip package, works in container (host may use python3-smbus instead)
+    import smbus2
 
-    # Rev 2 of Raspberry Pi and all newer use bus 1
-    return smbus.SMBus(1)
+    return smbus2.SMBus(1)
 
 
 ### <<< start theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py

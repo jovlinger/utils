@@ -144,15 +144,6 @@ OpenRC script (`/etc/local.d/dmz-init.start`) does:
 - Entropy and clock sync in dmz-init (Phase 3)
 - Optional: remote syslog (`-R <logserver>:514`)
 
-### Phase 8: Machine Auth (twoway → DMZ)
-
-- **Ed25519 request signing**: Twoway signs each POST to `/zone/<name>/sensors` with its private key; DMZ verifies with public key.
-- **Payload**: `method + path + timestamp + body_hash` (SHA256 of raw body).
-- **Headers**: `X-Zone-Signature`, `X-Zone-Timestamp`, `X-Zone-Name`.
-- **Replay protection**: Timestamp must be within ±5 min.
-- **Keys**: `ZONE_PRIVATE_KEY` / `ZONE_PRIVATE_KEY_PATH` in twoway; `ZONE_PUBLIC_KEY` / `ZONE_PUBLIC_KEY_PATH` in DMZ.
-- **Optional**: When keys not set, zone endpoints accept unsigned requests (backwards compat).
-
 ---
 
 ## Mitigations
