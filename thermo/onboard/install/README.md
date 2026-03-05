@@ -4,7 +4,7 @@ Auto-start the thermo onboard container on Raspberry Pi Zero 2 W. Uses GHCR for 
 
 ## Prerequisites
 
-- Raspberry Pi Zero 2 W (arm64)
+- Raspberry Pi Zero 2 W (arm64 or armhf/32-bit)
 - Docker installed (or let the script install it)
 - I2C enabled: `sudo raspi-config` → Interfacing Options → I2C
 - LIRC for IR: `/dev/lirc0` (TX) must exist (ANAVI IR pHAT)
@@ -29,8 +29,8 @@ Your GHCR login is in `~/.docker/config.json` with `"credsStore": "desktop"` —
 **On the Pi** (if the image is private):
 
 1. Create a GitHub PAT with `read:packages` scope
-2. `echo $PAT | docker login ghcr.io -u jovlinger --password-stdin`
-3. Or store in `~/.config/thermo/ghcr-token` and source before run
+2. Add to `~/.local.sh`: `export CR_PAT=ghp_...` (script sources this before pull)
+3. Or: `echo $PAT | docker login ghcr.io -u jovlinger --password-stdin` before run
 
 **Public images**: Make the package public at https://github.com/users/jovlinger/packages — then no login needed on the Pi.
 
@@ -54,3 +54,5 @@ sudo systemctl start onboard
 - **Local build & push**: from `thermo/onboard/` run `make build` and `make push` (requires `CR_PAT`)
 
 Override image: `ONBOARD_IMAGE=ghcr.io/jovlinger/thermo-onboard:mytag ./run-onboard.sh`
+
+**Platform**: On armhf (32-bit Pi OS), the script pulls `--platform linux/arm/v7` automatically.

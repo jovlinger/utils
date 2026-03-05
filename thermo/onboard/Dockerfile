@@ -7,8 +7,13 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+# Build deps for cryptography/cffi on armhf (no pre-built wheels)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libffi-dev libssl-dev python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # copy everything, including this file... why not?
-COPY . . 
+COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 

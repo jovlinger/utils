@@ -1,6 +1,6 @@
 # Build and push thermo/onboard to GHCR (ghcr.io/jovlinger/thermo-onboard)
 # Pi Zero 2 W: arm64 or armhf (32-bit OS). Always builds for Pi regardless of host. Requires CR_PAT for push.
-.PHONY: all build push clean test
+.PHONY: all build push clean test ci
 
 IMAGE := ghcr.io/jovlinger/thermo-onboard
 TAG ?= latest
@@ -26,3 +26,7 @@ clean:
 
 test: build
 	./test/run.sh
+
+# Trigger GitHub Actions workflow (builds arm64 + armhf, pushes to GHCR).
+ci:
+	gh workflow run thermo-onboard.yml

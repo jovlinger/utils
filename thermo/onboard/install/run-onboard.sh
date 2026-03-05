@@ -2,6 +2,10 @@
 # Run the onboard container on Pi Zero 2 W.
 # Pulls from GHCR if image missing; uses host network so onboard is reachable at Pi IP:5000.
 #
+# Install and run:
+#   scp -r thermo/onboard/install pi@pizero.local:~/
+#   ssh pi@pizero.local 'cd ~/install && chmod +x run-onboard.sh && ./run-onboard.sh --pull'
+#
 # Prerequisites: I2C enabled (raspi-config), LIRC for /dev/lirc0 (ANAVI IR pHAT)
 #
 # Usage:
@@ -42,12 +46,24 @@ fi
 DOCKER="docker"
 docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 
+# Source local env (e.g. CR_PAT for GHCR) before pull
+[ -f ~/.local.sh ] && . ~/.local.sh
+
+# Login to GHCR if CR_PAT set (for private images)
+if [ -n "${CR_PAT:-}" ]; then
+    echo "$CR_PAT" | $DOCKER login ghcr.io -u jovlinger --password-stdin 2>/dev/null || true
+fi
+
+# On armhf (32-bit Pi OS), pull arm/v7 explicitly; otherwise may get wrong arch
+PLATFORM=""
+case "$(uname -m)" in armv7l|armv6l) PLATFORM="--platform linux/arm/v7";; esac
+
 PULL="$ARG1"
 if [ "$PULL" = "--prep" ]; then PULL=""; fi
 
 if [ "$PULL" = "--pull" ] || ! $DOCKER image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "Pulling $IMAGE..."
-    $DOCKER pull "$IMAGE"
+    $DOCKER pull $PLATFORM "$IMAGE"
 fi
 
 # Remove existing container so we can recreate (e.g. after image update)
