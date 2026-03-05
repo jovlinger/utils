@@ -12,14 +12,12 @@ Auto-start the thermo onboard container on Raspberry Pi Zero 2 W. Uses GHCR for 
 ## Quick Start
 
 ```bash
-# Copy install scripts to the Pi
+# Option A: Copy install scripts to the Pi
 scp -r thermo/onboard/install pi@pizero.local:~/
+ssh pi@pizero.local 'cd ~/install && chmod +x run-onboard.sh && ./run-onboard.sh --pull'
 
-# On the Pi (installs Docker if missing, then pull & run)
-cd install
-chmod +x run-onboard.sh
-./run-onboard.sh
-# Or explicitly: ./run-onboard.sh --prep
+# Option B: Use repo on Pi (git pull first; if install was copied via scp, remove conflicts)
+ssh pi@pizero.local 'cd ~/github.com/jovlinger/utils && git clean -fd thermo/onboard/install/ 2>/dev/null; git pull && cd thermo/onboard/install && ./run-onboard.sh --pull'
 ```
 
 ## GHCR Token (for private images)
