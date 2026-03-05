@@ -45,4 +45,9 @@ echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.' || { echo "FAIL: POST missing Sent
 echo "$POST_OUT" | grep -q 'value="22.0"' || { echo "FAIL: POST form not repopulated with temp"; exit 1; }
 echo "$POST_OUT" | grep -q 'HEAT.*selected' || { echo "FAIL: POST form not repopulated with mode"; exit 1; }
 
+# Environment must refresh after POST: inject new readings, POST, verify response shows them
+curl -s -X POST "http://127.0.0.1:$PORT_APP/test/inject_readings" -H "Content-Type: application/json" -d '{"temp_centigrade":18.5,"humid_percent":62}' >/dev/null
+POST2_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=COOL&temp_c=24&fan=AUTO")
+echo "$POST2_OUT" | grep -q '18.5°C, 62%' || { echo "FAIL: POST response Environment not refreshed (expected 18.5°C, 62%)"; echo "$POST2_OUT" | head -5; exit 1; }
+
 echo "PASS: UI GET and POST OK"
