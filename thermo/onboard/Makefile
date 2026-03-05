@@ -28,5 +28,12 @@ test: build
 	./test/run.sh
 
 # Trigger GitHub Actions workflow (builds arm64 + armhf, pushes to GHCR).
+# Uses push to thermo/onboard/ (workflow_dispatch needs admin). Requires push access, run from main/master.
 ci:
-	gh workflow run thermo-onboard.yml
+	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	test "$$BRANCH" = main || test "$$BRANCH" = master || { echo "Run from main or master"; exit 1; }; \
+	echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ci-trigger && \
+	git add .ci-trigger && \
+	git commit -m "ci: trigger thermo-onboard build" && \
+	git push origin $$BRANCH
+	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
