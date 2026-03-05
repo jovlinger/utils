@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class Mode(Enum):
@@ -82,7 +82,7 @@ class State:
         self.mode = mode
         return self
 
-    def set_temp(self, temp_c: int | float) -> State:
+    def set_temp(self, temp_c: Union[int, float]) -> State:
         h = max(20, min(64, round(float(temp_c) * 2)))
         self.half_c = h
         return self

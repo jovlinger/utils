@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Thermo</title></head>
+<body>
+<h1>Thermo</h1>
+<p><b>Environment:</b> $env</p>
+<p>$msg</p>
+<form method="post" action="/">
+  <label>Power <input type="checkbox" name="power" $power_checked></label><br>
+  <label>Mode <select name="mode">$mode_options</select></label><br>
+  <label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="4"></label><br>
+  <label>Fan <select name="fan">$fan_options</select></label><br>
+  <label>Swing <input type="checkbox" name="swing" $swing_checked></label>
+  <label>Powerful <input type="checkbox" name="powerful" $powerful_checked></label>
+  <label>Econo <input type="checkbox" name="econo" $econo_checked></label>
+  <label>Comfort <input type="checkbox" name="comfort" $comfort_checked></label><br>
+  <label>Timer on <input type="text" name="timer_on_minutes" value="$timer_on" size="4"></label>
+  <label>Timer off <input type="text" name="timer_off_minutes" value="$timer_off" size="4"></label><br>
+  <input type="submit" value="SEND">
+</form>
+</body>
+</html>

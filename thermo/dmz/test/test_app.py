@@ -241,3 +241,67 @@ class HappyPathExternalClientTest(TestCase):
             ).get_json()
             self.assertEqual(r["command"]["lolidk"], "heat_20")
             self.assertEqual(r["sensors"]["temp_centigrade"], 19.5)
+
+
+class DebugLogsTest(TestCase):
+    """Access log circular buffer and GET /debug/logs."""
+
+    def setUp(self) -> None:
+        self.ctx = app.app_context()
+        self.ctx.push()
+
+    def tearDown(self) -> None:
+        self.ctx.pop()
+
+    def test_debug_logs_returns_access_entries(self) -> None:
+        """Each request is logged; GET /debug/logs returns them."""
+        with app.test_client() as c:
+            c.post("/test_reset", json={"commands": {}, "sensors": {}})
+            c.post("/zone/z1/sensors", json={"temp_centigrade": 20.0})
+            c.get("/zones")
+            r = c.get("/debug/logs").get_json()
+        logs = r["logs"]
+        self.assertGreaterEqual(len(logs), 3)
+        methods = {e["method"] for e in logs}
+        self.assertIn("POST", methods)
+        self.assertIn("GET", methods)
+        paths = [e["path"] for e in logs]
+        self.assertIn("/zone/z1/sensors", paths)
+        self.assertIn("/zones", paths)
+        # Second GET /debug/logs so first one is logged and appears in response
+        r2 = c.get("/debug/logs").get_json()
+        paths2 = [e["path"] for e in r2["logs"]]
+        self.assertIn("/debug/logs", paths2)
+        for e in logs:
+            self.assertIn("status", e)
+            self.assertIn("ts", e)
+
+
+class MachineAuthTest(TestCase):
+    """Ed25519 machine auth: unsigned requests rejected when ZONE_PUBLIC_KEY set."""
+
+    def setUp(self) -> None:
+        self.ctx = app.app_context()
+        self.ctx.push()
+        self._orig = os.environ.get("ZONE_PUBLIC_KEY")
+
+    def tearDown(self) -> None:
+        if self._orig is not None:
+            os.environ["ZONE_PUBLIC_KEY"] = self._orig
+        elif "ZONE_PUBLIC_KEY" in os.environ:
+            del os.environ["ZONE_PUBLIC_KEY"]
+        self.ctx.pop()
+
+    def test_unsigned_request_rejected_when_auth_required(self) -> None:
+        """When ZONE_PUBLIC_KEY is set, POST without signature returns 401."""
+        from zone_auth import generate_keypair
+
+        _, pub_pem = generate_keypair()
+        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+        with app.test_client() as c:
+            r = c.post(
+                "/zone/z1/sensors",
+                json={"temp_centigrade": 20.0},
+                content_type="application/json",
+            )
+            self.assertEqual(r.status_code, 401)

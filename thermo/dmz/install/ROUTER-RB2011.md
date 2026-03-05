@@ -23,6 +23,17 @@ RouterOS v6.49.19. This config exposes the Pi 1B to the internet on port 80 whil
 
 ## Interface Setup
 
+**WebFig**: IP → Addresses; Interfaces → Bridge; Interfaces → Bridge → Ports
+
+**Check current config:**
+```routeros
+/ip address print
+/interface bridge print
+/interface bridge port print
+```
+
+**Expected**: WAN (ether1) has an address or DHCP client; LAN bridge exists with ports; bridge has 192.168.88.1 or similar. **Bad sign**: ether1 has no IP (no internet); bridge-lan missing or empty; wrong subnet on LAN.
+
 Adjust interface names if your layout differs. Typical RB2011: ether1 = WAN, ether2–5 = switch/ports.
 
 ```routeros
@@ -48,6 +59,17 @@ add address=192.168.77.1/24 interface=ether5 comment="DMZ"
 
 ## DHCP on LAN (unchanged)
 
+**WebFig**: IP → DHCP Server; IP → DHCP Server → Networks; IP → Pool
+
+**Check current config:**
+```routeros
+/ip pool print
+/ip dhcp-server print
+/ip dhcp-server network print
+```
+
+**Expected**: A pool (e.g. `dhcp-lan` or `default`) with a range; a DHCP server bound to your LAN interface/bridge; a network entry with gateway matching your LAN IP. **Bad sign**: No DHCP server, or server bound to wrong interface (e.g. ether1/WAN).
+
 ```routeros
 /ip pool
 add name=dhcp-lan ranges=192.168.88.10-192.168.88.254
@@ -59,11 +81,16 @@ add address=192.168.88.0/24 gateway=192.168.88.1 dns-server=192.168.88.1
 add name=dhcp-lan interface=bridge-lan address-pool=dhcp-lan disabled=no
 ```
 
-## Pi 1B Static IP (DMZ)
-
-Configure the Pi (Alpine) with a static address on the DMZ subnet, e.g. `192.168.77.10/24` with gateway `192.168.77.1`. Or use DHCP on the DMZ interface if you prefer (see optional section below).
-
 ## Port Forward: 80 → Pi
+
+**WebFig**: IP → Firewall → NAT
+
+**Check current config:**
+```routeros
+/ip firewall nat print
+```
+
+**Expected**: A `dstnat` rule for TCP port 80 with `to-addresses` and `to-ports`; a `srcnat` masquerade rule for outbound. **Bad sign**: No dstnat for 80; `to-addresses` points to wrong subnet or unreachable host; masquerade missing (LAN won't reach internet).
 
 ```routeros
 /ip firewall nat
@@ -77,6 +104,15 @@ add chain=srcnat action=masquerade out-interface=ether1
 Replace `192.168.77.10` with the Pi’s actual DMZ IP.
 
 ## Firewall (recommended)
+
+**WebFig**: IP → Firewall → Filter Rules
+
+**Check current config:**
+```routeros
+/ip firewall filter print
+```
+
+**Expected**: `forward` chain rules: accept established/related; accept dstnat; drop DMZ→LAN; accept LAN outbound. **Bad sign**: No accept for `connection-nat-state=dstnat` (port forward will fail); DMZ→LAN not blocked (Pi could reach internal hosts); overly restrictive rules dropping LAN traffic.
 
 Allow forwarded traffic for the NAT rule and restrict DMZ→LAN:
 

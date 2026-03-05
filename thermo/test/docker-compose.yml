@@ -1,25 +1,32 @@
-version: "3.9" 
+version: "3.9"
 services:
   dmz:
     image: jovlinger/thermo/dmz
     environment:
-       ENV: 'DOCKERTEST'
-    #ports:
-    #  - "5000:5000"
-    # probably want to graft in a DB 
+      ENV: DOCKERTEST
+      PORT: "5000"
+      ZONE_PUBLIC_KEY_PATH: /keys/pub.pem
+    volumes:
+      - ./keys:/keys:ro
 
   onboard:
     image: jovlinger/thermo/onboard
     environment:
-       ENV: 'DOCKERTEST'
+      ENV: DOCKERTEST
+      PORT: "5000"
+      ZONE_PRIVATE_KEY_PATH: /keys/priv.pem
+      ZONE_NAME: zoneymczoneface
+    volumes:
+      - ./keys:/keys:ro
     depends_on:
-       - dmz
-    #ports: 
-    #  - "8080:8080" # flasky 
+      - dmz
 
   testdriver:
-      image: jovlinger/thermo/test
-      depends_on:
-        - dmz
-        - onboard
-        # also the DB in that case  
+    image: jovlinger/thermo/test
+    environment:
+      DMZ_URL: http://dmz:5000
+      ONBOARD_URL: http://onboard:5000
+      E2E_ZONE_NAME: zoneymczoneface
+    depends_on:
+      - dmz
+      - onboard

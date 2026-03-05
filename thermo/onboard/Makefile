@@ -1,12 +1,28 @@
-.image: *py *sh requirements.txt
-	docker build -q -t jovlinger/thermo/onboard . > .image
+# Build and push thermo/onboard to GHCR (ghcr.io/jovlinger/thermo-onboard)
+# Pi Zero 2 W: arm64 or armhf (32-bit OS). Always builds for Pi regardless of host. Requires CR_PAT for push.
+.PHONY: all build push clean test
+
+IMAGE := ghcr.io/jovlinger/thermo-onboard
+TAG ?= latest
+# Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS
+PLATFORM ?= linux/arm/v7
+
+all: build
+
+build: .image
+
+.image: Dockerfile requirements.txt $(wildcard *.py) $(wildcard *.sh) $(wildcard heatpumpirctl/*.py)
+	docker buildx build -q --platform $(PLATFORM) -t $(IMAGE):$(TAG) --load .
+	@docker image inspect $(IMAGE):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image
+
+push: build
+	@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
+	echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
+	docker push $(IMAGE):$(TAG)
 
 clean:
-	# if .image; then
-	SHA=$(cat .image)
-	docker image rm "${SHA}"
-	rm .image
-	# fi
+	@[ -f .image ] && docker image rm $(IMAGE):$(TAG) 2>/dev/null || true
+	@rm -f .image
 
-test:
+test: build
 	./test/run.sh

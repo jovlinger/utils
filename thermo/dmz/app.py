@@ -10,15 +10,19 @@ Backend will return result in next query, with association ID.
 Long-term, make the backend connection into a TCP based queue (connection is awkward bit)
 """
 
-from collections import defaultdict
+from collections import deque, defaultdict
 from datetime import datetime
 import os
-from typing import Dict, Union, Optional
+from typing import Any, Callable, Deque, Dict, List, Union, Optional
 
-from flask import Flask, request, send_from_directory
+from flask import Flask, g, redirect, request, session, url_for
 from pydantic import BaseModel
 
 JSON = Union[Dict, str, int]
+
+# Access log: circular buffer of {method, path, status, ts}
+ACCESS_LOG_MAXLEN = 500
+_access_log: Deque[Dict[str, Any]] = deque(maxlen=ACCESS_LOG_MAXLEN)
 
 
 class ZoneRequest(BaseModel):
@@ -62,28 +66,79 @@ class ZoneState(BaseModel):
 
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
+app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID")
+app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+# OAuth enabled only when credentials are set
+_oauth_enabled = bool(app.config["GOOGLE_CLIENT_ID"])
+ALLOWED_EMAIL = os.environ.get("ALLOWED_EMAIL", "jovlinger@gmail.com")
+
+if _oauth_enabled:
+    from authlib.integrations.flask_client import OAuth
+
+    oauth = OAuth(app)
+    oauth.register(
+        name="google",
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+        authorize_params={"hd": "gmail.com"},
+    )
 
 
-def assertAuthAzZone(req):
-    # skip auth for now, but let's treat house info as 'sensitive', later.
+def _log_access(method: str, path: str, status: int) -> None:
+    """Append to circular access log."""
+    _access_log.append(
+        {
+            "method": method,
+            "path": path,
+            "status": status,
+            "ts": datetime.now().isoformat(),
+        }
+    )
+
+
+@app.after_request
+def _after_request(response: Any) -> Any:
+    """Log every endpoint access with result HTTP status."""
+    if request.endpoint and request.endpoint != "static":
+        _log_access(request.method, request.path, response.status_code)
+    return response
+
+
+def _login_required(f: Callable[..., Any]) -> Callable[..., Any]:
+    """Require OAuth login for human-facing endpoints. No-op when OAuth disabled."""
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if not _oauth_enabled:
+            return f(*args, **kwargs)
+        if not session.get("user"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+
+    wrapped.__name__ = f.__name__
+    return wrapped
+
+
+def assertAuthAzZone(req: Any) -> None:
+    """Zone auth placeholder. Machine auth (request signing) will replace this."""
     assert req
 
 
 ### BEGIN STATE (make this sqlite)
-commands = defaultdict(list)  # {zonename -> [IRCommand]}
-sensors = defaultdict(list)  # {zonename -> [ Sensors]}
+commands: Dict[str, List[IRCommand]] = defaultdict(list)
+sensors: Dict[str, List[Sensors]] = defaultdict(list)
 ### END STATE
 
 
-def _lastor(lst, default=None):
+def _lastor(lst: List[Any], default: Optional[Any] = None) -> Any:
     if not lst:
         return default
     return lst[-1]
 
 
-def _zone_response(zonename, update_access) -> JSON:
+def _zone_response(zonename: str, update_access: bool) -> JSON:
     """Craft the json for one zone's response"""
-    # which happens to be exactly the UpdateZone model
     cmd = _lastor(commands[zonename])
     sns = _lastor(sensors[zonename])
     if cmd and update_access:
@@ -96,14 +151,10 @@ def _zone_response(zonename, update_access) -> JSON:
 MAXLEN = 10000
 
 
-def _append_and_trim(lst, item):
+def _append_and_trim(lst: List[Any], item: Any) -> None:
     """Append an item to the lst, and trim it to max length."""
-    # eventually, this goes into a DB, and we will use some history subsampling.
-    # eg: daily at noon for ever, hourly for last year, by minute last month.....
     lst.append(item)
     while len(lst) > MAXLEN:
-        # I don't care if this is possibly slow if there are many to delete.
-        # we call this on every append
         del lst[0]
 
 
@@ -112,12 +163,86 @@ def _append_and_trim(lst, item):
 # and restrict who can update what.
 
 
+@app.route("/login")
+def login() -> Any:
+    """Redirect to Google OAuth. Restricted to gmail.com; only ALLOWED_EMAIL accepted."""
+    if not _oauth_enabled:
+        return {"error": "OAuth not configured"}, 400
+    redirect_uri = url_for("authorize", _external=True)
+    return oauth.google.authorize_redirect(redirect_uri, hd="gmail.com")
+
+
+@app.route("/authorize")
+def authorize() -> Any:
+    """OAuth callback. Verify email is ALLOWED_EMAIL, then set session."""
+    if not _oauth_enabled:
+        return redirect(url_for("get_zones"))
+    try:
+        token = oauth.google.authorize_access_token()
+    except Exception:
+        return {"error": "OAuth failed"}, 400
+    userinfo = token.get("userinfo") or {}
+    email = (userinfo.get("email") or "").strip().lower()
+    if not email.endswith("@gmail.com"):
+        return {"error": "Only gmail.com accounts allowed"}, 403
+    if email != ALLOWED_EMAIL.lower():
+        return {"error": f"Access restricted to {ALLOWED_EMAIL}"}, 403
+    session["user"] = {"email": email}
+    return redirect(url_for("get_zones"))
+
+
+@app.route("/logout")
+def logout() -> Any:
+    """Clear session."""
+    session.pop("user", None)
+    return redirect(url_for("login") if _oauth_enabled else url_for("get_zones"))
+
+
+def _verify_zone_request(zonename: str) -> Optional[tuple[int, Any]]:
+    """Verify Ed25519 machine auth. Returns (status_code, response) on failure, None on success."""
+    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
+        "ZONE_PUBLIC_KEY_PATH"
+    )
+    if not pub_key:
+        return None  # auth disabled
+    try:
+        from zone_auth import (
+            verify_request,
+            HEADER_SIGNATURE,
+            HEADER_TIMESTAMP,
+            HEADER_ZONE,
+        )
+    except ImportError:
+        return None
+    sig = request.headers.get(HEADER_SIGNATURE)
+    ts = request.headers.get(HEADER_TIMESTAMP)
+    zone_hdr = request.headers.get(HEADER_ZONE)
+    if not sig or not ts or zone_hdr != zonename:
+        return (401, {"error": "missing or invalid zone auth headers"})
+    body = request.get_data()
+    if verify_request(
+        request.method,
+        request.path,
+        body,
+        zonename,
+        sig,
+        ts,
+        pub_key,
+    ):
+        return None
+    return (401, {"error": "invalid zone signature"})
+
+
 @app.route("/zone/<string:zonename>/sensors", methods=["POST"])
-def update_sensors(zonename: str):
+def update_sensors(zonename: str) -> Any:
     """
     Update a zone with UpdateZone. Read this zone's states.
-    Register the zone if not already there
+    Register the zone if not already there.
+    Machine auth (Ed25519 request signing) when ZONE_PUBLIC_KEY is set.
     """
+    err = _verify_zone_request(zonename)
+    if err:
+        return err[1], err[0]
     assertAuthAzZone(request)
     sns = Sensors(**request.json)
     _append_and_trim(sensors[zonename], sns)
@@ -125,22 +250,22 @@ def update_sensors(zonename: str):
 
 
 @app.route("/zone/<string:zonename>/command", methods=["POST"])
-def update_command(zonename: str):
+@_login_required
+def update_command(zonename: str) -> Any:
     """
     Update a zone with UpdateZone. Read this zone's states.
     Register the zone if not already there
     """
     assertAuthAzZone(request)
-    # assumes body exists, even if it is just {}
     js = request.json
     cmd = IRCommand(**js)
-    # eventually, we will store these and subsample them
     _append_and_trim(commands[zonename], cmd)
     return _zone_response(zonename, True)
 
 
 @app.route("/zones", methods=["GET"])
-def get_zones():
+@_login_required
+def get_zones() -> Any:
     """
     Stateless query.  Read ALL zone states, including pending commands.
     """
@@ -149,13 +274,20 @@ def get_zones():
     return res
 
 
+@app.route("/debug/logs", methods=["GET"])
+@_login_required
+def debug_logs() -> Any:
+    """Return bounded in-memory access log. Auth required."""
+    assertAuthAzZone(request)
+    return {"logs": list(_access_log)}
+
+
 @app.route("/test_reset", methods=["POST"])
-def test_reset():
+def test_reset() -> Any:
     """
     Update the zone state for testing.
     """
     assertAuthAzZone(request)
-    # assert running in container
     updates = request.json or {}
     if "commands" in updates:
         commands.clear()
@@ -167,5 +299,4 @@ def test_reset():
 
 
 if __name__ == "__main__":
-    # LOG starting / port
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

@@ -11,3 +11,5 @@ Order of operations: **prepare → flash → boot → test**
 | 5. Or manual | `./run_raw.sh /tmp/dmz_rootfs` | Pi 1B (after extract) |
 
 See [plan.md](../plan.md) for dmz-init.start setup (lbu, apkovl).
+
+**Cloud alternative**: See [CLOUD.md](CLOUD.md) for AWS EC2 / GCP e2-micro deployment.

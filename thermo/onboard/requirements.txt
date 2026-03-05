@@ -1,4 +1,4 @@
 flask
-requests # for twoway
-pydantic
 requests
+pydantic
+cryptography

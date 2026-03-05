@@ -4,5 +4,7 @@
 # this hardcodes "this" onboard zone's name as zoneymczoneface
 python twoway.py "http://onboard:5000/environment" "http://dmz:5000/zone/zoneymczoneface/sensors" "http://onboard:5000/daikin" &
 
+python ui_server.py &
+
 echo "starting app"
 python app.py

@@ -1,0 +1,15 @@
+[Unit]
+Description=Thermo Onboard container (Pi Zero 2 W)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/run-onboard.sh
+ExecStop=/usr/bin/docker stop thermo-onboard
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

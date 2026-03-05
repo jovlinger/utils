@@ -9,10 +9,11 @@ from common import is_test_env, log
 from constants import help_msg
 
 from collections import deque
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
 import os
 import sys
+from typing import Optional
 
 from flask import Flask, request
 
@@ -44,13 +45,33 @@ def help():
     return {"msg": help_msg}
 
 
+# Test override: when set, /environment returns these instead of sensor
+_fake_temp: Optional[float] = None
+_fake_humid: Optional[float] = None
+
+
 @app.route("/environment", methods=["GET"])
 def environment():
     """Return current temperature and humidity from HTU21D sensor."""
+    global _fake_temp, _fake_humid
+    if _fake_temp is not None and _fake_humid is not None:
+        return {"temperature_centigrade": _fake_temp, "humidity_percent": _fake_humid}
     htu = HTU21D.singleton()
     temp = htu.temperature_centigrade()
     hum = htu.humidity_percent()
     return {"temperature_centigrade": temp, "humidity_percent": hum}
+
+
+@app.route("/test/inject_readings", methods=["POST"])
+def test_inject_readings():
+    """Set fake sensor values for testing. Body: {temp_centigrade, humid_percent}."""
+    global _fake_temp, _fake_humid
+    if not is_test_env():
+        return {"error": "only in test env"}, 403
+    js = request.json or {}
+    _fake_temp = js.get("temp_centigrade")
+    _fake_humid = js.get("humid_percent")
+    return {"temp_centigrade": _fake_temp, "humid_percent": _fake_humid}
 
 
 DAIKIN_CMDS_MAXLEN = 100

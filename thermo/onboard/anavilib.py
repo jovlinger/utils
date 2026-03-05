@@ -22,8 +22,8 @@ def send_daikin_state(state) -> bool:
     """Send Daikin IR state via ir-ctl. Return True if sent, False on error."""
     from heatpumpirctl import ARC452A9 as proto
 
+    mode2 = proto.dumps(state)
     try:
-        mode2 = proto.dumps(state)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(mode2)
             path = f.name
