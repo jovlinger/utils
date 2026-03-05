@@ -38,6 +38,7 @@ jobs:
           context: ./thermo/onboard
           platforms: linux/arm64,linux/arm/v7
           push: true
+          provenance: false
           tags: |
             ghcr.io/jovlinger/thermo-onboard:latest
             ghcr.io/jovlinger/thermo-onboard:${{ github.sha }}
