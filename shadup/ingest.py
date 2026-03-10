@@ -23,6 +23,11 @@ FILES_DIR = STORE_ROOT / "files"
 DB_PATH = Path(os.environ.get("SHASRV_DB", str(Path.home() / "Music/shasrv/shadup.db")))
 SHADUP_PY = Path(__file__).resolve().parent / "shadup.py"
 
+print(f"{DATA_DIR=}")
+print(f"{FILES_DIR=}")
+print(f"{DB_PATH=}")
+print(f"{SHADUP_PY=}")
+
 
 def err(msg: str) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -49,6 +54,7 @@ def store_with_shadup(path_value: Path) -> None:
     cmd = [
         sys.executable,
         str(SHADUP_PY),
+	"-v",
         "--store",
         str(path_value),
         "--shadir",

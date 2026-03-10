@@ -2,3 +2,4 @@ env
 .image
 \#*#
 */__pycache__
+.venv
