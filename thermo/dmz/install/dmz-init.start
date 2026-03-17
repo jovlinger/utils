@@ -1,8 +1,7 @@
 #!/bin/sh
 # OpenRC boot script for DMZ on Pi 1B (Alpine diskless).
 # SD is RO; / is tmpfs RW. Boot log: /tmp/boot.log (scp it out after bringing up net).
-
-set -e
+# set -e disabled until we are happy all commands succeed; script pr's commands before running.
 
 ROOTFS_TAR="dmz_rootfs.tar"
 ROOTFS_DIR="/tmp/dmz_rootfs"
@@ -125,22 +124,31 @@ pr ""
 
 pr ">>> dmz-init: 3/7 iptables..."
 if command -v iptables >/dev/null 2>&1; then
-    modprobe iptable_nat 2>/dev/null || true
-    iptables -t nat -F 2>/dev/null || true
-    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+    pr "  running: modprobe iptable_nat"
+    modprobe iptable_nat 2>>"$LOG" || true
+    pr "  running: iptables -t nat -F"
+    iptables -t nat -F 2>>"$LOG" || true
+    pr "  running: iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080"
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 2>>"$LOG" || true
 fi
 pr ""
 
 pr ">>> dmz-init: 4/7 adduser..."
-if ! getent passwd dmzuser >/dev/null 2>&1; then adduser -D -s /bin/sh dmzuser; fi
+if ! getent passwd dmzuser >/dev/null 2>&1; then
+    pr "  running: adduser -D -s /bin/sh dmzuser"
+    adduser -D -s /bin/sh dmzuser 2>>"$LOG" || true
+fi
 pr ""
 
 pr ">>> dmz-init: 5/7 extract rootfs..."
-mkdir -p "$ROOTFS_DIR"
-tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR"
+pr "  running: mkdir -p $ROOTFS_DIR"
+mkdir -p "$ROOTFS_DIR" 2>>"$LOG" || true
+pr "  running: tar -xf $SD_MOUNT/$ROOTFS_TAR -C $ROOTFS_DIR"
+tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR" 2>>"$LOG" || true
 pr ""
 
 pr ">>> dmz-init: 6/7 launch app..."
+pr "  running: su dmzuser -c $SD_MOUNT/install/run_raw.sh $ROOTFS_DIR (background)"
 su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" &
 pr ""
 
@@ -157,8 +165,9 @@ pr ""
 
 # --- Unmount SD ---
 pr ">>> dmz-init: 7/7 unmount SD..."
+pr "  running: sleep 2; cd /; umount $SD_MOUNT"
 sleep 2
 cd /
-umount "$SD_MOUNT" 2>/dev/null || true
+umount "$SD_MOUNT" 2>>"$LOG" || true
 pr "========== dmz-init complete $(date) =========="
 pr "Log saved in /tmp/boot.log — after bringing up net: scp root@<pi-ip>:/tmp/boot.log ."

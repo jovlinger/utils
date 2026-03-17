@@ -26,7 +26,7 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT="${SCRIPT_DIR}/dmz.img"
+OUTPUT="/tmp/dmz.img"
 ALPINE_VERSION="3.23.3"
 IMAGE_SIZE_MB=256
 ALPINE_MIRROR="https://dl-cdn.alpinelinux.org/alpine"
@@ -140,26 +140,25 @@ docker run --rm --platform linux/arm/v6 \
     alpine:${ALPINE_VERSION} \
     sh -c "for f in /pkg_main/*.apk /pkg_community/*.apk; do [ -f \"\$f\" ] && tar -xzf \"\$f\" -C /overlay; done"
 
-mkdir -p "$APKOVL_DIR/etc/local.d" "$APKOVL_DIR/etc/apk"
+mkdir -p "$APKOVL_DIR/etc/local.d" "$APKOVL_DIR/etc/runlevels/default" "$APKOVL_DIR/etc/apk"
 cp "$DMZ_ROOT/install/dmz-init.start" "$APKOVL_DIR/etc/local.d/"
 chmod +x "$APKOVL_DIR/etc/local.d/dmz-init.start"
+# local service is not in default runlevel by default; enable so local.d/*.start run
+ln -s ../../init.d/local "$APKOVL_DIR/etc/runlevels/default/local"
 # No repos/world in overlay so boot never runs apk (no APKINDEX.tar.gz warnings)
 : > "$APKOVL_DIR/etc/apk/repositories"
 : > "$APKOVL_DIR/etc/apk/world"
 echo "dmz" > "$APKOVL_DIR/etc/hostname"
 
-# Build ID: script hash + install payload hash + UTC time (so changing dmz-init/network changes the ID)
+# Build ID: SHASUM(create-image.sh + install/*)[:8].upper()
 if command -v sha256sum >/dev/null 2>&1; then
-    SCRIPT_HASH=$(sha256sum "$SCRIPT_DIR/create-image.sh" | awk '{print $1}')
-    PAYLOAD_HASH=$( ( find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | sha256sum | awk '{print $1}')
+    BUILD_HASH=$( ( cat "$SCRIPT_DIR/create-image.sh"; find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | sha256sum | awk '{print $1}')
 else
-    SCRIPT_HASH=$(shasum -a 256 "$SCRIPT_DIR/create-image.sh" | awk '{print $1}')
-    PAYLOAD_HASH=$( ( find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | shasum -a 256 | awk '{print $1}')
+    BUILD_HASH=$( ( cat "$SCRIPT_DIR/create-image.sh"; find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | shasum -a 256 | awk '{print $1}')
 fi
+BUILD_ID=$(echo "$BUILD_HASH" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-SCRIPT_HASH_SHORT=$(echo "$SCRIPT_HASH" | cut -c1-12)
-PAYLOAD_HASH_SHORT=$(echo "$PAYLOAD_HASH" | cut -c1-8)
-BUILDINFO_LINE="sha:${SCRIPT_HASH_SHORT}+${PAYLOAD_HASH_SHORT} $BUILD_DATE"
+BUILDINFO_LINE="${BUILD_ID} $BUILD_DATE"
 echo "$BUILDINFO_LINE" > "$WORKDIR/buildinfo.txt"
 mkdir -p "$APKOVL_DIR/root"
 echo "DMZ image: $BUILDINFO_LINE" > "$APKOVL_DIR/root/README"
