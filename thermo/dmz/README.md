@@ -20,6 +20,8 @@ DMZ is the part of the application which handles access to the internet at large
 | `install/run_raw.sh` | Run extracted rootfs via bwrap (no Docker daemon) |
 | `install/prepare-sd.sh` | Copy payload and scripts to SD from dev machine |
 | `install/dmz-init.start` | OpenRC boot script template for Pi |
+| `image/create-image.sh` | Build complete bootable dmz.img for dd |
+| `image/write-to-card.sh` | Write dmz.img to SD card |
 | `test/` | Tests |
 
 ## Hardware (Elsewhere)
@@ -41,20 +43,25 @@ The target deployment is a Raspberry Pi 1B running Alpine Linux diskless (RAM bo
 
 ## Quick Start
 
+**Image workflow (recommended):** Create a complete bootable image and write to SD:
+
 ```bash
-# 1. Build image (ARMv6 for Pi 1B)
+cd thermo/dmz/image
+./create-image.sh
+./write-to-card.sh dmz.img /dev/sdX   # replace sdX with your SD device
+# Boot Pi; dmz-init runs automatically
+```
+
+**Manual workflow:** Build, export, and copy to an existing Alpine SD:
+
+```bash
 cd thermo/dmz
 docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .
-
-# 2. Export rootfs
 ./install/export_rootfs.sh jovlinger/thermo/dmz dmz_rootfs.tar
-
-# 3. Prepare SD card (with SD mounted at SD_MOUNT)
 ./install/prepare-sd.sh dmz_rootfs.tar /path/to/sd
-
-# 4. Boot Pi; dmz-init.start runs automatically, or manually:
+# Boot Pi; dmz-init runs automatically, or manually:
 #    mkdir -p /tmp/dmz_rootfs && tar -xf /media/mmcblk0p1/dmz_rootfs.tar -C /tmp/dmz_rootfs
 #    ./install/run_raw.sh /tmp/dmz_rootfs
 ```
 
-See [plan.md](plan.md) for the full development roadmap and deployment details.
+See [plan.md](plan.md) and [image/README.md](image/README.md) for details.

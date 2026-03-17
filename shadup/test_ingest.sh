@@ -5,6 +5,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh shadup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
+
 TEST_BASE="/tmp/shadup_test_ingest_$$"
 HARNESS="$TEST_BASE/harness"
 STORE="$TEST_BASE/store"
@@ -23,6 +32,7 @@ mk_harness() {
     cp "$SCRIPT_DIR/ingest.py" "$HARNESS/ingest.py"
     cp "$SCRIPT_DIR/shadup.py" "$HARNESS/shadup.py"
     cp "$SCRIPT_DIR/with-ro-remounted-rw.sh" "$HARNESS/with-ro-remounted-rw.sh"
+    ln -sf "$SCRIPT_DIR/env" "$HARNESS/env"
     chmod +x "$HARNESS/ingest.sh" "$HARNESS/ingest.py" "$HARNESS/with-ro-remounted-rw.sh"
 
     # Keep the binary behavior but remove root/mount requirements in test harness:
@@ -44,9 +54,9 @@ assert_relative_data_link() {
     target="$(readlink "$link")"
     [[ "$target" != /* ]] || fail "expected relative symlink, got absolute: $target"
     local resolved
-    resolved="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$link")"
+    resolved="$(python -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$link")"
     local data_root
-    data_root="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STORE/data")"
+    data_root="$(python -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STORE/data")"
     [[ "$resolved" == "$data_root/"* ]] || fail "symlink does not resolve under data/: $target"
 }
 

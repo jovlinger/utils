@@ -44,17 +44,25 @@ Insert the SD card and identify the device (e.g. `/dev/sdb`, `/dev/mmcblk0`).
 ./write-to-card.sh dmz.img /dev/sdX
 ```
 
-Type `YES` when prompted to confirm.
-
 ### 3. Boot the Pi 1B
 
 Insert the SD card and power on. The `dmz-init.start` script runs automatically: entropy, clock sync, iptables redirect (80→8080), and the sandboxed app.
+
+**Boot timeline:** There is a quiet period (initramfs: kernel, mount overlay, switch_root) with nothing visible on console. Once OpenRC starts, you get a login prompt within about 4 seconds.
+
+**Boot output:** You should see a clear `========== DMZ ==========` block with build hash and local time; then `dmz-init: 0/7 network...` through `7/7`, and finally `========== dmz-init complete ==========`. **Clock skew warnings** from OpenRC at the start of boot are expected (Pi has no RTC); time is corrected once dmz-init runs NTP.
 
 ### 4. Verify
 
 ```bash
 curl http://<pi-ip>/zones
 ```
+
+### Manual network + SSH (console only)
+
+Put your public key in the image at build time: **install/authorized_keys** (one line, your `id_rsa.pub`). The image will contain that single key in `/root/.ssh/authorized_keys`.
+
+On the Pi (root console): `sh /root/network-and-sshd.sh` — brings up eth0 at 192.168.88.200 and starts sshd. Then from your Mac: `ssh root@192.168.88.200`.
 
 ## Alternative: prepare-sd.sh
 
@@ -66,3 +74,13 @@ If you already have Alpine on an SD card and prefer to copy files manually, use 
 ```
 
 See [install/README.md](../install/README.md) and [plan.md](../plan.md).
+
+## Debugging boot (no guessing)
+
+After boot on the Pi, use **[BOOT-DEBUG.md](BOOT-DEBUG.md)** to:
+
+1. Confirm which image is on the card (`BUILD.txt` on the FAT partition).
+2. Capture initramfs messages (`dmesg`) to see whether the boot media and overlay were loaded.
+3. Check hostname and `/etc/local.d/` to see if the overlay was applied.
+
+Use the exact commands there and share the output so we can fix overlay loading step by step.

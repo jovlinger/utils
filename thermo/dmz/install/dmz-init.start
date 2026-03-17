@@ -1,48 +1,164 @@
 #!/bin/sh
 # OpenRC boot script for DMZ on Pi 1B (Alpine diskless).
-# Install to /etc/local.d/dmz-init.start on the Pi, then: lbu add /etc/local.d/dmz-init.start && lbu commit -d
-#
-# Prerequisites: apk add bubblewrap haveged chrony iptables (or ntpdate, rng-tools)
-#
-# SD_MOUNT: adjust if your SD partition differs (e.g. /media/mmcblk0p1, /media/sda1)
-# See plan.md.
+# SD is RO; / is tmpfs RW. Boot log: /tmp/boot.log (scp it out after bringing up net).
 
 set -e
 
-SD_MOUNT="${SD_MOUNT:-/media/mmcblk0p1}"
 ROOTFS_TAR="dmz_rootfs.tar"
 ROOTFS_DIR="/tmp/dmz_rootfs"
+LOG="/tmp/boot.log"
 
-# 1. Entropy (TLS/keygen can block without it)
-if command -v haveged >/dev/null 2>&1; then
-    haveged -w 1024 -F &
+mkdir -p /root
+: > "$LOG"
+pr() { echo "$@" >> "$LOG"; [ -c /dev/console ] && echo "$@" >/dev/console; }
+dump() { echo "--- $1 ---" >> "$LOG"; shift; "$@" >> "$LOG" 2>&1 || true; echo "" >> "$LOG"; }
+
+pr "========== dmz-init started $(date -u '+%Y-%m-%dT%H:%M:%SZ') local $(date) =========="
+pr ""
+
+# --- SD discovery (detailed) ---
+pr ">>> SD discovery: checking fixed paths..."
+SD_MOUNT=""
+SD_SOURCE=""
+for p in /media/mmcblk0 /media/mmcblk0p1 /boot /mnt/mmcblk0p1; do
+    if [ -f "$p/install/network.conf" ] || [ -f "$p/install/buildinfo.txt" ]; then
+        SD_MOUNT="$p"
+        SD_SOURCE="fixed"
+        pr "  $p: FOUND (using as SD_MOUNT)"
+        break
+    else
+        pr "  $p: missing (install/network.conf and buildinfo.txt not both present)"
+    fi
+done
+if [ -z "$SD_MOUNT" ] && [ -f /proc/mounts ]; then
+    pr "  scanning /proc/mounts for path with install/..."
+    while read -r _ mp _ _ _; do
+        if [ -f "$mp/install/network.conf" ] || [ -f "$mp/install/buildinfo.txt" ]; then
+            SD_MOUNT="$mp"
+            SD_SOURCE="proc_mounts"
+            pr "  $mp: FOUND from proc_mounts"
+            break
+        fi
+    done < /proc/mounts
 fi
-
-# 2. Clock sync (no RTC; TLS certs need valid time)
-if command -v chronyd >/dev/null 2>&1; then
-    chronyd -q -f /etc/chrony/chrony.conf 2>/dev/null || true
-elif command -v ntpdate >/dev/null 2>&1; then
-    ntpdate -q pool.ntp.org 2>/dev/null || true
+if [ -z "$SD_MOUNT" ]; then
+    SD_MOUNT="/media/mmcblk0"
+    SD_SOURCE="fallback"
+    pr "  fallback: SD_MOUNT=$SD_MOUNT"
 fi
+pr "SD_MOUNT=$SD_MOUNT source=$SD_SOURCE"
+pr ""
 
-# 3. iptables redirect 80 -> 8080
-modprobe iptable_nat 2>/dev/null || true
-iptables -t nat -F 2>/dev/null || true
-iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+dump "ls -la SD_MOUNT" ls -la "$SD_MOUNT"
+dump "ls -la SD_MOUNT/install" ls -la "$SD_MOUNT/install"
+pr "network.conf first line: $(head -n1 "$SD_MOUNT/install/network.conf" 2>/dev/null || echo '(read failed)')"
+pr "buildinfo: $(cat "$SD_MOUNT/install/buildinfo.txt" 2>/dev/null || echo '(read failed)')"
+pr ""
 
-# 4. Unprivileged user
-if ! getent passwd dmzuser >/dev/null 2>&1; then
-    adduser -D -s /bin/sh dmzuser
+# --- Banner ---
+pr "========== DMZ =========="
+[ -f "$SD_MOUNT/install/buildinfo.txt" ] && pr "  $(cat "$SD_MOUNT/install/buildinfo.txt")"
+pr "  SD: $SD_MOUNT"
+pr "================================"
+pr ""
+
+# --- Network ---
+pr ">>> dmz-init: 0/7 network..."
+NET_OK=""
+wait=0
+while [ $wait -lt 20 ]; do
+    if [ -d /sys/class/net/eth0 ]; then
+        pr "  eth0 found (after ${wait}s)"
+        ip link set eth0 up || true
+        sleep 1
+        if [ -f "$SD_MOUNT/install/network.conf" ]; then
+            read -r addr gw _ < "$SD_MOUNT/install/network.conf" || true
+            pr "  network.conf read: addr=$addr gw=$gw"
+            if [ -n "$addr" ]; then
+                if ip addr add "$addr" dev eth0 2>>"$LOG"; then
+                    pr "  added $addr"
+                    NET_OK=1
+                else
+                    pr "  ip addr add $addr failed (stderr above)"
+                    NET_OK=1
+                fi
+                if [ -n "$gw" ]; then
+                    if ip route add default via "$gw" 2>>"$LOG"; then
+                        pr "  default via $gw"
+                    else
+                        pr "  ip route add default via $gw failed (stderr above)"
+                    fi
+                    echo "nameserver $gw" > /etc/resolv.conf
+                    pr "  resolv.conf: nameserver $gw"
+                fi
+            else
+                pr "  network.conf empty or unreadable"
+            fi
+        else
+            pr "  no $SD_MOUNT/install/network.conf"
+        fi
+        break
+    fi
+    sleep 1
+    wait=$((wait + 1))
+done
+if [ -z "$NET_OK" ] && [ ! -d /sys/class/net/eth0 ]; then
+    pr "  eth0 not found after 20s, skipping"
 fi
+pr ""
 
-# 5. Extract rootfs to tmpfs
+dump "ip link" ip link
+dump "ip addr" ip addr
+dump "ip route" ip route
+dump "resolv.conf" cat /etc/resolv.conf
+pr "interfaces in /sys/class/net: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"
+pr ""
+
+# --- Steps 1–6 ---
+pr ">>> dmz-init: 1/7 entropy..."
+if command -v haveged >/dev/null 2>&1; then haveged -w 1024 -F & fi
+pr ""
+
+pr ">>> dmz-init: 2/7 clock..."
+if command -v chronyd >/dev/null 2>&1; then ( chronyd -q -f /etc/chrony/chrony.conf 2>/dev/null || true ) & fi
+pr ""
+
+pr ">>> dmz-init: 3/7 iptables..."
+if command -v iptables >/dev/null 2>&1; then
+    modprobe iptable_nat 2>/dev/null || true
+    iptables -t nat -F 2>/dev/null || true
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+fi
+pr ""
+
+pr ">>> dmz-init: 4/7 adduser..."
+if ! getent passwd dmzuser >/dev/null 2>&1; then adduser -D -s /bin/sh dmzuser; fi
+pr ""
+
+pr ">>> dmz-init: 5/7 extract rootfs..."
 mkdir -p "$ROOTFS_DIR"
 tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR"
+pr ""
 
-# 6. Launch sandboxed app (background)
+pr ">>> dmz-init: 6/7 launch app..."
 su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" &
+pr ""
 
-# 7. Unmount SD (runtime has no access; ensure we are not cwd on SD)
+# --- Full forensic dump into same log ---
+pr ">>> forensic dump (all for debug)..."
+dump "proc/mounts" cat /proc/mounts
+pr "kernel cmdline: $(cat /proc/cmdline 2>/dev/null)"
+pr ""
+pr "dmesg (mount/overlay/eth/smc/usb/network):"
+dmesg 2>/dev/null | grep -iE 'mount|overlay|apkovl|eth|smsc|usb|network|link' | tail -100 | sed 's/^/  /' >> "$LOG"
+pr ""
+pr "uname: $(uname -a 2>/dev/null)"
+pr ""
+
+# --- Unmount SD ---
+pr ">>> dmz-init: 7/7 unmount SD..."
 sleep 2
 cd /
 umount "$SD_MOUNT" 2>/dev/null || true
+pr "========== dmz-init complete $(date) =========="
+pr "Log saved in /tmp/boot.log — after bringing up net: scp root@<pi-ip>:/tmp/boot.log ."

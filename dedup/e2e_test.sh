@@ -10,6 +10,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -114,7 +124,7 @@ extract_archive() {
 run_dedup() {
     info "Running dedup on $INPUT_DIR -> $DEDUP_DIR..."
     
-    if ! python3 shasrv/dedup.py "$INPUT_DIR" "$DEDUP_DIR"; then
+    if ! python "$SCRIPT_DIR/dedup.py" "$INPUT_DIR" "$DEDUP_DIR"; then
         error "Dedup failed"
     fi
     
@@ -125,7 +135,7 @@ run_dedup() {
 run_redup() {
     info "Running redup on $DEDUP_DIR -> $REDUP_DIR..."
     
-    if ! ./shasrv/redup.sh "$DEDUP_DIR" "$REDUP_DIR"; then
+    if ! "$SCRIPT_DIR/redup.sh" "$DEDUP_DIR" "$REDUP_DIR"; then
         error "Redup failed"
     fi
     

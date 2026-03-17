@@ -7,10 +7,22 @@
 #
 # Prerequisites: Docker, curl/wget, tar, gzip, mkfs.vfat (dosfstools),
 #   mcopy/mmd (mtools) or mount (Linux/macOS with loop device).
+#   macOS: brew install dosfstools mtools
 #
 # See ../plan.md and README.md.
 
 set -e
+
+ts() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+# Homebrew installs dosfstools to sbin; ensure it's on PATH (macOS)
+case "$(uname)" in
+    Darwin)
+        for d in /opt/homebrew/sbin /usr/local/sbin; do
+            [ -d "$d" ] && PATH="$d:$PATH"
+        done
+        ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -39,27 +51,29 @@ done
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-echo "==> Creating DMZ image for Pi 1B"
+ts "==> Creating DMZ image for Pi 1B"
 echo "    Output: $OUTPUT"
 echo "    Alpine: $ALPINE_VERSION"
 echo "    Size: ${IMAGE_SIZE_MB}MB"
 echo ""
 
 # 1. Build Docker image
-echo "[1/8] Building Docker image (ARMv6)..."
+ts "[1/8] Building Docker image (ARMv6)..."
 (cd "$DMZ_ROOT" && docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .)
+ts "[1/8] Docker build done."
 
 # 2. Export rootfs
-echo "[2/8] Exporting rootfs..."
+ts "[2/8] Exporting rootfs..."
 ROOTFS_TAR="$WORKDIR/dmz_rootfs.tar"
 cid=$(docker create jovlinger/thermo/dmz)
 trap 'docker rm -f "$cid" 2>/dev/null || true; rm -rf "$WORKDIR"' EXIT
 docker export "$cid" > "$ROOTFS_TAR"
 docker rm -f "$cid" 2>/dev/null || true
 trap 'rm -rf "$WORKDIR"' EXIT
+ts "[2/8] Rootfs export done."
 
 # 3. Download Alpine RPi armhf tarball
-echo "[3/8] Downloading Alpine RPi armhf $ALPINE_VERSION..."
+ts "[3/8] Downloading Alpine RPi armhf $ALPINE_VERSION..."
 ALPINE_TAR="alpine-rpi-${ALPINE_VERSION}-armhf.tar.gz"
 ALPINE_URL="${ALPINE_MIRROR}/latest-stable/releases/armhf/${ALPINE_TAR}"
 ALPINE_SHA_URL="${ALPINE_MIRROR}/latest-stable/releases/armhf/${ALPINE_TAR}.sha256"
@@ -73,48 +87,90 @@ else
 fi
 
 (cd "$WORKDIR" && sha256sum -c "$ALPINE_TAR.sha256" 2>/dev/null || shasum -a 256 -c "$ALPINE_TAR.sha256" 2>/dev/null || true)
+ts "[3/8] Alpine tarball download done."
 
 # 4. Extract Alpine tarball
-echo "[4/8] Extracting Alpine base..."
+ts "[4/8] Extracting Alpine base..."
 ALPINE_EXTRACT="$WORKDIR/alpine_extract"
 mkdir -p "$ALPINE_EXTRACT"
 tar -xzf "$WORKDIR/$ALPINE_TAR" -C "$ALPINE_EXTRACT"
+# Do NOT add apkovl= to cmdline: with apkovl=FILE the init checks [ -f "FILE" ] in current dir and fails (file is on boot media). Leave unset so init uses /tmp/apkovls (full path from nlplug-findfs). We put alpine.apkovl.tar.gz and dmz.apkovl.tar.gz on the card; nlplug-findfs finds one and writes its full path.
+ts "[4/8] Alpine extract done."
 
-# 5. Pre-download apk packages (armhf) for offline boot
-echo "[5/8] Fetching apk packages (bubblewrap, haveged, chrony, iptables)..."
-APKS_DIR="$WORKDIR/apks"
-mkdir -p "$APKS_DIR"
+# 5. Pre-download apk packages (armhf) + APKINDEX for offline boot
+# Use main + community dirs so apk can find indexes and install at boot.
+ts "[5/8] Fetching apk packages (bubblewrap, haveged, chrony, iptables, dhcpcd)..."
+APKS_MAIN="$WORKDIR/apks_main"
+APKS_COMMUNITY="$WORKDIR/apks_community"
+mkdir -p "$APKS_MAIN/armhf" "$APKS_COMMUNITY/armhf"
+
 docker run --rm --platform linux/arm/v6 \
-    -v "$APKS_DIR:/out" \
+    -v "$APKS_MAIN/armhf:/out" \
     alpine:${ALPINE_VERSION} \
-    sh -c "apk update && apk fetch -o /out bubblewrap haveged chrony iptables"
+    sh -c "echo 'https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/main' > /etc/apk/repositories && apk update && apk fetch -o /out chrony iptables dhcpcd"
 
-# Add to Alpine's apks/armhf/ (base tarball already has this structure)
-mkdir -p "$ALPINE_EXTRACT/apks/armhf"
-cp "$APKS_DIR"/*.apk "$ALPINE_EXTRACT/apks/armhf/" 2>/dev/null || true
+docker run --rm --platform linux/arm/v6 \
+    -v "$APKS_COMMUNITY/armhf:/out" \
+    alpine:${ALPINE_VERSION} \
+    sh -c "printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/main' 'https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/community' > /etc/apk/repositories && apk update && apk fetch -o /out bubblewrap haveged"
 
-# 6. Build apkovl
-echo "[6/8] Building apkovl..."
+# Download APKINDEX so apk can install from local at boot
+if command -v curl >/dev/null 2>&1; then
+    curl -sL "${ALPINE_MIRROR}/${ALPINE_BRANCH}/main/armhf/APKINDEX.tar.gz" -o "$APKS_MAIN/armhf/APKINDEX.tar.gz"
+    curl -sL "${ALPINE_MIRROR}/${ALPINE_BRANCH}/community/armhf/APKINDEX.tar.gz" -o "$APKS_COMMUNITY/armhf/APKINDEX.tar.gz"
+else
+    wget -q -O "$APKS_MAIN/armhf/APKINDEX.tar.gz" "${ALPINE_MIRROR}/${ALPINE_BRANCH}/main/armhf/APKINDEX.tar.gz"
+    wget -q -O "$APKS_COMMUNITY/armhf/APKINDEX.tar.gz" "${ALPINE_MIRROR}/${ALPINE_BRANCH}/community/armhf/APKINDEX.tar.gz"
+fi
+
+mkdir -p "$ALPINE_EXTRACT/apks/main/armhf" "$ALPINE_EXTRACT/apks/community/armhf"
+cp "$APKS_MAIN/armhf"/* "$ALPINE_EXTRACT/apks/main/armhf/" 2>/dev/null || true
+cp "$APKS_COMMUNITY/armhf"/* "$ALPINE_EXTRACT/apks/community/armhf/" 2>/dev/null || true
+ts "[5/8] Apk fetch done."
+
+# 6. Build apkovl (overlay): extract .apk payloads into overlay so no apk at boot is needed
+ts "[6/8] Building apkovl (extract bwrap, haveged, chrony, iptables, dhcpcd into overlay)..."
 APKOVL_DIR="$WORKDIR/apkovl"
-mkdir -p "$APKOVL_DIR/etc/local.d"
-mkdir -p "$APKOVL_DIR/etc/apk"
+mkdir -p "$APKOVL_DIR"
+# Each .apk is a tarball (no data.tar.gz); extract payload in container, exclude metadata
+docker run --rm --platform linux/arm/v6 \
+    -v "$APKOVL_DIR:/overlay" \
+    -v "$APKS_MAIN/armhf:/pkg_main:ro" \
+    -v "$APKS_COMMUNITY/armhf:/pkg_community:ro" \
+    alpine:${ALPINE_VERSION} \
+    sh -c "for f in /pkg_main/*.apk /pkg_community/*.apk; do [ -f \"\$f\" ] && tar -xzf \"\$f\" -C /overlay; done"
 
+mkdir -p "$APKOVL_DIR/etc/local.d" "$APKOVL_DIR/etc/apk"
 cp "$DMZ_ROOT/install/dmz-init.start" "$APKOVL_DIR/etc/local.d/"
 chmod +x "$APKOVL_DIR/etc/local.d/dmz-init.start"
-
-# etc/apk/world: packages to install at boot
-printf '%s\n' "bubblewrap" "haveged" "chrony" "iptables" > "$APKOVL_DIR/etc/apk/world"
-
-# etc/apk/repositories: use local apks on boot partition for offline
-echo "/media/mmcblk0p1/apks" > "$APKOVL_DIR/etc/apk/repositories"
-
-# etc/hostname for consistent apkovl naming
+# No repos/world in overlay so boot never runs apk (no APKINDEX.tar.gz warnings)
+: > "$APKOVL_DIR/etc/apk/repositories"
+: > "$APKOVL_DIR/etc/apk/world"
 echo "dmz" > "$APKOVL_DIR/etc/hostname"
 
-(cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" etc/)
+# Build ID: script hash + install payload hash + UTC time (so changing dmz-init/network changes the ID)
+if command -v sha256sum >/dev/null 2>&1; then
+    SCRIPT_HASH=$(sha256sum "$SCRIPT_DIR/create-image.sh" | awk '{print $1}')
+    PAYLOAD_HASH=$( ( find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | sha256sum | awk '{print $1}')
+else
+    SCRIPT_HASH=$(shasum -a 256 "$SCRIPT_DIR/create-image.sh" | awk '{print $1}')
+    PAYLOAD_HASH=$( ( find "$DMZ_ROOT/install" -type f -exec cat {} \; 2>/dev/null ) | shasum -a 256 | awk '{print $1}')
+fi
+BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+SCRIPT_HASH_SHORT=$(echo "$SCRIPT_HASH" | cut -c1-12)
+PAYLOAD_HASH_SHORT=$(echo "$PAYLOAD_HASH" | cut -c1-8)
+BUILDINFO_LINE="sha:${SCRIPT_HASH_SHORT}+${PAYLOAD_HASH_SHORT} $BUILD_DATE"
+echo "$BUILDINFO_LINE" > "$WORKDIR/buildinfo.txt"
+mkdir -p "$APKOVL_DIR/root"
+echo "DMZ image: $BUILDINFO_LINE" > "$APKOVL_DIR/root/README"
+echo "cat /root/README for build ID. dmz-init: /etc/local.d/dmz-init.start" >> "$APKOVL_DIR/root/README"
+echo "DMZ $BUILDINFO_LINE" > "$APKOVL_DIR/etc/issue"
+
+(cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" .)
+ts "[6/8] Apkovl done."
 
 # 7. Create FAT32 image and populate
-echo "[7/8] Creating FAT32 image..."
+ts "[7/8] Creating FAT32 image..."
 
 IMG_FILE="$WORKDIR/dmz.img"
 dd if=/dev/zero of="$IMG_FILE" bs=1M count="$IMAGE_SIZE_MB" 2>/dev/null
@@ -130,8 +186,11 @@ mkfs.vfat -n PIBOOT -F 32 "$IMG_FILE" 2>/dev/null || mkfs.vfat -F 32 "$IMG_FILE"
 # Copy files using mtools (no root required)
 if command -v mcopy >/dev/null 2>&1 && command -v mmd >/dev/null 2>&1; then
     echo "    Using mtools..."
+    n=0
     for x in "$ALPINE_EXTRACT"/*; do
         [ -e "$x" ] || continue
+        n=$((n+1))
+        ts "    mcopy $n: $(basename "$x")..."
         mcopy -i "$IMG_FILE" -s "$x" "::$(basename "$x")"
     done
     mcopy -i "$IMG_FILE" "$ROOTFS_TAR" ::dmz_rootfs.tar
@@ -140,7 +199,11 @@ if command -v mcopy >/dev/null 2>&1 && command -v mmd >/dev/null 2>&1; then
         [ -e "$f" ] || continue
         mcopy -i "$IMG_FILE" "$f" "::install/$(basename "$f")"
     done
+    mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::install/buildinfo.txt
+    mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
     mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
+    mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz
+    ts "[7/8] mtools copy done."
 else
     echo "    Using mount (requires sudo)..."
     MOUNT_POINT="$WORKDIR/mnt"
@@ -170,7 +233,10 @@ else
     cp -a "$ALPINE_EXTRACT"/* "$MOUNT_POINT/"
     cp "$ROOTFS_TAR" "$MOUNT_POINT/dmz_rootfs.tar"
     cp -r "$DMZ_ROOT/install" "$MOUNT_POINT/"
+    cp "$WORKDIR/buildinfo.txt" "$MOUNT_POINT/install/"
+    cp "$WORKDIR/buildinfo.txt" "$MOUNT_POINT/BUILD.txt"
     cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/"
+    cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/alpine.apkovl.tar.gz"
     chmod +x "$MOUNT_POINT/install/run_raw.sh" 2>/dev/null || true
 
     case "$(uname)" in
@@ -180,7 +246,7 @@ else
 fi
 
 # 8. Move to output
-echo "[8/8] Finalizing..."
+ts "[8/8] Finalizing..."
 mkdir -p "$(dirname "$OUTPUT")"
 mv "$IMG_FILE" "$OUTPUT"
 
@@ -194,6 +260,7 @@ fi
 echo ""
 echo "==> Done. Image: $OUTPUT"
 echo "    SHA256: $SHA"
+echo "    Image reports as: $BUILDINFO_LINE"
 echo ""
 echo "Next: Write to SD card with:"
 echo "  ./write-to-card.sh $OUTPUT /dev/sdX"

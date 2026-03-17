@@ -1,27 +1,41 @@
-# use like so.
-# > cd <here>
-# > docker build -q -t jovlinger/thermo/dmz .
-# For Pi 1B (ARMv6): docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .
-# > docker run --rm -it jovlinger/thermo/dmz sh test.sh
+# Multi-stage build for Pi 1B (ARMv6). Stage 1 builds Python deps (incl. cryptography/Rust);
+# stage 2 produces a minimal runtime image.
 #
-# Minimal Alpine base per plan.md: lightweight, ARMv6-compatible.
-# To run without Docker daemon on Pi 1B, use install/run_raw.sh.
+# Usage:
+#   docker build -q -t jovlinger/thermo/dmz .
+#   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .
+#   docker run --rm -it jovlinger/thermo/dmz sh test.sh
 
-FROM alpine:3.19
+# -----------------------------------------------------------------------------
+# Stage 1: Builder (full toolchain for cryptography/Rust)
+# -----------------------------------------------------------------------------
+FROM alpine:3.19 AS builder
 
-RUN apk add --no-cache python3 py3-pip tini && ln -sf /usr/bin/python3 /usr/bin/python
+RUN apk add --no-cache \
+    python3 py3-pip \
+    rust cargo \
+    gcc musl-dev libffi-dev openssl-dev python3-dev
 
 WORKDIR /app
-# copy everything, including this file... why not?
-COPY . . 
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
+# -----------------------------------------------------------------------------
+# Stage 2: Runtime (minimal; no Rust, no build tools)
+# -----------------------------------------------------------------------------
+FROM alpine:3.19
 
-# App listens on 8080 (unprivileged); iptables redirects 80->8080 on host.
+RUN apk add --no-cache python3 tini openssl libffi \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+WORKDIR /app
+COPY . .
+
+# Copy pre-built site-packages from builder
+COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
+
 ENV PORT=8080
 EXPOSE 8080
 
-# tini as PID 1 reaps zombies in bwrap sandbox
 ENTRYPOINT ["tini", "--"]
 CMD ["sh", "./run.sh"]
-
