@@ -149,8 +149,9 @@ pr ""
 
 pr ">>> dmz-init: 6/7 launch app..."
 pr "  running: su dmzuser -c $SD_MOUNT/install/run_raw.sh $ROOTFS_DIR (background)"
-su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" &
-pr ""
+( su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" 2>>"$LOG" & )
+sleep 1
+pr "  app launch attempted (stderr above if any)"
 
 # --- Full forensic dump into same log ---
 pr ">>> forensic dump (all for debug)..."
@@ -163,6 +164,17 @@ pr ""
 pr "uname: $(uname -a 2>/dev/null)"
 pr ""
 
+# --- Debug: write boot.log and state to SD so card has them when pulled ---
+pr ">>> writing debug to SD..."
+mount -o remount,rw "$SD_MOUNT" 2>/dev/null || true
+if [ -d "$SD_MOUNT/debug" ]; then
+    cp "$LOG" "$SD_MOUNT/debug/boot.log" 2>/dev/null || true
+    echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt" 2>/dev/null || true
+    pr "  wrote $SD_MOUNT/debug/boot.log and state.txt"
+else
+    pr "  no $SD_MOUNT/debug dir, skip"
+fi
+
 # --- Unmount SD ---
 pr ">>> dmz-init: 7/7 unmount SD..."
 pr "  running: sleep 2; cd /; umount $SD_MOUNT"
@@ -170,4 +182,4 @@ sleep 2
 cd /
 umount "$SD_MOUNT" 2>>"$LOG" || true
 pr "========== dmz-init complete $(date) =========="
-pr "Log saved in /tmp/boot.log — after bringing up net: scp root@<pi-ip>:/tmp/boot.log ."
+pr "Log: /tmp/boot.log and (if SD had debug/) /Volumes/PIBOOT/debug/boot.log on card"

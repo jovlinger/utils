@@ -160,9 +160,18 @@ BUILD_ID=$(echo "$BUILD_HASH" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILDINFO_LINE="${BUILD_ID} $BUILD_DATE"
 echo "$BUILDINFO_LINE" > "$WORKDIR/buildinfo.txt"
-mkdir -p "$APKOVL_DIR/root"
+mkdir -p "$APKOVL_DIR/root" "$APKOVL_DIR/root/.ssh"
 echo "DMZ image: $BUILDINFO_LINE" > "$APKOVL_DIR/root/README"
 echo "cat /root/README for build ID. dmz-init: /etc/local.d/dmz-init.start" >> "$APKOVL_DIR/root/README"
+cp "$DMZ_ROOT/install/root-network-sshd.sh" "$APKOVL_DIR/root/network-and-sshd.sh"
+chmod +x "$APKOVL_DIR/root/network-and-sshd.sh"
+ID_RSA_PUB="${HOME:-/root}/.ssh/id_rsa.pub"
+if [ ! -s "$ID_RSA_PUB" ]; then
+    echo "Error: ~/.ssh/id_rsa.pub not found or empty."
+    exit 1
+fi
+cp "$ID_RSA_PUB" "$APKOVL_DIR/root/.ssh/authorized_keys"
+chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 echo "DMZ $BUILDINFO_LINE" > "$APKOVL_DIR/etc/issue"
 
 (cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" .)
@@ -194,6 +203,7 @@ if command -v mcopy >/dev/null 2>&1 && command -v mmd >/dev/null 2>&1; then
     done
     mcopy -i "$IMG_FILE" "$ROOTFS_TAR" ::dmz_rootfs.tar
     mmd -i "$IMG_FILE" ::install
+    mmd -i "$IMG_FILE" ::debug
     for f in "$DMZ_ROOT/install"/*; do
         [ -e "$f" ] || continue
         mcopy -i "$IMG_FILE" "$f" "::install/$(basename "$f")"
@@ -236,6 +246,7 @@ else
     cp "$WORKDIR/buildinfo.txt" "$MOUNT_POINT/BUILD.txt"
     cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/"
     cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/alpine.apkovl.tar.gz"
+    mkdir -p "$MOUNT_POINT/debug"
     chmod +x "$MOUNT_POINT/install/run_raw.sh" 2>/dev/null || true
 
     case "$(uname)" in
