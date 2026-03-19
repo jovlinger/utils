@@ -11,13 +11,15 @@ from constants import help_msg
 from collections import deque
 from collections import defaultdict
 from datetime import datetime
+import logging
 import os
 import sys
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, request
 
 from heatpumpirctl import State
+from common import get_log_level, set_log_level
 
 app = Flask(__name__)
 
@@ -28,6 +30,92 @@ def out(msg: str, **kwargs) -> None:
 
 
 c = defaultdict(lambda: 0)
+
+MANAGE_TOKEN_ENVVAR = "MANAGE_TOKEN"
+
+
+def _manage_auth_ok() -> bool:
+    """Allow management operations only with a matching token."""
+    token = os.environ.get(MANAGE_TOKEN_ENVVAR, "")
+    presented = request.headers.get("X-Manage-Token", "")
+    return bool(token and presented and token == presented)
+
+
+def _state_snapshot() -> Dict[str, Any]:
+    """Return an internal state snapshot for forensics and testing."""
+    return {
+        "time": datetime.now().isoformat(),
+        "pid": os.getpid(),
+        "log_level": get_log_level(),
+        "log_path": os.environ.get("LOG_PATH"),
+        "fake_sensor": {
+            "temperature_centigrade": _round1(_fake_temp),
+            "humidity_percent": _round1(_fake_humid),
+        },
+        "daikin_queue_size": len(daikin_cmds),
+        "daikin_queue_capacity": DAIKIN_CMDS_MAXLEN,
+        "env": {
+            "ENV": os.environ.get("ENV"),
+            "PORT": os.environ.get("PORT"),
+            "DMZ_URL": os.environ.get("DMZ_URL"),
+        },
+    }
+
+
+def _parse_exit_code(value: Any) -> int:
+    code = int(value)
+    if code < 1 or code > 255:
+        raise ValueError("code must be in [1,255]")
+    return code
+
+
+def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    action = str(payload.get("action", "")).strip().lower()
+    if not action:
+        return {"error": "missing action"}, 400
+
+    if action == "inject_log":
+        level_name = str(payload.get("level", "INFO")).upper().strip()
+        message = str(payload.get("message", "injected-log"))
+        logger = logging.getLogger("onboard")
+        level = getattr(logging, level_name, None)
+        if not isinstance(level, int):
+            return {"error": "invalid level"}, 400
+        logger.log(level, "manage: injected log message=%r", message)
+        return {"ok": True, "action": action, "level": level_name, "message": message}, 200
+
+    if action == "assert":
+        msg = str(payload.get("message", "management assertion failure"))
+        out("management assert", message=msg)
+        raise AssertionError(msg)
+
+    if action == "raise":
+        msg = str(payload.get("message", "management runtime failure"))
+        out("management raise", message=msg)
+        raise RuntimeError(msg)
+
+    if action == "fatal":
+        code = _parse_exit_code(payload.get("code", 99))
+        out("management fatal exit", code=code)
+        os._exit(code)
+
+    if action == "set_log_level":
+        level_name = str(payload.get("level", "")).strip()
+        updated = set_log_level(level_name)
+        if not updated:
+            return {"error": "invalid level"}, 400
+        out("management set log level", level=updated)
+        return {"ok": True, "action": action, "level": updated}, 200
+
+    if action == "reset":
+        global _fake_temp, _fake_humid
+        _fake_temp = None
+        _fake_humid = None
+        daikin_cmds.clear()
+        out("management reset state")
+        return {"ok": True, "action": action}, 200
+
+    return {"error": "unknown action"}, 400
 
 
 @app.route("/<path:path>")
@@ -120,6 +208,25 @@ def logs():
         return {"lines": [ln.rstrip("\n") for ln in lines[-200:]]}
     except OSError:
         return {"lines": []}, 200
+
+
+@app.route("/manage", methods=["GET"])
+def manage_get():
+    """Return internal state for diagnostics."""
+    if not _manage_auth_ok():
+        return {"error": "forbidden"}, 403
+    return _state_snapshot(), 200
+
+
+@app.route("/manage", methods=["POST"])
+def manage_post():
+    """Execute one management action for fault-injection or runtime tuning."""
+    if not _manage_auth_ok():
+        return {"error": "forbidden"}, 403
+    js = request.json or {}
+    if not isinstance(js, dict):
+        return {"error": "json object required"}, 400
+    return _management_action(js)
 
 
 @app.route("/daikin", methods=["PUT", "POST"])

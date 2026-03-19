@@ -91,7 +91,7 @@ DEVICES="--device /dev/i2c-1 --device /dev/lirc0"
 
 log "Starting container..."
 # Host network: onboard listens on Pi's IP:5000, reachable by DMZ
-# LOG_PATH: rolling buffer (500 lines) for post-reboot diagnosis
+# LOG_PATH: app log path managed by run-with-stdout-logged.py
 # DMZ_URL: full URL to DMZ (global IP or domain). E.g. http://203.0.113.42:5000
 [ -n "${DMZ_URL:-}" ] && log "DMZ_URL=$DMZ_URL"
 $DOCKER run -d --restart unless-stopped \
@@ -101,7 +101,8 @@ $DOCKER run -d --restart unless-stopped \
     $DEVICES \
     -e PORT=5000 \
     -e LOG_PATH=/var/log/thermo-onboard/onboard.log \
-    -e LOG_MAX_LINES=500 \
+    -e LOG_FILELIMIT=1048576 \
+    -e LOG_TOTALLIMIT=2097152 \
     ${DMZ_URL:+-e "DMZ_URL=$DMZ_URL"} \
     "$IMAGE"
 

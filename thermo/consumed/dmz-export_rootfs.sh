@@ -1,4 +1,7 @@
 #!/bin/sh
+# Archived script (consumed): superseded by thermo/dmz/image/create-image.sh.
+# Original path: thermo/dmz/install/export_rootfs.sh
+#
 # Export a Docker image to a rootfs tarball for "raw" execution (bwrap/chroot) on Pi 1B.
 #
 # Usage:

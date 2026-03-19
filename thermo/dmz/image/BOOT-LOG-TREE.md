@@ -1,6 +1,6 @@
 # Boot log: decision tree and contingencies
 
-The script writes to **/root/boot.log** only. The SD card is read-only; root (/) is tmpfs and writable. So the log is always at **/root/boot.log**. After you bring up net (e.g. run network-and-sshd.sh), scp it off: `scp root@<pi-ip>:/root/boot.log .`
+The script writes to **/tmp/boot.log**. The SD card is read-only; root (/) is tmpfs and writable. After you bring up net (e.g. run network-and-sshd.sh), scp it off: `scp root@<pi-ip>:/tmp/boot.log .` At the end of boot it is also copied to `debug/boot.log` on the card. For app log rotation, see **install/LOGGING.md**.
 
 The log is detailed: every step, SD discovery (each path tried), network.conf read, ip addr/route/resolv dumps, and a full forensic dump (mounts, cmdline, dmesg filter, uname) at the end.
 
@@ -40,18 +40,18 @@ The log is detailed: every step, SD discovery (each path tried), network.conf re
 - **Log:** `default via <gw>` or `ip route add default via <gw> failed`
 - **Else:** failed → we log it; no default route.
 
-### 8. Steps 1/7–6/7 (entropy, clock, iptables, adduser, rootfs, app)
+### 8. Steps 4/12–9/12 (entropy, clock, iptables, adduser, rootfs, launch run_raw)
 - **Log:** each step name; rootfs/app failures would exit script (set -e) and last line in log is the step that failed.
 - **Contingency:** If log ends before "dmz-init complete", the last line is where it died.
 
-### 9. Unmount
-- **Log:** `dmz-init complete`. Log is in /root/boot.log (tmpfs); scp it off after bringing up net.
+### 9. Steps 10/12–12/12 (forensic, persist boot.log to SD, unmount)
+- **Log:** `dmz-init complete`. Log is in /tmp/boot.log (tmpfs); scp it off after bringing up net, or read from card at debug/boot.log.
 
 ---
 
 ## Where to read the log
 
-- **On the Pi:** `cat /root/boot.log` (or after bringing up net: `scp root@<pi-ip>:/root/boot.log .` from your Mac).
+- **On the Pi:** `cat /tmp/boot.log` (or after bringing up net: `scp root@<pi-ip>:/tmp/boot.log .` from your Mac). On the card: `debug/boot.log`.
 
 ---
 

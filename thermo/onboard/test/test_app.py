@@ -50,11 +50,14 @@ class AppTest(TestCase):
         self.assertEqual(constants.help_msg, msg)
 
     def test_environment(self):
-        """Environment returns temp/humidity from HTU21D (smbus_fake). Values match read_sensor formula."""
-        res = app.environment()
-        # smbus_fake returns (123, 34, 56) -> raw=(123*256+34)/65536 -> temp≈37.67, hum≈54.12
-        want = {"temperature_centigrade": 37.67, "humidity_percent": 54.12}
-        self.assertTrue(equalish(want, res))
+        """Environment returns rounded temp/humidity from HTU21D (smbus_fake)."""
+        with patch.dict(os.environ, {"ENV": "TEST"}, clear=False):
+            # Reset singleton so this test always builds HTU21D with smbus_fake.
+            app.HTU21D.instance = None
+            res = app.environment()
+        # smbus_fake yields ~37.67C and ~54.12%, endpoint contract rounds to 1 decimal.
+        self.assertTrue(equalish(37.7, res.get("temperature_centigrade")))
+        self.assertTrue(equalish(54.1, res.get("humidity_percent")))
 
     @patch("app.send_daikin_state", return_value=True)
     def test_daikin_sequence(self, mock_send):
@@ -102,3 +105,45 @@ class AppTest(TestCase):
         self.assertFalse(get_r.json[0]["command"]["power"])
         self.assertEqual(get_r.json[1]["command"]["fan"], "F3")
         self.assertTrue(get_r.json[2]["command"]["power"])
+
+    def test_manage_get_state(self):
+        client = app.app.test_client()
+        with patch.dict(os.environ, {"MANAGE_TOKEN": "test-token"}, clear=False):
+            r = client.get("/manage", headers={"X-Manage-Token": "test-token"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("pid", r.json)
+        self.assertIn("log_level", r.json)
+        self.assertIn("fake_sensor", r.json)
+
+    def test_manage_set_log_level(self):
+        client = app.app.test_client()
+        with patch.dict(os.environ, {"MANAGE_TOKEN": "test-token"}, clear=False):
+            r = client.post(
+                "/manage",
+                json={"action": "set_log_level", "level": "debug"},
+                headers={"X-Manage-Token": "test-token"},
+            )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json["level"], "DEBUG")
+
+    def test_manage_inject_log(self):
+        client = app.app.test_client()
+        with patch.dict(os.environ, {"MANAGE_TOKEN": "test-token"}, clear=False):
+            r = client.post(
+                "/manage",
+                json={"action": "inject_log", "level": "INFO", "message": "hello"},
+                headers={"X-Manage-Token": "test-token"},
+            )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json["action"], "inject_log")
+        self.assertEqual(r.json["message"], "hello")
+
+    def test_manage_raise(self):
+        client = app.app.test_client()
+        with patch.dict(os.environ, {"MANAGE_TOKEN": "test-token"}, clear=False):
+            r = client.post(
+                "/manage",
+                json={"action": "raise", "message": "boom"},
+                headers={"X-Manage-Token": "test-token"},
+            )
+        self.assertEqual(r.status_code, 500)

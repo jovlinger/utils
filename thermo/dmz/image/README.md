@@ -5,9 +5,10 @@ Scripts to create a complete bootable SD image for the DMZ on Raspberry Pi 1B an
 ## Overview
 
 | Script | Purpose |
-|--------|---------|
+| ------ | ------- |
 | `create-image.sh` | Build `dmz.img` (Alpine diskless + DMZ app) |
 | `write-to-card.sh` | Write the image to an SD card via `dd` |
+| `build-and-write.sh` | Single command: clean-git check, build, then write |
 
 ## Prerequisites
 
@@ -18,6 +19,7 @@ Scripts to create a complete bootable SD image for the DMZ on Raspberry Pi 1B an
     Or: Linux with `losetup`/`mount` or macOS with `hdiutil` (requires sudo)
 
 On macOS, install tools via Homebrew:
+
 ```bash
 brew install mtools dosfstools
 ```
@@ -32,6 +34,7 @@ cd thermo/dmz/image
 ```
 
 Options:
+
 - `--output FILE` — Output path (default: `dmz.img` in script dir)
 - `--alpine-version VER` — Alpine version (default: 3.23.3)
 - `--size MB` — Image size in MB (default: 256)
@@ -44,13 +47,28 @@ Insert the SD card and identify the device (e.g. `/dev/sdb`, `/dev/mmcblk0`).
 ./write-to-card.sh dmz.img /dev/sdX
 ```
 
+### One-step build + write
+
+If you want the full loop in one command (and to avoid card/repo drift), use:
+
+```bash
+./build-and-write.sh /dev/rdisk4 --output /tmp/dmz-test.img
+```
+
+This script:
+
+- Asserts git working tree is clean (so image metadata has a real commit SHA)
+- Starts SD-card unmount in the background while image build runs
+- Builds via `create-image.sh`
+- Waits for unmount completion and then writes image via `write-to-card.sh` (with `sudo`)
+
 ### 3. Boot the Pi 1B
 
 Insert the SD card and power on. The `dmz-init.start` script runs automatically: entropy, clock sync, iptables redirect (80→8080), and the sandboxed app.
 
 **Boot timeline:** There is a quiet period (initramfs: kernel, mount overlay, switch_root) with nothing visible on console. Once OpenRC starts, you get a login prompt within about 4 seconds.
 
-**Boot output:** You should see a clear `========== DMZ ==========` block with build hash and local time; then `dmz-init: 0/7 network...` through `7/7`, and finally `========== dmz-init complete ==========`. **Clock skew warnings** from OpenRC at the start of boot are expected (Pi has no RTC); time is corrected once dmz-init runs NTP.
+**Boot output:** You should see a clear `========== DMZ ==========` block with build hash and local time; then `dmz-init: 1/12` through `12/12` (SD discovery, banner, network, … launch, forensic, persist, unmount), and finally `========== dmz-init complete ==========`. **Clock skew warnings** from OpenRC at the start of boot are expected (Pi has no RTC); time is corrected once dmz-init runs NTP.
 
 ### 4. Verify
 
@@ -63,15 +81,6 @@ curl http://<pi-ip>/zones
 Put your public key in the image at build time: **install/authorized_keys** (one line, your `id_rsa.pub`). The image will contain that single key in `/root/.ssh/authorized_keys`.
 
 On the Pi (root console): `sh /root/network-and-sshd.sh` — brings up eth0 at 192.168.88.200 and starts sshd. Then from your Mac: `ssh root@192.168.88.200`.
-
-## Alternative: prepare-sd.sh
-
-If you already have Alpine on an SD card and prefer to copy files manually, use the install workflow instead:
-
-```bash
-./install/export_rootfs.sh jovlinger/thermo/dmz dmz_rootfs.tar
-./install/prepare-sd.sh dmz_rootfs.tar /path/to/sd/mount
-```
 
 See [install/README.md](../install/README.md) and [plan.md](../plan.md).
 

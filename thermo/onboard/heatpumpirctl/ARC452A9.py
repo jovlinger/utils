@@ -83,9 +83,9 @@ def dump(state: State) -> Tuple[List[int], List[int]]:
     f1 = list(F1_FIXED)
 
     byte5 = (_MODE_TO_NIB.get(state.mode, 0) << 4) | (0x01 if state.power else 0x00)
-    if state.timer_off_minutes is not None:
+    if state.timer_off_active:
         byte5 |= 0x02
-    if state.timer_on_minutes is not None:
+    if state.timer_on_active:
         byte5 |= 0x04
 
     temp_byte = max(20, min(64, state.half_c))
@@ -150,10 +150,23 @@ def load(f3: Sequence[int], f1: Optional[Sequence[int]] = None) -> State:
 
     if n > 0x0C:
         b5 = f3[5]
-        if b5 & 0x04:
-            s.timer_on_minutes = ((f3[0x0B] & 0x0F) << 8) | f3[0x0A]
-        if b5 & 0x02:
-            s.timer_off_minutes = (f3[0x0C] << 4) | (f3[0x0B] >> 4)
+        s.timer_on_active = bool(b5 & 0x04)
+        s.timer_off_active = bool(b5 & 0x02)
+
+        # Minutes are encoded in bytes regardless of the active bit.
+        # Keep them if they look sane, so UI can preserve time while inactive.
+        timer_on_min = ((f3[0x0B] & 0x0F) << 8) | f3[0x0A]
+        timer_off_min = (f3[0x0C] << 4) | (f3[0x0B] >> 4)
+
+        if 0 <= timer_on_min <= 1439:
+            s.timer_on_minutes = timer_on_min
+        else:
+            s.timer_on_minutes = None
+
+        if 0 <= timer_off_min <= 1439:
+            s.timer_off_minutes = timer_off_min
+        else:
+            s.timer_off_minutes = None
 
     if n > 0x0D:
         s.powerful = bool(f3[0x0D] & 0x01)
@@ -419,6 +432,8 @@ def round_trip_ok(state: State) -> bool:
         and s2.powerful == state.powerful
         and s2.econo == state.econo
         and s2.comfort == state.comfort
+        and s2.timer_on_active == state.timer_on_active
+        and s2.timer_off_active == state.timer_off_active
         and s2.timer_on_minutes == state.timer_on_minutes
         and s2.timer_off_minutes == state.timer_off_minutes
     )

@@ -1,0 +1,3 @@
+**/*.img
+thermo/dmz/image/dmz.img
+thermo/dmz/image/*.img

@@ -69,7 +69,7 @@ Use the base URL only (e.g. `http://host:5000`); run.sh appends `/zone/zoneymczo
 
 ## Post-Reboot Diagnosis
 
-A rolling log buffer (500 lines) is written to the host for post-reboot diagnosis:
+A rotating app log is written to the host for post-reboot diagnosis:
 
 ```bash
 # View container logs (live)
@@ -80,3 +80,29 @@ ssh johan@pizero.local 'tail -200 /var/log/thermo-onboard/onboard.log'
 ```
 
 Override log location: `THERMO_LOG_DIR=~/thermo-logs ./run-onboard.sh`
+
+Rotation defaults (same strategy as DMZ):
+
+- file rotate at 1 MiB (`LOG_FILELIMIT=1048576`)
+- rotated-files total cap 2 MiB (`LOG_TOTALLIMIT=2097152`)
+
+## Management Endpoint
+
+Onboard exposes `/manage`:
+
+- `GET /manage`: internal runtime state (pid, log level, queue sizes, fake sensor state)
+- `POST /manage`: control actions for diagnostics/fault injection
+
+`POST` body examples:
+
+```json
+{"action":"inject_log","level":"INFO","message":"hello"}
+{"action":"set_log_level","level":"DEBUG"}
+{"action":"raise","message":"simulate exception"}
+{"action":"assert","message":"simulate assertion"}
+{"action":"fatal","code":99}
+{"action":"reset"}
+```
+
+Safety:
+- Require `X-Manage-Token` header matching `MANAGE_TOKEN` env var.

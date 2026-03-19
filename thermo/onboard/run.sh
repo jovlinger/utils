@@ -1,17 +1,21 @@
 # common entry point, invoked by container, per Dockerfile
-# Logs go to LOG_PATH (default /tmp/onboard.log), pruned by LOG_MAX_LINES.
+# Logs go to LOG_PATH (default /tmp/onboard.log) via run-with-stdout-logged.py.
 # When run locally, asserts pip env exists.
 
 # this hardcodes "this" onboard zone's name as zoneymczoneface
 # Use 127.0.0.1 for onboard (host network has no Docker DNS). Override ONBOARD_URL/DMZ_URL for docker-compose.
 ONBOARD="${ONBOARD_URL:-http://127.0.0.1:5000}"
 DMZ="${DMZ_URL:-http://dmz:5000}"
+LOG_PATH="${LOG_PATH:-/tmp/onboard.log}"
+LOG_FILELIMIT="${LOG_FILELIMIT:-1048576}"
+LOG_TOTALLIMIT="${LOG_TOTALLIMIT:-2097152}"
+export LOG_PATH
 
 if [ -f /.dockerenv ]; then
   python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
   python ui_server.py &
   echo "starting app"
-  exec python app.py
+  exec python ./run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,4 +29,4 @@ fi
 python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
 python ui_server.py &
 echo "starting app"
-exec python app.py
+exec python ./run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py

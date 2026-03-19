@@ -2,3 +2,4 @@ flask
 pydantic
 authlib
 cryptography
+pytest

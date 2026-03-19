@@ -13,15 +13,14 @@ DMZ is the part of the application which handles access to the internet at large
 ## Software in This Repo
 
 | Item | Purpose |
-|------|---------|
+| ---- | ------- |
 | `app.py` | Flask API for zone state/command rendezvous |
 | `Dockerfile` | Alpine-based image with Python, Flask, pydantic |
-| `install/export_rootfs.sh` | Export Docker image to rootfs tarball |
 | `install/run_raw.sh` | Run extracted rootfs via bwrap (no Docker daemon) |
-| `install/prepare-sd.sh` | Copy payload and scripts to SD from dev machine |
 | `install/dmz-init.start` | OpenRC boot script template for Pi |
 | `image/create-image.sh` | Build complete bootable dmz.img for dd |
 | `image/write-to-card.sh` | Write dmz.img to SD card |
+| `image/build-and-write.sh` | One-step clean-git + build + write loop |
 | `test/` | Tests |
 
 ## Hardware (Elsewhere)
@@ -52,16 +51,4 @@ cd thermo/dmz/image
 # Boot Pi; dmz-init runs automatically
 ```
 
-**Manual workflow:** Build, export, and copy to an existing Alpine SD:
-
-```bash
-cd thermo/dmz
-docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .
-./install/export_rootfs.sh jovlinger/thermo/dmz dmz_rootfs.tar
-./install/prepare-sd.sh dmz_rootfs.tar /path/to/sd
-# Boot Pi; dmz-init runs automatically, or manually:
-#    mkdir -p /tmp/dmz_rootfs && tar -xf /media/mmcblk0p1/dmz_rootfs.tar -C /tmp/dmz_rootfs
-#    ./install/run_raw.sh /tmp/dmz_rootfs
-```
-
-See [plan.md](plan.md) and [image/README.md](image/README.md) for details.
+See [plan.md](plan.md) and [image/README.md](image/README.md) for details. For where each install file ends up (overlay vs SD vs rootfs), see [install/README.md](install/README.md#name--path-correspondences). Legacy manual scripts and cloud docs were moved to `thermo/consumed`.

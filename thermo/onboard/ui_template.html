@@ -5,7 +5,14 @@
 <p>banana</p>
 <h1>Thermo</h1>
 <p><b>Environment:</b> $env</p>
+<p><b>State:</b> $state_summary</p>
 <p>$msg</p>
+<hr>
+<p><b>Help</b></p>
+<p>$help_msg</p>
+<p><b>About</b></p>
+<p>$about_msg</p>
+<p><code>$state_json</code></p>
 <form method="post" action="/">
   <label>Power <input type="checkbox" name="power" $power_checked></label><br>
   <label>Mode <select name="mode">$mode_options</select></label><br>
@@ -15,12 +22,33 @@
   <label>Powerful <input type="checkbox" name="powerful" $powerful_checked></label>
   <label>Econo <input type="checkbox" name="econo" $econo_checked></label>
   <label>Comfort <input type="checkbox" name="comfort" $comfort_checked></label><br>
-  <label>Turn on at <input type="checkbox" name="timer_on_enable" $timer_on_checked> <input type="text" name="timer_on_minutes" value="$timer_on" size="5" placeholder="06:30" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)" $timer_on_disabled></label>
-  <label>Turn off at <input type="checkbox" name="timer_off_enable" $timer_off_checked> <input type="text" name="timer_off_minutes" value="$timer_off" size="5" placeholder="20:00" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)" $timer_off_disabled></label><br>
+  <label>Turn on at <input type="checkbox" name="timer_on_enable" $timer_on_checked> <input type="text" name="timer_on_minutes" value="$timer_on" size="5" placeholder="06:30" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label>
+  <label>Turn off at <input type="checkbox" name="timer_off_enable" $timer_off_checked> <input type="text" name="timer_off_minutes" value="$timer_off" size="5" placeholder="20:00" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label><br>
   <input type="submit" value="SEND">
 </form>
 <hr>
 <p><b>Logs</b></p>
 <p>$logs</p>
+
+<hr>
+<p><b>Management</b></p>
+<p>$manage_status</p>
+<form method="post" action="/">
+  <label>Token <input type="password" name="manage_token" placeholder="(X-Manage-Token)"></label><br>
+  <label>Action
+    <select name="manage_action">
+      <option value="inject_log">inject_log</option>
+      <option value="set_log_level">set_log_level</option>
+      <option value="assert">assert</option>
+      <option value="raise">raise</option>
+      <option value="fatal">fatal</option>
+      <option value="reset">reset</option>
+    </select>
+  </label><br>
+  <label>Level <input type="text" name="manage_level" value="INFO" size="6"></label><br>
+  <label>Message <input type="text" name="manage_message" value="" size="30"></label><br>
+  <label>Fatal code <input type="text" name="manage_code" value="99" size="4"></label><br>
+  <input type="submit" value="RUN MANAGE">
+</form>
 </body>
 </html>

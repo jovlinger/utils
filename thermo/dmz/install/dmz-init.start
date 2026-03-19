@@ -1,185 +1,154 @@
 #!/bin/sh
 # OpenRC boot script for DMZ on Pi 1B (Alpine diskless).
-# SD is RO; / is tmpfs RW. Boot log: /tmp/boot.log (scp it out after bringing up net).
-# set -e disabled until we are happy all commands succeed; script pr's commands before running.
+#
+# Assumptions (known image / hardware):
+# - Boot FAT is mounted at /media/mmcblk0 with install/{network.conf,buildinfo.txt,run_raw.sh},
+#   dmz_rootfs.tar, and debug/
+# - apkovl provides eth0, haveged, busybox ntpd, iptables, bubblewrap; eth0 appears within 30s
+# - /tmp/boot.log is the live log; we copy it to SD debug/ before umount
+#
+set -e
 
 ROOTFS_TAR="dmz_rootfs.tar"
 ROOTFS_DIR="/tmp/dmz_rootfs"
+RUN_RAW_TMPDIR="/tmp/dmz-launcher"
+RUN_RAW_ON_TMPFS="$RUN_RAW_TMPDIR/run_raw.sh"
 LOG="/tmp/boot.log"
+# App log: run_raw bind-mounts host /tmp/dmz.log into bwrap so 10/12 can append it here.
+DMZ_APP_LOG="/tmp/dmz.log"
+SD_MOUNT="/media/mmcblk0"
 
 mkdir -p /root
 : > "$LOG"
-pr() { echo "$@" >> "$LOG"; [ -c /dev/console ] && echo "$@" >/dev/console; }
-dump() { echo "--- $1 ---" >> "$LOG"; shift; "$@" >> "$LOG" 2>&1 || true; echo "" >> "$LOG"; }
+pr() { echo "$@" >> "$LOG"; { [ -c /dev/console ] && echo "$@" >/dev/console; } || true; }
+dump() {
+    echo "--- $1 ---" >> "$LOG"
+    shift
+    "$@" >> "$LOG" 2>&1
+    echo "" >> "$LOG"
+}
 
 pr "========== dmz-init started $(date -u '+%Y-%m-%dT%H:%M:%SZ') local $(date) =========="
 pr ""
 
-# --- SD discovery (detailed) ---
-pr ">>> SD discovery: checking fixed paths..."
-SD_MOUNT=""
-SD_SOURCE=""
-for p in /media/mmcblk0 /media/mmcblk0p1 /boot /mnt/mmcblk0p1; do
-    if [ -f "$p/install/network.conf" ] || [ -f "$p/install/buildinfo.txt" ]; then
-        SD_MOUNT="$p"
-        SD_SOURCE="fixed"
-        pr "  $p: FOUND (using as SD_MOUNT)"
-        break
-    else
-        pr "  $p: missing (install/network.conf and buildinfo.txt not both present)"
-    fi
-done
-if [ -z "$SD_MOUNT" ] && [ -f /proc/mounts ]; then
-    pr "  scanning /proc/mounts for path with install/..."
-    while read -r _ mp _ _ _; do
-        if [ -f "$mp/install/network.conf" ] || [ -f "$mp/install/buildinfo.txt" ]; then
-            SD_MOUNT="$mp"
-            SD_SOURCE="proc_mounts"
-            pr "  $mp: FOUND from proc_mounts"
-            break
-        fi
-    done < /proc/mounts
-fi
-if [ -z "$SD_MOUNT" ]; then
-    SD_MOUNT="/media/mmcblk0"
-    SD_SOURCE="fallback"
-    pr "  fallback: SD_MOUNT=$SD_MOUNT"
-fi
-pr "SD_MOUNT=$SD_MOUNT source=$SD_SOURCE"
-pr ""
-
+pr ">>> dmz-init: 1/12 SD"
+test -d "$SD_MOUNT/install"
 dump "ls -la SD_MOUNT" ls -la "$SD_MOUNT"
 dump "ls -la SD_MOUNT/install" ls -la "$SD_MOUNT/install"
-pr "network.conf first line: $(head -n1 "$SD_MOUNT/install/network.conf" 2>/dev/null || echo '(read failed)')"
-pr "buildinfo: $(cat "$SD_MOUNT/install/buildinfo.txt" 2>/dev/null || echo '(read failed)')"
+pr "network.conf: $(head -n1 "$SD_MOUNT/install/network.conf")"
+pr "buildinfo: $(cat "$SD_MOUNT/install/buildinfo.txt")"
 pr ""
 
-# --- Banner ---
+pr ">>> dmz-init: 2/12 banner"
 pr "========== DMZ =========="
-[ -f "$SD_MOUNT/install/buildinfo.txt" ] && pr "  $(cat "$SD_MOUNT/install/buildinfo.txt")"
+pr "  $(cat "$SD_MOUNT/install/buildinfo.txt")"
 pr "  SD: $SD_MOUNT"
 pr "================================"
 pr ""
 
-# --- Network ---
-pr ">>> dmz-init: 0/7 network..."
-NET_OK=""
-wait=0
-while [ $wait -lt 20 ]; do
-    if [ -d /sys/class/net/eth0 ]; then
-        pr "  eth0 found (after ${wait}s)"
-        ip link set eth0 up || true
-        sleep 1
-        if [ -f "$SD_MOUNT/install/network.conf" ]; then
-            read -r addr gw _ < "$SD_MOUNT/install/network.conf" || true
-            pr "  network.conf read: addr=$addr gw=$gw"
-            if [ -n "$addr" ]; then
-                if ip addr add "$addr" dev eth0 2>>"$LOG"; then
-                    pr "  added $addr"
-                    NET_OK=1
-                else
-                    pr "  ip addr add $addr failed (stderr above)"
-                    NET_OK=1
-                fi
-                if [ -n "$gw" ]; then
-                    if ip route add default via "$gw" 2>>"$LOG"; then
-                        pr "  default via $gw"
-                    else
-                        pr "  ip route add default via $gw failed (stderr above)"
-                    fi
-                    echo "nameserver $gw" > /etc/resolv.conf
-                    pr "  resolv.conf: nameserver $gw"
-                fi
-            else
-                pr "  network.conf empty or unreadable"
-            fi
-        else
-            pr "  no $SD_MOUNT/install/network.conf"
-        fi
-        break
-    fi
+pr ">>> dmz-init: 3/12 network"
+w=0
+while [ ! -d /sys/class/net/eth0 ]; do
+    w=$((w + 1))
+    [ "$w" -le 30 ] || exit 1
     sleep 1
-    wait=$((wait + 1))
 done
-if [ -z "$NET_OK" ] && [ ! -d /sys/class/net/eth0 ]; then
-    pr "  eth0 not found after 20s, skipping"
-fi
+pr "  eth0 after ${w}s"
+ip link set eth0 up
+sleep 1
+read -r addr gw _ < "$SD_MOUNT/install/network.conf"
+ip addr add "$addr" dev eth0
+ip route add default via "$gw"
+echo "nameserver $gw" > /etc/resolv.conf
+cp "$SD_MOUNT/install/network.conf" /root/network.conf
 pr ""
 
 dump "ip link" ip link
 dump "ip addr" ip addr
 dump "ip route" ip route
 dump "resolv.conf" cat /etc/resolv.conf
-pr "interfaces in /sys/class/net: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"
 pr ""
 
-# --- Steps 1–6 ---
-pr ">>> dmz-init: 1/7 entropy..."
-if command -v haveged >/dev/null 2>&1; then haveged -w 1024 -F & fi
+pr ">>> dmz-init: 4/12 entropy"
+haveged -w 1024 -F &
 pr ""
 
-pr ">>> dmz-init: 2/7 clock..."
-if command -v chronyd >/dev/null 2>&1; then ( chronyd -q -f /etc/chrony/chrony.conf 2>/dev/null || true ) & fi
+pr ">>> dmz-init: 5/12 clock"
+ntpd -q -p pool.ntp.org
+ntpd -p pool.ntp.org &
 pr ""
 
-pr ">>> dmz-init: 3/7 iptables..."
-if command -v iptables >/dev/null 2>&1; then
-    pr "  running: modprobe iptable_nat"
-    modprobe iptable_nat 2>>"$LOG" || true
-    pr "  running: iptables -t nat -F"
-    iptables -t nat -F 2>>"$LOG" || true
-    pr "  running: iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080"
-    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 2>>"$LOG" || true
-fi
+pr ">>> dmz-init: 6/12 iptables"
+modprobe iptable_nat
+iptables -t nat -F
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
 pr ""
 
-pr ">>> dmz-init: 4/7 adduser..."
-if ! getent passwd dmzuser >/dev/null 2>&1; then
-    pr "  running: adduser -D -s /bin/sh dmzuser"
-    adduser -D -s /bin/sh dmzuser 2>>"$LOG" || true
-fi
+pr ">>> dmz-init: 7/12 adduser"
+getent passwd dmzuser >/dev/null 2>&1 || adduser -D -s /bin/sh dmzuser
 pr ""
 
-pr ">>> dmz-init: 5/7 extract rootfs..."
-pr "  running: mkdir -p $ROOTFS_DIR"
-mkdir -p "$ROOTFS_DIR" 2>>"$LOG" || true
-pr "  running: tar -xf $SD_MOUNT/$ROOTFS_TAR -C $ROOTFS_DIR"
-tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR" 2>>"$LOG" || true
+pr ">>> dmz-init: 8/12 extract rootfs"
+mkdir -p "$ROOTFS_DIR"
+tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$ROOTFS_DIR"
 pr ""
 
-pr ">>> dmz-init: 6/7 launch app..."
-pr "  running: su dmzuser -c $SD_MOUNT/install/run_raw.sh $ROOTFS_DIR (background)"
-( su dmzuser -c "$SD_MOUNT/install/run_raw.sh $ROOTFS_DIR" 2>>"$LOG" & )
+mkdir -p "$RUN_RAW_TMPDIR"
+cp "$SD_MOUNT/install/run_raw.sh" "$RUN_RAW_ON_TMPFS"
+
+pr ">>> dmz-init: 9/12 launch"
+pr "  DMZ_BOOT_LOG=$LOG"
+{
+    set -x
+    chmod 755 "$RUN_RAW_ON_TMPFS"
+    chown dmzuser:dmzuser "$RUN_RAW_ON_TMPFS"
+    su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR" >>"$LOG" 2>&1 &
+    set +x
+} >>"$LOG" 2>&1
+launch_pid=$!
 sleep 1
-pr "  app launch attempted (stderr above if any)"
-
-# --- Full forensic dump into same log ---
-pr ">>> forensic dump (all for debug)..."
-dump "proc/mounts" cat /proc/mounts
-pr "kernel cmdline: $(cat /proc/cmdline 2>/dev/null)"
-pr ""
-pr "dmesg (mount/overlay/eth/smc/usb/network):"
-dmesg 2>/dev/null | grep -iE 'mount|overlay|apkovl|eth|smsc|usb|network|link' | tail -100 | sed 's/^/  /' >> "$LOG"
-pr ""
-pr "uname: $(uname -a 2>/dev/null)"
-pr ""
-
-# --- Debug: write boot.log and state to SD so card has them when pulled ---
-pr ">>> writing debug to SD..."
-mount -o remount,rw "$SD_MOUNT" 2>/dev/null || true
-if [ -d "$SD_MOUNT/debug" ]; then
-    cp "$LOG" "$SD_MOUNT/debug/boot.log" 2>/dev/null || true
-    echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt" 2>/dev/null || true
-    pr "  wrote $SD_MOUNT/debug/boot.log and state.txt"
-else
-    pr "  no $SD_MOUNT/debug dir, skip"
+pr "  background launch sent pid=$launch_pid"
+if ! kill -0 "$launch_pid" 2>/dev/null; then
+    pr "  ERROR: launch pid $launch_pid no longer running (su/run_raw exited immediately — see $LOG)"
 fi
+pr ""
 
-# --- Unmount SD ---
-pr ">>> dmz-init: 7/7 unmount SD..."
-pr "  running: sleep 2; cd /; umount $SD_MOUNT"
+pr ">>> dmz-init: 10/12 forensic"
+dump "proc/mounts" cat /proc/mounts
+pr "kernel cmdline: $(cat /proc/cmdline)"
+pr ""
+dmesg 2>/dev/null | grep -iE 'mount|overlay|apkovl|eth|smsc|usb|network|link' | tail -100 | sed 's/^/  /' >> "$LOG" || true
+pr ""
+pr "uname: $(uname -a)"
+pr ""
+
+echo "--- $DMZ_APP_LOG ---" >> "$LOG"
+if [ ! -f "$DMZ_APP_LOG" ]; then
+    pr "ERROR: forensic: missing $DMZ_APP_LOG"
+    exit 1
+fi
+set -- $(wc -c "$DMZ_APP_LOG")
+dmz_log_bytes=$1
+if [ "${dmz_log_bytes:-0}" -eq 0 ]; then
+    pr "ERROR: forensic: $DMZ_APP_LOG is 0 bytes"
+    exit 1
+fi
+cat "$DMZ_APP_LOG" >>"$LOG"
+echo "" >>"$LOG"
+pr "  forensic: appended $dmz_log_bytes bytes from $DMZ_APP_LOG"
+pr ""
+
+pr ">>> dmz-init: 11/12 persist boot.log to SD"
+mount -o remount,rw "$SD_MOUNT"
+cp "$LOG" "$SD_MOUNT/debug/boot.log"
+echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt"
+pr "  wrote debug/boot.log and state.txt"
+pr ""
+
+pr ">>> dmz-init: 12/12 unmount SD"
 sleep 2
 cd /
-umount "$SD_MOUNT" 2>>"$LOG" || true
+umount "$SD_MOUNT"
+
 pr "========== dmz-init complete $(date) =========="
-pr "Log: /tmp/boot.log and (if SD had debug/) /Volumes/PIBOOT/debug/boot.log on card"
+pr "Log: /tmp/boot.log and SD debug/boot.log"

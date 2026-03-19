@@ -15,6 +15,12 @@ set -e
 
 ts() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+# Optional verbose shell tracing for long builds:
+#   CREATE_IMAGE_TRACE=1 ./create-image.sh ...
+if [ "${CREATE_IMAGE_TRACE:-0}" = "1" ]; then
+    set -x
+fi
+
 # Homebrew installs dosfstools to sbin; ensure it's on PATH (macOS)
 case "$(uname)" in
     Darwin)
@@ -26,6 +32,9 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DMZ_ROOT/../.." && pwd)"
+BIN_ROOT="$(cd "$DMZ_ROOT/../../.." && pwd)/bin"
+RUN_WITH_STDOUT_LOGGED_SRC="$BIN_ROOT/run-with-stdout-logged.py"
 OUTPUT="/tmp/dmz.img"
 ALPINE_VERSION="3.23.3"
 IMAGE_SIZE_MB=256
@@ -59,7 +68,16 @@ echo ""
 
 # 1. Build Docker image
 ts "[1/8] Building Docker image (ARMv6)..."
-(cd "$DMZ_ROOT" && docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .)
+if [ ! -f "$RUN_WITH_STDOUT_LOGGED_SRC" ]; then
+    echo "Error: missing external runner script: $RUN_WITH_STDOUT_LOGGED_SRC"
+    echo "Expected source is ../bin/run-with-stdout-logged.py relative to repo checkout root."
+    exit 1
+fi
+BUILD_CTX="$WORKDIR/dmz_build_ctx"
+mkdir -p "$BUILD_CTX"
+cp -a "$DMZ_ROOT"/. "$BUILD_CTX"/
+cp "$RUN_WITH_STDOUT_LOGGED_SRC" "$BUILD_CTX/run-with-stdout-logged.py"
+(cd "$BUILD_CTX" && docker buildx build --progress=plain --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .)
 ts "[1/8] Docker build done."
 
 # 2. Export rootfs
@@ -99,15 +117,16 @@ ts "[4/8] Alpine extract done."
 
 # 5. Pre-download apk packages (armhf) + APKINDEX for offline boot
 # Use main + community dirs so apk can find indexes and install at boot.
-ts "[5/8] Fetching apk packages (bubblewrap, haveged, chrony, iptables, dhcpcd)..."
+ts "[5/8] Fetching apk packages (bubblewrap, haveged, iptables, dhcpcd + deps)..."
 APKS_MAIN="$WORKDIR/apks_main"
 APKS_COMMUNITY="$WORKDIR/apks_community"
 mkdir -p "$APKS_MAIN/armhf" "$APKS_COMMUNITY/armhf"
 
+# iptables needs libmnl, libnftnl, libxtables; clock uses busybox ntpd (no chrony)
 docker run --rm --platform linux/arm/v6 \
     -v "$APKS_MAIN/armhf:/out" \
     alpine:${ALPINE_VERSION} \
-    sh -c "echo 'https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/main' > /etc/apk/repositories && apk update && apk fetch -o /out chrony iptables dhcpcd"
+    sh -c "echo 'https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/main' > /etc/apk/repositories && apk update && apk fetch -o /out iptables dhcpcd libmnl libnftnl libxtables"
 
 docker run --rm --platform linux/arm/v6 \
     -v "$APKS_COMMUNITY/armhf:/out" \
@@ -129,7 +148,7 @@ cp "$APKS_COMMUNITY/armhf"/* "$ALPINE_EXTRACT/apks/community/armhf/" 2>/dev/null
 ts "[5/8] Apk fetch done."
 
 # 6. Build apkovl (overlay): extract .apk payloads into overlay so no apk at boot is needed
-ts "[6/8] Building apkovl (extract bwrap, haveged, chrony, iptables, dhcpcd into overlay)..."
+ts "[6/8] Building apkovl (extract bwrap, haveged, iptables, dhcpcd into overlay)..."
 APKOVL_DIR="$WORKDIR/apkovl"
 mkdir -p "$APKOVL_DIR"
 # Each .apk is a tarball (no data.tar.gz); extract payload in container, exclude metadata
@@ -159,9 +178,15 @@ fi
 BUILD_ID=$(echo "$BUILD_HASH" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILDINFO_LINE="${BUILD_ID} $BUILD_DATE"
+GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+REPO_NAME=$(basename "$REPO_ROOT")
 echo "$BUILDINFO_LINE" > "$WORKDIR/buildinfo.txt"
+echo "repo=$REPO_NAME" >> "$WORKDIR/buildinfo.txt"
+echo "git_sha=$GIT_SHA" >> "$WORKDIR/buildinfo.txt"
 mkdir -p "$APKOVL_DIR/root" "$APKOVL_DIR/root/.ssh"
 echo "DMZ image: $BUILDINFO_LINE" > "$APKOVL_DIR/root/README"
+echo "Repo: $REPO_NAME" >> "$APKOVL_DIR/root/README"
+echo "Git SHA: $GIT_SHA" >> "$APKOVL_DIR/root/README"
 echo "cat /root/README for build ID. dmz-init: /etc/local.d/dmz-init.start" >> "$APKOVL_DIR/root/README"
 cp "$DMZ_ROOT/install/root-network-sshd.sh" "$APKOVL_DIR/root/network-and-sshd.sh"
 chmod +x "$APKOVL_DIR/root/network-and-sshd.sh"
@@ -172,6 +197,7 @@ if [ ! -s "$ID_RSA_PUB" ]; then
 fi
 cp "$ID_RSA_PUB" "$APKOVL_DIR/root/.ssh/authorized_keys"
 chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
+cp "$DMZ_ROOT/install/network.conf" "$APKOVL_DIR/root/network.conf"
 echo "DMZ $BUILDINFO_LINE" > "$APKOVL_DIR/etc/issue"
 
 (cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" .)
@@ -210,6 +236,7 @@ if command -v mcopy >/dev/null 2>&1 && command -v mmd >/dev/null 2>&1; then
     done
     mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::install/buildinfo.txt
     mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
+    mcopy -i "$IMG_FILE" "$DMZ_ROOT/install/CARD-README.txt" ::README.txt
     mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
     mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz
     ts "[7/8] mtools copy done."
@@ -244,6 +271,7 @@ else
     cp -r "$DMZ_ROOT/install" "$MOUNT_POINT/"
     cp "$WORKDIR/buildinfo.txt" "$MOUNT_POINT/install/"
     cp "$WORKDIR/buildinfo.txt" "$MOUNT_POINT/BUILD.txt"
+    cp "$DMZ_ROOT/install/CARD-README.txt" "$MOUNT_POINT/README.txt"
     cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/"
     cp "$WORKDIR/dmz.apkovl.tar.gz" "$MOUNT_POINT/alpine.apkovl.tar.gz"
     mkdir -p "$MOUNT_POINT/debug"
@@ -271,6 +299,8 @@ echo ""
 echo "==> Done. Image: $OUTPUT"
 echo "    SHA256: $SHA"
 echo "    Image reports as: $BUILDINFO_LINE"
+echo "    Repo: $REPO_NAME"
+echo "    Git SHA: $GIT_SHA"
 echo ""
 echo "Next: Write to SD card with:"
 echo "  ./write-to-card.sh $OUTPUT /dev/sdX"

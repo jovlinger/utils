@@ -25,8 +25,11 @@ export PATH="${FAKE_IRCTL_DIR}:${PATH}"
 
 # LOG_PATH so /logs has content; logs section verifies log feature
 TEST_LOG="/tmp/onboard-test-$$.log"
+# Keep test log rotation tiny but deterministic for harness parity with production.
+LOG_FILELIMIT=1048576
+LOG_TOTALLIMIT=2097152
 # Start app in background
-PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" app.py &
+PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" run-with-stdout-logged.py "$TEST_LOG" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" "$PYTHON" app.py &
 APP_PID=$!
 trap 'kill $APP_PID $UI_PID 2>/dev/null || true' EXIT
 
