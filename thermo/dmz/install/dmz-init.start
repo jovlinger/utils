@@ -29,8 +29,11 @@ persist_boot_log() {
     # Best-effort snapshot of the live log onto the SD card.
     # This runs on failure/exit so we still get evidence even if boot aborts early (e.g. iptables).
     [ -d "$SD_MOUNT" ] || return 0
-    echo "persist_boot_log: attempt remount rw" >>"$LOG" 2>/dev/null || true
-    mount -o remount,rw "$SD_MOUNT" >>"$LOG" 2>&1 || true
+    # Ensure the mount point is backed by the real SD card block device.
+    # (Previously we could end up writing into the mount point's tmpfs.)
+    echo "persist_boot_log: mount /dev/mmcblk0 -> $SD_MOUNT" >>"$LOG" 2>/dev/null || true
+    mount /dev/mmcblk0 "$SD_MOUNT" >>"$LOG" 2>&1 || true
+    mount | grep -qE " on ${SD_MOUNT} " || return 0
     mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
     if ! cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1; then
         echo "persist_boot_log: cp failed (SD likely RO?)" >>"$LOG" 2>/dev/null || true
@@ -136,19 +139,27 @@ pr "  DMZ_BOOT_LOG=$LOG"
 chmod 755 "$RUN_RAW_ON_TMPFS"
 chown dmzuser:dmzuser "$RUN_RAW_ON_TMPFS" || true
 
-# Chroot launcher (no bwrap on Pi until validated).
+# Prefer bwrap launcher (avoid chroot where possible).
 DMZ_LAUNCH_AS_ROOT=1
 if [ "${DMZ_LAUNCH_AS_ROOT:-0}" -eq 1 ]; then
-    "$RUN_RAW_ON_TMPFS" "$ROOTFS_DIR" --no-bwrap >>"$LOG" 2>&1 &
+    "$RUN_RAW_ON_TMPFS" "$ROOTFS_DIR" >>"$LOG" 2>&1 &
     launch_pid=$!
 else
-    su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR --no-bwrap" >>"$LOG" 2>&1 &
+    su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR" >>"$LOG" 2>&1 &
     launch_pid=$!
 fi
 sleep 1
 pr "  background launch sent pid=$launch_pid"
 if ! kill -0 "$launch_pid" 2>/dev/null; then
-    pr "  ERROR: launch pid $launch_pid no longer running (su/run_raw exited immediately — see $LOG)"
+    pr "  WARN: bwrap launch pid $launch_pid exited immediately; retrying with --no-bwrap (chroot)"
+    if [ "${DMZ_LAUNCH_AS_ROOT:-0}" -eq 1 ]; then
+        "$RUN_RAW_ON_TMPFS" "$ROOTFS_DIR" --no-bwrap >>"$LOG" 2>&1 &
+        launch_pid=$!
+    else
+        su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR --no-bwrap" >>"$LOG" 2>&1 &
+        launch_pid=$!
+    fi
+    sleep 1
 fi
 
 pr "  post-launch check: $DMZ_APP_LOG"
@@ -188,14 +199,8 @@ pr "  forensic: appended $dmz_log_bytes bytes from $DMZ_APP_LOG"
 pr ""
 
 pr ">>> dmz-init: 11/12 persist boot.log to SD"
-mount -o remount,rw "$SD_MOUNT" >>"$LOG" 2>&1 || pr "  WARNING: remount rw command failed (SD may stay RO)"
-if mount | grep -qE " on ${SD_MOUNT} .*(rw|RW)"; then
-    pr "  SD mount appears writable"
-else
-    pr "  ERROR: SD mount does not appear writable after remount; mount=$(mount | tail -n 5)"
-    pr "  Aborting before cp to avoid silent RO failure"
-    exit 1
-fi
+mount /dev/mmcblk0 "$SD_MOUNT" >>"$LOG" 2>&1 || pr "  WARNING: mount /dev/mmcblk0 failed (SD may stay RO/absent)"
+mount | grep -qE " on ${SD_MOUNT} " || { pr "  ERROR: SD mount not present at ${SD_MOUNT}"; exit 1; }
 mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
 cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || pr "  ERROR: cp boot.log to SD failed"
 test -s "$SD_MOUNT/debug/boot.log" || { pr "  ERROR: failed to persist $LOG to SD (boot.log missing/empty)"; exit 1; }

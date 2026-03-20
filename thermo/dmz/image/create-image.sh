@@ -206,6 +206,10 @@ chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 cp "$DMZ_ROOT/install/network.conf" "$APKOVL_DIR/root/network.conf"
 echo "DMZ $BUILDINFO_LINE" > "$APKOVL_DIR/etc/issue"
 
+# App smoke / fake traffic helper (curl/python + twoway-like canned traffic).
+cp "$DMZ_ROOT/install/root-hit-dmz-smoketest.py" "$APKOVL_DIR/root/dmz-smoketest.py"
+chmod +x "$APKOVL_DIR/root/dmz-smoketest.py"
+
 (cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" .)
 ts "[6/8] Apkovl done."
 
