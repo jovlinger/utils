@@ -19,7 +19,7 @@ import time
 from typing import Any, Callable, Deque, Dict, List, Union, Optional
 
 from flask import Flask, g, redirect, request, session, url_for
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 JSON = Union[Dict, str, int]
 
@@ -45,9 +45,12 @@ class Sensors(BaseModel):
     humid_percent: Optional[float] = None
     created_dt: str = ""
 
-    def model_post_init(self, __context) -> None:
-        if not self.created_dt:
-            self.created_dt = datetime.now().isoformat()
+    @validator("created_dt", pre=True, always=True)
+    def _set_created_dt(cls, v: Any) -> str:
+        # Pydantic v2 used `model_post_init`; in v1 we validate after construction.
+        if not v:
+            return datetime.now().isoformat()
+        return v
 
 
 class IRCommand(BaseModel):
@@ -55,9 +58,11 @@ class IRCommand(BaseModel):
     created_dt: str = ""
     last_access_dt: str = ""
 
-    def model_post_init(self, __context) -> None:
-        if not self.created_dt:
-            self.created_dt = datetime.now().isoformat()
+    @validator("created_dt", pre=True, always=True)
+    def _set_created_dt(cls, v: Any) -> str:
+        if not v:
+            return datetime.now().isoformat()
+        return v
 
     def model_mark_accessed(self) -> None:
         self.last_access_dt = datetime.now().isoformat()
@@ -169,7 +174,7 @@ def _zone_response(zonename: str, update_access: bool) -> JSON:
     sns = _lastor(sensors[zonename])
     if cmd and update_access:
         cmd.model_mark_accessed()
-    ret = ZoneState(command=cmd, sensors=sns).model_dump()
+    ret = ZoneState(command=cmd, sensors=sns).dict()
     print(f"_zone_response({zonename}, {update_access}) -> {ret}")
     return ret
 

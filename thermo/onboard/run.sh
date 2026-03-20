@@ -15,18 +15,20 @@ if [ -f /.dockerenv ]; then
   python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
   python ui_server.py &
   echo "starting app"
-  exec python ./run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
+  # In container: the build scratch context provides ./bin/run-with-stdout-logged.py.
+  exec python ./bin/run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# common root is where jovlinger reposutils AND bin live
+COMMON_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
   echo "No venv at $SCRIPT_DIR/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
+  echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2
   exit 1
 fi
 . "$SCRIPT_DIR/env/bin/activate"
 python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
 python ui_server.py &
 echo "starting app"
-exec python ./run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
+exec python "$COMMON_ROOT/bin/run-with-stdout-logged.py" "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py

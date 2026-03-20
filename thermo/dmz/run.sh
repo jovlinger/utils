@@ -23,19 +23,25 @@ python_probe() {
     # Crash-only probes: SIGILL will terminate the process. We rely on
     # run-with-stdout-logged.py to append the child returncode/signal line.
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=hello_world" >>"$DMZ_LOG"
-    python -c "print('hello world')"
+    python -u -c "print('hello world', flush=True)"
 
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_platform" >>"$DMZ_LOG"
-    python -c "import platform; print('platform ok')"
+    python -u -c "import platform; print('platform ok', flush=True)"
 
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_ssl" >>"$DMZ_LOG"
-    python -c "import ssl; print('ssl ok')"
+    python -u -c "import ssl; print('ssl ok', flush=True)"
 
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_cryptography" >>"$DMZ_LOG"
-    python -c "import cryptography; print('cryptography ok')"
+    python -u -c "import cryptography; print('cryptography ok', flush=True)"
+
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_pydantic_core" >>"$DMZ_LOG"
+    python -u -c "import importlib.util; spec=importlib.util.find_spec('pydantic_core'); print('pydantic_core ' + ('ok' if spec else 'absent'), flush=True)"
+
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_pydantic" >>"$DMZ_LOG"
+    python -u -c "import pydantic; print('pydantic ok', flush=True)"
 
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_app" >>"$DMZ_LOG"
-    python -c "print('about to import app'); import app; print('did import app')"
+    python -u -c "print('about to import app', flush=True); import app; print('did import app', flush=True)"
 
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: done" >>"$DMZ_LOG"
 }

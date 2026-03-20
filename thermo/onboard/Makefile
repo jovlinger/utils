@@ -12,7 +12,13 @@ all: build
 build: .image
 
 .image: Dockerfile requirements.txt $(wildcard *.py) $(wildcard *.sh) $(wildcard heatpumpirctl/*.py)
-	docker buildx build -q --platform $(PLATFORM) -t $(IMAGE):$(TAG) --load .
+	@TMP_CTX=$$(mktemp -d); \
+	cp -a . "$$TMP_CTX/onboard"; \
+	mkdir -p "$$TMP_CTX/onboard/bin"; \
+	# Copy the canonical runner from the parent `jovlinger/bin` checkout.
+	cp -a ../../../bin/run-with-stdout-logged.py "$$TMP_CTX/onboard/bin/run-with-stdout-logged.py"; \
+	docker buildx build -q --platform $(PLATFORM) -t $(IMAGE):$(TAG) --load "$$TMP_CTX/onboard"; \
+	rm -rf "$$TMP_CTX"
 	@docker image inspect $(IMAGE):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image
 
 push: build

@@ -423,6 +423,18 @@ def round_trip_ok(state: State) -> bool:
     """True if dump(state) -> load() reproduces the same logical fields."""
     f1, f3 = dump(state)
     s2 = load(f3, f1)
+
+    def norm_timer_minutes(s: State) -> tuple[Optional[int], Optional[int]]:
+        # When timers are not active, the protocol may still carry minute values.
+        # For our logical state semantics we treat inactive timers as "no minutes"
+        # (even if the decoded payload contains 0 or other values).
+        on_min = s.timer_on_minutes if s.timer_on_active else None
+        off_min = s.timer_off_minutes if s.timer_off_active else None
+        return on_min, off_min
+
+    s_on_min, s_off_min = norm_timer_minutes(state)
+    s2_on_min, s2_off_min = norm_timer_minutes(s2)
+
     return (
         s2.power == state.power
         and s2.mode == state.mode
@@ -434,6 +446,6 @@ def round_trip_ok(state: State) -> bool:
         and s2.comfort == state.comfort
         and s2.timer_on_active == state.timer_on_active
         and s2.timer_off_active == state.timer_off_active
-        and s2.timer_on_minutes == state.timer_on_minutes
-        and s2.timer_off_minutes == state.timer_off_minutes
+        and s2_on_min == s_on_min
+        and s2_off_min == s_off_min
     )

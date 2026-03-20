@@ -88,13 +88,10 @@ def _fetch_env() -> str:
             t = d.get("temperature_centigrade")
             h = d.get("humidity_percent")
             ts = _format_time(d.get("time"))
-            # Show all environment fields: temperature, humidity, and timestamp.
             if t is None or h is None:
-                return "temperature_centigrade=— humidity_percent=— time=" + (ts or "—")
-            return (
-                "temperature_centigrade=%s°C humidity_percent=%s%% time=%s"
-                % (t, h, ts or "—")
-            )
+                return "—°C, —% time=" + (ts or "—")
+            # Keep UI env line stable for tests: "<temp>°C, <humidity>%"
+            return f"{t}°C, {h}% time={ts or '—'}"
     except Exception:
         return "—"
 

@@ -1,5 +1,5 @@
 flask
-pydantic
+pydantic<2
 authlib
 cryptography
 pytest

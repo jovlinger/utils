@@ -32,10 +32,19 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare docker build context (scratch)
+        run: |
+          rm -rf ./.docker-build/thermo-onboard
+          mkdir -p ./.docker-build/thermo-onboard
+          cp -a ./thermo/onboard/. ./.docker-build/thermo-onboard/
+          mkdir -p ./.docker-build/thermo-onboard/bin
+          curl -fsSL "https://raw.githubusercontent.com/jovlinger/bin/master/run-with-stdout-logged.py" \
+            -o ./.docker-build/thermo-onboard/bin/run-with-stdout-logged.py
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./thermo/onboard
+          context: ./.docker-build/thermo-onboard
           platforms: linux/arm64,linux/arm/v7
           push: true
           provenance: false

@@ -18,7 +18,9 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+# Force building pydantic-core from source to avoid accidentally pulling an
+# ARMv7-optimized wheel that can SIGILL on ARMv6 at runtime.
+RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt
 
 # -----------------------------------------------------------------------------
 # Stage 2: Runtime (minimal; no Rust, no build tools)

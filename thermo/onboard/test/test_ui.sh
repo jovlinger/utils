@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
-UTILS_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+COMMON_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 FAKE_IRCTL_DIR="$THERMO/test/daikin"
 # Use high ports to avoid conflicts; 5xxxx range often free
 PORT_APP=$((50000 + RANDOM % 1000))
@@ -13,7 +13,7 @@ PORT_UI=$((51000 + RANDOM % 1000))
 
 if [ ! -f "$ONBOARD/env/bin/activate" ]; then
   echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
+  echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2
   exit 1
 fi
 PYTHON="$ONBOARD/env/bin/python"
@@ -29,7 +29,7 @@ TEST_LOG="/tmp/onboard-test-$$.log"
 LOG_FILELIMIT=1048576
 LOG_TOTALLIMIT=2097152
 # Start app in background
-PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" run-with-stdout-logged.py "$TEST_LOG" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" "$PYTHON" app.py &
+PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" "$COMMON_ROOT/bin/run-with-stdout-logged.py" "$TEST_LOG" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" "$PYTHON" app.py &
 APP_PID=$!
 trap 'kill $APP_PID $UI_PID 2>/dev/null || true' EXIT
 
