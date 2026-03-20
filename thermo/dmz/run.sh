@@ -9,6 +9,7 @@ whoami
 
 echo dmz ENV "${ENV:-idk}"
 
+DMZ_LOG="/var/log/dmz.log"
 
 
 # Same interpreter as `exec python app.py` below (image: python→python3; venv: activated python).
@@ -21,24 +22,29 @@ run_dmz_pytest() {
 python_probe() {
     # Crash-only probes: SIGILL will terminate the process. We rely on
     # run-with-stdout-logged.py to append the child returncode/signal line.
-    echo "python_probe: step=hello_world"
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=hello_world" >>"$DMZ_LOG"
     python -c "print('hello world')"
 
-    echo "python_probe: step=import_platform"
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_platform" >>"$DMZ_LOG"
     python -c "import platform; print('platform ok')"
 
-    echo "python_probe: step=import_ssl"
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_ssl" >>"$DMZ_LOG"
     python -c "import ssl; print('ssl ok')"
 
-    echo "python_probe: step=import_cryptography"
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_cryptography" >>"$DMZ_LOG"
     python -c "import cryptography; print('cryptography ok')"
-    echo "python_probe: done"
+
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_app" >>"$DMZ_LOG"
+    python -c "print('about to import app'); import app; print('did import app')"
+
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: done" >>"$DMZ_LOG"
 }
 
 if [ -f /.dockerenv ]; then
     # run_dmz_pytest
     echo "run.sh: preflight (docker) uname -m=$(uname -m)"
     # Avoid importing/running Python-based probes here; exec below may SIGILL.
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "run.sh: preflight (docker) uname -m=$(uname -m)" >>"$DMZ_LOG"
     python_probe
     exec python app.py
 fi
@@ -54,6 +60,7 @@ fi
 . "$SCRIPT_DIR/env/bin/activate"
 # run_dmz_pytest
 echo "run.sh: preflight uname -m=$(uname -m) uname=$(uname -a)"
+printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "run.sh: preflight uname -m=$(uname -m) uname=$(uname -a)" >>"$DMZ_LOG"
 case "$(uname -m)" in
     armv6*|armv6l) echo "run.sh: preflight armv6=yes" ;;
     *) echo "run.sh: preflight armv6=no (ISA mismatch likely)" ;;
@@ -63,5 +70,7 @@ if [ -r /proc/cpuinfo ]; then
     head -n 12 /proc/cpuinfo
 fi
 echo "run.sh: preflight python=$(command -v python 2>/dev/null || true)"
+printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "run.sh: preflight python=$(command -v python 2>/dev/null || true)" >>"$DMZ_LOG"
 python_probe
+echo "run.sh: preflight python_probe done, app starting"
 exec python app.py
