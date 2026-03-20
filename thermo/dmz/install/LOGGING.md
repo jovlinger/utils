@@ -1,12 +1,12 @@
 # DMZ logging strategy
 
-Boot log lives on **tmpfs** (`/tmp`). The app log is **`/var/log/dmz.log`** on the host (tmpfs while `/` is RAM root); it is bind-mounted into chroot/bwrap so the same path is used inside the sandbox. Nothing is written to the SD card at runtime except the one-time copy of the boot log (and forensic append of the app log into the boot log snapshot) to `debug/` before unmount.
+Boot log lives on **tmpfs** (`/tmp`). The app log is **`/var/log/dmz.log`** on the host (tmpfs while `/` is RAM root); it is bind-mounted into chroot/bwrap so the same path is used inside the sandbox. The SD card is written only when **`/root/dmz-forensics.sh`** runs: it **umounts** `/media/mmcblk0`, **remounts** `/dev/mmcblk0`, then **overwrites** `debug/forensics.txt`, `debug/boot.log`, `debug/dmz.log`, and `debug/state.txt`, and **umounts** again. `dmz-init` invokes that at step **12/12**; you can run the same script anytime over SSH (host root only, not inside bwrap).
 
 ## Boot log: `/tmp/boot.log`
 
 - Written once by `dmz-init.start` (OpenRC `local.d`).
-- Contains: SD discovery, network setup, steps 1–7, forensic dump (mounts, cmdline, dmesg, uname).
-- **No rotation.** At the end of boot, the script copies it to `SD_MOUNT/debug/boot.log` (and writes `debug/state.txt`) so the card has a snapshot when pulled.
+- Contains: SD discovery, network, iptables, launch, step 10 runtime checkpoint (mounts, ip, listeners, filtered processes), and stdout from **`dmz-forensics.sh`**.
+- **No rotation.** Latest SD snapshot: **`debug/boot.log`** is overwritten each time **`dmz-forensics.sh`** runs (includes the full `/tmp/boot.log` at that moment). Deep dive: **`debug/forensics.txt`** (full `dmz.log`, tail of boot log, `iptables-save`, `ps`, etc.).
 - On the running Pi, the live log is always `/tmp/boot.log`. See BOOT-LOG-TREE.md for how to use it for debugging.
 
 ## App log: `/var/log/dmz.log`

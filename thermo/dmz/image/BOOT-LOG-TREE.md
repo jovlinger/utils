@@ -44,8 +44,11 @@ The log is detailed: every step, SD discovery (each path tried), network.conf re
 - **Log:** each step name; rootfs/app failures would exit script (set -e) and last line in log is the step that failed.
 - **Contingency:** If log ends before "dmz-init complete", the last line is where it died.
 
-### 9. Steps 10/12–12/12 (forensic, persist boot.log to SD, unmount)
-- **Log:** `dmz-init complete`. Log is in /tmp/boot.log (tmpfs); scp it off after bringing up net, or read from card at debug/boot.log.
+### 9. Steps 10/12–12/12 (runtime checkpoint, `/root/dmz-forensics.sh`)
+- **10:** Appends mounts, cmdline, ip, iptables nat, listeners, filtered `ps`, dmesg tail to `/tmp/boot.log`.
+- **11:** Note that SD snapshot is done by `dmz-forensics.sh`.
+- **12:** Runs **`/bin/sh /root/dmz-forensics.sh`**: umount/remount SD, overwrite **`debug/forensics.txt`**, **`debug/boot.log`**, **`debug/dmz.log`**, **`debug/state.txt`**, umount SD. Script stdout is appended to `/tmp/boot.log`.
+- **Log:** `dmz-init complete`. Live log: `/tmp/boot.log`; after power-off pull the card: **`debug/forensics.txt`** (richest), **`debug/boot.log`**. Re-run anytime: **`/root/dmz-forensics.sh`** over SSH.
 
 ---
 

@@ -68,7 +68,7 @@ Insert the SD card and power on. The `dmz-init.start` script runs automatically:
 
 **Boot timeline:** There is a quiet period (initramfs: kernel, mount overlay, switch_root) with nothing visible on console. Once OpenRC starts, you get a login prompt within about 4 seconds.
 
-**Boot output:** You should see a clear `========== DMZ ==========` block with build hash and local time; then `dmz-init: 1/12` through `12/12` (SD discovery, banner, network, … launch, forensic, persist, unmount), and finally `========== dmz-init complete ==========`. **Clock skew warnings** from OpenRC at the start of boot are expected (Pi has no RTC); time is corrected once dmz-init runs NTP.
+**Boot output:** You should see a clear `========== DMZ ==========` block with build hash and local time; then `dmz-init: 1/12` through `12/12` (SD discovery, banner, network, … launch, runtime checkpoint, then **`/root/dmz-forensics.sh`** overwriting `debug/*` on the card), and finally `========== dmz-init complete ==========`. **Clock skew warnings** from OpenRC at the start of boot are expected (Pi has no RTC); time is corrected once dmz-init runs NTP.
 
 ### 4. Verify
 

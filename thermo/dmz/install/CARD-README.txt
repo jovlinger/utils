@@ -17,7 +17,7 @@ Three-stage boot (high level)
    - Extracts dmz_rootfs.tar into /tmp/dmz_rootfs (tmpfs)
    - Runs DMZ unit tests inside the sandbox and appends results to /tmp/boot.log
    - Launches the app in background via install/run_raw.sh
-   - Copies /tmp/boot.log to debug/boot.log on the card, then unmounts the SD
+   - Runs /root/dmz-forensics.sh: umount SD, remount, overwrite debug/{forensics.txt,boot.log,dmz.log,state.txt}, umount SD
 
 3) App runtime (bwrap “container-lite”)
    - Launcher: install/run_raw.sh
@@ -32,5 +32,5 @@ Files on this partition
   - dmz_rootfs.tar      : exported container root filesystem (payload)
   - dmz.apkovl.tar.gz   : overlay applied at boot (includes dmz-init + keys + helpers)
   - install/            : scripts and config read by dmz-init
-  - debug/              : written by dmz-init (boot.log snapshot + state.txt)
+  - debug/              : overwritten by /root/dmz-forensics.sh (forensics.txt, boot.log, dmz.log, state.txt)
 

@@ -5,7 +5,7 @@
 # - Boot FAT is mounted at /media/mmcblk0 with install/{network.conf,buildinfo.txt,run_raw.sh},
 #   dmz_rootfs.tar, and debug/
 # - apkovl provides eth0, haveged, busybox ntpd, iptables, bubblewrap; eth0 appears within 30s
-# - /tmp/boot.log is the live log; we copy it to SD debug/ before umount
+# - /tmp/boot.log is the live log; /root/dmz-forensics.sh overwrites SD debug/* (umount→mount→write→umount)
 #
 set -x
 
@@ -162,59 +162,48 @@ if ! kill -0 "$launch_pid" 2>/dev/null; then
     sleep 1
 fi
 
-pr "  post-launch check: $DMZ_APP_LOG"
+pr "  post-launch check: $DMZ_APP_LOG (WARN only — full capture in /root/dmz-forensics.sh)"
 if [ -f "$DMZ_APP_LOG" ]; then
     set -- $(wc -c "$DMZ_APP_LOG" 2>/dev/null || echo 0)
     dmz_log_bytes=$1
     pr "  $DMZ_APP_LOG exists, bytes=$dmz_log_bytes"
-    dump "head of $DMZ_APP_LOG" sh -c "head -n 20 '$DMZ_APP_LOG' 2>&1 || true"
+    dump "head of $DMZ_APP_LOG" sh -c "head -n 40 '$DMZ_APP_LOG' 2>&1 || true"
 else
-    pr "  ERROR: $DMZ_APP_LOG missing right after launch (check step 9 logs)"
+    pr "  WARN: $DMZ_APP_LOG missing right after launch (forensics will still run)"
 fi
+pr "  call chain: run_raw.sh -> tini -> run-with-stdout-logged.py -> sh ./run.sh -> python app.py"
 pr ""
 
-pr ">>> dmz-init: 10/12 forensic"
+pr ">>> dmz-init: 10/12 runtime checkpoint (tmpfs boot.log only)"
 dump "proc/mounts" cat /proc/mounts
 pr "kernel cmdline: $(cat /proc/cmdline)"
-pr ""
-dmesg 2>/dev/null | grep -iE 'mount|overlay|apkovl|eth|smsc|usb|network|link' | tail -100 | sed 's/^/  /' >> "$LOG" || true
-pr ""
-pr "uname: $(uname -a)"
+dump "ip addr" ip addr
+dump "ip route" ip route
+dump "iptables -t nat -L -n -v" iptables -t nat -L -n -v
+if command -v ss >/dev/null 2>&1; then
+    dump "ss -lntp" ss -lntp
+else
+    dump "netstat -ln" netstat -ln 2>/dev/null || true
+fi
+dump "ps (filter python/bwrap/tini/run)" sh -c "ps aux 2>&1 | grep -E '[p]ython|[b]wrap|[t]ini|[r]un_raw|run-with-stdout' || true"
+dmesg 2>/dev/null | grep -iE 'mount|overlay|apkovl|eth|smsc|usb|network|link' | tail -80 | sed 's/^/  /' >>"$LOG" || true
 pr ""
 
-echo "--- $DMZ_APP_LOG ---" >> "$LOG"
-if [ ! -f "$DMZ_APP_LOG" ]; then
-    pr "ERROR: forensic: missing $DMZ_APP_LOG"
+pr ">>> dmz-init: 11/12 note"
+pr "  SD snapshot + full forensics: /root/dmz-forensics.sh (umount SD, remount, overwrite debug/*)"
+pr ""
+
+pr ">>> dmz-init: 12/12 /root/dmz-forensics.sh (overwrite debug/forensics.txt boot.log dmz.log state.txt; umount SD)"
+if [ ! -x /root/dmz-forensics.sh ]; then
+    pr "  ERROR: /root/dmz-forensics.sh missing or not executable (rebuild apkovl)"
     exit 1
 fi
-set -- $(wc -c "$DMZ_APP_LOG")
-dmz_log_bytes=$1
-if [ "${dmz_log_bytes:-0}" -eq 0 ]; then
-    pr "ERROR: forensic: $DMZ_APP_LOG is 0 bytes"
+# Progress lines from the script are appended to boot.log here.
+if ! /bin/sh /root/dmz-forensics.sh >>"$LOG" 2>&1; then
+    pr "  ERROR: dmz-forensics.sh exited non-zero"
     exit 1
 fi
-cat "$DMZ_APP_LOG" >>"$LOG"
-echo "" >>"$LOG"
-pr "  forensic: appended $dmz_log_bytes bytes from $DMZ_APP_LOG"
-pr ""
-
-pr ">>> dmz-init: 11/12 persist boot.log to SD"
-mount /dev/mmcblk0 "$SD_MOUNT" >>"$LOG" 2>&1 || pr "  WARNING: mount /dev/mmcblk0 failed (SD may stay RO/absent)"
-mount | grep -qE " on ${SD_MOUNT} " || { pr "  ERROR: SD mount not present at ${SD_MOUNT}"; exit 1; }
-mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
-cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || pr "  ERROR: cp boot.log to SD failed"
-test -s "$SD_MOUNT/debug/boot.log" || { pr "  ERROR: failed to persist $LOG to SD (boot.log missing/empty)"; exit 1; }
-if [ -f "$DMZ_APP_LOG" ]; then
-    cp "$DMZ_APP_LOG" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || pr "  WARNING: cp dmz.log to SD failed"
-fi
-echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt"
-pr "  wrote debug/boot.log and state.txt"
-pr ""
-
-pr ">>> dmz-init: 12/12 unmount SD"
-sleep 2
-cd /
-umount "$SD_MOUNT"
+pr "  dmz-forensics.sh finished OK"
 
 pr "========== dmz-init complete $(date) =========="
-pr "Log: /tmp/boot.log, $DMZ_APP_LOG, SD debug/boot.log"
+pr "Live: $LOG, $DMZ_APP_LOG | SD after pull: debug/{forensics.txt,boot.log,dmz.log,state.txt} | re-run: /root/dmz-forensics.sh"
