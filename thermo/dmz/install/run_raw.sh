@@ -1,13 +1,13 @@
 #!/bin/sh
 # Run the DMZ app from an extracted Docker rootfs without the Docker daemon.
 # Uses bwrap (Bubblewrap): read-only root, tmpfs /tmp, proc, dev, share net.
-#
 # Assumptions: bubblewrap installed; ROOTFS_DIR is a real extracted rootfs; DMZ_BOOT_LOG
 # is writable when set (default /tmp/boot.log).
 #
 # Usage:
 #   ./run_raw.sh ROOTFS_DIR
 #   ./run_raw.sh ROOTFS_DIR --debug   # shell in sandbox instead of app
+#   ./run_raw.sh ROOTFS_DIR --no-bwrap # run without bubblewrap (for debugging)
 #
 # Started by dmz-init.start 9/12: copy to /tmp/dmz-launcher/run_raw.sh then:
 #   su dmzuser -c "DMZ_BOOT_LOG=... /tmp/dmz-launcher/run_raw.sh $ROOTFS_DIR"
@@ -24,18 +24,21 @@ boot_log() {
 }
 
 usage() {
-    echo "Usage: $0 ROOTFS_DIR [--debug]"
+    echo "Usage: $0 ROOTFS_DIR [--debug] [--no-bwrap]"
     echo "  ROOTFS_DIR  Path to extracted rootfs (from dmz_rootfs.tar on card)"
     echo "  --debug     Start shell in sandbox instead of running the app"
+    echo "  --no-bwrap  Run app without bubblewrap (plain host-process)"
     exit 1
 }
 
 ROOTFS=""
 DEBUG=""
+NO_BWRAP=""
 
 for arg in "$@"; do
     case "$arg" in
         --debug) DEBUG=1 ;;
+        --no-bwrap) NO_BWRAP=1 ;;
         --help|-h) usage ;;
         *) ROOTFS="$arg" ;;
     esac
@@ -51,12 +54,62 @@ test -n "$ROOTFS" -a -d "$ROOTFS" || {
 ROOTFS=$(cd "$ROOTFS" && pwd)
 boot_log "ROOTFS=$ROOTFS"
 
-BWRAP=$(command -v bwrap)
-boot_log "bwrap=$BWRAP"
+if [ -z "$NO_BWRAP" ]; then
+    BWRAP=$(command -v bwrap)
+    boot_log "bwrap=$BWRAP"
+fi
 
-# Host /tmp/dmz.log is bind-mounted at the same path inside bwrap so dmz-init 10/12 can copy it.
+# Host /tmp/dmz.log is what dmz-init reads for forensic evidence.
 touch /tmp/dmz.log
 chmod 666 /tmp/dmz.log
+
+if [ -n "$NO_BWRAP" ]; then
+    boot_log "no-bwrap mode: plain execution (no chroot/bwrap)"
+    printf '%s DMZ run_raw: plain start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> /tmp/dmz.log
+
+    APP_DIR="$ROOTFS/app"
+    [ -d "$APP_DIR" ] || APP_DIR="$ROOTFS"
+    cd "$APP_DIR"
+
+    # Best-effort: make the rootfs's site-packages visible to the host python.
+    PYTHONPATH_EXTRA=""
+    for d in "$ROOTFS"/usr/lib/python*/site-packages "$ROOTFS"/usr/lib/python*/dist-packages "$ROOTFS"/usr/local/lib/python*/site-packages; do
+        [ -d "$d" ] || continue
+        if [ -z "$PYTHONPATH_EXTRA" ]; then
+            PYTHONPATH_EXTRA="$d"
+        else
+            PYTHONPATH_EXTRA="$PYTHONPATH_EXTRA:$d"
+        fi
+    done
+    export PYTHONPATH="$APP_DIR${PYTHONPATH_EXTRA:+:$PYTHONPATH_EXTRA}"
+
+    PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+    boot_log "plain python=$PY"
+    if [ -z "$PY" ]; then
+        boot_log "ERROR: no python3/python on host in plain mode"
+        echo "ERROR: no python3/python on host in plain mode" >> /tmp/dmz.log
+        exit 1
+    fi
+
+    # Optional: run pytest from PATH (prefer `pytest` over `python -m pytest`).
+    _old_path=$PATH
+    export PATH="$ROOTFS/usr/bin:$ROOTFS/bin:$ROOTFS/usr/local/bin:$_old_path"
+    set +e
+    if command -v pytest >/dev/null 2>&1; then
+        pytest -q >> /tmp/dmz.log 2>&1
+        pytest_rc=$?
+    else
+        echo "plain: pytest not in PATH (after rootfs bin dirs), skipping" >> /tmp/dmz.log
+        boot_log "plain: pytest not in PATH, skipping"
+        pytest_rc=0
+    fi
+    set -e
+    export PATH="$_old_path"
+    boot_log "plain pytest_rc=$pytest_rc"
+
+    # Launch app logger + app.
+    exec "$PY" ./run-with-stdout-logged.py /tmp/dmz.log 1048576 2097152 sh ./run.sh
+fi
 
 # tini as PID 1; launcher chains pytest then run-with-stdout-logged + sh ./run.sh.
 if [ -n "$DEBUG" ]; then

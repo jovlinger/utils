@@ -7,7 +7,7 @@
 # - apkovl provides eth0, haveged, busybox ntpd, iptables, bubblewrap; eth0 appears within 30s
 # - /tmp/boot.log is the live log; we copy it to SD debug/ before umount
 #
-set -e
+set -x
 
 ROOTFS_TAR="dmz_rootfs.tar"
 ROOTFS_DIR="/tmp/dmz_rootfs"
@@ -21,6 +21,20 @@ SD_MOUNT="/media/mmcblk0"
 mkdir -p /root
 : > "$LOG"
 pr() { echo "$@" >> "$LOG"; { [ -c /dev/console ] && echo "$@" >/dev/console; } || true; }
+
+persist_boot_log() {
+    # Best-effort snapshot of the live log onto the SD card.
+    # This runs on failure/exit so we still get evidence even if boot aborts early (e.g. iptables).
+    [ -d "$SD_MOUNT" ] || return 0
+    echo "persist_boot_log: attempt remount rw" >>"$LOG" 2>/dev/null || true
+    mount -o remount,rw "$SD_MOUNT" >>"$LOG" 2>&1 || true
+    mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
+    if ! cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1; then
+        echo "persist_boot_log: cp failed (SD likely RO?)" >>"$LOG" 2>/dev/null || true
+    fi
+}
+trap 'persist_boot_log' EXIT INT TERM
+
 dump() {
     echo "--- $1 ---" >> "$LOG"
     shift
@@ -79,9 +93,24 @@ ntpd -p pool.ntp.org &
 pr ""
 
 pr ">>> dmz-init: 6/12 iptables"
-modprobe iptable_nat
-iptables -t nat -F
-iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+pr "  iptables setup (best-effort)"
+pr "  iptables: $(command -v iptables 2>/dev/null || echo '<missing>')"
+dump "uname -r" uname -r
+dump "ls -la /lib/modules 2>/dev/null" sh -c 'ls -la /lib/modules 2>&1 || true'
+
+if command -v modprobe >/dev/null 2>&1; then
+    kver="$(uname -r)"
+    if [ -d "/lib/modules/$kver" ]; then
+        modprobe iptable_nat 2>>"$LOG" || pr "  WARNING: modprobe iptable_nat failed (see $LOG)"
+    else
+        pr "  skip modprobe iptable_nat: missing /lib/modules/$kver"
+    fi
+else
+    pr "  skip modprobe: modprobe not found"
+fi
+
+iptables -t nat -F >>"$LOG" 2>&1 || pr "  WARNING: iptables nat -F failed (likely NAT/REDIRECT unsupported)"
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 >>"$LOG" 2>&1 || pr "  WARNING: iptables nat redirect rule failed"
 pr ""
 
 pr ">>> dmz-init: 7/12 adduser"
@@ -98,18 +127,34 @@ cp "$SD_MOUNT/install/run_raw.sh" "$RUN_RAW_ON_TMPFS"
 
 pr ">>> dmz-init: 9/12 launch"
 pr "  DMZ_BOOT_LOG=$LOG"
-{
-    set -x
-    chmod 755 "$RUN_RAW_ON_TMPFS"
-    chown dmzuser:dmzuser "$RUN_RAW_ON_TMPFS"
-    su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR" >>"$LOG" 2>&1 &
-    set +x
-} >>"$LOG" 2>&1
-launch_pid=$!
+chmod 755 "$RUN_RAW_ON_TMPFS"
+chown dmzuser:dmzuser "$RUN_RAW_ON_TMPFS" || true
+
+# For debugging: bypass bwrap so we always get a launcher evidence trail.
+DMZ_NO_BWRAP=1
+DMZ_LAUNCH_AS_ROOT=1
+if [ "${DMZ_LAUNCH_AS_ROOT:-0}" -eq 1 ]; then
+    DMZ_USE_BWRAP="${DMZ_USE_BWRAP:-0}" \
+    "$RUN_RAW_ON_TMPFS" "$ROOTFS_DIR" --no-bwrap >>"$LOG" 2>&1 &
+    launch_pid=$!
+else
+    su dmzuser -c "DMZ_BOOT_LOG='$LOG' DMZ_USE_BWRAP=0 $RUN_RAW_ON_TMPFS $ROOTFS_DIR --no-bwrap" >>"$LOG" 2>&1 &
+    launch_pid=$!
+fi
 sleep 1
 pr "  background launch sent pid=$launch_pid"
 if ! kill -0 "$launch_pid" 2>/dev/null; then
     pr "  ERROR: launch pid $launch_pid no longer running (su/run_raw exited immediately — see $LOG)"
+fi
+
+pr "  post-launch check: $DMZ_APP_LOG"
+if [ -f "$DMZ_APP_LOG" ]; then
+    set -- $(wc -c "$DMZ_APP_LOG" 2>/dev/null || echo 0)
+    dmz_log_bytes=$1
+    pr "  $DMZ_APP_LOG exists, bytes=$dmz_log_bytes"
+    dump "head of $DMZ_APP_LOG" sh -c "head -n 20 '$DMZ_APP_LOG' 2>&1 || true"
+else
+    pr "  ERROR: $DMZ_APP_LOG missing right after launch (check step 9 logs)"
 fi
 pr ""
 
@@ -139,8 +184,17 @@ pr "  forensic: appended $dmz_log_bytes bytes from $DMZ_APP_LOG"
 pr ""
 
 pr ">>> dmz-init: 11/12 persist boot.log to SD"
-mount -o remount,rw "$SD_MOUNT"
-cp "$LOG" "$SD_MOUNT/debug/boot.log"
+mount -o remount,rw "$SD_MOUNT" >>"$LOG" 2>&1 || pr "  WARNING: remount rw command failed (SD may stay RO)"
+if mount | grep -qE " on ${SD_MOUNT} .*(rw|RW)"; then
+    pr "  SD mount appears writable"
+else
+    pr "  ERROR: SD mount does not appear writable after remount; mount=$(mount | tail -n 5)"
+    pr "  Aborting before cp to avoid silent RO failure"
+    exit 1
+fi
+mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
+cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || pr "  ERROR: cp boot.log to SD failed"
+test -s "$SD_MOUNT/debug/boot.log" || { pr "  ERROR: failed to persist $LOG to SD (boot.log missing/empty)"; exit 1; }
 echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt"
 pr "  wrote debug/boot.log and state.txt"
 pr ""

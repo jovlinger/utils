@@ -151,6 +151,12 @@ ts "[5/8] Apk fetch done."
 ts "[6/8] Building apkovl (extract bwrap, haveged, iptables, dhcpcd into overlay)..."
 APKOVL_DIR="$WORKDIR/apkovl"
 mkdir -p "$APKOVL_DIR"
+# Kernel modules: include /lib/modules so `modprobe $(uname -r)` can work on the Pi.
+# Without this, modprobe fails with "can't change directory to /lib/modules/<kver>".
+if [ -d "$ALPINE_EXTRACT/lib/modules" ]; then
+    mkdir -p "$APKOVL_DIR/lib"
+    cp -a "$ALPINE_EXTRACT/lib/modules" "$APKOVL_DIR/lib/"
+fi
 # Each .apk is a tarball (no data.tar.gz); extract payload in container, exclude metadata
 docker run --rm --platform linux/arm/v6 \
     -v "$APKOVL_DIR:/overlay" \
