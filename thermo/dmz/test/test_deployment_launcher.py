@@ -32,8 +32,6 @@ class DMZDeploymentLauncherFormatTest(TestCase):
         self,
         script_path: Path,
         rootfs_dir: Path,
-        *,
-        debug: bool,
     ) -> List[str]:
         """
         Execute `install/run_raw.sh` with a stub `bwrap` so we can inspect
@@ -65,14 +63,11 @@ class DMZDeploymentLauncherFormatTest(TestCase):
             env = dict(os.environ)
             env["PATH"] = f"{stub_bin}:{env.get('PATH', '')}"
             env["BWRAP_ARGS_FILE"] = str(captured_args_path)
-            # `thermo/dmz/install/run_raw.sh` only toggles debug mode based on the
-            # `--debug` CLI argument (it overwrites any DEBUG env var).
 
             argv = [
                 "/bin/sh",
                 str(script_path),
                 str(rootfs_dir),
-                *(["--debug"] if debug else []),
             ]
             _trace(f"run_raw argv={argv!r}")
             _trace(f"PATH head (stub first): {env['PATH'][:200]!r}...")
@@ -116,7 +111,6 @@ class DMZDeploymentLauncherFormatTest(TestCase):
             args = self._run_raw_with_bwrap_stub(
                 script_path,
                 rootfs_dir,
-                debug=False,
             )
 
         # Validate the bubblewrap/tini/sh chain and delimiters:
@@ -132,7 +126,7 @@ class DMZDeploymentLauncherFormatTest(TestCase):
         sh_c_command = args[chain_idx + len(expected_chain)]
 
         expected = (
-            "exec python ./run-with-stdout-logged.py /tmp/dmz.log 1048576 2097152 "
+            "exec python ./run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 "
             "sh ./run.sh"
         )
         self.assertIn(
@@ -140,26 +134,3 @@ class DMZDeploymentLauncherFormatTest(TestCase):
             sh_c_command,
             msg=f"Embedded command did not match.\nExpected substring:\n{expected}\nActual sh -c:\n{sh_c_command}",
         )
-
-    def test_run_raw_debug_does_not_use_run_with_stdout_logged(self) -> None:
-        dmz_dir = Path(__file__).resolve().parent.parent
-        script_path = dmz_dir / "install" / "run_raw.sh"
-        self.assertTrue(script_path.exists(), msg=f"Missing script: {script_path}")
-
-        with tempfile.TemporaryDirectory() as rootfs_dir_str:
-            rootfs_dir = Path(rootfs_dir_str)
-            (rootfs_dir / "app").mkdir(parents=True, exist_ok=True)
-
-            args = self._run_raw_with_bwrap_stub(
-                script_path,
-                rootfs_dir,
-                debug=True,
-            )
-
-        joined = "\n".join(args)
-        self.assertNotIn(
-            "run-with-stdout-logged.py",
-            joined,
-            msg=f"DEBUG mode should not exec run-with-stdout-logged.py.\nArgs:\n{joined}",
-        )
-

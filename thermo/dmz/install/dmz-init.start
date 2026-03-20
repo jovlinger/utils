@@ -14,11 +14,14 @@ ROOTFS_DIR="/tmp/dmz_rootfs"
 RUN_RAW_TMPDIR="/tmp/dmz-launcher"
 RUN_RAW_ON_TMPFS="$RUN_RAW_TMPDIR/run_raw.sh"
 LOG="/tmp/boot.log"
-# App log: run_raw bind-mounts host /tmp/dmz.log into bwrap so 10/12 can append it here.
-DMZ_APP_LOG="/tmp/dmz.log"
+# App log on host: run_raw bind-mounts this path into chroot/bwrap at the same path.
+DMZ_APP_LOG="/var/log/dmz.log"
 SD_MOUNT="/media/mmcblk0"
 
 mkdir -p /root
+mkdir -p /var/log
+touch "$DMZ_APP_LOG" 2>/dev/null || true
+chmod 666 "$DMZ_APP_LOG" 2>/dev/null || true
 : > "$LOG"
 pr() { echo "$@" >> "$LOG"; { [ -c /dev/console ] && echo "$@" >/dev/console; } || true; }
 
@@ -31,6 +34,9 @@ persist_boot_log() {
     mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
     if ! cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1; then
         echo "persist_boot_log: cp failed (SD likely RO?)" >>"$LOG" 2>/dev/null || true
+    fi
+    if [ -f "$DMZ_APP_LOG" ]; then
+        cp "$DMZ_APP_LOG" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || true
     fi
 }
 trap 'persist_boot_log' EXIT INT TERM
@@ -130,15 +136,13 @@ pr "  DMZ_BOOT_LOG=$LOG"
 chmod 755 "$RUN_RAW_ON_TMPFS"
 chown dmzuser:dmzuser "$RUN_RAW_ON_TMPFS" || true
 
-# For debugging: bypass bwrap so we always get a launcher evidence trail.
-DMZ_NO_BWRAP=1
+# Chroot launcher (no bwrap on Pi until validated).
 DMZ_LAUNCH_AS_ROOT=1
 if [ "${DMZ_LAUNCH_AS_ROOT:-0}" -eq 1 ]; then
-    DMZ_USE_BWRAP="${DMZ_USE_BWRAP:-0}" \
     "$RUN_RAW_ON_TMPFS" "$ROOTFS_DIR" --no-bwrap >>"$LOG" 2>&1 &
     launch_pid=$!
 else
-    su dmzuser -c "DMZ_BOOT_LOG='$LOG' DMZ_USE_BWRAP=0 $RUN_RAW_ON_TMPFS $ROOTFS_DIR --no-bwrap" >>"$LOG" 2>&1 &
+    su dmzuser -c "DMZ_BOOT_LOG='$LOG' $RUN_RAW_ON_TMPFS $ROOTFS_DIR --no-bwrap" >>"$LOG" 2>&1 &
     launch_pid=$!
 fi
 sleep 1
@@ -195,6 +199,9 @@ fi
 mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
 cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || pr "  ERROR: cp boot.log to SD failed"
 test -s "$SD_MOUNT/debug/boot.log" || { pr "  ERROR: failed to persist $LOG to SD (boot.log missing/empty)"; exit 1; }
+if [ -f "$DMZ_APP_LOG" ]; then
+    cp "$DMZ_APP_LOG" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || pr "  WARNING: cp dmz.log to SD failed"
+fi
 echo "dmz-init complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$SD_MOUNT/debug/state.txt"
 pr "  wrote debug/boot.log and state.txt"
 pr ""
@@ -205,4 +212,4 @@ cd /
 umount "$SD_MOUNT"
 
 pr "========== dmz-init complete $(date) =========="
-pr "Log: /tmp/boot.log and SD debug/boot.log"
+pr "Log: /tmp/boot.log, $DMZ_APP_LOG, SD debug/boot.log"

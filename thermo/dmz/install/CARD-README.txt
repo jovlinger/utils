@@ -22,11 +22,11 @@ Three-stage boot (high level)
 3) App runtime (bwrap “container-lite”)
    - Launcher: install/run_raw.sh
    - bwrap runs the extracted rootfs as read-only / with tmpfs /tmp
-   - App is started via run-with-stdout-logged.py, which writes stdout/stderr to /tmp/dmz.log
+   - App is started via run-with-stdout-logged.py, which writes stdout/stderr to /var/log/dmz.log
 
 Logs
   - Boot: /tmp/boot.log (also copied to debug/boot.log on the card at end of boot)
-  - App:  /tmp/dmz.log (rotated by run-with-stdout-logged.py)
+  - App:  /var/log/dmz.log (rotated by run-with-stdout-logged.py; host path bind-mounted in sandbox)
 
 Files on this partition
   - dmz_rootfs.tar      : exported container root filesystem (payload)

@@ -1,22 +1,25 @@
 #!/bin/sh
 # Run the DMZ app from an extracted Docker rootfs without the Docker daemon.
-# Uses bwrap (Bubblewrap): read-only root, tmpfs /tmp, proc, dev, share net.
-# Assumptions: bubblewrap installed; ROOTFS_DIR is a real extracted rootfs; DMZ_BOOT_LOG
-# is writable when set (default /tmp/boot.log).
+# Uses bwrap (Bubblewrap) by default, or --no-bwrap for chroot + bind-mounted app log.
+#
+# App stdout/stderr log (host-visible): /var/log/dmz.log (bind-mounted into chroot/bwrap).
+#
+# Assumptions: bubblewrap installed when not using --no-bwrap; ROOTFS_DIR is extracted
+# dmz_rootfs.tar; DMZ_BOOT_LOG when set (default /tmp/boot.log).
 #
 # Usage:
 #   ./run_raw.sh ROOTFS_DIR
-#   ./run_raw.sh ROOTFS_DIR --debug   # shell in sandbox instead of app
-#   ./run_raw.sh ROOTFS_DIR --no-bwrap # run without bubblewrap (for debugging)
+#   ./run_raw.sh ROOTFS_DIR --no-bwrap   # chroot; host /var/log/dmz.log bind-mounted at same path
 #
-# Started by dmz-init.start 9/12: copy to /tmp/dmz-launcher/run_raw.sh then:
-#   su dmzuser -c "DMZ_BOOT_LOG=... /tmp/dmz-launcher/run_raw.sh $ROOTFS_DIR"
-#
-# App listens on 8080; iptables 80->8080 on host. Rootfs from image/create-image.sh.
+# Started by dmz-init.start 9/12: copy to /tmp/dmz-launcher/run_raw.sh then launch.
 
 set -e
 
 LOG="${DMZ_BOOT_LOG:-/tmp/boot.log}"
+# Host path for the app log; bind-mounted at /var/log/dmz.log inside chroot/bwrap.
+# Override with DMZ_APP_LOG=/path for tests or hosts where /var/log is not writable.
+DMZ_APP_LOG="${DMZ_APP_LOG:-/var/log/dmz.log}"
+
 boot_log() {
     ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     echo "$ts run_raw[$$] u=$(id -un): $*" >>"$LOG"
@@ -24,20 +27,17 @@ boot_log() {
 }
 
 usage() {
-    echo "Usage: $0 ROOTFS_DIR [--debug] [--no-bwrap]"
+    echo "Usage: $0 ROOTFS_DIR [--no-bwrap]"
     echo "  ROOTFS_DIR  Path to extracted rootfs (from dmz_rootfs.tar on card)"
-    echo "  --debug     Start shell in sandbox instead of running the app"
-    echo "  --no-bwrap  Run app without bubblewrap (plain host-process)"
+    echo "  --no-bwrap  chroot into ROOTFS; app log on host at $DMZ_APP_LOG"
     exit 1
 }
 
 ROOTFS=""
-DEBUG=""
 NO_BWRAP=""
 
 for arg in "$@"; do
     case "$arg" in
-        --debug) DEBUG=1 ;;
         --no-bwrap) NO_BWRAP=1 ;;
         --help|-h) usage ;;
         *) ROOTFS="$arg" ;;
@@ -59,68 +59,75 @@ if [ -z "$NO_BWRAP" ]; then
     boot_log "bwrap=$BWRAP"
 fi
 
-# Host /tmp/dmz.log is what dmz-init reads for forensic evidence.
-touch /tmp/dmz.log
-chmod 666 /tmp/dmz.log
+if ! ( umask 0; _d=$(dirname "$DMZ_APP_LOG"); mkdir -p "$_d" 2>/dev/null && touch "$DMZ_APP_LOG" 2>/dev/null ); then
+    DMZ_APP_LOG="/tmp/dmz.log"
+    mkdir -p "$(dirname "$DMZ_APP_LOG")"
+    touch "$DMZ_APP_LOG"
+fi
+chmod 666 "$DMZ_APP_LOG" 2>/dev/null || true
+boot_log "DMZ_APP_LOG(host)=$DMZ_APP_LOG -> /var/log/dmz.log in sandbox"
 
-if [ -n "$NO_BWRAP" ]; then
-    boot_log "no-bwrap mode: plain execution (no chroot/bwrap)"
-    printf '%s DMZ run_raw: plain start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> /tmp/dmz.log
+# Optional bwrap binds for DNS/hosts (host files, read-only inside sandbox).
+BWRAP_ETC_BINDS=""
+if [ -r /etc/resolv.conf ]; then
+    BWRAP_ETC_BINDS="$BWRAP_ETC_BINDS --ro-bind /etc/resolv.conf /etc/resolv.conf"
+fi
+if [ -r /etc/hosts ]; then
+    BWRAP_ETC_BINDS="$BWRAP_ETC_BINDS --ro-bind /etc/hosts /etc/hosts"
+fi
 
-    APP_DIR="$ROOTFS/app"
-    [ -d "$APP_DIR" ] || APP_DIR="$ROOTFS"
-    cd "$APP_DIR"
-
-    # Best-effort: make the rootfs's site-packages visible to the host python.
-    PYTHONPATH_EXTRA=""
-    for d in "$ROOTFS"/usr/lib/python*/site-packages "$ROOTFS"/usr/lib/python*/dist-packages "$ROOTFS"/usr/local/lib/python*/site-packages; do
-        [ -d "$d" ] || continue
-        if [ -z "$PYTHONPATH_EXTRA" ]; then
-            PYTHONPATH_EXTRA="$d"
-        else
-            PYTHONPATH_EXTRA="$PYTHONPATH_EXTRA:$d"
-        fi
-    done
-    export PYTHONPATH="$APP_DIR${PYTHONPATH_EXTRA:+:$PYTHONPATH_EXTRA}"
-
-    PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
-    boot_log "plain python=$PY"
-    if [ -z "$PY" ]; then
-        boot_log "ERROR: no python3/python on host in plain mode"
-        echo "ERROR: no python3/python on host in plain mode" >> /tmp/dmz.log
-        exit 1
+chroot_bind_runtime() {
+    # Pseudofs + host devices (typical minimal chroot for network + Python).
+    mkdir -p "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys" "$ROOTFS/run" \
+        "$ROOTFS/tmp" "$ROOTFS/dev/pts" "$ROOTFS/dev/shm" "$ROOTFS/var/log" \
+        "$ROOTFS/etc"
+    touch "$ROOTFS/var/log/dmz.log"
+    mount --bind "$DMZ_APP_LOG" "$ROOTFS/var/log/dmz.log"
+    mount --bind /dev "$ROOTFS/dev" 2>/dev/null || boot_log "WARN: bind /dev failed"
+    mount --bind /proc "$ROOTFS/proc" 2>/dev/null || boot_log "WARN: bind /proc failed"
+    mount --bind /sys "$ROOTFS/sys" 2>/dev/null || boot_log "WARN: bind /sys failed"
+    mount --bind /run "$ROOTFS/run" 2>/dev/null || boot_log "WARN: bind /run failed"
+    if [ -d /dev/pts ]; then
+        mount --bind /dev/pts "$ROOTFS/dev/pts" 2>/dev/null || \
+            mount -t devpts devpts "$ROOTFS/dev/pts" 2>/dev/null || \
+            boot_log "WARN: devpts failed"
     fi
-
-    # Optional: run pytest from PATH (prefer `pytest` over `python -m pytest`).
-    _old_path=$PATH
-    export PATH="$ROOTFS/usr/bin:$ROOTFS/bin:$ROOTFS/usr/local/bin:$_old_path"
-    set +e
-    if command -v pytest >/dev/null 2>&1; then
-        pytest -q >> /tmp/dmz.log 2>&1
-        pytest_rc=$?
+    if mount -t tmpfs -o mode=1777,nosuid,nodev,size=128m tmpfs "$ROOTFS/tmp" 2>/dev/null; then
+        boot_log "chroot /tmp: tmpfs 128m"
     else
-        echo "plain: pytest not in PATH (after rootfs bin dirs), skipping" >> /tmp/dmz.log
-        boot_log "plain: pytest not in PATH, skipping"
-        pytest_rc=0
+        mount --bind /tmp "$ROOTFS/tmp" 2>/dev/null || boot_log "WARN: /tmp not tmpfs nor bind"
     fi
-    set -e
-    export PATH="$_old_path"
-    boot_log "plain pytest_rc=$pytest_rc"
+    mount -t tmpfs -o mode=1777,nosuid,nodev,size=32m tmpfs "$ROOTFS/dev/shm" 2>/dev/null || \
+        mount --bind /dev/shm "$ROOTFS/dev/shm" 2>/dev/null || true
+    if [ -r /etc/resolv.conf ]; then
+        mount --bind /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || \
+            boot_log "WARN: bind resolv.conf failed"
+    fi
+    if [ -r /etc/hosts ]; then
+        mount --bind /etc/hosts "$ROOTFS/etc/hosts" 2>/dev/null || true
+    fi
+}
 
-    # Launch app logger + app.
-    exec "$PY" ./run-with-stdout-logged.py /tmp/dmz.log 1048576 2097152 sh ./run.sh
+# no-bwrap: chroot + bind $DMZ_APP_LOG + runtime mounts
+if [ -n "$NO_BWRAP" ]; then
+    # Branches below use exec: this process becomes tini/sh and never returns;
+    # nothing after this if-block runs on success.
+    boot_log "no-bwrap: chroot + bind $DMZ_APP_LOG + runtime mounts"
+    chroot_bind_runtime
+
+    printf '%s DMZ run_raw: chroot start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$DMZ_APP_LOG"
+
+    _tini="$ROOTFS/sbin/tini"
+    if [ -x "$_tini" ]; then
+        boot_log "chroot -> tini -> run-with-stdout-logged -> sh ./run.sh ($DMZ_APP_LOG)"
+        exec chroot "$ROOTFS" /sbin/tini -s -- sh -c 'export PORT=8080; cd /app; printf "%s DMZ launcher starting %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date)" >> /var/log/dmz.log; exec python ./run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 sh ./run.sh'
+    fi
+    boot_log "chroot (no tini) -> run-with-stdout-logged"
+    exec chroot "$ROOTFS" /bin/sh -c 'export PORT=8080; cd /app; printf "%s DMZ launcher starting %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date)" >> /var/log/dmz.log; exec python ./run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 sh ./run.sh'
 fi
 
-# tini as PID 1; launcher chains pytest then run-with-stdout-logged + sh ./run.sh.
-if [ -n "$DEBUG" ]; then
-    printf '%s run_raw: --debug (host line for forensic)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/dmz.log
-    boot_log "exec bwrap (DEBUG shell)"
-    exec "$BWRAP" --ro-bind "$ROOTFS" / --tmpfs /tmp --bind /tmp/dmz.log /tmp/dmz.log \
-        --proc /proc --dev /dev --unshare-all --share-net --hostname dmz-isolation \
-        --setenv PORT 8080 --chdir /app -- /bin/sh
-fi
-
-boot_log "exec bwrap -> tini -> run-with-stdout-logged -> sh ./run.sh"
-exec "$BWRAP" --ro-bind "$ROOTFS" / --tmpfs /tmp --bind /tmp/dmz.log /tmp/dmz.log \
-    --proc /proc --dev /dev --unshare-all --share-net --hostname dmz-isolation \
-    --setenv PORT 8080 --chdir /app -- /sbin/tini -s -- sh -c 'printf "%s DMZ launcher starting %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date)" >> /tmp/dmz.log; printf "%s DMZ pytest starting\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/dmz.log; pytest -q >> /tmp/dmz.log 2>&1; printf "%s DMZ pytest ok\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/dmz.log; exec python ./run-with-stdout-logged.py /tmp/dmz.log 1048576 2097152 sh ./run.sh'
+boot_log "exec bwrap -> tini -> run-with-stdout-logged -> sh ./run.sh ($DMZ_APP_LOG)"
+# shellcheck disable=SC2086
+exec "$BWRAP" --ro-bind "$ROOTFS" / --tmpfs /tmp --bind "$DMZ_APP_LOG" /var/log/dmz.log \
+    --proc /proc --dev /dev $BWRAP_ETC_BINDS --unshare-all --share-net --hostname dmz-isolation \
+    --setenv PORT 8080 --chdir /app -- /sbin/tini -s -- sh -c 'printf "%s DMZ launcher starting %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date)" >> /var/log/dmz.log; exec python ./run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 sh ./run.sh'

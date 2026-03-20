@@ -68,7 +68,7 @@ class ZoneState(BaseModel):
     sensors: Optional[Sensors] = None
 
 
-# Logging: isodatetime, DEBUG, to stdout (captured by run-with-stdout-logged to /tmp/dmz.log)
+# Logging: isodatetime, DEBUG, to stdout (captured by run-with-stdout-logged to /var/log/dmz.log)
 _log_handler = logging.StreamHandler(sys.stdout)
 _log_handler.setLevel(logging.DEBUG)
 _log_fmt = logging.Formatter(
