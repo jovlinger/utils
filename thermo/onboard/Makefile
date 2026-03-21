@@ -7,18 +7,16 @@ TAG ?= latest
 # Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS
 PLATFORM ?= linux/arm/v7
 
+# Sister repo `bin/` next to `utils/` (see ../../../bin/... from thermo/onboard)
+RUN_WITH_BIN := $(abspath $(CURDIR)/../../../bin/run-with-stdout-logged.py)
+
 all: build
 
 build: .image
 
-.image: Dockerfile requirements.txt $(wildcard *.py) $(wildcard *.sh) $(wildcard heatpumpirctl/*.py)
-	@TMP_CTX=$$(mktemp -d); \
-	cp -a . "$$TMP_CTX/onboard"; \
-	mkdir -p "$$TMP_CTX/onboard/bin"; \
-	# Copy the canonical runner from the parent `jovlinger/bin` checkout.
-	cp -a ../../../bin/run-with-stdout-logged.py "$$TMP_CTX/onboard/bin/run-with-stdout-logged.py"; \
-	docker buildx build -q --platform $(PLATFORM) -t $(IMAGE):$(TAG) --load "$$TMP_CTX/onboard"; \
-	rm -rf "$$TMP_CTX"
+.image: Dockerfile requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(wildcard *.py) $(wildcard *.sh) $(wildcard heatpumpirctl/*.py)
+	"$(CURDIR)/stage-docker-import.sh"
+	docker buildx build -q --platform $(PLATFORM) -t $(IMAGE):$(TAG) --load .
 	@docker image inspect $(IMAGE):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image
 
 push: build
@@ -29,6 +27,7 @@ push: build
 clean:
 	@[ -f .image ] && docker image rm $(IMAGE):$(TAG) 2>/dev/null || true
 	@rm -f .image
+	@rm -rf .docker-import
 
 test: build
 	./test/run.sh

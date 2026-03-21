@@ -1,6 +1,6 @@
 # DMZ smoketests (black-box HTTP)
 
-Build the image (after **`stage-docker-import.sh`** copies **`../onboard/run-with-stdout-logged.py`** into **`.docker-import/`**), run a container like **`make runlocal`**, then **`pytest test_smoke.py`** from the host venv against the live API.
+Build the image (after **`stage-docker-import.sh`** copies **`../../../bin/run-with-stdout-logged.py`** from the **`bin`** sister repo into **`.docker-import/`**), run a container like **`make runlocal`**, then **`pytest test_smoke.py`** from the host venv against the live API.
 
 ```bash
 cd thermo/dmz

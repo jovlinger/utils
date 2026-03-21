@@ -38,7 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "==> stage .docker-import (../onboard/run-with-stdout-logged.py)"
+echo "==> stage .docker-import (../../../bin/run-with-stdout-logged.py)"
 "$DMZ/stage-docker-import.sh"
 
 if [ "${1:-}" = "--no-cache" ]; then

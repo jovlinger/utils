@@ -13,8 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev libssl-dev python3-dev v4l-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# copy everything, including this file... why not?
+RUN mkdir -p /app/bin
+# Staged by stage-docker-import.sh from sister `bin` repo (see Makefile).
+COPY .docker-import/run-with-stdout-logged.py /app/bin/run-with-stdout-logged.py
 COPY . .
+RUN chmod +x /app/bin/run-with-stdout-logged.py
 
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
