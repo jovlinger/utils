@@ -1,6 +1,5 @@
-# DMZ dev notes (tooling preferences)
+# DMZ dev notes
 
-- **Tests (DMZ):** Use **`python -m pytest`** (same **`python`** as **`app.py`** in **`thermo/dmz/run.sh`**). **Temporary:** **`run.sh`** runs pytest before **`app.py`**; plan is to remove that for Docker-based fidelity tests. **`install/run_raw.sh`** has no **`--debug`**; only optional **`--no-bwrap`** (chroot). It chains **`run-with-stdout-logged.py` → `sh ./run.sh`**.
-- **Repo search in a plain shell:** Prefer portable patterns such as  
-  `find . -type f -exec grep -Hn 'pattern' {} +`  
-  over assuming **`rg`** (ripgrep) is installed.
+- **Tests:** `make test` / `./test/run.sh` (pytest; Flask test client). Smoketests: `./smoketest/run.sh`. See `test/README.md` and `smoketest/README.md`.
+- **Entry:** `start.sh` runs as **root** only for mounts; the app always runs as **`dmz`** via `su-exec`.
+- **Pydantic:** Stay on **v1** (`pydantic<2` in `requirements.txt`) for musl / ARM wheel consistency; Dockerfile forces pydantic-core build from source when needed.

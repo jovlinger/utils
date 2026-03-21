@@ -73,7 +73,7 @@ class ZoneState(BaseModel):
     sensors: Optional[Sensors] = None
 
 
-# Logging: isodatetime, DEBUG, to stdout (captured by run-with-stdout-logged to /var/log/dmz.log)
+# Logging: isodatetime, DEBUG, to stdout (Docker / process manager capture)
 _log_handler = logging.StreamHandler(sys.stdout)
 _log_handler.setLevel(logging.DEBUG)
 _log_fmt = logging.Formatter(
@@ -81,10 +81,10 @@ _log_fmt = logging.Formatter(
 )
 _log_fmt.converter = time.gmtime
 _log_handler.setFormatter(_log_fmt)
-_logger = logging.getLogger("dmz")
-_logger.setLevel(logging.DEBUG)
-_logger.addHandler(_log_handler)
-_logger.propagate = False
+logger = logging.getLogger("dmz")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(_log_handler)
+logger.propagate = False
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
@@ -126,7 +126,7 @@ def _after_request(response: Any) -> Any:
         _log_access(request.method, request.path, response.status_code)
         req_size = request.content_length if request.content_length is not None else len(request.get_data())
         resp_size = getattr(response, "content_length", None) or "-"
-        _logger.debug(
+        logger.debug(
             "request %s %s body=%s -> %d response_len=%s",
             request.method,
             request.path,

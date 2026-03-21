@@ -1,1 +1,0 @@
-# One line: ADDR/CIDR GATEWAY. Default in image: 192.168.77.10/24 192.168.77.1 (MikroTik DMZ per ROUTER-RB2011.md). Edit install/network.conf on the SD if your deployment differs.

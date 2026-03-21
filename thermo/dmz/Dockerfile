@@ -1,43 +1,54 @@
-# Multi-stage build for Pi 1B (ARMv6). Stage 1 builds Python deps (incl. cryptography/Rust);
-# stage 2 produces a minimal runtime image.
+# Alpine image: Flask app as non-root user `dmz`. Entry: tini -> start.sh -> run.sh -> python.
 #
-# Usage:
-#   docker build -q -t jovlinger/thermo/dmz .
+# Build:
+#   docker build -t jovlinger/thermo/dmz .
 #   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .
-#   docker run --rm -it jovlinger/thermo/dmz sh test.sh
+#
+# Run (optional --tmpfs /tmp; do not tmpfs over all of /var/log if you bind-mount dmz.log):
+#   docker run --rm -p 8080:8080 jovlinger/thermo/dmz
+# ENTRYPOINT is only tini; default CMD is start.sh. A trailing command replaces CMD:
+#   docker run --rm -it jovlinger/thermo/dmz /bin/sh   ->  tini -- /bin/sh
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder (full toolchain for cryptography/Rust)
+# Builder: compile wheels that need a toolchain (cryptography, pydantic-core on musl).
 # -----------------------------------------------------------------------------
 FROM alpine:3.19 AS builder
 
 RUN apk add --no-cache \
-    python3 py3-pip \
-    rust cargo \
-    gcc musl-dev libffi-dev openssl-dev python3-dev
+	python3 py3-pip \
+	rust cargo \
+	gcc musl-dev libffi-dev openssl-dev python3-dev
 
 WORKDIR /app
 COPY requirements.txt .
-# Force building pydantic-core from source to avoid accidentally pulling an
-# ARMv7-optimized wheel that can SIGILL on ARMv6 at runtime.
+# pydantic<2 still uses pydantic-core; build from source on musl / odd arches when needed.
 RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt
 
 # -----------------------------------------------------------------------------
-# Stage 2: Runtime (minimal; no Rust, no build tools)
+# Runtime
 # -----------------------------------------------------------------------------
 FROM alpine:3.19
 
-RUN apk add --no-cache python3 tini openssl libffi \
-    && ln -sf /usr/bin/python3 /usr/bin/python
+RUN apk add --no-cache python3 tini su-exec openssl libffi \
+	&& ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN addgroup -g 1000 dmz \
+	&& adduser -D -u 1000 -G dmz dmz
 
 WORKDIR /app
-COPY . .
 
-# Copy pre-built site-packages from builder
 COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
+# Console script so `pytest` is on PATH (same as venv `pytest`; avoids `python -m pytest` in run.sh / make test).
+COPY --from=builder /usr/bin/pytest /usr/bin/pytest
+# Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source ../onboard).
+COPY .docker-import/run-with-stdout-logged.py /app/run-with-stdout-logged.py
+COPY . .
+RUN chown -R dmz:dmz /app \
+	&& chmod +x /app/start.sh /app/run.sh /app/run-with-stdout-logged.py /usr/bin/pytest
 
 ENV PORT=8080
 EXPOSE 8080
 
-ENTRYPOINT ["tini", "--"]
-CMD ["sh", "./run.sh"]
+USER root
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/start.sh"]

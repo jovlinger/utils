@@ -1,3 +1,6 @@
 **/*.img
-thermo/dmz/image/dmz.img
-thermo/dmz/image/*.img
+**/.image
+env/
+__pycache__/
+*.pyc
+.pytest_cache/

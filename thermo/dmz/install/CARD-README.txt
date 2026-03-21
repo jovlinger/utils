@@ -1,36 +1,9 @@
-DMZ Pi 1B SD card (PIBOOT)
+DMZ Pi 1B — Alpine diskless + Docker-exported root (dmz_rootfs.tar)
 
-This card boots Alpine diskless (RAM root) and runs the DMZ app in a bwrap sandbox.
+Edit install/network.conf on this card (one line: ADDR/CIDR GATEWAY) before first boot if needed.
 
-Three-stage boot (high level)
+Boot: firmware loads kernel from this FAT volume; Alpine applies dmz.apkovl.tar.gz; /etc/local.d/dmz-boot.start brings up eth0, extracts dmz_rootfs.tar, chroots into it, runs the same entrypoint as docker run (tini → start.sh → run-with-stdout-logged.py → run.sh → app). Verbose boot steps are appended to /tmp/boot.log on the Pi; app logs to /var/log/dmz.log.
 
-1) Firmware + initramfs (quiet)
-   - Raspberry Pi firmware loads kernel + initramfs from this FAT partition.
-   - Alpine initramfs mounts the boot media and unpacks the apkovl overlay.
-   - This stage is mostly silent on console.
+Rescue (RAM Alpine, serial or keyboard): sh /root/network-and-sshd.sh  — sets eth0 to 192.168.88.200/24 (optional IPv4 as first arg), installs/starts sshd; authorized_keys was populated at image build from the machine that ran build-and-write.sh.
 
-2) dmz-init (OpenRC local.d) sets up the host
-   - Script: /etc/local.d/dmz-init.start
-   - Reads install/network.conf from the SD and configures eth0 + default route + resolv.conf
-   - Starts haveged (entropy)
-   - Syncs time (busybox ntpd)
-   - Extracts dmz_rootfs.tar into /tmp/dmz_rootfs (tmpfs)
-   - Runs DMZ unit tests inside the sandbox and appends results to /tmp/boot.log
-   - Launches the app in background via install/run_raw.sh
-   - Runs /root/dmz-forensics.sh: umount SD, remount, overwrite debug/{forensics.txt,boot.log,dmz.log,state.txt}, umount SD
-
-3) App runtime (bwrap “container-lite”)
-   - Launcher: install/run_raw.sh
-   - bwrap runs the extracted rootfs as read-only / with tmpfs /tmp
-   - App is started via run-with-stdout-logged.py, which writes stdout/stderr to /var/log/dmz.log
-
-Logs
-  - Boot: /tmp/boot.log (also copied to debug/boot.log on the card at end of boot)
-  - App:  /var/log/dmz.log (rotated by run-with-stdout-logged.py; host path bind-mounted in sandbox)
-
-Files on this partition
-  - dmz_rootfs.tar      : exported container root filesystem (payload)
-  - dmz.apkovl.tar.gz   : overlay applied at boot (includes dmz-init + keys + helpers)
-  - install/            : scripts and config read by dmz-init
-  - debug/              : overwritten by /root/dmz-forensics.sh (forensics.txt, boot.log, dmz.log, state.txt)
-
+Prior full Pi pipeline (bwrap, separate tarball workflow) is on git branch overly_complicated_double_pivot.

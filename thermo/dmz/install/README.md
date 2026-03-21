@@ -1,34 +1,15 @@
-# Install Scripts
+# Install (SD card contents)
 
-Order of operations: **build image → flash → boot → test**
+Files here are copied to **`install/`** on the boot FAT by `build-and-write.sh`.
 
-| Step | Script | Where |
-| ---- | ------ | ----- |
-| 1. Build image | `cd ../image && ./create-image.sh --output /tmp/dmz-test.img` | Dev machine |
-| 2. Write SD | `cd ../image && ./write-to-card.sh /tmp/dmz-test.img /dev/sdX` | Dev machine |
-| 3. Boot | dmz-init.start runs automatically | Pi 1B |
-| 4. Or manual | `./run_raw.sh /tmp/dmz_rootfs` | Pi 1B (after extract) |
+| File | Role |
+|------|------|
+| `network.conf` | One line: `ADDR/CIDR GATEWAY` (edit on the card before boot if defaults are wrong). |
+| `buildinfo.txt` | Written at image build time (build id + git). |
+| `dmz-boot.start` | Source for apkovl `/etc/local.d/` (also embedded in `dmz.apkovl.tar.gz` on the card). |
+| `root-network-sshd.sh` | Same script as RAM **`/root/network-and-sshd.sh`** (rescue: `192.168.88.200/24` + ssh; keys from build host `~/.ssh/id_rsa.pub`). |
+| `CARD-README.txt` | Short human notes; copied to `README.txt` on FAT root. |
 
-See [plan.md](../plan.md) for dmz-init.start setup (lbu, apkovl).
+Boot diagnostics go to **`/tmp/boot.log`** on the Pi; app output is **`/var/log/dmz.log`** (copies may appear under **`debug/`** on the SD when unmounted cleanly).
 
-## Name / path correspondences
-
-Where repo files end up on the running Pi or on the SD card.
-
-### Overlay (apkovl) on the running Pi
-
-| Repo | On Pi |
-| ---- | ----- |
-| `install/root-network-sshd.sh` | `/root/network-and-sshd.sh` |
-| `install/network.conf` | `/root/network.conf` |
-| `install/dmz-init.start` | `/etc/local.d/dmz-init.start` |
-| `~/.ssh/id_rsa.pub` | `/root/.ssh/authorized_keys` |
-
-### SD card
-
-All of `install/*` is copied to the card as `install/<basename>` (e.g. `install/run_raw.sh` → SD `install/run_raw.sh`).
-
-### Rootfs (container image)
-
-- `dmz/run.sh` lives in the Docker image as `/app/run.sh`. Extracting `dmz_rootfs.tar` gives e.g. `/tmp/dmz_rootfs/app/run.sh` — same name, inside the rootfs.
-- `install/run_raw.sh` is the bwrap launcher; it lives only on the SD at `install/run_raw.sh`, not inside the rootfs tarball.
+Edit **`network.conf`** on the mounted FAT volume if the Pi is not `192.168.1.50/24` with gateway `192.168.1.1`.
