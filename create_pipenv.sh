@@ -63,5 +63,10 @@ for PROJECT_REL in "$@"; do
     else
       echo "  No requirements.txt at $REQ_FILE"
     fi
+    DEV_REQ="$UTILS_ROOT/$PROJECT_REL/requirements-dev.txt"
+    if [ -f "$DEV_REQ" ]; then
+      python -m pip install -r "$DEV_REQ" -q
+      echo "  Installed from $DEV_REQ"
+    fi
   )
 done
