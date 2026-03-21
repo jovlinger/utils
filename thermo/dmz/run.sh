@@ -11,9 +11,23 @@ echo "dmz ENV ${ENV:-idk}"
 DMZ_LOG="/tmp/dmz-run.log"
 
 run_dmz_pytest() {
-	printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	pytest -q || echo "FAILED pytest, app still starts"
-	printf '%s DMZ pytest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	# pytest.ini limits collection to test/; smoketest/ needs a live server (smoketest/run.sh).
+	# In Docker, send full pytest output to a file so /var/log/dmz.log stays readable (run.sh + app).
+	if [ -f /.dockerenv ]; then
+		STARTUP_PYTEST_LOG="/var/log/startup_pytest.log"
+		: >"$STARTUP_PYTEST_LOG"
+		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
+		if pytest -q >>"$STARTUP_PYTEST_LOG" 2>&1; then
+			printf '%s DMZ pytest finished (ok)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
+		else
+			printf '%s DMZ pytest finished (FAILED)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
+			echo "FAILED pytest (see /var/log/startup_pytest.log), app still starts"
+		fi
+	else
+		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		pytest -q || echo "FAILED pytest, app still starts"
+		printf '%s DMZ pytest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	fi
 }
 
 python_probe() {

@@ -1,6 +1,6 @@
 # DMZ unit / integration tests (host venv or `make test`)
 
-Pytest against the **source tree** using Flask `test_client()` (no real HTTP server).
+Pytest against the **source tree** using Flask `test_client()` (no real HTTP server). Default **`pytest`** from **`thermo/dmz`** uses **`../pytest.ini`** (**`testpaths = test`**) so **`smoketest/`** is not collected (those need a live server; use **`../smoketest/run.sh`**).
 
 ```bash
 cd thermo/dmz
