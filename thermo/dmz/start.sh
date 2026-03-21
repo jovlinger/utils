@@ -6,8 +6,8 @@
 set -eu
 
 mkdir -p /var/log /tmp
-touch /var/log/dmz.log /var/log/startup_pytest.log 2>/dev/null || true
-chown dmz:dmz /var/log/dmz.log /var/log/startup_pytest.log 2>/dev/null || true
+touch /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
+chown dmz:dmz /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 
 mount -t tmpfs -o nosuid,nodev,size=64m tmpfs /tmp 2>/dev/null \
 	|| echo "start.sh: tmpfs /tmp skipped" >&2

@@ -92,7 +92,7 @@ else
 	docker run -d --rm -p 8080:8080 --name "$CONTAINER_NAME" "$IMAGE"
 fi
 
-echo "==> wait for HTTP (GET /zones, up to 120s; container runs pytest+probes before app)"
+echo "==> wait for HTTP (GET /zones, up to 120s; container runs unittest+probes before app)"
 ready=0
 for _ in $(seq 1 120); do
 	if curl -sf --max-time 2 "${DMZ_URL}/zones" >/dev/null 2>&1; then

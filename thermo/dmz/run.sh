@@ -1,6 +1,6 @@
 # Invoked by start.sh as user `dmz` in the container, or directly with a venv on a dev machine.
 #
-# Always runs pytest (non-fatal if it fails) then import/smoke probes, then the app.
+# Runs unittest (test/*.py, non-fatal if it fails) then import/smoke probes, then the app.
 
 hostname
 whoami
@@ -10,23 +10,22 @@ echo "dmz ENV ${ENV:-idk}"
 # Probe breadcrumbs (works in Docker and local dev without /var/log).
 DMZ_LOG="/tmp/dmz-run.log"
 
-run_dmz_pytest() {
-	# pytest.ini limits collection to test/; smoketest/ needs a live server (smoketest/run.sh).
-	# In Docker, send full pytest output to a file so /var/log/dmz.log stays readable (run.sh + app).
+run_dmz_unittest() {
+	# Stdlib unittest only (no pytest in the runtime image). Smoketest stays host-side (smoketest/run.sh).
 	if [ -f /.dockerenv ]; then
-		STARTUP_PYTEST_LOG="/var/log/startup_pytest.log"
-		: >"$STARTUP_PYTEST_LOG"
-		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
-		if pytest -q >>"$STARTUP_PYTEST_LOG" 2>&1; then
-			printf '%s DMZ pytest finished (ok)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
+		STARTUP_TESTS_LOG="/var/log/startup_tests.log"
+		: >"$STARTUP_TESTS_LOG"
+		printf '%s DMZ unittest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
+		if python -m unittest discover -s test -p 'test_*.py' -q >>"$STARTUP_TESTS_LOG" 2>&1; then
+			printf '%s DMZ unittest finished (ok)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
 		else
-			printf '%s DMZ pytest finished (FAILED)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_PYTEST_LOG"
-			echo "FAILED pytest (see /var/log/startup_pytest.log), app still starts"
+			printf '%s DMZ unittest finished (FAILED)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
+			echo "FAILED unittest (see /var/log/startup_tests.log), app still starts"
 		fi
 	else
-		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-		pytest -q || echo "FAILED pytest, app still starts"
-		printf '%s DMZ pytest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		printf '%s DMZ unittest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		python -m unittest discover -s test -p 'test_*.py' -q || echo "FAILED unittest, app still starts"
+		printf '%s DMZ unittest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	fi
 }
 
@@ -71,6 +70,6 @@ else
 	echo "run.sh: dev uname -m=$(uname -m)"
 fi
 
-run_dmz_pytest
+run_dmz_unittest
 python_probe
 exec python -u app.py

@@ -38,13 +38,11 @@ RUN addgroup -g 1000 dmz \
 WORKDIR /app
 
 COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
-# Console script so `pytest` is on PATH (same as venv `pytest`; avoids `python -m pytest` in run.sh / make test).
-COPY --from=builder /usr/bin/pytest /usr/bin/pytest
 # Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source bin repo).
 COPY .docker-import/run-with-stdout-logged.py /app/run-with-stdout-logged.py
 COPY . .
 RUN chown -R dmz:dmz /app \
-	&& chmod +x /app/start.sh /app/run.sh /app/run-with-stdout-logged.py /usr/bin/pytest
+	&& chmod +x /app/start.sh /app/run.sh /app/run-with-stdout-logged.py
 
 ENV PORT=8080
 EXPOSE 8080

@@ -4,3 +4,12 @@ env/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Not needed inside the runtime image (boot/FAT uses install/ from the host build).
+install/
+smoketest/
+Makefile
+build-and-write.sh
+stage-docker-import.sh
+pytest.ini
+*.md

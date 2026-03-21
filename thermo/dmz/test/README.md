@@ -1,11 +1,13 @@
 # DMZ unit / integration tests (host venv or `make test`)
 
-Pytest against the **source tree** using Flask `test_client()` (no real HTTP server). Default **`pytest`** from **`thermo/dmz`** uses **`../pytest.ini`** (**`testpaths = test`**) so **`smoketest/`** is not collected (those need a live server; use **`../smoketest/run.sh`**).
+**Stdlib `unittest`** against the **source tree** using Flask `test_client()` (no real HTTP server).
 
 ```bash
 cd thermo/dmz
 ./test/run.sh
 ```
+
+Needs venv with **`requirements.txt`** (and **`requirements-dev.txt`** if you also run **`../smoketest/`**). **`create_pipenv.sh`** installs both when **`requirements-dev.txt`** exists.
 
 Same tests run inside the built image:
 
@@ -13,4 +15,6 @@ Same tests run inside the built image:
 make test
 ```
 
-**Smoketests** (Docker + live HTTP) live in **`../smoketest/`**.
+**Smoketests** (Docker + live HTTP, **pytest** on the host) live in **`../smoketest/`**.
+
+Optional: with **`pytest`** installed from **`requirements-dev.txt`**, repo **`../pytest.ini`** limits default collection to **`test/`** (so **`pytest`** from **`thermo/dmz`** does not pick up **`smoketest/`**).

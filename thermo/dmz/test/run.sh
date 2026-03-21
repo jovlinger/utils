@@ -1,7 +1,6 @@
 #!/bin/bash
-# Host venv, pytest against source (Flask test_client + layout): no running container.
-# Smoketests (Docker + HTTP) live in ../smoketest/ — see smoke README.
-# CI / parity with image: `make test` from thermo/dmz (pytest in Docker).
+# Host venv, unittest against source (Flask test_client + layout): no running container.
+# CI / parity with image: `make test` from thermo/dmz (unittest in Docker).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -16,4 +15,4 @@ fi
 cd "$DMZ"
 # shellcheck source=/dev/null
 . "$DMZ/env/bin/activate"
-pytest -q test
+python -m unittest discover -s test -p 'test_*.py' -q

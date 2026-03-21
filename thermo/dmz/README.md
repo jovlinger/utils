@@ -12,16 +12,16 @@ Internet-facing rendezvous service: interior **zones** and the **controller** ex
 
 Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
-`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`pytest`** (non-fatal on failure) → **import probes** → **`python -u app.py`**.
+`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`unittest`** on **`test/`** (non-fatal on failure; log **`/var/log/startup_tests.log`** in Docker) → **import probes** → **`python -u app.py`**.
 
 | Path | Role |
 |------|------|
 | `Dockerfile` | Multi-stage build: Python deps (pydantic **&lt; 2** / pydantic-core from source on musl when needed) |
 | `start.sh` | Privileged setup, then drop to `dmz` with log wrapper around `run.sh` |
 | `bin/run-with-stdout-logged.py` (sister repo next to `utils/`) | Staged into `.docker-import/` before image build; append child output to a log path with size limits |
-| `run.sh` | Always `pytest -q`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
+| `run.sh` | Always `unittest discover` on `test/`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
 | `app.py` | Flask API |
-| `requirements.txt` | Includes `pytest` for tests in the image |
+| `requirements.txt` | Runtime deps only; **`requirements-dev.txt`** adds `pytest` / `requests` for host smoketest and optional tooling |
 
 **Port:** `8080` by default (`PORT` env).
 
