@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Callable, Deque, Dict, List, Union, Optional
+from typing import Any, Deque, Dict, List, Union, Optional
 
 from flask import Flask, g, redirect, request, session, url_for
 from pydantic import BaseModel, validator
@@ -124,7 +124,11 @@ def _after_request(response: Any) -> Any:
     """Log every endpoint access with result HTTP status."""
     if request.endpoint and request.endpoint != "static":
         _log_access(request.method, request.path, response.status_code)
-        req_size = request.content_length if request.content_length is not None else len(request.get_data())
+        req_size = (
+            request.content_length
+            if request.content_length is not None
+            else len(request.get_data())
+        )
         resp_size = getattr(response, "content_length", None) or "-"
         logger.debug(
             "request %s %s body=%s -> %d response_len=%s",
@@ -135,20 +139,6 @@ def _after_request(response: Any) -> Any:
             resp_size,
         )
     return response
-
-
-def _login_required(f: Callable[..., Any]) -> Callable[..., Any]:
-    """Require OAuth login for human-facing endpoints. No-op when OAuth disabled."""
-
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        if not _oauth_enabled:
-            return f(*args, **kwargs)
-        if not session.get("user"):
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-
-    wrapped.__name__ = f.__name__
-    return wrapped
 
 
 def assertAuthAzZone(req: Any) -> None:
@@ -264,6 +254,78 @@ def _verify_zone_request(zonename: str) -> Optional[tuple[int, Any]]:
     return (401, {"error": "invalid zone signature"})
 
 
+def _verify_global_machine_request() -> Optional[tuple[int, Any]]:
+    """
+    Verify Ed25519 machine auth for routes without a zone in the URL (e.g. GET /zones).
+    Returns (status_code, response) on failure, None on success.
+    """
+    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
+        "ZONE_PUBLIC_KEY_PATH"
+    )
+    if not pub_key:
+        return (401, {"error": "machine auth misconfigured"})
+    try:
+        from zone_auth import (
+            verify_request,
+            HEADER_SIGNATURE,
+            HEADER_TIMESTAMP,
+            HEADER_ZONE,
+        )
+    except ImportError:
+        return None
+    sig = request.headers.get(HEADER_SIGNATURE)
+    ts = request.headers.get(HEADER_TIMESTAMP)
+    zone_hdr = request.headers.get(HEADER_ZONE)
+    if not sig or not ts or not zone_hdr:
+        return (401, {"error": "missing zone auth headers"})
+    body = request.get_data()
+    if verify_request(
+        request.method,
+        request.path,
+        body,
+        zone_hdr,
+        sig,
+        ts,
+        pub_key,
+    ):
+        return None
+    return (401, {"error": "invalid zone signature"})
+
+
+def _authorize_global_read() -> Optional[Any]:
+    """
+    Authorize GET /zones and GET /debug/logs: machine signature, OAuth session, or open
+    when neither ZONE_PUBLIC_KEY nor OAuth is enforcing access.
+    """
+    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
+        "ZONE_PUBLIC_KEY_PATH"
+    )
+    machine_ok = False
+    if pub_key:
+        try:
+            from zone_auth import HEADER_SIGNATURE
+        except ImportError:
+            HEADER_SIGNATURE = "X-Zone-Signature"
+        if request.headers.get(HEADER_SIGNATURE):
+            gerr = _verify_global_machine_request()
+            if gerr:
+                return gerr[1], gerr[0]
+            machine_ok = True
+    if machine_ok:
+        return None
+    if not pub_key:
+        if not _oauth_enabled:
+            return None
+        if session.get("user"):
+            return None
+        return redirect(url_for("login"))
+    if _oauth_enabled and session.get("user"):
+        return None
+    if _oauth_enabled:
+        return redirect(url_for("login"))
+    return {"error": "machine auth required"}, 401
+
+
 @app.route("/zone/<string:zonename>/sensors", methods=["POST"])
 def update_sensors(zonename: str) -> Any:
     """
@@ -281,12 +343,31 @@ def update_sensors(zonename: str) -> Any:
 
 
 @app.route("/zone/<string:zonename>/command", methods=["POST"])
-@_login_required
 def update_command(zonename: str) -> Any:
     """
     Update a zone with UpdateZone. Read this zone's states.
     Register the zone if not already there
     """
+    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
+        "ZONE_PUBLIC_KEY_PATH"
+    )
+    if pub_key:
+        try:
+            from zone_auth import HEADER_SIGNATURE
+        except ImportError:
+            HEADER_SIGNATURE = "X-Zone-Signature"
+        if request.headers.get(HEADER_SIGNATURE):
+            err = _verify_zone_request(zonename)
+            if err:
+                return err[1], err[0]
+        elif _oauth_enabled and session.get("user"):
+            pass
+        elif _oauth_enabled:
+            return redirect(url_for("login"))
+        else:
+            return {"error": "machine auth required"}, 401
+    elif _oauth_enabled and not session.get("user"):
+        return redirect(url_for("login"))
     assertAuthAzZone(request)
     js = request.json
     cmd = IRCommand(**js)
@@ -295,20 +376,25 @@ def update_command(zonename: str) -> Any:
 
 
 @app.route("/zones", methods=["GET"])
-@_login_required
 def get_zones() -> Any:
     """
     Stateless query.  Read ALL zone states, including pending commands.
     """
+    denied = _authorize_global_read()
+    if denied is not None:
+        return denied
     assertAuthAzZone(request)
-    res = {zonename: _zone_response(zonename, False) for zonename in sensors}
+    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    res = {zonename: _zone_response(zonename, False) for zonename in all_zones}
     return res
 
 
 @app.route("/debug/logs", methods=["GET"])
-@_login_required
 def debug_logs() -> Any:
     """Return bounded in-memory access log. Auth required."""
+    denied = _authorize_global_read()
+    if denied is not None:
+        return denied
     assertAuthAzZone(request)
     return {"logs": list(_access_log)}
 

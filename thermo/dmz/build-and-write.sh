@@ -9,7 +9,7 @@
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
 #
-# ~/.ssh/id_rsa.pub is copied into the apkovl rootfs as /root/.ssh/authorized_keys for rescue ssh.
+# ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub (each if present) are merged into apkovl /root/.ssh/authorized_keys.
 
 set -eu
 
@@ -68,12 +68,6 @@ DMZ_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
 RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../../bin/run-with-stdout-logged.py}"
 OUTPUT_IMG="$DMZ_DIR/dist/dmz.img"
-SSH_PUB="${HOME}/.ssh/id_rsa.pub"
-
-if [ ! -f "$SSH_PUB" ]; then
-	echo "Error: missing $SSH_PUB (needed for Pi rescue /root/.ssh/authorized_keys)." >&2
-	exit 1
-fi
 
 UMOUNT_LOG=""
 UM_PID=""
@@ -154,6 +148,24 @@ cleanup() {
 	rm -rf "$WORKDIR" 2>/dev/null || true
 }
 trap 'cleanup' EXIT INT TERM
+
+# Pi rescue: merge every present standard pubkey (RSA-only images broke ed25519-primary laptops).
+RESCUE_AUTH_KEYS="$WORKDIR/rescue_authorized_keys.tmp"
+: >"$RESCUE_AUTH_KEYS"
+RESCUE_KEY_SRC=""
+for _n in id_ed25519 id_ecdsa id_rsa; do
+	_k="${HOME}/.ssh/${_n}.pub"
+	if [ -f "$_k" ]; then
+		# .pub files already end with newline; do not append another (avoids blank lines).
+		cat "$_k" >>"$RESCUE_AUTH_KEYS"
+		RESCUE_KEY_SRC="${RESCUE_KEY_SRC}${RESCUE_KEY_SRC:+ }${_n}.pub"
+	fi
+done
+if [ ! -s "$RESCUE_AUTH_KEYS" ]; then
+	echo "Error: no ~/.ssh/{id_ed25519,id_ecdsa,id_rsa}.pub found (need at least one for Pi rescue authorized_keys)." >&2
+	exit 1
+fi
+ts "[build] rescue authorized_keys from: $RESCUE_KEY_SRC"
 
 if [ -n "$WRITE_DEV" ]; then
 	ts "==> DMZ bootable image (write $DEV; background unmount pid=$UM_PID)"
@@ -245,10 +257,27 @@ ln -sf ../../init.d/local "$APKOVL_DIR/etc/runlevels/default/local"
 : >"$APKOVL_DIR/etc/apk/world"
 echo "dmz" >"$APKOVL_DIR/etc/hostname"
 
+# Stable rescue sshd host keys (gitignored .secrets/); avoids known_hosts churn each flash.
+SECRETS_SSH="$DMZ_DIR/.secrets/ssh-host"
+if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ]; then
+	ts "[6/7] first-time: generating rescue SSH host keys -> $SECRETS_SSH"
+	"$DMZ_DIR/install/gen-dmz-rescue-host-keys.sh"
+fi
+if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ] || [ ! -f "$SECRETS_SSH/ssh_host_rsa_key" ]; then
+	echo "Error: missing host keys under $SECRETS_SSH (run install/gen-dmz-rescue-host-keys.sh)." >&2
+	exit 1
+fi
+mkdir -p "$APKOVL_DIR/etc/ssh"
+cp "$SECRETS_SSH/ssh_host_ed25519_key" "$SECRETS_SSH/ssh_host_ed25519_key.pub" \
+	"$SECRETS_SSH/ssh_host_rsa_key" "$SECRETS_SSH/ssh_host_rsa_key.pub" \
+	"$APKOVL_DIR/etc/ssh/"
+chmod 600 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key"
+chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key.pub"
+
 mkdir -p "$APKOVL_DIR/root/.ssh"
 cp "$DMZ_DIR/install/root-network-sshd.sh" "$APKOVL_DIR/root/network-and-sshd.sh"
 chmod +x "$APKOVL_DIR/root/network-and-sshd.sh"
-cp "$SSH_PUB" "$APKOVL_DIR/root/.ssh/authorized_keys"
+cp "$RESCUE_AUTH_KEYS" "$APKOVL_DIR/root/.ssh/authorized_keys"
 chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 
 if command -v sha256sum >/dev/null 2>&1; then

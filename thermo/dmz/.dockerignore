@@ -1,6 +1,7 @@
 **/*.img
 **/.image
 dist/
+.secrets/
 env/
 __pycache__/
 *.pyc

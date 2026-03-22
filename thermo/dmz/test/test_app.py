@@ -305,3 +305,81 @@ class MachineAuthTest(TestCase):
                 content_type="application/json",
             )
             self.assertEqual(r.status_code, 401)
+
+    def test_unsigned_command_rejected_when_auth_required(self) -> None:
+        """When ZONE_PUBLIC_KEY is set, POST /zone/.../command without signature returns 401."""
+        from zone_auth import generate_keypair
+
+        _, pub_pem = generate_keypair()
+        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+        with app.test_client() as c:
+            r = c.post(
+                "/zone/z1/command",
+                json={"lolidk": "x"},
+                content_type="application/json",
+            )
+            self.assertEqual(r.status_code, 401)
+
+    def test_unsigned_get_zones_rejected_when_auth_required(self) -> None:
+        """When ZONE_PUBLIC_KEY is set, GET /zones without signature returns 401 (OAuth off)."""
+        from zone_auth import generate_keypair
+
+        _, pub_pem = generate_keypair()
+        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+        with app.test_client() as c:
+            r = c.get("/zones")
+            self.assertEqual(r.status_code, 401)
+
+    def test_signed_post_command_accepted(self) -> None:
+        """Valid Ed25519 signature on POST /zone/<z>/command succeeds when ZONE_PUBLIC_KEY set."""
+        import json
+
+        from zone_auth import (
+            HEADER_SIGNATURE,
+            HEADER_TIMESTAMP,
+            HEADER_ZONE,
+            generate_keypair,
+            sign_request,
+        )
+
+        priv_pem, pub_pem = generate_keypair()
+        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+        path = "/zone/z1/command"
+        body: dict = {"lolidk": "heat_21"}
+        body_bytes = json.dumps(body).encode()
+        sig, ts, zn = sign_request("POST", path, body_bytes, "z1", priv_pem.decode())
+        headers = {
+            HEADER_SIGNATURE: sig,
+            HEADER_TIMESTAMP: ts,
+            HEADER_ZONE: zn,
+            "Content-Type": "application/json",
+        }
+        with app.test_client() as c:
+            r = c.post(path, data=body_bytes, headers=headers)
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+            js = r.get_json() or {}
+            self.assertEqual(js.get("command", {}).get("lolidk"), "heat_21")
+
+    def test_signed_get_zones_accepted(self) -> None:
+        """Valid signature on GET /zones succeeds when ZONE_PUBLIC_KEY is set."""
+        from zone_auth import (
+            HEADER_SIGNATURE,
+            HEADER_TIMESTAMP,
+            HEADER_ZONE,
+            generate_keypair,
+            sign_request,
+        )
+
+        priv_pem, pub_pem = generate_keypair()
+        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+        path = "/zones"
+        body_bytes = b""
+        sig, ts, zn = sign_request("GET", path, body_bytes, "z1", priv_pem.decode())
+        headers = {
+            HEADER_SIGNATURE: sig,
+            HEADER_TIMESTAMP: ts,
+            HEADER_ZONE: zn,
+        }
+        with app.test_client() as c:
+            r = c.get(path, headers=headers)
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))

@@ -55,17 +55,51 @@ Override image: `ONBOARD_IMAGE=ghcr.io/jovlinger/thermo-onboard:mytag ./run-onbo
 
 **Platform**: On armhf (32-bit Pi OS), the script pulls `--platform linux/arm/v7` automatically.
 
-## DMZ URL (twoway sync)
+## DMZ URL (twoway sync) — blessed approach
 
-The onboard `twoway` process syncs environment data to the DMZ. On standalone Pi (no docker-compose), the default `http://dmz:5000` does not resolve. Set the full DMZ URL in `~/.local.sh`:
+The onboard `twoway` process syncs environment data to the DMZ. On standalone Pi (no docker-compose), the default `http://dmz:5000` does not resolve on **host** network. Configure the DMZ **base URL** on the Pi, then **recreate** the container so Docker injects `DMZ_URL` (editing `~/.local.sh` alone does not change a running container).
+
+Use the base URL only (e.g. `http://host:5000`); [run.sh](../run.sh) appends `/zone/zoneymczoneface/sensors`.
+
+### 1. Persist `DMZ_URL` in `~/.local.sh`
 
 ```bash
-# DMZ can be a global IP, domain, or local hostname
-export DMZ_URL="http://203.0.113.42:5000"
-# or: export DMZ_URL="https://dmz.example.com"
+# Example: DMZ on the same LAN (replace with your DMZ host/IP)
+export DMZ_URL="http://192.168.88.200:5000"
+# Other examples: public IP, or HTTPS hostname
+# export DMZ_URL="http://203.0.113.42:5000"
+# export DMZ_URL="https://dmz.example.com"
 ```
 
-Use the base URL only (e.g. `http://host:5000`); run.sh appends `/zone/zoneymczoneface/sensors`.
+If you change an existing value, remove or edit the old `DMZ_URL` line so only one definition remains.
+
+### 2. Ensure `run-onboard.sh` passes `DMZ_URL` into Docker
+
+[run-onboard.sh](run-onboard.sh) must source `~/.local.sh` and pass `-e DMZ_URL=...` to `docker run`. If the Pi’s checkout is old (script has no `DMZ_URL` lines), update from git:
+
+```bash
+ssh johan@pizero.local 'cd ~/github.com/jovlinger/utils && git pull && cd thermo/onboard/install && ./run-onboard.sh'
+```
+
+Otherwise recreate the container from the install directory (pull optional):
+
+```bash
+ssh johan@pizero.local 'cd ~/github.com/jovlinger/utils/thermo/onboard/install && ./run-onboard.sh'
+# or: ./run-onboard.sh --pull
+```
+
+### 3. Verify
+
+```bash
+ssh johan@pizero.local 'docker inspect thermo-onboard --format "{{range .Config.Env}}{{println .}}{{end}}" | grep DMZ_URL'
+ssh johan@pizero.local 'docker logs --tail 20 thermo-onboard'
+```
+
+`twoway` startup logs should show your DMZ URL in the argv list (not `http://dmz:5000/...`).
+
+### Reboot behavior (no `onboard.service` required)
+
+`run-onboard.sh` uses `docker run --restart unless-stopped`. After you recreate the container once with `DMZ_URL`, the Docker daemon will bring **`thermo-onboard`** back on reboot with the **same** env (including `DMZ_URL`). That is independent of [Auto-Start (systemd)](#auto-start-systemd); systemd is optional for a fixed install path and explicit `ExecStart` on every boot.
 
 ## Post-Reboot Diagnosis
 

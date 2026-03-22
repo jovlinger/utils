@@ -39,7 +39,7 @@ docker run --rm -p 8080:8080 jovlinger/thermo/dmz
 
 ## Pi 1B: bootable SD image (same root as Docker, `dd` to card)
 
-1. Ensure **`~/.ssh/id_rsa.pub`** exists; it is baked into the apkovl as **`/root/.ssh/authorized_keys`** for rescue SSH after **`sh /root/network-and-sshd.sh`** ( **`192.168.88.200/24`** by default on **`eth0`** ).
+1. Ensure at least one of **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, **`id_rsa.pub`** exists on the build host; all present keys are merged into the apkovl **`/root/.ssh/authorized_keys`** for rescue SSH after **`sh /root/network-and-sshd.sh`** ( **`192.168.88.200/24`** by default on **`eth0`**; **pubkey-only** sshd).
 2. From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/…`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free.
 3. Eject the card, insert in Pi 1B, power on.
 

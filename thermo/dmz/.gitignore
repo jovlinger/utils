@@ -2,3 +2,5 @@ env
 .image
 dist/
 .docker-import/
+# Rescue sshd host keys + other local secrets (see install/README.md).
+.secrets/

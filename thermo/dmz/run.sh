@@ -1,4 +1,5 @@
 # Invoked by start.sh as user `dmz` in the container, or directly with a venv on a dev machine.
+# Pi chroot matches the image layout (/app/...) but has no /.dockerenv — same runtime path as Docker.
 #
 # Runs unittest (test/*.py, non-fatal if it fails) then import/smoke probes, then the app.
 
@@ -10,9 +11,37 @@ echo "dmz ENV ${ENV:-idk}"
 # Probe breadcrumbs (works in Docker and local dev without /var/log).
 DMZ_LOG="/tmp/dmz-run.log"
 
+# Log probe step to /tmp/dmz-run.log and stdout (dmz.log via run-with-stdout-logged).
+_probe_python_note() {
+	line="$(date -u '+%Y-%m-%dT%H:%M:%SZ') $1"
+	printf '%s\n' "$line" >>"$DMZ_LOG"
+	printf '%s\n' "$line"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUNTIME_IS_CONTAINER=0
+APP_ROOT=""
+# Host dev machine: repo checkout with create_pipenv venv (not Docker, not Pi).
+if [ -f "$SCRIPT_DIR/env/bin/activate" ]; then
+	# shellcheck source=/dev/null
+	. "$SCRIPT_DIR/env/bin/activate"
+	APP_ROOT="$SCRIPT_DIR"
+	echo "run.sh: dev uname -m=$(uname -m)"
+# Local Docker container (/.dockerenv) or Pi 1B: same image tree under /app after chroot.
+elif [ -f /.dockerenv ] || [ -f /app/app.py ]; then
+	RUNTIME_IS_CONTAINER=1
+	APP_ROOT="/app"
+	echo "run.sh: image/chroot uname -m=$(uname -m) user=$(id -u) $(id -un)"
+# Neither a dev venv nor /app layout (mis-copy or wrong cwd).
+else
+	echo "No venv at $SCRIPT_DIR/env and not an image layout (missing /app/app.py)." >&2
+	exit 1
+fi
+cd "$APP_ROOT" || exit 1
+
 run_dmz_unittest() {
 	# Stdlib unittest only (no pytest in the runtime image). Smoketest stays host-side (smoketest/run.sh).
-	if [ -f /.dockerenv ]; then
+	if [ "$RUNTIME_IS_CONTAINER" -eq 1 ]; then
 		STARTUP_TESTS_LOG="/var/log/startup_tests.log"
 		: >"$STARTUP_TESTS_LOG"
 		printf '%s DMZ unittest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
@@ -31,45 +60,34 @@ run_dmz_unittest() {
 
 python_probe() {
 	# Crash-only steps: SIGILL or import failure exits the process before the app.
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=hello_world" >>"$DMZ_LOG"
+	# Step labels go to /tmp/dmz-run.log AND stdout: run-with-stdout-logged only captures
+	# stdout of this shell, so without echoing here you would see Python prints in
+	# /var/log/dmz.log but not the "python_probe: done" line next to them.
+	_probe_python_note "python_probe: step=hello_world"
 	python -u -c "print('hello world', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_platform" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_platform"
 	python -u -c "import platform; print('platform ok', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_ssl" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_ssl"
 	python -u -c "import ssl; print('ssl ok', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_cryptography" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_cryptography"
 	python -u -c "import cryptography; print('cryptography ok', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_pydantic_core" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_pydantic_core"
 	python -u -c "import importlib.util; spec=importlib.util.find_spec('pydantic_core'); print('pydantic_core ' + ('ok' if spec else 'absent'), flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_pydantic" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_pydantic"
 	python -u -c "import pydantic; print('pydantic ok', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: step=import_app" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: step=import_app"
 	python -u -c "print('about to import app', flush=True); import app; print('did import app', flush=True)"
 
-	printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "python_probe: done" >>"$DMZ_LOG"
+	_probe_python_note "python_probe: done"
 }
-
-if [ -f /.dockerenv ]; then
-	echo "run.sh: docker uname -m=$(uname -m) user=$(id -u) $(id -un)"
-else
-	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-	UTILS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-	if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
-		echo "No venv at $SCRIPT_DIR/env." >&2
-		echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/dmz" >&2
-		exit 1
-	fi
-	# shellcheck source=/dev/null
-	. "$SCRIPT_DIR/env/bin/activate"
-	echo "run.sh: dev uname -m=$(uname -m)"
-fi
 
 run_dmz_unittest
 python_probe
+# cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).
 exec python -u app.py
