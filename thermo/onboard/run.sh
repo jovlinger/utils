@@ -12,11 +12,9 @@ LOG_TOTALLIMIT="${LOG_TOTALLIMIT:-2097152}"
 export LOG_PATH
 
 if [ -f /.dockerenv ]; then
-  python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
-  python ui_server.py &
-  echo "starting app"
-  # In container: the build scratch context provides ./bin/run-with-stdout-logged.py.
-  exec python ./bin/run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
+  # Production uses docker-compose: onboard-app + twoway containers (see install/docker-compose.yml).
+  # Legacy single image: use docker-entrypoint-onboard.sh / Dockerfile.onboard only.
+  exec ./docker-entrypoint-onboard.sh
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

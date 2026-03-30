@@ -62,6 +62,8 @@ Observed:
 
 ## Logs Collected
 
+Long-lived copies of multi-source pulls belong under **`thermo/debuglogs/`** (gitignored, dated filenames, retention header — see `thermo/debuglogs/README.md`).
+
 Commands:
 
 ```bash

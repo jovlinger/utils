@@ -1,0 +1,66 @@
+# Thermo onboard stack: app + twoway (host network; bind-mounted logs under /var/log/thermo-onboard).
+# Deploy: ./deploy-compose.sh from this directory (see README.md).
+#
+# Resource limits: prefer OOM / cgroup failure over slow growth. Tune deploy.resources if needed.
+# Optional /dev/lirc1: duplicate the lirc0 device line if your hardware exposes a second device.
+
+name: thermo-onboard
+
+services:
+  onboard:
+    image: ghcr.io/jovlinger/thermo-onboard-app:latest
+    container_name: thermo-onboard-app
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+      - /dev/lirc0:/dev/lirc0
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      LOG_PATH_APP: /var/log/thermo-onboard/onboard-app.log
+      LOG_PATH_UI: /var/log/thermo-onboard/onboard-ui.log
+      LOG_FILELIMIT: "1048576"
+      LOG_TOTALLIMIT: "2097152"
+      PORT: "5000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+
+  twoway:
+    image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
+    container_name: thermo-onboard-twoway
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - onboard
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      LOG_PATH: /var/log/thermo-onboard/twoway.log
+      LOG_FILELIMIT: "1048576"
+      LOG_TOTALLIMIT: "2097152"
+      ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
+      DMZ_URL: ${DMZ_URL:-http://dmz:5000}
+      ZONE_NAME: ${ZONE_NAME:-zoneymczoneface}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 96M
+    ulimits:
+      nofile:
+        soft: 512
+        hard: 1024

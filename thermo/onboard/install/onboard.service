@@ -1,5 +1,6 @@
+# DEPRECATED: use thermo-onboard.service + deploy-compose.sh (see README.md in parent).
 [Unit]
-Description=Thermo Onboard container (Pi Zero 2 W)
+Description=Thermo Onboard container (legacy single image; deprecated)
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service

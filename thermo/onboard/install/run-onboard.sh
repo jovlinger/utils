@@ -1,5 +1,8 @@
 #!/bin/sh
-# Run the onboard container on Pi Zero 2 W.
+# DEPRECATED: single-image ghcr.io/jovlinger/thermo-onboard is replaced by docker-compose
+# (thermo-onboard-app + thermo-onboard-twoway). Use deploy-compose.sh — see ../README.md.
+#
+# Run the legacy single onboard container on Pi Zero 2 W.
 # Pulls from GHCR if image missing; uses host network so onboard is reachable at Pi IP:5000.
 #
 # Install and run:
