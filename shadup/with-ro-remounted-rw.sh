@@ -23,21 +23,31 @@ get_real_mount() {
 remount_mode() {
   local mode="$1"
   local line src fstype
+
+  # Prefer mountpoint-only remount (util-linux). Device+target remount is flaky on
+  # some setups; the old fallback `mount -t fstype -o ro src mnt` is a *new* mount
+  # and fails with "already mounted" while leaving the fs rw.
+  if mount -o "remount,$mode" "$MNT"; then
+    return 0
+  fi
+
   line="$(get_real_mount || true)"
   src="$(printf '%s' "$line" | awk '{print $1}')"
   fstype="$(printf '%s' "$line" | awk '{print $2}')"
   [ -n "$src" ] && [ -n "$fstype" ] || {
-    err "cannot resolve real mount beneath $MNT"
+    err "cannot resolve real mount beneath $MNT (needed for remount,$mode)"
     return 1
   }
-  mount -o "remount,$mode" "$src" "$MNT" 2>/dev/null || mount -t "$fstype" -o "$mode" "$src" "$MNT"
+  mount -o "remount,$mode" --source "$src" --target "$MNT"
 }
 
 cleanup() {
   local rc="$?"
   trap - EXIT INT TERM HUP QUIT PIPE
   log "remount ro: $MNT"
-  remount_mode ro || true
+  if ! remount_mode ro; then
+    err "filesystem may still be read-write — fix manually: sudo mount -o remount,ro $MNT"
+  fi
   exit "$rc"
 }
 
