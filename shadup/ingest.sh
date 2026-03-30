@@ -26,7 +26,6 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INGEST_PY="$SCRIPT_DIR/ingest.py"
 REMOUNT="$SCRIPT_DIR/with-ro-remounted-rw.sh"
