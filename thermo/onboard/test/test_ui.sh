@@ -48,11 +48,13 @@ kill -0 $UI_PID 2>/dev/null || { echo "FAIL: ui_server did not start"; exit 1; }
 GET_OUT=$(curl -s --connect-timeout 2 "http://127.0.0.1:$PORT_UI/")
 echo "$GET_OUT" | grep -q '<form method="post"' || { echo "FAIL: GET missing form"; exit 1; }
 echo "$GET_OUT" | grep -q 'Environment:' || { echo "FAIL: GET missing Environment"; exit 1; }
+echo "$GET_OUT" | grep -q 'Current time:' || { echo "FAIL: GET missing Current time"; exit 1; }
+echo "$GET_OUT" | grep -q 'State (full JSON):' || { echo "FAIL: GET missing State full JSON"; exit 1; }
 echo "$GET_OUT" | grep -q 'SEND' || { echo "FAIL: GET missing SEND button"; exit 1; }
 
 # POST: must return success message and repopulated form
 POST_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=HEAT&temp_c=22&fan=AUTO")
-echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.|Sent at |Stored at ' || { echo "FAIL: POST missing Sent/Stored"; exit 1; }
+echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.|Sent at |Stored at |No IR \(unchanged\)' || { echo "FAIL: POST missing Sent/Stored/unchanged"; exit 1; }
 echo "$POST_OUT" | grep -qE 'value="22"|value="22\.0"' || { echo "FAIL: POST form not repopulated with temp"; exit 1; }
 echo "$POST_OUT" | grep -q 'HEAT.*selected' || { echo "FAIL: POST form not repopulated with mode"; exit 1; }
 

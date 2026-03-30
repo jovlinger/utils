@@ -61,6 +61,11 @@ class State:
     econo: bool = False
     comfort: bool = False
 
+    # We are still working on the exact spec for this.
+    # We are pretty certain that these values are duration from sending the messaege,
+    # in minutes, with no concept of current wall time sent to the headunit.  
+    # But it could also be minutes past midnight, and we have not yet found  where 
+    # the clock is set on the headunit.
     timer_on_minutes: Optional[int] = None
     timer_off_minutes: Optional[int] = None
     # Active/inactive bits for timer on/off.

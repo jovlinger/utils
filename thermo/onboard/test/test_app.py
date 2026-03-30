@@ -63,6 +63,7 @@ class AppTest(TestCase):
     def test_daikin_sequence(self, mock_send):
         """Simple on / uptemp+fan3 / off sequence: POST commands, GET returns newest-first."""
         app.daikin_cmds.clear()
+        app._last_daikin_ir_fingerprint = None
         client = app.app.test_client()
 
         # 1. Power on, HEAT 22°C
@@ -105,6 +106,31 @@ class AppTest(TestCase):
         self.assertFalse(get_r.json[0]["command"]["power"])
         self.assertEqual(get_r.json[1]["command"]["fan"], "F3")
         self.assertTrue(get_r.json[2]["command"]["power"])
+
+    @patch("app.send_daikin_state", return_value=True)
+    def test_daikin_identical_skips_ir(self, mock_send):
+        """Repeated identical State must not call send_daikin_state (no duplicate IR)."""
+        app.daikin_cmds.clear()
+        app._last_daikin_ir_fingerprint = None
+        client = app.app.test_client()
+        body = {"command": {"power": True, "mode": "HEAT", "temp_c": 22, "fan": "AUTO"}}
+        r1 = client.post("/daikin", json=body)
+        self.assertEqual(r1.status_code, 200)
+        self.assertTrue(r1.json["sent"])
+        self.assertNotIn("unchanged", r1.json)
+        r2 = client.post("/daikin", json=body)
+        self.assertEqual(r2.status_code, 200)
+        self.assertFalse(r2.json["sent"])
+        self.assertTrue(r2.json.get("unchanged"))
+        self.assertEqual(mock_send.call_count, 1)
+        # Real change sends again
+        r3 = client.post(
+            "/daikin",
+            json={"command": {"power": True, "mode": "HEAT", "temp_c": 23, "fan": "AUTO"}},
+        )
+        self.assertEqual(r3.status_code, 200)
+        self.assertTrue(r3.json["sent"])
+        self.assertEqual(mock_send.call_count, 2)
 
     def test_manage_get_state(self):
         client = app.app.test_client()

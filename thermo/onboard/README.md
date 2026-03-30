@@ -21,6 +21,24 @@ After deploy, on the Pi:
 
 Rotation is handled inside the container by `run-with-stdout-logged.py` (`LOG_FILELIMIT` / `LOG_TOTALLIMIT`, default 1 MiB file / 2 MiB rotated total per stream — same idea as before).
 
+### Preferred for SD wear reduction: host tmpfs
+
+To avoid SD card write wear, keep the existing bind mount path and mount the host log directory as `tmpfs`.
+
+- Compose already bind-mounts `${THERMO_LOG_DIR:-/var/log/thermo-onboard}` into each container.
+- Preferred setup: make `/var/log/thermo-onboard` a RAM-backed mount on the Pi.
+- Tune `size=` based on free RAM and your retention target.
+
+Example:
+
+```bash
+sudo mkdir -p /var/log/thermo-onboard
+echo 'tmpfs /var/log/thermo-onboard tmpfs rw,nosuid,nodev,mode=0755,size=16m 0 0' | sudo tee -a /etc/fstab
+sudo mount /var/log/thermo-onboard
+```
+
+If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or `~/.local.sh`) to that path and ensure it exists at boot.
+
 ## Deploy on `pizero.local` (upgrade loop)
 
 **Prerequisites:** Docker + Compose v2 plugin, user in group `docker`, I2C + LIRC devices as before, optional GHCR token in `~/.local.sh` if images are private.

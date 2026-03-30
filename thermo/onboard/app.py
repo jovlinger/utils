@@ -11,6 +11,7 @@ from constants import help_msg
 from collections import deque
 from collections import defaultdict
 from datetime import datetime
+import json
 import logging
 import os
 import sys
@@ -108,9 +109,10 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         return {"ok": True, "action": action, "level": updated}, 200
 
     if action == "reset":
-        global _fake_temp, _fake_humid
+        global _fake_temp, _fake_humid, _last_daikin_ir_fingerprint
         _fake_temp = None
         _fake_humid = None
+        _last_daikin_ir_fingerprint = None
         daikin_cmds.clear()
         out("management reset state")
         return {"ok": True, "action": action}, 200
@@ -186,6 +188,14 @@ def test_inject_readings():
 DAIKIN_CMDS_MAXLEN = 100
 daikin_cmds: deque[tuple[datetime, State, bool]] = deque(maxlen=DAIKIN_CMDS_MAXLEN)
 
+# Last IR payload successfully sent (JSON fingerprint); identical State skips send_daikin_state.
+_last_daikin_ir_fingerprint: Optional[str] = None
+
+
+def _daikin_state_fingerprint(state: State) -> str:
+    """Stable string for IR-relevant fields (no wall-clock in State)."""
+    return json.dumps(state.to_json(), sort_keys=True)
+
 
 @app.route("/daikin", methods=["GET"])
 def get_daikin():
@@ -231,7 +241,12 @@ def manage_post():
 
 @app.route("/daikin", methods=["PUT", "POST"])
 def set_daikin():
-    """Accept JSON {command: State}, parse to State, store, send via IR. Returns {time, command, sent}."""
+    """Accept JSON {command: State}, parse to State, send via IR only if state changed.
+
+    Repeated identical commands (same IR-relevant fields as last successful send) do not
+    call send_daikin_state. Returns {time, command, sent}; sent False also when unchanged.
+    """
+    global _last_daikin_ir_fingerprint
     js = request.json or {}
     cmd_obj = js.get("command") if isinstance(js, dict) else js
     if not cmd_obj or not isinstance(cmd_obj, dict):
@@ -243,7 +258,18 @@ def set_daikin():
         out("Invalid command: %s" % e)
         return {"error": "InvalidCmd", "detail": str(e)}, 400
     ts = datetime.now()
+    fp = _daikin_state_fingerprint(state)
+    if _last_daikin_ir_fingerprint is not None and fp == _last_daikin_ir_fingerprint:
+        out("SET_DAIKIN unchanged (no IR): %s" % state.summary())
+        return {
+            "time": ts.isoformat(),
+            "command": state.to_json(),
+            "sent": False,
+            "unchanged": True,
+        }, 200
     success = send_daikin_state(state)
+    if success:
+        _last_daikin_ir_fingerprint = fp
     daikin_cmds.append((ts, state, success))
     out("SET_DAIKIN: %s" % state.summary())
     return {"time": ts.isoformat(), "command": state.to_json(), "sent": success}, 200

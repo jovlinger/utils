@@ -217,9 +217,16 @@ def render_template(state: "State", env: str = "—", msg: str = "") -> str:
 
     state_summary = state.summary()
     import html
-    state_json = html.escape(__import__("json").dumps(state.to_json(), sort_keys=True))
+    import json as _json
+
+    now_iso = datetime.now().isoformat()
+    state_json = html.escape(_json.dumps(state.to_json(), sort_keys=True))
+    state_json_pretty = html.escape(
+        _json.dumps(state.to_json(), sort_keys=True, indent=2)
+    )
     return (
         TEMPLATE_PATH.read_text()
+        .replace("$now_iso", now_iso)
         .replace("$env", env)
         .replace("$state_summary", state_summary)
         .replace("$msg", msg)
@@ -227,6 +234,7 @@ def render_template(state: "State", env: str = "—", msg: str = "") -> str:
         .replace("$help_msg", help_msg_html)
         .replace("$about_msg", about_msg_html)
         .replace("$state_json", state_json)
+        .replace("$state_json_pretty", state_json_pretty)
         .replace("$manage_status", manage_status)
         .replace("$power_checked", "checked" if state.power else "")
         .replace("$swing_checked", "checked" if state.swing else "")
@@ -366,8 +374,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 d = json.loads(r.read().decode())
-                status = "Sent" if d.get("sent") else "Stored"
                 ts = _format_time(d.get("time"))
+                if d.get("unchanged"):
+                    return f"No IR (unchanged) at {ts}." if ts else "No IR (unchanged)."
+                status = "Sent" if d.get("sent") else "Stored"
                 return f"{status} at {ts}." if ts else f"{status}."
         except urllib.error.HTTPError as e:
             d = json.loads(e.read().decode()) if e.read() else {}
