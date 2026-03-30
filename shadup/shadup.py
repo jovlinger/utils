@@ -157,7 +157,24 @@ def parse_args() -> argparse.Namespace:
         raise argparse.ArgumentTypeError(f"invalid boolean: {value!r}")
 
     parser = argparse.ArgumentParser(
-        description="Store files by sha256 and replace with symlinks, or extract back."
+        description="Store files by sha256 and replace with symlinks, or extract back.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Store (.shadir): without --shadir, searches upward from the current "
+            "working directory. At each ancestor directory, looks for an existing "
+            "subdirectory named .shadup, then .shadir (in that order). The walk "
+            "stops at $HOME when cwd is under your home directory, otherwise at "
+            "the filesystem root. If neither name is found, you must pass "
+            "--shadir. When --shadir is set, that store path is created if it "
+            "does not exist (on first database open).\n\n"
+            "Database: defaults to <shadir>/.shadup.db unless --db is given. "
+            "The database file's parent directory is created if missing; the DB "
+            "file is created on first open.\n\n"
+            "--check: with no --shadir/--db, exit 0 if a store is found and "
+            "<shadir>/.shadup.db exists, else exit 1; prints the DB path and "
+            "cheap aggregate stats. With --shadir and/or --db, open (creating) "
+            "the DB, print path and stats, and exit 0."
+        ),
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
@@ -219,6 +236,15 @@ def parse_args() -> argparse.Namespace:
         const="__AUTO__",
         dest="reindex_files",
         help="Rebuild DB entries by scanning symlinks under files/ tree",
+    )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "With no --shadir/--db: exit 0 if store and default DB exist, else 1; "
+            "prints DB path and aggregate stats. With --shadir or --db: create or "
+            "open the database and schema, then print path and stats"
+        ),
     )
     parser.add_argument(
         "--shadir",
@@ -295,6 +321,11 @@ def is_under_dir(path: str, parent: str) -> bool:
         return False
 
 
+def expand_path(path: str) -> str:
+    """Expand ~ / ~user and normalize to an absolute path."""
+    return os.path.abspath(os.path.expanduser(path))
+
+
 def ensure_store_path(shadir: str, digest: str) -> str:
     """Ensure shadir subdirectory exists and return digest path."""
     subdir = os.path.join(shadir, digest[:2])
@@ -344,14 +375,61 @@ def normalize_hash_arg(shadir: str, value: str) -> str | None:
     return None
 
 
+def resolve_db_path(shadir: str, db_path: str | None = None) -> str:
+    """Return absolute path to the SQLite DB (default: <shadir>/.shadup.db)."""
+    if db_path is None:
+        return os.path.join(shadir, DB_NAME)
+    return expand_path(db_path)
+
+
+def fetch_check_stats(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
+    """Return cheap aggregates: active rows, distinct active hashes, deleted rows, total rows."""
+    try:
+        row = conn.execute(
+            """
+            SELECT
+              SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END),
+              COUNT(DISTINCT CASE WHEN deleted = 0 THEN shasum END),
+              SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END),
+              COUNT(*)
+            FROM stored_files
+            """
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return (0, 0, 0, 0)
+    if not row or row[3] is None:
+        return (0, 0, 0, 0)
+    active, distinct_h, deleted, total = row
+    return (
+        int(active or 0),
+        int(distinct_h or 0),
+        int(deleted or 0),
+        int(total or 0),
+    )
+
+
+def emit_check_report(conn: sqlite3.Connection, shadir: str, db_path: str) -> None:
+    """Print resolved DB path, cheap table aggregates, and check ok line."""
+    active, distinct_h, deleted, total = fetch_check_stats(conn)
+    out("check db {db_path}", 0, db_path=db_path, kind="data")
+    out(
+        "check stats: active_entries {active} distinct_hashes {distinct_h} "
+        "deleted_entries {deleted} total_rows {total}",
+        0,
+        active=active,
+        distinct_h=distinct_h,
+        deleted=deleted,
+        total=total,
+        kind="data",
+    )
+    out("check ok: shadir {shadir}", 0, shadir=shadir, kind="data")
+
+
 def open_db(shadir: str, db_path: str | None = None) -> sqlite3.Connection:
     """Open shadir sqlite db and ensure schema.
     If db_path is given, use it; otherwise use <shadir>/.shadup.db.
     """
-    if db_path is None:
-        db_path = os.path.join(shadir, DB_NAME)
-    else:
-        db_path = os.path.abspath(db_path)
+    db_path = resolve_db_path(shadir, db_path)
     db_dir = os.path.dirname(db_path)
     os.makedirs(db_dir, exist_ok=True)
     os.makedirs(shadir, exist_ok=True)
@@ -1294,6 +1372,45 @@ def handle_reindex_files(
     out("reindexed entries active: {count}", 0, count=indexed)
 
 
+def handle_check(args: argparse.Namespace) -> int:
+    """Verify shadir discovery; optionally open DB (see --check help)."""
+    if args.shadir:
+        shadir = expand_path(args.shadir)
+    else:
+        found = find_shadir(os.getcwd())
+        if not found:
+            print(
+                "check failed: no .shadup/.shadir found from cwd",
+                file=sys.stderr,
+            )
+            return 1
+        shadir = found
+    cwd = os.path.abspath(os.curdir)
+    if is_under_dir(cwd, shadir):
+        print(
+            f"check failed: cwd must not be inside shadir: cwd={cwd} shadir={shadir}",
+            file=sys.stderr,
+        )
+        return 1
+    init_db = args.shadir is not None or args.db is not None
+    user_db = expand_path(args.db) if args.db else None
+    resolved = resolve_db_path(shadir, user_db)
+    if init_db:
+        with open_db(shadir, user_db) as conn:
+            emit_check_report(conn, shadir, resolved)
+        return 0
+
+    if not os.path.isfile(resolved):
+        print(
+            f"check failed: database not found: {resolved}",
+            file=sys.stderr,
+        )
+        return 1
+    with sqlite3.connect(resolved) as conn:
+        emit_check_report(conn, shadir, resolved)
+    return 0
+
+
 def main() -> int:
     """Entry point for command execution."""
     args = parse_args()
@@ -1301,8 +1418,10 @@ def main() -> int:
     VERBOSITY = args.v
     global OUTPUT_MODE
     OUTPUT_MODE = "pretty" if sys.stdout.isatty() else "machine"
+    if args.check:
+        return handle_check(args)
     if args.shadir:
-        shadir = os.path.abspath(args.shadir)
+        shadir = expand_path(args.shadir)
     else:
         found = find_shadir(os.getcwd())
         if not found:
@@ -1327,12 +1446,12 @@ def main() -> int:
         raise SystemExit("--mindup is only valid with --lspath/--ls or --lshash")
     if args.reindex_files and args.recursive:
         raise SystemExit("--reindex-files does not accept --recursive")
-    db_path = os.path.abspath(args.db) if args.db else None
+    db_path = expand_path(args.db) if args.db else None
     with open_db(shadir, db_path) as conn:
         if args.store:
             for root in args.store:
                 out("store {root}", 1, root=root)
-                handle_store(conn, os.path.abspath(root), shadir, args.skip_dotfiles)
+                handle_store(conn, expand_path(root), shadir, args.skip_dotfiles)
             return 0
         if args.extract:
             for prefix in args.extract:
@@ -1383,7 +1502,7 @@ def main() -> int:
                 out("fixlinks {root}", 1, root=root)
             handle_fixlinks(
                 conn,
-                [os.path.abspath(root) for root in args.fixlinks],
+                [expand_path(root) for root in args.fixlinks],
                 shadir,
                 args.skip_dotfiles,
                 recursive=args.recursive,
@@ -1394,13 +1513,13 @@ def main() -> int:
             if args.reindex_files == "__AUTO__":
                 files_root = os.path.join(os.path.dirname(shadir), "files")
             else:
-                files_root = args.reindex_files
+                files_root = expand_path(args.reindex_files)
             out("reindex-files {files_root}", 1, files_root=files_root)
             handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
             return 0
         for root in args.dedup:
             out("dedup {root}", 1, root=root)
-            handle_dedup(conn, os.path.abspath(root), shadir, args.skip_dotfiles)
+            handle_dedup(conn, expand_path(root), shadir, args.skip_dotfiles)
     return 0
 
 

@@ -1,7 +1,7 @@
-# Build and push thermo/onboard to GHCR (ghcr.io/jovlinger/thermo-onboard)
+# Build and push thermo-onboard-app + thermo-onboard-twoway to GHCR.
 # Trigger: push to thermo/onboard/ or workflow_dispatch
-# Pi Zero 2 W: arm64 or armhf (32-bit). If push fails with 403: link package to this repo:
-#   github.com/users/jovlinger/packages/container/thermo-onboard → Package settings →
+# Pi Zero 2 W: arm64 or armhf. If push fails with 403: link each package to this repo:
+#   github.com/users/jovlinger/packages/container/<name> → Package settings →
 #   Manage Actions access → Add repository (jovlinger/utils) with Write role.
 name: Thermo Onboard
 
@@ -32,13 +32,35 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Prepare docker build context (scratch)
+        run: |
+          rm -rf ./.docker-build/thermo-onboard
+          mkdir -p ./.docker-build/thermo-onboard
+          cp -a ./thermo/onboard/. ./.docker-build/thermo-onboard/
+          mkdir -p ./.docker-build/thermo-onboard/.docker-import
+          curl -fsSL "https://raw.githubusercontent.com/jovlinger/bin/master/run-with-stdout-logged.py" \
+            -o ./.docker-build/thermo-onboard/.docker-import/run-with-stdout-logged.py
+
+      - name: Build and push onboard app
         uses: docker/build-push-action@v6
         with:
-          context: ./thermo/onboard
+          context: ./.docker-build/thermo-onboard
+          file: ./.docker-build/thermo-onboard/Dockerfile.onboard
           platforms: linux/arm64,linux/arm/v7
           push: true
           provenance: false
           tags: |
-            ghcr.io/jovlinger/thermo-onboard:latest
-            ghcr.io/jovlinger/thermo-onboard:${{ github.sha }}
+            ghcr.io/jovlinger/thermo-onboard-app:latest
+            ghcr.io/jovlinger/thermo-onboard-app:${{ github.sha }}
+
+      - name: Build and push twoway
+        uses: docker/build-push-action@v6
+        with:
+          context: ./.docker-build/thermo-onboard
+          file: ./.docker-build/thermo-onboard/Dockerfile.twoway
+          platforms: linux/arm64,linux/arm/v7
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/jovlinger/thermo-onboard-twoway:latest
+            ghcr.io/jovlinger/thermo-onboard-twoway:${{ github.sha }}

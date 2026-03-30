@@ -1,0 +1,124 @@
+#!/bin/sh
+# OpenRC local.d — Pi 1B: RAM Alpine + extract dmz_rootfs.tar + chroot (same tree as Docker).
+# Logs: /tmp/boot.log (host tmpfs), /var/log/dmz.log (host; bind into chroot for the app).
+# Rescue: /root/network-and-sshd.sh → 192.168.88.200/24 + ssh (keys from image build).
+
+set -x
+
+ROOTFS_TAR="dmz_rootfs.tar"
+CHROOT_DIR="/tmp/dmz_rootfs"
+SD_MOUNT="/media/mmcblk0"
+LOG="/tmp/boot.log"
+DMZ_APP_LOG="/var/log/dmz.log"
+
+mkdir -p /root /var/log
+touch "$DMZ_APP_LOG" 2>/dev/null || true
+chmod 666 "$DMZ_APP_LOG" 2>/dev/null || true
+: >"$LOG"
+
+pr() {
+	echo "$@" >>"$LOG"
+	{ [ -c /dev/console ] && echo "$@" >/dev/console; } || true
+}
+
+persist_boot_log() {
+	[ -d "$SD_MOUNT" ] || return 0
+	mount /dev/mmcblk0 "$SD_MOUNT" >>"$LOG" 2>&1 || true
+	mount | grep -qE " on ${SD_MOUNT} " || return 0
+	mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
+	cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || true
+	[ -f "$DMZ_APP_LOG" ] && cp "$DMZ_APP_LOG" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || true
+}
+trap 'persist_boot_log' EXIT INT TERM
+
+dump() {
+	echo "--- $1 ---" >>"$LOG"
+	shift
+	"$@" >>"$LOG" 2>&1
+	echo "" >>"$LOG"
+}
+
+pr "========== dmz-boot started $(date -u '+%Y-%m-%dT%H:%M:%SZ') local $(date) =========="
+pr ""
+
+pr ">>> 1/10 SD"
+test -d "$SD_MOUNT/install"
+dump "ls SD_MOUNT" ls -la "$SD_MOUNT"
+dump "ls install" ls -la "$SD_MOUNT/install"
+pr "network.conf: $(grep -v '^[[:space:]]*#' "$SD_MOUNT/install/network.conf" | head -n1)"
+pr "buildinfo: $(cat "$SD_MOUNT/install/buildinfo.txt")"
+pr ""
+
+pr ">>> 2/10 banner"
+pr "========== DMZ =========="
+pr "  $(cat "$SD_MOUNT/install/buildinfo.txt")"
+pr "  Rescue: sh /root/network-and-sshd.sh  (192.168.88.200/24 + ssh)"
+pr "================================"
+pr ""
+
+pr ">>> 3/10 kernel / mounts / cmdline"
+dump "uname -a" uname -a
+dump "/proc/cmdline" cat /proc/cmdline
+dump "/proc/mounts (head)" sh -c 'head -40 /proc/mounts'
+pr ""
+
+pr ">>> 4/10 dmesg (tail, filtered)"
+dmesg 2>/dev/null | grep -iE 'mmc|eth|smsc|usb|mount|overlay|apkovl' | tail -60 | sed 's/^/  /' >>"$LOG" || true
+pr ""
+
+pr ">>> 5/10 network (eth0)"
+w=0
+while [ ! -d /sys/class/net/eth0 ]; do
+	w=$((w + 1))
+	[ "$w" -le 30 ] || exit 1
+	sleep 1
+done
+pr "  eth0 after ${w}s"
+ip link set eth0 up
+sleep 1
+NETLINE=$(grep -v '^[[:space:]]*#' "$SD_MOUNT/install/network.conf" | head -n1)
+read -r addr gw _ <<EOF
+$NETLINE
+EOF
+ip addr add "$addr" dev eth0
+ip route add default via "$gw"
+echo "nameserver $gw" >/etc/resolv.conf
+cp "$SD_MOUNT/install/network.conf" /root/network.conf
+dump "ip addr" ip addr
+dump "ip route" ip route
+dump "resolv.conf" cat /etc/resolv.conf
+pr ""
+
+pr ">>> 6/10 entropy + clock"
+haveged -w 1024 -F &
+ntpd -q -p pool.ntp.org
+ntpd -p pool.ntp.org &
+pr ""
+
+pr ">>> 7/10 extract $ROOTFS_TAR"
+dump "tar size" ls -la "$SD_MOUNT/$ROOTFS_TAR"
+mkdir -p "$CHROOT_DIR"
+tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$CHROOT_DIR"
+dump "chroot top" ls -la "$CHROOT_DIR"
+pr ""
+
+pr ">>> 8/10 chroot prep (binds, tmpfs /tmp, dmz.log bind)"
+mount --bind /dev "$CHROOT_DIR/dev"
+mount --bind /proc "$CHROOT_DIR/proc"
+mount --bind /sys "$CHROOT_DIR/sys"
+mount --bind /run "$CHROOT_DIR/run"
+mount -t tmpfs -o mode=1777,nosuid,nodev,size=64m tmpfs "$CHROOT_DIR/tmp"
+mkdir -p "$CHROOT_DIR/var/log"
+touch "$CHROOT_DIR/var/log/dmz.log"
+mount --bind "$DMZ_APP_LOG" "$CHROOT_DIR/var/log/dmz.log"
+dump "mounts after chroot prep" sh -c 'grep dmz_rootfs /proc/mounts || true'
+pr ""
+
+pr ">>> 9/10 launch chroot: tini -> start.sh -> run-with-stdout-logged -> run.sh -> app"
+# tini/start.sh diagnostics also land in boot.log; app stream is /var/log/dmz.log via wrapper.
+chroot "$CHROOT_DIR" /sbin/tini -- /app/start.sh >>"$LOG" 2>&1 &
+pr "  background pid=$!"
+pr ""
+
+pr ">>> 10/10 dmz-boot handoff complete $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+pr "========== dmz-boot done =========="

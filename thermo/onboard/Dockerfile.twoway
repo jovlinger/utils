@@ -1,0 +1,21 @@
+# Twoway sync only. GHCR: ghcr.io/jovlinger/thermo-onboard-twoway
+# Local: docker build -f Dockerfile.twoway -t ghcr.io/jovlinger/thermo-onboard-twoway .
+
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libffi-dev libssl-dev python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/bin
+COPY .docker-import/run-with-stdout-logged.py /app/bin/run-with-stdout-logged.py
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY twoway.py common.py zone_auth.py docker-entrypoint-twoway.sh ./
+COPY heatpumpirctl/ ./heatpumpirctl/
+
+RUN chmod +x /app/bin/run-with-stdout-logged.py /app/docker-entrypoint-twoway.sh
+
+CMD ["./docker-entrypoint-twoway.sh"]

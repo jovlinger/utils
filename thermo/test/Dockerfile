@@ -9,7 +9,7 @@ WORKDIR /app
 # copy everything, including this file... why not?
 COPY . . 
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # start temptest
 RUN apt-get update ; apt-get install -y iputils-ping wget curl

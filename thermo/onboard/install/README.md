@@ -1,56 +1,30 @@
-# Onboard Install (Pi Zero 2 W)
+# Install scripts (Pi)
 
-Auto-start the thermo onboard container on Raspberry Pi Zero 2 W. Uses GHCR for image hosting.
+**Primary documentation:** [../README.md](../README.md) — two GHCR images, `docker-compose.yml`, `deploy-compose.sh`, systemd, troubleshooting.
 
-## Prerequisites
-
-- Raspberry Pi Zero 2 W (arm64 or armhf/32-bit)
-- Docker installed (or let the script install it)
-- I2C enabled: `sudo raspi-config` → Interfacing Options → I2C
-- LIRC for IR: `/dev/lirc0` (TX) must exist (ANAVI IR pHAT)
-
-## Quick Start
+## Quick commands
 
 ```bash
-# Option A: Copy install scripts to the Pi
-scp -r thermo/onboard/install pi@pizero.local:~/
-ssh pi@pizero.local 'cd ~/install && chmod +x run-onboard.sh && ./run-onboard.sh --pull'
-
-# Option B: Use repo on Pi (git pull first; if install was copied via scp, remove conflicts)
-ssh pi@pizero.local 'cd ~/github.com/jovlinger/utils && git clean -fd thermo/onboard/install/ 2>/dev/null; git pull && cd thermo/onboard/install && ./run-onboard.sh --pull'
+cd ~/github.com/jovlinger/utils
+git pull
+cd thermo/onboard/install
+./deploy-compose.sh
 ```
 
-## GHCR Token (for private images)
+First-time: copy `env.example` to `.env` and set `DMZ_URL`, or set `DMZ_URL` in `~/.local.sh`.
 
-Your GHCR login is in `~/.docker/config.json` with `"credsStore": "desktop"` — credentials live in macOS Keychain (Docker Desktop), not in `~/.local`.
+## Files
 
-**On the Pi** (if the image is private):
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Stack: `thermo-onboard-app` + `thermo-onboard-twoway` |
+| `deploy-compose.sh` | `docker compose pull` + `up -d` (sources `~/.local.sh`) |
+| `deploy.sh` | `git pull` (repo root) then `deploy-compose.sh` |
+| `install-systemd.sh` | Installs `thermo-onboard.service` for boot |
+| `env.example` | Template for `.env` |
+| `run-onboard.sh` | **Deprecated** — old single-container runner |
+| `onboard.service` | **Deprecated** — old systemd unit |
 
-1. Create a GitHub PAT with `read:packages` scope
-2. Add to `~/.local.sh`: `export CR_PAT=ghp_...` (script sources this before pull)
-3. Or: `echo $PAT | docker login ghcr.io -u jovlinger --password-stdin` before run
+## GHCR
 
-**Public images**: Make the package public at https://github.com/users/jovlinger/packages — then no login needed on the Pi.
-
-## Auto-Start (systemd)
-
-```bash
-# Copy script to a fixed location
-sudo cp run-onboard.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/run-onboard.sh
-
-# Install service
-sudo cp onboard.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable onboard
-sudo systemctl start onboard
-```
-
-## Image Source
-
-- **GHCR**: `ghcr.io/jovlinger/thermo-onboard:latest` (built by GitHub Actions on push to main)
-- **Local build & push**: from `thermo/onboard/` run `make build` and `make push` (requires `CR_PAT`)
-
-Override image: `ONBOARD_IMAGE=ghcr.io/jovlinger/thermo-onboard:mytag ./run-onboard.sh`
-
-**Platform**: On armhf (32-bit Pi OS), the script pulls `--platform linux/arm/v7` automatically.
+Images: `ghcr.io/jovlinger/thermo-onboard-app` and `ghcr.io/jovlinger/thermo-onboard-twoway`. Private packages need `CR_PAT` in `~/.local.sh` before pull.

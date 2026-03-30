@@ -4,16 +4,20 @@ services:
     image: jovlinger/thermo/dmz
     environment:
       ENV: DOCKERTEST
-      PORT: "5000"
+      PORT: "8080"
       ZONE_PUBLIC_KEY_PATH: /keys/pub.pem
     volumes:
       - ./keys:/keys:ro
+    tmpfs:
+      - /tmp
+      - /var/log
 
   onboard:
     image: jovlinger/thermo/onboard
     environment:
       ENV: DOCKERTEST
       PORT: "5000"
+      DMZ_URL: http://dmz:8080
       ZONE_PRIVATE_KEY_PATH: /keys/priv.pem
       ZONE_NAME: zoneymczoneface
     volumes:
@@ -24,7 +28,7 @@ services:
   testdriver:
     image: jovlinger/thermo/test
     environment:
-      DMZ_URL: http://dmz:5000
+      DMZ_URL: http://dmz:8080
       ONBOARD_URL: http://onboard:5000
       E2E_ZONE_NAME: zoneymczoneface
     depends_on:

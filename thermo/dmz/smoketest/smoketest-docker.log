@@ -1,0 +1,2 @@
+start.sh: tmpfs /tmp skipped
+start.sh: remount ro / not applied

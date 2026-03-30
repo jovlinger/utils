@@ -26,6 +26,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INGEST_PY="$SCRIPT_DIR/ingest.py"
 REMOUNT="$SCRIPT_DIR/with-ro-remounted-rw.sh"
 
@@ -36,10 +38,12 @@ err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
   exit 2
 }
 
-command -v python3 >/dev/null || {
-  err "missing python3"
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  err "No venv at $SCRIPT_DIR/env."
+  err "Run: $UTILS_ROOT/create_pipenv.sh shadup"
   exit 1
-}
+fi
+. "$SCRIPT_DIR/env/bin/activate"
 
 [ -f "$INGEST_PY" ] || {
   err "missing $INGEST_PY"
@@ -55,4 +59,4 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
   exit 1
 fi
 
-exec "$REMOUNT" python3 "$INGEST_PY" "$@"
+exec "$REMOUNT" python "$INGEST_PY" "$@"

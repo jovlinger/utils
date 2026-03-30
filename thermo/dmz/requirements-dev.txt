@@ -1,0 +1,3 @@
+# Host / smoketest only — not installed in the Pi/runtime Docker image.
+pytest
+requests

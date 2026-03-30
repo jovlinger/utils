@@ -9,6 +9,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
+
 # Test directories
 TEST_BASE="/tmp/cpdup_test"
 A_DIR="$TEST_BASE/A"
@@ -78,7 +88,7 @@ cp -r "$A_DIR" "$C_DIR"
 
 # Create dedup structure for A
 echo "Creating dedup structure for A..."
-python3 dedup.py "$A_DIR" "$A_DIR.dedup"
+python "$SCRIPT_DIR/dedup.py" "$A_DIR" "$A_DIR.dedup"
 
 # Create empty dedup structure for B
 echo "Creating empty dedup structure for B..."
@@ -86,11 +96,11 @@ mkdir -p "$B_DIR.dedup/data" "$B_DIR.dedup/files"
 
 # Run cpdup A.dedup B.dedup
 echo "Running cpdup A.dedup -> B.dedup..."
-./cpdup.sh "$A_DIR.dedup" "$B_DIR.dedup"
+"$SCRIPT_DIR/cpdup.sh" "$A_DIR.dedup" "$B_DIR.dedup"
 
 # Run redup B.dedup C
 echo "Running redup B.dedup -> C..."
-./redup.sh "$B_DIR.dedup" "$C_DIR"
+"$SCRIPT_DIR/redup.sh" "$B_DIR.dedup" "$C_DIR"
 
 # Create archive from C
 echo "Creating archive from C..."

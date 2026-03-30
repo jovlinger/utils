@@ -1,11 +1,19 @@
-# Cloud Alternative: AWS EC2 / GCP e2-micro
+# Archived DMZ Cloud Alternative
+
+This document was archived from `thermo/dmz/install/CLOUD.md` after the DMZ workflow standardized on the Pi image flow in `thermo/dmz/image/`.
+
+The original cloud guidance is preserved below for historical reference.
+
+---
+
+## Cloud Alternative: AWS EC2 / GCP e2-micro
 
 Deploy the DMZ app on a free-tier cloud VM instead of Pi 1B + MikroTik. Simpler to get running; different security and cost trade-offs.
 
 ## Comparison
 
 | Aspect | Pi + MikroTik | Cloud |
-|--------|---------------|-------|
+| ------ | ------------- | ----- |
 | Initial setup | High (Alpine diskless, ARMv6, SD, RouterOS) | Low (launch VM, deploy) |
 | Physical work | Yes (Pi, SD, cabling) | No |
 | Platform | ARMv6, initramfs, apkovl | x86_64/ARM64, standard Linux |

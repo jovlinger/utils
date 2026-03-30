@@ -5,14 +5,15 @@ hint. After a run, do
 > docker compose logs testdriver to get the test logs.
 """
 
+import os
 import socket
+import time
 
 import pytest
 import requests
-import time
 
-b = "http://dmz:5000"
-o = "http://onboard:5000"
+b = os.environ.get("DMZ_URL", "http://dmz:8080")
+o = os.environ.get("ONBOARD_URL", "http://onboard:5000")
 
 
 def _in_docker() -> bool:

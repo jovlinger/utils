@@ -1,0 +1,5 @@
+# Ephemeral captures: large, machine-specific, may contain paths or LAN hints.
+# Tracked files: .gitignore, README.md (convention only).
+*
+!.gitignore
+!README.md

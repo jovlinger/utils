@@ -9,6 +9,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
+
 # Test directories
 TEST_BASE="/tmp/dir"
 INPUT_DIR="$TEST_BASE/input"
@@ -31,7 +41,7 @@ mv "$(dirname "$INPUT_DIR")/simple_test" "$INPUT_DIR"
 
 # Run dedup
 echo "Running dedup..."
-python3 "$(dirname "$0")/dedup.py" "$INPUT_DIR" "$DEDUP_DIR"
+python "$SCRIPT_DIR/dedup.py" "$INPUT_DIR" "$DEDUP_DIR"
 
 # Run redup
 echo "Running redup..."

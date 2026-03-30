@@ -5,13 +5,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+if [ ! -f "$ONBOARD/env/bin/activate" ]; then
+  echo "No venv at $ONBOARD/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
+  exit 1
+fi
 
 cd "$ONBOARD"
-if [ ! -d env ]; then
-    python3 -m venv env
-    env/bin/pip install -r requirements.txt
-fi
-"$ONBOARD/env/bin/python" -m unittest discover -s test -p 'test_*.py'
+. "$ONBOARD/env/bin/activate"
+python -m unittest discover -s test -p 'test_*.py'
 
 bash "$SCRIPT_DIR/test_ui.sh"
 

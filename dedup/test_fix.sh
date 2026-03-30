@@ -4,7 +4,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_BASE="/tmp/shasrv_test_fix_$$"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
 
 cleanup() { rm -rf "$TEST_BASE"; }
 trap cleanup EXIT
@@ -22,7 +30,7 @@ echo "content A" > "$TEST_BASE/source/album2/track1.flac"   # duplicate
 STORE="$TEST_BASE/store"
 
 # ---- Ingest ----
-python3 "$SCRIPT_DIR/dedup.py" "$TEST_BASE/source" "$STORE" -v
+python "$SCRIPT_DIR/dedup.py" "$TEST_BASE/source" "$STORE" -v
 echo ""
 
 # Sanity: symlinks resolve
@@ -40,7 +48,7 @@ fi
 pass "symlink broken after move"
 
 # Run fix
-python3 "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
 echo ""
 
 # Symlink should resolve now
@@ -61,7 +69,7 @@ if [ -e "$STORE/files/track2.flac" ]; then
 fi
 pass "symlink broken after shallow move"
 
-python3 "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
 echo ""
 
 actual=$(cat "$STORE/files/track2.flac")
@@ -73,7 +81,7 @@ pass "fix restored shallow-moved symlink"
 mkdir -p "$STORE/files/drytest"
 mv "$STORE/files/track2.flac" "$STORE/files/drytest/track2.flac"
 
-python3 "$SCRIPT_DIR/dedup.py" --fix --dryrun "$STORE" -v
+python "$SCRIPT_DIR/dedup.py" --fix --dryrun "$STORE" -v
 echo ""
 
 # Should still be broken (dryrun)
@@ -83,13 +91,13 @@ fi
 pass "dryrun did not modify symlinks"
 
 # Actually fix it
-python3 "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
 actual=$(cat "$STORE/files/drytest/track2.flac")
 [ "$actual" = "content B" ] || fail "final fix content mismatch"
 pass "final fix after dryrun"
 
 # ---- Test 4: Already-correct symlinks are untouched ----
-output=$(python3 "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v 2>&1)
+output=$(python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v 2>&1)
 fixed=$(echo "$output" | grep "Symlinks fixed:" | awk '{print $NF}')
 [ "$fixed" = "0" ] || fail "expected 0 fixes on already-correct store, got $fixed"
 pass "no-op on already-correct symlinks"

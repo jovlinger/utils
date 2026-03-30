@@ -63,6 +63,10 @@ class State:
 
     timer_on_minutes: Optional[int] = None
     timer_off_minutes: Optional[int] = None
+    # Active/inactive bits for timer on/off.
+    # Minutes can remain set even when inactive, so UI can preserve the chosen time.
+    timer_on_active: bool = False
+    timer_off_active: bool = False
 
     # Raw frame bytes that produced this state (set by loads).
     raw_f1: Optional[List[int]] = field(default=None, repr=False)
@@ -114,10 +118,12 @@ class State:
 
     def set_timer_on(self, minutes: Optional[int]) -> State:
         self.timer_on_minutes = minutes
+        self.timer_on_active = minutes is not None
         return self
 
     def set_timer_off(self, minutes: Optional[int]) -> State:
         self.timer_off_minutes = minutes
+        self.timer_off_active = minutes is not None
         return self
 
     def to_json(self) -> Dict[str, Any]:
@@ -132,6 +138,9 @@ class State:
             "econo": self.econo,
             "comfort": self.comfort,
         }
+        # Always include active flags so UI can represent active/inactive + time.
+        d["timer_on_active"] = self.timer_on_active
+        d["timer_off_active"] = self.timer_off_active
         if self.timer_on_minutes is not None:
             d["timer_on_minutes"] = self.timer_on_minutes
         if self.timer_off_minutes is not None:
@@ -161,17 +170,19 @@ class State:
         if obj.get("comfort") is not None:
             s.comfort = bool(obj["comfort"])
         if "timer_on_minutes" in obj:
-            s.timer_on_minutes = (
-                int(obj["timer_on_minutes"])
-                if obj["timer_on_minutes"] is not None
-                else None
-            )
+            s.timer_on_minutes = int(obj["timer_on_minutes"]) if obj["timer_on_minutes"] is not None else None
+        if obj.get("timer_on_active") is not None:
+            s.timer_on_active = bool(obj["timer_on_active"])
         if "timer_off_minutes" in obj:
-            s.timer_off_minutes = (
-                int(obj["timer_off_minutes"])
-                if obj["timer_off_minutes"] is not None
-                else None
-            )
+            s.timer_off_minutes = int(obj["timer_off_minutes"]) if obj["timer_off_minutes"] is not None else None
+        if obj.get("timer_off_active") is not None:
+            s.timer_off_active = bool(obj["timer_off_active"])
+
+        # Backwards compatibility: old callers used the presence of minutes to infer active.
+        if obj.get("timer_on_active") is None:
+            s.timer_on_active = s.timer_on_minutes is not None
+        if obj.get("timer_off_active") is None:
+            s.timer_off_active = s.timer_off_minutes is not None
         return s
 
     def summary(self) -> str:
@@ -189,9 +200,9 @@ class State:
         if self.comfort:
             parts.append("comfort")
         if self.timer_on_minutes is not None:
-            parts.append("timer_on=%dm" % self.timer_on_minutes)
+            parts.append("timer_on=%s %dm" % ("ON" if self.timer_on_active else "OFF", self.timer_on_minutes))
         if self.timer_off_minutes is not None:
-            parts.append("timer_off=%dm" % self.timer_off_minutes)
+            parts.append("timer_off=%s %dm" % ("ON" if self.timer_off_active else "OFF", self.timer_off_minutes))
         if self.truncated:
             parts.append("(truncated)")
         return " ".join(parts)

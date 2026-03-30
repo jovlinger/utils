@@ -3,6 +3,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh shadup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
+
 TEST_BASE="/tmp/shadup_test_reindex_$$"
 STORE="$TEST_BASE/store"
 SHADIR="$STORE/data"
@@ -32,10 +41,10 @@ ln -s "../../data/aa/not_a_hash_name" "$FILES/Misc/not-hash.flac"
 
 (
     cd "$TEST_BASE"
-    python3 "$SCRIPT_DIR/shadup.py" --reindex-files "$FILES" --shadir "$SHADIR" --db "$DB" >/dev/null
+    python "$SCRIPT_DIR/shadup.py" --reindex-files "$FILES" --shadir "$SHADIR" --db "$DB" >/dev/null
 )
 
-row_count="$(python3 - "$DB" <<'PY'
+row_count="$(python - "$DB" <<'PY'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
 count = conn.execute("SELECT COUNT(*) FROM stored_files WHERE deleted = 0").fetchone()[0]
@@ -45,7 +54,7 @@ PY
 [ "$row_count" = "2" ] || fail "expected 2 active rows, got $row_count"
 pass "indexed only valid symlink entries"
 
-paths="$(python3 - "$DB" <<'PY'
+paths="$(python - "$DB" <<'PY'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
 rows = conn.execute(
@@ -64,7 +73,7 @@ pass "root_rel/dirpath/filename reconstructed correctly"
 
 (
     cd "$TEST_BASE"
-    out="$(python3 "$SCRIPT_DIR/shadup.py" --lspath --shadir "$SHADIR" --db "$DB")"
+    out="$(python "$SCRIPT_DIR/shadup.py" --lspath --shadir "$SHADIR" --db "$DB")"
     echo "$out" | grep -q "$H1" || fail "--lspath output missing first hash"
     echo "$out" | grep -q "$H2" || fail "--lspath output missing second hash"
 )

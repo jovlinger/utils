@@ -7,7 +7,7 @@ to read sensors and send commands, then verifies commands appear in onboard.
 
 Runs in two modes:
 - Local: subprocess starts dmz, onboard, twoway (DMZ_URL/ONBOARD_URL from env or localhost)
-- Docker: dmz and onboard are containers; use DMZ_URL=http://dmz:5000 etc.
+- Docker: dmz and onboard are containers; use DMZ_URL=http://dmz:8080 etc.
 """
 
 from __future__ import annotations
@@ -191,10 +191,10 @@ def test_e2e_sensors_and_commands(e2e_services):
 def test_e2e_docker_compose():
     """
     E2E against docker-compose services (dmz, onboard with twoway).
-    Set DMZ_URL=http://dmz:5000 ONBOARD_URL=http://onboard:5000 E2E_ZONE_NAME=zoneymczoneface.
+    Set DMZ_URL=http://dmz:8080 ONBOARD_URL=http://onboard:5000 E2E_ZONE_NAME=zoneymczoneface.
     """
     if "dmz" not in DMZ_URL:
-        pytest.skip("run with DMZ_URL=http://dmz:5000 (docker-compose)")
+        pytest.skip("run with DMZ_URL=http://dmz:8080 (docker-compose)")
     # Reset dmz
     r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
     assert r.status_code == 200

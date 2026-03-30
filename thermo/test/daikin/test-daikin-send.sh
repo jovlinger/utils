@@ -4,9 +4,18 @@
 set -e
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 THERMO_DIR="$(cd "$TEST_DIR/../.." && pwd)"
+ONBOARD="$THERMO_DIR/onboard"
+UTILS_ROOT="$(cd "$TEST_DIR/../../../.." && pwd)"
 SCRIBBLE="$THERMO_DIR/scribble"
 SEND_LOG="/tmp/fake-ir-ctl-send.log"
 rm -f "$SEND_LOG"
+
+if [ ! -f "$ONBOARD/env/bin/activate" ]; then
+  echo "No venv at $ONBOARD/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
+  exit 1
+fi
+. "$ONBOARD/env/bin/activate"
 
 _timeout() { local s=$1; shift; perl -e 'alarm(shift @ARGV); exec @ARGV' "$s" "$@"; }
 

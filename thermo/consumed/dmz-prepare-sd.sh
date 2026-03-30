@@ -1,4 +1,7 @@
 #!/bin/sh
+# Archived script (consumed): superseded by thermo/dmz/image/create-image.sh + write-to-card.sh.
+# Original path: thermo/dmz/install/prepare-sd.sh
+#
 # Copy DMZ payload and install scripts to SD card (run on dev machine with SD mounted).
 #
 # Usage:

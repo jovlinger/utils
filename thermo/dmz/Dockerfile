@@ -1,27 +1,52 @@
-# use like so.
-# > cd <here>
-# > docker build -q -t jovlinger/thermo/dmz .
-# For Pi 1B (ARMv6): docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .
-# > docker run --rm -it jovlinger/thermo/dmz sh test.sh
+# Alpine image: Flask app as non-root user `dmz`. Entry: tini -> start.sh -> run.sh -> python.
 #
-# Minimal Alpine base per plan.md: lightweight, ARMv6-compatible.
-# To run without Docker daemon on Pi 1B, use install/run_raw.sh.
+# Build:
+#   docker build -t jovlinger/thermo/dmz .
+#   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .
+#
+# Run (optional --tmpfs /tmp; do not tmpfs over all of /var/log if you bind-mount dmz.log):
+#   docker run --rm -p 8080:8080 jovlinger/thermo/dmz
+# ENTRYPOINT is only tini; default CMD is start.sh. A trailing command replaces CMD:
+#   docker run --rm -it jovlinger/thermo/dmz /bin/sh   ->  tini -- /bin/sh
 
-FROM alpine:3.19
+# -----------------------------------------------------------------------------
+# Builder: compile wheels that need a toolchain (cryptography, pydantic-core on musl).
+# -----------------------------------------------------------------------------
+FROM alpine:3.19 AS builder
 
-RUN apk add --no-cache python3 py3-pip tini && ln -sf /usr/bin/python3 /usr/bin/python
+RUN apk add --no-cache \
+	python3 py3-pip \
+	rust cargo \
+	gcc musl-dev libffi-dev openssl-dev python3-dev
 
 WORKDIR /app
-# copy everything, including this file... why not?
-COPY . . 
+COPY requirements.txt .
+# pydantic<2 still uses pydantic-core; build from source on musl / odd arches when needed.
+RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
+# -----------------------------------------------------------------------------
+# Runtime
+# -----------------------------------------------------------------------------
+FROM alpine:3.19
 
-# App listens on 8080 (unprivileged); iptables redirects 80->8080 on host.
+RUN apk add --no-cache python3 tini su-exec openssl libffi \
+	&& ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN addgroup -g 1000 dmz \
+	&& adduser -D -u 1000 -G dmz dmz
+
+WORKDIR /app
+
+COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
+# Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source bin repo).
+COPY .docker-import/run-with-stdout-logged.py /app/run-with-stdout-logged.py
+COPY . .
+RUN chown -R dmz:dmz /app \
+	&& chmod +x /app/start.sh /app/run.sh /app/run-with-stdout-logged.py
+
 ENV PORT=8080
 EXPOSE 8080
 
-# tini as PID 1 reaps zombies in bwrap sandbox
-ENTRYPOINT ["tini", "--"]
-CMD ["sh", "./run.sh"]
-
+USER root
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/start.sh"]

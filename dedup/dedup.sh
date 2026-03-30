@@ -11,6 +11,14 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
+  exit 1
+fi
+. "$SCRIPT_DIR/env/bin/activate"
 
 REMOUNTED=false
 MOUNT_POINT=""
@@ -84,4 +92,4 @@ if [ -n "$TARGET_DIR" ]; then
 fi
 
 # Run the Python deduplication/fix script
-python3 "$SCRIPT_DIR/dedup.py" "$@"
+python "$SCRIPT_DIR/dedup.py" "$@"

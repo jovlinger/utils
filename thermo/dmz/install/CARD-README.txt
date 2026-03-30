@@ -1,0 +1,9 @@
+DMZ Pi 1B — Alpine diskless + Docker-exported root (dmz_rootfs.tar)
+
+Edit install/network.conf on this card (one line: ADDR/CIDR GATEWAY) before first boot if needed.
+
+Boot: firmware loads kernel from this FAT volume; Alpine applies dmz.apkovl.tar.gz; /etc/local.d/dmz-boot.start brings up eth0, extracts dmz_rootfs.tar, chroots into it, runs the same entrypoint as docker run (tini → start.sh → run-with-stdout-logged.py → run.sh → app). Verbose boot steps are appended to /tmp/boot.log on the Pi; app logs to /var/log/dmz.log.
+
+Rescue (RAM Alpine, serial or keyboard): sh /root/network-and-sshd.sh  — sets eth0 to 192.168.88.200/24 (optional IPv4 as first arg), installs/starts sshd (pubkey-only for root); authorized_keys merged at build from build host ~/.ssh/id_{ed25519,ecdsa,rsa}.pub when present.
+
+Prior full Pi pipeline (bwrap, separate tarball workflow) is on git branch overly_complicated_double_pivot.

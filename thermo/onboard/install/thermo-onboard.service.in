@@ -1,0 +1,20 @@
+[Unit]
+Description=Thermo onboard (docker compose: app + twoway)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@@USER@@
+Group=docker
+WorkingDirectory=@@INSTALL@@
+Environment=HOME=@@HOME@@
+# Optional: EnvironmentFile=-@@HOME@@/.config/thermo-onboard/environment
+ExecStart=@@INSTALL@@/deploy-compose.sh up
+ExecStop=@@INSTALL@@/deploy-compose.sh down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
