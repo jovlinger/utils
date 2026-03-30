@@ -1,8 +1,31 @@
 #!/usr/bin/env bash
 # Ingest files/dirs into hash-backed store with automatic rw/ro remount.
+# 
+#
+# Usage:
+#   sudo ./ingest.sh public/albumdir1 public/albumdir2 ...
+#   sudo ./ingest.sh public/albumdir*          # shell glob; one arg per album
+#
+# Each directory arg's basename becomes the dest_prefix under files/,
+# so  public/MyAlbum  →  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
+#
+# CAUTION: Do NOT pass the top-level parent directory (e.g. "public").
+#   sudo ./ingest.sh public                    # WRONG
+# This would set dest_prefix="public", creating files/public/albumdir/track
+# instead of the intended files/albumdir/track — an unwanted extra level.
+# It also ingests (and deletes from source!) ALL files under public/.
+#
+# Recovery if you did this by mistake:
+#   Data blobs in data/ are safe. Fix the symlink tree with:
+#     mv /mnt/sdb2/music/flac/files/public/* /mnt/sdb2/music/flac/files/
+#     rmdir /mnt/sdb2/music/flac/files/public
+
+
+
+
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 INGEST_PY="$SCRIPT_DIR/ingest.py"
 REMOUNT="$SCRIPT_DIR/with-ro-remounted-rw.sh"
 
