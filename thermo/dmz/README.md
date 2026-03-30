@@ -47,6 +47,8 @@ The image is a **256MB FAT** volume: Alpine Raspberry Pi **3.19.0 armhf** boot f
 
 Edit **`install/network.conf`** on the FAT partition before first boot if the defaults are wrong.
 
+**Home router DMZ (Pi not on LAN subnet, public port 5000, Dyndns):** see **[`install/ROUTERBOARD-DMZ.md`](install/ROUTERBOARD-DMZ.md)**.
+
 Older full pipeline (bwrap, `dmz-init`, etc.) is on branch **`overly_complicated_double_pivot`**.
 
 ## Tests

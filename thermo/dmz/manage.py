@@ -10,7 +10,8 @@ For GET /zones and GET /debug/logs, signing uses ZONE_NAME in X-Zone-Name
 (see onboard run.sh / twoway).
 
 Usage:
-  DMZ_URL=http://host:5000 ZONE_NAME=myzone ZONE_PRIVATE_KEY_PATH=... \\
+  DMZ_URL=http://host:5000   # or host:5000 (treated as http://…)
+  ZONE_NAME=myzone ZONE_PRIVATE_KEY_PATH=... \\
     python manage.py <action> [args...]
 
 Actions (first arg) map to app routes:
@@ -21,6 +22,7 @@ Actions (first arg) map to app routes:
   debug_logs | logs             — GET /debug/logs
   test_reset [json]             — POST /test_reset (unsigned; testing only)
   updatezone <zone> key=val...  — GET /zones, merge key=val into command, POST command
+    (see onboard heatpumpirctl.State; run updatezone with no args for a full JSON example)
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. lolidk=heat_22 temp_centigrade=21.5).
@@ -40,6 +42,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+# Repo layout: thermo/dmz/manage.py → thermo/onboard/heatpumpirctl (State)
+_ONBOARD_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "onboard"))
+
 
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
@@ -47,10 +52,40 @@ def _die(msg: str, code: int = 2) -> None:
 
 
 def _dmz_base() -> str:
+    """
+    Resolve DMZ_URL using urllib.parse.
+
+    Full URLs (http:// or https://) are validated as-is. A scheme-less base
+    (e.g. 192.168.88.200:5000 or dmz.local) is treated as http://… so requests
+    gets a proper scheme.
+    """
     raw = os.environ.get("DMZ_URL", "").strip()
     if not raw:
         _die("DMZ_URL is not set")
-    return raw.rstrip("/")
+
+    parsed = urlparse(raw)
+    if parsed.scheme in ("http", "https"):
+        if not parsed.netloc:
+            _die(
+                "DMZ_URL must include a host, e.g. http://dmz.local:5000\n"
+                f"  (got {raw!r})"
+            )
+        return raw.rstrip("/")
+
+    if parsed.scheme:
+        _die(f"DMZ_URL must use http or https (got scheme {parsed.scheme!r})")
+
+    # No scheme: urlparse puts "host:port" in .path, not .netloc — try http:// + raw
+    candidate = "http://" + raw.lstrip("/")
+    trial = urlparse(candidate)
+    if trial.scheme == "http" and trial.netloc:
+        return candidate.rstrip("/")
+
+    _die(
+        "DMZ_URL is not a valid base URL. Use http:// or https:// with a host "
+        "(e.g. http://192.168.88.200:5000), or host:port alone for plain HTTP.\n"
+        f"  (got {raw!r})"
+    )
 
 
 def _zone_private_key_material() -> str:
@@ -168,23 +203,85 @@ def _emit(status: int, body: Union[dict, list, str, None]) -> int:
     return 0
 
 
+def _onboard_state_example_dict() -> Dict[str, Any]:
+    """Fully-populated onboard heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
+    if _ONBOARD_ROOT not in sys.path:
+        sys.path.insert(0, _ONBOARD_ROOT)
+    from heatpumpirctl import Fan, Mode, State
+
+    s = (
+        State()
+        .set_power(True)
+        .set_mode(Mode.HEAT)
+        .set_temp(22.5)
+        .set_fan(Fan.F4)
+        .set_swing(True)
+        .set_powerful(True)
+        .set_econo(False)
+        .set_comfort(True)
+        .set_timer_on(90)
+        .set_timer_off(120)
+    )
+    return s.to_json()
+
+
+def _updatezone_help_message() -> str:
+    example = _onboard_state_example_dict()
+    pretty = json.dumps(example, indent=2, sort_keys=True)
+    return (
+        "usage: manage.py updatezone <zone> key=value ...\n"
+        "\n"
+        "Merges each key=value into the zone's command dict and POSTs it. Key names match "
+        "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
+        '{"command": ...} to POST /daikin on the Pi. The DMZ IRCommand model currently '
+        "persists lolidk and timestamp fields only; pydantic drops other keys until the "
+        "schema is extended.\n"
+        "\n"
+        "Fully-populated onboard State example (.to_json()):\n"
+        f"{pretty}\n"
+        "\n"
+        "Note: from_json() also accepts temp_c (°C) instead of half_c. "
+        "mode: AUTO, DRY, COOL, HEAT, FAN. fan: F1..F5, AUTO, SILENT."
+    )
+
+
 def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
-    if not kv_args:
-        _die("updatezone requires at least one key=value")
     key_mat = _zone_private_key_material()
     zn = _zone_name_default() or zone
-    st, all_zones = _request_json(
-        "GET",
-        "/zones",
-        zone_for_sign=zn,
-        body=None,
-        sign=bool(key_mat),
-    )
+
+    def _fetch_zone_entry() -> (
+        Tuple[int, Union[dict, list, str, None], Optional[Dict[str, Any]]]
+    ):
+        st, all_zones = _request_json(
+            "GET",
+            "/zones",
+            zone_for_sign=zn,
+            body=None,
+            sign=bool(key_mat),
+        )
+        if st != 200:
+            return st, all_zones, None
+        if not isinstance(all_zones, dict):
+            _die("unexpected /zones response shape")
+        raw = all_zones.get(zone)
+        if raw is not None and not isinstance(raw, dict):
+            _die(f"unexpected zone payload for {zone!r}")
+        return st, all_zones, raw
+
+    if not kv_args:
+        print(_updatezone_help_message(), file=sys.stderr)
+        st, body, zstate = _fetch_zone_entry()
+        if st != 200:
+            return _emit(st, body)
+        if zstate is None:
+            print(f"zone not found: {zone!r}", file=sys.stderr)
+            return 1
+        print(json.dumps(zstate, indent=2, sort_keys=True))
+        return 0
+
+    st, all_zones, zstate = _fetch_zone_entry()
     if st != 200:
         return _emit(st, all_zones)
-    if not isinstance(all_zones, dict):
-        _die("unexpected /zones response shape")
-    zstate = all_zones.get(zone)
     if zstate is None:
         _die(f"zone not found: {zone!r}")
     cmd_obj = zstate.get("command")
@@ -262,7 +359,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if action == "updatezone":
         if not rest:
-            _die("updatezone <zone> key=value ...")
+            _die(_updatezone_help_message())
         zone = rest[0]
         return _cmd_updatezone(zone, rest[1:])
 

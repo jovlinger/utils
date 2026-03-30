@@ -26,6 +26,7 @@ Pi rescue **`sshd`** (after **`sh /root/network-and-sshd.sh`**) should keep the 
 | `dmz-boot.start` | Source for apkovl `/etc/local.d/` (also embedded in `dmz.apkovl.tar.gz` on the card). |
 | `root-network-sshd.sh` | Same script as RAM **`/root/network-and-sshd.sh`** (rescue: `192.168.88.200/24` + sshd pubkey-only; keys merged at build from `~/.ssh/id_{ed25519,ecdsa,rsa}.pub`). |
 | `CARD-README.txt` | Short human notes; copied to `README.txt` on FAT root. |
+| [`ROUTERBOARD-DMZ.md`](ROUTERBOARD-DMZ.md) | Home DMZ **design**: Pi outside LAN NAT, separate subnet, port **5000**, Dyndns—so topology is not re-argued from scratch. |
 
 Boot diagnostics go to **`/tmp/boot.log`** on the Pi; app output is **`/var/log/dmz.log`** (copies may appear under **`debug/`** on the SD when unmounted cleanly).
 
