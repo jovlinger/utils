@@ -24,6 +24,20 @@ def _in_docker() -> bool:
     except socket.gaierror:
         return False
 
+
+def _wait_for(url: str, *, timeout_s: float = 10.0) -> None:
+    """Wait until GET url returns a 2xx/3xx or timeout."""
+    start = time.time()
+    while time.time() - start < timeout_s:
+        try:
+            r = requests.get(url, timeout=1)
+            if r.ok:
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(0.1)
+    raise AssertionError(f"timeout waiting for {url}")
+
 name_supply = ["bob", "jill", "jack", "annie", "mark", "mary", "paul", "stella"]
 
 JSON = "JSON data type"
@@ -62,6 +76,7 @@ class External:
 
 def reset_dmz():
     print("reset dmz")
+    _wait_for(f"{b}/zones", timeout_s=15.0)
     r = requests.post(f"{b}/test_reset", json={"commands": {}, "sensors": {}})
     assert r.status_code == 200
 
@@ -69,6 +84,7 @@ def reset_dmz():
 @pytest.mark.skipif(not _in_docker(), reason="requires docker-compose (dmz hostname)")
 def test_onboard_help():
     """Tests that we can reach onboard, and that the app is running"""
+    _wait_for(f"{o}/help", timeout_s=15.0)
     res_o = requests.get(f"{o}/help")
     js_o = res_o.json()
     assert "msg" in js_o

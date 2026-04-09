@@ -26,8 +26,11 @@ part of the application.
 
 # and some canned commands
 
-- run tests:
+- run tests (builds ``../onboard`` GHCR-tagged app + twoway images, dmz, testdriver; then compose):
 > make dockertest
+
+- same stack, explicit name for e2e pytest (``testcases/test_e2e.py``):
+> make test_e2e
 
 - copy file from container (doesn't have to be running)
 > docker cp f1c711b7e058:/app/twoway.out -

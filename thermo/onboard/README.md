@@ -7,6 +7,13 @@ Two **separate** container images on **GHCR**:
 | `ghcr.io/jovlinger/thermo-onboard-app` | Flask API (`app.py`), static UI (`ui_server.py`), I2C/LIRC |
 | `ghcr.io/jovlinger/thermo-onboard-twoway` | DMZ ↔ onboard sync (`twoway.py`) |
 
+**Viewing images in the browser after `make push`:** there is no separate “ghcr.io gallery” URL per image. GitHub hosts the UI. The predictable links are:
+
+- App package: [github.com/jovlinger/utils/pkgs/container/thermo-onboard-app](https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-app)
+- Twoway package: [github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway](https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway)
+
+If a link 404s (e.g. package not linked to this repo), open [your packages](https://github.com/jovlinger?tab=packages), or go to the **utils** repo → **Packages** in the right sidebar (or **Code** → find **Packages** under the repo name on the new UI).
+
 They are started together with **Docker Compose** (`install/docker-compose.yml`): **host networking**, **hard cgroup-style limits** (memory and CPU via `deploy.resources`), bounded **ulimits** for open files, and **no Docker json log growth** (`logging: driver: none`) because each process logs **only** through **`run-with-stdout-logged.py`** into bind-mounted files under **`/var/log/thermo-onboard/`**.
 
 ## Log files (host)

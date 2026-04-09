@@ -5,6 +5,19 @@ Composes all three components. Onboard provides fake sensor readings;
 twoway syncs to dmz (signed) and back to onboard. Testdriver pokes dmz
 to read sensors and send commands, then verifies commands appear in onboard.
 
+Docker images (must match ``thermo/test/docker-compose.yml`` and ``thermo/onboard/Makefile``):
+
+- ``THERMO_ONBOARD_IMAGE`` — Flask + UI (``Dockerfile.onboard``).
+- ``THERMO_ONBOARD_TWOWAY_IMAGE`` — twoway sync (``Dockerfile.twoway``).
+
+Build locally before compose: from ``thermo/onboard`` run ``make images`` (or ``make test_e2e``
+from ``thermo/test``, which invokes that). Push to GHCR: ``make push_images`` (needs ``CR_PAT``).
+
+Registry: images are pushed to **GHCR** under ``ghcr.io/jovlinger/…`` (same as CI:
+``.github/workflows/thermo-onboard.yml``). To confirm the namespaces exist without logging in,
+``curl -sI https://ghcr.io/v2/jovlinger/thermo-onboard-app/manifests/latest`` returns **401**
+with a ``WWW-Authenticate`` scope (anonymous pull is denied but the repository is registered).
+
 Runs in two modes:
 - Local: subprocess starts dmz, onboard, twoway (DMZ_URL/ONBOARD_URL from env or localhost)
 - Docker: dmz and onboard are containers; use DMZ_URL=http://dmz:8080 etc.
@@ -29,9 +42,19 @@ DMZ_DIR = THERMO / "dmz"
 ONBOARD_DIR = THERMO / "onboard"
 sys.path.insert(0, str(DMZ_DIR))
 
+# Pinned to GHCR / Makefile IMAGE_APP and IMAGE_TWOWAY (default tag latest).
+THERMO_ONBOARD_IMAGE = "ghcr.io/jovlinger/thermo-onboard-app"
+THERMO_ONBOARD_TWOWAY_IMAGE = "ghcr.io/jovlinger/thermo-onboard-twoway"
+DEFAULT_IMAGE_TAG = "latest"
+
 DMZ_URL = os.environ.get("DMZ_URL", "http://127.0.0.1:5001")
 ONBOARD_URL = os.environ.get("ONBOARD_URL", "http://127.0.0.1:5002")
 ZONE_NAME = os.environ.get("E2E_ZONE_NAME", "e2ezone")
+
+
+def _in_docker_compose() -> bool:
+    """True when running e2e against docker-compose service hostnames."""
+    return "://dmz:" in DMZ_URL and "://onboard:" in ONBOARD_URL
 
 
 def _gen_keys(tmpdir: Path) -> tuple[Path, Path]:
@@ -102,6 +125,7 @@ def _wait_for(url: str, timeout: float = 10.0) -> bool:
 @pytest.fixture
 def e2e_services():
     """Start dmz, onboard, twoway with machine auth keys."""
+    twoway_proc: subprocess.Popen | None = None
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         priv_path, pub_path = _gen_keys(tmp)
@@ -132,16 +156,22 @@ def e2e_services():
                 "twoway": twoway_proc,
             }
         finally:
-            twoway_proc.terminate()
+            if twoway_proc is not None:
+                twoway_proc.terminate()
             onboard_proc.terminate()
             dmz_proc.terminate()
-            for p in [twoway_proc, onboard_proc, dmz_proc]:
+            procs = [p for p in (twoway_proc, onboard_proc, dmz_proc) if p is not None]
+            for p in procs:
                 try:
                     p.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     p.kill()
 
 
+@pytest.mark.skipif(
+    _in_docker_compose(),
+    reason="local-subprocess mode requires dmz/onboard source tree (not present in docker-compose testdriver image)",
+)
 def test_e2e_sensors_and_commands(e2e_services):
     """Inject fake readings, wait for twoway sync, read from dmz. Send command, verify in onboard."""
     # Reset dmz
@@ -195,6 +225,10 @@ def test_e2e_docker_compose():
     """
     if "dmz" not in DMZ_URL:
         pytest.skip("run with DMZ_URL=http://dmz:8080 (docker-compose)")
+    if not _wait_for(f"{DMZ_URL}/zones", timeout=15):
+        pytest.fail("dmz did not start (docker-compose)")
+    if not _wait_for(f"{ONBOARD_URL}/help", timeout=15):
+        pytest.fail("onboard did not start (docker-compose)")
     # Reset dmz
     r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
     assert r.status_code == 200

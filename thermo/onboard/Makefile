@@ -1,12 +1,22 @@
 # Build and push thermo-onboard-app and thermo-onboard-twoway to GHCR.
 # Pi Zero 2 W: arm64 or armhf. Requires CR_PAT for push.
-.PHONY: all build push clean test ci
+#
+# Deploy (on the Pi or any host with this repo): from thermo/onboard run
+#   make deploy
+# That runs install/deploy.sh with REPO_PATH set to the utils checkout (git pull + deploy-compose).
+.PHONY: all build images push push_images clean test ci deploy
 
 IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
 IMAGE_TWOWAY := ghcr.io/jovlinger/thermo-onboard-twoway
 TAG ?= latest
+# After `make push`, view on GitHub (package slug = image name after ghcr.io/jovlinger/):
+#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-app
+#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway
+# List: repo https://github.com/jovlinger/utils → Packages (sidebar), or https://github.com/jovlinger?tab=packages
 # Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS
 PLATFORM ?= linux/arm/v7
+# Verbose docker build (plain streams RUN output; use `make ... DOCKER_BUILD_PROGRESS=auto` for TTY bars)
+DOCKER_BUILD_PROGRESS ?= plain
 
 RUN_WITH_BIN := $(abspath $(CURDIR)/../../../bin/run-with-stdout-logged.py)
 
@@ -20,12 +30,14 @@ build: .image.app .image.twoway
 
 .image.app: Dockerfile.onboard requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) ui_server.py ui_template.html
 	"$(CURDIR)/stage-docker-import.sh"
-	docker buildx build -q --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
+	@echo "[build] $(IMAGE_APP):$(TAG) platform=$(PLATFORM) (this may take several minutes)..."
+	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
 	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.app
 
 .image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py common.py zone_auth.py $(PY_SRC)
 	"$(CURDIR)/stage-docker-import.sh"
-	docker buildx build -q --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
+	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
+	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
 	@docker image inspect $(IMAGE_TWOWAY):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.twoway
 
 push: build
@@ -51,3 +63,12 @@ ci:
 	git commit -m "ci: trigger thermo-onboard build" && \
 	git push origin $$BRANCH
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
+
+# On-target deploy: git pull at REPO root, then thermo/onboard/install/deploy-compose.sh (docker compose pull + up).
+# Override checkout: make deploy DEPLOY_REPO=/path/to/utils
+DEPLOY_REPO ?= $(abspath $(CURDIR)/../../..)
+deploy:
+	@test -f "$(CURDIR)/install/deploy.sh" || { echo "deploy: missing install/deploy.sh"; exit 1; }
+	@test -e "$(DEPLOY_REPO)/.git" || { echo "deploy: DEPLOY_REPO must be a git working tree: $(DEPLOY_REPO)"; exit 1; }
+	@echo "[deploy] REPO_PATH=$(DEPLOY_REPO)"
+	REPO_PATH="$(DEPLOY_REPO)" /bin/sh "$(CURDIR)/install/deploy.sh"

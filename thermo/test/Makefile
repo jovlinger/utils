@@ -1,6 +1,9 @@
+.PHONY: dockertest test_e2e clean
+
+# Builds thermo/dmz + onboard GHCR-tagged images (../onboard make images) + testdriver, then docker compose up.
 dockertest: .image
+	$(MAKE) -C ../onboard images
 	$(MAKE) -C ../dmz .image
-	$(MAKE) -C ../onboard .image
 	./dockertest.sh
 
 .image: testcases/*.py *.sh  requirements.txt

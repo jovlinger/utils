@@ -3,7 +3,7 @@
 # This is the command-line test driver.
 # This composes a docker container and runs it. This is run OUTSIDE the container
 
-set -e
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 THERMO="$(cd "$SCRIPT_DIR/.." && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -24,4 +24,4 @@ elif [ -f "$THERMO/dmz/env/bin/python" ]; then
 fi
 
 # | cat to convince the script that we are not a tty, and to skip the color and redraws
-docker compose up --timestamps --abort-on-container-exit --always-recreate-deps --build --exit-code-from  testdriver 2>&1  | cat
+docker compose up --timestamps --abort-on-container-exit --always-recreate-deps --build --exit-code-from testdriver 2>&1 | cat

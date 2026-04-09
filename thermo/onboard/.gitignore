@@ -2,3 +2,9 @@ env
 .docker-import/
 install/.env
 
+# Make/docker image stamp files (see Makefile .image.app / .image.twoway)
+.image
+.image.app
+.image.twoway
+.pytest_cache/
+

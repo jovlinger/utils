@@ -1,7 +1,8 @@
-version: "3.9"
 services:
   dmz:
     image: jovlinger/thermo/dmz
+    build:
+      context: ../dmz
     environment:
       ENV: DOCKERTEST
       PORT: "8080"
@@ -13,10 +14,30 @@ services:
       - /var/log
 
   onboard:
-    image: jovlinger/thermo/onboard
+    # Same names as production (thermo/onboard/Makefile, install/docker-compose.yml). Build with: cd ../onboard && make images
+    image: ghcr.io/jovlinger/thermo-onboard-app:latest
+    build:
+      context: ../onboard
+      dockerfile: Dockerfile.onboard
     environment:
       ENV: DOCKERTEST
       PORT: "5000"
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      - dmz
+    tmpfs:
+      - /tmp
+      - /var/log
+
+  twoway:
+    image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
+    build:
+      context: ../onboard
+      dockerfile: Dockerfile.twoway
+    environment:
+      ENV: DOCKERTEST
+      ONBOARD_URL: http://onboard:5000
       DMZ_URL: http://dmz:8080
       ZONE_PRIVATE_KEY_PATH: /keys/priv.pem
       ZONE_NAME: zoneymczoneface
@@ -24,9 +45,15 @@ services:
       - ./keys:/keys:ro
     depends_on:
       - dmz
+      - onboard
+    tmpfs:
+      - /tmp
+      - /var/log
 
   testdriver:
     image: jovlinger/thermo/test
+    build:
+      context: .
     environment:
       DMZ_URL: http://dmz:8080
       ONBOARD_URL: http://onboard:5000
@@ -34,3 +61,4 @@ services:
     depends_on:
       - dmz
       - onboard
+      - twoway
