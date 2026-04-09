@@ -35,3 +35,8 @@ Living backlog for heat-pump / IR / onboard work. Numbered sections are stable I
 **Pi log grab (2026-03-22):** From a dev machine on the LAN: `ssh pizero.local` with the same bundle as `thermo/onboard/DEBUG.md` / `install/README.md` (`docker logs --tail 500 thermo-onboard`, `tail` of `/var/log/thermo-onboard/onboard.log`, `journalctl -u onboard`). Saved under **`thermo/debuglogs/`** with a dated filename and retention header: `2026-03-22T230004Z_pizero-twoway-sticky-lolidk.txt` (directory is gitignored except `README.md`; see `thermo/debuglogs/README.md`).
 
 That snapshot **confirms** onboard behavior: after each successful DMZ sensors POST, twoway hits **`/daikin`** ~every 5s and **`app: SET_DAIKIN: power=ON mode=AUTO temp=25C…`** runs each time (same decoded state from `lolidk` fallback). Repeated **`warning: …/tmp/….txt:440: trailing space ignored`** appears alongside each IR send (likely `ir-ctl` stderr). DMZ **HTTP 500** on sensors later stopped twoway before `/daikin` → IR stopped. `journalctl -u onboard` was empty at pull time (service vs container mismatch per `DEBUG.md`).
+
+
+## 33. cleanup
+
+all other scripts use setup_venv, which ends up with .venv/. Only this directory uses pipenv which ends up in env/.   Move thermo to also use .venv and possibly the common script. 

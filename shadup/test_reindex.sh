@@ -2,15 +2,20 @@
 # test_reindex.sh - Rebuild DB entries from existing files/ symlink tree.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
-  echo "No venv at $SCRIPT_DIR/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh shadup" >&2
+SHADUP_VENV=""
+if [ -f "$SCRIPT_DIR/env/bin/activate" ]; then
+  SHADUP_VENV="$SCRIPT_DIR/env"
+elif [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  SHADUP_VENV="$SCRIPT_DIR/.venv"
+else
+  echo "No venv under $SCRIPT_DIR (env/ or .venv/)." >&2
+  echo "Run: $UTILS_ROOT/create_pipenv.sh shadup   or   $SCRIPT_DIR/setup-venv.sh" >&2
   exit 1
 fi
-. "$SCRIPT_DIR/env/bin/activate"
+. "$SHADUP_VENV/bin/activate"
 
 TEST_BASE="/tmp/shadup_test_reindex_$$"
 STORE="$TEST_BASE/store"

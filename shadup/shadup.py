@@ -727,8 +727,17 @@ def map_walk_files(
 ) -> Iterator[T]:
     """Return iterator of mapper results over walked files."""
     max_workers = min(32, (os.cpu_count() or 1) + 4)
+
+    def mapper_with_progress(path: str) -> T:
+        try:
+            return mapper(path)
+        finally:
+            print(".", end="", flush=True, file=sys.stderr)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for result in executor.map(mapper, walk_files(root, shadir, skip_dotfiles)):
+        for result in executor.map(
+            mapper_with_progress, walk_files(root, shadir, skip_dotfiles)
+        ):
             yield result
 
 
