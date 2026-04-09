@@ -65,8 +65,9 @@ ci:
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
 
 # On-target deploy: git pull at REPO root, then thermo/onboard/install/deploy-compose.sh (docker compose pull + up).
+# Default REPO root is two levels up from this dir (onboard -> thermo -> utils).
 # Override checkout: make deploy DEPLOY_REPO=/path/to/utils
-DEPLOY_REPO ?= $(abspath $(CURDIR)/../../..)
+DEPLOY_REPO ?= $(abspath $(CURDIR)/../..)
 deploy:
 	@test -f "$(CURDIR)/install/deploy.sh" || { echo "deploy: missing install/deploy.sh"; exit 1; }
 	@test -e "$(DEPLOY_REPO)/.git" || { echo "deploy: DEPLOY_REPO must be a git working tree: $(DEPLOY_REPO)"; exit 1; }
