@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
-UTILS_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 if [ ! -f "$ONBOARD/env/bin/activate" ]; then
   echo "No venv at $ONBOARD/env." >&2

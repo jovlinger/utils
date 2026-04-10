@@ -17,6 +17,6 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 COPY . .
 RUN chmod +x /app/bin/run-with-stdout-logged.py /app/docker-entrypoint-onboard.sh
 
-EXPOSE 5000 8080
+EXPOSE 5000 8080 80
 
 CMD ["./docker-entrypoint-onboard.sh"]

@@ -18,8 +18,9 @@ if [ -f /.dockerenv ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# common root is where jovlinger reposutils AND bin live
-COMMON_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# utils repo root; run-with-stdout-logged.py is in sibling ../bin (see Makefile RUN_WITH_BIN).
+COMMON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RUN_WITH_STDOUT="$(cd "$COMMON_ROOT/.." && pwd)/bin/run-with-stdout-logged.py"
 if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
   echo "No venv at $SCRIPT_DIR/env." >&2
   echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2
@@ -29,4 +30,4 @@ fi
 python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
 python ui_server.py &
 echo "starting app"
-exec python "$COMMON_ROOT/bin/run-with-stdout-logged.py" "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py
+exec python "$RUN_WITH_STDOUT" "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py

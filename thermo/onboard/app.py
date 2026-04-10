@@ -105,7 +105,7 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         updated = set_log_level(level_name)
         if not updated:
             return {"error": "invalid level"}, 400
-        out("management set log level", level=updated)
+        out("management set log level", log_level=updated)
         return {"ok": True, "action": action, "level": updated}, 200
 
     if action == "reset":

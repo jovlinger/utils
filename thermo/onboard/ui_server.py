@@ -1,7 +1,8 @@
-"""Serve the thermo UI on port 8080. Plain HTML form POST to app on port 5000."""
+"""Serve the thermo UI (default port 8080; optional extra ports e.g. 80). Form POSTs to app on PORT."""
 
 import os
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +12,30 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 PORT_UI = int(os.environ.get("UI_PORT", "8080"))
+
+
+def _parse_extra_ui_ports() -> List[int]:
+    """Optional comma-separated extra bind ports (e.g. ``80`` for http://pizero/)."""
+    raw = os.environ.get("UI_EXTRA_PORTS", "").strip()
+    if not raw:
+        return []
+    ports: List[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            ports.append(int(part))
+    return ports
+
+
+def _all_ui_ports() -> List[int]:
+    """Deduplicated list: primary ``UI_PORT`` first, then ``UI_EXTRA_PORTS``."""
+    seen: set[int] = set()
+    ordered: List[int] = []
+    for p in [PORT_UI] + _parse_extra_ui_ports():
+        if p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    return ordered
 
 
 def _parse_timer(s: str) -> Optional[int]:
@@ -399,9 +424,23 @@ def _post_manage(payload: dict, token: str) -> dict:
 
 
 def main() -> None:
-    server = HTTPServer(("0.0.0.0", PORT_UI), Handler)
-    print(f"UI on http://0.0.0.0:{PORT_UI}")
-    server.serve_forever()
+    ports = _all_ui_ports()
+    if len(ports) == 1:
+        server = HTTPServer(("0.0.0.0", ports[0]), Handler)
+        print(f"UI on http://0.0.0.0:{ports[0]}")
+        server.serve_forever()
+        return
+    for port in ports[1:]:
+        s = HTTPServer(("0.0.0.0", port), Handler)
+        threading.Thread(
+            target=s.serve_forever,
+            daemon=True,
+            name=f"ui-server-{port}",
+        ).start()
+        print(f"UI on http://0.0.0.0:{port}")
+    first = HTTPServer(("0.0.0.0", ports[0]), Handler)
+    print(f"UI on http://0.0.0.0:{ports[0]}")
+    first.serve_forever()
 
 
 if __name__ == "__main__":

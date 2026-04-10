@@ -6,7 +6,7 @@ set -e
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 THERMO_DIR="$(cd "$TEST_DIR/../.." && pwd)"
 ONBOARD="$THERMO_DIR/onboard"
-UTILS_ROOT="$(cd "$TEST_DIR/../../../.." && pwd)"
+UTILS_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIBBLE="$THERMO_DIR/scribble"
 export PATH="${TEST_DIR}:${PATH}"
 

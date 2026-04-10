@@ -96,6 +96,7 @@ Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is no
 - **Twoway errors / DMZ unreachable:** Set `DMZ_URL` to the **base** URL of the DMZ (e.g. `http://192.168.1.10:5000`). Check `twoway.log` and `curl` the DMZ from the Pi.
 - **Onboard HTTP not listening:** Check `onboard-app.log`, `docker compose ps`, and `curl -sS http://127.0.0.1:5000/` (host network).
 - **`/dev/lirc0` or `/dev/i2c-1` missing:** Enable I2C / LIRC; comment out unused `devices:` lines in `docker-compose.yml` only if you accept reduced functionality.
+- **`docker compose up` fails on `vcgencmd` or `/dev/vchiq`:** Those are for Pi SoC temperature and throttle flags on the **connectivity-watchdog** service. Remove the `vcgencmd` bind and `devices:` entry for that service when developing on a non-Pi host.
 - **Compose ignores `deploy.resources`:** On some older Compose versions, limits apply only in Swarm. Upgrade Docker/Compose, or add equivalent `docker run` flags via `docker compose` override (see Docker docs).
 - **No lines in `docker logs`:** Expected — logging driver is `none`. Use the files under `/var/log/thermo-onboard/`.
 - **Stale images:** Run `./deploy-compose.sh` after `git pull`; it always **`docker compose pull`** before **`up`**.

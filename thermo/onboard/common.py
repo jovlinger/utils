@@ -8,7 +8,10 @@ import logging
 import os
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional, Union
+
+# Parsed HTTP JSON body from onboard helpers: object -> dict, else raw text.
+jsonT = Union[dict, str]
 
 # possibly the least informative name ever
 ENVVAR = "ENV"
@@ -24,7 +27,7 @@ def is_test_env() -> bool:
 # ---------------------------------------------------------------------------
 
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
 LOG_PATH = os.environ.get("LOG_PATH")
 LOGGER_NAME = "onboard"
 _VALID_LOG_LEVELS = {
@@ -45,7 +48,7 @@ def configure_logging() -> None:
     and rotation uniformly for both DMZ and onboard.
     """
     root = logging.getLogger(LOGGER_NAME)
-    root.setLevel(_VALID_LOG_LEVELS.get(LOG_LEVEL, logging.INFO))
+    root.setLevel(_VALID_LOG_LEVELS.get(LOG_LEVEL, logging.DEBUG))
     root.handlers.clear()
 
     formatter = logging.Formatter(
@@ -82,8 +85,21 @@ def set_log_level(level_name: str) -> Optional[str]:
 configure_logging()
 
 
-def log(component: str, msg: str, **kwargs) -> None:
-    """Single-line log. component is 'app' or 'twoway'."""
+def _emit(component: str, msg: str, level: int, **kwargs: Any) -> None:
     extra = " " + " ".join(f"{k}={v!r}" for k, v in kwargs.items()) if kwargs else ""
-    logger = logging.getLogger(LOGGER_NAME)
-    logger.info("%s: %s%s", component, msg, extra)
+    logging.getLogger(LOGGER_NAME).log(level, "%s: %s%s", component, msg, extra)
+
+
+def log(component: str, msg: str, **kwargs: Any) -> None:
+    """Single-line log at INFO. component is 'app' or 'twoway'."""
+    _emit(component, msg, logging.INFO, **kwargs)
+
+
+def log_error(component: str, msg: str, **kwargs: Any) -> None:
+    """Same wire format as log, at ERROR level."""
+    _emit(component, msg, logging.ERROR, **kwargs)
+
+
+def log_debug(component: str, msg: str, **kwargs: Any) -> None:
+    """Same wire format as log, at DEBUG level."""
+    _emit(component, msg, logging.DEBUG, **kwargs)
