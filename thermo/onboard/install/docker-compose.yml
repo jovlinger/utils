@@ -1,7 +1,7 @@
 # Thermo onboard stack: app + twoway (host network; bind-mounted logs under /var/log/thermo-onboard).
 # Deploy: ./deploy-compose.sh from this directory (see README.md).
 #
-# Resource limits: prefer OOM / cgroup failure over slow growth. Tune deploy.resources if needed.
+# CPU limits via deploy.resources (memory limits omitted: cgroup memory is often unavailable on Pi OS).
 # Optional /dev/lirc1: duplicate the lirc0 device line if your hardware exposes a second device.
 
 name: thermo-onboard
@@ -30,7 +30,6 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
     ulimits:
       nofile:
         soft: 1024
@@ -59,8 +58,44 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 96M
     ulimits:
       nofile:
         soft: 512
         hard: 1024
+
+  # Same image as twoway: HTTP checks to DMZ + onboard; on sustained failure writes
+  # incidents under LOG_DIR/incidents (set CONNECTIVITY_DUMP_DIR to a persistent host
+  # path if THERMO_LOG_DIR is tmpfs and you need bundles after hard reboot).
+  connectivity-watchdog:
+    image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
+    container_name: thermo-onboard-connectivity-watchdog
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - onboard
+    entrypoint: ["/app/docker-entrypoint-watchdog.sh"]
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      CONNECTIVITY_LOG_PATH: /var/log/thermo-onboard/connectivity-watchdog.log
+      CONNECTIVITY_LOG_FILELIMIT: "524288"
+      CONNECTIVITY_LOG_TOTALLIMIT: "1048576"
+      CONNECTIVITY_CHECK_INTERVAL_SECS: ${CONNECTIVITY_CHECK_INTERVAL_SECS:-30}
+      CONNECTIVITY_FAIL_THRESHOLD: ${CONNECTIVITY_FAIL_THRESHOLD:-3}
+      CONNECTIVITY_HTTP_TIMEOUT_SECS: ${CONNECTIVITY_HTTP_TIMEOUT_SECS:-5}
+      CONNECTIVITY_INCIDENT_KEEP: ${CONNECTIVITY_INCIDENT_KEEP:-15}
+      ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
+      DMZ_URL: ${DMZ_URL:-http://dmz:5000}
+      TWOWAY_LOG_PATH: /var/log/thermo-onboard/twoway.log
+      CONNECTIVITY_DUMP_DIR: ${CONNECTIVITY_DUMP_DIR:-/var/log/thermo-onboard/incidents}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+    ulimits:
+      nofile:
+        soft: 256
+        hard: 512

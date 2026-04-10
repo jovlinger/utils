@@ -14,7 +14,7 @@ Two **separate** container images on **GHCR**:
 
 If a link 404s (e.g. package not linked to this repo), open [your packages](https://github.com/jovlinger?tab=packages), or go to the **utils** repo → **Packages** in the right sidebar (or **Code** → find **Packages** under the repo name on the new UI).
 
-They are started together with **Docker Compose** (`install/docker-compose.yml`): **host networking**, **hard cgroup-style limits** (memory and CPU via `deploy.resources`), bounded **ulimits** for open files, and **no Docker json log growth** (`logging: driver: none`) because each process logs **only** through **`run-with-stdout-logged.py`** into bind-mounted files under **`/var/log/thermo-onboard/`**.
+They are started together with **Docker Compose** (`install/docker-compose.yml`): **host networking**, **CPU limits** via `deploy.resources` (memory cgroup limits are not set — they are often unsupported on Raspberry Pi OS and only produce warnings), bounded **ulimits** for open files, and **no Docker json log growth** (`logging: driver: none`) because each process logs **only** through **`run-with-stdout-logged.py`** into bind-mounted files under **`/var/log/thermo-onboard/`**.
 
 ## Log files (host)
 
@@ -87,7 +87,7 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
 
 ## Resource limits
 
-Compose sets **memory** and **CPU** per service via `deploy.resources.limits` so the footprint stays bounded. If a container exceeds memory, the **OOM killer** stops it loudly (restart policy brings it back after you fix the cause). Tune `deploy.resources` and `ulimits` in `install/docker-compose.yml` for your Pi (512 MiB RAM total — leave headroom for the OS). Add `pids` limits if your Compose version supports them under `deploy.resources.limits`.
+Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is not capped in Compose (cgroup memory is unreliable on many Pi kernels); keep footprint in check with log rotation (`LOG_*LIMIT`) and host `ulimits`. Tune `deploy.resources` and `ulimits` in `install/docker-compose.yml` for your Pi. Add `pids` limits if your Compose version supports them under `deploy.resources.limits`.
 
 ## Troubleshooting
 

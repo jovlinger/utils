@@ -6,6 +6,7 @@ FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev libssl-dev python3-dev \
+    iproute2 iw \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/bin
@@ -13,9 +14,11 @@ COPY .docker-import/run-with-stdout-logged.py /app/bin/run-with-stdout-logged.py
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY twoway.py common.py zone_auth.py docker-entrypoint-twoway.sh ./
+COPY twoway.py common.py zone_auth.py connectivity_watchdog.py \
+    docker-entrypoint-twoway.sh docker-entrypoint-watchdog.sh ./
 COPY heatpumpirctl/ ./heatpumpirctl/
 
-RUN chmod +x /app/bin/run-with-stdout-logged.py /app/docker-entrypoint-twoway.sh
+RUN chmod +x /app/bin/run-with-stdout-logged.py \
+    /app/docker-entrypoint-twoway.sh /app/docker-entrypoint-watchdog.sh
 
 CMD ["./docker-entrypoint-twoway.sh"]
