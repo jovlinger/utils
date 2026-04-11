@@ -85,7 +85,7 @@ info(
     zone_name=ZONE_NAME or "(unset)",
     signing_enabled=bool(ZONE_PRIVATE_KEY and ZONE_NAME),
     timeout_secs=TIMEOUT_SECS,
-    maxfail=MAXFAIL,
+    period_max_secs=PERIOD_MAX_SECS,
     period_secs=PERIOD_SECS,
     env=os.environ.get("ENV", ""),
 )

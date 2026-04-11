@@ -41,8 +41,9 @@ build: .image.app .image.twoway
 	@docker image inspect $(IMAGE_TWOWAY):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.twoway
 
 push: build
-	@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
-	echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
+	# OR use dockerlogin function
+	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
+	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
 	docker push $(IMAGE_APP):$(TAG)
 	docker push $(IMAGE_TWOWAY):$(TAG)
 

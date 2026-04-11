@@ -2,9 +2,11 @@
 # One-shot: build linux/arm/v6 image, export dmz_rootfs.tar, assemble FAT .img; optionally dd to SD.
 #
 # Usage:
-#   ./build-and-write.sh                  # build dist/dmz.img only (no sudo, no unmount, no dd)
-#   ./build-and-write.sh /dev/rdisk4      # macOS whole disk (rdisk) + write after build
-#   ./build-and-write.sh /dev/sdb         # Linux whole disk, not partitions
+#   ./build-and-write.sh                          # build dist/dmz.img only (no sudo, no dd)
+#   ./build-and-write.sh /dev/disk4             # macOS whole disk (or /dev/rdisk4)
+#   ./build-and-write.sh /Volumes/PIBOOT        # macOS: mounted boot volume -> whole /dev/rdiskN
+#   ./build-and-write.sh /dev/sdb               # Linux whole disk
+#   ./build-and-write.sh /run/media/you/PIBOOT  # Linux: mount point -> parent disk (needs lsblk)
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
@@ -14,10 +16,10 @@
 set -eu
 
 usage() {
-	echo "Usage: $0 [BLOCK_DEVICE]" >&2
+	echo "Usage: $0 [BLOCK_DEVICE_OR_MOUNT]" >&2
 	echo "  No args: build dist/dmz.img only (no sudo / dd)." >&2
-	echo "  With device: same, then unmount (background during build) and sudo dd to disk." >&2
-	echo "  Example: $0 /dev/rdisk4" >&2
+	echo "  With device or mount dir: same, then unmount (background during build) and sudo dd to disk." >&2
+	echo "  Examples: $0 /dev/disk4   $0 /dev/rdisk4   $0 /Volumes/PIBOOT   $0 /dev/sdb" >&2
 	exit 2
 }
 
@@ -75,11 +77,74 @@ DEV=""
 DEV_CHECK=""
 
 if [ -n "$WRITE_DEV" ]; then
-	DEV="$WRITE_DEV"
-	if [ ! -e "$DEV" ]; then
-		echo "Error: $DEV does not exist." >&2
+	WRITE_SRC="$WRITE_DEV"
+	if [ ! -e "$WRITE_SRC" ]; then
+		echo "Error: $WRITE_SRC does not exist." >&2
 		exit 1
 	fi
+	# Mount point (e.g. /Volumes/PIBOOT): df -> /dev/disk4s1 or /dev/disk4 -> whole /dev/rdiskN for dd.
+	if [ ! -b "$WRITE_SRC" ]; then
+		if [ ! -d "$WRITE_SRC" ]; then
+			echo "Error: $WRITE_SRC is not a block device or a directory (mount point)." >&2
+			exit 1
+		fi
+		_df_fs=$(LC_ALL=C df -P "$WRITE_SRC" 2>/dev/null | tail -n1 | awk '{print $1}')
+		if [ -z "$_df_fs" ]; then
+			echo "Error: could not resolve backing device for $WRITE_SRC (df)." >&2
+			exit 1
+		fi
+		case "$(uname)" in
+		Darwin)
+			case "$WRITE_SRC" in
+			/Volumes/*) ;;
+			*)
+				echo "Error: on macOS pass /dev/diskN, /dev/rdiskN, or a mount under /Volumes/ (got $WRITE_SRC)." >&2
+				exit 1
+				;;
+			esac
+			case "$_df_fs" in
+			/dev/disk*)
+				_diskrest="${_df_fs#/dev/disk}"
+				case "$_diskrest" in
+				*s*)
+					_disknum="${_diskrest%%s*}"
+					WRITE_DEV="/dev/rdisk${_disknum}"
+					;;
+				*)
+					WRITE_DEV="/dev/rdisk${_diskrest}"
+					;;
+				esac
+				;;
+			*)
+				echo "Error: unexpected df device '$_df_fs' for $WRITE_SRC (expected /dev/disk*)." >&2
+				exit 1
+				;;
+			esac
+			;;
+		*)
+			case "$_df_fs" in
+			/dev/sda | /dev/sda* | /dev/nvme* | /dev/vda | /dev/vda*)
+				echo "Error: refusing to write system-looking resolved device $_df_fs" >&2
+				exit 1
+				;;
+			esac
+			if ! command -v lsblk >/dev/null 2>&1; then
+				echo "Error: lsblk not found; cannot resolve mount $WRITE_SRC to a whole disk. Pass /dev/sdX explicitly." >&2
+				exit 1
+			fi
+			_pk=$(lsblk -ndo PKNAME -- "$_df_fs" 2>/dev/null | awk 'NR==1 { print; exit }')
+			if [ -z "$_pk" ]; then
+				echo "Error: lsblk could not find parent disk for $_df_fs (mount $WRITE_SRC)." >&2
+				exit 1
+			fi
+			WRITE_DEV="/dev/${_pk}"
+			;;
+		esac
+		if [ "$WRITE_SRC" != "$WRITE_DEV" ]; then
+			ts "write target: mount $WRITE_SRC -> $WRITE_DEV (df: $_df_fs)"
+		fi
+	fi
+	DEV="$WRITE_DEV"
 	case "$DEV" in
 	/dev/sda | /dev/sda* | /dev/nvme* | /dev/vda | /dev/vda*)
 		echo "Error: refusing to write system-looking device $DEV" >&2
@@ -326,7 +391,26 @@ mkdir -p "$APKOVL_DIR/root"
 
 echo "DMZ $BUILDINFO_LINE" >"$APKOVL_DIR/etc/issue"
 
-(cd "$APKOVL_DIR" && tar -czf "$WORKDIR/dmz.apkovl.tar.gz" .)
+# macOS Docker Desktop: chown inside a container does NOT update UIDs on the macOS
+# host filesystem (virtiofs / osxfs bridge does not propagate UID changes back). So
+# we must also run tar inside the same container — that way Linux bakes 0:0 into the
+# archive rather than the macOS build user's UID (typically 501/dialout on Linux).
+ts "[6/7] apkovl ownership+modes+tar (root:root under /root, /etc/ssh)"
+docker run --rm \
+	-v "$APKOVL_DIR:/overlay" \
+	-v "$WORKDIR:/out" \
+	alpine:3.19 sh -c '
+set -e
+chown -R 0:0 /overlay/root
+chown -R 0:0 /overlay/etc/ssh
+chmod 700 /overlay/root/.ssh
+chmod 600 /overlay/root/.ssh/authorized_keys
+chmod 755 /overlay/root/network-and-sshd.sh
+test -f /overlay/root/README && chmod 644 /overlay/root/README
+chmod 600 /overlay/etc/ssh/ssh_host_ed25519_key /overlay/etc/ssh/ssh_host_rsa_key 2>/dev/null || true
+chmod 644 /overlay/etc/ssh/ssh_host_ed25519_key.pub /overlay/etc/ssh/ssh_host_rsa_key.pub 2>/dev/null || true
+tar -czf /out/dmz.apkovl.tar.gz -C /overlay .
+'
 ts "[6/7] done."
 
 ts "[7/7] FAT image (mkfs.vfat + mtools)"
@@ -376,7 +460,7 @@ echo "    Build: $BUILDINFO_LINE"
 echo ""
 
 if [ -z "$WRITE_DEV" ]; then
-	echo "SD write skipped. To flash: sudo dd if=$OUTPUT_IMG of=/dev/rdiskN bs=1m conv=sync  # macOS"
+	echo "SD write skipped. To flash: sudo dd if=$OUTPUT_IMG of=/dev/diskN bs=1m conv=sync  # macOS"
 	echo "                         or: sudo dd if=$OUTPUT_IMG of=/dev/sdX bs=4M conv=fsync    # Linux"
 	exit 0
 fi
