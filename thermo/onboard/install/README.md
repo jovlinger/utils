@@ -17,7 +17,7 @@ First-time: copy `env.example` to `.env` and set `DMZ_URL`, or set `DMZ_URL` in 
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Stack: app + twoway + connectivity-watchdog (`vcgencmd`/`vchiq` for Pi hw metrics) |
+| `docker-compose.yml` | Stack: app + twoway; optional **connectivity-watchdog** via profile `thermo-watchdog` (needs current GHCR twoway image) |
 | `deploy-compose.sh` | `docker compose pull` + `up -d` (sources `~/.local.sh`) |
 | `deploy.sh` | `git pull` (repo root) then `deploy-compose.sh` |
 | `install-systemd.sh` | Installs `thermo-onboard.service` for boot |

@@ -28,7 +28,9 @@ After deploy, on the Pi:
 | `onboard-app.log` | Flask app (`app.py`) |
 | `onboard-ui.log`  | UI server            |
 | `twoway.log`      | Twoway sync          |
+| `connectivity-watchdog.log` | Optional **connectivity-watchdog** service (see below) |
 
+**Connectivity watchdog (optional):** the `connectivity-watchdog` service uses the same image as twoway and needs `docker-entrypoint-watchdog.sh` inside that image. Until GHCR `thermo-onboard-twoway:latest` is rebuilt from the current repo, leave **`COMPOSE_PROFILES`** unset so `deploy-compose.sh` only starts app + twoway. After you `make push` (or CI builds the image), add `COMPOSE_PROFILES=thermo-watchdog` to `install/.env` or `~/.local.sh` and redeploy to start the watchdog.
 
 Rotation is handled inside the container by `run-with-stdout-logged.py` (`LOG_FILELIMIT` / `LOG_TOTALLIMIT`, default 1 MiB file / 2 MiB rotated total per stream — same idea as before).
 

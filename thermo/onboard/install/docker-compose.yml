@@ -68,7 +68,14 @@ services:
   # Same image as twoway: HTTP checks to DMZ + onboard; on sustained failure writes
   # incidents under LOG_DIR/incidents (set CONNECTIVITY_DUMP_DIR to a persistent host
   # path if THERMO_LOG_DIR is tmpfs and you need bundles after hard reboot).
+  #
+  # Profile `thermo-watchdog`: GHCR `thermo-onboard-twoway:latest` must include
+  # docker-entrypoint-watchdog.sh (rebuild/push after that file landed in the repo).
+  # Without the profile, deploy works with older images. Enable in .env or ~/.local.sh:
+  #   COMPOSE_PROFILES=thermo-watchdog
   connectivity-watchdog:
+    profiles:
+      - thermo-watchdog
     image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
     container_name: thermo-onboard-connectivity-watchdog
     network_mode: host

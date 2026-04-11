@@ -54,13 +54,32 @@ ip addr show eth0
 echo "==> full table:"
 ip route show
 
-command -v sshd >/dev/null 2>&1 || {
+# sshd must be invoked with an absolute path or re-exec fails with:
+#   "sshd reexec requires execution with absolute path"
+SSHD_BIN=""
+for _c in /usr/sbin/sshd /sbin/sshd; do
+	if [ -x "$_c" ]; then
+		SSHD_BIN="$_c"
+		break
+	fi
+done
+if [ -z "$SSHD_BIN" ]; then
 	# http:// avoids TLS verification failures on a minimal rootfs (no/missing CA certs, wrong time).
 	echo "http://dl-cdn.alpinelinux.org/alpine/v3.19/main" >/etc/apk/repositories
 	echo "http://dl-cdn.alpinelinux.org/alpine/v3.19/community" >>/etc/apk/repositories
 	apk update
 	apk add --no-cache openssh
-}
+	for _c in /usr/sbin/sshd /sbin/sshd; do
+		if [ -x "$_c" ]; then
+			SSHD_BIN="$_c"
+			break
+		fi
+	done
+fi
+if [ -z "$SSHD_BIN" ]; then
+	echo "Error: sshd not found after apk add openssh (expected /usr/sbin/sshd)." >&2
+	exit 1
+fi
 
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
@@ -99,10 +118,10 @@ SSHD_LOG=/var/log/sshd.log
 touch "$SSHD_LOG"
 chmod 644 "$SSHD_LOG"
 # -ddd ≈ LogLevel DEBUG3; -e log to stderr (here redirected); -D no daemonize (stable fd with &).
-sshd -D -ddd -e >>"$SSHD_LOG" 2>&1 &
+"$SSHD_BIN" -D -ddd -e >>"$SSHD_LOG" 2>&1 &
 echo "$!" >/run/dmz-sshd-raw.pid
 
 echo "sshd up (pubkey only, raw debug). ssh root@${ip_in}"
 echo "  log: tail -f $SSHD_LOG"
 echo '  stop: kill $(cat /run/dmz-sshd-raw.pid) 2>/dev/null || killall sshd; rm -f /run/sshd.pid'
-echo "  re-run this script after network is up, or: sshd -D -ddd -e >>${SSHD_LOG} 2>&1 &"
+echo "  re-run this script after network is up, or: $SSHD_BIN -D -ddd -e >>${SSHD_LOG} 2>&1 &"

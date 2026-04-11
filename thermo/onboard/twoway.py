@@ -73,8 +73,8 @@ ZONE_PRIVATE_KEY = os.environ.get("ZONE_PRIVATE_KEY") or os.environ.get(
 DMZ_SIGN_PATH: str = _parsed_dmz.path or "/zone/default/sensors"
 
 TIMEOUT_SECS: float = 10.0
-MAXFAIL: int = 100
 PERIOD_SECS: float = 5.0
+PERIOD_MAX_SECS: float = 60.0
 
 info(
     "twoway config",
@@ -223,19 +223,15 @@ def poll_once() -> bool:
 
 def poll_forever() -> None:
     info("twoway poll forever start")
-    attempts = MAXFAIL
     slp = PERIOD_SECS
-    while attempts > 0:
-        info(f"sleep: {slp}, attempts left {attempts}")
+    while True:
+        info(f"sleep: {slp}")
         time.sleep(slp)
         ok = poll_once()
         if ok:
-            attempts = MAXFAIL
             slp = PERIOD_SECS
         else:
-            attempts -= 1
-            slp *= 1.5
-    info("too many fail; exit")
+            slp = max(PERIOD_MAX_SECS, slp + 1)
 
 
 info("enter")
