@@ -199,7 +199,7 @@ def test_e2e_sensors_and_commands(e2e_services):
     # Send command via dmz
     r = requests.post(
         f"{DMZ_URL}/zone/{ZONE_NAME}/command",
-        json={"lolidk": "heat_22"},
+        json={"power": True, "mode": "HEAT", "temp_c": 22},
     )
     assert r.status_code == 200
 
@@ -246,7 +246,7 @@ def test_e2e_docker_compose():
     assert ZONE_NAME in zones
     assert zones[ZONE_NAME]["sensors"]["temp_centigrade"] == 19.5
     # Send command
-    r = requests.post(f"{DMZ_URL}/zone/{ZONE_NAME}/command", json={"lolidk": "heat_22"})
+    r = requests.post(f"{DMZ_URL}/zone/{ZONE_NAME}/command", json={"power": True, "mode": "HEAT", "temp_c": 22})
     assert r.status_code == 200
     time.sleep(1.5)
     # Verify command in onboard

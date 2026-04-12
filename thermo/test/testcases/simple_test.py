@@ -65,8 +65,8 @@ class External:
     def __init__(self, name="zoneymczoneface"):
         self.name = name
 
-    def issue_command(self, zone, *, lolidk):
-        return post_json(f"{b}/zone/{self.name}/command", {"lolidk": lolidk})
+    def issue_command(self, zone, *, command: dict):
+        return post_json(f"{b}/zone/{self.name}/command", command)
 
     def all_backends(self):
         r = requests.get(f"{b}/zones")

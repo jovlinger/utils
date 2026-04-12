@@ -25,7 +25,7 @@ Actions (first arg) map to app routes:
     (see onboard heatpumpirctl.State; run updatezone with no args for a full JSON example)
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
-(e.g. lolidk=heat_22 temp_centigrade=21.5).
+(e.g. mode=HEAT temp_c=22 power=true).
 
 python manage.py zones
 One zone: dump current zone JSON (from GET /zones, then print that entry)
@@ -38,7 +38,7 @@ python manage.py updatezone myzone power=true mode=HEAT half_c=45 fan=F4
 Direct POSTs (body is either key=value pairs or one JSON object string)
 
 python manage.py sensors myzone temp_centigrade=20.5
-python manage.py command myzone '{"lolidk": "heat_22"}'
+python manage.py command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
 OAuth helpers (browser-oriented; no zone signing)
 
 python manage.py login

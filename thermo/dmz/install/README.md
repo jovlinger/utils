@@ -28,6 +28,6 @@ Pi rescue **`sshd`** (after **`sh /root/network-and-sshd.sh`**) should keep the 
 | `CARD-README.txt` | Short human notes; copied to `README.txt` on FAT root. |
 | [`ROUTERBOARD-DMZ.md`](ROUTERBOARD-DMZ.md) | Home DMZ **design**: Pi outside LAN NAT, separate subnet, port **5000**, Dyndns—so topology is not re-argued from scratch. |
 
-Boot diagnostics go to **`/tmp/boot.log`** on the Pi; app output is **`/var/log/dmz.log`** (copies may appear under **`debug/`** on the SD when unmounted cleanly).
+Boot diagnostics go to **`/tmp/boot.log`** on the Pi; app output is **`/tmp/dmz_rootfs/var/log/dmz.log`** (chroot tmpfs), with **`/var/log/dmz.log`** on the host as a symlink for convenience (copies may appear under **`debug/`** on the SD when unmounted cleanly).
 
 Edit **`network.conf`** on the mounted FAT volume if the Pi is not `192.168.1.50/24` with gateway `192.168.1.1`.

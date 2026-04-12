@@ -14,17 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import jsonT, log, log_debug, log_error
 
 
-def info(msg: str, force: bool = False, **kwargs) -> None:
+def info(msg: str, **kwargs) -> None:
     """Log via common.log (same format as app)."""
     log("twoway", msg, **kwargs)
 
 
-def err(msg: str, force: bool = False, **kwargs) -> None:
+def err(msg: str, **kwargs) -> None:
     """Log at ERROR (same kwargs style as info)."""
     log_error("twoway", msg, **kwargs)
 
 
-def dbg(msg: str, force: bool = False, **kwargs) -> None:
+def dbg(msg: str, **kwargs) -> None:
     """Log at DEBUG (same kwargs style as info)."""
     log_debug("twoway", msg, **kwargs)
 
@@ -100,43 +100,6 @@ def _env_to_sensors(env: dict) -> dict:
     }
 
 
-def _lolidk_to_state(lolidk: str) -> dict:
-    """Convert DMZ lolidk string to onboard State JSON. E.g. heat_22 -> {power, mode, half_c}."""
-    from heatpumpirctl import Mode, State
-
-    lolidk = (lolidk or "").strip().lower()
-    if not lolidk or lolidk == "off":
-        return State().set_power(False).to_json()
-    parts = lolidk.split("_")
-    if len(parts) >= 2:
-        try:
-            temp = float(parts[1])
-            mode_str = parts[0]
-            mode_map = {
-                "heat": Mode.HEAT,
-                "cool": Mode.COOL,
-                "dry": Mode.DRY,
-                "auto": Mode.AUTO,
-            }
-            mode = mode_map.get(mode_str, Mode.HEAT)
-            return State().set_power(True).set_mode(mode).set_temp(temp).to_json()
-        except (ValueError, IndexError):
-            pass
-    return State().set_power(True).set_mode(Mode.AUTO).to_json()
-
-
-def _zone_state_to_daikin(zone_state: dict) -> Optional[dict]:
-    """Extract command from ZoneState and convert to onboard /daikin format."""
-    cmd = zone_state.get("command") if isinstance(zone_state, dict) else None
-    if not cmd or not isinstance(cmd, dict):
-        return None
-    lolidk = cmd.get("lolidk", "")
-    if not lolidk:
-        dbg("no lolidk in zone state: aborting post to onboard", error=zone_state)
-        return None
-    return {"command": _lolidk_to_state(lolidk)}
-
-
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:
     """Add Ed25519 signature headers if ZONE_PRIVATE_KEY is set."""
     if not ZONE_PRIVATE_KEY or not zonename:
@@ -170,7 +133,7 @@ def get_json(url: str, extra_headers: Optional[dict] = None) -> Tuple[jsonT, boo
     try:
         return (r.json(), True)
     except Exception:
-        return (f"unexpcted string response: {r.text}", False)
+        return (f"unexpected string response: {r.text}", False)
 
 
 def post_json(
@@ -187,7 +150,7 @@ def post_json(
     try:
         return (r.json(), True)
     except Exception:
-        return (f"unexpcted string response: {r.text}", False)
+        return (f"unexpected string response: {r.text}", False)
 
 
 def poll_once() -> bool:
@@ -206,15 +169,11 @@ def poll_once() -> bool:
             err("post to DMZ failed: aborting poll", error=res)
             return False
 
-        # POST to onboard /daikin with command from zone state
-        daikin_body = _zone_state_to_daikin(res)
-        if daikin_body:
-            _, ok_write = post_json(writeto, daikin_body)
-            if not ok_write:
-                err("post to onboard failed: aborting poll", error=daikin_body)
-                return False
-        else:
-            info("no daikin body in zone state: no post to onboard")
+        # POST zone state to onboard /daikin; app.py owns conversion to State
+        write_res, ok_write = post_json(writeto, res)
+        if not ok_write:
+            err("post to onboard failed: aborting poll", error=write_res, res=res)
+            return False
     except Exception as e:
         err("failed", error=str(e))
         return False

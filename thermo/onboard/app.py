@@ -14,7 +14,6 @@ from datetime import datetime
 import json
 import logging
 import os
-import sys
 from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, request
@@ -241,10 +240,12 @@ def manage_post():
 
 @app.route("/daikin", methods=["PUT", "POST"])
 def set_daikin():
-    """Accept JSON {command: State}, parse to State, send via IR only if state changed.
+    """Accept a zone state or bare command dict, convert to State, send IR if changed.
 
-    Repeated identical commands (same IR-relevant fields as last successful send) do not
-    call send_daikin_state. Returns {time, command, sent}; sent False also when unchanged.
+    Twoway posts the raw DMZ zone state ({command, sensors}); direct callers may post
+    {command: ...} or a bare command dict. The command dict keys must match
+    State.from_json() (power, mode, temp_c/half_c, fan, swing, …). Repeated identical
+    commands (same IR-relevant fields) do not re-send IR. Returns {time, command, sent}.
     """
     global _last_daikin_ir_fingerprint
     js = request.json or {}

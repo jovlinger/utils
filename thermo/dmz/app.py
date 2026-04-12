@@ -113,19 +113,6 @@ def _parse_validated_command_json(
     return parsed, None
 
 
-def _normalize_stored_command(value: Any) -> Any:
-    """Defaults for command objects (back-compat with former fixed schema)."""
-    if not isinstance(value, dict):
-        return value
-    out: Dict[str, Any] = dict(value)
-    if "created_dt" not in out:
-        out["created_dt"] = datetime.now().isoformat()
-    if "lolidk" not in out:
-        out["lolidk"] = ""
-    if "last_access_dt" not in out:
-        out["last_access_dt"] = ""
-    return out
-
 
 def _mark_command_accessed(cmd: Any) -> None:
     if isinstance(cmd, dict):
@@ -438,8 +425,7 @@ def update_command(zonename: str) -> Any:
     parsed, parse_err = _parse_validated_command_json(raw)
     if parse_err:
         return parse_err[0], parse_err[1]
-    cmd = _normalize_stored_command(parsed)
-    _append_and_trim(commands[zonename], cmd)
+    _append_and_trim(commands[zonename], parsed)
     return _zone_response(zonename, True)
 
 

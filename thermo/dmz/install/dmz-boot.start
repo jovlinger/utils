@@ -1,6 +1,7 @@
 #!/bin/sh
 # OpenRC local.d — Pi 1B: RAM Alpine + extract dmz_rootfs.tar + chroot (same tree as Docker).
-# Logs: /tmp/boot.log (host tmpfs), /var/log/dmz.log (host; bind into chroot for the app).
+# Logs: /tmp/boot.log (host tmpfs). App writes under chroot tmpfs $CHROOT_DIR/var/log/dmz.log;
+# host /var/log/dmz.log is a symlink there so "tail -f /var/log/dmz.log" on the rescue shell works.
 # Rescue: /root/network-and-sshd.sh → 192.168.88.200/24 + ssh (keys from image build).
 
 set -x
@@ -113,11 +114,14 @@ mkdir -p "$CHROOT_DIR/var/log"
 # propagating the exception out of the read loop and into proc.wait(), deadlocking
 # the logger and filling the pipe so every app thread blocks on pipe_write.
 mount -t tmpfs -o size=64m,mode=0755 tmpfs "$CHROOT_DIR/var/log"
+# Stable host path for operators (SSH on RAM Alpine, not chrooted). Same inode as chroot /var/log/dmz.log.
+rm -f /var/log/dmz.log
+ln -sf "$CHROOT_DIR/var/log/dmz.log" /var/log/dmz.log
 dump "mounts after chroot prep" sh -c 'grep dmz_rootfs /proc/mounts || true'
 pr ""
 
 pr ">>> 9/10 launch chroot: tini -> start.sh -> run-with-stdout-logged -> run.sh -> app"
-# tini/start.sh diagnostics also land in boot.log; app stream is /var/log/dmz.log via wrapper.
+# tini/start.sh diagnostics also land in boot.log; app stream is chroot /var/log/dmz.log (see symlink above).
 chroot "$CHROOT_DIR" /sbin/tini -- /app/start.sh >>"$LOG" 2>&1 &
 pr "  background pid=$!"
 pr ""

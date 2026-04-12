@@ -12,7 +12,7 @@ from app import app
 
 
 def _pathget(d: dict, path: str):
-    """Get nested dict value by dot-separated path, e.g. 'command.lolidk'."""
+    """Get nested dict value by dot-separated path, e.g. 'command.mode'."""
     for key in path.split("."):
         d = d.get(key, {}) if isinstance(d, dict) else d
     return d
@@ -47,15 +47,15 @@ class DMZTest(TestCase):
         """Multiple zones: update sensors/commands, verify last_access_dt and latest values."""
         with app.test_client() as c:
             self.reset(c)
-            self.post_200(c, "/zone/z1/command", {"lolidk": "what"})
+            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
             self.post_200(c, "/zone/z1/sensors", {"temp_centigrade": 11.45})
             self.post_200(
                 c,
                 "/zone/z2/sensors",
                 {"temp_centigrade": 21.34, "humid_percent": 99.99},
             )
-            js12 = self.post_200(c, "/zone/z1/command", {"lolidk": "make it so"})
-            self.post_200(c, "/zone/z3/command", {"lolidk": "who"})
+            js12 = self.post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
+            self.post_200(c, "/zone/z3/command", {"power": False})
 
             js13 = self.post_200(c, "/zone/z1/sensors", {"temp_centigrade": 13.34})
 
@@ -64,7 +64,7 @@ class DMZTest(TestCase):
                 js13["command"]["last_access_dt"],
                 "Expected access times to be updated on /zone/ endpoint",
             )
-            self.assertEqual("make it so", js13["command"]["lolidk"])
+            self.assertEqual("COOL", js13["command"]["mode"])
             self.assertEqual(13.34, js13["sensors"]["temp_centigrade"])
 
             js = self.get_200(c, "/zones")
@@ -72,16 +72,16 @@ class DMZTest(TestCase):
             self.assertEqual(js13, js["z1"])
 
     def test_empty_command_overwrites_then_new_command(self) -> None:
-        """POST empty command clears lolidk; subsequent command restores it."""
+        """POST command replaces previous; empty body ({}) is stored as-is."""
         with app.test_client() as c:
             self.reset(c)
-            self.post_200(c, "/zone/z1/command", {"lolidk": "what"})
+            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
             self.post_200(c, "/zone/z1/command", {})
             js = self.get_200(c, "/zones")
-            self.assertEqual("", _pathget(js["z1"], "command.lolidk"))
-            self.post_200(c, "/zone/z1/command", {"lolidk": "who"})
+            self.assertNotIn("mode", js["z1"]["command"])
+            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
             js = self.get_200(c, "/zones")
-            self.assertEqual("who", _pathget(js["z1"], "command.lolidk"))
+            self.assertEqual("COOL", _pathget(js["z1"], "command.mode"))
 
     def test_command_rejects_invalid_json(self) -> None:
         """POST /zone/.../command returns 400 when body is not valid JSON."""
@@ -109,7 +109,7 @@ class DMZTest(TestCase):
             self.reset(c)
             r = c.post(
                 "/zone/z1/command",
-                data='{"lolidk": "\\u00e9"}',
+                data='{"mode": "\\u00e9"}',
                 content_type="application/json",
             )
             self.assertEqual(r.status_code, 400)
@@ -181,38 +181,36 @@ class HappyPathOnboardTest(TestCase):
         """
         with app.test_client() as c:
             # External client sets command for zone z1 (before any onboard has polled)
-            self._post_200(c, "/zone/z1/command", {"lolidk": "heat_on"})
+            self._post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
 
             # Onboard z1 (twoway) posts sensors, gets back the command
             r1 = self._onboard_post_sensors(c, "z1", 19.5, 45.0)
-            self.assertEqual(r1["command"]["lolidk"], "heat_on")
+            self.assertEqual(r1["command"]["mode"], "HEAT")
             self.assertEqual(r1["sensors"]["temp_centigrade"], 19.5)
             self.assertEqual(r1["sensors"]["humid_percent"], 45.0)
 
             # Onboard z2 posts sensors; no command yet
             r2 = self._onboard_post_sensors(c, "z2", 21.0)
-            self.assertTrue(
-                r2.get("command") is None or r2.get("command", {}).get("lolidk") == ""
-            )
+            self.assertIsNone(r2.get("command"))
 
             # External client sets command for z2
-            self._post_200(c, "/zone/z2/command", {"lolidk": "cool_22"})
+            self._post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL"})
 
             # Onboard z2 posts again, now receives command
             r3 = self._onboard_post_sensors(c, "z2", 21.2)
-            self.assertEqual(r3["command"]["lolidk"], "cool_22")
+            self.assertEqual(r3["command"]["mode"], "COOL")
 
     def test_onboard_multiple_zones_independent(self) -> None:
         """Multiple onboard instances: each zone's sensors and commands are independent."""
         with app.test_client() as c:
-            self._post_200(c, "/zone/living/command", {"lolidk": "heat_22"})
-            self._post_200(c, "/zone/bedroom/command", {"lolidk": "off"})
+            self._post_200(c, "/zone/living/command", {"power": True, "mode": "HEAT", "temp_c": 22})
+            self._post_200(c, "/zone/bedroom/command", {"power": False})
 
             living = self._onboard_post_sensors(c, "living", 20.1, 50.0)
             bedroom = self._onboard_post_sensors(c, "bedroom", 18.5, 55.0)
 
-            self.assertEqual(living["command"]["lolidk"], "heat_22")
-            self.assertEqual(bedroom["command"]["lolidk"], "off")
+            self.assertEqual(living["command"]["mode"], "HEAT")
+            self.assertFalse(bedroom["command"]["power"])
             self.assertEqual(living["sensors"]["temp_centigrade"], 20.1)
             self.assertEqual(bedroom["sensors"]["temp_centigrade"], 18.5)
 
@@ -265,13 +263,13 @@ class HappyPathExternalClientTest(TestCase):
             self.assertEqual(zones["z2"]["sensors"]["temp_centigrade"], 22.5)
 
             # External client sets commands
-            self._post_200(c, "/zone/z1/command", {"lolidk": "heat_21"})
-            self._post_200(c, "/zone/z2/command", {"lolidk": "cool_24"})
+            self._post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 21})
+            self._post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL", "temp_c": 24})
 
             # Verify via GET (external client view)
             zones = self._get_200(c, "/zones")
-            self.assertEqual(zones["z1"]["command"]["lolidk"], "heat_21")
-            self.assertEqual(zones["z2"]["command"]["lolidk"], "cool_24")
+            self.assertEqual(zones["z1"]["command"]["mode"], "HEAT")
+            self.assertEqual(zones["z2"]["command"]["mode"], "COOL")
 
     def test_external_client_full_cycle(self) -> None:
         """
@@ -285,14 +283,14 @@ class HappyPathExternalClientTest(TestCase):
             # External client reads, sets command
             zones = self._get_200(c, "/zones")
             self.assertIn("kitchen", zones)
-            self._post_200(c, "/zone/kitchen/command", {"lolidk": "heat_20"})
+            self._post_200(c, "/zone/kitchen/command", {"power": True, "mode": "HEAT", "temp_c": 20})
 
             # Simulate onboard kitchen posting again (twoway poll)
             r = c.post(
                 "/zone/kitchen/sensors",
                 json={"temp_centigrade": 19.5, "humid_percent": 48.0},
             ).get_json()
-            self.assertEqual(r["command"]["lolidk"], "heat_20")
+            self.assertEqual(r["command"]["mode"], "HEAT")
             self.assertEqual(r["sensors"]["temp_centigrade"], 19.5)
 
 
@@ -368,7 +366,7 @@ class MachineAuthTest(TestCase):
         with app.test_client() as c:
             r = c.post(
                 "/zone/z1/command",
-                json={"lolidk": "x"},
+                json={"power": True, "mode": "HEAT"},
                 content_type="application/json",
             )
             self.assertEqual(r.status_code, 401)
@@ -398,7 +396,7 @@ class MachineAuthTest(TestCase):
         priv_pem, pub_pem = generate_keypair()
         os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
         path = "/zone/z1/command"
-        body: dict = {"lolidk": "heat_21"}
+        body: dict = {"power": True, "mode": "HEAT", "temp_c": 21}
         body_bytes = json.dumps(body).encode()
         sig, ts, zn = sign_request("POST", path, body_bytes, "z1", priv_pem.decode())
         headers = {
@@ -411,7 +409,7 @@ class MachineAuthTest(TestCase):
             r = c.post(path, data=body_bytes, headers=headers)
             self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
             js = r.get_json() or {}
-            self.assertEqual(js.get("command", {}).get("lolidk"), "heat_21")
+            self.assertEqual(js.get("command", {}).get("mode"), "HEAT")
 
     def test_signed_get_zones_accepted(self) -> None:
         """Valid signature on GET /zones succeeds when ZONE_PUBLIC_KEY is set."""

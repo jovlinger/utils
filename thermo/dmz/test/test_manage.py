@@ -19,7 +19,7 @@ class UpdatezoneNoKvTest(unittest.TestCase):
         with patch.dict(os.environ, {"DMZ_URL": "http://127.0.0.1:9"}, clear=False):
             fake_zones = {
                 "z1": {
-                    "command": {"lolidk": "heat_22"},
+                    "command": {"power": True, "mode": "HEAT", "temp_c": 22},
                     "sensors": {"temp_centigrade": 20.0},
                 }
             }
@@ -30,7 +30,7 @@ class UpdatezoneNoKvTest(unittest.TestCase):
                     code = manage._cmd_updatezone("z1", [])
                 self.assertEqual(code, 0)
                 self.assertIn("updatezone <zone>", err.getvalue())
-                self.assertIn("heat_22", out.getvalue())
+                self.assertIn("HEAT", out.getvalue())
                 self.assertIn("temp_centigrade", out.getvalue())
 
     def test_zone_missing_returns_1_after_help(self) -> None:

@@ -98,11 +98,12 @@ def test_smoke_reset_and_zones_empty(http: requests.Session) -> None:
 def test_smoke_command_round_trip(http: requests.Session) -> None:
     logger.info("case: post command, read back via /zones")
     _post_json(http, "/test_reset", {"commands": {}, "sensors": {}})
-    _post_json(http, "/zone/z1/command", {"lolidk": "smoke"})
+    _post_json(http, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 22})
     js = _get_json(http, "/zones")
     assert "z1" in js
-    assert js["z1"]["command"]["lolidk"] == "smoke"
-    logger.info("ok: z1 command lolidk=smoke")
+    assert js["z1"]["command"]["mode"] == "HEAT"
+    assert js["z1"]["command"]["power"] is True
+    logger.info("ok: z1 command mode=HEAT power=True")
 
 
 def test_smoke_debug_logs(http: requests.Session) -> None:
@@ -143,12 +144,12 @@ def test_smoke_multiple_external_command_clients(http: requests.Session) -> None
     bob = requests.Session()
     bob.headers.update(_JSON_HEADERS)
 
-    _post_json(alice, "/zone/a/command", {"lolidk": "heat_20"})
-    _post_json(bob, "/zone/b/command", {"lolidk": "cool_22"})
+    _post_json(alice, "/zone/a/command", {"power": True, "mode": "HEAT", "temp_c": 20})
+    _post_json(bob, "/zone/b/command", {"power": True, "mode": "COOL", "temp_c": 22})
 
     js = _get_json(http, "/zones")
-    assert js["a"]["command"]["lolidk"] == "heat_20"
-    assert js["b"]["command"]["lolidk"] == "cool_22"
+    assert js["a"]["command"]["mode"] == "HEAT"
+    assert js["b"]["command"]["mode"] == "COOL"
     assert js["a"]["sensors"]["temp_centigrade"] == 20.0
     assert js["b"]["sensors"]["temp_centigrade"] == 21.0
     logger.info("ok: two clients, two zones")
@@ -160,7 +161,7 @@ def test_smoke_access_log_history(http: requests.Session) -> None:
     _post_json(http, "/test_reset", {"commands": {}, "sensors": {}})
     _post_json(http, "/zone/logtest-a/sensors", {"temp_centigrade": 1.0})
     _post_json(http, "/zone/logtest-b/sensors", {"temp_centigrade": 2.0})
-    _post_json(http, "/zone/logtest-a/command", {"lolidk": "x"})
+    _post_json(http, "/zone/logtest-a/command", {"power": True})
     _get_json(http, "/zones")
 
     body = _get_json(http, "/debug/logs")

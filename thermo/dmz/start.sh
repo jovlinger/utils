@@ -1,7 +1,7 @@
 #!/bin/sh
-# Container / Pi chroot entry (root): tmpfs on /tmp only (never over all of /var/log, so a
-# bind-mounted /var/log/dmz.log stays visible — same on Pi and plain docker run). Then drop to
-# dmz with run-with-stdout-logged wrapping run.sh -> /var/log/dmz.log.
+# Container / Pi chroot entry (root): tmpfs on /tmp only (never over all of /var/log in Docker,
+# so /var/log/dmz.log stays a normal file for log rotation). Pi: dmz-boot mounts chroot var/log
+# tmpfs and symlinks host /var/log/dmz.log to that file. Then su-exec dmz + run-with-stdout-logged.
 
 set -eu
 
