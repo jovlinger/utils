@@ -1,6 +1,20 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Thermo</title></head>
+<head>
+<meta charset="utf-8">
+<title>Thermo</title>
+<style>
+  body { font-size: 1.125rem; line-height: 1.45; max-width: 52rem; }
+  h1 { font-size: 1.75rem; }
+  code, pre { font-size: 1.05rem; }
+  .setting { font-size: 1.2rem; margin: 0.55rem 0; }
+  .setting input, .setting select { font-size: 1.1rem; }
+  .manage-setting { font-size: 1.15rem; margin: 0.5rem 0; }
+  .manage-setting input, .manage-setting select { font-size: 1.05rem; }
+  .loglines { font-size: 1.1rem; line-height: 1.55; word-break: break-word; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
 <body>
 <h1>Thermo</h1>
 <p><b>Current time:</b> <code>$now_iso</code></p>
@@ -15,28 +29,30 @@
 <p><b>About</b></p>
 <p>$about_msg</p>
 <form method="post" action="/">
-  <label>Power <input type="checkbox" name="power" $power_checked></label><br>
-  <label>Mode <select name="mode">$mode_options</select></label><br>
-  <label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="5" inputmode="decimal" pattern="[0-9.]*" title="18–32°C" autocomplete="off"></label><br>
-  <label>Fan <select name="fan">$fan_options</select></label><br>
-  <label>Swing <input type="checkbox" name="swing" $swing_checked></label>
-  <label>Powerful <input type="checkbox" name="powerful" $powerful_checked></label>
-  <label>Econo <input type="checkbox" name="econo" $econo_checked></label>
-  <label>Comfort <input type="checkbox" name="comfort" $comfort_checked></label><br>
-  <label>Turn on at <input type="checkbox" name="timer_on_enable" $timer_on_checked> <input type="text" name="timer_on_minutes" value="$timer_on" size="5" placeholder="06:30" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label>
-  <label>Turn off at <input type="checkbox" name="timer_off_enable" $timer_off_checked> <input type="text" name="timer_off_minutes" value="$timer_off" size="5" placeholder="20:00" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label><br>
-  <input type="submit" value="SEND">
+  <div class="setting"><label>Power <input type="checkbox" name="power" $power_checked></label></div>
+  <div class="setting"><label>Mode <select name="mode">$mode_options</select></label></div>
+  <div class="setting"><label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="5" inputmode="decimal" pattern="[0-9.]*" title="18–32°C" autocomplete="off"></label></div>
+  <div class="setting"><label>Fan <select name="fan">$fan_options</select></label></div>
+  <div class="setting">
+    <label>Swing <input type="checkbox" name="swing" $swing_checked></label>
+    <label>Powerful <input type="checkbox" name="powerful" $powerful_checked></label>
+    <label>Econo <input type="checkbox" name="econo" $econo_checked></label>
+    <label>Comfort <input type="checkbox" name="comfort" $comfort_checked></label>
+  </div>
+  <div class="setting"><label>Turn on at <input type="checkbox" name="timer_on_enable" $timer_on_checked> <input type="text" name="timer_on_minutes" value="$timer_on" size="5" placeholder="06:30" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label></div>
+  <div class="setting"><label>Turn off at <input type="checkbox" name="timer_off_enable" $timer_off_checked> <input type="text" name="timer_off_minutes" value="$timer_off" size="5" placeholder="20:00" pattern="[0-9]{1,2}:[0-9]{2}" title="HH:MM (24h)"></label></div>
+  <div class="setting"><input type="submit" value="SEND"></div>
 </form>
 <hr>
 <p><b>Logs</b></p>
-<p>$logs</p>
+<div class="loglines">$logs</div>
 
 <hr>
 <p><b>Management</b></p>
 <p>$manage_status</p>
 <form method="post" action="/">
-  <label>Token <input type="password" name="manage_token" placeholder="(X-Manage-Token)"></label><br>
-  <label>Action
+  <div class="manage-setting"><label>Token <input type="password" name="manage_token" placeholder="(X-Manage-Token)"></label></div>
+  <div class="manage-setting"><label>Action
     <select name="manage_action">
       <option value="inject_log">inject_log</option>
       <option value="set_log_level">set_log_level</option>
@@ -45,11 +61,11 @@
       <option value="fatal">fatal</option>
       <option value="reset">reset</option>
     </select>
-  </label><br>
-  <label>Level <input type="text" name="manage_level" value="INFO" size="6"></label><br>
-  <label>Message <input type="text" name="manage_message" value="" size="30"></label><br>
-  <label>Fatal code <input type="text" name="manage_code" value="99" size="4"></label><br>
-  <input type="submit" value="RUN MANAGE">
+  </label></div>
+  <div class="manage-setting"><label>Level <input type="text" name="manage_level" value="INFO" size="6"></label></div>
+  <div class="manage-setting"><label>Message <input type="text" name="manage_message" value="" size="30"></label></div>
+  <div class="manage-setting"><label>Fatal code <input type="text" name="manage_code" value="99" size="4"></label></div>
+  <div class="manage-setting"><input type="submit" value="RUN MANAGE"></div>
 </form>
 </body>
 </html>

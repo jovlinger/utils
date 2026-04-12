@@ -4,7 +4,7 @@
 # Deploy (on the Pi or any host with this repo): from thermo/onboard run
 #   make deploy
 # That runs install/deploy.sh with REPO_PATH set to the utils checkout (git pull + deploy-compose).
-.PHONY: all build images push push_images clean test ci deploy
+.PHONY: all build images push push_images clean test test-local test-docker ci deploy
 
 IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
 IMAGE_TWOWAY := ghcr.io/jovlinger/thermo-onboard-twoway
@@ -25,6 +25,9 @@ ENTRYPOINTS := docker-entrypoint-onboard.sh docker-entrypoint-twoway.sh
 PY_SRC := $(wildcard *.py) $(wildcard heatpumpirctl/*.py)
 
 all: build
+
+# Alias for CI / thermo/test (Makefile calls `make images`).
+images: build
 
 build: .image.app .image.twoway
 
@@ -53,8 +56,16 @@ clean:
 	@rm -f .image.app .image.twoway
 	@rm -rf .docker-import
 
-test: build
+# Host venv: pytest, UI harness, daikin scripts (./test/run.sh). Does not require Docker images.
+test-local:
 	./test/run.sh
+
+# Compose / image integration lives under ../test (dockertest). Avoid duplicate image builds here.
+test-docker:
+	@echo "onboard: no standalone test-docker recipe (stack: cd ../test && make test-docker)"
+	@true
+
+test: test-local test-docker
 
 ci:
 	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \

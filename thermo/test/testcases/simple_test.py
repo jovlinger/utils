@@ -25,6 +25,13 @@ def _in_docker() -> bool:
         return False
 
 
+def _run_simple_tests() -> bool:
+    """Compose testdriver, or host with ``THERMO_RUN_SIMPLE_TEST=1`` (stack must be up)."""
+    if _in_docker():
+        return True
+    return os.environ.get("THERMO_RUN_SIMPLE_TEST", "") == "1"
+
+
 def _wait_for(url: str, *, timeout_s: float = 10.0) -> None:
     """Wait until GET url returns a 2xx/3xx or timeout."""
     start = time.time()
@@ -81,7 +88,10 @@ def reset_dmz():
     assert r.status_code == 200
 
 
-@pytest.mark.skipif(not _in_docker(), reason="requires docker-compose (dmz hostname)")
+@pytest.mark.skipif(
+    not _run_simple_tests(),
+    reason="compose (dmz resolvable) or THERMO_RUN_SIMPLE_TEST=1 with stack reachable",
+)
 def test_onboard_help():
     """Tests that we can reach onboard, and that the app is running"""
     _wait_for(f"{o}/help", timeout_s=15.0)
@@ -92,7 +102,10 @@ def test_onboard_help():
     assert "help -> this message" in js_o["msg"]
 
 
-@pytest.mark.skipif(not _in_docker(), reason="requires docker-compose (dmz hostname)")
+@pytest.mark.skipif(
+    not _run_simple_tests(),
+    reason="compose (dmz resolvable) or THERMO_RUN_SIMPLE_TEST=1 with stack reachable",
+)
 def test_dmz_backend():
     """Simple first test."""
     reset_dmz()

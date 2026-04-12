@@ -15,7 +15,7 @@ fi
 
 cd "$ONBOARD"
 . "$ONBOARD/env/bin/activate"
-python -m unittest discover -s test -p 'test_*.py'
+python -m pytest -q test
 
 bash "$SCRIPT_DIR/test_ui.sh"
 

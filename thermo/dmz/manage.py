@@ -73,6 +73,23 @@ if SCRIPT_DIR not in sys.path:
 # Repo layout: thermo/dmz/manage.py → thermo/onboard/heatpumpirctl (State)
 _ONBOARD_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "onboard"))
 
+# When heatpumpirctl is not importable (e.g. DMZ Docker image has no onboard tree), help text
+# still matches State.to_json() for the same builder chain — keep in sync with onboard.
+_FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
+    "power": True,
+    "mode": "HEAT",
+    "half_c": 45,
+    "fan": "F4",
+    "swing": True,
+    "powerful": True,
+    "econo": False,
+    "comfort": True,
+    "timer_on_active": True,
+    "timer_off_active": True,
+    "timer_on_minutes": 90,
+    "timer_off_minutes": 120,
+}
+
 
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
@@ -235,7 +252,10 @@ def _onboard_state_example_dict() -> Dict[str, Any]:
     """Fully-populated onboard heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
     if _ONBOARD_ROOT not in sys.path:
         sys.path.insert(0, _ONBOARD_ROOT)
-    from heatpumpirctl import Fan, Mode, State
+    try:
+        from heatpumpirctl import Fan, Mode, State
+    except ImportError:
+        return dict(_FALLBACK_ONBOARD_STATE_EXAMPLE)
 
     s = (
         State()

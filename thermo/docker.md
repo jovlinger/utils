@@ -12,10 +12,10 @@ docker run --rm -p 8080:8080 --tmpfs /tmp --tmpfs /var/log jovlinger/thermo/dmz
 
 ```text
 docker run --rm --workdir /app --entrypoint python jovlinger/thermo/dmz \
-  -m unittest discover -s test -p 'test_*.py'
+  -m pytest -q test
 ```
 
-Or from `**thermo/dmz**`: `make test`.
+Or from `**thermo/dmz**`: `make test-docker` (in-image pytest) or `make test-local` (host venv); `make test` runs both.
 
 ## DMZ: interactive shell (Alpine has `/bin/sh`, not `bash`)
 

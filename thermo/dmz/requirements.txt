@@ -2,3 +2,8 @@ flask
 pydantic<2
 authlib
 cryptography
+requests
+
+# below here is for testing. So far it is lightweight and we comingle with deployed code. But if this gets heaveir,
+# we will create requirements-dev.txt
+pytest

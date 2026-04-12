@@ -2,7 +2,7 @@
 
 Sub-projects are each run in their own virtualenv and `requirements.txt`. Create an `env` in each and ignore it in git.
 
-**Convention:** Scripts that need pip assert the env exists; if not, they point to `create_pipenv.sh` to generate it. One env per `utils/<dir>/env`. For `bin/`, use `bin/setup-venv.sh` (single shared `.venv`).
+**Convention:** Scripts that need pip assert the env exists; if not, they point to `create_pipenv.sh` to generate it. Use **`./create_pipenv.sh --sync <path>`** to refresh an existing venv after `requirements*.txt` changes (e.g. `thermo/Makefile` stamps). One env per `utils/<dir>/env`. For `bin/`, use `bin/setup-venv.sh` (single shared `.venv`).
 
 ## Prereq (once)
 

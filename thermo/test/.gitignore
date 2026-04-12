@@ -3,3 +3,6 @@ keys/
 
 # Makefile stamp for jovlinger/thermo/test image (see Makefile .image)
 .image
+
+# Last dockertest transcript (see dockertest.sh)
+.dockertest-last.log

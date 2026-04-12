@@ -2,435 +2,359 @@
 
 from __future__ import annotations
 
+import json
 import os
-import sys
-from unittest import TestCase
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from typing import Any
 
 from app import app
 
 
-def _pathget(d: dict, path: str):
+def _pathget(d: dict, path: str) -> Any:
     """Get nested dict value by dot-separated path, e.g. 'command.mode'."""
+    cur: Any = d
     for key in path.split("."):
-        d = d.get(key, {}) if isinstance(d, dict) else d
-    return d
+        cur = cur.get(key, {}) if isinstance(cur, dict) else cur
+    return cur
 
 
-class DMZTest(TestCase):
-    def setUp(self) -> None:
-        self.ctx = app.app_context()
-        self.ctx.push()
+def _post_200(c, url: str, body: dict) -> dict:
+    res = c.post(url, json=body)
+    assert res.status_code == 200, res.get_data(as_text=True)
+    return res.get_json() or {}
 
-    def tearDown(self) -> None:
-        self.ctx.pop()
 
-    def post_200(self, c, url: str, json: dict) -> dict:
-        res = c.post(url, json=json)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
+def _get_200(c, url: str) -> dict:
+    res = c.get(url)
+    assert res.status_code == 200, res.get_data(as_text=True)
+    return res.get_json() or {}
 
-    def get_200(self, c, url: str) -> dict:
-        res = c.get(url)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
 
-    def reset(
-        self, c, commands: dict | None = None, sensors: dict | None = None
-    ) -> None:
-        self.post_200(
-            c, "/test_reset", {"commands": commands or {}, "sensors": sensors or {}}
+def _reset(c, commands: dict | None = None, sensors: dict | None = None) -> None:
+    _post_200(c, "/test_reset", {"commands": commands or {}, "sensors": sensors or {}})
+
+
+def test_update_sensors_and_command_multi_zone(dmz_ctx: object) -> None:
+    """Multiple zones: update sensors/commands, verify last_access_dt and latest values."""
+    with app.test_client() as c:
+        _reset(c)
+        _post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
+        _post_200(c, "/zone/z1/sensors", {"temp_centigrade": 11.45})
+        _post_200(
+            c,
+            "/zone/z2/sensors",
+            {"temp_centigrade": 21.34, "humid_percent": 99.99},
+        )
+        js12 = _post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
+        _post_200(c, "/zone/z3/command", {"power": False})
+
+        js13 = _post_200(c, "/zone/z1/sensors", {"temp_centigrade": 13.34})
+
+        assert js12["command"]["last_access_dt"] != js13["command"]["last_access_dt"], (
+            "Expected access times to be updated on /zone/ endpoint"
+        )
+        assert js13["command"]["mode"] == "COOL"
+        assert js13["sensors"]["temp_centigrade"] == 13.34
+
+        js = _get_200(c, "/zones")
+        assert sorted(js.keys()) == ["z1", "z2", "z3"]
+        assert js["z1"] == js13
+
+
+def test_empty_command_overwrites_then_new_command(dmz_ctx: object) -> None:
+    """POST command replaces previous; empty body ({}) is stored as-is."""
+    with app.test_client() as c:
+        _reset(c)
+        _post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
+        _post_200(c, "/zone/z1/command", {})
+        js = _get_200(c, "/zones")
+        assert "mode" not in js["z1"]["command"]
+        _post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
+        js = _get_200(c, "/zones")
+        assert _pathget(js["z1"], "command.mode") == "COOL"
+
+
+def test_command_rejects_invalid_json(dmz_ctx: object) -> None:
+    """POST /zone/.../command returns 400 when body is not valid JSON."""
+    with app.test_client() as c:
+        _reset(c)
+        r = c.post(
+            "/zone/z1/command",
+            data="{not json",
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+        js = r.get_json() or {}
+        assert js.get("error") == "invalid JSON"
+
+
+def test_command_rejects_empty_body(dmz_ctx: object) -> None:
+    with app.test_client() as c:
+        _reset(c)
+        r = c.post("/zone/z1/command", data="", content_type="application/json")
+        assert r.status_code == 400
+        assert (r.get_json() or {}).get("error") == "empty body"
+
+
+def test_command_rejects_non_ascii_string(dmz_ctx: object) -> None:
+    """JSON string values must be 7-bit ASCII only."""
+    with app.test_client() as c:
+        _reset(c)
+        r = c.post(
+            "/zone/z1/command",
+            data='{"mode": "\\u00e9"}',
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+        err = (r.get_json() or {}).get("error", "")
+        assert "ASCII" in err
+
+
+def test_command_rejects_non_ascii_object_key(dmz_ctx: object) -> None:
+    with app.test_client() as c:
+        _reset(c)
+        r = c.post(
+            "/zone/z1/command",
+            data='{"\\u00e9": "x"}',
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+
+
+def test_command_accepts_arbitrary_object_keys(dmz_ctx: object) -> None:
+    """Command body may include any ASCII-only keys on a JSON object."""
+    with app.test_client() as c:
+        _reset(c)
+        body = {"mode": "HEAT", "power": True, "temp_c": 21}
+        js = _post_200(c, "/zone/z1/command", body)
+        assert js["command"]["mode"] == "HEAT"
+        assert js["command"]["power"] is True
+        assert js["command"]["temp_c"] == 21
+
+
+def _onboard_post_sensors(
+    c, zone: str, temp: float, humid: float | None = None
+) -> dict:
+    body: dict = {"temp_centigrade": temp}
+    if humid is not None:
+        body["humid_percent"] = humid
+    return c.post(f"/zone/{zone}/sensors", json=body).get_json() or {}
+
+
+def test_onboard_zones_poll_sensors_receive_commands(dmz_ctx: object) -> None:
+    """
+    External client sets command for z1. Onboard z1 posts sensors, receives command.
+    Onboard z2 posts sensors, has no command. External client sets command for z2.
+    """
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        _post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
+
+        r1 = _onboard_post_sensors(c, "z1", 19.5, 45.0)
+        assert r1["command"]["mode"] == "HEAT"
+        assert r1["sensors"]["temp_centigrade"] == 19.5
+        assert r1["sensors"]["humid_percent"] == 45.0
+
+        r2 = _onboard_post_sensors(c, "z2", 21.0)
+        assert r2.get("command") is None
+
+        _post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL"})
+
+        r3 = _onboard_post_sensors(c, "z2", 21.2)
+        assert r3["command"]["mode"] == "COOL"
+
+
+def test_onboard_multiple_zones_independent(dmz_ctx: object) -> None:
+    """Multiple onboard instances: each zone's sensors and commands are independent."""
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        _post_200(
+            c, "/zone/living/command", {"power": True, "mode": "HEAT", "temp_c": 22}
+        )
+        _post_200(c, "/zone/bedroom/command", {"power": False})
+
+        living = _onboard_post_sensors(c, "living", 20.1, 50.0)
+        bedroom = _onboard_post_sensors(c, "bedroom", 18.5, 55.0)
+
+        assert living["command"]["mode"] == "HEAT"
+        assert bedroom["command"]["power"] is False
+        assert living["sensors"]["temp_centigrade"] == 20.1
+        assert bedroom["sensors"]["temp_centigrade"] == 18.5
+
+
+def test_external_client_reads_state_updates_commands(dmz_ctx: object) -> None:
+    """
+    Onboard zones have posted sensors. External client GETs /zones, sees state.
+    External client POSTs commands. Next onboard poll will receive them.
+    """
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        c.post(
+            "/zone/z1/sensors",
+            json={"temp_centigrade": 20.0, "humid_percent": 40.0},
+        )
+        c.post("/zone/z2/sensors", json={"temp_centigrade": 22.5})
+
+        zones = _get_200(c, "/zones")
+        assert set(zones.keys()) == {"z1", "z2"}
+        assert zones["z1"]["sensors"]["temp_centigrade"] == 20.0
+        assert zones["z2"]["sensors"]["temp_centigrade"] == 22.5
+
+        _post_200(
+            c, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 21}
+        )
+        _post_200(
+            c, "/zone/z2/command", {"power": True, "mode": "COOL", "temp_c": 24}
         )
 
-    def test_update_sensors_and_command_multi_zone(self) -> None:
-        """Multiple zones: update sensors/commands, verify last_access_dt and latest values."""
-        with app.test_client() as c:
-            self.reset(c)
-            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
-            self.post_200(c, "/zone/z1/sensors", {"temp_centigrade": 11.45})
-            self.post_200(
-                c,
-                "/zone/z2/sensors",
-                {"temp_centigrade": 21.34, "humid_percent": 99.99},
-            )
-            js12 = self.post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
-            self.post_200(c, "/zone/z3/command", {"power": False})
-
-            js13 = self.post_200(c, "/zone/z1/sensors", {"temp_centigrade": 13.34})
-
-            self.assertNotEqual(
-                js12["command"]["last_access_dt"],
-                js13["command"]["last_access_dt"],
-                "Expected access times to be updated on /zone/ endpoint",
-            )
-            self.assertEqual("COOL", js13["command"]["mode"])
-            self.assertEqual(13.34, js13["sensors"]["temp_centigrade"])
-
-            js = self.get_200(c, "/zones")
-            self.assertEqual(["z1", "z2", "z3"], sorted(js.keys()))
-            self.assertEqual(js13, js["z1"])
-
-    def test_empty_command_overwrites_then_new_command(self) -> None:
-        """POST command replaces previous; empty body ({}) is stored as-is."""
-        with app.test_client() as c:
-            self.reset(c)
-            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
-            self.post_200(c, "/zone/z1/command", {})
-            js = self.get_200(c, "/zones")
-            self.assertNotIn("mode", js["z1"]["command"])
-            self.post_200(c, "/zone/z1/command", {"power": True, "mode": "COOL"})
-            js = self.get_200(c, "/zones")
-            self.assertEqual("COOL", _pathget(js["z1"], "command.mode"))
-
-    def test_command_rejects_invalid_json(self) -> None:
-        """POST /zone/.../command returns 400 when body is not valid JSON."""
-        with app.test_client() as c:
-            self.reset(c)
-            r = c.post(
-                "/zone/z1/command",
-                data="{not json",
-                content_type="application/json",
-            )
-            self.assertEqual(r.status_code, 400)
-            js = r.get_json() or {}
-            self.assertEqual(js.get("error"), "invalid JSON")
-
-    def test_command_rejects_empty_body(self) -> None:
-        with app.test_client() as c:
-            self.reset(c)
-            r = c.post("/zone/z1/command", data="", content_type="application/json")
-            self.assertEqual(r.status_code, 400)
-            self.assertEqual((r.get_json() or {}).get("error"), "empty body")
-
-    def test_command_rejects_non_ascii_string(self) -> None:
-        """JSON string values must be 7-bit ASCII only."""
-        with app.test_client() as c:
-            self.reset(c)
-            r = c.post(
-                "/zone/z1/command",
-                data='{"mode": "\\u00e9"}',
-                content_type="application/json",
-            )
-            self.assertEqual(r.status_code, 400)
-            err = (r.get_json() or {}).get("error", "")
-            self.assertIn("ASCII", err)
-
-    def test_command_rejects_non_ascii_object_key(self) -> None:
-        with app.test_client() as c:
-            self.reset(c)
-            r = c.post(
-                "/zone/z1/command",
-                data='{"\\u00e9": "x"}',
-                content_type="application/json",
-            )
-            self.assertEqual(r.status_code, 400)
-
-    def test_command_accepts_arbitrary_object_keys(self) -> None:
-        """Command body may include any ASCII-only keys on a JSON object."""
-        with app.test_client() as c:
-            self.reset(c)
-            body = {"mode": "HEAT", "power": True, "temp_c": 21}
-            js = self.post_200(c, "/zone/z1/command", body)
-            self.assertEqual(js["command"]["mode"], "HEAT")
-            self.assertTrue(js["command"]["power"])
-            self.assertEqual(js["command"]["temp_c"], 21)
+        zones = _get_200(c, "/zones")
+        assert zones["z1"]["command"]["mode"] == "HEAT"
+        assert zones["z2"]["command"]["mode"] == "COOL"
 
 
-class HappyPathOnboardTest(TestCase):
+def test_external_client_full_cycle(dmz_ctx: object) -> None:
     """
-    Simulate onboard instances (via twoway) reading commands and updating sensors.
-    Each zone POSTs sensors to /zone/<name>/sensors and receives back the latest command.
+    Full cycle: onboard posts -> external reads -> external sets command ->
+    onboard posts again and receives command.
     """
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        c.post("/zone/kitchen/sensors", json={"temp_centigrade": 19.0})
 
-    def setUp(self) -> None:
-        self.ctx = app.app_context()
-        self.ctx.push()
-        self._reset()
+        zones = _get_200(c, "/zones")
+        assert "kitchen" in zones
+        _post_200(
+            c,
+            "/zone/kitchen/command",
+            {"power": True, "mode": "HEAT", "temp_c": 20},
+        )
 
-    def tearDown(self) -> None:
-        self.ctx.pop()
-
-    def _reset(self) -> None:
-        with app.test_client() as c:
-            c.post("/test_reset", json={"commands": {}, "sensors": {}})
-
-    def _onboard_post_sensors(
-        self, c, zone: str, temp: float, humid: float | None = None
-    ) -> dict:
-        """Simulate onboard zone posting sensor data; returns zone state (command + sensors)."""
-        body: dict = {"temp_centigrade": temp}
-        if humid is not None:
-            body["humid_percent"] = humid
-        return c.post(f"/zone/{zone}/sensors", json=body).get_json() or {}
-
-    def _post_200(self, c, url: str, json: dict) -> dict:
-        res = c.post(url, json=json)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
-
-    def _get_200(self, c, url: str) -> dict:
-        res = c.get(url)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
-
-    def test_onboard_zones_poll_sensors_receive_commands(self) -> None:
-        """
-        External client sets command for z1. Onboard z1 posts sensors, receives command.
-        Onboard z2 posts sensors, has no command. External client sets command for z2.
-        """
-        with app.test_client() as c:
-            # External client sets command for zone z1 (before any onboard has polled)
-            self._post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT"})
-
-            # Onboard z1 (twoway) posts sensors, gets back the command
-            r1 = self._onboard_post_sensors(c, "z1", 19.5, 45.0)
-            self.assertEqual(r1["command"]["mode"], "HEAT")
-            self.assertEqual(r1["sensors"]["temp_centigrade"], 19.5)
-            self.assertEqual(r1["sensors"]["humid_percent"], 45.0)
-
-            # Onboard z2 posts sensors; no command yet
-            r2 = self._onboard_post_sensors(c, "z2", 21.0)
-            self.assertIsNone(r2.get("command"))
-
-            # External client sets command for z2
-            self._post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL"})
-
-            # Onboard z2 posts again, now receives command
-            r3 = self._onboard_post_sensors(c, "z2", 21.2)
-            self.assertEqual(r3["command"]["mode"], "COOL")
-
-    def test_onboard_multiple_zones_independent(self) -> None:
-        """Multiple onboard instances: each zone's sensors and commands are independent."""
-        with app.test_client() as c:
-            self._post_200(c, "/zone/living/command", {"power": True, "mode": "HEAT", "temp_c": 22})
-            self._post_200(c, "/zone/bedroom/command", {"power": False})
-
-            living = self._onboard_post_sensors(c, "living", 20.1, 50.0)
-            bedroom = self._onboard_post_sensors(c, "bedroom", 18.5, 55.0)
-
-            self.assertEqual(living["command"]["mode"], "HEAT")
-            self.assertFalse(bedroom["command"]["power"])
-            self.assertEqual(living["sensors"]["temp_centigrade"], 20.1)
-            self.assertEqual(bedroom["sensors"]["temp_centigrade"], 18.5)
+        r = c.post(
+            "/zone/kitchen/sensors",
+            json={"temp_centigrade": 19.5, "humid_percent": 48.0},
+        ).get_json()
+        assert r["command"]["mode"] == "HEAT"
+        assert r["sensors"]["temp_centigrade"] == 19.5
 
 
-class HappyPathExternalClientTest(TestCase):
-    """
-    Simulate external client: reading all zone state (GET /zones) and updating commands
-    (POST /zone/<name>/command).
-    """
-
-    def setUp(self) -> None:
-        self.ctx = app.app_context()
-        self.ctx.push()
-        self._reset()
-
-    def tearDown(self) -> None:
-        self.ctx.pop()
-
-    def _reset(self) -> None:
-        with app.test_client() as c:
-            c.post("/test_reset", json={"commands": {}, "sensors": {}})
-
-    def _post_200(self, c, url: str, json: dict) -> dict:
-        res = c.post(url, json=json)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
-
-    def _get_200(self, c, url: str) -> dict:
-        res = c.get(url)
-        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        return res.get_json() or {}
-
-    def test_external_client_reads_state_updates_commands(self) -> None:
-        """
-        Onboard zones have posted sensors. External client GETs /zones, sees state.
-        External client POSTs commands. Next onboard poll will receive them.
-        """
-        with app.test_client() as c:
-            # Simulate onboard zones having posted sensors
-            c.post(
-                "/zone/z1/sensors",
-                json={"temp_centigrade": 20.0, "humid_percent": 40.0},
-            )
-            c.post("/zone/z2/sensors", json={"temp_centigrade": 22.5})
-
-            # External client reads all zones
-            zones = self._get_200(c, "/zones")
-            self.assertEqual(set(zones.keys()), {"z1", "z2"})
-            self.assertEqual(zones["z1"]["sensors"]["temp_centigrade"], 20.0)
-            self.assertEqual(zones["z2"]["sensors"]["temp_centigrade"], 22.5)
-
-            # External client sets commands
-            self._post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 21})
-            self._post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL", "temp_c": 24})
-
-            # Verify via GET (external client view)
-            zones = self._get_200(c, "/zones")
-            self.assertEqual(zones["z1"]["command"]["mode"], "HEAT")
-            self.assertEqual(zones["z2"]["command"]["mode"], "COOL")
-
-    def test_external_client_full_cycle(self) -> None:
-        """
-        Full cycle: onboard posts -> external reads -> external sets command ->
-        onboard posts again and receives command.
-        """
-        with app.test_client() as c:
-            # Onboard z1 posts sensors
-            c.post("/zone/kitchen/sensors", json={"temp_centigrade": 19.0})
-
-            # External client reads, sets command
-            zones = self._get_200(c, "/zones")
-            self.assertIn("kitchen", zones)
-            self._post_200(c, "/zone/kitchen/command", {"power": True, "mode": "HEAT", "temp_c": 20})
-
-            # Simulate onboard kitchen posting again (twoway poll)
-            r = c.post(
-                "/zone/kitchen/sensors",
-                json={"temp_centigrade": 19.5, "humid_percent": 48.0},
-            ).get_json()
-            self.assertEqual(r["command"]["mode"], "HEAT")
-            self.assertEqual(r["sensors"]["temp_centigrade"], 19.5)
-
-
-class DebugLogsTest(TestCase):
-    """Access log circular buffer and GET /debug/logs."""
-
-    def setUp(self) -> None:
-        self.ctx = app.app_context()
-        self.ctx.push()
-
-    def tearDown(self) -> None:
-        self.ctx.pop()
-
-    def test_debug_logs_returns_access_entries(self) -> None:
-        """Each request is logged; GET /debug/logs returns them."""
-        with app.test_client() as c:
-            c.post("/test_reset", json={"commands": {}, "sensors": {}})
-            c.post("/zone/z1/sensors", json={"temp_centigrade": 20.0})
-            c.get("/zones")
-            r = c.get("/debug/logs").get_json()
+def test_debug_logs_returns_access_entries(dmz_ctx: object) -> None:
+    """Each request is logged; GET /debug/logs returns them."""
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        c.post("/zone/z1/sensors", json={"temp_centigrade": 20.0})
+        c.get("/zones")
+        r = c.get("/debug/logs").get_json()
         logs = r["logs"]
-        self.assertGreaterEqual(len(logs), 3)
+        assert len(logs) >= 3
         methods = {e["method"] for e in logs}
-        self.assertIn("POST", methods)
-        self.assertIn("GET", methods)
+        assert "POST" in methods
+        assert "GET" in methods
         paths = [e["path"] for e in logs]
-        self.assertIn("/zone/z1/sensors", paths)
-        self.assertIn("/zones", paths)
-        # Second GET /debug/logs so first one is logged and appears in response
+        assert "/zone/z1/sensors" in paths
+        assert "/zones" in paths
         r2 = c.get("/debug/logs").get_json()
         paths2 = [e["path"] for e in r2["logs"]]
-        self.assertIn("/debug/logs", paths2)
+        assert "/debug/logs" in paths2
         for e in logs:
-            self.assertIn("status", e)
-            self.assertIn("ts", e)
+            assert "status" in e
+            assert "ts" in e
 
 
-class MachineAuthTest(TestCase):
-    """Ed25519 machine auth: unsigned requests rejected when ZONE_PUBLIC_KEY set."""
+def test_unsigned_request_rejected_when_auth_required(
+    dmz_ctx: object, restore_zone_public_key: object
+) -> None:
+    """When ZONE_PUBLIC_KEY is set, POST without signature returns 401."""
+    from zone_auth import generate_keypair
 
-    def setUp(self) -> None:
-        self.ctx = app.app_context()
-        self.ctx.push()
-        self._orig = os.environ.get("ZONE_PUBLIC_KEY")
-
-    def tearDown(self) -> None:
-        if self._orig is not None:
-            os.environ["ZONE_PUBLIC_KEY"] = self._orig
-        elif "ZONE_PUBLIC_KEY" in os.environ:
-            del os.environ["ZONE_PUBLIC_KEY"]
-        self.ctx.pop()
-
-    def test_unsigned_request_rejected_when_auth_required(self) -> None:
-        """When ZONE_PUBLIC_KEY is set, POST without signature returns 401."""
-        from zone_auth import generate_keypair
-
-        _, pub_pem = generate_keypair()
-        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
-        with app.test_client() as c:
-            r = c.post(
-                "/zone/z1/sensors",
-                json={"temp_centigrade": 20.0},
-                content_type="application/json",
-            )
-            self.assertEqual(r.status_code, 401)
-
-    def test_unsigned_command_rejected_when_auth_required(self) -> None:
-        """When ZONE_PUBLIC_KEY is set, POST /zone/.../command without signature returns 401."""
-        from zone_auth import generate_keypair
-
-        _, pub_pem = generate_keypair()
-        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
-        with app.test_client() as c:
-            r = c.post(
-                "/zone/z1/command",
-                json={"power": True, "mode": "HEAT"},
-                content_type="application/json",
-            )
-            self.assertEqual(r.status_code, 401)
-
-    def test_unsigned_get_zones_rejected_when_auth_required(self) -> None:
-        """When ZONE_PUBLIC_KEY is set, GET /zones without signature returns 401 (OAuth off)."""
-        from zone_auth import generate_keypair
-
-        _, pub_pem = generate_keypair()
-        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
-        with app.test_client() as c:
-            r = c.get("/zones")
-            self.assertEqual(r.status_code, 401)
-
-    def test_signed_post_command_accepted(self) -> None:
-        """Valid Ed25519 signature on POST /zone/<z>/command succeeds when ZONE_PUBLIC_KEY set."""
-        import json
-
-        from zone_auth import (
-            HEADER_SIGNATURE,
-            HEADER_TIMESTAMP,
-            HEADER_ZONE,
-            generate_keypair,
-            sign_request,
+    _, pub_pem = generate_keypair()
+    os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    with app.test_client() as c:
+        r = c.post(
+            "/zone/z1/sensors",
+            json={"temp_centigrade": 20.0},
+            content_type="application/json",
         )
+        assert r.status_code == 401
 
-        priv_pem, pub_pem = generate_keypair()
-        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
-        path = "/zone/z1/command"
-        body: dict = {"power": True, "mode": "HEAT", "temp_c": 21}
-        body_bytes = json.dumps(body).encode()
-        sig, ts, zn = sign_request("POST", path, body_bytes, "z1", priv_pem.decode())
-        headers = {
-            HEADER_SIGNATURE: sig,
-            HEADER_TIMESTAMP: ts,
-            HEADER_ZONE: zn,
-            "Content-Type": "application/json",
-        }
-        with app.test_client() as c:
-            r = c.post(path, data=body_bytes, headers=headers)
-            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-            js = r.get_json() or {}
-            self.assertEqual(js.get("command", {}).get("mode"), "HEAT")
 
-    def test_signed_get_zones_accepted(self) -> None:
-        """Valid signature on GET /zones succeeds when ZONE_PUBLIC_KEY is set."""
-        from zone_auth import (
-            HEADER_SIGNATURE,
-            HEADER_TIMESTAMP,
-            HEADER_ZONE,
-            generate_keypair,
-            sign_request,
+def test_unsigned_command_rejected_when_auth_required(
+    dmz_ctx: object, restore_zone_public_key: object
+) -> None:
+    """When ZONE_PUBLIC_KEY is set, POST /zone/.../command without signature returns 401."""
+    from zone_auth import generate_keypair
+
+    _, pub_pem = generate_keypair()
+    os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    with app.test_client() as c:
+        r = c.post(
+            "/zone/z1/command",
+            json={"power": True, "mode": "HEAT"},
+            content_type="application/json",
         )
+        assert r.status_code == 401
 
-        priv_pem, pub_pem = generate_keypair()
-        os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
-        path = "/zones"
-        body_bytes = b""
-        sig, ts, zn = sign_request("GET", path, body_bytes, "z1", priv_pem.decode())
-        headers = {
-            HEADER_SIGNATURE: sig,
-            HEADER_TIMESTAMP: ts,
-            HEADER_ZONE: zn,
-        }
-        with app.test_client() as c:
-            r = c.get(path, headers=headers)
-            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+def test_unsigned_get_zones_rejected_when_auth_required(
+    dmz_ctx: object, restore_zone_public_key: object
+) -> None:
+    """When ZONE_PUBLIC_KEY is set, GET /zones without signature returns 401 (OAuth off)."""
+    from zone_auth import generate_keypair
+
+    _, pub_pem = generate_keypair()
+    os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    with app.test_client() as c:
+        r = c.get("/zones")
+        assert r.status_code == 401
+
+
+def test_signed_post_command_accepted(dmz_ctx: object, restore_zone_public_key: object) -> None:
+    """Valid Ed25519 signature on POST /zone/<z>/command succeeds when ZONE_PUBLIC_KEY set."""
+    from zone_auth import (
+        HEADER_SIGNATURE,
+        HEADER_TIMESTAMP,
+        HEADER_ZONE,
+        generate_keypair,
+        sign_request,
+    )
+
+    priv_pem, pub_pem = generate_keypair()
+    os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    path = "/zone/z1/command"
+    body: dict = {"power": True, "mode": "HEAT", "temp_c": 21}
+    body_bytes = json.dumps(body).encode()
+    sig, ts, zn = sign_request("POST", path, body_bytes, "z1", priv_pem.decode())
+    headers = {
+        HEADER_SIGNATURE: sig,
+        HEADER_TIMESTAMP: ts,
+        HEADER_ZONE: zn,
+        "Content-Type": "application/json",
+    }
+    with app.test_client() as c:
+        r = c.post(path, data=body_bytes, headers=headers)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        js = r.get_json() or {}
+        assert js.get("command", {}).get("mode") == "HEAT"
+
+
+def test_signed_get_zones_accepted(dmz_ctx: object, restore_zone_public_key: object) -> None:
+    """Valid signature on GET /zones succeeds when ZONE_PUBLIC_KEY is set."""
+    from zone_auth import (
+        HEADER_SIGNATURE,
+        HEADER_TIMESTAMP,
+        HEADER_ZONE,
+        generate_keypair,
+        sign_request,
+    )
+
+    priv_pem, pub_pem = generate_keypair()
+    os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    path = "/zones"
+    body_bytes = b""
+    sig, ts, zn = sign_request("GET", path, body_bytes, "z1", priv_pem.decode())
+    headers = {
+        HEADER_SIGNATURE: sig,
+        HEADER_TIMESTAMP: ts,
+        HEADER_ZONE: zn,
+    }
+    with app.test_client() as c:
+        r = c.get(path, headers=headers)
+        assert r.status_code == 200, r.get_data(as_text=True)

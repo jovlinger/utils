@@ -32,7 +32,7 @@ Accepts JSON with a `command` object (or a top-level command dict), parses it as
 
 ## `GET /logs`
 
-Returns JSON with up to the last 200 lines of the log file at `LOG_PATH` (key `lines`), or empty lines if the path is missing or unreadable.
+Returns JSON with up to the last 200 lines of the log file at `LOG_PATH` (key `lines`), or empty lines if the path is missing or unreadable. Lines are ordered **newest first** (reverse chronological within the tail window).
 
 ## `GET /manage`
 

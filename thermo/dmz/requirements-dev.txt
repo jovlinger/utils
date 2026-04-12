@@ -1,3 +1,2 @@
-# Host / smoketest only — not installed in the Pi/runtime Docker image.
-pytest
-requests
+# Host venv (e.g. smoketest): same as runtime + tests; add host-only pins below if needed.
+-r requirements.txt

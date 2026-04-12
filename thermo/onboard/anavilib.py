@@ -8,34 +8,130 @@ This library will require system libraries like i2c to be installed,
 and hopefully described in onboard/README.md
 """
 
+from __future__ import annotations
+
+import hashlib
 import os
 import subprocess
-import sys
 import tempfile
+from typing import Any
 
-from common import is_test_env
+from common import is_test_env, log, log_debug, log_error
 
 LIRC_TX = "/dev/lirc0"
+IR_KIND = "heatpump_ir"
+IR_DIALECT = "Daikin/ARC452A9"
+IR_DEVICE = "lirc:%s" % LIRC_TX
 
 
-def send_daikin_state(state) -> bool:
+def _state_summary(state: Any) -> str:
+    fn = getattr(state, "summary", None)
+    if callable(fn):
+        try:
+            return str(fn())
+        except Exception:
+            pass
+    return repr(state)
+
+
+def _payload_sha256(mode2: str) -> str:
+    return hashlib.sha256(mode2.encode("utf-8")).hexdigest()
+
+
+def send_daikin_state(state: Any) -> bool:
     """Send Daikin IR state via ir-ctl. Return True if sent, False on error."""
     if is_test_env():
+        log_debug(
+            "ir",
+            "send_skipped",
+            kind=IR_KIND,
+            dialect=IR_DIALECT,
+            device=IR_DEVICE,
+            reason="test_env",
+            state_summary=_state_summary(state),
+        )
         return True
+
     from heatpumpirctl import ARC452A9 as proto
 
+    log_debug(
+        "ir",
+        "encode_start",
+        kind=IR_KIND,
+        dialect=IR_DIALECT,
+        device=IR_DEVICE,
+        state_summary=_state_summary(state),
+    )
     try:
         mode2 = proto.dumps(state)
+    except Exception as e:
+        log_error(
+            "ir",
+            "encode_failed",
+            kind=IR_KIND,
+            dialect=IR_DIALECT,
+            device=IR_DEVICE,
+            error=str(e),
+        )
+        return False
+
+    digest = _payload_sha256(mode2)
+    first_line = mode2.split("\n", 1)[0] if mode2 else ""
+    line_count = mode2.count("\n") + (1 if mode2 else 0)
+    log_debug(
+        "ir",
+        "encoded",
+        kind=IR_KIND,
+        dialect=IR_DIALECT,
+        device=IR_DEVICE,
+        mode2_bytes=len(mode2.encode("utf-8")),
+        mode2_lines=line_count,
+        sha256=digest,
+        first_line_preview=first_line[:160],
+    )
+
+    try:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(mode2)
             path = f.name
         try:
-            subprocess.run(["ir-ctl", "-d", LIRC_TX, "--send", path], check=True)
+            log(
+                "ir",
+                "ir_send",
+                kind=IR_KIND,
+                dialect=IR_DIALECT,
+                device=IR_DEVICE,
+                payload_sha256_prefix=digest[:16],
+            )
+            argv = ["ir-ctl", "-d", LIRC_TX, "--send", path]
+            log_debug(
+                "ir",
+                "ir_ctl_invoke",
+                kind=IR_KIND,
+                dialect=IR_DIALECT,
+                argv=argv,
+            )
+            subprocess.run(argv, check=True)
+            log_debug(
+                "ir",
+                "ir_ctl_sent_ok",
+                kind=IR_KIND,
+                dialect=IR_DIALECT,
+                device=IR_DEVICE,
+            )
             return True
         finally:
             os.unlink(path)
     except (FileNotFoundError, OSError, subprocess.CalledProcessError) as e:
-        print("Daikin send error: %s" % e, file=sys.stderr)
+        log_error(
+            "ir",
+            "ir_ctl_failed",
+            kind=IR_KIND,
+            dialect=IR_DIALECT,
+            device=IR_DEVICE,
+            payload_sha256_prefix=digest[:16],
+            error=str(e),
+        )
         return False
 
 

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Host venv, unittest against source (Flask test_client + layout): no running container.
-# CI / parity with image: `make test` from thermo/dmz (unittest in Docker).
+# Host venv, pytest against source (Flask test_client + layout): no running container.
+# CI / parity with image: `make test-docker` from thermo/dmz (pytest in Docker).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -15,4 +15,4 @@ fi
 cd "$DMZ"
 # shellcheck source=/dev/null
 . "$DMZ/env/bin/activate"
-python -m unittest discover -s test -p 'test_*.py' -q
+python -m pytest -q

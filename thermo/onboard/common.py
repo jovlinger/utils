@@ -91,7 +91,7 @@ def _emit(component: str, msg: str, level: int, **kwargs: Any) -> None:
 
 
 def log(component: str, msg: str, **kwargs: Any) -> None:
-    """Single-line log at INFO. component is 'app' or 'twoway'."""
+    """Single-line log at INFO. component is e.g. 'app', 'twoway', or 'ir'."""
     _emit(component, msg, logging.INFO, **kwargs)
 
 

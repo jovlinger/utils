@@ -33,6 +33,7 @@ def dbg(msg: str, **kwargs) -> None:
     """Log at DEBUG (same kwargs style as info)."""
     log_debug("app", msg, **kwargs)
 
+
 c = defaultdict(lambda: 0)
 
 MANAGE_TOKEN_ENVVAR = "MANAGE_TOKEN"
@@ -86,7 +87,12 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         if not isinstance(level, int):
             return {"error": "invalid level"}, 400
         logger.log(level, "manage: injected log message=%r", message)
-        return {"ok": True, "action": action, "level": level_name, "message": message}, 200
+        return {
+            "ok": True,
+            "action": action,
+            "level": level_name,
+            "message": message,
+        }, 200
 
     if action == "assert":
         msg = str(payload.get("message", "management assertion failure"))
@@ -112,10 +118,11 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         return {"ok": True, "action": action, "level": updated}, 200
 
     if action == "reset":
-        global _fake_temp, _fake_humid, _last_daikin_ir_fingerprint
+        global _fake_temp, _fake_humid, _last_daikin_ir_fingerprint, _last_applied_state
         _fake_temp = None
         _fake_humid = None
         _last_daikin_ir_fingerprint = None
+        _last_applied_state = None
         daikin_cmds.clear()
         out("management reset state")
         return {"ok": True, "action": action}, 200
@@ -147,9 +154,8 @@ def _round1(x: Optional[float]) -> Optional[float]:
     return round(x, 1) if x is not None else None
 
 
-@app.route("/environment", methods=["GET"])
-def environment():
-    """Return current temperature and humidity from HTU21D sensor (1 decimal)."""
+def _environment_dict() -> Dict[str, Any]:
+    """Current environment payload (same shape as GET /environment)."""
     global _fake_temp, _fake_humid
     ts = datetime.now()
     if _fake_temp is not None and _fake_humid is not None:
@@ -176,6 +182,12 @@ def environment():
         }
 
 
+@app.route("/environment", methods=["GET"])
+def environment():
+    """Return current temperature and humidity from HTU21D sensor (1 decimal)."""
+    return _environment_dict()
+
+
 @app.route("/test/inject_readings", methods=["POST"])
 def test_inject_readings():
     """Set fake sensor values for testing. Body: {temp_centigrade, humid_percent}."""
@@ -186,6 +198,18 @@ def test_inject_readings():
     _fake_temp = js.get("temp_centigrade")
     _fake_humid = js.get("humid_percent")
     return {"temp_centigrade": _fake_temp, "humid_percent": _fake_humid}
+
+
+@app.route("/test/reset", methods=["POST"])
+def test_reset():
+    """Clear in-memory command history and state for test isolation."""
+    global _last_daikin_ir_fingerprint, _last_applied_state
+    if not is_test_env():
+        return {"error": "only in test env"}, 403
+    daikin_cmds.clear()
+    _last_daikin_ir_fingerprint = None
+    _last_applied_state = None
+    return {"ok": True}
 
 
 DAIKIN_CMDS_MAXLEN = 100
@@ -226,8 +250,12 @@ def _command_dict_for_state(cmd: Dict[str, Any]) -> Dict[str, Any]:
             out[canon] = val
     return out
 
+
 # Last IR payload successfully sent (JSON fingerprint); identical State skips send_daikin_state.
 _last_daikin_ir_fingerprint: Optional[str] = None
+
+# Last State applied on /daikin (UI or twoway); used to merge partial DMZ commands from twoway.
+_last_applied_state: Optional[State] = None
 
 
 def _daikin_state_fingerprint(state: State) -> str:
@@ -246,14 +274,15 @@ def get_daikin():
 
 @app.route("/logs", methods=["GET"])
 def logs():
-    """Return last N lines from LOG_PATH (rolling buffer). JSON {lines} or 404 if no log file."""
+    """Return last N lines from LOG_PATH (rolling buffer). JSON {lines}, newest first."""
     path = os.environ.get("LOG_PATH")
     if not path or not os.path.isfile(path):
         return {"lines": [], "path": path}, 200
     try:
         with open(path) as f:
             lines = f.readlines()
-        return {"lines": [ln.rstrip("\n") for ln in lines[-200:]]}
+        tail = [ln.rstrip("\n") for ln in lines[-200:]]
+        return {"lines": list(reversed(tail))}
     except OSError:
         return {"lines": []}, 200
 
@@ -277,24 +306,42 @@ def manage_post():
     return _management_action(js)
 
 
+def _daikin_response_payload(ts_iso: str, state: State, **extra: Any) -> Dict[str, Any]:
+    """JSON for successful /daikin responses (authoritative command + environment)."""
+    pl: Dict[str, Any] = {
+        "time": ts_iso,
+        "command": state.to_json(),
+        "environment": _environment_dict(),
+    }
+    pl.update(extra)
+    return pl
+
+
 @app.route("/daikin", methods=["PUT", "POST"])
 def set_daikin():
     """Accept a zone state or bare command dict, convert to State, send IR if changed.
 
-    Twoway posts the raw DMZ zone state ({command, sensors}); direct callers may post
-    {command: ...} or a bare command dict. Command keys are matched case-insensitively
-    to State fields (power, mode, temp_c, half_c, fan, …); other keys (e.g. DMZ
-    timestamps, lolidk) are ignored. Repeated identical commands do not re-send IR.
-    Returns {time, command, sent}.
+    Twoway posts the raw DMZ zone state ({command, sensors}). Partial DMZ commands are
+    merged onto the last applied onboard State so the UI is not overwritten by stale
+    narrow keys (e.g. only fan). Direct UI posts typically send {command} without sensors
+    and replace behavior as before. Command keys are normalized via _command_dict_for_state.
+
+    Successful responses include ``command`` (authoritative State JSON) and
+    ``environment`` (same as GET /environment) so twoway can push command back to DMZ.
+
+    Repeated identical commands do not re-send IR. Returns {time, command, environment, sent}.
     """
-    global _last_daikin_ir_fingerprint
+    global _last_daikin_ir_fingerprint, _last_applied_state
     js = request.json or {}
     dbg("set_daikin", js=js)
     cmd_obj = js.get("command") if isinstance(js, dict) else js
     if cmd_obj is None:
-        # Zone state with no command set yet; nothing to drive.
         dbg("no command in zone state; skipping /daikin")
-        return {"sent": False, "reason": "no command"}, 200
+        return {
+            "sent": False,
+            "reason": "no command",
+            "environment": _environment_dict(),
+        }, 200
     if not isinstance(cmd_obj, dict):
         out("Invalid command: expected dict, got %s" % type(cmd_obj).__name__)
         return {"error": "EmptyCmd"}, 400
@@ -304,30 +351,44 @@ def set_daikin():
             "set_daikin no state fields in command",
             keys=list(cmd_obj.keys()),
         )
-        return {"sent": False, "reason": "no state fields in command"}, 200
+        return {
+            "sent": False,
+            "reason": "no state fields in command",
+            "environment": _environment_dict(),
+        }, 200
+
+    from_dmz_twoway = isinstance(js, dict) and "sensors" in js
     try:
-        dbg("set_daikin state preconvert", merged=merged)
-        state = State.from_json(merged)
+        if from_dmz_twoway and _last_applied_state is not None:
+            base = _last_applied_state.to_json()
+            merged_for_state = {**base, **merged}
+            dbg(
+                "set_daikin merge twoway command into last state",
+                merged_incoming=merged,
+            )
+            state = State.from_json(merged_for_state)
+        else:
+            dbg("set_daikin state preconvert", merged=merged)
+            state = State.from_json(merged)
         dbg("set_daikin state", state=state)
     except (KeyError, ValueError, TypeError) as e:
         out("Invalid command: %s" % e)
         return {"error": "InvalidCmd", "detail": str(e)}, 400
+
     ts = datetime.now()
+    ts_iso = ts.isoformat()
     fp = _daikin_state_fingerprint(state)
     if _last_daikin_ir_fingerprint is not None and fp == _last_daikin_ir_fingerprint:
         out("SET_DAIKIN unchanged (no IR): %s" % state.summary())
-        return {
-            "time": ts.isoformat(),
-            "command": state.to_json(),
-            "sent": False,
-            "unchanged": True,
-        }, 200
+        _last_applied_state = state
+        return _daikin_response_payload(ts_iso, state, sent=False, unchanged=True), 200
     success = send_daikin_state(state)
     if success:
         _last_daikin_ir_fingerprint = fp
+    _last_applied_state = state
     daikin_cmds.append((ts, state, success))
     out("SET_DAIKIN: %s" % state.summary())
-    return {"time": ts.isoformat(), "command": state.to_json(), "sent": success}, 200
+    return _daikin_response_payload(ts_iso, state, sent=success), 200
 
 
 if __name__ == "__main__":

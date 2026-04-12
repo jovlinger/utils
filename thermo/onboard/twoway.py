@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import os
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -40,13 +40,14 @@ Options:
 
 A small standalone binary that:
 
-1. does a GET from URL 1
-2. takes that and POSTs it to URL 2.
-3. takes the response from URL 2 (if 200)
-4. and POSTs it to URL 3.
-5. take a breath, and repeat.
+1. GET URL1 (onboard /environment).
+2. POST sensors to URL2 (DMZ /zone/<z>/sensors), signed when keys are set.
+3. POST the zone JSON from DMZ to URL3 (onboard /daikin).
+4. If /daikin returns 200 with a ``command`` object, POST that authoritative command
+   back to DMZ ``/zone/<z>/command`` (signed) so DMZ matches merged onboard state.
+5. Sleep and repeat.
 
-There will be rudimentary authorization for URL 2. None for URL 1 or 3. TBD
+URL2 must be the sensors endpoint; the command URL is derived by replacing ``/sensors`` with ``/command``.
 
 > make dockertest
 """
@@ -72,6 +73,23 @@ ZONE_PRIVATE_KEY = os.environ.get("ZONE_PRIVATE_KEY") or os.environ.get(
 # Request path used for Ed25519 signing (must match DMZ URL path).
 DMZ_SIGN_PATH: str = _parsed_dmz.path or "/zone/default/sensors"
 
+# POST /zone/<name>/command — same host as sensors URL; twoway pushes authoritative command.
+_sensors_url_path = _parsed_dmz.path or ""
+if _sensors_url_path.endswith("/sensors"):
+    DMZ_COMMAND_SIGN_PATH: str = _sensors_url_path[: -len("sensors")] + "command"
+else:
+    DMZ_COMMAND_SIGN_PATH = _sensors_url_path.rstrip("/") + "/command"
+DMZ_COMMAND_URL: str = urlunparse(
+    (
+        _parsed_dmz.scheme,
+        _parsed_dmz.netloc,
+        DMZ_COMMAND_SIGN_PATH,
+        "",
+        "",
+        "",
+    )
+)
+
 TIMEOUT_SECS: float = 10.0
 PERIOD_SECS: float = 5.0
 PERIOD_MAX_SECS: float = 60.0
@@ -82,6 +100,7 @@ info(
     dmz=dmz,
     writeto=writeto,
     dmz_sign_path=DMZ_SIGN_PATH,
+    dmz_command_url=DMZ_COMMAND_URL,
     zone_name=ZONE_NAME or "(unset)",
     signing_enabled=bool(ZONE_PRIVATE_KEY and ZONE_NAME),
     timeout_secs=TIMEOUT_SECS,
@@ -136,6 +155,21 @@ def get_json(url: str, extra_headers: Optional[dict] = None) -> Tuple[jsonT, boo
         return (f"unexpected string response: {r.text}", False)
 
 
+def _push_authoritative_command_to_dmz(cmd: dict) -> bool:
+    """POST merged command JSON to DMZ (bytes must match Ed25519 signature)."""
+    body_bytes = json.dumps(cmd, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    extra = _sign_headers("POST", DMZ_COMMAND_SIGN_PATH, body_bytes, ZONE_NAME)
+    if extra:
+        headers.update(extra)
+    dbg("post dmz command", url=DMZ_COMMAND_URL, body_len=len(body_bytes))
+    r = requests.post(
+        DMZ_COMMAND_URL, data=body_bytes, headers=headers, timeout=TIMEOUT_SECS
+    )
+    info("dmz command push", url=DMZ_COMMAND_URL, status=r.status_code)
+    return r.status_code == 200
+
+
 def post_json(
     url: str, body: dict, extra_headers: Optional[dict] = None
 ) -> Tuple[jsonT, bool]:
@@ -176,6 +210,15 @@ def poll_once() -> bool:
             err("post to onboard failed: aborting poll", error=write_res, res=res)
             return False
         dbg(f"post twoway -> {writeto}", res=write_res, ok_write=ok_write)
+        if isinstance(write_res, dict):
+            cmd_push = write_res.get("command")
+            if isinstance(cmd_push, dict) and cmd_push:
+                if not _push_authoritative_command_to_dmz(cmd_push):
+                    err(
+                        "push authoritative command to dmz failed",
+                        write_res=write_res,
+                    )
+                    return False
     except Exception as e:
         err("failed", error=str(e))
         return False

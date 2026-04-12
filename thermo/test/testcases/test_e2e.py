@@ -124,7 +124,38 @@ def _wait_for(url: str, timeout: float = 10.0) -> bool:
 
 @pytest.fixture
 def e2e_services():
-    """Start dmz, onboard, twoway with machine auth keys."""
+    """Local: start dmz, onboard, twoway with temp keys. Compose: use deployed stack (HTTP only)."""
+    if _in_docker_compose():
+        if not _wait_for(f"{DMZ_URL}/zones", timeout=30):
+            pytest.fail("dmz did not start (docker-compose)")
+        if not _wait_for(f"{ONBOARD_URL}/help", timeout=30):
+            pytest.fail("onboard did not start (docker-compose)")
+        # Warm up twoway: inject a probe reading, then wait for it to appear in
+        # DMZ. This confirms twoway has completed at least one full poll cycle
+        # before the test body resets DMZ and injects its own readings.
+        requests.post(
+            f"{ONBOARD_URL}/test/inject_readings",
+            json={"temp_centigrade": -99.0},
+            timeout=5,
+        )
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            try:
+                r = requests.get(f"{DMZ_URL}/zones", timeout=2)
+                if r.ok and ZONE_NAME in r.json():
+                    break
+            except requests.RequestException:
+                pass
+            time.sleep(0.2)
+        else:
+            pytest.fail(
+                f"twoway did not push zone '{ZONE_NAME}' to dmz within 20s"
+            )
+        # Reset onboard command history so each test starts with a clean slate.
+        requests.post(f"{ONBOARD_URL}/test/reset", timeout=5)
+        yield {}
+        return
+
     twoway_proc: subprocess.Popen | None = None
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -168,14 +199,11 @@ def e2e_services():
                     p.kill()
 
 
-@pytest.mark.skipif(
-    _in_docker_compose(),
-    reason="local-subprocess mode requires dmz/onboard source tree (not present in docker-compose testdriver image)",
-)
 def test_e2e_sensors_and_commands(e2e_services):
     """Inject fake readings, wait for twoway sync, read from dmz. Send command, verify in onboard."""
-    # Reset dmz
     r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
+    assert r.status_code == 200
+    r = requests.post(f"{ONBOARD_URL}/test/reset")
     assert r.status_code == 200
 
     # Inject fake sensor readings on onboard
@@ -216,6 +244,42 @@ def test_e2e_sensors_and_commands(e2e_services):
     assert latest.get("power") is True
     assert latest.get("mode") == "HEAT"
     assert latest.get("half_c") == 44  # 22 * 2
+
+
+def test_e2e_partial_command_merged_and_pushed_to_dmz(e2e_services):
+    """Partial DMZ command merges on onboard; twoway pushes full command back so DMZ stays consistent."""
+    r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
+    assert r.status_code == 200
+    r = requests.post(f"{ONBOARD_URL}/test/reset")
+    assert r.status_code == 200
+    r = requests.post(
+        f"{ONBOARD_URL}/test/inject_readings",
+        json={"temp_centigrade": 19.5, "humid_percent": 55.0},
+    )
+    assert r.status_code == 200
+    time.sleep(1.0)
+    r = requests.post(
+        f"{DMZ_URL}/zone/{ZONE_NAME}/command",
+        json={"power": True, "mode": "HEAT", "temp_c": 22},
+    )
+    assert r.status_code == 200
+    time.sleep(1.0)
+    r = requests.post(
+        f"{DMZ_URL}/zone/{ZONE_NAME}/command",
+        json={"fan": "F3"},
+    )
+    assert r.status_code == 200
+    time.sleep(1.2)
+    r = requests.get(f"{ONBOARD_URL}/daikin")
+    assert r.status_code == 200
+    latest = r.json()[0]["command"]
+    assert latest.get("mode") == "HEAT"
+    assert latest.get("fan") == "F3"
+    r = requests.get(f"{DMZ_URL}/zones")
+    assert r.status_code == 200
+    zcmd = r.json()[ZONE_NAME]["command"]
+    assert zcmd.get("mode") == "HEAT"
+    assert zcmd.get("fan") == "F3"
 
 
 def test_e2e_docker_compose():

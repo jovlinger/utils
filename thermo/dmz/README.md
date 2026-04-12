@@ -12,18 +12,20 @@ Internet-facing rendezvous service: interior **zones** and the **controller** ex
 
 Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
-`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`unittest`** on **`test/`** (non-fatal on failure; log **`/var/log/startup_tests.log`** in Docker) → **import probes** → **`python -u app.py`**.
+`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`pytest`** on **`test/`** (non-fatal on failure; log **`/var/log/startup_tests.log`** in Docker) → **import probes** → **`python -u app.py`**.
 
 | Path | Role |
 |------|------|
 | `Dockerfile` | Multi-stage build: Python deps (pydantic **&lt; 2** / pydantic-core from source on musl when needed) |
 | `start.sh` | Privileged setup, then drop to `dmz` with log wrapper around `run.sh` |
 | `bin/run-with-stdout-logged.py` (repo root) | Snapshotted from sister `bin` repo; staged into `.docker-import/` before image build. Refresh: `make -C bin all` |
-| `run.sh` | Always `unittest discover` on `test/`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
+| `run.sh` | Always `pytest -q test` on `test/`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
 | `app.py` | Flask API |
-| `requirements.txt` | Runtime deps only; **`requirements-dev.txt`** adds `pytest` / `requests` for host smoketest and optional tooling |
+| `requirements.txt` | Runtime deps including **`requests`** (for **`manage.py`**) and **`pytest`** for in-container tests; **`requirements-dev.txt`** includes the same set for host venv (`-r requirements.txt`) |
 
 **Port:** `8080` by default (`PORT` env).
+
+**HTTPS:** For a browser-trusted certificate on the public internet (e.g. DuckDNS + Let’s Encrypt), see [HTTPS-TRUSTED-CERT.md](HTTPS-TRUSTED-CERT.md).
 
 ```bash
 cd thermo/dmz
@@ -53,7 +55,7 @@ Older full pipeline (bwrap, `dmz-init`, etc.) is on branch **`overly_complicated
 
 ## Tests
 
-- **Unit / integration (in-process):** `./test/run.sh` or `make test` — see **`test/README.md`**.
+- **Unit / integration (in-process):** `./test/run.sh` or `make test-local` — see **`test/README.md`**. **`make test-docker`** runs pytest in the built image; **`make test`** runs both.
 - **Smoketests (Docker + HTTP):** **`./smoketest/run.sh`** — see **`smoketest/README.md`**.
 
 ## Other paths

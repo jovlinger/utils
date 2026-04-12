@@ -1,7 +1,7 @@
 # Invoked by start.sh as user `dmz` in the container, or directly with a venv on a dev machine.
 # Pi chroot matches the image layout (/app/...) but has no /.dockerenv — same runtime path as Docker.
 #
-# Runs unittest (test/*.py, non-fatal if it fails) then import/smoke probes, then the app.
+# Runs pytest on test/ (non-fatal if it fails) then import/smoke probes, then the app.
 
 hostname
 whoami
@@ -39,22 +39,21 @@ else
 fi
 cd "$APP_ROOT" || exit 1
 
-run_dmz_unittest() {
-	# Stdlib unittest only (no pytest in the runtime image). Smoketest stays host-side (smoketest/run.sh).
+run_dmz_pytest() {
 	if [ "$RUNTIME_IS_CONTAINER" -eq 1 ]; then
 		STARTUP_TESTS_LOG="/var/log/startup_tests.log"
 		: >"$STARTUP_TESTS_LOG"
-		printf '%s DMZ unittest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
-		if python -m unittest discover -s test -p 'test_*.py' -q >>"$STARTUP_TESTS_LOG" 2>&1; then
-			printf '%s DMZ unittest finished (ok)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
+		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
+		if python -m pytest -q test >>"$STARTUP_TESTS_LOG" 2>&1; then
+			printf '%s DMZ pytest finished (ok)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
 		else
-			printf '%s DMZ unittest finished (FAILED)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
-			echo "FAILED unittest (see /var/log/startup_tests.log), app still starts"
+			printf '%s DMZ pytest finished (FAILED)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STARTUP_TESTS_LOG"
+			echo "FAILED pytest (see /var/log/startup_tests.log), app still starts"
 		fi
 	else
-		printf '%s DMZ unittest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-		python -m unittest discover -s test -p 'test_*.py' -q || echo "FAILED unittest, app still starts"
-		printf '%s DMZ unittest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		printf '%s DMZ pytest starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		python -m pytest -q test || echo "FAILED pytest, app still starts"
+		printf '%s DMZ pytest finished (non-zero above means failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	fi
 }
 
@@ -87,7 +86,7 @@ python_probe() {
 	_probe_python_note "python_probe: done"
 }
 
-run_dmz_unittest
+run_dmz_pytest
 python_probe
 # cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).
 exec python -u app.py
