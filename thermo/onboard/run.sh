@@ -18,9 +18,9 @@ if [ -f /.dockerenv ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# utils repo root; run-with-stdout-logged.py is in sibling ../bin (see Makefile RUN_WITH_BIN).
+# utils repo root (for venv path hints).
 COMMON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RUN_WITH_STDOUT="$(cd "$COMMON_ROOT/.." && pwd)/bin/run-with-stdout-logged.py"
+RUN_WITH_STDOUT="$(cd "$SCRIPT_DIR/../../bin" && pwd)/run-with-stdout-logged.py"
 if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
   echo "No venv at $SCRIPT_DIR/env." >&2
   echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2

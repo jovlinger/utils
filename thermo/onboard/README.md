@@ -104,7 +104,7 @@ Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is no
 
 - **Local venv:** `run.sh` without Docker still runs twoway + UI + app for development (see `run.sh`).
 - **Build images locally:** From `thermo/onboard/`, `make build` / `make push` (requires `CR_PAT`).
-- **CI:** `.github/workflows/thermo-onboard.yml` builds and pushes both images on changes under `thermo/onboard/`.
+- **CI:** `.github/workflows/thermo-onboard.yml` builds and pushes both images on changes under `thermo/onboard/` or `bin/` (log wrapper + `mock_cmd` snapshots).
 
 ## Legacy
 

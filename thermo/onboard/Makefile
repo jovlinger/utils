@@ -18,7 +18,7 @@ PLATFORM ?= linux/arm/v7
 # Verbose docker build (plain streams RUN output; use `make ... DOCKER_BUILD_PROGRESS=auto` for TTY bars)
 DOCKER_BUILD_PROGRESS ?= plain
 
-RUN_WITH_BIN := $(abspath $(CURDIR)/../../../bin/run-with-stdout-logged.py)
+RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
 
 DOCKERFILES := Dockerfile.onboard Dockerfile.twoway
 ENTRYPOINTS := docker-entrypoint-onboard.sh docker-entrypoint-twoway.sh

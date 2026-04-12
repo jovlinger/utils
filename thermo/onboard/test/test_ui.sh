@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
 COMMON_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-# run-with-stdout-logged.py lives in sibling bin/ (same layout as onboard Makefile RUN_WITH_BIN).
-RUN_WITH_STDOUT="$(cd "$COMMON_ROOT/.." && pwd)/bin/run-with-stdout-logged.py"
+# run-with-stdout-logged: repo-root bin/ (same as Makefile RUN_WITH_BIN).
+RUN_WITH_STDOUT="$(cd "$ONBOARD/../../bin" && pwd)/run-with-stdout-logged.py"
 FAKE_IRCTL_DIR="$THERMO/test/daikin"
 # Use high ports to avoid conflicts; 5xxxx range often free
 PORT_APP=$((50000 + RANDOM % 1000))

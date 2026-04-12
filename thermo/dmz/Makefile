@@ -11,8 +11,8 @@ clean:
 	@rm -f .image
 	@rm -rf .docker-import
 
-# Sister repo `bin/` next to `utils/` (see thermo/dmz/../../../bin/...)
-RUN_WITH_BIN := $(abspath $(CURDIR)/../../../bin/run-with-stdout-logged.py)
+# Log wrapper: ../../bin/run-with-stdout-logged.py. Refresh: make -C ../../bin all
+RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
 
 # Unit tests inside the built image (stdlib unittest only — no pytest in the image).
 test: .image

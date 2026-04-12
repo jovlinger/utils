@@ -68,7 +68,7 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
-RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../../bin/run-with-stdout-logged.py}"
+RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../bin/run-with-stdout-logged.py}"
 OUTPUT_IMG="$DMZ_DIR/dist/dmz.img"
 
 UMOUNT_LOG=""

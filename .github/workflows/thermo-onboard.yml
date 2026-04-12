@@ -10,6 +10,7 @@ on:
     branches: [main, master]
     paths:
       - "thermo/onboard/**"
+      - "bin/**"
       - ".github/workflows/thermo-onboard.yml"
   workflow_dispatch:
 
@@ -38,8 +39,8 @@ jobs:
           mkdir -p ./.docker-build/thermo-onboard
           cp -a ./thermo/onboard/. ./.docker-build/thermo-onboard/
           mkdir -p ./.docker-build/thermo-onboard/.docker-import
-          curl -fsSL "https://raw.githubusercontent.com/jovlinger/bin/master/run-with-stdout-logged.py" \
-            -o ./.docker-build/thermo-onboard/.docker-import/run-with-stdout-logged.py
+          cp ./bin/run-with-stdout-logged.py \
+            ./.docker-build/thermo-onboard/.docker-import/run-with-stdout-logged.py
 
       - name: Build and push onboard app
         uses: docker/build-push-action@v6

@@ -1,16 +1,18 @@
 """
 Tests for `make deploy` (thermo/onboard/Makefile).
 
-Drive commands via mock_cmd (Python) from the sister `bin` repo: symlink test/bin/git,
-test/bin/docker, etc. to mock_cmd.py, prepend that test/bin to PATH, run `make deploy`
-against a fixture repo tree — or prepend the sister bin repo so `mock_cmd.py` is on PATH.
+Drive commands via :func:`mock_cmd_path`: symlink fixture ``test/bin/git``,
+``test/bin/docker``, etc. to that file, prepend that directory to ``PATH``, run
+``make deploy`` against a fixture repo tree.
 
-Layout matches the rest of this tree: sibling repo at ``<parent-of-utils>/bin`` (same as
-``Makefile`` ``RUN_WITH_BIN`` / ``stage-docker-import.sh``).
+Layout: ``run-with-stdout-logged.py`` / ``mock_cmd.py`` are snapshotted under
+``bin/`` at the utils repo root (refresh: ``make -C bin all`` from repo root).
+``Makefile`` ``RUN_WITH_BIN`` / ``stage-docker-import.sh`` use
+``../../bin/run-with-stdout-logged.py`` from ``thermo/onboard``.
 
-mock_cmd (sister ``bin/mock_cmd.py``) matches invocations by exact ``cmd + args`` string
-(see ``MOCK_FILE`` JSON). Tests register expectations via ``set_mock`` (imported), not
-``--mock_match``, because the CLI misparses ``docker compose up -d`` (``-d`` looks like an option).
+mock_cmd matches invocations by exact ``cmd + args`` string (see ``MOCK_FILE`` JSON).
+Tests register expectations via ``set_mock`` (imported), not ``--mock_match``, because
+the CLI misparses ``docker compose up -d`` (``-d`` looks like an option).
 
 Run: from thermo/onboard with venv active, or via test/run.sh.
 """
@@ -36,19 +38,14 @@ def _utils_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
-def sister_bin_dir() -> Path:
-    """
-    Directory of the sister ``bin`` repo (``bin/`` next to ``utils/``).
-
-    Same convention as ``thermo/onboard/Makefile`` ``$(CURDIR)/../../../bin`` and
-    ``stage-docker-import.sh`` ``$ONBOARD/../../../bin``.
-    """
-    return (_utils_root().parent / "bin").resolve()
+def thermo_bin_repo_dependencies_dir() -> Path:
+    """Repo-root ``bin/`` (snapshotted copies from the sister ``bin`` checkout)."""
+    return (_utils_root() / "bin").resolve()
 
 
 def mock_cmd_path() -> Path:
-    """Path to ``mock_cmd.py`` in the sister bin repo."""
-    return sister_bin_dir() / "mock_cmd.py"
+    """Path to committed ``mock_cmd.py`` under repo-root ``bin/``."""
+    return thermo_bin_repo_dependencies_dir() / "mock_cmd.py"
 
 
 def onboard_dir() -> Path:
@@ -57,9 +54,9 @@ def onboard_dir() -> Path:
 
 
 @contextmanager
-def sister_bin_first_on_path() -> Iterator[None]:
-    """Prepend :func:`sister_bin_dir` to ``PATH``, then restore the previous value."""
-    bin_dir = str(sister_bin_dir())
+def thermo_bin_repo_first_on_path() -> Iterator[None]:
+    """Prepend :func:`thermo_bin_repo_dependencies_dir` to ``PATH``, then restore."""
+    bin_dir = str(thermo_bin_repo_dependencies_dir())
     old = os.environ.get("PATH")
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{old or ''}"
     try:
@@ -84,7 +81,7 @@ def _mock_subprocess_env(mock_file: Path, home: Path, mock_bins: Path) -> Dict[s
 
 def _load_mock_cmd_module(mpy: Path, mock_file: Path) -> Any:
     """
-    Load sister ``mock_cmd.py`` with ``MOCK_FILE`` set.
+    Load snapshotted ``mock_cmd.py`` with ``MOCK_FILE`` set.
 
     We call ``reset_mocks`` / ``set_mock`` directly: the CLI ``--mock_match`` parser
     misparses args that include ``-d`` (e.g. ``docker compose up -d``).
@@ -128,19 +125,19 @@ _DEPLOY_EXPECTED_INVOCATIONS: Tuple[Tuple[str, ...], ...] = (
 )
 
 
-class TestSisterBinPathHelpers(unittest.TestCase):
-    """Same layout as ``Makefile`` / ``stage-docker-import.sh`` (sibling ``bin`` next to ``utils``)."""
+class TestThermoBinRepoPathHelpers(unittest.TestCase):
+    """Paths for ``mock_cmd`` / ``run-with-stdout-logged`` under repo-root ``bin/``."""
 
-    def test_sister_bin_dir_is_parent_of_utils_named_bin(self) -> None:
+    def test_thermo_bin_repo_dependencies_dir(self) -> None:
         utils = _utils_root()
-        expected = (utils.parent / "bin").resolve()
-        self.assertEqual(sister_bin_dir(), expected)
+        expected = (utils / "bin").resolve()
+        self.assertEqual(thermo_bin_repo_dependencies_dir(), expected)
 
-    def test_sister_bin_first_on_path_restores_path(self) -> None:
+    def test_thermo_bin_repo_first_on_path_restores_path(self) -> None:
         old = os.environ.get("PATH")
-        with sister_bin_first_on_path():
+        with thermo_bin_repo_first_on_path():
             head = os.environ["PATH"].split(os.pathsep, 1)[0]
-            self.assertEqual(head, str(sister_bin_dir()))
+            self.assertEqual(head, str(thermo_bin_repo_dependencies_dir()))
         self.assertEqual(os.environ.get("PATH"), old)
 
 
