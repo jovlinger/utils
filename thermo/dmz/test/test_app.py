@@ -83,6 +83,59 @@ class DMZTest(TestCase):
             js = self.get_200(c, "/zones")
             self.assertEqual("who", _pathget(js["z1"], "command.lolidk"))
 
+    def test_command_rejects_invalid_json(self) -> None:
+        """POST /zone/.../command returns 400 when body is not valid JSON."""
+        with app.test_client() as c:
+            self.reset(c)
+            r = c.post(
+                "/zone/z1/command",
+                data="{not json",
+                content_type="application/json",
+            )
+            self.assertEqual(r.status_code, 400)
+            js = r.get_json() or {}
+            self.assertEqual(js.get("error"), "invalid JSON")
+
+    def test_command_rejects_empty_body(self) -> None:
+        with app.test_client() as c:
+            self.reset(c)
+            r = c.post("/zone/z1/command", data="", content_type="application/json")
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual((r.get_json() or {}).get("error"), "empty body")
+
+    def test_command_rejects_non_ascii_string(self) -> None:
+        """JSON string values must be 7-bit ASCII only."""
+        with app.test_client() as c:
+            self.reset(c)
+            r = c.post(
+                "/zone/z1/command",
+                data='{"lolidk": "\\u00e9"}',
+                content_type="application/json",
+            )
+            self.assertEqual(r.status_code, 400)
+            err = (r.get_json() or {}).get("error", "")
+            self.assertIn("ASCII", err)
+
+    def test_command_rejects_non_ascii_object_key(self) -> None:
+        with app.test_client() as c:
+            self.reset(c)
+            r = c.post(
+                "/zone/z1/command",
+                data='{"\\u00e9": "x"}',
+                content_type="application/json",
+            )
+            self.assertEqual(r.status_code, 400)
+
+    def test_command_accepts_arbitrary_object_keys(self) -> None:
+        """Command body may include any ASCII-only keys on a JSON object."""
+        with app.test_client() as c:
+            self.reset(c)
+            body = {"mode": "HEAT", "power": True, "temp_c": 21}
+            js = self.post_200(c, "/zone/z1/command", body)
+            self.assertEqual(js["command"]["mode"], "HEAT")
+            self.assertTrue(js["command"]["power"])
+            self.assertEqual(js["command"]["temp_c"], 21)
+
 
 class HappyPathOnboardTest(TestCase):
     """

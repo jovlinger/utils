@@ -117,11 +117,16 @@ rm -f /run/sshd.pid 2>/dev/null || true
 SSHD_LOG=/var/log/sshd.log
 touch "$SSHD_LOG"
 chmod 644 "$SSHD_LOG"
-# -ddd ≈ LogLevel DEBUG3; -e log to stderr (here redirected); -D no daemonize (stable fd with &).
-"$SSHD_BIN" -D -ddd -e >>"$SSHD_LOG" 2>&1 &
+# -D: no daemonize (keeps a stable background job).
+# -E: log to file (OpenSSH >= 6.3; present on Alpine 3.19).
+# LogLevel DEBUG3 in sshd_config.d gives verbose auth noise without -d/-dd/-ddd,
+# which each cause sshd to accept only ONE connection then exit (man sshd: "-d Debug mode
+# ... will only process one connection").
+echo "LogLevel DEBUG3" >>/etc/ssh/sshd_config.d/50-dmz-rescue.conf
+"$SSHD_BIN" -D -E "$SSHD_LOG" &
 echo "$!" >/run/dmz-sshd-raw.pid
 
-echo "sshd up (pubkey only, raw debug). ssh root@${ip_in}"
+echo "sshd up (pubkey only, debug). ssh root@${ip_in}"
 echo "  log: tail -f $SSHD_LOG"
-echo '  stop: kill $(cat /run/dmz-sshd-raw.pid) 2>/dev/null || killall sshd; rm -f /run/sshd.pid'
-echo "  re-run this script after network is up, or: $SSHD_BIN -D -ddd -e >>${SSHD_LOG} 2>&1 &"
+echo '  stop: kill $(cat /run/dmz-sshd-raw.pid) 2>/dev/null || killall sshd'
+echo "  re-run this script after network is up, or: $SSHD_BIN -D -E ${SSHD_LOG} &"

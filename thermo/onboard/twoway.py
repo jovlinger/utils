@@ -231,7 +231,7 @@ def poll_forever() -> None:
         if ok:
             slp = PERIOD_SECS
         else:
-            slp = max(PERIOD_MAX_SECS, slp + 1)
+            slp = min(PERIOD_MAX_SECS, slp + 1)
 
 
 info("enter")

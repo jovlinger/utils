@@ -26,6 +26,34 @@ Actions (first arg) map to app routes:
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. lolidk=heat_22 temp_centigrade=21.5).
+
+python manage.py zones
+One zone: dump current zone JSON (from GET /zones, then print that entry)
+
+python manage.py updatezone myzone
+One zone: merge key=value into that zone’s command and POST
+
+python manage.py updatezone myzone power=true mode=HEAT half_c=45 fan=F4
+
+Direct POSTs (body is either key=value pairs or one JSON object string)
+
+python manage.py sensors myzone temp_centigrade=20.5
+python manage.py command myzone '{"lolidk": "heat_22"}'
+OAuth helpers (browser-oriented; no zone signing)
+
+python manage.py login
+python manage.py authorize
+python manage.py logout
+Debug logs
+
+python manage.py debug_logs
+# same as:
+python manage.py logs
+Test reset (unsigned; testing)
+
+python manage.py test_reset
+For zones / debug_logs with a private key configured, manage.py requires ZONE_NAME for signing the GET; for updatezone, it uses ZONE_NAME if set, otherwise the zone name you pass.
+
 """
 
 from __future__ import annotations
@@ -225,20 +253,41 @@ def _onboard_state_example_dict() -> Dict[str, Any]:
     return s.to_json()
 
 
+def _flat_dict_as_updatezone_kv_args(d: Dict[str, Any]) -> str:
+    """Format a flat dict as `updatezone` key=value tokens (sorted keys, ASCII-safe)."""
+    tokens: List[str] = []
+    for key in sorted(d.keys()):
+        val = d[key]
+        if isinstance(val, bool):
+            tokens.append(f"{key}={'true' if val else 'false'}")
+        elif isinstance(val, str):
+            tokens.append(f"{key}={val}")
+        elif isinstance(val, (int, float)):
+            tokens.append(f"{key}={val}")
+        elif val is None:
+            tokens.append(f"{key}=")
+        else:
+            tokens.append(f"{key}={json.dumps(val, separators=(',', ':'))}")
+    return " ".join(tokens)
+
+
 def _updatezone_help_message() -> str:
     example = _onboard_state_example_dict()
     pretty = json.dumps(example, indent=2, sort_keys=True)
+    pretty_kv = _flat_dict_as_updatezone_kv_args(example)
     return (
         "usage: manage.py updatezone <zone> key=value ...\n"
         "\n"
         "Merges each key=value into the zone's command dict and POSTs it. Key names match "
         "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
-        '{"command": ...} to POST /daikin on the Pi. The DMZ IRCommand model currently '
-        "persists lolidk and timestamp fields only; pydantic drops other keys until the "
-        "schema is extended.\n"
+        '{"command": ...} to POST /daikin on the Pi. The DMZ stores the command object '
+        "as JSON (7-bit ASCII strings only); onboard owns parsing and IR.\n"
         "\n"
         "Fully-populated onboard State example (.to_json()):\n"
         f"{pretty}\n"
+        "\n"
+        "Same payload as one line of flat key=value args:\n"
+        f"  manage.py updatezone <zone> {pretty_kv}\n"
         "\n"
         "Note: from_json() also accepts temp_c (°C) instead of half_c. "
         "mode: AUTO, DRY, COOL, HEAT, FAN. fan: F1..F5, AUTO, SILENT."

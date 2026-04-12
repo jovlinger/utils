@@ -9,11 +9,8 @@ ROOTFS_TAR="dmz_rootfs.tar"
 CHROOT_DIR="/tmp/dmz_rootfs"
 SD_MOUNT="/media/mmcblk0"
 LOG="/tmp/boot.log"
-DMZ_APP_LOG="/var/log/dmz.log"
 
 mkdir -p /root /var/log
-touch "$DMZ_APP_LOG" 2>/dev/null || true
-chmod 666 "$DMZ_APP_LOG" 2>/dev/null || true
 : >"$LOG"
 
 pr() {
@@ -27,7 +24,8 @@ persist_boot_log() {
 	mount | grep -qE " on ${SD_MOUNT} " || return 0
 	mkdir -p "$SD_MOUNT/debug" 2>/dev/null || true
 	cp "$LOG" "$SD_MOUNT/debug/boot.log" >>"$LOG" 2>&1 || true
-	[ -f "$DMZ_APP_LOG" ] && cp "$DMZ_APP_LOG" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || true
+	# dmz.log lives inside the chroot tmpfs (not at the host DMZ_APP_LOG path).
+	[ -f "$CHROOT_DIR/var/log/dmz.log" ] && cp "$CHROOT_DIR/var/log/dmz.log" "$SD_MOUNT/debug/dmz.log" >>"$LOG" 2>&1 || true
 }
 trap 'persist_boot_log' EXIT INT TERM
 
@@ -102,15 +100,19 @@ tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$CHROOT_DIR"
 dump "chroot top" ls -la "$CHROOT_DIR"
 pr ""
 
-pr ">>> 8/10 chroot prep (binds, tmpfs /tmp, dmz.log bind)"
+pr ">>> 8/10 chroot prep (binds, tmpfs /tmp, tmpfs /var/log)"
 mount --bind /dev "$CHROOT_DIR/dev"
 mount --bind /proc "$CHROOT_DIR/proc"
 mount --bind /sys "$CHROOT_DIR/sys"
 mount --bind /run "$CHROOT_DIR/run"
 mount -t tmpfs -o mode=1777,nosuid,nodev,size=64m tmpfs "$CHROOT_DIR/tmp"
 mkdir -p "$CHROOT_DIR/var/log"
-touch "$CHROOT_DIR/var/log/dmz.log"
-mount --bind "$DMZ_APP_LOG" "$CHROOT_DIR/var/log/dmz.log"
+# Mount a tmpfs DIRECTORY at /var/log (not a file bind).
+# A file bind-mount makes dmz.log a mountpoint; rename() on a mountpoint raises
+# EBUSY (OSError), which causes run-with-stdout-logged.py's rotation to fail,
+# propagating the exception out of the read loop and into proc.wait(), deadlocking
+# the logger and filling the pipe so every app thread blocks on pipe_write.
+mount -t tmpfs -o size=64m,mode=0755 tmpfs "$CHROOT_DIR/var/log"
 dump "mounts after chroot prep" sh -c 'grep dmz_rootfs /proc/mounts || true'
 pr ""
 

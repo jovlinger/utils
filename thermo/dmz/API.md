@@ -1,6 +1,6 @@
 # DMZ HTTP API
 
-Flask application: import `app` from **`app`** after adding `thermo/dmz` to `PYTHONPATH` (or running with that directory on `sys.path`). Request/response shapes use Pydantic models in the same module; import **`ZoneRequest`**, **`ZoneReply`**, **`Sensors`**, **`IRCommand`**, **`ZoneState`** from **`app`**.
+Flask application: import `app` from **`app`** after adding `thermo/dmz` to `PYTHONPATH` (or running with that directory on `sys.path`). Request/response shapes use Pydantic models in the same module; import **`ZoneRequest`**, **`ZoneReply`**, **`Sensors`**, **`ZoneState`** from **`app`**. Zone **`command`** payloads are arbitrary JSON (see `POST /zone/<zonename>/command`).
 
 Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_auth.py`, same `PYTHONPATH` rule).
 
@@ -24,7 +24,7 @@ Accepts JSON sensor readings for the named zone, appends them to in-memory state
 
 ## `POST /zone/<zonename>/command`
 
-Accepts JSON to append an IR command for the zone and returns the zone snapshot. With a configured zone public key, either valid machine-signed requests or an authenticated browser session (when Google OAuth is enabled) may be used; otherwise OAuth may be required for human operators.
+Accepts the JSON body and passes it through to zone command storage, returning that zone’s snapshot. Aside from auth, the server only checks that the body is well-formed JSON (UTF-8) and that every JSON string (object keys and string values) is 7-bit ASCII; otherwise it returns `400`. With a configured zone public key, either valid machine-signed requests or an authenticated browser session (when Google OAuth is enabled) may be used; otherwise OAuth may be required for human operators.
 
 ## `GET /zones`
 

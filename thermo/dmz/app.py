@@ -12,11 +12,12 @@ Long-term, make the backend connection into a TCP based queue (connection is awk
 
 from collections import deque, defaultdict
 from datetime import datetime
+import json
 import logging
 import os
 import sys
 import time
-from typing import Any, Deque, Dict, List, Union, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 
 from flask import Flask, g, redirect, request, session, url_for
 from pydantic import BaseModel, validator
@@ -53,24 +54,82 @@ class Sensors(BaseModel):
         return v
 
 
-class IRCommand(BaseModel):
-    lolidk: str = ""
-    created_dt: str = ""
-    last_access_dt: str = ""
-
-    @validator("created_dt", pre=True, always=True)
-    def _set_created_dt(cls, v: Any) -> str:
-        if not v:
-            return datetime.now().isoformat()
-        return v
-
-    def model_mark_accessed(self) -> None:
-        self.last_access_dt = datetime.now().isoformat()
-
-
 class ZoneState(BaseModel):
-    command: Optional[IRCommand] = None
+    command: Optional[Any] = None
     sensors: Optional[Sensors] = None
+
+
+def _json_strings_only_ascii(value: Any) -> Optional[str]:
+    """
+    Return an error detail string if any JSON string value or object key
+    contains a non-ASCII character (code point > 127).
+    """
+    if isinstance(value, str):
+        for ch in value:
+            if ord(ch) > 127:
+                return "string contains non-ASCII character"
+        return None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            err = _json_strings_only_ascii(k)
+            if err:
+                return err
+            err = _json_strings_only_ascii(v)
+            if err:
+                return err
+        return None
+    if isinstance(value, list):
+        for item in value:
+            err = _json_strings_only_ascii(item)
+            if err:
+                return err
+        return None
+    return None
+
+
+def _parse_validated_command_json(
+    raw: bytes,
+) -> Tuple[Optional[Any], Optional[Tuple[Dict[str, Any], int]]]:
+    """
+    Parse POST body as JSON and ensure all strings are 7-bit ASCII.
+    Returns (value, None) on success, or (None, (error_body, status_code)) on failure.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, ({"error": "body must be valid UTF-8"}, 400)
+    if not text.strip():
+        return None, ({"error": "empty body"}, 400)
+    try:
+        parsed: Any = json.loads(text)
+    except json.JSONDecodeError as e:
+        return None, ({"error": "invalid JSON", "detail": str(e)}, 400)
+    err = _json_strings_only_ascii(parsed)
+    if err:
+        return None, (
+            {"error": "JSON strings must be 7-bit ASCII", "detail": err},
+            400,
+        )
+    return parsed, None
+
+
+def _normalize_stored_command(value: Any) -> Any:
+    """Defaults for command objects (back-compat with former fixed schema)."""
+    if not isinstance(value, dict):
+        return value
+    out: Dict[str, Any] = dict(value)
+    if "created_dt" not in out:
+        out["created_dt"] = datetime.now().isoformat()
+    if "lolidk" not in out:
+        out["lolidk"] = ""
+    if "last_access_dt" not in out:
+        out["last_access_dt"] = ""
+    return out
+
+
+def _mark_command_accessed(cmd: Any) -> None:
+    if isinstance(cmd, dict):
+        cmd["last_access_dt"] = datetime.now().isoformat()
 
 
 # Logging: isodatetime, DEBUG, to stdout (Docker / process manager capture)
@@ -147,7 +206,7 @@ def assertAuthAzZone(req: Any) -> None:
 
 
 ### BEGIN STATE (make this sqlite)
-commands: Dict[str, List[IRCommand]] = defaultdict(list)
+commands: Dict[str, List[Any]] = defaultdict(list)
 sensors: Dict[str, List[Sensors]] = defaultdict(list)
 ### END STATE
 
@@ -162,8 +221,8 @@ def _zone_response(zonename: str, update_access: bool) -> JSON:
     """Craft the json for one zone's response"""
     cmd = _lastor(commands[zonename])
     sns = _lastor(sensors[zonename])
-    if cmd and update_access:
-        cmd.model_mark_accessed()
+    if cmd is not None and update_access:
+        _mark_command_accessed(cmd)
     ret = ZoneState(command=cmd, sensors=sns).dict()
     print(f"_zone_response({zonename}, {update_access}) -> {ret}")
     return ret
@@ -349,8 +408,8 @@ def update_sensors(zonename: str) -> Any:
 @app.route("/zone/<string:zonename>/command", methods=["POST"])
 def update_command(zonename: str) -> Any:
     """
-    Update a zone with UpdateZone. Read this zone's states.
-    Register the zone if not already there
+    Store the JSON body as the zone’s latest command and return the zone snapshot.
+    Body checks: valid UTF-8, parse as JSON, all JSON strings 7-bit ASCII only.
     """
     pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
         "ZONE_PUBLIC_KEY_PATH"
@@ -375,8 +434,11 @@ def update_command(zonename: str) -> Any:
     elif _oauth_enabled and not session.get("user"):
         return redirect(url_for("login"))
     assertAuthAzZone(request)
-    js = request.json
-    cmd = IRCommand(**js)
+    raw = request.get_data(cache=True)
+    parsed, parse_err = _parse_validated_command_json(raw)
+    if parse_err:
+        return parse_err[0], parse_err[1]
+    cmd = _normalize_stored_command(parsed)
     _append_and_trim(commands[zonename], cmd)
     return _zone_response(zonename, True)
 
