@@ -5,7 +5,7 @@ Use as an import for testing. Must use the flask cmd line to start
 """
 
 from anavilib import HTU21D, send_daikin_state
-from common import is_test_env, log
+from common import is_test_env, log, log_debug
 from constants import help_msg
 
 from collections import deque
@@ -14,7 +14,7 @@ from datetime import datetime
 import json
 import logging
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 from flask import Flask, request
 
@@ -28,6 +28,10 @@ def out(msg: str, **kwargs) -> None:
     """Log via common.log (same format as twoway)."""
     log("app", msg, **kwargs)
 
+
+def dbg(msg: str, **kwargs) -> None:
+    """Log at DEBUG (same kwargs style as info)."""
+    log_debug("app", msg, **kwargs)
 
 c = defaultdict(lambda: 0)
 
@@ -187,6 +191,41 @@ def test_inject_readings():
 DAIKIN_CMDS_MAXLEN = 100
 daikin_cmds: deque[tuple[datetime, State, bool]] = deque(maxlen=DAIKIN_CMDS_MAXLEN)
 
+# Keys understood by heatpumpirctl.State.from_json (canonical lowercase).
+_STATE_FROM_JSON_KEYS: FrozenSet[str] = frozenset(
+    {
+        "power",
+        "mode",
+        "temp_c",
+        "half_c",
+        "fan",
+        "swing",
+        "powerful",
+        "econo",
+        "comfort",
+        "timer_on_minutes",
+        "timer_off_minutes",
+        "timer_on_active",
+        "timer_off_active",
+    }
+)
+
+
+def _command_dict_for_state(cmd: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build the dict passed to State.from_json from a raw zone command.
+
+    DMZ/twoway may carry noise (lolidk, created_dt, last_access_dt). CLI callers
+    may use any casing (FAN=F1). Only keys in _STATE_FROM_JSON_KEYS are kept,
+    renamed to lowercase.
+    """
+    out: Dict[str, Any] = {}
+    for key, val in cmd.items():
+        canon = str(key).lower()
+        if canon in _STATE_FROM_JSON_KEYS:
+            out[canon] = val
+    return out
+
 # Last IR payload successfully sent (JSON fingerprint); identical State skips send_daikin_state.
 _last_daikin_ir_fingerprint: Optional[str] = None
 
@@ -243,18 +282,33 @@ def set_daikin():
     """Accept a zone state or bare command dict, convert to State, send IR if changed.
 
     Twoway posts the raw DMZ zone state ({command, sensors}); direct callers may post
-    {command: ...} or a bare command dict. The command dict keys must match
-    State.from_json() (power, mode, temp_c/half_c, fan, swing, …). Repeated identical
-    commands (same IR-relevant fields) do not re-send IR. Returns {time, command, sent}.
+    {command: ...} or a bare command dict. Command keys are matched case-insensitively
+    to State fields (power, mode, temp_c, half_c, fan, …); other keys (e.g. DMZ
+    timestamps, lolidk) are ignored. Repeated identical commands do not re-send IR.
+    Returns {time, command, sent}.
     """
     global _last_daikin_ir_fingerprint
     js = request.json or {}
+    dbg("set_daikin", js=js)
     cmd_obj = js.get("command") if isinstance(js, dict) else js
-    if not cmd_obj or not isinstance(cmd_obj, dict):
-        out("Empty or invalid command")
+    if cmd_obj is None:
+        # Zone state with no command set yet; nothing to drive.
+        dbg("no command in zone state; skipping /daikin")
+        return {"sent": False, "reason": "no command"}, 200
+    if not isinstance(cmd_obj, dict):
+        out("Invalid command: expected dict, got %s" % type(cmd_obj).__name__)
         return {"error": "EmptyCmd"}, 400
+    merged = _command_dict_for_state(cmd_obj)
+    if not merged:
+        dbg(
+            "set_daikin no state fields in command",
+            keys=list(cmd_obj.keys()),
+        )
+        return {"sent": False, "reason": "no state fields in command"}, 200
     try:
-        state = State.from_json(cmd_obj)
+        dbg("set_daikin state preconvert", merged=merged)
+        state = State.from_json(merged)
+        dbg("set_daikin state", state=state)
     except (KeyError, ValueError, TypeError) as e:
         out("Invalid command: %s" % e)
         return {"error": "InvalidCmd", "detail": str(e)}, 400

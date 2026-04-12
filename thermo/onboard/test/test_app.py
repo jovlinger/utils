@@ -132,6 +132,67 @@ class AppTest(TestCase):
         self.assertTrue(r3.json["sent"])
         self.assertEqual(mock_send.call_count, 2)
 
+    @patch("app.send_daikin_state", return_value=True)
+    def test_daikin_uppercase_cli_keys(self, mock_send) -> None:
+        """CLI-style FAN= / MODE= keys must map to State.from_json field names."""
+        app.daikin_cmds.clear()
+        app._last_daikin_ir_fingerprint = None
+        client = app.app.test_client()
+        r = client.post(
+            "/daikin",
+            json={
+                "command": {
+                    "POWER": True,
+                    "MODE": "HEAT",
+                    "HALF_C": 44,
+                    "FAN": "F1",
+                }
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json["sent"])
+        self.assertEqual(r.json["command"]["fan"], "F1")
+        self.assertEqual(r.json["command"]["mode"], "HEAT")
+
+    @patch("app.send_daikin_state", return_value=True)
+    def test_daikin_strips_dmz_metadata_keys(self, mock_send) -> None:
+        app.daikin_cmds.clear()
+        app._last_daikin_ir_fingerprint = None
+        client = app.app.test_client()
+        r = client.post(
+            "/daikin",
+            json={
+                "command": {
+                    "fan": "F4",
+                    "created_dt": "2026-01-01T00:00:00",
+                    "last_access_dt": "2026-01-02T00:00:00",
+                }
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json["sent"])
+        self.assertEqual(r.json["command"]["fan"], "F4")
+
+    def test_daikin_metadata_only_no_ir(self) -> None:
+        """DMZ-only keys must not build a default State or call IR."""
+        app.daikin_cmds.clear()
+        app._last_daikin_ir_fingerprint = None
+        client = app.app.test_client()
+        with patch("app.send_daikin_state") as mock_send:
+            r = client.post(
+                "/daikin",
+                json={
+                    "command": {
+                        "created_dt": "x",
+                        "last_access_dt": "y",
+                    }
+                },
+            )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json["sent"])
+        self.assertEqual(r.json.get("reason"), "no state fields in command")
+        mock_send.assert_not_called()
+
     def test_manage_get_state(self):
         client = app.app.test_client()
         with patch.dict(os.environ, {"MANAGE_TOKEN": "test-token"}, clear=False):

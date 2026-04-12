@@ -165,6 +165,7 @@ def poll_once() -> bool:
         body_bytes = json.dumps(dmz_body).encode()
         extra = _sign_headers("POST", DMZ_SIGN_PATH, body_bytes, ZONE_NAME)
         res, ok_dmz = post_json(dmz, dmz_body, extra_headers=extra if extra else None)
+        dbg(f"poll_once dmz -> twoway", res=res, ok_dmz=ok_dmz)
         if not ok_dmz:
             err("post to DMZ failed: aborting poll", error=res)
             return False
@@ -174,6 +175,7 @@ def poll_once() -> bool:
         if not ok_write:
             err("post to onboard failed: aborting poll", error=write_res, res=res)
             return False
+        dbg(f"post twoway -> {writeto}", res=write_res, ok_write=ok_write)
     except Exception as e:
         err("failed", error=str(e))
         return False
