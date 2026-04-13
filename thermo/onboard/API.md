@@ -24,7 +24,7 @@ When running in a test environment (`common.is_test_env()`), sets fake temperatu
 
 ## `GET /daikin`
 
-Returns a JSON array of recent Daikin commands (newest first), each entry with `time` and `command` (the `State` JSON).
+Returns a JSON array of recent Daikin commands (newest first), each entry with `time` and `command` (the `State` JSON). If the rolling history is empty, the array has one element: the current last-applied state (on cold start: off, AUTO mode/fan, 20°C) with `time` JSON `null`.
 
 ## `PUT /daikin` · `POST /daikin`
 

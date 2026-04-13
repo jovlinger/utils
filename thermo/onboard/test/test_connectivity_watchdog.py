@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
+import connectivity_watchdog
 from connectivity_watchdog import (
     check_http_reachable,
     decode_pi_throttled,
@@ -68,19 +68,25 @@ def test_decode_flags() -> None:
     assert decode_pi_throttled(0) == "none"
 
 
-@patch("connectivity_watchdog.requests.get")
-def test_http_ok_on_404(mock_get: MagicMock) -> None:
-    r = MagicMock()
-    r.status_code = 404
-    mock_get.return_value = r
+class _FakeResponse404:
+    status_code = 404
+
+
+def test_http_ok_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_get(*args: object, **kwargs: object) -> _FakeResponse404:
+        return _FakeResponse404()
+
+    monkeypatch.setattr(connectivity_watchdog.requests, "get", fake_get)
     ok, detail = check_http_reachable("http://example.test/", 1.0)
     assert ok
     assert "404" in detail
 
 
-@patch("connectivity_watchdog.requests.get")
-def test_http_fail_on_timeout(mock_get: MagicMock) -> None:
-    mock_get.side_effect = requests.Timeout("nope")
+def test_http_fail_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_get(*args: object, **kwargs: object) -> None:
+        raise requests.Timeout("nope")
+
+    monkeypatch.setattr(connectivity_watchdog.requests, "get", fake_get)
     ok, detail = check_http_reachable("http://example.test/", 1.0)
     assert not ok
     assert "nope" in detail

@@ -1,12 +1,6 @@
 """
-Duck-typed mocks for smbus.
-
-use like so:
-
-
-<brief tutorial in mocking. Do we want to switch to pytest instead of unittest?
-
-Nah. we'll use the get-in-there-first low-level import
+Duck-typed mocks for smbus (``thermo/onboard/test/conftest.py`` injects this as
+``sys.modules["smbus"]`` so HTU21D tests run without real I2C).
 """
 
 

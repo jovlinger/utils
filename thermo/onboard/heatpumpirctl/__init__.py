@@ -54,7 +54,8 @@ class State:
 
     power: bool = False
     mode: Mode = Mode.AUTO
-    half_c: int = 50  # temp × 2; 50 = 25°C, 49 = 24.5°C
+    # temp × 2; default 20°C (comfort). E.g. 44 = 22°C, 50 = 25°C.
+    half_c: int = 40
     fan: Fan = Fan.AUTO
     swing: bool = False
     powerful: bool = False

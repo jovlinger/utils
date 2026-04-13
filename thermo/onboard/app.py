@@ -122,7 +122,7 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         _fake_temp = None
         _fake_humid = None
         _last_daikin_ir_fingerprint = None
-        _last_applied_state = None
+        _last_applied_state = State()
         daikin_cmds.clear()
         out("management reset state")
         return {"ok": True, "action": action}, 200
@@ -208,7 +208,7 @@ def test_reset():
         return {"error": "only in test env"}, 403
     daikin_cmds.clear()
     _last_daikin_ir_fingerprint = None
-    _last_applied_state = None
+    _last_applied_state = State()
     return {"ok": True}
 
 
@@ -254,8 +254,9 @@ def _command_dict_for_state(cmd: Dict[str, Any]) -> Dict[str, Any]:
 # Last IR payload successfully sent (JSON fingerprint); identical State skips send_daikin_state.
 _last_daikin_ir_fingerprint: Optional[str] = None
 
-# Last State applied on /daikin (UI or twoway); used to merge partial DMZ commands from twoway.
-_last_applied_state: Optional[State] = None
+# Last State applied on /daikin (UI or twoway); merge baseline for partial DMZ/twoway commands.
+# Starts at a comfortable default (see heatpumpirctl.State: off, AUTO, 20°C).
+_last_applied_state: State = State()
 
 
 def _daikin_state_fingerprint(state: State) -> str:
@@ -265,7 +266,13 @@ def _daikin_state_fingerprint(state: State) -> str:
 
 @app.route("/daikin", methods=["GET"])
 def get_daikin():
-    """Return list of {time, command} for recent daikin commands sent (newest first)."""
+    """Return list of {time, command} for recent daikin commands sent (newest first).
+
+    When the rolling queue is empty, returns one entry built from the current
+    last-applied State (cold start: off, AUTO, 20°C) with ``time`` null.
+    """
+    if not daikin_cmds:
+        return [{"time": None, "command": _last_applied_state.to_json()}]
     return [
         {"time": ts.isoformat(), "command": s.to_json()}
         for ts, s, _ in reversed(list(daikin_cmds))
@@ -359,7 +366,7 @@ def set_daikin():
 
     from_dmz_twoway = isinstance(js, dict) and "sensors" in js
     try:
-        if from_dmz_twoway and _last_applied_state is not None:
+        if from_dmz_twoway:
             base = _last_applied_state.to_json()
             merged_for_state = {**base, **merged}
             dbg(
