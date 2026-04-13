@@ -1,0 +1,2 @@
+[console_scripts]
+rediscover = rediscover.cli:cli
