@@ -552,6 +552,7 @@ def get_dir_tags(conn: sqlite3.Connection, dirpath: str) -> list[str]:
     path_rows = conn.execute(
         "SELECT shasum, root_rel, dirpath AS dp, filename FROM stored_files WHERE deleted = 0"
     ).fetchall()
+    matching: set[str] = set()
     for shasum, root_rel, dp, filename in path_rows:
         full = os.path.normpath(os.path.join(root_rel, dp, filename))
         parent = os.path.normpath(os.path.join(root_rel, dp)) if dp else os.path.normpath(root_rel)
