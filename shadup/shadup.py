@@ -246,6 +246,34 @@ def parse_args() -> argparse.Namespace:
             "open the database and schema, then print path and stats"
         ),
     )
+    mode.add_argument(
+        "--tag-add",
+        nargs="+",
+        metavar="ARG",
+        dest="tag_add",
+        help="Add tags to a sha256 hash: --tag-add HASH TAG [TAG ...]",
+    )
+    mode.add_argument(
+        "--tag-rm",
+        nargs="+",
+        metavar="ARG",
+        dest="tag_rm",
+        help="Remove tags from a sha256 hash: --tag-rm HASH TAG [TAG ...]",
+    )
+    mode.add_argument(
+        "--get-tags",
+        nargs="*",
+        metavar="HASH",
+        dest="get_tags",
+        help="Print tags for sha256 hashes (all tagged hashes if none given)",
+    )
+    mode.add_argument(
+        "--dir-tags",
+        nargs="+",
+        metavar="PATH",
+        dest="dir_tags",
+        help="Print union of tags for all files under each path",
+    )
     parser.add_argument(
         "--shadir",
         help="Directory to store files by sha256",
@@ -462,7 +490,137 @@ def open_db(shadir: str, db_path: str | None = None) -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS stored_files_dirpath_idx ON stored_files(dirpath)"
     )
+    # sha_tags stores a JSON list of opaque tag strings keyed by sha256 hash.
+    # Many hashes can share the same tag; one hash can carry many tags.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sha_tags (
+            shasum TEXT NOT NULL PRIMARY KEY,
+            tags TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Tag helpers
+# ---------------------------------------------------------------------------
+
+
+def get_tags(conn: sqlite3.Connection, shasum: str) -> list[str]:
+    """Return the tags for a sha256 hash, or [] if none."""
+    row = conn.execute(
+        "SELECT tags FROM sha_tags WHERE shasum = ?", (shasum,)
+    ).fetchone()
+    if not row:
+        return []
+    return json.loads(row[0])
+
+
+def set_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
+    """Replace the tag list for a sha256 hash."""
+    conn.execute(
+        """
+        INSERT INTO sha_tags (shasum, tags) VALUES (?, ?)
+        ON CONFLICT(shasum) DO UPDATE SET tags = excluded.tags
+        """,
+        (shasum, json.dumps(sorted(set(tags)))),
+    )
+
+
+def add_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
+    """Add tags to a sha256 hash (no-op for already-present tags)."""
+    current = get_tags(conn, shasum)
+    set_tags(conn, shasum, list(set(current) | set(tags)))
+
+
+def remove_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
+    """Remove tags from a sha256 hash (no-op for absent tags)."""
+    current = get_tags(conn, shasum)
+    set_tags(conn, shasum, [t for t in current if t not in tags])
+
+
+def get_dir_tags(conn: sqlite3.Connection, dirpath: str) -> list[str]:
+    """Return the union of tags for all stored files under dirpath.
+
+    The path is matched against the normalised ``root_rel/dirpath/filename``
+    triple stored in *stored_files*.  A file's full path prefix must equal
+    *dirpath* or start with ``dirpath + sep`` to be included.
+    """
+    norm = os.path.normpath(dirpath)
+    path_rows = conn.execute(
+        "SELECT shasum, root_rel, dirpath AS dp, filename FROM stored_files WHERE deleted = 0"
+    ).fetchall()
+    matching: set[str] = set()
+    for shasum, root_rel, dp, filename in path_rows:
+        full = os.path.normpath(os.path.join(root_rel, dp, filename))
+        parent = os.path.normpath(os.path.join(root_rel, dp)) if dp else os.path.normpath(root_rel)
+        if full == norm or parent == norm or full.startswith(norm + os.sep) or parent.startswith(norm + os.sep):
+            matching.add(shasum)
+
+    union: set[str] = set()
+    for shasum in matching:
+        union.update(get_tags(conn, shasum))
+    return sorted(union)
+
+
+# ---------------------------------------------------------------------------
+# Tag command handlers
+# ---------------------------------------------------------------------------
+
+
+def handle_tag_add(
+    conn: sqlite3.Connection, shadir: str, shasum_arg: str, tags: list[str]
+) -> None:
+    """Add tags to a sha256 hash."""
+    shasum = normalize_hash_arg(shadir, shasum_arg)
+    if not shasum:
+        raise SystemExit(f"invalid hash: {shasum_arg!r}")
+    add_tags(conn, shasum, tags)
+    conn.commit()
+    out("tags for {shasum}: {tags}", 0, shasum=shasum, tags=json.dumps(get_tags(conn, shasum)), kind="data")
+
+
+def handle_tag_rm(
+    conn: sqlite3.Connection, shadir: str, shasum_arg: str, tags: list[str]
+) -> None:
+    """Remove tags from a sha256 hash."""
+    shasum = normalize_hash_arg(shadir, shasum_arg)
+    if not shasum:
+        raise SystemExit(f"invalid hash: {shasum_arg!r}")
+    remove_tags(conn, shasum, tags)
+    conn.commit()
+    out("tags for {shasum}: {tags}", 0, shasum=shasum, tags=json.dumps(get_tags(conn, shasum)), kind="data")
+
+
+def handle_get_tags(
+    conn: sqlite3.Connection, shadir: str, shasum_args: list[str]
+) -> None:
+    """Print tags for one or more sha256 hashes."""
+    if shasum_args:
+        shasums = [normalize_hash_arg(shadir, a) for a in shasum_args]
+    else:
+        rows = conn.execute("SELECT shasum FROM sha_tags ORDER BY shasum").fetchall()
+        shasums = [r[0] for r in rows]
+    for shasum in shasums:
+        if not shasum:
+            continue
+        tags = get_tags(conn, shasum)
+        if OUTPUT_MODE == "machine":
+            out_csv([shasum, json.dumps(tags)])
+        else:
+            out("{shasum}  {tags}", 0, shasum=shasum, tags=json.dumps(tags), kind="data")
+
+
+def handle_dir_tags(conn: sqlite3.Connection, paths: list[str]) -> None:
+    """Print the union of tags for all files under each path."""
+    for path in paths:
+        tags = get_dir_tags(conn, path)
+        if OUTPUT_MODE == "machine":
+            out_csv([path, json.dumps(tags)])
+        else:
+            out("{path}  {tags}", 0, path=path, tags=json.dumps(tags), kind="data")
 
 
 def store_digest(path: str, digest: str, shadir: str) -> tuple[str, bool] | None:
@@ -1516,6 +1674,24 @@ def main() -> int:
                 files_root = expand_path(args.reindex_files)
             out("reindex-files {files_root}", 1, files_root=files_root)
             handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
+            return 0
+        if args.tag_add:
+            shasum_arg, *tags = args.tag_add
+            if not tags:
+                raise SystemExit("--tag-add requires: HASH TAG [TAG ...]")
+            handle_tag_add(conn, shadir, shasum_arg, tags)
+            return 0
+        if args.tag_rm:
+            shasum_arg, *tags = args.tag_rm
+            if not tags:
+                raise SystemExit("--tag-rm requires: HASH TAG [TAG ...]")
+            handle_tag_rm(conn, shadir, shasum_arg, tags)
+            return 0
+        if args.get_tags is not None:
+            handle_get_tags(conn, shadir, args.get_tags)
+            return 0
+        if args.dir_tags:
+            handle_dir_tags(conn, args.dir_tags)
             return 0
         for root in args.dedup:
             out("dedup {root}", 1, root=root)
