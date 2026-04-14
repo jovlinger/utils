@@ -16,3 +16,23 @@ if [ ! -f "$SRC" ]; then
 	exit 1
 fi
 cp "$SRC" "$DST"
+
+HP_SRC="$DMZ/../onboard/heatpumpirctl"
+HP_DST="$DMZ/.docker-import/heatpumpirctl"
+if [ ! -d "$HP_SRC" ]; then
+	echo "dmz: missing heatpumpirctl: $HP_SRC" >&2
+	exit 1
+fi
+rm -rf "$HP_DST"
+mkdir -p "$HP_DST"
+cp -R "$HP_SRC"/. "$HP_DST/"
+
+UI_SRC="$DMZ/../ui"
+UI_DST="$DMZ/.docker-import/ui"
+if [ ! -d "$UI_SRC" ]; then
+	echo "dmz: missing shared UI dir: $UI_SRC" >&2
+	exit 1
+fi
+rm -rf "$UI_DST"
+mkdir -p "$UI_DST"
+cp -R "$UI_SRC"/. "$UI_DST/"

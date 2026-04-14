@@ -5,7 +5,7 @@ Two **separate** container images on **GHCR**:
 
 | Image                                     | Role                                                       |
 | ----------------------------------------- | ---------------------------------------------------------- |
-| `ghcr.io/jovlinger/thermo-onboard-app`    | Flask API (`app.py`), static UI (`ui_server.py`), I2C/LIRC |
+| `ghcr.io/jovlinger/thermo-onboard-app`    | Flask API (`app.py`), static UI (`thermo/ui`), I2C/LIRC |
 | `ghcr.io/jovlinger/thermo-onboard-twoway` | DMZ ↔ onboard sync (`twoway.py`)                           |
 
 

@@ -39,6 +39,12 @@ c = defaultdict(lambda: 0)
 MANAGE_TOKEN_ENVVAR = "MANAGE_TOKEN"
 
 
+def _onboard_ui_zone_name() -> str:
+    """Zone label for UI and ``GET /ui/context`` (defaults when unset)."""
+    z = (os.environ.get("ZONE_NAME") or "").strip()
+    return z if z else "default"
+
+
 def _manage_auth_ok() -> bool:
     """Allow management operations only with a matching token."""
     token = os.environ.get(MANAGE_TOKEN_ENVVAR, "")
@@ -324,22 +330,18 @@ def _daikin_response_payload(ts_iso: str, state: State, **extra: Any) -> Dict[st
     return pl
 
 
-@app.route("/daikin", methods=["PUT", "POST"])
-def set_daikin():
-    """Accept a zone state or bare command dict, convert to State, send IR if changed.
+def _latest_command_dict_for_ui() -> Dict[str, Any]:
+    """Authoritative command JSON for the onboard zone (matches ``GET /daikin`` newest)."""
+    global _last_applied_state
+    if not daikin_cmds:
+        return _last_applied_state.to_json()
+    _ts, state, _succ = daikin_cmds[-1]
+    return state.to_json()
 
-    Twoway posts the raw DMZ zone state ({command, sensors}). Partial DMZ commands are
-    merged onto the last applied onboard State so the UI is not overwritten by stale
-    narrow keys (e.g. only fan). Direct UI posts typically send {command} without sensors
-    and replace behavior as before. Command keys are normalized via _command_dict_for_state.
 
-    Successful responses include ``command`` (authoritative State JSON) and
-    ``environment`` (same as GET /environment) so twoway can push command back to DMZ.
-
-    Repeated identical commands do not re-send IR. Returns {time, command, environment, sent}.
-    """
+def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
+    """Shared implementation for ``POST /daikin`` and ``POST /ui/command``."""
     global _last_daikin_ir_fingerprint, _last_applied_state
-    js = request.json or {}
     dbg("set_daikin", js=js)
     cmd_obj = js.get("command") if isinstance(js, dict) else js
     if cmd_obj is None:
@@ -396,6 +398,72 @@ def set_daikin():
     daikin_cmds.append((ts, state, success))
     out("SET_DAIKIN: %s" % state.summary())
     return _daikin_response_payload(ts_iso, state, sent=success), 200
+
+
+@app.route("/ui/context", methods=["GET"])
+def ui_context():
+    """JSON for the shared thermo UI: one zone, local environment, latest command."""
+    zn = _onboard_ui_zone_name()
+    env = _environment_dict()
+    env_row: Dict[str, Any] = {
+        "zone": zn,
+        "temperature_centigrade": env.get("temperature_centigrade"),
+        "humidity_percent": env.get("humidity_percent"),
+        "time": env.get("time"),
+    }
+    cmd = _latest_command_dict_for_ui()
+    return {
+        "zones": [zn],
+        "environments": [env_row],
+        "zone_states": {zn: {"command": cmd, "sensors": None}},
+    }
+
+
+@app.route("/ui/command", methods=["POST"])
+def ui_command():
+    """Apply a Daikin command for this onboard zone (``zone`` in body is ignored)."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return {"error": "json object required"}, 400
+    cmd = body.get("command")
+    if not isinstance(cmd, dict):
+        return {"error": "command object required"}, 400
+    inner: Dict[str, Any] = {"command": cmd}
+    payload, status = handle_set_daikin_body(inner)
+    if status >= 400:
+        return payload, status
+    if not isinstance(payload, dict):
+        return {"error": "unexpected response"}, 500
+    zn = _onboard_ui_zone_name()
+    out_payload: Dict[str, Any] = {
+        "zone": zn,
+        "command": payload.get("command"),
+        "sensors": None,
+        "time": payload.get("time"),
+        "sent": payload.get("sent"),
+        "environment": payload.get("environment"),
+        "unchanged": payload.get("unchanged"),
+        "reason": payload.get("reason"),
+    }
+    return out_payload, status
+
+
+@app.route("/daikin", methods=["PUT", "POST"])
+def set_daikin():
+    """Accept a zone state or bare command dict, convert to State, send IR if changed.
+
+    Twoway posts the raw DMZ zone state ({command, sensors}). Partial DMZ commands are
+    merged onto the last applied onboard State so the UI is not overwritten by stale
+    narrow keys (e.g. only fan). Direct UI posts typically send {command} without sensors
+    and replace behavior as before. Command keys are normalized via _command_dict_for_state.
+
+    Successful responses include ``command`` (authoritative State JSON) and
+    ``environment`` (same as GET /environment) so twoway can push command back to DMZ.
+
+    Repeated identical commands do not re-send IR. Returns {time, command, environment, sent}.
+    """
+    js = request.json or {}
+    return handle_set_daikin_body(js)
 
 
 if __name__ == "__main__":

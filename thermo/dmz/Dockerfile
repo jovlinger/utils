@@ -40,12 +40,15 @@ WORKDIR /app
 COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
 # Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source bin repo).
 COPY .docker-import/run-with-stdout-logged.py /app/run-with-stdout-logged.py
+COPY .docker-import/heatpumpirctl /app/heatpumpirctl
+COPY .docker-import/ui /app/ui
 COPY . .
 RUN chown -R dmz:dmz /app \
 	&& chmod +x /app/start.sh /app/run.sh /app/run-with-stdout-logged.py
 
 ENV PORT=8080
-EXPOSE 8080
+ENV UI_PORT=8090
+EXPOSE 8080 8090
 
 USER root
 ENTRYPOINT ["/sbin/tini", "--"]

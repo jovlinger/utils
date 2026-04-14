@@ -42,16 +42,24 @@ Returns JSON diagnostic snapshot (time, pid, log level, fake sensor values, Daik
 
 Runs one management action from a JSON body (`action`, plus action-specific fields): inject log lines, change log level, reset state, or fault-injection paths (`assert`, `raise`, `fatal`). Requires the same **`X-Manage-Token`** as `GET /manage`.
 
+## `GET /ui/context`
+
+JSON snapshot for the shared thermo UI: **`zones`** (single element: `ZONE_NAME` or `"default"`), **`environments`** (one row: local sensor / time), **`zone_states`** (that zone’s latest command and `sensors: null`).
+
+## `POST /ui/command`
+
+JSON body `{"zone": "<ignored>", "command": { ... }}` — same command semantics as **`POST /daikin`**. Response includes `zone` (this onboard’s name), `command`, `environment`, `sent`, `unchanged` / `reason` when applicable, and `sensors: null`.
+
 ---
 
 ## UI server (port `UI_PORT`, default 8080)
 
-Separate process: import **`Handler`**, **`main`** from **`ui_server`** with `thermo/onboard` on `PYTHONPATH`. Serves HTML that proxies to the Flask app on `127.0.0.1:$PORT`.
+Separate process: run **`thermo/ui/ui_server.py`** with **`thermo/onboard`** on **`PYTHONPATH`** (Docker: `/app`). Default backend is onboard (`THERMO_UI_BACKEND=onboard`). Serves HTML that talks to the Flask app on `127.0.0.1:$PORT` via **`GET /ui/context`** and **`POST /ui/command`** (with fallbacks if `/ui/context` is unavailable).
 
 ## `GET /`
 
-Serves the thermostat HTML UI (reads latest state from Flask `GET /daikin`, environment line from `GET /environment`, embedded help from `GET /help` and `GET /about`, log excerpt from `GET /logs`).
+Serves the thermostat HTML UI (environment table, zone selector, latest state, help/about/logs, management on onboard only).
 
 ## `POST /`
 
-Accepts `application/x-www-form-urlencoded` body: either submits a Daikin update (POSTs JSON to Flask `POST /daikin`) or performs a management action (POSTs JSON to Flask `POST /manage` with token from form or `MANAGE_TOKEN` env). Responds with refreshed HTML and a status message.
+Accepts `application/x-www-form-urlencoded` body: Daikin update (POSTs JSON to Flask **`POST /ui/command`**) or management action (POSTs JSON to Flask **`POST /manage`** with token from form or `MANAGE_TOKEN` env). Responds with refreshed HTML and a status message.

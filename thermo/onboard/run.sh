@@ -28,6 +28,7 @@ if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
 fi
 . "$SCRIPT_DIR/env/bin/activate"
 python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
-python ui_server.py &
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+python "$SCRIPT_DIR/../ui/ui_server.py" &
 echo "starting app"
 exec python "$RUN_WITH_STDOUT" "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py

@@ -10,6 +10,7 @@
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
+#   Optional for SD write progress on macOS: brew install pv (bar + ETA; else periodic "still writing").
 #
 # ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub (each if present) are merged into apkovl /root/.ssh/authorized_keys.
 
@@ -489,9 +490,22 @@ fi
 echo "Writing $OUTPUT_IMG -> $DEV (sudo)..."
 case "$(uname)" in
 Darwin)
-	sudo dd if="$OUTPUT_IMG" of="$DEV" bs=1m conv=sync
+	if command -v pv >/dev/null 2>&1; then
+		# Size hint so pv can show % and ETA (brew install pv).
+		pv -s "$IMG_SIZE" -f -p -t -e -r "$OUTPUT_IMG" | sudo dd of="$DEV" bs=1m conv=sync
+	else
+		echo "Tip: install pv for a live progress bar: brew install pv" >&2
+		sudo dd if="$OUTPUT_IMG" of="$DEV" bs=1m conv=sync &
+		_dd_pid=$!
+		while kill -0 "$_dd_pid" 2>/dev/null; do
+			sleep 20
+			echo "… still writing to $DEV ($(date +%H:%M:%S))" >&2
+		done
+		wait "$_dd_pid"
+	fi
 	;;
 *)
+	# GNU coreutils dd: periodic kernel progress lines.
 	sudo dd if="$OUTPUT_IMG" of="$DEV" bs=4M status=progress conv=fsync
 	;;
 esac

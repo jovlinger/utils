@@ -15,7 +15,8 @@ mkdir -p "$(dirname "$LOG_PATH_APP")" "$(dirname "$LOG_PATH_UI")"
 export LOG_PATH="$LOG_PATH_APP"
 
 # Background UI: same rotation wrapper so nothing grows unbounded on Docker's json log.
+export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
 python ./bin/run-with-stdout-logged.py "$LOG_PATH_UI" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-  python ui_server.py &
+  python ui/ui_server.py &
 exec python ./bin/run-with-stdout-logged.py "$LOG_PATH_APP" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
   python app.py

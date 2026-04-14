@@ -8,7 +8,7 @@ all: .image
 # Plain progress: avoid `docker build -q` (no output until done — looks hung in CI / agent logs).
 DOCKER_BUILD_PROGRESS ?= plain
 
-.image: Dockerfile requirements.txt .dockerignore start.sh run.sh stage-docker-import.sh $(RUN_WITH_BIN) $(wildcard *.py) $(wildcard test/*.py)
+.image: Dockerfile requirements.txt .dockerignore start.sh run.sh stage-docker-import.sh $(RUN_WITH_BIN) $(wildcard *.py) $(wildcard test/*.py) $(wildcard ../ui/*) $(wildcard ../onboard/heatpumpirctl/*.py)
 	"$(CURDIR)/stage-docker-import.sh"
 	docker build --progress=$(DOCKER_BUILD_PROGRESS) -t jovlinger/thermo/dmz .
 	@docker image inspect jovlinger/thermo/dmz -f '{{.Id}}' | cut -d: -f2 > .image

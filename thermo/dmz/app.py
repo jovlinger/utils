@@ -429,6 +429,79 @@ def update_command(zonename: str) -> Any:
     return _zone_response(zonename, True)
 
 
+def _environment_row_for_zone(zonename: str) -> Dict[str, Any]:
+    """One table row: latest sensor snapshot for ``zonename`` (DMZ UI / ``GET /ui/context``)."""
+    sns: Optional[Sensors] = _lastor(sensors[zonename])
+    if sns is None:
+        return {
+            "zone": zonename,
+            "temperature_centigrade": None,
+            "humidity_percent": None,
+            "time": None,
+        }
+    d = sns.dict()
+    return {
+        "zone": zonename,
+        "temperature_centigrade": d.get("temp_centigrade"),
+        "humidity_percent": d.get("humid_percent"),
+        "time": d.get("created_dt") or None,
+    }
+
+
+@app.route("/ui/context", methods=["GET"])
+def ui_context() -> Any:
+    """
+    JSON for the shared thermo UI: all zones with state, environment table per zone.
+
+    Intentionally **not** gated on OAuth or machine auth (DMZ UI is open for now; protect
+    at the edge if needed).
+    """
+    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    env_rows = [_environment_row_for_zone(z) for z in all_zones]
+    zone_states = {z: _zone_response(z, False) for z in all_zones}
+    return {
+        "zones": all_zones,
+        "environments": env_rows,
+        "zone_states": zone_states,
+    }
+
+
+@app.route("/ui/command", methods=["POST"])
+def ui_command() -> Any:
+    """
+    Store command JSON for ``zone`` (same storage as ``POST /zone/<z>/command``).
+
+    Open endpoint for the bundled UI (no OAuth / machine auth). Prefer reverse-proxy
+    or network policy in production.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return {"error": "json object required"}, 400
+    zonename_raw = body.get("zone")
+    if not isinstance(zonename_raw, str) or not zonename_raw.strip():
+        return {"error": "zone string required"}, 400
+    zonename = zonename_raw.strip()
+    cmd = body.get("command")
+    if not isinstance(cmd, dict):
+        return {"error": "command object required"}, 400
+    raw = json.dumps(cmd, separators=(",", ":")).encode("utf-8")
+    parsed, parse_err = _parse_validated_command_json(raw)
+    if parse_err:
+        return parse_err[0], parse_err[1]
+    _append_and_trim(commands[zonename], parsed)
+    snap = _zone_response(zonename, True)
+    return {
+        "zone": zonename,
+        "command": snap.get("command"),
+        "sensors": snap.get("sensors"),
+        "time": datetime.now().isoformat(),
+        "sent": None,
+        "environment": None,
+        "unchanged": None,
+        "reason": None,
+    }
+
+
 @app.route("/zones", methods=["GET"])
 def get_zones() -> Any:
     """

@@ -31,7 +31,7 @@ images: build
 
 build: .image.app .image.twoway
 
-.image.app: Dockerfile.onboard requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) ui_server.py ui_template.html
+.image.app: Dockerfile.onboard requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(wildcard ../ui/*)
 	"$(CURDIR)/stage-docker-import.sh"
 	@echo "[build] $(IMAGE_APP):$(TAG) platform=$(PLATFORM) (this may take several minutes)..."
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .

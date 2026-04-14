@@ -16,3 +16,13 @@ if [ ! -f "$SRC" ]; then
 	exit 1
 fi
 cp "$SRC" "$DST"
+
+UI_SRC="$ONBOARD/../ui"
+UI_DST="$ONBOARD/.docker-import/ui"
+if [ ! -d "$UI_SRC" ]; then
+	echo "onboard: missing shared UI dir: $UI_SRC" >&2
+	exit 1
+fi
+rm -rf "$UI_DST"
+mkdir -p "$UI_DST"
+cp -R "$UI_SRC"/. "$UI_DST/"

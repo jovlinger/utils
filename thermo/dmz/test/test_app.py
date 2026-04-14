@@ -358,3 +358,45 @@ def test_signed_get_zones_accepted(dmz_ctx: object, restore_zone_public_key: obj
     with app.test_client() as c:
         r = c.get(path, headers=headers)
         assert r.status_code == 200, r.get_data(as_text=True)
+
+
+def test_ui_context_empty(dmz_ctx: object) -> None:
+    """GET /ui/context returns empty structures when no zones exist."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _get_200(c, "/ui/context")
+        assert js.get("zones") == []
+        assert js.get("environments") == []
+        assert js.get("zone_states") == {}
+
+
+def test_ui_context_all_zones(dmz_ctx: object) -> None:
+    """GET /ui/context lists every zone with state and environment rows."""
+    with app.test_client() as c:
+        _reset(c)
+        _post_200(c, "/zone/a/command", {"power": True, "mode": "HEAT"})
+        _post_200(c, "/zone/b/sensors", {"temp_centigrade": 14.0, "humid_percent": 40.0})
+        js = _get_200(c, "/ui/context")
+        assert sorted(js["zones"]) == ["a", "b"]
+        assert len(js["environments"]) == 2
+        by_zone = {row["zone"]: row for row in js["environments"]}
+        assert by_zone["b"]["temperature_centigrade"] == 14.0
+        assert by_zone["b"]["humidity_percent"] == 40.0
+        assert js["zone_states"]["a"]["command"]["mode"] == "HEAT"
+
+
+def test_ui_command_stores_command(dmz_ctx: object) -> None:
+    """POST /ui/command stores the same way as POST /zone/<z>/command."""
+    with app.test_client() as c:
+        _reset(c)
+        r = c.post(
+            "/ui/command",
+            json={"zone": "z9", "command": {"power": False, "mode": "AUTO"}},
+        )
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json() or {}
+        assert body.get("zone") == "z9"
+        assert body.get("command", {}).get("mode") == "AUTO"
+        zones = _get_200(c, "/zones")
+        assert "z9" in zones
+        assert zones["z9"]["command"]["mode"] == "AUTO"

@@ -305,3 +305,44 @@ def test_manage_raise(monkeypatch: pytest.MonkeyPatch) -> None:
         headers={"X-Manage-Token": "test-token"},
     )
     assert r.status_code == 500
+
+
+def test_ui_context_single_zone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GET /ui/context exposes one zone name and matches environment + latest command."""
+    monkeypatch.setenv("ENV", "TEST")
+    monkeypatch.setenv("ZONE_NAME", "pizero")
+    app.daikin_cmds.clear()
+    app._last_daikin_ir_fingerprint = None
+    app._last_applied_state = State()
+    client = app.app.test_client()
+    client.post(
+        "/daikin",
+        json={"command": {"power": True, "mode": "COOL", "temp_c": 24, "fan": "AUTO"}},
+    )
+    r = client.get("/ui/context")
+    assert r.status_code == 200
+    js = r.json
+    assert js["zones"] == ["pizero"]
+    assert len(js["environments"]) == 1
+    assert js["environments"][0]["zone"] == "pizero"
+    assert js["environments"][0]["temperature_centigrade"] is not None
+    assert js["zone_states"]["pizero"]["command"]["mode"] == "COOL"
+    assert js["zone_states"]["pizero"]["sensors"] is None
+
+
+def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /ui/command applies the same way as POST /daikin for a bare command."""
+    monkeypatch.setenv("ENV", "TEST")
+    app.daikin_cmds.clear()
+    app._last_daikin_ir_fingerprint = None
+    app._last_applied_state = State()
+    client = app.app.test_client()
+    r = client.post(
+        "/ui/command",
+        json={"zone": "ignored", "command": {"power": True, "mode": "HEAT", "temp_c": 21}},
+    )
+    assert r.status_code == 200
+    assert r.json["zone"] == "default"
+    assert r.json["command"]["mode"] == "HEAT"
+    assert r.json["sent"] is True
+    assert r.json["sensors"] is None

@@ -30,6 +30,14 @@ Accepts the JSON body and passes it through to zone command storage, returning t
 
 Returns a JSON object of all known zones and each zone’s latest command and sensor state. Authorization follows `_authorize_global_read`: machine-signed request, OAuth session, or open access when neither machine auth nor OAuth is enforcing, depending on environment variables.
 
+## `GET /ui/context`
+
+JSON snapshot for the shared thermo UI: **`zones`** (every zone that has ever posted sensors or command), **`environments`** (one table row per zone with latest sensor temps / humidity / time; nulls when a zone has no sensor data yet), **`zone_states`** (per-zone `command` and `sensors` as in `GET /zones`). **Not** protected by OAuth or machine auth (intended for the bundled UI; restrict at the network edge if needed).
+
+## `POST /ui/command`
+
+JSON body `{"zone": "<name>", "command": { ... }}` — same validation and storage as **`POST /zone/<zonename>/command`** (ASCII-only JSON strings). **Not** protected by OAuth or machine auth for now. Response echoes `zone`, `command`, `sensors`, and `time`.
+
 ## `GET /debug/logs`
 
 Returns a JSON object with a bounded in-memory list of recent HTTP access records (method, path, status, timestamp). Uses the same authorization rules as `GET /zones`.

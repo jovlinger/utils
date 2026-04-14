@@ -88,5 +88,20 @@ python_probe() {
 
 run_dmz_pytest
 python_probe
+# Bundled thermo UI (proxies Flask on PORT) on UI_PORT — image has /app/ui; dev uses ../ui.
+UI_SERVER_PATH="$APP_ROOT/ui/ui_server.py"
+if [ ! -f "$UI_SERVER_PATH" ]; then
+	UI_SERVER_PATH="$APP_ROOT/../ui/ui_server.py"
+fi
+if [ -f "$UI_SERVER_PATH" ]; then
+	if [ -d "$APP_ROOT/heatpumpirctl" ]; then
+		export PYTHONPATH="${APP_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+	else
+		export PYTHONPATH="${APP_ROOT}:${APP_ROOT}/../onboard${PYTHONPATH:+:$PYTHONPATH}"
+	fi
+	export THERMO_UI_BACKEND=dmz
+	export UI_PORT="${UI_PORT:-8090}"
+	python -u "$UI_SERVER_PATH" &
+fi
 # cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).
 exec python -u app.py
