@@ -1,0 +1,3 @@
+fakeredis>=2.10
+pytest>=7.0
+pytest-cov

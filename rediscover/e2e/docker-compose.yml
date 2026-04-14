@@ -1,0 +1,22 @@
+version: "3.8"
+services:
+  redis1:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+  redis2:
+    image: redis:7-alpine
+    ports:
+      - "6382:6379"
+  app:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.app
+    environment:
+      REDIS_URLS: "redis://redis1:6379,redis://redis2:6379"
+      APP_NAMESPACE: "e2e_test"
+    depends_on:
+      - redis1
+      - redis2
+    ports:
+      - "8765:8765"
