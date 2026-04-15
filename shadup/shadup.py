@@ -268,11 +268,17 @@ def parse_args() -> argparse.Namespace:
         help="Print tags for sha256 hashes (all tagged hashes if none given)",
     )
     mode.add_argument(
-        "--dir-tags",
+        "--tags",
         nargs="+",
         metavar="PATH",
         dest="dir_tags",
         help="Print union of tags for all files under each path",
+    )
+    mode.add_argument(
+        "--refresh-extracted-tags",
+        action="store_true",
+        dest="refresh_extracted_tags",
+        help="Rebuild _tags/ symlinks under files/ from filesystem + DB tags",
     )
     parser.add_argument(
         "--shadir",
@@ -555,8 +561,17 @@ def get_dir_tags(conn: sqlite3.Connection, dirpath: str) -> list[str]:
     matching: set[str] = set()
     for shasum, root_rel, dp, filename in path_rows:
         full = os.path.normpath(os.path.join(root_rel, dp, filename))
-        parent = os.path.normpath(os.path.join(root_rel, dp)) if dp else os.path.normpath(root_rel)
-        if full == norm or parent == norm or full.startswith(norm + os.sep) or parent.startswith(norm + os.sep):
+        parent = (
+            os.path.normpath(os.path.join(root_rel, dp))
+            if dp
+            else os.path.normpath(root_rel)
+        )
+        if (
+            full == norm
+            or parent == norm
+            or full.startswith(norm + os.sep)
+            or parent.startswith(norm + os.sep)
+        ):
             matching.add(shasum)
 
     union: set[str] = set()
@@ -579,7 +594,13 @@ def handle_tag_add(
         raise SystemExit(f"invalid hash: {shasum_arg!r}")
     add_tags(conn, shasum, tags)
     conn.commit()
-    out("tags for {shasum}: {tags}", 0, shasum=shasum, tags=json.dumps(get_tags(conn, shasum)), kind="data")
+    out(
+        "tags for {shasum}: {tags}",
+        0,
+        shasum=shasum,
+        tags=json.dumps(get_tags(conn, shasum)),
+        kind="data",
+    )
 
 
 def handle_tag_rm(
@@ -591,7 +612,13 @@ def handle_tag_rm(
         raise SystemExit(f"invalid hash: {shasum_arg!r}")
     remove_tags(conn, shasum, tags)
     conn.commit()
-    out("tags for {shasum}: {tags}", 0, shasum=shasum, tags=json.dumps(get_tags(conn, shasum)), kind="data")
+    out(
+        "tags for {shasum}: {tags}",
+        0,
+        shasum=shasum,
+        tags=json.dumps(get_tags(conn, shasum)),
+        kind="data",
+    )
 
 
 def handle_get_tags(
@@ -610,7 +637,9 @@ def handle_get_tags(
         if OUTPUT_MODE == "machine":
             out_csv([shasum, json.dumps(tags)])
         else:
-            out("{shasum}  {tags}", 0, shasum=shasum, tags=json.dumps(tags), kind="data")
+            out(
+                "{shasum}  {tags}", 0, shasum=shasum, tags=json.dumps(tags), kind="data"
+            )
 
 
 def handle_dir_tags(conn: sqlite3.Connection, paths: list[str]) -> None:
@@ -621,6 +650,19 @@ def handle_dir_tags(conn: sqlite3.Connection, paths: list[str]) -> None:
             out_csv([path, json.dumps(tags)])
         else:
             out("{path}  {tags}", 0, path=path, tags=json.dumps(tags), kind="data")
+
+
+def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
+    """Rebuild _tags/ symlinks mirroring directory paths per tag."""
+    files_root = os.path.abspath(os.path.join(os.path.dirname(shadir), "files"))
+    out("refresh-extracted-tags files_root {files_root}", 1, files_root=files_root)
+    if not os.path.isdir(files_root):
+        raise SystemExit(
+            f"refresh-extracted-tags: files root not a directory: {files_root}"
+        )
+    tags_root = os.path.join(files_root, "_tags")
+    os.makedirs(tags_root, exist_ok=True)
+    # TODO: union tags per path, walk bottom-up, symlink _tags/<tag>/<relpath> -> ...
 
 
 def store_digest(path: str, digest: str, shadir: str) -> tuple[str, bool] | None:
@@ -1692,6 +1734,10 @@ def main() -> int:
             return 0
         if args.dir_tags:
             handle_dir_tags(conn, args.dir_tags)
+            return 0
+        if args.refresh_extracted_tags:
+            out("refresh-extracted-tags", 1)
+            handle_refresh_extracted_tags(conn, shadir)
             return 0
         for root in args.dedup:
             out("dedup {root}", 1, root=root)
