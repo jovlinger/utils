@@ -82,9 +82,7 @@ def compute_dir_tags_from_file_specs(
     rel_pairs: list[tuple[Path, frozenset[str]]] = [
         (p.relative_to(files_root), frozenset(tags)) for p, tags in file_specs
     ]
-    file_map: dict[str, frozenset[str]] = {
-        p.as_posix(): t for p, t in rel_pairs
-    }
+    file_map: dict[str, frozenset[str]] = {p.as_posix(): t for p, t in rel_pairs}
 
     all_dirs: set[str] = {""}
     for fp in file_map:
@@ -182,8 +180,7 @@ def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
-    """Precomputed tag sets from the a/b/f … tree.`.
-    """
+    """Precomputed tag sets from the a/b/f … tree.`."""
     tags_by_dir: dict[str, frozenset[str]] = {
         "a": frozenset({"x", "y", "z"}),
         "a/b": frozenset({"x", "y"}),
@@ -281,14 +278,14 @@ def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     want_links = _symlink_checks_from_plan(files_root, rows)
 
     tmp_path = files_root.parent
-    _run_shadup(tmp_path, shadir, ["--store", "files"])
+    _run_shadup(tmp_path, shadir, ["store", "files"])
 
     for orig, tags in file_specs:
         assert orig.is_symlink()
-        _run_shadup(tmp_path, shadir, ["--tag-add", str(orig), *tags])
+        _run_shadup(tmp_path, shadir, ["tag-add", str(orig), *tags])
 
-    _run_shadup(tmp_path, shadir, ["--extract", "files"])
-    _run_shadup(tmp_path, shadir, ["--refresh-extracted-tags"])
+    _run_shadup(tmp_path, shadir, ["extract", "files"])
+    _run_shadup(tmp_path, shadir, ["refresh-extracted-tags"])
 
     got_find = _find_sorted_relative_to_files(files_root)
     assert got_find == want_find, (
@@ -299,9 +296,9 @@ def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     for rel, want_text in want_links:
         link = files_root / rel
         assert link.is_symlink(), f"expected symlink at {link}"
-        assert os.readlink(link) == want_text, (
-            f"{link}: got {os.readlink(link)!r} want {want_text!r}"
-        )
+        assert (
+            os.readlink(link) == want_text
+        ), f"{link}: got {os.readlink(link)!r} want {want_text!r}"
     for rel, _want_text in want_links:
         link = files_root / rel
         target = (link.parent / os.readlink(link)).resolve()

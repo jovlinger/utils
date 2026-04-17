@@ -135,61 +135,32 @@ def _emit_lshash_pretty(
                 out(f"  {path}", 0, kind="data")
 
 
-def normalize_argv(argv: list[str]) -> list[str]:
-    """Move global flags before mode flags.
-
-    >>> normalize_argv(["--ls", "--recursive", "foo"])
-    ['--recursive', '--ls', 'foo']
-    >>> normalize_argv(["--skip-dotfiles=false", "--extract", "a"])
-    ['--skip-dotfiles=false', '--extract', 'a']
-    >>> normalize_argv(["--extract", "a", "--show-deleted"])
-    ['--show-deleted', '--extract', 'a']
-    """
-    global_flags = {"--recursive", "--show-deleted", "-v", "--alltags"}
-    global_with_value = {"--skip-dotfiles", "--paranoia"}
-    extracted: list[str] = []
-    remaining: list[str] = []
-    idx = 0
-    while idx < len(argv):
-        arg = argv[idx]
-        if arg in global_flags:
-            extracted.append(arg)
-            idx += 1
-            continue
-        if arg in global_with_value:
-            extracted.append(arg)
-            if idx + 1 < len(argv):
-                extracted.append(argv[idx + 1])
-                idx += 2
-            else:
-                idx += 1
-            continue
-        if arg.startswith("--skip-dotfiles=") or arg.startswith("--paranoia="):
-            extracted.append(arg)
-            idx += 1
-            continue
-        remaining.append(arg)
-        idx += 1
-    return extracted + remaining
+def _parse_bool(value: str) -> bool:
+    """Parse a CLI boolean value."""
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean: {value!r}")
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for store/extract modes."""
+def _positive_int(value: str) -> int:
+    """Accept integers >= 1 for ``--mindup``."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1: {value!r}")
+    return parsed
 
-    def parse_bool(value: str) -> bool:
-        """Parse a CLI boolean value."""
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "n", "off"}:
-            return False
-        raise argparse.ArgumentTypeError(f"invalid boolean: {value!r}")
 
+def build_parser() -> argparse.ArgumentParser:
+    """Build the AWS-style ``shadup [global] <action> [action-opts]`` parser."""
     parser = argparse.ArgumentParser(
+        prog="shadup",
         description="Store files by sha256 and replace with symlinks, or extract back.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Store (.shadir): without --shadir, searches upward from the current "
+            "Shadir discovery: without --shadir, searches upward from the current "
             "working directory. At each ancestor directory, looks for an existing "
             "subdirectory named .shadup, then .shadir (in that order). The walk "
             "stops at $HOME when cwd is under your home directory, otherwise at "
@@ -199,101 +170,11 @@ def parse_args() -> argparse.Namespace:
             "Database: defaults to <shadir>/.shadup.db unless --db is given. "
             "The database file's parent directory is created if missing; the DB "
             "file is created on first open.\n\n"
-            "--check: with no --shadir/--db, exit 0 if a store is found and "
+            "check action: with no --shadir/--db, exit 0 if a store is found and "
             "<shadir>/.shadup.db exists, else exit 1; prints the DB path and "
             "cheap aggregate stats. With --shadir and/or --db, open (creating) "
             "the DB, print path and stats, and exit 0."
         ),
-    )
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument(
-        "--store",
-        nargs="+",
-        metavar="DIR",
-        help="Directories to store files from",
-    )
-    mode.add_argument(
-        "--extract",
-        nargs="+",
-        metavar="DIR",
-        help="Prefix paths to extract (relative to cwd used at store time)",
-    )
-    mode.add_argument(
-        "--lspath",
-        "--ls",
-        nargs="*",
-        metavar="PATH",
-        dest="lspath",
-        help="List stored file paths with sha256 hashes",
-    )
-    mode.add_argument(
-        "--lshash",
-        nargs="*",
-        metavar="HASH",
-        help="List stored file paths grouped by sha256 hashes",
-    )
-    mode.add_argument(
-        "--rmpath",
-        nargs="+",
-        metavar="PATH",
-        dest="rmpath",
-        help="Mark stored entries as deleted (same prefixes as extract).",
-    )
-    mode.add_argument(
-        "--rmhash",
-        nargs="+",
-        metavar="HASH",
-        dest="rmhash",
-        help="Mark all entries with matching shasums as deleted",
-    )
-    mode.add_argument(
-        "--dedup",
-        nargs="+",
-        metavar="DIR",
-        help="Replace files with existing shadir links without storing",
-    )
-    mode.add_argument(
-        "--fixlinks",
-        nargs="+",
-        metavar="DIR",
-        help="Fix broken symlink targets under directories",
-    )
-    mode.add_argument(
-        "--reindex-files",
-        nargs="?",
-        metavar="DIR",
-        const="__AUTO__",
-        dest="reindex_files",
-        help="Rebuild DB entries by scanning symlinks under files/ tree",
-    )
-    mode.add_argument(
-        "--check",
-        action="store_true",
-        help=(
-            "With no --shadir/--db: exit 0 if store and default DB exist, else 1; "
-            "prints DB path and aggregate stats. With --shadir or --db: create or "
-            "open the database and schema, then print path and stats"
-        ),
-    )
-    mode.add_argument(
-        "--tag-add",
-        nargs="+",
-        metavar="ARG",
-        dest="tag_add",
-        help="Add tags to a stored file: --tag-add PATH TAG [TAG ...]",
-    )
-    mode.add_argument(
-        "--tag-rm",
-        nargs="+",
-        metavar="ARG",
-        dest="tag_rm",
-        help="Remove tags from a stored file: --tag-rm PATH TAG [TAG ...]",
-    )
-    mode.add_argument(
-        "--refresh-extracted-tags",
-        action="store_true",
-        dest="refresh_extracted_tags",
-        help="Rebuild _tags/ symlinks under files/ from filesystem + DB tags",
     )
     parser.add_argument(
         "--shadir",
@@ -304,54 +185,207 @@ def parse_args() -> argparse.Namespace:
         help="Path to SQLite database (default: <shadir>/.shadup.db)",
     )
     parser.add_argument(
-        "--skip-dotfiles",
-        type=parse_bool,
-        default=True,
-        metavar="BOOL",
-        help="Skip files and directories starting with '.' (default: true)",
-    )
-    parser.add_argument(
-        "--mindup",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Minimum duplicate count for lspath/lshash filtering (default: 1)",
-    )
-    parser.add_argument(
-        "-r",
-        "--recursive",
-        action="store_true",
-        help="Recurse into child paths for list/delete operations",
-    )
-    parser.add_argument(
-        "-d",
-        "--show-deleted",
-        action="store_true",
-        help="Include deleted entries in db operations",
-    )
-    parser.add_argument(
-        "--paranoia",
-        type=int,
-        default=0,
-        metavar="N",
-        help="With --fixlinks: 0=no extra checks, 1=target exists, 2=1+sha256 verify",
-    )
-    parser.add_argument(
         "-v",
         action="count",
         default=0,
         help="Increase verbosity (can be repeated)",
     )
-    parser.add_argument(
+
+    sub = parser.add_subparsers(dest="action", required=True, metavar="ACTION")
+
+    p_store = sub.add_parser("store", help="Store files by sha256 under directories")
+    p_store.add_argument(
+        "dirs", nargs="+", metavar="DIR", help="Directories (or files) to store"
+    )
+    p_store.add_argument(
+        "--skip-dotfiles",
+        type=_parse_bool,
+        default=True,
+        metavar="BOOL",
+        help="Skip files and directories starting with '.' (default: true)",
+    )
+
+    p_extract = sub.add_parser(
+        "extract", help="Extract files back to their original paths"
+    )
+    p_extract.add_argument(
+        "prefixes",
+        nargs="+",
+        metavar="DIR",
+        help="Prefix paths to extract (relative to cwd at store time)",
+    )
+    p_extract.add_argument(
+        "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+
+    p_ls = sub.add_parser(
+        "ls",
+        aliases=["lspath"],
+        help="List stored file paths with sha256 hashes and tags",
+    )
+    p_ls.add_argument(
+        "prefixes",
+        nargs="*",
+        metavar="PATH",
+        help="Optional path prefixes to filter by",
+    )
+    p_ls.add_argument(
+        "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_ls.add_argument(
+        "--mindup",
+        type=_positive_int,
+        default=1,
+        metavar="N",
+        help="Minimum duplicate count for filtering (default: 1)",
+    )
+    p_ls.add_argument(
         "--alltags",
         action="store_true",
         help=(
-            "With --lspath/--ls only: list directories under files/ with recursive "
-            "computed tag sets (union of tags over immediate children). Default --ls "
-            "shows direct DB tags per stored file row."
+            "List directories under files/ with recursive computed tag sets "
+            "(union over immediate children). Default: direct DB tags per file row."
         ),
     )
-    return parser.parse_args(normalize_argv(sys.argv[1:]))
+
+    p_lshash = sub.add_parser("lshash", help="List stored file paths grouped by sha256")
+    p_lshash.add_argument(
+        "hashes",
+        nargs="*",
+        metavar="HASH",
+        help="Optional sha256 hashes (or symlinks to them) to filter by",
+    )
+    p_lshash.add_argument(
+        "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_lshash.add_argument(
+        "--mindup",
+        type=_positive_int,
+        default=1,
+        metavar="N",
+        help="Minimum duplicate count for filtering (default: 1)",
+    )
+
+    p_rmpath = sub.add_parser(
+        "rmpath", help="Mark stored entries as deleted by path prefix"
+    )
+    p_rmpath.add_argument(
+        "prefixes", nargs="+", metavar="PATH", help="Path prefixes to mark deleted"
+    )
+    p_rmpath.add_argument(
+        "-r", "--recursive", action="store_true", help="Recurse into child paths"
+    )
+    p_rmpath.add_argument(
+        "-d",
+        "--show-deleted",
+        action="store_true",
+        help="Include already-deleted entries in selection",
+    )
+
+    p_rmhash = sub.add_parser(
+        "rmhash", help="Mark all entries with matching sha256 as deleted"
+    )
+    p_rmhash.add_argument(
+        "hashes", nargs="+", metavar="HASH", help="sha256 hashes (or symlinks to them)"
+    )
+
+    p_dedup = sub.add_parser(
+        "dedup", help="Replace files with existing shadir links without storing"
+    )
+    p_dedup.add_argument(
+        "dirs", nargs="+", metavar="DIR", help="Directories to scan for duplicates"
+    )
+    p_dedup.add_argument(
+        "--skip-dotfiles",
+        type=_parse_bool,
+        default=True,
+        metavar="BOOL",
+        help="Skip files and directories starting with '.' (default: true)",
+    )
+
+    p_fixlinks = sub.add_parser(
+        "fixlinks", help="Fix broken symlink targets under directories"
+    )
+    p_fixlinks.add_argument(
+        "dirs", nargs="+", metavar="DIR", help="Directories to scan for symlinks to fix"
+    )
+    p_fixlinks.add_argument(
+        "-r", "--recursive", action="store_true", help="Recurse into subdirectories"
+    )
+    p_fixlinks.add_argument(
+        "--paranoia",
+        type=int,
+        default=0,
+        choices=(0, 1, 2),
+        help="0=no extra checks, 1=target exists, 2=1+sha256 verify",
+    )
+    p_fixlinks.add_argument(
+        "--skip-dotfiles",
+        type=_parse_bool,
+        default=True,
+        metavar="BOOL",
+        help="Skip files and directories starting with '.' (default: true)",
+    )
+
+    p_reindex = sub.add_parser(
+        "reindex-files",
+        help="Rebuild DB entries by scanning symlinks under a files/ tree",
+    )
+    p_reindex.add_argument(
+        "dir",
+        nargs="?",
+        default=None,
+        metavar="DIR",
+        help="Root of files/ tree (default: <parent-of-shadir>/files)",
+    )
+    p_reindex.add_argument(
+        "--skip-dotfiles",
+        type=_parse_bool,
+        default=True,
+        metavar="BOOL",
+        help="Skip files and directories starting with '.' (default: true)",
+    )
+
+    sub.add_parser(
+        "check",
+        help=(
+            "Verify shadir discovery and DB. Without --shadir/--db: exit 0 if "
+            "store + default DB exist. With either: open (creating) the DB and "
+            "print path + aggregate stats."
+        ),
+    )
+
+    p_tadd = sub.add_parser(
+        "tag-add", help="Add tags to a stored file identified by path"
+    )
+    p_tadd.add_argument(
+        "path",
+        metavar="PATH",
+        help="Path to a stored file (symlink into shadir) or a regular file",
+    )
+    p_tadd.add_argument("tags", nargs="+", metavar="TAG", help="Tags to add")
+
+    p_trm = sub.add_parser(
+        "tag-rm", help="Remove tags from a stored file identified by path"
+    )
+    p_trm.add_argument(
+        "path",
+        metavar="PATH",
+        help="Path to a stored file (symlink into shadir) or a regular file",
+    )
+    p_trm.add_argument("tags", nargs="+", metavar="TAG", help="Tags to remove")
+
+    sub.add_parser(
+        "refresh-extracted-tags",
+        help="Rebuild _tags/ symlinks under files/ from filesystem + DB tags",
+    )
+
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments for the AWS-style ``shadup <action>`` interface."""
+    return build_parser().parse_args(argv)
 
 
 def sha256_file(path: str) -> str:
@@ -1829,15 +1863,17 @@ def handle_check(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    """Entry point for command execution."""
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for ``shadup [global-opts] <action> [action-opts]``."""
+    args = parse_args(argv)
     global VERBOSITY
     VERBOSITY = args.v
     global OUTPUT_MODE
     OUTPUT_MODE = "pretty" if sys.stdout.isatty() else "machine"
-    if args.check:
+
+    if args.action == "check":
         return handle_check(args)
+
     if args.shadir:
         shadir = expand_path(args.shadir)
     else:
@@ -1850,118 +1886,103 @@ def main() -> int:
     cwd = os.path.abspath(os.curdir)
     if is_under_dir(cwd, shadir):
         raise SystemExit(f"cwd must not be inside shadir: cwd={cwd} shadir={shadir}")
-    if args.lspath is not None and args.recursive:
-        raise SystemExit("--lspath/--ls does not accept --recursive")
-    if args.rmhash and args.recursive:
-        raise SystemExit("--rmhash does not accept --recursive")
-    if args.paranoia < 0 or args.paranoia > 2:
-        raise SystemExit("--paranoia must be 0, 1, or 2")
-    if args.paranoia and not args.fixlinks:
-        raise SystemExit("--paranoia is only valid with --fixlinks")
-    if args.mindup < 1:
-        raise SystemExit("--mindup must be >= 1")
-    if args.mindup != 1 and args.lspath is None and args.lshash is None:
-        raise SystemExit("--mindup is only valid with --lspath/--ls or --lshash")
-    if args.alltags and args.lspath is None:
-        raise SystemExit("--alltags is only valid with --lspath/--ls")
-    if args.alltags and args.lshash is not None:
-        raise SystemExit("--alltags is only valid with --lspath/--ls")
-    if args.alltags and args.mindup != 1:
-        raise SystemExit("--alltags does not support --mindup (use default 1)")
-    if args.reindex_files and args.recursive:
-        raise SystemExit("--reindex-files does not accept --recursive")
+
     db_path = expand_path(args.db) if args.db else None
     with open_db(shadir, db_path) as conn:
-        if args.store:
-            for root in args.store:
-                out("store {root}", 1, root=root)
-                handle_store(conn, expand_path(root), shadir, args.skip_dotfiles)
-            return 0
-        if args.extract:
-            for prefix in args.extract:
-                out("extract {prefix}", 1, prefix=prefix)
-            handle_extract(conn, args.extract, shadir, show_deleted=args.show_deleted)
-            return 0
-        if args.lspath is not None:
-            for prefix in args.lspath:
-                out("lspath {prefix}", 1, prefix=prefix)
-            handle_ls(
-                conn,
-                args.lspath,
-                shadir,
-                recursive=args.recursive,
-                show_deleted=args.show_deleted,
-                mindup=args.mindup,
-                alltags=args.alltags,
-            )
-            return 0
-        if args.lshash is not None:
-            for shasum in args.lshash:
-                out("lshash {shasum}", 1, shasum=shasum)
-            handle_lshash(
-                conn,
-                args.lshash,
-                shadir,
-                show_deleted=args.show_deleted,
-                mindup=args.mindup,
-            )
-            return 0
-        if args.rmpath:
-            for prefix in args.rmpath:
-                out("rmpath {prefix}", 1, prefix=prefix)
-            handle_del(
-                conn,
-                args.rmpath,
-                shadir,
-                recursive=args.recursive,
-                show_deleted=args.show_deleted,
-            )
-            return 0
-        if args.rmhash:
-            for shasum in args.rmhash:
-                out("rmhash {shasum}", 1, shasum=shasum)
-            handle_rmhash(conn, args.rmhash, shadir)
-            return 0
-        if args.fixlinks:
-            for root in args.fixlinks:
-                out("fixlinks {root}", 1, root=root)
-            handle_fixlinks(
-                conn,
-                [expand_path(root) for root in args.fixlinks],
-                shadir,
-                args.skip_dotfiles,
-                recursive=args.recursive,
-                paranoia=args.paranoia,
-            )
-            return 0
-        if args.reindex_files is not None:
-            if args.reindex_files == "__AUTO__":
-                files_root = os.path.join(os.path.dirname(shadir), "files")
-            else:
-                files_root = expand_path(args.reindex_files)
-            out("reindex-files {files_root}", 1, files_root=files_root)
-            handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
-            return 0
-        if args.tag_add:
-            path_arg, *tags = args.tag_add
-            if not tags:
-                raise SystemExit("--tag-add requires: PATH TAG [TAG ...]")
-            handle_tag_add(conn, shadir, path_arg, tags)
-            return 0
-        if args.tag_rm:
-            path_arg, *tags = args.tag_rm
-            if not tags:
-                raise SystemExit("--tag-rm requires: PATH TAG [TAG ...]")
-            handle_tag_rm(conn, shadir, path_arg, tags)
-            return 0
-        if args.refresh_extracted_tags:
-            out("refresh-extracted-tags", 1)
-            handle_refresh_extracted_tags(conn, shadir)
-            return 0
-        for root in args.dedup:
+        return dispatch_action(conn, shadir, args)
+
+
+def dispatch_action(
+    conn: sqlite3.Connection, shadir: str, args: argparse.Namespace
+) -> int:
+    """Dispatch *args.action* to the corresponding ``handle_*`` function."""
+    action = args.action
+    if action == "store":
+        for root in args.dirs:
+            out("store {root}", 1, root=root)
+            handle_store(conn, expand_path(root), shadir, args.skip_dotfiles)
+        return 0
+    if action == "extract":
+        for prefix in args.prefixes:
+            out("extract {prefix}", 1, prefix=prefix)
+        handle_extract(conn, args.prefixes, shadir, show_deleted=args.show_deleted)
+        return 0
+    if action in ("ls", "lspath"):
+        for prefix in args.prefixes:
+            out("lspath {prefix}", 1, prefix=prefix)
+        handle_ls(
+            conn,
+            args.prefixes,
+            shadir,
+            recursive=False,
+            show_deleted=args.show_deleted,
+            mindup=args.mindup,
+            alltags=args.alltags,
+        )
+        return 0
+    if action == "lshash":
+        for shasum in args.hashes:
+            out("lshash {shasum}", 1, shasum=shasum)
+        handle_lshash(
+            conn,
+            args.hashes,
+            shadir,
+            show_deleted=args.show_deleted,
+            mindup=args.mindup,
+        )
+        return 0
+    if action == "rmpath":
+        for prefix in args.prefixes:
+            out("rmpath {prefix}", 1, prefix=prefix)
+        handle_del(
+            conn,
+            args.prefixes,
+            shadir,
+            recursive=args.recursive,
+            show_deleted=args.show_deleted,
+        )
+        return 0
+    if action == "rmhash":
+        for shasum in args.hashes:
+            out("rmhash {shasum}", 1, shasum=shasum)
+        handle_rmhash(conn, args.hashes, shadir)
+        return 0
+    if action == "dedup":
+        for root in args.dirs:
             out("dedup {root}", 1, root=root)
             handle_dedup(conn, expand_path(root), shadir, args.skip_dotfiles)
-    return 0
+        return 0
+    if action == "fixlinks":
+        for root in args.dirs:
+            out("fixlinks {root}", 1, root=root)
+        handle_fixlinks(
+            conn,
+            [expand_path(root) for root in args.dirs],
+            shadir,
+            args.skip_dotfiles,
+            recursive=args.recursive,
+            paranoia=args.paranoia,
+        )
+        return 0
+    if action == "reindex-files":
+        if args.dir is None:
+            files_root = os.path.join(os.path.dirname(shadir), "files")
+        else:
+            files_root = expand_path(args.dir)
+        out("reindex-files {files_root}", 1, files_root=files_root)
+        handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
+        return 0
+    if action == "tag-add":
+        handle_tag_add(conn, shadir, args.path, args.tags)
+        return 0
+    if action == "tag-rm":
+        handle_tag_rm(conn, shadir, args.path, args.tags)
+        return 0
+    if action == "refresh-extracted-tags":
+        out("refresh-extracted-tags", 1)
+        handle_refresh_extracted_tags(conn, shadir)
+        return 0
+    raise SystemExit(f"unknown action: {action}")
 
 
 if __name__ == "__main__":

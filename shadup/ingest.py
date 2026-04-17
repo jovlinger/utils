@@ -54,13 +54,13 @@ def store_with_shadup(path_value: Path) -> None:
     cmd = [
         sys.executable,
         str(SHADUP_PY),
-	"-v",
-        "--store",
-        str(path_value),
+        "-v",
         "--shadir",
         str(DATA_DIR),
         "--db",
         str(DB_PATH),
+        "store",
+        str(path_value),
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
 
