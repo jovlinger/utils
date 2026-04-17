@@ -280,14 +280,14 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         metavar="ARG",
         dest="tag_add",
-        help="Add tags to a sha256 hash: --tag-add HASH TAG [TAG ...]",
+        help="Add tags to a stored file: --tag-add PATH TAG [TAG ...]",
     )
     mode.add_argument(
         "--tag-rm",
         nargs="+",
         metavar="ARG",
         dest="tag_rm",
-        help="Remove tags from a sha256 hash: --tag-rm HASH TAG [TAG ...]",
+        help="Remove tags from a stored file: --tag-rm PATH TAG [TAG ...]",
     )
     mode.add_argument(
         "--refresh-extracted-tags",
@@ -428,6 +428,35 @@ def normalize_hash_arg(shadir: str, value: str) -> str | None:
     if os.path.isfile(resolved_path):
         try:
             return sha256_file(resolved_path)
+        except OSError:
+            return None
+    return None
+
+
+def resolve_path_to_shasum(shadir: str, path: str) -> str | None:
+    """Resolve a filesystem path to its stored sha256 digest.
+
+    Accepts a symlink whose target is ``<shadir>/xx/<digest>`` (the shape
+    produced by ``--store``) or a regular file, which is hashed on the fly.
+    Raw hash strings are intentionally rejected here; use ``--rmhash`` or
+    ``--lshash`` for hash-addressed operations.
+    """
+    if not path:
+        return None
+    if os.path.islink(path):
+        resolved = os.path.realpath(path)
+        base = os.path.basename(resolved).lower()
+        if HASH_RE.match(base) and is_under_dir(resolved, shadir):
+            return base
+        if os.path.isfile(resolved):
+            try:
+                return sha256_file(resolved)
+            except OSError:
+                return None
+        return None
+    if os.path.isfile(path):
+        try:
+            return sha256_file(path)
         except OSError:
             return None
     return None
@@ -577,12 +606,12 @@ def remove_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
 
 
 def handle_tag_add(
-    conn: sqlite3.Connection, shadir: str, shasum_arg: str, tags: list[str]
+    conn: sqlite3.Connection, shadir: str, path_arg: str, tags: list[str]
 ) -> None:
-    """Add tags to a sha256 hash."""
-    shasum = normalize_hash_arg(shadir, shasum_arg)
+    """Add tags to the stored file at *path_arg*."""
+    shasum = resolve_path_to_shasum(shadir, path_arg)
     if not shasum:
-        raise SystemExit(f"invalid hash: {shasum_arg!r}")
+        raise SystemExit(f"cannot resolve path to stored file: {path_arg!r}")
     add_tags(conn, shasum, tags)
     conn.commit()
     out(
@@ -595,12 +624,12 @@ def handle_tag_add(
 
 
 def handle_tag_rm(
-    conn: sqlite3.Connection, shadir: str, shasum_arg: str, tags: list[str]
+    conn: sqlite3.Connection, shadir: str, path_arg: str, tags: list[str]
 ) -> None:
-    """Remove tags from a sha256 hash."""
-    shasum = normalize_hash_arg(shadir, shasum_arg)
+    """Remove tags from the stored file at *path_arg*."""
+    shasum = resolve_path_to_shasum(shadir, path_arg)
     if not shasum:
-        raise SystemExit(f"invalid hash: {shasum_arg!r}")
+        raise SystemExit(f"cannot resolve path to stored file: {path_arg!r}")
     remove_tags(conn, shasum, tags)
     conn.commit()
     out(
@@ -1914,16 +1943,16 @@ def main() -> int:
             handle_reindex_files(conn, shadir, files_root, args.skip_dotfiles)
             return 0
         if args.tag_add:
-            shasum_arg, *tags = args.tag_add
+            path_arg, *tags = args.tag_add
             if not tags:
-                raise SystemExit("--tag-add requires: HASH TAG [TAG ...]")
-            handle_tag_add(conn, shadir, shasum_arg, tags)
+                raise SystemExit("--tag-add requires: PATH TAG [TAG ...]")
+            handle_tag_add(conn, shadir, path_arg, tags)
             return 0
         if args.tag_rm:
-            shasum_arg, *tags = args.tag_rm
+            path_arg, *tags = args.tag_rm
             if not tags:
-                raise SystemExit("--tag-rm requires: HASH TAG [TAG ...]")
-            handle_tag_rm(conn, shadir, shasum_arg, tags)
+                raise SystemExit("--tag-rm requires: PATH TAG [TAG ...]")
+            handle_tag_rm(conn, shadir, path_arg, tags)
             return 0
         if args.refresh_extracted_tags:
             out("refresh-extracted-tags", 1)
