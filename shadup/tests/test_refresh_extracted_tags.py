@@ -182,10 +182,7 @@ def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
-    """Precomputed tag sets from the a/b/f … tree; corrected mirror rows (no ``z``→``d``).
-
-    In the user's sketch, ``d/`` carries only ``{y}``, so a mirror
-    ``_tags/z/d`` would be inconsistent; ``z`` only mirrors ``a`` and ``a/a``.
+    """Precomputed tag sets from the a/b/f … tree.`.
     """
     tags_by_dir: dict[str, frozenset[str]] = {
         "a": frozenset({"x", "y", "z"}),
@@ -202,7 +199,6 @@ def test_user_abcdf_tree_mirror_plan() -> None:
         ("x", "a(2)", "a/a"),
         ("y", "a", "a"),
         ("y", "b", "a/b"),
-        ("y", "a(2)", "a/a"),
         ("y", "d", "d"),
         ("z", "a", "a"),
         ("z", "a(2)", "a/a"),

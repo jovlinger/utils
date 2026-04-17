@@ -17,6 +17,9 @@ T = TypeVar("T")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 DB_NAME = ".shadup.db"
+# Per-tag folder name under ``_tags`` that collects directory mirrors with an
+# empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
+NOTAGS_DIR_NAME = "NOTAGS"
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
 LSHASH_DELIM = "|"
@@ -47,37 +50,63 @@ def _format_pretty_path(path: str) -> str:
     return path
 
 
-def _emit_lspath_machine(entries: list[tuple[str, str, bool]]) -> None:
-    for path, shasum, deleted in entries:
-        out_csv([path, shasum, "1" if deleted else "0"])
+def _emit_lspath_machine(
+    entries: list[tuple[str, str, list[str], bool]],
+) -> None:
+    for path, shasum, tags, deleted in entries:
+        out_csv([path, shasum, json.dumps(tags), "1" if deleted else "0"])
 
 
 def _emit_lspath_pretty(
-    entries: list[tuple[str, str, bool]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
 ) -> None:
     formatted = [
-        (_format_pretty_path(path), shasum, deleted)
-        for path, shasum, deleted in entries
+        (_format_pretty_path(path), shasum, tags, deleted)
+        for path, shasum, tags, deleted in entries
     ]
-    max_len = max(len(path) for path, _shasum, _deleted in formatted)
-    for path, shasum, deleted in formatted:
+    max_path = max(len(path) for path, _s, _t, _d in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _p, _s, tags, _d in formatted]
+    max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
+    for (path, shasum, tags, deleted), tstr in zip(formatted, tag_strs, strict=True):
         if show_deleted:
             out(
-                "{path} {deleted} {shasum}",
+                "{path} {tags} {deleted} {shasum}",
                 0,
-                path=path.ljust(max_len),
+                path=path.ljust(max_path),
+                tags=tstr.ljust(max_tags),
                 deleted="X" if deleted else ".",
                 shasum=shasum,
                 kind="data",
             )
         else:
             out(
-                "{path} {shasum}",
+                "{path} {tags} {shasum}",
                 0,
-                path=path.ljust(max_len),
+                path=path.ljust(max_path),
+                tags=tstr.ljust(max_tags),
                 shasum=shasum,
                 kind="data",
             )
+
+
+def _emit_ls_alltags_machine(rows: list[tuple[str, list[str]]]) -> None:
+    for path, tags in rows:
+        out_csv([path, json.dumps(tags)])
+
+
+def _emit_ls_alltags_pretty(rows: list[tuple[str, list[str]]]) -> None:
+    formatted = [(_format_pretty_path(path), tags) for path, tags in rows]
+    max_path = max(len(p) for p, _t in formatted) if formatted else 0
+    tag_strs = [json.dumps(tags, sort_keys=True) for _p, tags in formatted]
+    max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
+    for (path, tags), tstr in zip(formatted, tag_strs, strict=True):
+        out(
+            "{path} {tags}",
+            0,
+            path=path.ljust(max_path),
+            tags=tstr.ljust(max_tags),
+            kind="data",
+        )
 
 
 def _emit_lshash_machine(
@@ -116,7 +145,7 @@ def normalize_argv(argv: list[str]) -> list[str]:
     >>> normalize_argv(["--extract", "a", "--show-deleted"])
     ['--show-deleted', '--extract', 'a']
     """
-    global_flags = {"--recursive", "--show-deleted", "-v"}
+    global_flags = {"--recursive", "--show-deleted", "-v", "--alltags"}
     global_with_value = {"--skip-dotfiles", "--paranoia"}
     extracted: list[str] = []
     remaining: list[str] = []
@@ -261,20 +290,6 @@ def parse_args() -> argparse.Namespace:
         help="Remove tags from a sha256 hash: --tag-rm HASH TAG [TAG ...]",
     )
     mode.add_argument(
-        "--get-tags",
-        nargs="*",
-        metavar="HASH",
-        dest="get_tags",
-        help="Print tags for sha256 hashes (all tagged hashes if none given)",
-    )
-    mode.add_argument(
-        "--tags",
-        nargs="+",
-        metavar="PATH",
-        dest="dir_tags",
-        help="Print union of tags for all files under each path",
-    )
-    mode.add_argument(
         "--refresh-extracted-tags",
         action="store_true",
         dest="refresh_extracted_tags",
@@ -326,6 +341,15 @@ def parse_args() -> argparse.Namespace:
         action="count",
         default=0,
         help="Increase verbosity (can be repeated)",
+    )
+    parser.add_argument(
+        "--alltags",
+        action="store_true",
+        help=(
+            "With --lspath/--ls only: list directories under files/ with recursive "
+            "computed tag sets (union of tags over immediate children). Default --ls "
+            "shows direct DB tags per stored file row."
+        ),
     )
     return parser.parse_args(normalize_argv(sys.argv[1:]))
 
@@ -547,39 +571,6 @@ def remove_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
     set_tags(conn, shasum, [t for t in current if t not in tags])
 
 
-def get_dir_tags(conn: sqlite3.Connection, dirpath: str) -> list[str]:
-    """Return the union of tags for all stored files under dirpath.
-
-    The path is matched against the normalised ``root_rel/dirpath/filename``
-    triple stored in *stored_files*.  A file's full path prefix must equal
-    *dirpath* or start with ``dirpath + sep`` to be included.
-    """
-    norm = os.path.normpath(dirpath)
-    path_rows = conn.execute(
-        "SELECT shasum, root_rel, dirpath AS dp, filename FROM stored_files WHERE deleted = 0"
-    ).fetchall()
-    matching: set[str] = set()
-    for shasum, root_rel, dp, filename in path_rows:
-        full = os.path.normpath(os.path.join(root_rel, dp, filename))
-        parent = (
-            os.path.normpath(os.path.join(root_rel, dp))
-            if dp
-            else os.path.normpath(root_rel)
-        )
-        if (
-            full == norm
-            or parent == norm
-            or full.startswith(norm + os.sep)
-            or parent.startswith(norm + os.sep)
-        ):
-            matching.add(shasum)
-
-    union: set[str] = set()
-    for shasum in matching:
-        union.update(get_tags(conn, shasum))
-    return sorted(union)
-
-
 # ---------------------------------------------------------------------------
 # Tag command handlers
 # ---------------------------------------------------------------------------
@@ -621,48 +612,240 @@ def handle_tag_rm(
     )
 
 
-def handle_get_tags(
-    conn: sqlite3.Connection, shadir: str, shasum_args: list[str]
-) -> None:
-    """Print tags for one or more sha256 hashes."""
-    if shasum_args:
-        shasums = [normalize_hash_arg(shadir, a) for a in shasum_args]
-    else:
-        rows = conn.execute("SELECT shasum FROM sha_tags ORDER BY shasum").fetchall()
-        shasums = [r[0] for r in rows]
-    for shasum in shasums:
-        if not shasum:
-            continue
-        tags = get_tags(conn, shasum)
-        if OUTPUT_MODE == "machine":
-            out_csv([shasum, json.dumps(tags)])
-        else:
-            out(
-                "{shasum}  {tags}", 0, shasum=shasum, tags=json.dumps(tags), kind="data"
+def _parent_dir_key(dir_key: str) -> str:
+    """Parent POSIX directory key; empty if ``dir_key`` has a single segment."""
+    if not dir_key or "/" not in dir_key:
+        return ""
+    return "/".join(dir_key.split("/")[:-1])
+
+
+def _allocate_flat_link_basename(taken: set[str], logical_base: str) -> str:
+    """First free name among ``base``, ``base(2)``, ``base(3)``, … and mark it taken."""
+    if logical_base not in taken:
+        taken.add(logical_base)
+        return logical_base
+    n = 2
+    while True:
+        cand = f"{logical_base}({n})"
+        if cand not in taken:
+            taken.add(cand)
+            return cand
+        n += 1
+
+
+def _plan_flat_mirrors_for_tag(
+    tag: str, subset: set[str]
+) -> list[tuple[str, str, str]]:
+    """BFS per top-level component; ``taken`` basenames are shared across components."""
+    from collections import deque
+
+    roots = sorted(d for d in subset if "/" not in d)
+    taken: set[str] = set()
+    rows: list[tuple[str, str, str]] = []
+    for root in roots:
+        dq: deque[str] = deque([root])
+        while dq:
+            dk = dq.popleft()
+            logical_base = dk.split("/")[-1]
+            name = _allocate_flat_link_basename(taken, logical_base)
+            rows.append((tag, name, dk))
+            children = sorted(
+                (d for d in subset if _parent_dir_key(d) == dk),
+                reverse=True,
             )
+            dq.extend(children)
+    return rows
 
 
-def handle_dir_tags(conn: sqlite3.Connection, paths: list[str]) -> None:
-    """Print the union of tags for all files under each path."""
-    for path in paths:
-        tags = get_dir_tags(conn, path)
-        if OUTPUT_MODE == "machine":
-            out_csv([path, json.dumps(tags)])
-        else:
-            out("{path}  {tags}", 0, path=path, tags=json.dumps(tags), kind="data")
+def plan_refresh_extracted_tag_mirrors(
+    tags_by_dir: dict[str, frozenset[str]],
+) -> list[tuple[str, str, str]]:
+    """Plan flat per-tag symlinks: ``(tag_or_NOTAGS, link_basename, dir_key)`` rows.
+
+    Rules:
+
+    * For every tag ``t`` present on any directory, include directories whose
+      computed set contains ``t`` and walk them top-down BFS per top-level
+      component. Siblings are emitted **descending by dir_key** (so ``a/b``
+      appears before ``a/a``).
+    * Within a tag folder, duplicate basenames are disambiguated with
+      ``(2)``, ``(3)``, … (shared across top-level components under the tag).
+    * Directories whose computed set is empty go under
+      :data:`NOTAGS_DIR_NAME` with the same BFS + disambiguation rules.
+    * The root directory (``dir_key = ""``) is **never** mirrored.
+    * Tags iterate in ``sorted`` order; :data:`NOTAGS_DIR_NAME` is emitted last.
+    """
+    rows: list[tuple[str, str, str]] = []
+    all_tags: set[str] = set()
+    for ts in tags_by_dir.values():
+        all_tags |= set(ts)
+    for tag in sorted(all_tags):
+        subset = {dk for dk, ts in tags_by_dir.items() if dk and tag in ts}
+        rows.extend(_plan_flat_mirrors_for_tag(tag, subset))
+    empty_dirs = {dk for dk, ts in tags_by_dir.items() if dk and not ts}
+    if empty_dirs:
+        rows.extend(_plan_flat_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
+    return rows
+
+
+def _stored_relpath_to_shasum(
+    conn: sqlite3.Connection, files_root_abs: str
+) -> dict[str, str]:
+    """Map ``dirpath/filename`` POSIX relpath under ``files_root`` → shasum."""
+    out_map: dict[str, str] = {}
+    for shasum, root, dirpath, filename in conn.execute(
+        "SELECT shasum, root, dirpath, filename FROM stored_files WHERE deleted = 0"
+    ):
+        if os.path.abspath(root) != files_root_abs:
+            continue
+        rel = (
+            os.path.join(dirpath, filename).replace(os.sep, "/")
+            if dirpath
+            else filename
+        )
+        rel = rel.lstrip("/")
+        out_map[rel] = shasum
+    return out_map
+
+
+def _compute_tags_by_dir(
+    conn: sqlite3.Connection, files_root_abs: str
+) -> dict[str, frozenset[str]]:
+    """Recursive dir_key → tag set under *files_root_abs* (includes ``""`` for root)."""
+    file_shasum = _stored_relpath_to_shasum(conn, files_root_abs)
+    shasum_tags: dict[str, frozenset[str]] = {}
+
+    def tags_for(shasum: str) -> frozenset[str]:
+        cached = shasum_tags.get(shasum)
+        if cached is None:
+            cached = frozenset(get_tags(conn, shasum))
+            shasum_tags[shasum] = cached
+        return cached
+
+    acc: dict[str, set[str]] = {"": set()}
+    for dirpath_abs, dirnames, filenames in os.walk(files_root_abs, topdown=True):
+        dirnames[:] = [d for d in dirnames if d != "_tags"]
+        rel_dir = os.path.relpath(dirpath_abs, files_root_abs)
+        dir_key = "" if rel_dir in (".", "") else rel_dir.replace(os.sep, "/")
+        acc.setdefault(dir_key, set())
+        for fn in filenames:
+            rel_file = f"{dir_key}/{fn}" if dir_key else fn
+            shasum = file_shasum.get(rel_file)
+            if shasum is None:
+                continue
+            acc[dir_key] |= set(tags_for(shasum))
+
+    ordered = sorted(
+        acc.keys(),
+        key=lambda k: (-(len(k.split("/")) if k else 0), k),
+    )
+    for dk in ordered:
+        if not dk:
+            continue
+        acc[_parent_dir_key(dk)] |= acc[dk]
+
+    return {dk: frozenset(ts) for dk, ts in acc.items()}
+
+
+def _dir_list_path_for_key(files_root_rel: str, dir_key: str) -> str:
+    """Path string for --ls output (POSIX slashes), same style as stored paths."""
+    fk = dir_key.replace(os.sep, "/")
+    fr = files_root_rel.replace(os.sep, "/")
+    if not fk:
+        return fr
+    return f"{fr}/{fk}"
+
+
+def _path_matches_ls_prefixes(list_path: str, prefixes: list[str]) -> bool:
+    """Same inclusion rule as :func:`list_children` for stored paths."""
+    if not prefixes:
+        return True
+    norm = list_path.replace(os.sep, "/")
+    for prefix in prefixes:
+        if os.path.isabs(prefix):
+            continue
+        p = os.path.normpath(prefix).replace(os.sep, "/")
+        if norm == p or norm.startswith(p + "/"):
+            return True
+    return False
+
+
+def handle_ls_alltags(
+    conn: sqlite3.Connection, prefixes: list[str], shadir: str
+) -> None:
+    """Print each directory under files/ with recursively computed tag sets."""
+    files_root_abs = os.path.abspath(os.path.join(os.path.dirname(shadir), "files"))
+    if not os.path.isdir(files_root_abs):
+        return
+    files_root_rel = os.path.relpath(files_root_abs, os.getcwd())
+    tags_by_dir = _compute_tags_by_dir(conn, files_root_abs)
+    normalized = normalize_prefixes(prefixes)
+    if prefixes and not normalized:
+        return
+    use_prefixes = normalized
+
+    rows: list[tuple[str, list[str]]] = []
+    for dir_key in sorted(tags_by_dir.keys()):
+        list_path = _dir_list_path_for_key(files_root_rel, dir_key)
+        if not _path_matches_ls_prefixes(list_path, use_prefixes):
+            continue
+        rows.append((list_path, sorted(tags_by_dir[dir_key])))
+
+    if not rows:
+        return
+    if OUTPUT_MODE == "machine":
+        _emit_ls_alltags_machine(rows)
+        return
+    _emit_ls_alltags_pretty(rows)
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild _tags/ symlinks mirroring directory paths per tag."""
+    """Rebuild ``files/_tags`` with flat per-tag symlinks.
+
+    Two passes:
+
+    1. **Bottom-up** walk of ``files/``: build ``dir_key → frozenset(tags)`` by
+       unioning each file's DB tags into its directory and propagating to
+       ancestors.
+    2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
+       ``files/_tags/<tag>/<basename[(n)]>`` → ``<files>/<dir_key>`` symlinks.
+    """
     files_root = os.path.abspath(os.path.join(os.path.dirname(shadir), "files"))
     out("refresh-extracted-tags files_root {files_root}", 1, files_root=files_root)
     if not os.path.isdir(files_root):
         raise SystemExit(
             f"refresh-extracted-tags: files root not a directory: {files_root}"
         )
+
     tags_root = os.path.join(files_root, "_tags")
+    if os.path.lexists(tags_root):
+        shutil.rmtree(tags_root)
+
+    tags_by_dir = _compute_tags_by_dir(conn, files_root)
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+
+    for tag, name, dir_key in rows:
+        link = os.path.join(files_root, "_tags", tag, name)
+        target = os.path.join(files_root, *dir_key.split("/"))
+        parent = os.path.dirname(link)
+        os.makedirs(parent, exist_ok=True)
+        if os.path.lexists(link):
+            os.unlink(link)
+        rel_target = os.path.relpath(target, parent)
+        os.symlink(rel_target, link)
+        out(
+            "refresh-extracted-tags mirror {tag}/{name} -> {dir_key}",
+            2,
+            tag=tag,
+            name=name,
+            dir_key=dir_key,
+        )
     os.makedirs(tags_root, exist_ok=True)
-    # TODO: union tags per path, walk bottom-up, symlink _tags/<tag>/<relpath> -> ...
+    out(
+        "refresh-extracted-tags mirrors {count}",
+        0,
+        count=len(rows),
+    )
 
 
 def store_digest(path: str, digest: str, shadir: str) -> tuple[str, bool] | None:
@@ -1309,18 +1492,26 @@ def handle_ls(
     recursive: bool,
     show_deleted: bool,
     mindup: int,
+    alltags: bool,
 ) -> None:
-    """Print list entries under prefixes."""
+    """Print list entries under prefixes (direct DB tags per file unless *alltags*)."""
+    if alltags:
+        handle_ls_alltags(conn, prefixes, shadir)
+        return
     entries = list_children(
         conn, prefixes, recursive=recursive, show_deleted=show_deleted
     )
-    if mindup > 1 and entries:
+    tagged: list[tuple[str, str, list[str], bool]] = [
+        (path, shasum, sorted(get_tags(conn, shasum)), deleted)
+        for path, shasum, deleted in entries
+    ]
+    if mindup > 1 and tagged:
         grouped: dict[str, list[str]] = {}
-        for path, shasum, _deleted in entries:
+        for path, shasum, _tags, _deleted in tagged:
             grouped.setdefault(shasum, []).append(path)
         dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
         dir_counts: dict[str, int] = {}
-        for path, shasum, _deleted in entries:
+        for path, shasum, _tags, _deleted in tagged:
             if shasum not in dup_shasums:
                 continue
             dirpath = os.path.dirname(path)
@@ -1328,15 +1519,13 @@ def handle_ls(
         allowed_dirs = {
             dirpath for dirpath, count in dir_counts.items() if count >= mindup
         }
-        entries = [
-            entry for entry in entries if os.path.dirname(entry[0]) in allowed_dirs
-        ]
-    if not entries:
+        tagged = [row for row in tagged if os.path.dirname(row[0]) in allowed_dirs]
+    if not tagged:
         return
     if OUTPUT_MODE == "machine":
-        _emit_lspath_machine(entries)
+        _emit_lspath_machine(tagged)
         return
-    _emit_lspath_pretty(entries, show_deleted)
+    _emit_lspath_pretty(tagged, show_deleted)
 
 
 def handle_lshash(
@@ -1644,6 +1833,12 @@ def main() -> int:
         raise SystemExit("--mindup must be >= 1")
     if args.mindup != 1 and args.lspath is None and args.lshash is None:
         raise SystemExit("--mindup is only valid with --lspath/--ls or --lshash")
+    if args.alltags and args.lspath is None:
+        raise SystemExit("--alltags is only valid with --lspath/--ls")
+    if args.alltags and args.lshash is not None:
+        raise SystemExit("--alltags is only valid with --lspath/--ls")
+    if args.alltags and args.mindup != 1:
+        raise SystemExit("--alltags does not support --mindup (use default 1)")
     if args.reindex_files and args.recursive:
         raise SystemExit("--reindex-files does not accept --recursive")
     db_path = expand_path(args.db) if args.db else None
@@ -1668,6 +1863,7 @@ def main() -> int:
                 recursive=args.recursive,
                 show_deleted=args.show_deleted,
                 mindup=args.mindup,
+                alltags=args.alltags,
             )
             return 0
         if args.lshash is not None:
@@ -1728,12 +1924,6 @@ def main() -> int:
             if not tags:
                 raise SystemExit("--tag-rm requires: HASH TAG [TAG ...]")
             handle_tag_rm(conn, shadir, shasum_arg, tags)
-            return 0
-        if args.get_tags is not None:
-            handle_get_tags(conn, shadir, args.get_tags)
-            return 0
-        if args.dir_tags:
-            handle_dir_tags(conn, args.dir_tags)
             return 0
         if args.refresh_extracted_tags:
             out("refresh-extracted-tags", 1)
