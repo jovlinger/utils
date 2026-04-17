@@ -1,26 +1,23 @@
-"""Contract tests for ``--refresh-extracted-tags`` (intended behavior).
+"""Tests for ``--refresh-extracted-tags`` mirror layout (flat per-tag symlinks).
 
-Layout (under ``<parent-of-shadir>/files``)::
+Layout under ``<parent-of-shadir>/files``::
 
-  ``_tags/<tag>/<dir-relpath>`` → symlink to the mirrored directory under ``files/``
+  ``_tags/<tag>/<basename-or-basename(n)>`` → symlink to ``<root>/<dir-key>``
 
-* ``<dir-relpath>`` uses POSIX components (no leading slash). The **root**
-  directory uses a symlink named :data:`ROOT_LINK_NAME` under each tag, because
-  ``_tags/<tag>`` must remain a real directory so paths like
-  ``_tags/<tag>/d0/e0`` can exist.
-* **Tags on a directory** = ⋃ over **direct children** of each child’s tag set
-  (each **file** contributes its DB tags; each **subdir** contributes its own
-  computed set).
+* ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
+* **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
+  their computed set).
+* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, … when
+  the same basename appears more than once (see :func:`plan_refresh_extracted_tag_mirrors`).
 
-Pipeline under test: ``--store`` → ``--tag-add`` (per path) → ``--extract`` →
-``--refresh-extracted-tags``.
-
-Assertions: ``find <files>/_tags | sort`` matches the expected path set, and each
-symlink’s textual target matches :func:`_expected_symlink_text`.
+The user worked example under ``test_user_abcdf_tree_mirror_plan``; one line in
+their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) —
+the test encodes the corrected plan.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -30,7 +27,18 @@ import pytest
 
 SHADUP_PY = Path(__file__).resolve().parent.parent / "shadup.py"
 
-ROOT_LINK_NAME = "__root__"
+
+def _load_shadup() -> object:
+    spec = importlib.util.spec_from_file_location("shadup_mod", SHADUP_PY)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_sh = _load_shadup()
+plan_refresh_extracted_tag_mirrors = _sh.plan_refresh_extracted_tag_mirrors
+NOTAGS_DIR_NAME = _sh.NOTAGS_DIR_NAME
 
 
 def _run_shadup(
@@ -123,69 +131,84 @@ def compute_dir_tags_from_file_specs(
     return result
 
 
-def _link_relpath_under_files(tag: str, dir_key: str) -> Path:
-    """Path under ``files/`` for the symlink mirroring directory ``dir_key``."""
-    base = Path("_tags") / tag
-    if not dir_key:
-        return base / ROOT_LINK_NAME
-    return base.joinpath(*dir_key.split("/"))
-
-
-def _expected_symlink_text(files_root: Path, tag: str, dir_key: str) -> str:
-    """Text stored in the symlink (relative to its parent directory)."""
-    link = files_root / _link_relpath_under_files(tag, dir_key)
-    target_dir = files_root / dir_key if dir_key else files_root
-    return os.path.relpath(target_dir, link.parent)
-
-
-def expected__tags_find_lines(files_root: Path, tags_by_dir: dict[str, frozenset[str]]) -> str:
-    """Sorted ``find`` lines (relative to ``files/``) for everything under ``_tags``."""
+def _expected_find_lines_from_plan(
+    files_root: Path, rows: list[tuple[str, str, str]]
+) -> str:
+    """Sorted ``find`` lines under ``files/_tags`` for a mirror *plan*."""
+    fr = files_root.resolve()
     paths: set[str] = set()
-    tags_anchor = files_root / "_tags"
+    anchor = (fr / "_tags").resolve()
 
-    def add_path_and_ancestors(p: Path) -> None:
+    def add_chain(p: Path) -> None:
         cur = p.resolve()
-        anchor = tags_anchor.resolve()
         while True:
-            rel = os.path.relpath(cur, files_root.resolve())
+            rel = os.path.relpath(cur, fr)
             if rel != ".":
                 paths.add(rel.replace(os.sep, "/"))
-            if cur == anchor or cur.resolve() == anchor:
+            if cur == anchor:
                 break
             if cur.parent == cur:
                 break
             cur = cur.parent
 
-    add_path_and_ancestors(files_root / "_tags")
-
-    for dir_key, tags in tags_by_dir.items():
-        for tag in tags:
-            add_path_and_ancestors(files_root / _link_relpath_under_files(tag, dir_key))
-
+    add_chain(fr / "_tags")
+    for tag, name, _dk in rows:
+        add_chain(fr / "_tags" / tag / name)
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
-def expected_symlink_checks(
-    files_root: Path, tags_by_dir: dict[str, frozenset[str]]
+def _symlink_checks_from_plan(
+    files_root: Path, rows: list[tuple[str, str, str]]
 ) -> list[tuple[Path, str]]:
     """(path relative to ``files_root``, expected readlink text)."""
     out: list[tuple[Path, str]] = []
-    for dir_key, tags in tags_by_dir.items():
-        for tag in sorted(tags):
-            rel = _link_relpath_under_files(tag, dir_key)
-            txt = _expected_symlink_text(files_root, tag, dir_key)
-            out.append((rel, txt))
+    for tag, name, dk in rows:
+        rel = Path("_tags") / tag / name
+        target = files_root / dk
+        link_parent = (files_root / rel).parent
+        txt = os.path.relpath(target, link_parent)
+        out.append((rel, txt))
     return out
 
 
-def _dir_key_from_link_rel(rel: Path) -> str:
-    """Inverse of :func:`_link_relpath_under_files` (directory key, ``\"\"`` = root)."""
-    parts = rel.parts
-    assert parts[0] == "_tags"
-    body = parts[2:]
-    if not body or body == (ROOT_LINK_NAME,):
-        return ""
-    return str(Path(*body))
+def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
+    """Map ``_tags/<tag>/<name>`` back to dir_key using the plan."""
+    assert rel.parts[0] == "_tags"
+    tag, name = rel.parts[1], rel.parts[2]
+    for t, n, dk in rows:
+        if t == tag and n == name:
+            return dk
+    raise AssertionError(f"no plan row for {rel}")
+
+
+def test_user_abcdf_tree_mirror_plan() -> None:
+    """Precomputed tag sets from the a/b/f … tree; corrected mirror rows (no ``z``→``d``).
+
+    In the user's sketch, ``d/`` carries only ``{y}``, so a mirror
+    ``_tags/z/d`` would be inconsistent; ``z`` only mirrors ``a`` and ``a/a``.
+    """
+    tags_by_dir: dict[str, frozenset[str]] = {
+        "a": frozenset({"x", "y", "z"}),
+        "a/b": frozenset({"x", "y"}),
+        "a/a": frozenset({"x", "z"}),
+        "d": frozenset({"y"}),
+        "e": frozenset(),
+    }
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    # Order matches shadup.plan_refresh_extracted_tag_mirrors (tags x,y,z then NOTAGS).
+    want: list[tuple[str, str, str]] = [
+        ("x", "a", "a"),
+        ("x", "b", "a/b"),
+        ("x", "a(2)", "a/a"),
+        ("y", "a", "a"),
+        ("y", "b", "a/b"),
+        ("y", "a(2)", "a/a"),
+        ("y", "d", "d"),
+        ("z", "a", "a"),
+        ("z", "a(2)", "a/a"),
+        (NOTAGS_DIR_NAME, "e", "e"),
+    ]
+    assert rows == want
 
 
 def _build_three_level_two_plus_two(
@@ -252,13 +275,14 @@ def test_golden_directory_tags_three_level_tree(
 def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     three_level_fixture: tuple[Path, Path, list[tuple[Path, list[str]]]],
 ) -> None:
-    """Store → tag-add → extract → refresh; compare ``find`` and symlink targets."""
+    """Store → tag-add → extract → refresh; ``find`` + symlinks match ``plan_*``."""
     shadir, files_root, file_specs = three_level_fixture
     assert len(file_specs) == 14
 
     tags_by_dir = compute_dir_tags_from_file_specs(files_root, file_specs)
-    want_find = expected__tags_find_lines(files_root, tags_by_dir)
-    want_links = expected_symlink_checks(files_root, tags_by_dir)
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    want_find = _expected_find_lines_from_plan(files_root, rows)
+    want_links = _symlink_checks_from_plan(files_root, rows)
 
     tmp_path = files_root.parent
     _run_shadup(tmp_path, shadir, ["--store", "files"])
@@ -285,6 +309,6 @@ def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     for rel, _want_text in want_links:
         link = files_root / rel
         target = (link.parent / os.readlink(link)).resolve()
-        dir_key = _dir_key_from_link_rel(rel)
-        expect = (files_root / dir_key).resolve() if dir_key else files_root.resolve()
+        dir_key = _dir_key_from_plan_row(rel, rows)
+        expect = (files_root / dir_key).resolve()
         assert target == expect, f"{link} -> {target} expected {expect}"
