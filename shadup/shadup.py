@@ -1883,9 +1883,16 @@ def main(argv: list[str] | None = None) -> int:
                 "--shadir is required when no .shadup/.shadir directory is found"
             )
         shadir = found
-    cwd = os.path.abspath(os.curdir)
-    if is_under_dir(cwd, shadir):
-        raise SystemExit(f"cwd must not be inside shadir: cwd={cwd} shadir={shadir}")
+    # The cwd-inside-shadir guard is only meaningful for operations that walk
+    # the user's working tree (``store``) or write files back into it
+    # (``extract``). Read-only / DB-only actions may run from inside shadir.
+    if args.action in ("store", "extract"):
+        cwd = os.path.abspath(os.curdir)
+        if is_under_dir(cwd, shadir):
+            raise SystemExit(
+                f"cwd must not be inside shadir for {args.action}: "
+                f"cwd={cwd} shadir={shadir}"
+            )
 
     db_path = expand_path(args.db) if args.db else None
     with open_db(shadir, db_path) as conn:
