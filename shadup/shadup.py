@@ -22,7 +22,6 @@ DB_NAME = ".shadup.db"
 NOTAGS_DIR_NAME = "NOTAGS"
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
-LSHASH_DELIM = "|"
 
 
 def out(msg: str, level: int, kind: str = "status", **kwargs: object) -> None:
@@ -110,29 +109,44 @@ def _emit_ls_alltags_pretty(rows: list[tuple[str, list[str]]]) -> None:
 
 
 def _emit_lshash_machine(
-    grouped: dict[str, list[tuple[str, bool]]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool]],
 ) -> None:
-    for shasum in sorted(grouped):
-        paths = []
-        for path, deleted in sorted(grouped[shasum]):
-            if show_deleted:
-                paths.append(f"{path}:{'X' if deleted else '.'}")
-            else:
-                paths.append(path)
-        out_csv([shasum, LSHASH_DELIM.join(paths)])
+    for shasum, path, tags, deleted in entries:
+        out_csv([shasum, path, json.dumps(tags), "1" if deleted else "0"])
 
 
 def _emit_lshash_pretty(
-    grouped: dict[str, list[tuple[str, bool]]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
 ) -> None:
-    for shasum in sorted(grouped):
-        out(shasum, 0, kind="data")
-        for path, deleted in sorted(grouped[shasum]):
-            path = _format_pretty_path(path)
-            if show_deleted:
-                out(f"  {path} {'X' if deleted else '.'}", 0, kind="data")
-            else:
-                out(f"  {path}", 0, kind="data")
+    formatted = [
+        (shasum, _format_pretty_path(path), tags, deleted)
+        for shasum, path, tags, deleted in entries
+    ]
+    max_path = max(len(path) for _s, path, _t, _d in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _s, _p, tags, _d in formatted]
+    max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
+    for (shasum, path, _tags, deleted), tstr in zip(
+        formatted, tag_strs, strict=True
+    ):
+        if show_deleted:
+            out(
+                "{shasum} {path} {tags} {deleted}",
+                0,
+                shasum=shasum,
+                path=path.ljust(max_path),
+                tags=tstr.ljust(max_tags),
+                deleted="X" if deleted else ".",
+                kind="data",
+            )
+        else:
+            out(
+                "{shasum} {path} {tags}",
+                0,
+                shasum=shasum,
+                path=path.ljust(max_path),
+                tags=tstr.ljust(max_tags),
+                kind="data",
+            )
 
 
 def _parse_bool(value: str) -> bool:
@@ -1598,7 +1612,7 @@ def handle_lshash(
     show_deleted: bool,
     mindup: int,
 ) -> None:
-    """Print list entries grouped by sha256 hash."""
+    """Print stored entries sorted by sha256, one row per (hash, path)."""
     entries = list_db_entries(conn, show_deleted)
     if hashes:
         normalized = {
@@ -1607,19 +1621,33 @@ def handle_lshash(
         entries = [entry for entry in entries if entry[1] in normalized]
     if not entries:
         return
-    grouped: dict[str, list[tuple[str, bool]]] = {}
-    for path, shasum, deleted in entries:
-        grouped.setdefault(shasum, []).append((path, deleted))
     if mindup > 1:
-        grouped = {
-            shasum: paths for shasum, paths in grouped.items() if len(paths) >= mindup
-        }
-        if not grouped:
+        counts: dict[str, int] = {}
+        for _path, shasum, _deleted in entries:
+            counts[shasum] = counts.get(shasum, 0) + 1
+        entries = [e for e in entries if counts[e[1]] >= mindup]
+        if not entries:
             return
+    tag_cache: dict[str, list[str]] = {}
+
+    def _tags(shasum: str) -> list[str]:
+        cached = tag_cache.get(shasum)
+        if cached is None:
+            cached = sorted(get_tags(conn, shasum))
+            tag_cache[shasum] = cached
+        return cached
+
+    tagged: list[tuple[str, str, list[str], bool]] = sorted(
+        (
+            (shasum, path, _tags(shasum), deleted)
+            for path, shasum, deleted in entries
+        ),
+        key=lambda row: (row[0], row[1]),
+    )
     if OUTPUT_MODE == "machine":
-        _emit_lshash_machine(grouped, show_deleted)
+        _emit_lshash_machine(tagged)
         return
-    _emit_lshash_pretty(grouped, show_deleted)
+    _emit_lshash_pretty(tagged, show_deleted)
 
 
 def normalize_prefixes(prefixes: list[str]) -> list[str]:
