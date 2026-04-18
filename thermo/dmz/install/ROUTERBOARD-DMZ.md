@@ -15,7 +15,7 @@ This document fixes the **network intent** for the thermo DMZ Pi: how it sits re
 ## Traffic we want
 
 - **Inbound from the internet:** TCP **5000** on the Pi → Flask **`app.py`** (default listen port when **`PORT`** is unset in the chroot environment; see **`app.py`**).
-- **DNS:** A dynamic DNS name (e.g. **`thermo.dyndns.org`**) tracks the home connection’s **changing public IP**. Users and services use **`http://thermo.dyndns.org:5000`** (or HTTPS later if terminated on the Pi or elsewhere).
+- **DNS:** **DuckDNS** hostname **`jovlinger.duckdns.org`** tracks the home connection’s **changing public IP** (update the DuckDNS token/panel when the ISP address changes). Users and services use **`http://jovlinger.duckdns.org:5000`** (or HTTPS later if terminated on the Pi or elsewhere; see **`HTTPS-TRUSTED-CERT.md`**).
 - The home router (here: **RouterBOARD**, DMZ attachment on **ether9** in the current plan) must **forward** or **allow forward** from WAN to the Pi’s address on the DMZ segment for **tcp/5000** (and any other ports we explicitly decide later).
 
 ## Pi addressing
@@ -27,7 +27,7 @@ This document fixes the **network intent** for the thermo DMZ Pi: how it sits re
 
 - **`README.md`** (parent): Pi image boot chain and **`network.conf`** editing.
 - **`Pi1b.md`** (under **`thermo/consumed/`**): SSH and hardening—**do not** expose maintenance SSH on the WAN/DMZ side; use internal access, serial, or a deliberate jump path.
-- **Onboard** ([`thermo/onboard/install/README.md`](../../onboard/install/README.md)): **`DMZ_URL`** must point at this service; from the LAN that may be the **Dyndns name**, a **hairpin NAT** rule, or another path—whatever makes the onboard host reach the DMZ as if it were “the internet” for routing purposes.
+- **Onboard** ([`thermo/onboard/install/README.md`](../../onboard/install/README.md)): **`DMZ_URL`** must point at this service; from the LAN that may be **`http://jovlinger.duckdns.org:5000`**, a **hairpin NAT** rule, or another path—whatever makes the onboard host reach the DMZ as if it were “the internet” for routing purposes.
 
 ## What this document does *not* specify yet
 

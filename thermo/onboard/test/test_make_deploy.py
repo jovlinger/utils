@@ -130,8 +130,11 @@ def test_thermo_bin_repo_first_on_path_restores_path() -> None:
 def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
     mpy = mock_cmd_path()
     onboard = onboard_dir()
+    thermo_root = onboard.parent
     src_compose = onboard / "install" / "deploy-compose.sh"
+    src_loader = thermo_root / "config" / "source-thermo-env.sh"
     assert src_compose.is_file(), f"missing {src_compose}"
+    assert src_loader.is_file(), f"missing {src_loader}"
 
     with tempfile.TemporaryDirectory() as td_raw:
         td = Path(td_raw)
@@ -147,11 +150,20 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         inst.mkdir(parents=True)
         shutil.copy2(src_compose, inst / "deploy-compose.sh")
 
+        cfg = fixture / "thermo" / "config"
+        cfg.mkdir(parents=True)
+        shutil.copy2(src_loader, cfg / "source-thermo-env.sh")
+        (cfg / "ci.env").write_text(
+            "DMZ_SCHEME=http\nDMZ_HOST=127.0.0.1\nDMZ_PORT=5000\n",
+            encoding="ascii",
+        )
+
         subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
         assert (fixture / ".git").exists()
 
         _symlink_mock_bins(mock_bins, mpy)
         env = _mock_subprocess_env(mock_file, home, mock_bins)
+        env["THERMO_ENV_FILE"] = "config/ci.env"
         _configure_mock_expectations(mpy, mock_file)
 
         result = subprocess.run(

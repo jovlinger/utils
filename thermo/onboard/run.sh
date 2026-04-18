@@ -3,9 +3,23 @@
 # When run locally, asserts pip env exists.
 
 # this hardcodes "this" onboard zone's name as zoneymczoneface
-# Use 127.0.0.1 for onboard (host network has no Docker DNS). Override ONBOARD_URL/DMZ_URL for docker-compose.
+# Use 127.0.0.1 for onboard (host network has no Docker DNS). Override DMZ_URL or DMZ_HOST in the environment;
+# Optional: export THERMO_ENV_FILE=config/kitchen.env and THERMO_ROOT is set below.
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+THERMO_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
+export THERMO_ROOT
+if [ -n "${THERMO_ENV_FILE:-}" ]; then
+	# shellcheck source=/dev/null
+	. "$THERMO_ROOT/config/source-thermo-env.sh"
+fi
+: "${DMZ_SCHEME:=http}"
+: "${DMZ_HOST:=jovlinger.duckdns.org}"
+: "${DMZ_PORT:=5000}"
+if [ -z "${DMZ_URL:-}" ]; then
+	export DMZ_URL="${DMZ_SCHEME}://${DMZ_HOST}:${DMZ_PORT}"
+fi
 ONBOARD="${ONBOARD_URL:-http://127.0.0.1:5000}"
-DMZ="${DMZ_URL:-http://dmz:5000}"
+DMZ="${DMZ_URL}"
 LOG_PATH="${LOG_PATH:-/tmp/onboard.log}"
 LOG_FILELIMIT="${LOG_FILELIMIT:-1048576}"
 LOG_TOTALLIMIT="${LOG_TOTALLIMIT:-2097152}"
@@ -17,7 +31,7 @@ if [ -f /.dockerenv ]; then
   exec ./docker-entrypoint-onboard.sh
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$_SCRIPT_DIR"
 # utils repo root (for venv path hints).
 COMMON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_WITH_STDOUT="$(cd "$SCRIPT_DIR/../../bin" && pwd)/run-with-stdout-logged.py"

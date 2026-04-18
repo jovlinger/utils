@@ -61,12 +61,11 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
    cd ~/github.com/jovlinger/utils
    git pull
   ```
-2. **Configure DMZ** (required for twoway):
+2. **Choose a config env file** (see [`thermo/config/README.md`](../config/README.md)): copy `thermo/config/deploy.env.sample` to `thermo/config/kitchen.env` (or `den.env`, … — `*.env` is gitignored). Set:
   ```bash
-   # ~/.local.sh — sourced by deploy-compose.sh
-   export DMZ_URL="http://192.168.88.200:5000"
+   export THERMO_ENV_FILE=config/kitchen.env
   ```
-   Or copy `thermo/onboard/install/env.example` to `thermo/onboard/install/.env` and edit `DMZ_URL` there.
+   Use a distinct file per onboard unit. Override lab URLs in that file or in `~/.local.sh` / `install/.env` as needed.
 3. **Run the deploy script** (pulls images and starts the stack):
   ```bash
    cd thermo/onboard/install
@@ -75,10 +74,12 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
   ```
 4. **Optional: systemd** so reboot brings the stack up:
   ```bash
+   mkdir -p ~/.config/thermo-onboard
+   echo 'THERMO_ENV_FILE=config/kitchen.env' > ~/.config/thermo-onboard/environment
    sudo ./install-systemd.sh
    sudo systemctl enable --now thermo-onboard
   ```
-   The unit runs `deploy-compose.sh up` from `install/` and `deploy-compose.sh down` on stop. Adjust paths in `thermo-onboard.service.in` before install only if your checkout path differs; `install-systemd.sh` substitutes `@@INSTALL@@`, `@@USER@@`, and `@@HOME@@`.
+   The unit reads `~/.config/thermo-onboard/environment` for `THERMO_ENV_FILE`, then runs `deploy-compose.sh` from `install/`. Adjust paths in `thermo-onboard.service.in` only if your checkout layout differs; `install-systemd.sh` substitutes `@@INSTALL@@`, `@@USER@@`, and `@@HOME@@`.
 
 **Each upgrade:** `git pull` → `./deploy-compose.sh` from `install/` (same as step 3). Systemd will **not** auto-pull new images until you run deploy again or restart the unit after a pull — for upgrades, run `./deploy-compose.sh` manually or re-run the service after `git pull`.
 
@@ -90,7 +91,7 @@ Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is no
 
 - `**docker compose` not found:** Install Docker Compose v2 (`docker compose version`). On Raspberry Pi OS, Docker’s official install usually includes it.
 - `**permission denied` talking to Docker socket:** `sudo usermod -aG docker "$USER"` and re-login.
-- **Twoway errors / DMZ unreachable:** Set `DMZ_URL` to the **base** URL of the DMZ (e.g. `http://192.168.1.10:5000`). Check `twoway.log` and `curl` the DMZ from the Pi.
+- **Twoway errors / DMZ unreachable:** Check the file named by `THERMO_ENV_FILE` (`DMZ_HOST` / `DMZ_PORT`) or override `DMZ_URL`. Check `twoway.log` and `curl` the DMZ from the Pi.
 - **Onboard HTTP not listening:** Check `onboard-app.log`, `docker compose ps`, and `curl -sS http://127.0.0.1:5000/` (host network).
 - `**/dev/lirc0` or `/dev/i2c-1` missing:** Enable I2C / LIRC; comment out unused `devices:` lines in `docker-compose.yml` only if you accept reduced functionality.
 - `**docker compose up` fails on `vcgencmd` or `/dev/vchiq`:** Those are for Pi SoC temperature and throttle flags on the **connectivity-watchdog** service. Remove the `vcgencmd` bind and `devices:` entry for that service when developing on a non-Pi host.

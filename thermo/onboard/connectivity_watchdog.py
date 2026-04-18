@@ -28,6 +28,21 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import log  # noqa: E402
 
+_DEFAULT_DMZ_SCHEME = "http"
+_DEFAULT_DMZ_HOST = "jovlinger.duckdns.org"
+_DEFAULT_DMZ_PORT = "5000"
+
+
+def resolve_dmz_base_url() -> str:
+    """DMZ_URL if set; else http(s)://DMZ_HOST:DMZ_PORT with thermo-wide defaults."""
+    raw = os.environ.get("DMZ_URL", "").strip()
+    if raw:
+        return raw.rstrip("/")
+    scheme = (os.environ.get("DMZ_SCHEME") or _DEFAULT_DMZ_SCHEME).strip() or _DEFAULT_DMZ_SCHEME
+    host = (os.environ.get("DMZ_HOST") or _DEFAULT_DMZ_HOST).strip() or _DEFAULT_DMZ_HOST
+    port = (os.environ.get("DMZ_PORT") or _DEFAULT_DMZ_PORT).strip() or _DEFAULT_DMZ_PORT
+    return f"{scheme}://{host}:{port}"
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -369,7 +384,7 @@ def detail_summary(ok: bool, detail: str) -> str:
 
 
 def main() -> None:
-    dmz_url = os.environ.get("DMZ_URL", "http://127.0.0.1:5000").rstrip("/") + "/"
+    dmz_url = resolve_dmz_base_url().rstrip("/") + "/"
     onboard_url = os.environ.get("ONBOARD_URL", "http://127.0.0.1:5000").rstrip("/") + "/"
     log_dir = os.environ.get("LOG_DIR", "/var/log/thermo-onboard")
     twoway_log = os.environ.get("TWOWAY_LOG_PATH", os.path.join(log_dir, "twoway.log"))

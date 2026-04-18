@@ -27,6 +27,8 @@ Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
 **HTTPS:** For a browser-trusted certificate on the public internet (e.g. DuckDNS + Let’s Encrypt), see [HTTPS-TRUSTED-CERT.md](HTTPS-TRUSTED-CERT.md).
 
+**Zone keys + TLS layout (generate, gitignore, distribute):** see **[`../KEYS-AND-CERTS.md`](../KEYS-AND-CERTS.md)**. Generate Ed25519 keys with **`make -C thermo/dmz zone-keys`** (writes under **`dmz/.secrets/zone/`**, ignored by git).
+
 ```bash
 cd thermo/dmz
 docker build -t jovlinger/thermo/dmz .
@@ -49,7 +51,7 @@ The image is a **256MB FAT** volume: Alpine Raspberry Pi **3.19.0 armhf** boot f
 
 Edit **`install/network.conf`** on the FAT partition before first boot if the defaults are wrong.
 
-**Home router DMZ (Pi not on LAN subnet, public port 5000, Dyndns):** see **[`install/ROUTERBOARD-DMZ.md`](install/ROUTERBOARD-DMZ.md)**.
+**Home router DMZ (Pi not on LAN subnet, public port 5000, DuckDNS `jovlinger.duckdns.org`):** see **[`install/ROUTERBOARD-DMZ.md`](install/ROUTERBOARD-DMZ.md)**.
 
 Older full pipeline (bwrap, `dmz-init`, etc.) is on branch **`overly_complicated_double_pivot`**.
 

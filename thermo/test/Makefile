@@ -1,8 +1,15 @@
 .PHONY: dockertest test test-local test-docker test_e2e clean
 
 # Host pytest (e2e testcases; skips compose-only tests without DMZ_URL=http://dmz:…).
+# Sources THERMO_ENV_FILE via thermo/config/source-thermo-env.sh (default: config/test.env.sample).
+THERMO_ROOT := $(abspath $(CURDIR)/..)
+THERMO_ENV_FILE ?= config/test.env.sample
+
 test-local:
 	@set -e; \
+	export THERMO_ROOT="$(THERMO_ROOT)"; \
+	export THERMO_ENV_FILE="$(THERMO_ENV_FILE)"; \
+	. "$(THERMO_ROOT)/config/source-thermo-env.sh"; \
 	if [ -f "$(CURDIR)/../dmz/env/bin/python" ]; then PY="$(CURDIR)/../dmz/env/bin/python"; \
 	elif [ -f "$(CURDIR)/env/bin/python" ]; then PY="$(CURDIR)/env/bin/python"; \
 	else echo "test-local: need thermo/dmz/env or thermo/test/env (create_pipenv.sh thermo/dmz thermo/test)" >&2; exit 1; \

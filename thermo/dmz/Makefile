@@ -1,4 +1,4 @@
-.PHONY: all clean test test-local test-docker runlocal
+.PHONY: all clean test test-local test-docker runlocal zone-keys
 
 # Log wrapper: ../../bin/run-with-stdout-logged.py. Refresh: make -C ../../bin all
 RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
@@ -34,3 +34,10 @@ test: test-local test-docker
 # /var/log/dmz.log (writable layer). Ctrl+C stops the container.
 runlocal: .image
 	docker run --rm -it -p 8080:8080 jovlinger/thermo/dmz
+
+# Ed25519 zone machine-auth keypair under .secrets/zone/ (gitignored via .secrets/). Onboard keeps priv.pem;
+# configure DMZ with ZONE_PUBLIC_KEY or ZONE_PUBLIC_KEY_PATH pointing at pub.pem. See ../KEYS-AND-CERTS.md.
+zone-keys:
+	@test -f "$(CURDIR)/env/bin/python" || { echo "Run ../../create_pipenv.sh thermo/dmz first" >&2; exit 1; }
+	@mkdir -p "$(CURDIR)/.secrets/zone"
+	@THERMO_ZONE_KEYS_DIR="$(CURDIR)/.secrets/zone" "$(CURDIR)/env/bin/python" "$(CURDIR)/../test/gen_keys.py"

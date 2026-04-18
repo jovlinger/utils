@@ -15,8 +15,9 @@ PI_HOST="${1:-}"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 if [ -n "$PI_HOST" ]; then
-	log "Deploy from dev machine -> $PI_HOST (git pull + deploy-compose on Pi)"
-	ssh "johan@$PI_HOST" 'cd ~/github.com/jovlinger/utils && git pull && cd thermo/onboard/install && chmod +x deploy-compose.sh && ./deploy-compose.sh'
+	: "${THERMO_ENV_FILE:?set THERMO_ENV_FILE e.g. export THERMO_ENV_FILE=config/kitchen.env (path relative to thermo/ on the Pi)}"
+	log "Deploy from dev machine -> $PI_HOST (git pull + deploy-compose on Pi) THERMO_ENV_FILE=$THERMO_ENV_FILE"
+	ssh "johan@$PI_HOST" "cd ~/github.com/jovlinger/utils && git pull && cd thermo/onboard/install && export THERMO_ENV_FILE=\"$THERMO_ENV_FILE\" && chmod +x deploy-compose.sh && ./deploy-compose.sh"
 	log "Deploy complete."
 	exit 0
 fi
@@ -26,7 +27,8 @@ if [ ! -d "$REPO" ]; then
 	exit 1
 fi
 
-log "Deploy on Pi: $REPO"
+: "${THERMO_ENV_FILE:?set THERMO_ENV_FILE e.g. export THERMO_ENV_FILE=config/kitchen.env}"
+log "Deploy on Pi: $REPO THERMO_ENV_FILE=$THERMO_ENV_FILE"
 cd "$REPO"
 git pull
 cd thermo/onboard/install

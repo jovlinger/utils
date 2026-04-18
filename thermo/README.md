@@ -27,6 +27,10 @@ flowchart LR
   i2c --> htu[HTU21D temp/humidity]
 ```
 
+### Keys, machine auth, and HTTPS
+
+Ed25519 zone keys, TLS certificates, gitignored paths, and **`make -C thermo/dmz zone-keys`**: **[`KEYS-AND-CERTS.md`](KEYS-AND-CERTS.md)**. TLS issuance steps: **[`dmz/HTTPS-TRUSTED-CERT.md`](dmz/HTTPS-TRUSTED-CERT.md)**.
+
 ### Twoway relay
 
 ```mermaid

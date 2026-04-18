@@ -3,7 +3,12 @@
 set -eu
 
 ONBOARD_URL="${ONBOARD_URL:-http://127.0.0.1:5000}"
-DMZ_URL="${DMZ_URL:-http://dmz:5000}"
+: "${DMZ_SCHEME:=http}"
+: "${DMZ_HOST:=jovlinger.duckdns.org}"
+: "${DMZ_PORT:=5000}"
+if [ -z "${DMZ_URL:-}" ]; then
+	DMZ_URL="${DMZ_SCHEME}://${DMZ_HOST}:${DMZ_PORT}"
+fi
 ZONE="${ZONE_NAME:-zoneymczoneface}"
 LOG_DIR="${LOG_DIR:-/var/log/thermo-onboard}"
 LOG_PATH="${LOG_PATH:-$LOG_DIR/twoway.log}"

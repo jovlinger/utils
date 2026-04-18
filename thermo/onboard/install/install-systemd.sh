@@ -32,4 +32,5 @@ sed \
 chmod 644 /etc/systemd/system/thermo-onboard.service
 systemctl daemon-reload
 echo "Installed /etc/systemd/system/thermo-onboard.service"
-echo "Enable on boot: sudo systemctl enable --now thermo-onboard"
+echo "Set THERMO_ENV_FILE in ~/.config/thermo-onboard/environment (e.g. THERMO_ENV_FILE=config/kitchen.env) then:"
+echo "  sudo systemctl enable --now thermo-onboard"

@@ -77,6 +77,7 @@ ci:
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
 
 # On-target deploy: git pull at REPO root, then thermo/onboard/install/deploy-compose.sh (docker compose pull + up).
+# Requires THERMO_ENV_FILE (e.g. export THERMO_ENV_FILE=config/kitchen.env) — see thermo/config/README.md.
 # Default REPO root is two levels up from this dir (onboard -> thermo -> utils).
 # Override checkout: make deploy DEPLOY_REPO=/path/to/utils
 DEPLOY_REPO ?= $(abspath $(CURDIR)/../..)

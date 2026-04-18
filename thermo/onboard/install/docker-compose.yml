@@ -1,5 +1,6 @@
 # Thermo onboard stack: app + twoway (host network; bind-mounted logs under /var/log/thermo-onboard).
 # Deploy: ./deploy-compose.sh from this directory (see README.md).
+# DMZ_* defaults should match the file pointed to by THERMO_ENV_FILE (see thermo/config/README.md).
 #
 # CPU limits via deploy.resources (memory limits omitted: cgroup memory is often unavailable on Pi OS).
 # Optional /dev/lirc1: duplicate the lirc0 device line if your hardware exposes a second device.
@@ -54,7 +55,10 @@ services:
       LOG_FILELIMIT: "1048576"
       LOG_TOTALLIMIT: "2097152"
       ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
-      DMZ_URL: ${DMZ_URL:-http://dmz:5000}
+      DMZ_SCHEME: ${DMZ_SCHEME:-http}
+      DMZ_HOST: ${DMZ_HOST:-jovlinger.duckdns.org}
+      DMZ_PORT: ${DMZ_PORT:-5000}
+      DMZ_URL: ${DMZ_URL:-}
       ZONE_NAME: ${ZONE_NAME:-zoneymczoneface}
     deploy:
       resources:
@@ -101,7 +105,10 @@ services:
       CONNECTIVITY_HTTP_TIMEOUT_SECS: ${CONNECTIVITY_HTTP_TIMEOUT_SECS:-5}
       CONNECTIVITY_INCIDENT_KEEP: ${CONNECTIVITY_INCIDENT_KEEP:-15}
       ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
-      DMZ_URL: ${DMZ_URL:-http://dmz:5000}
+      DMZ_SCHEME: ${DMZ_SCHEME:-http}
+      DMZ_HOST: ${DMZ_HOST:-jovlinger.duckdns.org}
+      DMZ_PORT: ${DMZ_PORT:-5000}
+      DMZ_URL: ${DMZ_URL:-}
       TWOWAY_LOG_PATH: /var/log/thermo-onboard/twoway.log
       CONNECTIVITY_DUMP_DIR: ${CONNECTIVITY_DUMP_DIR:-/var/log/thermo-onboard/incidents}
       # 0 = only log hw at connectivity incidents; >0 = periodic INFO lines (e.g. thermal trend).

@@ -8,7 +8,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "dmz"))
 from zone_auth import generate_keypair
 
-KEYS_DIR = os.path.join(os.path.dirname(__file__), "keys")
+KEYS_DIR = os.environ.get(
+    "THERMO_ZONE_KEYS_DIR",
+    os.path.join(os.path.dirname(__file__), "keys"),
+)
 
 
 def main() -> None:

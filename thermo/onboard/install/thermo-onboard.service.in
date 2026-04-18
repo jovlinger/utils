@@ -11,7 +11,8 @@ User=@@USER@@
 Group=docker
 WorkingDirectory=@@INSTALL@@
 Environment=HOME=@@HOME@@
-# Optional: EnvironmentFile=-@@HOME@@/.config/thermo-onboard/environment
+# Optional: one line THERMO_ENV_FILE=config/kitchen.env (path relative to thermo/ or absolute)
+EnvironmentFile=-@@HOME@@/.config/thermo-onboard/environment
 ExecStart=@@INSTALL@@/deploy-compose.sh up
 ExecStop=@@INSTALL@@/deploy-compose.sh down
 TimeoutStartSec=300

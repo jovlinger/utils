@@ -82,6 +82,28 @@ def test_http_ok_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "404" in detail
 
 
+def test_resolve_dmz_base_url_prefers_dmz_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DMZ_URL", "http://custom.example:9/")
+    monkeypatch.delenv("DMZ_HOST", raising=False)
+    assert connectivity_watchdog.resolve_dmz_base_url() == "http://custom.example:9"
+
+
+def test_resolve_dmz_base_url_default_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DMZ_URL", raising=False)
+    monkeypatch.delenv("DMZ_HOST", raising=False)
+    monkeypatch.delenv("DMZ_PORT", raising=False)
+    monkeypatch.delenv("DMZ_SCHEME", raising=False)
+    assert connectivity_watchdog.resolve_dmz_base_url() == "http://jovlinger.duckdns.org:5000"
+
+
+def test_resolve_dmz_base_url_from_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DMZ_URL", raising=False)
+    monkeypatch.setenv("DMZ_HOST", "dmz.internal")
+    monkeypatch.setenv("DMZ_PORT", "9000")
+    monkeypatch.setenv("DMZ_SCHEME", "https")
+    assert connectivity_watchdog.resolve_dmz_base_url() == "https://dmz.internal:9000"
+
+
 def test_http_fail_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_get(*args: object, **kwargs: object) -> None:
         raise requests.Timeout("nope")

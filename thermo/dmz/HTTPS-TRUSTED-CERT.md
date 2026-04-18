@@ -1,6 +1,8 @@
 # Trusted HTTPS for DMZ (Let’s Encrypt + DuckDNS)
 
-When DMZ is reachable from the public internet, browsers need a certificate chained to a public CA. **Let’s Encrypt** is the usual free option. **DuckDNS** gives you a hostname (use the exact subdomain you registered, e.g. `jovlinger.duckdns.org`) that must resolve to the **public IP** of whatever terminates TLS (your DMZ host, a home router port-forward target, or a VPS reverse proxy).
+Hub doc (Ed25519 zone keys + TLS + gitignore): **[`../KEYS-AND-CERTS.md`](../KEYS-AND-CERTS.md)**.
+
+When DMZ is reachable from the public internet, browsers need a certificate chained to a public CA. **Let’s Encrypt** is the usual free option. This deployment’s public hostname is **`jovlinger.duckdns.org`** (**DuckDNS**); it must resolve to the **public IP** of whatever terminates TLS (your DMZ host, a home router port-forward target, or a VPS reverse proxy).
 
 ## 1. Prove the name reaches you
 

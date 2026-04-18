@@ -1,7 +1,7 @@
 # Umbrella targets for the whole thermo/ tree (wired subtrees only — see each Makefile).
 #
 #   make thermo-envs — refresh host venvs when requirements*.txt change (stamps live under each env/).
-#   make test-local  — thermo-envs, then each component’s host-only tests.
+#   make test-local  — thermo-envs, then each component’s host-only tests (test/ sources THERMO_ENV_FILE, default config/test.env.sample).
 #   make test-docker — thermo-envs (for smoketest / gen_keys), then Docker / compose suites.
 #   make test        — thermo-envs once, then test-local-only + test-docker-only.
 #

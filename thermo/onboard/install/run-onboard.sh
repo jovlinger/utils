@@ -22,6 +22,11 @@
 set -e
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+THERMO_ROOT="$(cd "$INSTALL_DIR/../.." && pwd)"
+export THERMO_ROOT
+export THERMO_ENV_FILE="${THERMO_ENV_FILE:?thermo: set THERMO_ENV_FILE e.g. export THERMO_ENV_FILE=config/kitchen.env}"
+# shellcheck source=/dev/null
+. "$THERMO_ROOT/config/source-thermo-env.sh"
 IMAGE="${ONBOARD_IMAGE:-ghcr.io/jovlinger/thermo-onboard:latest}"
 ARG1="${1:-}"
 
@@ -59,6 +64,11 @@ log "Using: $DOCKER"
 # Source local env (e.g. CR_PAT for GHCR, DMZ_URL for twoway) before pull
 log "Loading env..."
 [ -f ~/.local.sh ] && . ~/.local.sh
+if [ -z "${DMZ_URL:-}" ] && [ -n "${DMZ_HOST:-}" ]; then
+	: "${DMZ_SCHEME:=http}"
+	: "${DMZ_PORT:=5000}"
+	export DMZ_URL="${DMZ_SCHEME}://${DMZ_HOST}:${DMZ_PORT}"
+fi
 
 # Login to GHCR if CR_PAT set (for private images)
 if [ -n "${CR_PAT:-}" ]; then
