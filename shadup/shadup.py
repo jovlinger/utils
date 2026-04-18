@@ -1825,7 +1825,7 @@ def handle_reindex_files(
 
 
 def handle_check(args: argparse.Namespace) -> int:
-    """Verify shadir discovery; optionally open DB (see --check help)."""
+    """Verify shadir discovery; optionally open DB (see ``check`` help)."""
     if args.shadir:
         shadir = expand_path(args.shadir)
     else:
@@ -1837,13 +1837,6 @@ def handle_check(args: argparse.Namespace) -> int:
             )
             return 1
         shadir = found
-    cwd = os.path.abspath(os.curdir)
-    if is_under_dir(cwd, shadir):
-        print(
-            f"check failed: cwd must not be inside shadir: cwd={cwd} shadir={shadir}",
-            file=sys.stderr,
-        )
-        return 1
     init_db = args.shadir is not None or args.db is not None
     user_db = expand_path(args.db) if args.db else None
     resolved = resolve_db_path(shadir, user_db)

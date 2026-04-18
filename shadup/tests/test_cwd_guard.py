@@ -84,3 +84,14 @@ def test_tag_add_allowed_from_inside_shadir(tmp_path: Path) -> None:
 
     result = _run(inside, shadir, ["tag-add", str(link), "red"])
     assert result.returncode == 0
+
+
+def test_check_allowed_from_inside_shadir(tmp_path: Path) -> None:
+    """``check`` is read-only; cwd inside shadir must not block it."""
+    _cwd, shadir, _link = _setup_with_one_file(tmp_path)
+    inside = shadir / "sub"
+    inside.mkdir()
+
+    result = _run(inside, shadir, ["check"])
+    assert result.returncode == 0
+    assert "check ok" in result.stdout
