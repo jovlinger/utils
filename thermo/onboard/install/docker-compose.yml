@@ -29,6 +29,8 @@ services:
       PORT: "5000"
       UI_PORT: "8080"
       UI_EXTRA_PORTS: "80"
+      # Set to 1 to skip onboard HTML UI (DMZ still serves its own ui_server on UI_PORT, default 8090 in image).
+      THERMO_UI_DISABLE: ${THERMO_UI_DISABLE:-0}
     deploy:
       resources:
         limits:

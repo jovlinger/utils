@@ -99,6 +99,17 @@ dump "tar size" ls -la "$SD_MOUNT/$ROOTFS_TAR"
 mkdir -p "$CHROOT_DIR"
 tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$CHROOT_DIR"
 dump "chroot top" ls -la "$CHROOT_DIR"
+# Optional: zone Ed25519 pub key baked by build-and-write.sh --include-pub-key.
+# When present, start.sh exports ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem so the DMZ
+# enforces twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md, ../SECRETS.md).
+if [ -f "$SD_MOUNT/install/zone-pub.pem" ]; then
+	mkdir -p "$CHROOT_DIR/etc/dmz"
+	cp "$SD_MOUNT/install/zone-pub.pem" "$CHROOT_DIR/etc/dmz/zone-pub.pem"
+	chmod 0444 "$CHROOT_DIR/etc/dmz/zone-pub.pem"
+	pr "  zone pub key: installed at /etc/dmz/zone-pub.pem (twoway auth ENABLED)"
+else
+	pr "  zone pub key: absent (twoway auth DISABLED — rebuild SD with --include-pub-key=...)"
+fi
 pr ""
 
 pr ">>> 8/10 chroot prep (binds, tmpfs /tmp, tmpfs /var/log)"

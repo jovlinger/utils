@@ -1,5 +1,10 @@
 # Twoway sync only. GHCR: ghcr.io/jovlinger/thermo-onboard-twoway
 # Local: docker build -f Dockerfile.twoway -t ghcr.io/jovlinger/thermo-onboard-twoway .
+#
+# !!! ARCHITECTURE NOTE !!!
+# Production target is Pi Zero 2 W (default linux/arm/v7 — see ../onboard/Makefile PLATFORM).
+# Do NOT pin a platform in the FROM line below (no `FROM --platform=...`); the platform must come
+# from `docker buildx build --platform` so the Makefile / CI can pick it.
 
 FROM python:3.11-slim
 

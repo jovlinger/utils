@@ -572,6 +572,16 @@ def _post_manage_json(payload: dict, token: str) -> dict:
 
 
 def main() -> None:
+    if (os.environ.get("THERMO_UI_DISABLE") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        print(
+            "THERMO_UI_DISABLE set: not binding UI ports (use DMZ UI or re-enable later)",
+            flush=True,
+        )
+        return
     ports = _all_ui_ports()
     if len(ports) == 1:
         server = HTTPServer(("0.0.0.0", ports[0]), Handler)

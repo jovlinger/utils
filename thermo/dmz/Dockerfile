@@ -1,8 +1,15 @@
 # Alpine image: Flask app as non-root user `dmz`. Entry: tini -> start.sh -> run.sh -> python.
 #
 # Build:
-#   docker build -t jovlinger/thermo/dmz .
-#   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz --load .
+#   docker build -t jovlinger/thermo/dmz .                                   # host-native: TEST/DEV ONLY
+#   docker buildx build --platform linux/arm/v6 -t jovlinger/thermo/dmz .    # PRODUCTION (Pi 1B)
+#
+# !!! ARCHITECTURE NOTE !!!
+# Production DMZ image is ARMv6 (Pi 1B). It is built by ../build-and-write.sh, NOT by `make .image`
+# in ../Makefile. The Makefile builds host-native on purpose — that image is only used by the test
+# stack (thermo/test/dockertest.sh) and by `make runlocal`. Do NOT add `--platform` to the FROM lines
+# below, and do NOT change the Makefile to force linux/arm/v6: that would slow down the test loop to
+# crawl under QEMU. The production architecture is fixed in build-and-write.sh.
 #
 # Run (optional --tmpfs /tmp; do not tmpfs over all of /var/log if you bind-mount dmz.log):
 #   docker run --rm -p 8080:8080 jovlinger/thermo/dmz

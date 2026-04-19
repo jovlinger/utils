@@ -43,6 +43,8 @@ fi
 . "$SCRIPT_DIR/env/bin/activate"
 python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
 export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-python "$SCRIPT_DIR/../ui/ui_server.py" &
+if [ "${THERMO_UI_DISABLE:-0}" != "1" ]; then
+	python "$SCRIPT_DIR/../ui/ui_server.py" &
+fi
 echo "starting app"
 exec python "$RUN_WITH_STDOUT" "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" python app.py

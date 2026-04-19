@@ -25,7 +25,11 @@ test: test-local test-docker
 test_e2e: test-docker
 
 # Builds thermo/dmz + onboard GHCR-tagged images (../onboard make images) + testdriver, then docker compose up.
-# On macOS, default onboard PLATFORM (linux/arm/v7) is often emulated and very slow; use a native Linux arch unless set.
+# IMPORTANT: this is the *test* path on a developer host. We override PLATFORM to host-native here so the
+# QEMU-emulated armhf/armv6 build does not take forever. Production images for the Pis are built elsewhere:
+#   - DMZ Pi 1B (armv6): thermo/dmz/build-and-write.sh (Alpine RPi armhf SD image)
+#   - Onboard Pi Zero 2 W (armv7 default / arm64): thermo/onboard/Makefile `make images` with PLATFORM
+# Do NOT remove the Darwin-arm64 → linux/arm64 mapping below — it only applies to the test stack.
 dockertest: .image
 	@set -e; \
 	case "$$(uname -s)-$$(uname -m)" in \

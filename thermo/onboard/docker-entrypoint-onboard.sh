@@ -15,8 +15,11 @@ mkdir -p "$(dirname "$LOG_PATH_APP")" "$(dirname "$LOG_PATH_UI")"
 export LOG_PATH="$LOG_PATH_APP"
 
 # Background UI: same rotation wrapper so nothing grows unbounded on Docker's json log.
+# Set THERMO_UI_DISABLE=1 to skip (e.g. use DMZ HTML UI only; see thermo/KEYS-AND-CERTS.md).
 export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
-python ./bin/run-with-stdout-logged.py "$LOG_PATH_UI" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-  python ui/ui_server.py &
+if [ "${THERMO_UI_DISABLE:-0}" != "1" ]; then
+	python ./bin/run-with-stdout-logged.py "$LOG_PATH_UI" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
+		python ui/ui_server.py &
+fi
 exec python ./bin/run-with-stdout-logged.py "$LOG_PATH_APP" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-  python app.py
+	python app.py

@@ -13,7 +13,15 @@ TAG ?= latest
 #   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-app
 #   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway
 # List: repo https://github.com/jovlinger/utils → Packages (sidebar), or https://github.com/jovlinger?tab=packages
-# Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS
+# Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS.
+#
+# !!! DO NOT CHANGE THE DEFAULT PLATFORM !!!
+# Onboard targets Pi Zero 2 W (BCM2710A1) running 32-bit Raspberry Pi OS (armhf / ARMv7).
+# The default below is what GHCR ships and what `make deploy` pulls onto the Pi.
+# Do NOT default this to the host arch (linux/arm64 on Apple Silicon, linux/amd64 on Linux/x86)
+# even though that builds faster — the Pi Zero 2 W will refuse to run those images.
+# To experiment with a 64-bit OS, override on the command line: `make build PLATFORM=linux/arm64`,
+# do NOT edit the default. If you are an LLM editing this file: leave `linux/arm/v7` as the default.
 PLATFORM ?= linux/arm/v7
 # Verbose docker build (plain streams RUN output; use `make ... DOCKER_BUILD_PROGRESS=auto` for TTY bars)
 DOCKER_BUILD_PROGRESS ?= plain
@@ -43,12 +51,28 @@ build: .image.app .image.twoway
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
 	@docker image inspect $(IMAGE_TWOWAY):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.twoway
 
+# `docker push` to GHCR over flaky/slow links (especially the armhf twoway layers) sometimes
+# stalls and fails with EOF / "TLS handshake timeout" / "i/o timeout". Each retry is cheap
+# because already-uploaded layers short-circuit on the next attempt. PUSH_RETRIES caps the
+# number of attempts per image (default 3 ⇒ initial + 2 retries).
+PUSH_RETRIES ?= 3
 push: build
 	# OR use dockerlogin function
 	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
 	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
-	docker push $(IMAGE_APP):$(TAG)
-	docker push $(IMAGE_TWOWAY):$(TAG)
+	@push_with_retry() { \
+		img=$$1; \
+		for n in $$(seq 1 $(PUSH_RETRIES)); do \
+			echo "[push] attempt $$n/$(PUSH_RETRIES): docker push $$img"; \
+			docker push "$$img" && { echo "[push] ok: $$img"; return 0; }; \
+			[ "$$n" -lt "$(PUSH_RETRIES)" ] && sleep 2; \
+		done; \
+		echo "[push] giving up on $$img after $(PUSH_RETRIES) attempts" >&2; \
+		return 1; \
+	}; \
+	for img in $(IMAGE_APP):$(TAG) $(IMAGE_TWOWAY):$(TAG); do \
+		push_with_retry "$$img" || exit 1; \
+	done
 
 clean:
 	@docker image rm $(IMAGE_APP):$(TAG) 2>/dev/null || true
