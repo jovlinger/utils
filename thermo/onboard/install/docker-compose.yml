@@ -52,11 +52,22 @@ services:
     volumes:
       - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
       # Zone Ed25519 private key for twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md).
-      # Host file should be 0400 root:root: `sudo install -m 0400 priv.pem /etc/thermo/zone-priv.pem`.
+      # We bind-mount the **directory** (not the file) so the container can start even before
+      # the priv key has been installed: twoway will then log a loud `WARNING zone auth
+      # DISABLED` instead of failing at OCI mount time with the cryptic
+      #   "not a directory: Are you trying to mount a directory onto a file (or vice-versa)?"
+      # which Docker emits when the source file is missing (Docker auto-creates the missing
+      # source as a directory, which then collides with the file-shaped target).
+      #
+      # Install the key on the Pi (one-time):
+      #   sudo install -m 0700 -d /etc/thermo
+      #   scp dev:utils/thermo/dmz/.secrets/zone/priv.pem /tmp/priv.pem
+      #   sudo install -m 0400 -o root -g root /tmp/priv.pem /etc/thermo/zone-priv.pem
+      #   shred -u /tmp/priv.pem 2>/dev/null || rm -f /tmp/priv.pem
       # In-container path mirrors the host path on purpose so logs/diagnostics are unambiguous.
-      # Override the host path via ZONE_PRIVATE_KEY_PATH (sourced from THERMO_ENV_FILE / ~/.local.sh)
-      # if you keep the key elsewhere; the path is not secret, only the file's bytes are.
-      - ${ZONE_PRIVATE_KEY_PATH:-/etc/thermo/zone-priv.pem}:/etc/thermo/zone-priv.pem:ro
+      # Override the host directory via ZONE_KEYS_DIR (in THERMO_ENV_FILE / ~/.local.sh) if
+      # you keep keys elsewhere; the in-container path stays /etc/thermo regardless.
+      - ${ZONE_KEYS_DIR:-/etc/thermo}:/etc/thermo:ro
     environment:
       LOG_DIR: /var/log/thermo-onboard
       LOG_PATH: /var/log/thermo-onboard/twoway.log
@@ -68,9 +79,10 @@ services:
       DMZ_PORT: ${DMZ_PORT:-5000}
       DMZ_URL: ${DMZ_URL:-}
       ZONE_NAME: ${ZONE_NAME:-zoneymczoneface}
-      # Twoway reads ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM); the in-container
-      # path is fixed and matches the bind-mount target above. Without this, twoway logs
-      # `signing_enabled=False` and every DMZ POST 401s when DMZ has ZONE_PUBLIC_KEY* configured.
+      # Twoway reads ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM). The in-container
+      # path is fixed at /etc/thermo/zone-priv.pem; if that file is absent (because the host
+      # dir is empty), twoway logs `WARNING zone auth DISABLED on client; …` and DMZ POSTs
+      # will 401 — by design. Install the key per the instructions above to enable auth.
       ZONE_PRIVATE_KEY_PATH: /etc/thermo/zone-priv.pem
     deploy:
       resources:

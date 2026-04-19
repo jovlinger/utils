@@ -37,6 +37,27 @@ if [ -n "${CR_PAT:-}" ]; then
 	echo "$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin 2>/dev/null || true
 fi
 
+# ZONE_KEYS_DIR (default /etc/thermo) is bind-mounted into twoway as the source for
+# /etc/thermo/zone-priv.pem (see docker-compose.yml twoway.volumes). We check & warn here;
+# we deliberately do NOT sudo from a deploy script — elevation is a one-time operator step:
+#
+#   sudo install -m 0755 -d /etc/thermo
+#   sudo install -m 0400 -o root -g root /path/to/priv.pem /etc/thermo/zone-priv.pem
+#
+# If the dir is absent, Docker will auto-create it as a root-owned empty dir on first
+# `compose up`; the container starts with auth DISABLED (twoway logs a loud WARNING) and
+# you can install the key later without restarting the host. Override the host dir via
+# ZONE_KEYS_DIR (in THERMO_ENV_FILE / ~/.local.sh).
+ZONE_KEYS_DIR="${ZONE_KEYS_DIR:-/etc/thermo}"
+export ZONE_KEYS_DIR
+if [ ! -d "$ZONE_KEYS_DIR" ]; then
+	log "WARN: ZONE_KEYS_DIR=$ZONE_KEYS_DIR is missing; docker will auto-create on compose up."
+	log "      To enable zone auth: sudo install -m 0755 -d $ZONE_KEYS_DIR &&"
+	log "      sudo install -m 0400 -o root -g root /path/to/priv.pem $ZONE_KEYS_DIR/zone-priv.pem"
+elif [ ! -f "$ZONE_KEYS_DIR/zone-priv.pem" ]; then
+	log "NOTE: $ZONE_KEYS_DIR/zone-priv.pem missing — twoway will start with auth DISABLED."
+fi
+
 CMD="${1:-up}"
 case "$CMD" in
 up | start)
