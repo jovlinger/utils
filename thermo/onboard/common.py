@@ -100,6 +100,11 @@ def log_error(component: str, msg: str, **kwargs: Any) -> None:
     _emit(component, msg, logging.ERROR, **kwargs)
 
 
+def log_warning(component: str, msg: str, **kwargs: Any) -> None:
+    """Same wire format as log, at WARNING level."""
+    _emit(component, msg, logging.WARNING, **kwargs)
+
+
 def log_debug(component: str, msg: str, **kwargs: Any) -> None:
     """Same wire format as log, at DEBUG level."""
     _emit(component, msg, logging.DEBUG, **kwargs)

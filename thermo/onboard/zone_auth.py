@@ -113,6 +113,28 @@ def verify_request(
         return False
 
 
+def public_key_fingerprint(key: "Ed25519PrivateKey | Ed25519PublicKey") -> str:
+    """Stable short identifier (sha256 of the raw 32-byte public key, first 16 hex chars).
+
+    Same fingerprint whether you pass the private half or the public half. Use to confirm in
+    logs that twoway is signing with the key whose pub matches what DMZ has loaded — without
+    leaking any private material to the log.
+    """
+    if Ed25519PrivateKey is None:
+        raise RuntimeError("cryptography not installed; pip install cryptography")
+    from cryptography.hazmat.primitives import serialization
+
+    if isinstance(key, Ed25519PrivateKey):
+        pub = key.public_key()
+    else:
+        pub = key
+    raw = pub.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 def generate_keypair() -> tuple[bytes, bytes]:
     if Ed25519PrivateKey is None:
         raise RuntimeError("cryptography not installed; pip install cryptography")

@@ -11,7 +11,7 @@ import requests
 
 # Same logging as app (configured in common)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import jsonT, log, log_debug, log_error
+from common import jsonT, log, log_debug, log_error, log_warning
 
 
 def info(msg: str, **kwargs) -> None:
@@ -22,6 +22,11 @@ def info(msg: str, **kwargs) -> None:
 def err(msg: str, **kwargs) -> None:
     """Log at ERROR (same kwargs style as info)."""
     log_error("twoway", msg, **kwargs)
+
+
+def warn(msg: str, **kwargs) -> None:
+    """Log at WARNING (same kwargs style as info)."""
+    log_warning("twoway", msg, **kwargs)
 
 
 def dbg(msg: str, **kwargs) -> None:
@@ -70,6 +75,80 @@ ZONE_PRIVATE_KEY = os.environ.get("ZONE_PRIVATE_KEY") or os.environ.get(
     "ZONE_PRIVATE_KEY_PATH"
 )
 
+
+# Eagerly load the Ed25519 private key at startup so misconfiguration is loud and
+# obvious BEFORE the first poll. Without this, a missing/unreadable/garbled key was
+# only discovered per-request (silently per `_sign_headers`), and the only visible
+# symptom was "DMZ keeps 401-ing us" with no client-side hint as to why.
+SIGNING_ENABLED: bool = False
+_PRIVATE_KEY_OBJ = None  # type: ignore[var-annotated]  # cryptography Ed25519PrivateKey when loaded
+_KEY_FINGERPRINT: Optional[str] = None
+
+
+def _probe_signing(zone_name: str, key_ref: Optional[str]) -> None:
+    """Resolve and validate signing configuration; log WARN/ERROR/INFO accordingly.
+
+    Sets module globals SIGNING_ENABLED, _PRIVATE_KEY_OBJ, _KEY_FINGERPRINT. Three outcomes:
+      1) No key configured at all     -> WARN "zone auth DISABLED on client" (DMZ POSTs will 401
+         if DMZ enforces auth via ZONE_PUBLIC_KEY*).
+      2) Key configured but unloadable -> ERROR "zone auth MISCONFIGURED" (path missing, bad PEM,
+         missing `cryptography`). Same DMZ symptom as case 1, but the cause is on us, not config.
+      3) Key configured and loaded     -> INFO  "zone auth ENABLED key_sha256=… zone=…"; signing
+         is on for every DMZ POST. The 16-char fingerprint matches DMZ's pub.pem fingerprint
+         (see thermo/dmz/SECRETS.md), so cross-checking client vs server is one-line each side.
+
+    A non-empty key + empty zone_name is also treated as misconfig (we cannot sign without a
+    zone name in the request URL or in ZONE_NAME env).
+    """
+    global SIGNING_ENABLED, _PRIVATE_KEY_OBJ, _KEY_FINGERPRINT
+    if not key_ref:
+        warn(
+            "zone auth DISABLED on client; DMZ POSTs will 401 if DMZ enforces auth. "
+            "Set ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM) to enable. "
+            "See thermo/KEYS-AND-CERTS.md."
+        )
+        return
+    if not zone_name:
+        err(
+            "zone auth MISCONFIGURED: ZONE_PRIVATE_KEY* set but ZONE_NAME is empty "
+            "(could not extract from DMZ URL path /zone/<name>/sensors). Signing disabled.",
+            key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+        )
+        return
+    try:
+        from zone_auth import _load_private_key, public_key_fingerprint
+
+        key_obj = _load_private_key(key_ref)
+        fingerprint = public_key_fingerprint(key_obj)
+    except FileNotFoundError as e:
+        err(
+            "zone auth MISCONFIGURED: private key file not found. "
+            "Bind-mount it into the container; see thermo/onboard/install/docker-compose.yml.",
+            key_ref=key_ref,
+            error=str(e),
+        )
+        return
+    except Exception as e:
+        err(
+            "zone auth MISCONFIGURED: failed to load Ed25519 private key. "
+            "Expected PEM (PKCS8) or 32 raw bytes. Signing disabled.",
+            key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+            error=f"{type(e).__name__}: {e}",
+        )
+        return
+    SIGNING_ENABLED = True
+    _PRIVATE_KEY_OBJ = key_obj
+    _KEY_FINGERPRINT = fingerprint
+    info(
+        "zone auth ENABLED",
+        zone=zone_name,
+        key_sha256=fingerprint,
+        key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+    )
+
+
+_probe_signing(ZONE_NAME, ZONE_PRIVATE_KEY)
+
 # Request path used for Ed25519 signing (must match DMZ URL path).
 DMZ_SIGN_PATH: str = _parsed_dmz.path or "/zone/default/sensors"
 
@@ -102,7 +181,8 @@ info(
     dmz_sign_path=DMZ_SIGN_PATH,
     dmz_command_url=DMZ_COMMAND_URL,
     zone_name=ZONE_NAME or "(unset)",
-    signing_enabled=bool(ZONE_PRIVATE_KEY and ZONE_NAME),
+    signing_enabled=SIGNING_ENABLED,
+    key_sha256=_KEY_FINGERPRINT or "(none)",
     timeout_secs=TIMEOUT_SECS,
     period_max_secs=PERIOD_MAX_SECS,
     period_secs=PERIOD_SECS,
@@ -120,21 +200,31 @@ def _env_to_sensors(env: dict) -> dict:
 
 
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:
-    """Add Ed25519 signature headers if ZONE_PRIVATE_KEY is set."""
-    if not ZONE_PRIVATE_KEY or not zonename:
+    """Build Ed25519 signature headers using the eagerly-loaded private key.
+
+    Returns ``{}`` when signing is disabled (no key configured / misconfigured at startup;
+    see :func:`_probe_signing`). The cached key object means we do not hit disk per request.
+    """
+    if not SIGNING_ENABLED or _PRIVATE_KEY_OBJ is None or not zonename:
         return {}
     try:
-        from zone_auth import (
-            sign_request,
-            HEADER_SIGNATURE,
-            HEADER_TIMESTAMP,
-            HEADER_ZONE,
-        )
+        import base64
+        import hashlib
+        import time as _time
 
-        sig, ts, _ = sign_request(method, path, body, zonename, ZONE_PRIVATE_KEY)
-        return {HEADER_SIGNATURE: sig, HEADER_TIMESTAMP: ts, HEADER_ZONE: zonename}
+        from zone_auth import HEADER_SIGNATURE, HEADER_TIMESTAMP, HEADER_ZONE
+
+        ts = str(int(_time.time()))
+        body_hash = hashlib.sha256(body).hexdigest()
+        payload = f"{method}\n{path}\n{ts}\n{body_hash}"
+        sig = _PRIVATE_KEY_OBJ.sign(payload.encode())
+        return {
+            HEADER_SIGNATURE: base64.b64encode(sig).decode(),
+            HEADER_TIMESTAMP: ts,
+            HEADER_ZONE: zonename,
+        }
     except Exception as e:
-        info("sign failed", error=str(e))
+        err("sign failed unexpectedly (key was loaded at startup)", error=str(e))
         return {}
 
 
@@ -172,7 +262,13 @@ def _push_authoritative_command_to_dmz(cmd: dict) -> bool:
 
 def post_json(
     url: str, body: dict, extra_headers: Optional[dict] = None
-) -> Tuple[jsonT, bool]:
+) -> Tuple[jsonT, bool, int]:
+    """POST JSON; return (parsed-or-raw body, ok, status_code).
+
+    status_code is 0 on transport failure (caught by caller). Callers use status_code to
+    distinguish HTTP error classes — in particular 401-with-no-headers (we forgot to sign)
+    from 401-with-headers (DMZ rejected the signature).
+    """
     dbg("post request", url=url)
     headers = {"Content-type": "application/json", "Accept": "application/json"}
     if extra_headers:
@@ -180,11 +276,33 @@ def post_json(
     r = requests.post(url, json=body, headers=headers, timeout=TIMEOUT_SECS)
     info("post response", url=url, status=r.status_code)
     if r.status_code != 200:
-        return (r.text, False)
+        return (r.text, False, r.status_code)
     try:
-        return (r.json(), True)
+        return (r.json(), True, r.status_code)
     except Exception:
-        return (f"unexpected string response: {r.text}", False)
+        return (f"unexpected string response: {r.text}", False, r.status_code)
+
+
+def _explain_dmz_failure(status: int, signed: bool) -> str:
+    """Human-readable hint for a non-200 from the DMZ POST. Intent: stop turning a 401 into
+    a head-scratcher. The two 401 cases have very different fixes."""
+    if status == 401:
+        if signed:
+            return (
+                "DMZ rejected our signed request (401). Likely causes: client key fingerprint "
+                f"({_KEY_FINGERPRINT or '?'}) does not match DMZ's pub.pem; clock skew >5min; "
+                "or zone name mismatch. Cross-check fingerprints (see thermo/dmz/SECRETS.md)."
+            )
+        return (
+            "DMZ requires zone auth and we sent NO signature headers (401). Set "
+            "ZONE_PRIVATE_KEY_PATH and bind-mount the priv key into the twoway container "
+            "(see thermo/onboard/install/docker-compose.yml + thermo/KEYS-AND-CERTS.md)."
+        )
+    if status == 403:
+        return f"DMZ accepted the signature but forbade the action (403). Check zone allowlist."
+    if status >= 500:
+        return f"DMZ server error ({status}); not our config — see DMZ logs."
+    return f"DMZ returned HTTP {status}."
 
 
 def poll_once() -> bool:
@@ -198,14 +316,23 @@ def poll_once() -> bool:
         dmz_body = _env_to_sensors(env)
         body_bytes = json.dumps(dmz_body).encode()
         extra = _sign_headers("POST", DMZ_SIGN_PATH, body_bytes, ZONE_NAME)
-        res, ok_dmz = post_json(dmz, dmz_body, extra_headers=extra if extra else None)
-        dbg(f"poll_once dmz -> twoway", res=res, ok_dmz=ok_dmz)
+        signed = bool(extra)
+        res, ok_dmz, status = post_json(
+            dmz, dmz_body, extra_headers=extra if extra else None
+        )
+        dbg(f"poll_once dmz -> twoway", res=res, ok_dmz=ok_dmz, status=status)
         if not ok_dmz:
-            err("post to DMZ failed: aborting poll", error=res)
+            err(
+                "post to DMZ failed: aborting poll",
+                status=status,
+                signed=signed,
+                hint=_explain_dmz_failure(status, signed),
+                error=res,
+            )
             return False
 
         # POST zone state to onboard /daikin; app.py owns conversion to State
-        write_res, ok_write = post_json(writeto, res)
+        write_res, ok_write, _wstatus = post_json(writeto, res)
         if not ok_write:
             err("post to onboard failed: aborting poll", error=write_res, res=res)
             return False
