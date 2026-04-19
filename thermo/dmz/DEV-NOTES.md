@@ -13,16 +13,18 @@
   - gforth: 3% memory of python, 5-10x speedup of python
 
 
-| Feature | Gforth | Gambit (Gambit-C) | Ribbit |
-|:--- |:--- |:--- |:--- |
-| **Execution Type** | Indirect Threaded (Interpreter) | Native (Compiles via C) | Minimal VM (AOT Compiled) |
-| **Slowdown vs. C** | ~5x | **~1.1x – 2x** | ~10x – 20x |
-| **Idle RAM** | ~1 MB | ~3 – 5 MB | **< 100 KB** |
-| **Binary Size** | ~1 – 2 MB | ~2 – 4 MB (Stand-alone) | **< 10 KB (Core)** |
-| **ARMv6 Support** | Yes (Excellent) | Yes (via C backend) | Yes (via C or JS backends) |
-| **Flask-like Library** | No (Manual socket/HTTP) | **Spock** or **Spheres** | No (Minimalist/Raw) |
-| **Primary Focus** | Bare-metal efficiency | High-performance Scheme | Extreme compactness |
-| **Download/Repo** | [GNU Gforth](https://gnu.org) | [Gambit Scheme](http://gambitscheme.org) | [Ribbit Repo](https://github.com) |
+
+| Feature | CPython (Baseline) | Gforth | Gambit (Gambit-C) | Ribbit |
+|:--- |:--- |:--- |:--- |:--- |
+| **Execution Type** | Bytecode Interpreter | Indirect Threaded | Native (via C) | Minimal VM (AOT) |
+| **Slowdown vs. C** | ~20x – 50x | ~5x | **~1.1x – 2x** | ~10x – 20x |
+| **Idle RAM** | ~25 MB | ~1 MB | ~3 – 5 MB | **< 100 KB** |
+| **Binary Size** | ~100 MB+ (Full Dist) | ~1 – 2 MB | ~2 – 4 MB | **< 10 KB** |
+| **ARMv6 Support** | Yes | Yes | Yes | Yes |
+| **Flask-like Lib** | **Flask, Bottle** | No (Raw Sockets) | Spock, Spheres | No |
+| **Download Link** | [python.org](https://python.org) | [gnu.org/s/gforth](https://gnu.org) | [gambitscheme.org](http://gambitscheme.org) | [://github.com](https://github.com) |
+
+
 
 Gforth: You'll likely use the built-in unix/socket.fs. It's very low-level; you'll be manipulating file descriptors directly, similar to C.
 Gambit: Check out Spock or the networking modules in Gerbil Scheme (which runs on Gambit) if you want a more modern web-handling feel.
