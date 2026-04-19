@@ -148,9 +148,7 @@ def e2e_services():
                 pass
             time.sleep(0.2)
         else:
-            pytest.fail(
-                f"twoway did not push zone '{ZONE_NAME}' to dmz within 20s"
-            )
+            pytest.fail(f"twoway did not push zone '{ZONE_NAME}' to dmz within 20s")
         # Reset onboard command history so each test starts with a clean slate.
         requests.post(f"{ONBOARD_URL}/test/reset", timeout=5)
         yield {}
@@ -246,8 +244,17 @@ def test_e2e_sensors_and_commands(e2e_services):
     assert latest.get("half_c") == 44  # 22 * 2
 
 
-def test_e2e_partial_command_merged_and_pushed_to_dmz(e2e_services):
-    """Partial DMZ command merges on onboard; twoway pushes full command back so DMZ stays consistent."""
+def test_e2e_partial_command_merged_on_onboard(e2e_services):
+    """Partial DMZ command merges on onboard; DMZ stores only what was last posted to it.
+
+    Convergence model (post-fixup-removal): each side gates command writes on a
+    strictly-newer ``created_dt``. Onboard merges a partial DMZ command onto its last
+    applied State (so the IR / UI never regresses on missing fields). DMZ stores the
+    incoming command verbatim -- it does NOT receive the merged version back, because
+    onboard preserves the incoming ``created_dt`` so the round-trip looks "same age"
+    and DMZ ignores it. Net effect: hardware state is correct (onboard merged); DMZ
+    UI shows the partial command the user last sent (which is what they sent).
+    """
     r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
     assert r.status_code == 200
     r = requests.post(f"{ONBOARD_URL}/test/reset")
@@ -275,11 +282,12 @@ def test_e2e_partial_command_merged_and_pushed_to_dmz(e2e_services):
     latest = r.json()[0]["command"]
     assert latest.get("mode") == "HEAT"
     assert latest.get("fan") == "F3"
+    # DMZ holds the most recent partial command verbatim -- merging is onboard-only now.
     r = requests.get(f"{DMZ_URL}/zones")
     assert r.status_code == 200
     zcmd = r.json()[ZONE_NAME]["command"]
-    assert zcmd.get("mode") == "HEAT"
     assert zcmd.get("fan") == "F3"
+    assert zcmd.get("mode") is None  # only "fan: F3" was POSTed last; no merge on DMZ
 
 
 def test_e2e_docker_compose():
@@ -310,7 +318,10 @@ def test_e2e_docker_compose():
     assert ZONE_NAME in zones
     assert zones[ZONE_NAME]["sensors"]["temp_centigrade"] == 19.5
     # Send command
-    r = requests.post(f"{DMZ_URL}/zone/{ZONE_NAME}/command", json={"power": True, "mode": "HEAT", "temp_c": 22})
+    r = requests.post(
+        f"{DMZ_URL}/zone/{ZONE_NAME}/command",
+        json={"power": True, "mode": "HEAT", "temp_c": 22},
+    )
     assert r.status_code == 200
     time.sleep(1.5)
     # Verify command in onboard

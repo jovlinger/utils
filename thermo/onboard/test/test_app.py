@@ -78,9 +78,7 @@ def test_daikin_sequence(send_daikin_spy) -> None:
 
     r1 = client.post(
         "/daikin",
-        json={
-            "command": {"power": True, "mode": "HEAT", "temp_c": 22, "fan": "AUTO"}
-        },
+        json={"command": {"power": True, "mode": "HEAT", "temp_c": 22, "fan": "AUTO"}},
     )
     assert r1.status_code == 200
     assert r1.json["sent"]
@@ -92,9 +90,7 @@ def test_daikin_sequence(send_daikin_spy) -> None:
 
     r2 = client.post(
         "/daikin",
-        json={
-            "command": {"power": True, "mode": "HEAT", "temp_c": 23, "fan": "F3"}
-        },
+        json={"command": {"power": True, "mode": "HEAT", "temp_c": 23, "fan": "F3"}},
     )
     assert r2.status_code == 200
     assert "environment" in r2.json
@@ -103,9 +99,7 @@ def test_daikin_sequence(send_daikin_spy) -> None:
 
     r3 = client.post(
         "/daikin",
-        json={
-            "command": {"power": False, "mode": "HEAT", "temp_c": 23, "fan": "F3"}
-        },
+        json={"command": {"power": False, "mode": "HEAT", "temp_c": 23, "fan": "F3"}},
     )
     assert r3.status_code == 200
     assert "environment" in r3.json
@@ -214,15 +208,24 @@ def test_daikin_metadata_only_no_ir(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_daikin_twoway_first_post_merges_onto_default(send_daikin_spy) -> None:
-    """Zone-shaped body with no prior full POST merges onto cold-start default State."""
+    """Zone-shaped body with no prior full POST merges onto cold-start default State.
+
+    Twoway-shaped requests are gated on ``command.created_dt`` strictly newer than
+    the onboard-tracked one (None at cold start; first valid command always wins).
+    """
     app.daikin_cmds.clear()
     app._last_daikin_ir_fingerprint = None
     app._last_applied_state = State()
+    app._last_command_created_dt = None
     client = app.app.test_client()
     r = client.post(
         "/daikin",
         json={
-            "command": {"power": True, "fan": "F3"},
+            "command": {
+                "power": True,
+                "fan": "F3",
+                "created_dt": "2026-04-19T12:00:00",
+            },
             "sensors": {"temp_centigrade": 19.0},
         },
     )
@@ -237,10 +240,15 @@ def test_daikin_twoway_first_post_merges_onto_default(send_daikin_spy) -> None:
 
 
 def test_daikin_twoway_merge_partial_into_last_state(send_daikin_spy) -> None:
-    """Zone-shaped body (sensors present) merges partial command onto last applied State."""
+    """Zone-shaped body (sensors present) merges partial command onto last applied State.
+
+    The second twoway POST must carry a strictly-newer ``created_dt`` than the first
+    UI-direct command (which receiver-stamped at receive time).
+    """
     app.daikin_cmds.clear()
     app._last_daikin_ir_fingerprint = None
     app._last_applied_state = State()
+    app._last_command_created_dt = None
     client = app.app.test_client()
     r1 = client.post(
         "/daikin",
@@ -248,10 +256,11 @@ def test_daikin_twoway_merge_partial_into_last_state(send_daikin_spy) -> None:
     )
     assert r1.status_code == 200
     assert r1.json["sent"]
+    # Use far-future timestamp so the gate accepts regardless of how fast we run.
     r2 = client.post(
         "/daikin",
         json={
-            "command": {"fan": "F3"},
+            "command": {"fan": "F3", "created_dt": "2099-01-01T00:00:00"},
             "sensors": {"temp_centigrade": 20.0},
         },
     )
@@ -259,6 +268,91 @@ def test_daikin_twoway_merge_partial_into_last_state(send_daikin_spy) -> None:
     assert r2.json["command"]["mode"] == "HEAT"
     assert r2.json["command"]["fan"] == "F3"
     assert send_daikin_spy.call_count == 2
+
+
+def test_daikin_twoway_obsolete_command_ignored(send_daikin_spy) -> None:
+    """Twoway command with non-newer created_dt must NOT touch IR or last-applied state."""
+    app.daikin_cmds.clear()
+    app._last_daikin_ir_fingerprint = None
+    app._last_applied_state = State()
+    app._last_command_created_dt = None
+    client = app.app.test_client()
+    r1 = client.post(
+        "/daikin",
+        json={"command": {"power": True, "mode": "HEAT", "temp_c": 22, "fan": "AUTO"}},
+    )
+    assert r1.status_code == 200
+    assert r1.json["sent"]
+    sends_after_first = send_daikin_spy.call_count
+    tracked_after_first = app._last_command_created_dt
+    assert tracked_after_first is not None
+
+    # Same created_dt as tracked -> NOT strictly newer -> obsolete.
+    r_eq = client.post(
+        "/daikin",
+        json={
+            "command": {"fan": "F3", "created_dt": tracked_after_first},
+            "sensors": {"temp_centigrade": 20.0},
+        },
+    )
+    assert r_eq.status_code == 200
+    assert r_eq.json["sent"] is False
+    assert "obsolete" in r_eq.json.get("reason", "")
+    assert send_daikin_spy.call_count == sends_after_first
+    assert app._last_command_created_dt == tracked_after_first
+
+    # Older created_dt -> obsolete.
+    r_old = client.post(
+        "/daikin",
+        json={
+            "command": {"fan": "F3", "created_dt": "1999-01-01T00:00:00"},
+            "sensors": {"temp_centigrade": 20.0},
+        },
+    )
+    assert r_old.status_code == 200
+    assert r_old.json["sent"] is False
+    assert "obsolete" in r_old.json.get("reason", "")
+    assert send_daikin_spy.call_count == sends_after_first
+
+    # Missing created_dt on twoway path -> obsolete (cannot prove newer).
+    r_miss = client.post(
+        "/daikin",
+        json={
+            "command": {"fan": "F3"},
+            "sensors": {"temp_centigrade": 20.0},
+        },
+    )
+    assert r_miss.status_code == 200
+    assert r_miss.json["sent"] is False
+    assert "obsolete" in r_miss.json.get("reason", "")
+    assert send_daikin_spy.call_count == sends_after_first
+
+
+def test_environment_includes_command_with_created_dt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /environment exposes the last-applied command + created_dt for twoway to forward."""
+    monkeypatch.setenv("ENV", "TEST")
+    app.daikin_cmds.clear()
+    app._last_daikin_ir_fingerprint = None
+    app._last_applied_state = State()
+    app._last_command_created_dt = None
+    client = app.app.test_client()
+
+    r0 = client.get("/environment")
+    assert r0.status_code == 200
+    assert r0.json["command"] is None  # cold start: no command yet
+
+    client.post(
+        "/daikin",
+        json={"command": {"power": True, "mode": "COOL", "temp_c": 24, "fan": "AUTO"}},
+    )
+    r1 = client.get("/environment")
+    assert r1.status_code == 200
+    cmd = r1.json["command"]
+    assert isinstance(cmd, dict)
+    assert cmd["mode"] == "COOL"
+    assert isinstance(cmd.get("created_dt"), str) and cmd["created_dt"]
 
 
 def test_manage_get_state(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,7 +433,10 @@ def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:
     client = app.app.test_client()
     r = client.post(
         "/ui/command",
-        json={"zone": "ignored", "command": {"power": True, "mode": "HEAT", "temp_c": 21}},
+        json={
+            "zone": "ignored",
+            "command": {"power": True, "mode": "HEAT", "temp_c": 21},
+        },
     )
     assert r.status_code == 200
     assert r.json["zone"] == "default"

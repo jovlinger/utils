@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -220,7 +220,9 @@ def _form_to_command(form: Dict[bytes, List[bytes]]) -> Dict[str, Any]:
     if timer_off_active and timer_off_minutes is None:
         timer_off_active = False
     cmd["timer_off_active"] = timer_off_active
-    cmd["timer_off_minutes"] = timer_off_minutes if timer_off_active else timer_off_minutes
+    cmd["timer_off_minutes"] = (
+        timer_off_minutes if timer_off_active else timer_off_minutes
+    )
     return cmd
 
 
@@ -237,7 +239,7 @@ def _env_table_rows(ctx: Mapping[str, Any]) -> str:
         hm_s = "—" if hm is None else html.escape(str(hm))
         rows.append(f"<tr><td>{z}</td><td>{tc_s}</td><td>{hm_s}</td><td>{ts}</td></tr>")
     if not rows:
-        rows.append("<tr><td colspan=\"4\">No environment data</td></tr>")
+        rows.append('<tr><td colspan="4">No environment data</td></tr>')
     return "\n".join(rows)
 
 
@@ -309,17 +311,15 @@ def render_template(
         zones = [selected_zone or "default"]
     sel_zone = selected_zone if selected_zone in zones else zones[0]
 
-    env_rows = _env_table_rows(ctx) if ctx else "<tr><td colspan=\"4\">—</td></tr>"
+    env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="4">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
 
     if _ui_backend() == "dmz":
         manage_fragment = ""
     else:
-        manage_fragment = (
-            _MANAGE_SECTION_ONBOARD.replace(
-                "$manage_status", html.escape(manage_status)
-            ).replace("$manage_ui_zone", html.escape(sel_zone))
-        )
+        manage_fragment = _MANAGE_SECTION_ONBOARD.replace(
+            "$manage_status", html.escape(manage_status)
+        ).replace("$manage_ui_zone", html.escape(sel_zone))
 
     tpl = TEMPLATE_PATH.read_text()
     return (
@@ -454,7 +454,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not ui_zone or (zones and ui_zone not in zones):
                     ui_zone = zones[0] if zones else "default"
                 state = _state_for_zone(ctx, ui_zone)
-                html_out = render_template(state, ctx=ctx, selected_zone=ui_zone, msg=msg)
+                html_out = render_template(
+                    state, ctx=ctx, selected_zone=ui_zone, msg=msg
+                )
             else:
                 ui_zone = (form.get(b"ui_zone") or [b""])[0].decode().strip()
                 if not ui_zone or (zones and ui_zone not in zones):
@@ -512,14 +514,15 @@ class Handler(BaseHTTPRequestHandler):
     def _post_manage_action(
         self, form: Dict[bytes, List[bytes]], ctx: Optional[Dict[str, Any]]
     ) -> str:
-        manage_action = (form.get(b"manage_action") or [b""])[0].decode().strip().lower()
+        manage_action = (
+            (form.get(b"manage_action") or [b""])[0].decode().strip().lower()
+        )
         manage_level = (form.get(b"manage_level") or [b"INFO"])[0].decode().strip()
         manage_message = (form.get(b"manage_message") or [b""])[0].decode().strip()
         manage_code_raw = (form.get(b"manage_code") or [b"99"])[0].decode().strip()
-        manage_token = (
-            (form.get(b"manage_token") or [b""])[0].decode().strip()
-            or os.environ.get("MANAGE_TOKEN", "")
-        )
+        manage_token = (form.get(b"manage_token") or [b""])[
+            0
+        ].decode().strip() or os.environ.get("MANAGE_TOKEN", "")
 
         payload: Dict[str, Any] = {}
         if manage_action == "inject_log":
@@ -561,9 +564,7 @@ def _post_manage_json(payload: dict, token: str) -> dict:
         raise RuntimeError("missing manage token")
     headers = {"X-Manage-Token": token}
     body_bytes = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{APP_BASE}/manage", data=body_bytes, method="POST"
-    )
+    req = urllib.request.Request(f"{APP_BASE}/manage", data=body_bytes, method="POST")
     req.add_header("Content-Type", "application/json")
     for k, v in headers.items():
         req.add_header(k, v)
@@ -584,19 +585,22 @@ def main() -> None:
         return
     ports = _all_ui_ports()
     if len(ports) == 1:
-        server = HTTPServer(("0.0.0.0", ports[0]), Handler)
+        server = ThreadingHTTPServer(("0.0.0.0", ports[0]), Handler)
+        server.daemon_threads = True
         print(f"UI on http://0.0.0.0:{ports[0]} (backend={_ui_backend()})")
         server.serve_forever()
         return
     for port in ports[1:]:
-        s = HTTPServer(("0.0.0.0", port), Handler)
+        s = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        s.daemon_threads = True
         threading.Thread(
             target=s.serve_forever,
             daemon=True,
             name=f"ui-server-{port}",
         ).start()
         print(f"UI on http://0.0.0.0:{port}")
-    first = HTTPServer(("0.0.0.0", ports[0]), Handler)
+    first = ThreadingHTTPServer(("0.0.0.0", ports[0]), Handler)
+    first.daemon_threads = True
     print(f"UI on http://0.0.0.0:{ports[0]} (backend={_ui_backend()})")
     first.serve_forever()
 

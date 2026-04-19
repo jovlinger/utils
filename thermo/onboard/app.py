@@ -125,10 +125,12 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
 
     if action == "reset":
         global _fake_temp, _fake_humid, _last_daikin_ir_fingerprint, _last_applied_state
+        global _last_command_created_dt
         _fake_temp = None
         _fake_humid = None
         _last_daikin_ir_fingerprint = None
         _last_applied_state = State()
+        _last_command_created_dt = None
         daikin_cmds.clear()
         out("management reset state")
         return {"ok": True, "action": action}, 200
@@ -160,15 +162,37 @@ def _round1(x: Optional[float]) -> Optional[float]:
     return round(x, 1) if x is not None else None
 
 
+def _last_command_with_created_dt() -> Optional[Dict[str, Any]]:
+    """Return ``{...state fields..., "created_dt": ...}`` for the last accepted command.
+
+    Returns ``None`` when no command has ever been applied (cold start). Twoway uses this
+    to forward the most recent onboard-side command (and its origin timestamp) to DMZ;
+    DMZ's strictly-newer gate then decides whether to replace its stored command.
+    """
+    if _last_command_created_dt is None:
+        return None
+    cmd = dict(_last_applied_state.to_json())
+    cmd["created_dt"] = _last_command_created_dt
+    return cmd
+
+
 def _environment_dict() -> Dict[str, Any]:
-    """Current environment payload (same shape as GET /environment)."""
+    """Current environment payload + last-applied command (same shape as GET /environment).
+
+    The ``command`` field carries the last command applied on this onboard (and its
+    ``created_dt``) so twoway can propagate it to DMZ in a single POST. ``None`` until
+    the first command is applied. (TODO: rename endpoint to ``/state`` -- the response
+    is no longer just the environment readings.)
+    """
     global _fake_temp, _fake_humid
     ts = datetime.now()
+    cmd = _last_command_with_created_dt()
     if _fake_temp is not None and _fake_humid is not None:
         return {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
             "time": ts.isoformat(),
+            "command": cmd,
         }
     try:
         htu = HTU21D.singleton()
@@ -178,6 +202,7 @@ def _environment_dict() -> Dict[str, Any]:
             "temperature_centigrade": _round1(temp),
             "humidity_percent": _round1(hum),
             "time": ts.isoformat(),
+            "command": cmd,
         }
     except Exception as e:
         out("environment", error=str(e))
@@ -185,12 +210,16 @@ def _environment_dict() -> Dict[str, Any]:
             "temperature_centigrade": None,
             "humidity_percent": None,
             "time": ts.isoformat(),
+            "command": cmd,
         }
 
 
 @app.route("/environment", methods=["GET"])
 def environment():
-    """Return current temperature and humidity from HTU21D sensor (1 decimal)."""
+    """Return current temperature/humidity + last-applied command (TODO: rename to /state).
+
+    See :func:`_environment_dict`.
+    """
     return _environment_dict()
 
 
@@ -209,12 +238,13 @@ def test_inject_readings():
 @app.route("/test/reset", methods=["POST"])
 def test_reset():
     """Clear in-memory command history and state for test isolation."""
-    global _last_daikin_ir_fingerprint, _last_applied_state
+    global _last_daikin_ir_fingerprint, _last_applied_state, _last_command_created_dt
     if not is_test_env():
         return {"error": "only in test env"}, 403
     daikin_cmds.clear()
     _last_daikin_ir_fingerprint = None
     _last_applied_state = State()
+    _last_command_created_dt = None
     return {"ok": True}
 
 
@@ -263,6 +293,13 @@ _last_daikin_ir_fingerprint: Optional[str] = None
 # Last State applied on /daikin (UI or twoway); merge baseline for partial DMZ/twoway commands.
 # Starts at a comfortable default (see heatpumpirctl.State: off, AUTO, 20°C).
 _last_applied_state: State = State()
+
+# created_dt of the last accepted command. Used to gate twoway-shaped writes:
+# the from-twoway path applies a command only if its created_dt is *strictly newer*
+# than this. UI-direct writes (POST /ui/command, plain POST /daikin) always apply
+# and update this to ``now()`` if the incoming command does not carry one. None
+# means "no command has ever been applied" -- the first write always wins.
+_last_command_created_dt: Optional[str] = None
 
 
 def _daikin_state_fingerprint(state: State) -> str:
@@ -340,8 +377,16 @@ def _latest_command_dict_for_ui() -> Dict[str, Any]:
 
 
 def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
-    """Shared implementation for ``POST /daikin`` and ``POST /ui/command``."""
-    global _last_daikin_ir_fingerprint, _last_applied_state
+    """Shared implementation for ``POST /daikin`` and ``POST /ui/command``.
+
+    Twoway-shaped requests (``"sensors"`` key present in body) are gated on the
+    command's ``created_dt``: the command is applied only when its ``created_dt`` is
+    *strictly newer* than the most recently accepted one (``_last_command_created_dt``).
+    Obsolete twoway commands log at DEBUG and return ``sent: False, reason: "obsolete"``.
+    UI-direct requests (no ``"sensors"`` key) always apply and stamp ``created_dt`` with
+    receiver wall-clock when the body did not provide one.
+    """
+    global _last_daikin_ir_fingerprint, _last_applied_state, _last_command_created_dt
     dbg("set_daikin", js=js)
     cmd_obj = js.get("command") if isinstance(js, dict) else js
     if cmd_obj is None:
@@ -367,6 +412,43 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
         }, 200
 
     from_dmz_twoway = isinstance(js, dict) and "sensors" in js
+    incoming_created_dt = (
+        cmd_obj.get("created_dt") if isinstance(cmd_obj, dict) else None
+    )
+
+    if from_dmz_twoway:
+        # Strictly-newer gate: skip stale round-trips of our own command (or older DMZ
+        # commands that arrived after a fresher local change).  No created_dt at all on
+        # an inbound twoway command is also stale: we cannot prove it is newer.
+        if incoming_created_dt is None:
+            dbg(
+                "twoway command has no created_dt; treating as obsolete",
+                tracked=_last_command_created_dt,
+            )
+            return {
+                "sent": False,
+                "reason": "obsolete (missing created_dt)",
+                "environment": _environment_dict(),
+            }, 200
+        if (
+            _last_command_created_dt is not None
+            and incoming_created_dt <= _last_command_created_dt
+        ):
+            dbg(
+                "twoway command obsolete; ignored",
+                incoming_created_dt=incoming_created_dt,
+                tracked_created_dt=_last_command_created_dt,
+            )
+            return {
+                "sent": False,
+                "reason": "obsolete",
+                "environment": _environment_dict(),
+            }, 200
+        out(
+            "twoway command accepted",
+            incoming_created_dt=incoming_created_dt,
+            previous_created_dt=_last_command_created_dt,
+        )
     try:
         if from_dmz_twoway:
             base = _last_applied_state.to_json()
@@ -386,15 +468,24 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
 
     ts = datetime.now()
     ts_iso = ts.isoformat()
+    # Stamp UI-direct commands with receiver wall-clock when missing; trust the inbound
+    # value otherwise (twoway path got past the gate above so it has a real created_dt).
+    new_created_dt = (
+        incoming_created_dt
+        if isinstance(incoming_created_dt, str) and incoming_created_dt
+        else ts_iso
+    )
     fp = _daikin_state_fingerprint(state)
     if _last_daikin_ir_fingerprint is not None and fp == _last_daikin_ir_fingerprint:
         out("SET_DAIKIN unchanged (no IR): %s" % state.summary())
         _last_applied_state = state
+        _last_command_created_dt = new_created_dt
         return _daikin_response_payload(ts_iso, state, sent=False, unchanged=True), 200
     success = send_daikin_state(state)
     if success:
         _last_daikin_ir_fingerprint = fp
     _last_applied_state = state
+    _last_command_created_dt = new_created_dt
     daikin_cmds.append((ts, state, success))
     out("SET_DAIKIN: %s" % state.summary())
     return _daikin_response_payload(ts_iso, state, sent=success), 200

@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import os
 import sys
 import time
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import requests
 
@@ -152,23 +152,6 @@ _probe_signing(ZONE_NAME, ZONE_PRIVATE_KEY)
 # Request path used for Ed25519 signing (must match DMZ URL path).
 DMZ_SIGN_PATH: str = _parsed_dmz.path or "/zone/default/sensors"
 
-# POST /zone/<name>/command — same host as sensors URL; twoway pushes authoritative command.
-_sensors_url_path = _parsed_dmz.path or ""
-if _sensors_url_path.endswith("/sensors"):
-    DMZ_COMMAND_SIGN_PATH: str = _sensors_url_path[: -len("sensors")] + "command"
-else:
-    DMZ_COMMAND_SIGN_PATH = _sensors_url_path.rstrip("/") + "/command"
-DMZ_COMMAND_URL: str = urlunparse(
-    (
-        _parsed_dmz.scheme,
-        _parsed_dmz.netloc,
-        DMZ_COMMAND_SIGN_PATH,
-        "",
-        "",
-        "",
-    )
-)
-
 TIMEOUT_SECS: float = 10.0
 PERIOD_SECS: float = 5.0
 PERIOD_MAX_SECS: float = 60.0
@@ -179,7 +162,6 @@ info(
     dmz=dmz,
     writeto=writeto,
     dmz_sign_path=DMZ_SIGN_PATH,
-    dmz_command_url=DMZ_COMMAND_URL,
     zone_name=ZONE_NAME or "(unset)",
     signing_enabled=SIGNING_ENABLED,
     key_sha256=_KEY_FINGERPRINT or "(none)",
@@ -190,13 +172,25 @@ info(
 )
 
 
-def _env_to_sensors(env: dict) -> dict:
-    """Map onboard /environment response to DMZ Sensors format."""
-    return {
-        "temp_centigrade": env.get("temperature_centigrade")
-        or env.get("temp_centigrade"),
-        "humid_percent": env.get("humidity_percent") or env.get("humid_percent"),
+def _env_to_dmz_body(env: dict) -> dict:
+    """Build nested DMZ POST body from onboard /environment response.
+
+    Shape: ``{"sensors": {...}, "command": {...}}`` -- DMZ accepts the optional
+    ``command`` field as a piggybacked onboard-side command and applies its strictly-newer
+    ``created_dt`` gate. ``command`` is omitted when onboard has never applied one
+    (cold start), so DMZ never sees a misleading empty command.
+    """
+    body: dict = {
+        "sensors": {
+            "temp_centigrade": env.get("temperature_centigrade")
+            or env.get("temp_centigrade"),
+            "humid_percent": env.get("humidity_percent") or env.get("humid_percent"),
+        }
     }
+    cmd = env.get("command") if isinstance(env, dict) else None
+    if isinstance(cmd, dict) and cmd:
+        body["command"] = cmd
+    return body
 
 
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:
@@ -245,21 +239,6 @@ def get_json(url: str, extra_headers: Optional[dict] = None) -> Tuple[jsonT, boo
         return (f"unexpected string response: {r.text}", False)
 
 
-def _push_authoritative_command_to_dmz(cmd: dict) -> bool:
-    """POST merged command JSON to DMZ (bytes must match Ed25519 signature)."""
-    body_bytes = json.dumps(cmd, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    extra = _sign_headers("POST", DMZ_COMMAND_SIGN_PATH, body_bytes, ZONE_NAME)
-    if extra:
-        headers.update(extra)
-    dbg("post dmz command", url=DMZ_COMMAND_URL, body_len=len(body_bytes))
-    r = requests.post(
-        DMZ_COMMAND_URL, data=body_bytes, headers=headers, timeout=TIMEOUT_SECS
-    )
-    info("dmz command push", url=DMZ_COMMAND_URL, status=r.status_code)
-    return r.status_code == 200
-
-
 def post_json(
     url: str, body: dict, extra_headers: Optional[dict] = None
 ) -> Tuple[jsonT, bool, int]:
@@ -306,21 +285,32 @@ def _explain_dmz_failure(status: int, signed: bool) -> str:
 
 
 def poll_once() -> bool:
+    """One bidirectional sync round. Convergence relies on each side's strictly-newer
+    ``created_dt`` gate; no separate "authoritative command" push is needed."""
     try:
+        # 1/3: pull onboard's current sensors AND last-applied command (with created_dt).
         env, ok_get = get_json(readfrom)
         if not ok_get:
             err("get from onboard failed: aborting poll", error=env)
             return False
+        dbg("poll_once 1/3 ONBOARD -> twoway env+command", env=env)
 
-        # POST to DMZ with optional machine auth
-        dmz_body = _env_to_sensors(env)
+        # 2/3: POST {sensors, command?} to DMZ. DMZ replaces its stored command only when
+        # ours is strictly newer than what it already has (logged on DMZ side as
+        # accepted/obsolete); response contains DMZ's current authoritative zone state.
+        dmz_body = _env_to_dmz_body(env)
         body_bytes = json.dumps(dmz_body).encode()
         extra = _sign_headers("POST", DMZ_SIGN_PATH, body_bytes, ZONE_NAME)
         signed = bool(extra)
         res, ok_dmz, status = post_json(
             dmz, dmz_body, extra_headers=extra if extra else None
         )
-        dbg(f"poll_once dmz -> twoway", res=res, ok_dmz=ok_dmz, status=status)
+        dbg(
+            "poll_once 2/3 twoway -> DMZ returning zone state",
+            res=res,
+            ok_dmz=ok_dmz,
+            status=status,
+        )
         if not ok_dmz:
             err(
                 "post to DMZ failed: aborting poll",
@@ -331,21 +321,20 @@ def poll_once() -> bool:
             )
             return False
 
-        # POST zone state to onboard /daikin; app.py owns conversion to State
+        # 3/3: POST DMZ's zone state to onboard /daikin. Onboard applies the command only
+        # when its created_dt is strictly newer than what onboard already tracks (logged
+        # on onboard side as accepted/obsolete). No post-step fixup: convergence is
+        # symmetric across both gates.
         write_res, ok_write, _wstatus = post_json(writeto, res)
         if not ok_write:
             err("post to onboard failed: aborting poll", error=write_res, res=res)
             return False
-        dbg(f"post twoway -> {writeto}", res=write_res, ok_write=ok_write)
-        if isinstance(write_res, dict):
-            cmd_push = write_res.get("command")
-            if isinstance(cmd_push, dict) and cmd_push:
-                if not _push_authoritative_command_to_dmz(cmd_push):
-                    err(
-                        "push authoritative command to dmz failed",
-                        write_res=write_res,
-                    )
-                    return False
+        dbg(
+            "poll_once 3/3 twoway -> ONBOARD returning apply result",
+            writeto=writeto,
+            res=write_res,
+            ok_write=ok_write,
+        )
     except Exception as e:
         err("failed", error=str(e))
         return False

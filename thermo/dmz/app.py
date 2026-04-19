@@ -113,10 +113,91 @@ def _parse_validated_command_json(
     return parsed, None
 
 
-
 def _mark_command_accessed(cmd: Any) -> None:
     if isinstance(cmd, dict):
         cmd["last_access_dt"] = datetime.now().isoformat()
+
+
+def _stamp_command_if_missing(cmd: Dict[str, Any]) -> str:
+    """Ensure ``cmd["created_dt"]`` is a string; receiver-stamp with now() when missing.
+
+    Returns the (now-guaranteed) ``created_dt`` string. Origin clocks are trusted when
+    present, but should be human-precision close to ours; receiver-stamping covers
+    callers that simply do not bother (UI form posts, ad-hoc curl).
+    """
+    existing = cmd.get("created_dt")
+    if isinstance(existing, str) and existing:
+        return existing
+    stamped = datetime.now().isoformat()
+    cmd["created_dt"] = stamped
+    return stamped
+
+
+def _replace_command_if_newer(zonename: str, cmd: Dict[str, Any], source: str) -> str:
+    """Append ``cmd`` to ``commands[zonename]`` iff its created_dt is strictly newer
+    than the stored last command's. Returns one of ``"accepted"`` or ``"obsolete"``.
+
+    The stored history (capped at MAXLEN) is append-only on accept; obsolete commands
+    are dropped entirely so ``_lastor`` always returns the freshest seen command.
+    """
+    incoming_dt = _stamp_command_if_missing(cmd)
+    last = _lastor(commands[zonename])
+    last_dt = last.get("created_dt") if isinstance(last, dict) else None
+    if isinstance(last_dt, str) and last_dt and incoming_dt <= last_dt:
+        logger.debug(
+            "zone command obsolete; ignored zone=%s source=%s incoming=%s stored=%s",
+            zonename,
+            source,
+            incoming_dt,
+            last_dt,
+        )
+        return "obsolete"
+    _append_and_trim(commands[zonename], cmd)
+    logger.info(
+        "zone command accepted zone=%s source=%s created_dt=%s previous=%s",
+        zonename,
+        source,
+        incoming_dt,
+        last_dt,
+    )
+    _log_full_zone_state(reason=f"command:{source}", zonename=zonename)
+    return "accepted"
+
+
+def _full_zone_state_snapshot() -> Dict[str, Dict[str, Any]]:
+    """Latest ``{command, sensors}`` for every known zone, JSON-friendly.
+
+    Walks the union of ``commands`` and ``sensors`` keys so a zone with sensors but no
+    command (or vice versa) still appears. Used by :func:`_log_full_zone_state` to dump
+    the entire DMZ state on every mutation; cheap (one-deep dict + Pydantic .dict()).
+    """
+    snap: Dict[str, Dict[str, Any]] = {}
+    for z in sorted(set(commands.keys()) | set(sensors.keys())):
+        cmd = _lastor(commands[z])
+        sns = _lastor(sensors[z])
+        sns_d = sns.dict() if hasattr(sns, "dict") else sns
+        snap[z] = {"command": cmd, "sensors": sns_d}
+    return snap
+
+
+def _log_full_zone_state(reason: str, zonename: Optional[str] = None) -> None:
+    """Emit a single DEBUG line with the full ``{zone: {command, sensors}}`` snapshot.
+
+    Called after every mutation of ``commands`` / ``sensors`` so the log shows the
+    complete authoritative state at each transition. ``reason`` and ``zonename`` (if any)
+    explain what just changed; the snapshot itself is the entire DMZ state, not just the
+    mutated zone, since cross-zone visibility is the point.
+    """
+    try:
+        snap = _full_zone_state_snapshot()
+        logger.debug(
+            "zone state changed reason=%s zone=%s state=%s",
+            reason,
+            zonename or "*",
+            json.dumps(snap, default=str, sort_keys=True),
+        )
+    except Exception as e:
+        logger.debug("zone state log failed reason=%s err=%s", reason, e)
 
 
 # Logging: isodatetime, DEBUG, to stdout (Docker / process manager capture)
@@ -379,16 +460,36 @@ def _authorize_global_read() -> Optional[Any]:
 @app.route("/zone/<string:zonename>/sensors", methods=["POST"])
 def update_sensors(zonename: str) -> Any:
     """
-    Update a zone with UpdateZone. Read this zone's states.
-    Register the zone if not already there.
+    Update a zone with sensors and (optionally) a piggybacked command.
+
+    Body shape (preferred): ``{"sensors": {...}, "command": {...}}``.
+
+    Legacy / backward-compat: a flat sensors dict (``{"temp_centigrade": ..., ...}``) is
+    accepted and treated as the ``sensors`` payload with no piggybacked command. Both
+    callers (twoway and the smoke test driver) sign the raw bytes, so no auth concerns.
+
+    The optional ``command`` carries the latest onboard-side command and its
+    ``created_dt``; DMZ's strictly-newer gate (see :func:`_replace_command_if_newer`)
+    decides whether to replace the stored command. Receiver-stamps when missing.
+
     Machine auth (Ed25519 request signing) when ZONE_PUBLIC_KEY is set.
     """
     err = _verify_zone_request(zonename)
     if err:
         return err[1], err[0]
     assertAuthAzZone(request)
-    sns = Sensors(**request.json)
+    body = request.json or {}
+    if isinstance(body, dict) and ("sensors" in body or "command" in body):
+        sensors_body = body.get("sensors") or {}
+        cmd_body = body.get("command")
+    else:
+        sensors_body = body
+        cmd_body = None
+    sns = Sensors(**sensors_body)
     _append_and_trim(sensors[zonename], sns)
+    _log_full_zone_state(reason="sensors", zonename=zonename)
+    if isinstance(cmd_body, dict) and cmd_body:
+        _replace_command_if_newer(zonename, cmd_body, source="zone-sensors")
     return _zone_response(zonename, True)
 
 
@@ -425,7 +526,13 @@ def update_command(zonename: str) -> Any:
     parsed, parse_err = _parse_validated_command_json(raw)
     if parse_err:
         return parse_err[0], parse_err[1]
-    _append_and_trim(commands[zonename], parsed)
+    if isinstance(parsed, dict):
+        _replace_command_if_newer(zonename, parsed, source="zone-command")
+    else:
+        # Non-dict commands (legacy / test) cannot carry created_dt; keep prior behavior
+        # of unconditional append so existing callers do not regress.
+        _append_and_trim(commands[zonename], parsed)
+        _log_full_zone_state(reason="command:legacy-nondict", zonename=zonename)
     return _zone_response(zonename, True)
 
 
@@ -488,7 +595,11 @@ def ui_command() -> Any:
     parsed, parse_err = _parse_validated_command_json(raw)
     if parse_err:
         return parse_err[0], parse_err[1]
-    _append_and_trim(commands[zonename], parsed)
+    if isinstance(parsed, dict):
+        _replace_command_if_newer(zonename, parsed, source="ui-command")
+    else:
+        _append_and_trim(commands[zonename], parsed)
+        _log_full_zone_state(reason="ui-command:legacy-nondict", zonename=zonename)
     snap = _zone_response(zonename, True)
     return {
         "zone": zonename,
@@ -539,6 +650,7 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
+    _log_full_zone_state(reason="test_reset")
     return '"ok"'
 
 

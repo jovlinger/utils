@@ -49,9 +49,9 @@ def test_update_sensors_and_command_multi_zone(dmz_ctx: object) -> None:
 
         js13 = _post_200(c, "/zone/z1/sensors", {"temp_centigrade": 13.34})
 
-        assert js12["command"]["last_access_dt"] != js13["command"]["last_access_dt"], (
-            "Expected access times to be updated on /zone/ endpoint"
-        )
+        assert (
+            js12["command"]["last_access_dt"] != js13["command"]["last_access_dt"]
+        ), "Expected access times to be updated on /zone/ endpoint"
         assert js13["command"]["mode"] == "COOL"
         assert js13["sensors"]["temp_centigrade"] == 13.34
 
@@ -199,12 +199,8 @@ def test_external_client_reads_state_updates_commands(dmz_ctx: object) -> None:
         assert zones["z1"]["sensors"]["temp_centigrade"] == 20.0
         assert zones["z2"]["sensors"]["temp_centigrade"] == 22.5
 
-        _post_200(
-            c, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 21}
-        )
-        _post_200(
-            c, "/zone/z2/command", {"power": True, "mode": "COOL", "temp_c": 24}
-        )
+        _post_200(c, "/zone/z1/command", {"power": True, "mode": "HEAT", "temp_c": 21})
+        _post_200(c, "/zone/z2/command", {"power": True, "mode": "COOL", "temp_c": 24})
 
         zones = _get_200(c, "/zones")
         assert zones["z1"]["command"]["mode"] == "HEAT"
@@ -306,7 +302,9 @@ def test_unsigned_get_zones_rejected_when_auth_required(
         assert r.status_code == 401
 
 
-def test_signed_post_command_accepted(dmz_ctx: object, restore_zone_public_key: object) -> None:
+def test_signed_post_command_accepted(
+    dmz_ctx: object, restore_zone_public_key: object
+) -> None:
     """Valid Ed25519 signature on POST /zone/<z>/command succeeds when ZONE_PUBLIC_KEY set."""
     from zone_auth import (
         HEADER_SIGNATURE,
@@ -335,7 +333,9 @@ def test_signed_post_command_accepted(dmz_ctx: object, restore_zone_public_key: 
         assert js.get("command", {}).get("mode") == "HEAT"
 
 
-def test_signed_get_zones_accepted(dmz_ctx: object, restore_zone_public_key: object) -> None:
+def test_signed_get_zones_accepted(
+    dmz_ctx: object, restore_zone_public_key: object
+) -> None:
     """Valid signature on GET /zones succeeds when ZONE_PUBLIC_KEY is set."""
     from zone_auth import (
         HEADER_SIGNATURE,
@@ -375,7 +375,9 @@ def test_ui_context_all_zones(dmz_ctx: object) -> None:
     with app.test_client() as c:
         _reset(c)
         _post_200(c, "/zone/a/command", {"power": True, "mode": "HEAT"})
-        _post_200(c, "/zone/b/sensors", {"temp_centigrade": 14.0, "humid_percent": 40.0})
+        _post_200(
+            c, "/zone/b/sensors", {"temp_centigrade": 14.0, "humid_percent": 40.0}
+        )
         js = _get_200(c, "/ui/context")
         assert sorted(js["zones"]) == ["a", "b"]
         assert len(js["environments"]) == 2
@@ -383,6 +385,79 @@ def test_ui_context_all_zones(dmz_ctx: object) -> None:
         assert by_zone["b"]["temperature_centigrade"] == 14.0
         assert by_zone["b"]["humidity_percent"] == 40.0
         assert js["zone_states"]["a"]["command"]["mode"] == "HEAT"
+
+
+def test_command_gate_strictly_newer_replaces(dmz_ctx: object) -> None:
+    """``POST /zone/<z>/command``: only strictly-newer ``created_dt`` replaces stored command."""
+    with app.test_client() as c:
+        _reset(c)
+        # First write: no created_dt -> DMZ stamps it.
+        js0 = _post_200(c, "/zone/zg/command", {"power": True, "mode": "HEAT"})
+        stamped = js0["command"].get("created_dt")
+        assert isinstance(stamped, str) and stamped
+
+        # Equal created_dt: NOT strictly newer -> ignored, stored command unchanged.
+        _post_200(c, "/zone/zg/command", {"mode": "COOL", "created_dt": stamped})
+        js_eq = _get_200(c, "/zones")
+        assert js_eq["zg"]["command"]["mode"] == "HEAT"
+
+        # Older created_dt: ignored.
+        _post_200(
+            c, "/zone/zg/command", {"mode": "AUTO", "created_dt": "1999-01-01T00:00:00"}
+        )
+        js_old = _get_200(c, "/zones")
+        assert js_old["zg"]["command"]["mode"] == "HEAT"
+
+        # Strictly newer: replaces.
+        _post_200(
+            c, "/zone/zg/command", {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"}
+        )
+        js_new = _get_200(c, "/zones")
+        assert js_new["zg"]["command"]["mode"] == "COOL"
+        assert js_new["zg"]["command"]["created_dt"] == "2099-01-01T00:00:00"
+
+
+def test_sensors_with_piggybacked_command_nested_body(dmz_ctx: object) -> None:
+    """``POST /zone/<z>/sensors`` accepts nested ``{sensors, command}`` and gates command."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zn/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "command": {"mode": "HEAT", "created_dt": "2050-01-01T00:00:00"},
+            },
+        )
+        assert js["sensors"]["temp_centigrade"] == 20.0
+        assert js["command"]["mode"] == "HEAT"
+        assert js["command"]["created_dt"] == "2050-01-01T00:00:00"
+
+        # Older piggybacked command must NOT replace the stored one.
+        js2 = _post_200(
+            c,
+            "/zone/zn/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.5},
+                "command": {"mode": "AUTO", "created_dt": "1999-01-01T00:00:00"},
+            },
+        )
+        assert js2["sensors"]["temp_centigrade"] == 20.5
+        assert js2["command"]["mode"] == "HEAT"
+
+
+def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
+    """Backward-compat: a flat sensors dict (no ``sensors``/``command`` keys) is accepted."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zf/sensors",
+            {"temp_centigrade": 18.0, "humid_percent": 40.0},
+        )
+        assert js["sensors"]["temp_centigrade"] == 18.0
+        assert js["sensors"]["humid_percent"] == 40.0
+        assert js["command"] is None
 
 
 def test_ui_command_stores_command(dmz_ctx: object) -> None:
