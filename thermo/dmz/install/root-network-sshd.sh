@@ -21,6 +21,15 @@ fi
 gw="${prefix3}.1"
 
 echo "==> network-and-sshd: ip_in=$ip_in addr=$addr gw=$gw"
+
+# Loopback first.  dmz-boot.start brings lo up at normal boot, but if this rescue
+# script is invoked from a path that skipped that (cold rescue boot, manual
+# re-run before dmz-boot has run), 127.0.0.1 must still work or anything that
+# talks to itself (sshd PAM lookups, intra-app HTTP) will hang at SYN.
+ip link set lo up
+ip addr add 127.0.0.1/8 dev lo 2>/dev/null || true
+ip -6 addr add ::1/128 dev lo 2>/dev/null || true
+
 echo "==> eth0 before:"
 ip -brief link show eth0 2>/dev/null || echo "    (no eth0 yet)"
 ip addr show dev eth0 2>/dev/null || true

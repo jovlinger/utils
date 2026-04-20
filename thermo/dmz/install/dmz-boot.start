@@ -65,7 +65,17 @@ pr ">>> 4/10 dmesg (tail, filtered)"
 dmesg 2>/dev/null | grep -iE 'mmc|eth|smsc|usb|mount|overlay|apkovl' | tail -60 | sed 's/^/  /' >>"$LOG" || true
 pr ""
 
-pr ">>> 5/10 network (eth0)"
+pr ">>> 5/10 network (lo + eth0)"
+# Loopback first: this minimal Pi 1B image bypasses Alpine's /etc/network/interfaces
+# + `networking` openrc service entirely, so nothing else brings `lo` up. Without it,
+# `lo` stays DOWN with no 127.0.0.1/8 address, and every intra-process HTTP call
+# (ui_server -> Flask app, both inside the same chroot) hangs at SYN with no route.
+# `ip addr add` is idempotent only via the `|| true` -- second boot already has it.
+ip link set lo up
+ip addr add 127.0.0.1/8 dev lo 2>/dev/null || true
+ip -6 addr add ::1/128 dev lo 2>/dev/null || true
+dump "ip addr lo" ip addr show dev lo
+
 w=0
 while [ ! -d /sys/class/net/eth0 ]; do
 	w=$((w + 1))
