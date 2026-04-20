@@ -405,7 +405,30 @@ def _parse_zone_from_path(path: str, ctx: Optional[Dict[str, Any]]) -> Optional[
     return str(raw)
 
 
+# Connection-aborted exceptions we treat as routine: the peer (browser preconnect,
+# load balancer health check, port scan, user refresh) closed the TCP connection
+# before/while we were reading the request line. Logging full tracebacks for these
+# floods onboard-ui.log with noise that has no operational meaning.
+_CLIENT_DISCONNECT_ERRORS: tuple = (
+    ConnectionResetError,
+    ConnectionAbortedError,
+    BrokenPipeError,
+)
+
+
 class Handler(BaseHTTPRequestHandler):
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except _CLIENT_DISCONNECT_ERRORS as e:
+            # One-line debug instead of a stack trace.  No self.log_error: that goes
+            # through log_message which we no-op below; use stderr directly so an
+            # operator can still see it if log level is raised.
+            sys.stderr.write(
+                f"ui-server: client disconnected before request complete: "
+                f"{type(e).__name__}\n"
+            )
+
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
             from heatpumpirctl import State
@@ -572,6 +595,32 @@ def _post_manage_json(payload: dict, token: str) -> dict:
         return json.loads(r.read().decode())
 
 
+class _UiHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that swallows client-disconnect tracebacks.
+
+    ``handle_error`` is the catch-all for any exception that escaped a request
+    handler (including before ``handle()`` runs, e.g. inside ``setup()``).  We
+    summarize ECONNRESET / ECONNABORTED / EPIPE to a single stderr line and let
+    everything else use the default traceback path, so real bugs still surface.
+    """
+
+    daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, _CLIENT_DISCONNECT_ERRORS):
+            sys.stderr.write(
+                f"ui-server: client {client_address} disconnected: "
+                f"{type(exc).__name__}\n"
+            )
+            return
+        super().handle_error(request, client_address)
+
+
+def _make_server(port: int) -> _UiHTTPServer:
+    return _UiHTTPServer(("0.0.0.0", port), Handler)
+
+
 def main() -> None:
     if (os.environ.get("THERMO_UI_DISABLE") or "").strip().lower() in (
         "1",
@@ -585,22 +634,19 @@ def main() -> None:
         return
     ports = _all_ui_ports()
     if len(ports) == 1:
-        server = ThreadingHTTPServer(("0.0.0.0", ports[0]), Handler)
-        server.daemon_threads = True
+        server = _make_server(ports[0])
         print(f"UI on http://0.0.0.0:{ports[0]} (backend={_ui_backend()})")
         server.serve_forever()
         return
     for port in ports[1:]:
-        s = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-        s.daemon_threads = True
+        s = _make_server(port)
         threading.Thread(
             target=s.serve_forever,
             daemon=True,
             name=f"ui-server-{port}",
         ).start()
         print(f"UI on http://0.0.0.0:{port}")
-    first = ThreadingHTTPServer(("0.0.0.0", ports[0]), Handler)
-    first.daemon_threads = True
+    first = _make_server(ports[0])
     print(f"UI on http://0.0.0.0:{ports[0]} (backend={_ui_backend()})")
     first.serve_forever()
 
