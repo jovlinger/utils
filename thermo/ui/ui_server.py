@@ -191,8 +191,17 @@ def _fetch_about_msg() -> str:
 
 
 def _form_to_command(form: Dict[bytes, List[bytes]]) -> Dict[str, Any]:
+    # Explicit Power on / Power off buttons (see ui_template.html). No power checkbox:
+    # absent thermo_action (e.g. Enter in a text field) defaults to power on so other
+    # fields still apply predictably.
+    action_raw = (form.get(b"thermo_action") or [b""])[0].decode().strip().lower()
+    if action_raw == "power_off":
+        power = False
+    else:
+        power = True  # power_on or legacy/implicit submit
+
     cmd: Dict[str, Any] = {
-        "power": b"power" in form,
+        "power": power,
         "mode": (form.get(b"mode") or [b"AUTO"])[0].decode(),
         "fan": (form.get(b"fan") or [b"AUTO"])[0].decode(),
         "swing": b"swing" in form,
@@ -310,6 +319,7 @@ def render_template(
     if not zones:
         zones = [selected_zone or "default"]
     sel_zone = selected_zone if selected_zone in zones else zones[0]
+    refresh_href = "/?zone=" + urllib.parse.quote(sel_zone, safe="")
 
     env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="4">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
@@ -335,7 +345,7 @@ def render_template(
         .replace("$state_json", state_json)
         .replace("$state_json_pretty", state_json_pretty)
         .replace("$manage_section", manage_fragment)
-        .replace("$power_checked", "checked" if state.power else "")
+        .replace("$refresh_href", html.escape(refresh_href))
         .replace("$swing_checked", "checked" if state.swing else "")
         .replace("$powerful_checked", "checked" if state.powerful else "")
         .replace("$econo_checked", "checked" if state.econo else "")

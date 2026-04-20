@@ -54,17 +54,19 @@ echo "$GET_OUT" | grep -q 'Environment' || { echo "FAIL: GET missing Environment
 echo "$GET_OUT" | grep -q '<table class="env"' || { echo "FAIL: GET missing environment table"; exit 1; }
 echo "$GET_OUT" | grep -q 'Current time:' || { echo "FAIL: GET missing Current time"; exit 1; }
 echo "$GET_OUT" | grep -q 'State (full JSON):' || { echo "FAIL: GET missing State full JSON"; exit 1; }
-echo "$GET_OUT" | grep -q 'SEND' || { echo "FAIL: GET missing SEND button"; exit 1; }
+echo "$GET_OUT" | grep -q 'Power on' || { echo "FAIL: GET missing Power on button"; exit 1; }
+echo "$GET_OUT" | grep -q 'Power off' || { echo "FAIL: GET missing Power off button"; exit 1; }
+echo "$GET_OUT" | grep -q 'Refresh' || { echo "FAIL: GET missing Refresh link"; exit 1; }
 
 # POST: must return success message and repopulated form
-POST_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=HEAT&temp_c=22&fan=AUTO")
+POST_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "thermo_action=power_on&mode=HEAT&temp_c=22&fan=AUTO")
 echo "$POST_OUT" | grep -qE 'Sent\.|Stored\.|Sent at |Stored at |No IR \(unchanged\)' || { echo "FAIL: POST missing Sent/Stored/unchanged"; exit 1; }
 echo "$POST_OUT" | grep -qE 'value="22"|value="22\.0"' || { echo "FAIL: POST form not repopulated with temp"; exit 1; }
 echo "$POST_OUT" | grep -q 'HEAT.*selected' || { echo "FAIL: POST form not repopulated with mode"; exit 1; }
 
 # Environment must refresh after POST: inject new readings, POST, verify response shows them
 curl -s -X POST "http://127.0.0.1:$PORT_APP/test/inject_readings" -H "Content-Type: application/json" -d '{"temp_centigrade":18.5,"humid_percent":62}' >/dev/null
-POST2_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "power=on&mode=COOL&temp_c=24&fan=AUTO")
+POST2_OUT=$(curl -s --connect-timeout 2 -X POST "http://127.0.0.1:$PORT_UI/" -d "thermo_action=power_on&mode=COOL&temp_c=24&fan=AUTO")
 echo "$POST2_OUT" | grep -q '18.5' || { echo "FAIL: POST response missing refreshed temp 18.5"; echo "$POST2_OUT" | head -5; exit 1; }
 echo "$POST2_OUT" | grep -q '62' || { echo "FAIL: POST response missing refreshed humidity 62"; echo "$POST2_OUT" | head -5; exit 1; }
 
