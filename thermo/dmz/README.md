@@ -43,7 +43,7 @@ docker run --rm -p 8080:8080 jovlinger/thermo/dmz
 
 ## Pi 1B: bootable SD image (same root as Docker, `dd` to card)
 
-1. Ensure at least one of **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, **`id_rsa.pub`** exists on the build host; all present keys are merged into the apkovl **`/root/.ssh/authorized_keys`** for rescue SSH after **`sh /root/network-and-sshd.sh`** ( **`192.168.88.200/24`** by default on **`eth0`**; **pubkey-only** sshd).
+1. **Required:** at least one **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, or **`id_rsa.pub`** on the **build machine** — merged into **`install/rescue_authorized_keys`** on the FAT and **`/root/install/`** in the apkovl so **`sh /root/sshd.sh`** can install **`authorized_keys`** and start **`sshd`**. Stable **host keys**: **[`../.secrets/ssh-host/`](../.secrets/)** (`../.gitignore`).
 2. From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/…`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free. **Write progress:** Linux uses GNU **`dd status=progress`**. On macOS, **`brew install pv`** gives a byte-accurate bar and ETA; without **`pv`**, the script prints a **heartbeat every 20s** so long writes are not silent.
 3. Eject the card, insert in Pi 1B, power on.
 

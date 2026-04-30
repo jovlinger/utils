@@ -2,8 +2,10 @@
 # OpenRC local.d — Pi 1B: RAM Alpine + extract dmz_rootfs.tar + chroot (same tree as Docker).
 # Logs: /tmp/boot.log (host tmpfs). App writes under chroot tmpfs $CHROOT_DIR/var/log/dmz.log;
 # host /var/log/dmz.log is a symlink there so "tail -f /var/log/dmz.log" on the rescue shell works.
-# Rescue: /root/network-and-sshd.sh → 192.168.88.200/24 + ssh (keys from image build).
-
+#
+# Path note (rescue RAM root vs chroot): /app/start.sh exists only INSIDE the chroot. On this host
+# the same inode is visible as $CHROOT_DIR/app/start.sh (NOT /app/start.sh on RAM Alpine).
+# Rescue: `sh /root/sshd.sh` — LAB 192.168.88.x/24 + copy install/rescue_authorized_keys → authorized_keys → sshd (inactive until script).
 set -x
 
 ROOTFS_TAR="dmz_rootfs.tar"
@@ -51,7 +53,7 @@ pr ""
 pr ">>> 2/10 banner"
 pr "========== DMZ =========="
 pr "  $(cat "$SD_MOUNT/install/buildinfo.txt")"
-pr "  Rescue: sh /root/network-and-sshd.sh  (192.168.88.200/24 + ssh)"
+pr "  Rescue: sh /root/sshd.sh   (install rescue_authorized_keys from SD or apkovl, then sshd)"
 pr "================================"
 pr ""
 
@@ -91,7 +93,8 @@ $NETLINE
 EOF
 ip addr add "$addr" dev eth0
 ip route add default via "$gw"
-echo "nameserver $gw" >/etc/resolv.conf
+# Default route stays on $gw; resolver 1.1.1.1 (`/root/sshd.sh` LAB script copies keys then sshd).
+echo "nameserver 1.1.1.1" >/etc/resolv.conf
 cp "$SD_MOUNT/install/network.conf" /root/network.conf
 dump "ip addr" ip addr
 dump "ip route" ip route
@@ -109,6 +112,24 @@ dump "tar size" ls -la "$SD_MOUNT/$ROOTFS_TAR"
 mkdir -p "$CHROOT_DIR"
 tar -xf "$SD_MOUNT/$ROOTFS_TAR" -C "$CHROOT_DIR"
 dump "chroot top" ls -la "$CHROOT_DIR"
+# Fatal if docker export tarball is truncated or Dockerfile/.dockerignore regressed —
+# tini's "exec … failed: no such file" is otherwise easy to confuse with missing /app on RAM root.
+_missing=""
+for _f in \
+	"$CHROOT_DIR/app/start.sh" \
+	"$CHROOT_DIR/sbin/tini" \
+	"$CHROOT_DIR/bin/sh" \
+	"$CHROOT_DIR/bin/busybox" \
+	"$CHROOT_DIR/lib/ld-musl-armhf.so.1"; do
+	[ -e "$_f" ] || _missing="$_missing $_f"
+done
+if [ -n "$_missing" ]; then
+	pr "FATAL: dmz_rootfs.tar extract incomplete (missing:${_missing})"
+	dump "ls CHROOT/app" ls -la "$CHROOT_DIR/app" 2>&1 || true
+	dump "ls CHROOT/sbin" ls -la "$CHROOT_DIR/sbin" 2>&1 || true
+	dump "ls CHROOT/lib" ls -la "$CHROOT_DIR/lib" 2>&1 || true
+	exit 1
+fi
 # Optional: zone Ed25519 pub key baked by build-and-write.sh --include-pub-key.
 # When present, start.sh exports ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem so the DMZ
 # enforces twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md, ../SECRETS.md).
@@ -142,6 +163,20 @@ dump "mounts after chroot prep" sh -c 'grep dmz_rootfs /proc/mounts || true'
 pr ""
 
 pr ">>> 9/10 launch chroot: tini -> start.sh -> run-with-stdout-logged -> run.sh -> app"
+# Sync probe: confirms the kernel accepted chroot(8) and critical paths exist inside the new root.
+pr ">>> 9a chroot probe: about to enter $CHROOT_DIR (sync /bin/sh, output below)"
+chroot "$CHROOT_DIR" /bin/sh -c '
+	echo "chroot_probe: inside pid=$$ pwd=$(pwd)"
+	test -f /app/start.sh && test -x /sbin/tini && echo "chroot_probe: /app/start.sh and /sbin/tini ok"
+' >>"$LOG" 2>&1
+CHROOT_RC=$?
+if [ "$CHROOT_RC" -eq 0 ]; then
+	pr "  chroot probe: OK — successfully entered $CHROOT_DIR"
+else
+	pr "  chroot probe: FAILED — chroot exited $CHROOT_RC (see $LOG)"
+	exit 1
+fi
+pr ">>> 9b chroot launch: starting tini+start.sh in background (same root $CHROOT_DIR)"
 # tini/start.sh diagnostics also land in boot.log; app stream is chroot /var/log/dmz.log (see symlink above).
 chroot "$CHROOT_DIR" /sbin/tini -- /app/start.sh >>"$LOG" 2>&1 &
 pr "  background pid=$!"

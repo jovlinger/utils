@@ -106,21 +106,46 @@ def _format_log_line(line: str) -> str:
 def _fetch_logs() -> str:
     if _ui_backend() == "dmz":
         try:
-            with urllib.request.urlopen(f"{APP_BASE}/debug/logs", timeout=2) as r:
+            with urllib.request.urlopen(f"{APP_BASE}/ui/diagnostics", timeout=2) as r:
                 d = json.loads(r.read().decode())
-            logs = d.get("logs", [])
-            if not logs:
-                return ""
-            lines: List[str] = []
-            for entry in logs:
-                if isinstance(entry, dict):
-                    ts = entry.get("ts", "")
-                    lines.append(
-                        f"{ts} {entry.get('method', '')} {entry.get('path', '')} -> {entry.get('status', '')}"
-                    )
-                else:
-                    lines.append(str(entry))
-            return "<br>".join(_format_log_line(ln) for ln in lines)
+            cfg = d.get("config") or {}
+            uptime = d.get("uptime_seconds")
+            summary = (
+                f"<span>uptime_s={html.escape(str(uptime))} "
+                f"zone_auth={html.escape(str(cfg.get('zone_auth_enforced')))}</span>"
+            )
+            parts: List[str] = []
+            za = d.get("zone_attempts") or []
+            if za:
+                zlines: List[str] = []
+                for entry in za[-40:]:
+                    if isinstance(entry, dict):
+                        zlines.append(
+                            f'{entry.get("ts", "")} {entry.get("outcome", "")} '
+                            f'zone={entry.get("zone", "")} '
+                            f'{entry.get("path", "")} — {entry.get("detail", "")} '
+                            f'ip={entry.get("client_ip", "")} '
+                            f'->{entry.get("status_code", "")}'
+                        )
+                parts.append("<b>Zone POST /sensors (twoway)</b><br>")
+                parts.append(
+                    "<br>".join(_format_log_line(ln) for ln in zlines)
+                )
+            logs = d.get("access_log") or []
+            if logs:
+                lines: List[str] = []
+                for entry in logs:
+                    if isinstance(entry, dict):
+                        ts = entry.get("ts", "")
+                        lines.append(
+                            f"{ts} {entry.get('method', '')} {entry.get('path', '')} -> {entry.get('status', '')}"
+                        )
+                    else:
+                        lines.append(str(entry))
+                parts.append("<br><b>HTTP access (memory)</b><br>")
+                parts.append("<br>".join(_format_log_line(ln) for ln in lines))
+            body = "<br>".join([summary] + parts) if parts else summary
+            return body
         except Exception:
             return ""
     try:
@@ -132,6 +157,31 @@ def _fetch_logs() -> str:
         return "<br>".join(_format_log_line(ln) for ln in lines_raw)
     except Exception:
         return ""
+
+
+def _dmz_diagnostics_export_block() -> str:
+    """Embedded ``/ui/diagnostics`` JSON for copy-from-browser export (DMZ UI only)."""
+    if _ui_backend() != "dmz":
+        return ""
+    try:
+        with urllib.request.urlopen(f"{APP_BASE}/ui/diagnostics", timeout=4) as r:
+            raw_json = r.read().decode()
+        esc = html.escape(raw_json)
+        return (
+            "<details><summary><b>Diagnostics JSON</b> "
+            "(full export for support — in-memory only on DMZ)</summary>"
+            "<p><textarea id=\"thermo-diag-export\" readonly rows=\"14\" cols=\"92\" "
+            'style="font-family: monospace; width: 100%; max-width: 52rem;">'
+            f"{esc}"
+            "</textarea></p>"
+            '<p><button type="button" '
+            'onclick="var e=document.getElementById(\'thermo-diag-export\');'
+            "if(e){e.focus();e.select();document.execCommand('copy');}\">"
+            "Copy to clipboard</button></p>"
+            "</details>"
+        )
+    except Exception:
+        return "<p><b>Diagnostics JSON</b> unavailable (Flask backend unreachable).</p>"
 
 
 def _fetch_ui_context() -> Optional[Dict[str, Any]]:
@@ -302,6 +352,7 @@ def render_template(
     fan_opts = "".join(opt(f.name, state.fan.name) for f in Fan)
 
     logs_html = _fetch_logs()
+    diag_export_html = _dmz_diagnostics_export_block()
     manage_status = _fetch_manage_status(os.environ.get("MANAGE_TOKEN", ""))
     help_msg_html = _fetch_help_msg()
     about_msg_html = _fetch_about_msg()
@@ -334,6 +385,7 @@ def render_template(
     tpl = TEMPLATE_PATH.read_text()
     return (
         tpl.replace("$now_iso", now_iso)
+        .replace("$diagnostics_export_section", diag_export_html)
         .replace("$env_table_rows", env_rows)
         .replace("$zone_options", zone_opts)
         .replace("$selected_zone_value", html.escape(sel_zone))

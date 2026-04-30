@@ -11,7 +11,7 @@ Long-term, make the backend connection into a TCP based queue (connection is awk
 """
 
 from collections import deque, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -27,6 +27,12 @@ JSON = Union[Dict, str, int]
 # Access log: circular buffer of {method, path, status, ts}
 ACCESS_LOG_MAXLEN = 500
 _access_log: Deque[Dict[str, Any]] = deque(maxlen=ACCESS_LOG_MAXLEN)
+
+# In-memory only (no disk): recent zone POST outcomes for operator debugging (twoway ↔ DMZ).
+_ZONE_ATTEMPT_MAXLEN = 200
+_zone_attempts: Deque[Dict[str, Any]] = deque(maxlen=_ZONE_ATTEMPT_MAXLEN)
+_START_MONO: float = time.time()
+_START_UTC_ISO: str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class ZoneRequest(BaseModel):
@@ -232,6 +238,54 @@ if _oauth_enabled:
         client_kwargs={"scope": "openid email profile"},
         authorize_params={"hd": "gmail.com"},
     )
+
+
+def _client_ip(req: Any) -> str:
+    """Best-effort client address (honors ``X-Forwarded-For`` when present)."""
+    xff = (req.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",", 1)[0].strip()
+    return str(req.remote_addr or "")
+
+
+def _record_zone_sensor_attempt(
+    zonename: str,
+    path: str,
+    outcome: str,
+    detail: str,
+    http_status: Optional[int],
+) -> None:
+    """Append one POST /zone/<z>/sensors outcome (ring buffer, no persistent state)."""
+    _zone_attempts.append(
+        {
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "zone": zonename,
+            "path": path,
+            "outcome": outcome,
+            "detail": (detail[:500] if detail else ""),
+            "client_ip": _client_ip(request),
+            "status_code": http_status,
+        }
+    )
+
+
+def _diagnostics_payload() -> Dict[str, Any]:
+    """Shared JSON for ``/ui/diagnostics`` and augmented ``GET /debug/logs``."""
+    return {
+        "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "process_start_utc": _START_UTC_ISO,
+        "uptime_seconds": round(time.time() - _START_MONO, 3),
+        "config": {
+            "zone_auth_enforced": bool(
+                os.environ.get("ZONE_PUBLIC_KEY")
+                or os.environ.get("ZONE_PUBLIC_KEY_PATH")
+            ),
+            "oauth_enabled": _oauth_enabled,
+            "env": os.environ.get("ENV"),
+        },
+        "access_log": list(_access_log),
+        "zone_attempts": list(_zone_attempts),
+    }
 
 
 def _log_access(method: str, path: str, status: int) -> None:
@@ -457,6 +511,17 @@ def _authorize_global_read() -> Optional[Any]:
     return {"error": "machine auth required"}, 401
 
 
+@app.route("/ui/diagnostics", methods=["GET"])
+def ui_diagnostics() -> Any:
+    """
+    Bounded in-memory bundle: access tail, zone POST outcomes, uptime, flags.
+    Not gated — same openness as ``GET /ui/context``. No durable state on DMZ.
+
+    Operators can paste this JSON for support / export copies from the bundled UI textarea.
+    """
+    return _diagnostics_payload()
+
+
 @app.route("/zone/<string:zonename>/sensors", methods=["POST"])
 def update_sensors(zonename: str) -> Any:
     """
@@ -476,7 +541,19 @@ def update_sensors(zonename: str) -> Any:
     """
     err = _verify_zone_request(zonename)
     if err:
+        code_e, payload_e = err[0], err[1]
+        det_e = ""
+        if isinstance(payload_e, dict):
+            det_e = str(payload_e.get("error", "") or "")
+        _record_zone_sensor_attempt(
+            zonename,
+            request.path,
+            "rejected",
+            det_e,
+            code_e,
+        )
         return err[1], err[0]
+    _record_zone_sensor_attempt(zonename, request.path, "accepted", "", 200)
     assertAuthAzZone(request)
     body = request.json or {}
     if isinstance(body, dict) and ("sensors" in body or "command" in body):
@@ -629,12 +706,14 @@ def get_zones() -> Any:
 
 @app.route("/debug/logs", methods=["GET"])
 def debug_logs() -> Any:
-    """Return bounded in-memory access log. Auth required."""
+    """Return bounded in-memory access log plus diagnostics (same data as ``/ui/diagnostics``)."""
     denied = _authorize_global_read()
     if denied is not None:
         return denied
     assertAuthAzZone(request)
-    return {"logs": list(_access_log)}
+    bundle = _diagnostics_payload()
+    logs_list = list(bundle.pop("access_log"))
+    return {"logs": logs_list, **bundle}
 
 
 @app.route("/test_reset", methods=["POST"])
@@ -650,6 +729,8 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
+    _zone_attempts.clear()
+    _access_log.clear()
     _log_full_zone_state(reason="test_reset")
     return '"ok"'
 

@@ -56,7 +56,7 @@ def test_rescue_script_brings_loopback_up(dmz_dir: Path) -> None:
     """Rescue path is sometimes invoked before dmz-boot.start has run; it must
     also be self-sufficient about loopback (idempotent: ``2>/dev/null || true``).
     """
-    p = dmz_dir / "install" / "root-network-sshd.sh"
+    p = dmz_dir / "install" / "sshd.sh"
     assert p.is_file(), f"Missing {p}"
     text = p.read_text(encoding="utf-8")
     assert "ip link set lo up" in text, "rescue script no longer brings lo up"

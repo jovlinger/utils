@@ -241,6 +241,9 @@ def test_debug_logs_returns_access_entries(dmz_ctx: object) -> None:
         r = c.get("/debug/logs").get_json()
         logs = r["logs"]
         assert len(logs) >= 3
+        assert "uptime_seconds" in r
+        assert "zone_attempts" in r
+        assert "server_time_utc" in r
         methods = {e["method"] for e in logs}
         assert "POST" in methods
         assert "GET" in methods
@@ -253,6 +256,22 @@ def test_debug_logs_returns_access_entries(dmz_ctx: object) -> None:
         for e in logs:
             assert "status" in e
             assert "ts" in e
+
+
+def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(dmz_ctx: object) -> None:
+    """GET /ui/diagnostics is open (operators) and exposes memory-only diagnostics."""
+    with app.test_client() as c:
+        c.post("/test_reset", json={"commands": {}, "sensors": {}})
+        c.post("/zone/a/sensors", json={"temp_centigrade": 3.14})
+        d = c.get("/ui/diagnostics").get_json()
+        assert d is not None
+        assert isinstance(d["access_log"], list)
+        assert isinstance(d["zone_attempts"], list)
+        assert d["uptime_seconds"] >= 0
+        assert isinstance(d["config"]["zone_auth_enforced"], bool)
+        zlast = d["zone_attempts"][-1]
+        assert zlast["outcome"] == "accepted"
+        assert zlast["zone"] == "a"
 
 
 def test_unsigned_request_rejected_when_auth_required(
@@ -270,6 +289,11 @@ def test_unsigned_request_rejected_when_auth_required(
             content_type="application/json",
         )
         assert r.status_code == 401
+        d = c.get("/ui/diagnostics").get_json()
+        attempts = d["zone_attempts"]
+        assert attempts
+        assert attempts[-1]["outcome"] == "rejected"
+        assert attempts[-1]["status_code"] == 401
 
 
 def test_unsigned_command_rejected_when_auth_required(

@@ -35,7 +35,8 @@
 # Env overrides:
 #   DMZ_OUTPUT_IMG  Override the output .img path (default: dist/dmz.img). Used by tests.
 #
-# ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub (each if present) are merged into apkovl /root/.ssh/authorized_keys.
+# ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub — at least one required: merged into
+# install/rescue_authorized_keys on FAT and apkovl /root/install/ (installed by console sh /root/sshd.sh).
 
 set -eu
 
@@ -299,10 +300,10 @@ for _n in id_ed25519 id_ecdsa id_rsa; do
 	fi
 done
 if [ ! -s "$RESCUE_AUTH_KEYS" ]; then
-	echo "Error: no ~/.ssh/{id_ed25519,id_ecdsa,id_rsa}.pub found (need at least one for Pi rescue authorized_keys)." >&2
+	echo "Error: no ~/.ssh/{id_ed25519,id_ecdsa,id_rsa}.pub on build host — required to populate on-device install/rescue_authorized_keys (copy to SD + apkovl /root/install/ for /root/sshd.sh)." >&2
 	exit 1
 fi
-ts "[build] rescue authorized_keys from: $RESCUE_KEY_SRC"
+ts "[build] rescue_authorized_keys from: $RESCUE_KEY_SRC"
 
 if [ -n "$WRITE_DEV" ]; then
 	ts "==> DMZ bootable image (write $DEV; background unmount pid=$UM_PID)"
@@ -368,7 +369,7 @@ mkdir -p "$PKGDIR"
 docker run --rm --platform linux/arm/v6 \
 	-v "$PKGDIR:/out" \
 	alpine:3.19 \
-	sh -c "printf '%s\n' '${ALPINE_MIRROR}/${ALPINE_BRANCH}/main' '${ALPINE_MIRROR}/${ALPINE_BRANCH}/community' > /etc/apk/repositories && apk update && apk fetch -o /out haveged"
+	sh -c "printf '%s\n' '${ALPINE_MIRROR}/${ALPINE_BRANCH}/main' '${ALPINE_MIRROR}/${ALPINE_BRANCH}/community' > /etc/apk/repositories && apk update && apk fetch --recursive -o /out haveged openssh"
 if command -v curl >/dev/null 2>&1; then
 	curl -fsSL "${ALPINE_MIRROR}/${ALPINE_BRANCH}/main/armhf/APKINDEX.tar.gz" -o "$PKGDIR/APKINDEX-main.tar.gz"
 	curl -fsSL "${ALPINE_MIRROR}/${ALPINE_BRANCH}/community/armhf/APKINDEX.tar.gz" -o "$PKGDIR/APKINDEX-community.tar.gz"
@@ -390,6 +391,19 @@ docker run --rm --platform linux/arm/v6 \
 	-v "$PKGDIR:/pkgs:ro" \
 	alpine:3.19 \
 	sh -c 'for f in /pkgs/*.apk; do [ -f "$f" ] && tar -xzf "$f" -C /overlay; done'
+# Alpine openssh installs default OpenRC sshd symlinks — sshd must stay stopped until `/root/sshd.sh`.
+find "$APKOVL_DIR/etc/runlevels" -type l \( -name 'sshd' -o -name 'sshd*' \) -delete 2>/dev/null || true
+# --recursive fetch pulls in musl, openssl, zlib which are already in the pinned Alpine RPi 3.19.0
+# base image.  Overlaying them with packages from the docker-side alpine:3.19 (currently 3.19.9)
+# replaces the HOST dynamic linker (/lib/ld-musl-armhf.so.1) with a different patch-release
+# version, which breaks chroot execution on real ARMv6 hardware.  Strip them from the overlay.
+rm -f \
+	"$APKOVL_DIR/lib/ld-musl-armhf.so.1" \
+	"$APKOVL_DIR/lib/libc.musl-armhf.so.1" \
+	"$APKOVL_DIR/lib/libcrypto.so.3" \
+	"$APKOVL_DIR/lib/libssl.so.3" \
+	"$APKOVL_DIR/lib/libz.so.1" \
+	"$APKOVL_DIR/lib/libz.so."*
 
 mkdir -p "$APKOVL_DIR/etc/local.d" "$APKOVL_DIR/etc/runlevels/default" "$APKOVL_DIR/etc/apk"
 cp "$DMZ_DIR/install/dmz-boot.start" "$APKOVL_DIR/etc/local.d/dmz-boot.start"
@@ -416,10 +430,12 @@ cp "$SECRETS_SSH/ssh_host_ed25519_key" "$SECRETS_SSH/ssh_host_ed25519_key.pub" \
 chmod 600 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key"
 chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key.pub"
 
-mkdir -p "$APKOVL_DIR/root/.ssh"
-cp "$DMZ_DIR/install/root-network-sshd.sh" "$APKOVL_DIR/root/network-and-sshd.sh"
-chmod +x "$APKOVL_DIR/root/network-and-sshd.sh"
-cp "$RESCUE_AUTH_KEYS" "$APKOVL_DIR/root/.ssh/authorized_keys"
+mkdir -p "$APKOVL_DIR/root/.ssh" "$APKOVL_DIR/root/install"
+cp "$DMZ_DIR/install/sshd.sh" "$APKOVL_DIR/root/sshd.sh"
+chmod +x "$APKOVL_DIR/root/sshd.sh"
+cp "$RESCUE_AUTH_KEYS" "$APKOVL_DIR/root/install/rescue_authorized_keys"
+chmod 644 "$APKOVL_DIR/root/install/rescue_authorized_keys"
+: >"$APKOVL_DIR/root/.ssh/authorized_keys"
 chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -428,7 +444,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
 			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/root-network-sshd.sh" \
+				"$DMZ_DIR/install/sshd.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -440,7 +456,7 @@ else
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
 			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/root-network-sshd.sh" \
+				"$DMZ_DIR/install/sshd.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -472,7 +488,7 @@ mkdir -p "$APKOVL_DIR/root"
 	echo "DMZ $BUILDINFO_LINE"
 	echo "Repo: $REPO_NAME  Git: $GIT_SHA"
 	echo "Boot: /etc/local.d/dmz-boot.start"
-	echo "Rescue: sh /root/network-and-sshd.sh  (eth0 192.168.88.200/24 + ssh)"
+	echo "Rescue: sh /root/sshd.sh  (LAB 192.168.88.0/24; installs install/rescue_authorized_keys then sshd)"
 } >"$APKOVL_DIR/root/README"
 
 echo "DMZ $BUILDINFO_LINE" >"$APKOVL_DIR/etc/issue"
@@ -491,7 +507,9 @@ chown -R 0:0 /overlay/root
 chown -R 0:0 /overlay/etc/ssh
 chmod 700 /overlay/root/.ssh
 chmod 600 /overlay/root/.ssh/authorized_keys
-chmod 755 /overlay/root/network-and-sshd.sh
+chmod 755 /overlay/root/install
+chmod 644 /overlay/root/install/rescue_authorized_keys
+chmod 755 /overlay/root/sshd.sh
 test -f /overlay/root/README && chmod 644 /overlay/root/README
 chmod 600 /overlay/etc/ssh/ssh_host_ed25519_key /overlay/etc/ssh/ssh_host_rsa_key 2>/dev/null || true
 chmod 644 /overlay/etc/ssh/ssh_host_ed25519_key.pub /overlay/etc/ssh/ssh_host_rsa_key.pub 2>/dev/null || true
@@ -523,6 +541,8 @@ for f in "$DMZ_DIR/install"/*; do
 	[ -e "$f" ] || continue
 	mcopy -i "$IMG_FILE" "$f" "::install/$(basename "$f")"
 done
+cp "$RESCUE_AUTH_KEYS" "$WORKDIR/device-rescue_authorized_keys"
+mcopy -i "$IMG_FILE" "$WORKDIR/device-rescue_authorized_keys" ::install/rescue_authorized_keys
 mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::install/buildinfo.txt
 mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
 mcopy -i "$IMG_FILE" "$DMZ_DIR/install/CARD-README.txt" ::README.txt
