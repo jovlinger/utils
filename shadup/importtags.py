@@ -166,17 +166,28 @@ def _shadup_argv(shadup_cli: str | None) -> list[str]:
     return ["shadup"]
 
 
-def _shadup_base(shadup_cli: str | None, shadir: str | None) -> list[str]:
+def _expand_db_path(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def _shadup_base(
+    shadup_cli: str | None, shadir: str | None, db: str | None
+) -> list[str]:
     cmd = list(_shadup_argv(shadup_cli))
     if shadir:
         cmd.extend(["--shadir", shadir])
+    if db:
+        cmd.extend(["--db", db])
     return cmd
 
 
 def _existing_tags_for_path(
-    shadup_cli: str | None, shadir: str | None, rel_path: str
+    shadup_cli: str | None,
+    shadir: str | None,
+    db: str | None,
+    rel_path: str,
 ) -> list[str]:
-    cmd = _shadup_base(shadup_cli, shadir) + ["ls", rel_path]
+    cmd = _shadup_base(shadup_cli, shadir, db) + ["ls", rel_path]
     proc = subprocess.run(
         cmd,
         check=False,
@@ -206,9 +217,14 @@ def _existing_tags_for_path(
 
 
 def _run_shadup(
-    shadup_cli: str | None, shadir: str | None, args: Sequence[str], *, cwd: str
+    shadup_cli: str | None,
+    shadir: str | None,
+    db: str | None,
+    args: Sequence[str],
+    *,
+    cwd: str,
 ) -> None:
-    cmd = _shadup_base(shadup_cli, shadir) + list(args)
+    cmd = _shadup_base(shadup_cli, shadir, db) + list(args)
     proc = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit(
@@ -264,6 +280,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional shadup store path (default: discover from cwd or $IMPORTTAGS_SHADIR)",
     )
     p.add_argument(
+        "--db",
+        default=os.environ.get("IMPORTTAGS_DB"),
+        metavar="PATH",
+        help="SQLite DB path passed to shadup (default: <shadir>/.shadup.db; or $IMPORTTAGS_DB)",
+    )
+    p.add_argument(
         "dirs",
         nargs="+",
         metavar="DIR",
@@ -273,6 +295,9 @@ def main(argv: list[str] | None = None) -> int:
 
     cwd = os.getcwd()
     shadir_opt: str | None = args.shadir or None
+    db_opt: str | None = args.db or None
+    if db_opt:
+        db_opt = _expand_db_path(db_opt)
 
     for raw in args.dirs:
         album_dir = os.path.abspath(os.path.expanduser(raw))
@@ -293,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             rel = target
         if args.dryrun:
-            current = _existing_tags_for_path(args.shadup, shadir_opt, rel)
+            current = _existing_tags_for_path(args.shadup, shadir_opt, db_opt, rel)
             if args.reset:
                 resulting = sorted(set(tags))
             else:
@@ -316,17 +341,19 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         if args.reset:
-            current = _existing_tags_for_path(args.shadup, shadir_opt, rel)
+            current = _existing_tags_for_path(args.shadup, shadir_opt, db_opt, rel)
             if current:
                 _run_shadup(
                     args.shadup,
                     shadir_opt,
+                    db_opt,
                     ["tag-rm", rel, *current],
                     cwd=cwd,
                 )
         _run_shadup(
             args.shadup,
             shadir_opt,
+            db_opt,
             ["tag-add", rel, *tags],
             cwd=cwd,
         )

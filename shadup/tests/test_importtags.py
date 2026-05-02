@@ -14,10 +14,13 @@ SHADUP_PY = Path(__file__).resolve().parent.parent / "shadup.py"
 IMPORTTAGS_PKG = Path(__file__).resolve().parent.parent
 
 
-def _db_tags_for_path(shadir: Path, relpath: str) -> list[str]:
+def _db_tags_for_path(
+    shadir: Path, relpath: str, *, db_path: Path | None = None
+) -> list[str]:
     """Tags for the active row whose stored path equals *relpath* (shadup path shape)."""
+    db_file = db_path if db_path is not None else shadir / ".shadup.db"
     want = os.path.normpath(relpath)
-    with sqlite3.connect(shadir / ".shadup.db") as conn:
+    with sqlite3.connect(db_file) as conn:
         rows = conn.execute(
             """
             SELECT shasum, root_rel, dirpath, filename
@@ -33,7 +36,7 @@ def _db_tags_for_path(shadir: Path, relpath: str) -> list[str]:
             break
     if not shasum:
         return []
-    with sqlite3.connect(shadir / ".shadup.db") as conn:
+    with sqlite3.connect(db_file) as conn:
         trow = conn.execute(
             "SELECT tags FROM sha_tags WHERE shasum = ?", (shasum,)
         ).fetchone()
@@ -41,9 +44,17 @@ def _db_tags_for_path(shadir: Path, relpath: str) -> list[str]:
 
 
 def _run_shadup(
-    cwd: Path, shadir: Path, args: list[str], *, check: bool = True
+    cwd: Path,
+    shadir: Path,
+    args: list[str],
+    *,
+    db: Path | None = None,
+    check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    cmd = [sys.executable, str(SHADUP_PY), "--shadir", str(shadir), *args]
+    cmd = [sys.executable, str(SHADUP_PY), "--shadir", str(shadir)]
+    if db is not None:
+        cmd.extend(["--db", str(db)])
+    cmd.extend(args)
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
 
 
@@ -55,6 +66,7 @@ def _run_importtags(
     *,
     reset: bool = False,
     dryrun: bool = False,
+    db: Path | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
@@ -70,6 +82,8 @@ def _run_importtags(
         "--metatool",
         str(metatool),
     ]
+    if db is not None:
+        cmd.extend(["--db", str(db)])
     if reset:
         cmd.append("--reset")
     if dryrun:
@@ -181,6 +195,38 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
 
     tags = _db_tags_for_path(shadir, "work/disc/notes.txt")
+    assert tags == ["album:B2", "artist:A1", "gr", "im"]
+
+
+def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    custom_db = tmp_path / "data" / "x.db"
+    custom_db.parent.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "notes.txt").write_bytes(b"notes\n")
+    (album / "t.flac").write_bytes(b"audio\n")
+
+    _run_shadup(tmp_path, shadir, ["store", "work"], db=custom_db)
+    assert custom_db.is_file()
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["im"], "genre": ["gr"], "artist": "A1", "album": "B2"}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    r = _run_importtags(tmp_path, shadir, fake_mt, album, db=custom_db)
+    assert r.returncode == 0, r.stderr
+
+    tags = _db_tags_for_path(shadir, "work/disc/notes.txt", db_path=custom_db)
     assert tags == ["album:B2", "artist:A1", "gr", "im"]
 
 
