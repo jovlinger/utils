@@ -17,6 +17,9 @@ T = TypeVar("T")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 DB_NAME = ".shadup.db"
+# Object payloads live under ``<shadir>/data/xx/<digest>`` (sibling to ``files/``).
+DATA_DIR_NAME = "data"
+META_KEY_SHADIR = "shadir"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
@@ -182,6 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--shadir. When --shadir is set, that store path is created if it "
             "does not exist (on first database open).\n\n"
             "Database: defaults to <shadir>/.shadup.db unless --db is given. "
+            "The resolved store directory (--shadir after discovery) is stored "
+            "in the DB meta table and used for all later commands (CLI "
+            "--shadir overrides and updates it).\n\n"
             "The database file's parent directory is created if missing; the DB "
             "file is created on first open.\n\n"
             "check action: with no --shadir/--db, exit 0 if a store is found and "
@@ -192,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--shadir",
-        help="Directory to store files by sha256",
+        help="Store directory (persisted in DB meta; overrides stored value when set)",
     )
     parser.add_argument(
         "--db",
@@ -241,7 +247,10 @@ def build_parser() -> argparse.ArgumentParser:
         "prefixes",
         nargs="*",
         metavar="PATH",
-        help="Optional path prefixes to filter by",
+        help=(
+            "Optional path filters: prefix from the stored tree root, or any "
+            "contiguous path segment sequence (tail match; multiple hits possible)"
+        ),
     )
     p_ls.add_argument(
         "-d", "--show-deleted", action="store_true", help="Include deleted entries"
@@ -257,8 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--alltags",
         action="store_true",
         help=(
-            "List directories under files/ with recursive computed tag sets "
-            "(union over immediate children). Default: direct DB tags per file row."
+            "For directory paths: list each directory with tags aggregated bottom-up "
+            "from descendants. For file paths: same as plain ls (per-file DB tags). "
+            "Combine both when mixing path types."
         ),
     )
 
@@ -318,20 +328,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_fixlinks = sub.add_parser(
-        "fixlinks", help="Fix broken symlink targets under directories"
+        "fixlinks",
+        help="Fix symlink targets (single symlinks and/or directory trees)",
     )
     p_fixlinks.add_argument(
-        "dirs", nargs="+", metavar="DIR", help="Directories to scan for symlinks to fix"
+        "paths",
+        nargs="+",
+        metavar="PATH",
+        help="Symlinks and/or directories; each directory is scanned recursively by default",
     )
     p_fixlinks.add_argument(
-        "-r", "--recursive", action="store_true", help="Recurse into subdirectories"
+        "-r",
+        "--recursive",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Recurse into subdirectories when a PATH is a directory (default: true)",
     )
     p_fixlinks.add_argument(
         "--paranoia",
         type=int,
         default=0,
         choices=(0, 1, 2),
-        help="0=no extra checks, 1=target exists, 2=1+sha256 verify",
+        help="0=blob must exist before fix (always), 1=same as 0, 2=sha256 verify",
     )
     p_fixlinks.add_argument(
         "--skip-dotfiles",
@@ -427,16 +445,67 @@ def is_under_dir(path: str, parent: str) -> bool:
         return False
 
 
+def _is_two_hex_dir(name: str) -> bool:
+    return len(name) == 2 and all(c in "0123456789abcdefABCDEF" for c in name)
+
+
+def is_under_sha_store_tree(path: str, shadir: str) -> bool:
+    """True under metadata dirs, flat ``…/xx/…``, or ``…/data/xx/…`` under shadir.
+
+    Common layout: shadir contains sibling ``files/`` (library) and ``data/``
+    (hash buckets ``data/b2/…``). Only those buckets count as object store, not
+    all of shadir (so ``files/`` is still walked).
+    """
+    path_abs = os.path.abspath(path)
+    shadir_abs = os.path.abspath(shadir)
+    if not is_under_dir(path_abs, shadir_abs):
+        return False
+    rel = os.path.relpath(path_abs, shadir_abs)
+    if rel in (".", ""):
+        return False
+    parts = rel.split(os.sep)
+    top = parts[0]
+    if top in (".shadir", ".shadup"):
+        return True
+    if top == "data" and len(parts) >= 2 and _is_two_hex_dir(parts[1]):
+        return True
+    if _is_two_hex_dir(top):
+        return True
+    return False
+
+
 def expand_path(path: str) -> str:
     """Expand ~ / ~user and normalize to an absolute path."""
     return os.path.abspath(os.path.expanduser(path))
 
 
+def blob_object_path(shadir: str, digest: str) -> str:
+    """Canonical stored blob path: ``<shadir>/data/xx/<digest>``."""
+    root = os.path.abspath(shadir)
+    return os.path.abspath(
+        os.path.join(root, DATA_DIR_NAME, digest[:2], digest)
+    )
+
+
+def legacy_flat_blob_path(shadir: str, digest: str) -> str:
+    """Older layout without a ``data/`` directory: ``<shadir>/xx/<digest>``."""
+    root = os.path.abspath(shadir)
+    return os.path.abspath(os.path.join(root, digest[:2], digest))
+
+
+def first_existing_blob_path(shadir: str, digest: str) -> str | None:
+    """Return ``blob_object_path`` or legacy flat path if that file exists."""
+    for path in (blob_object_path(shadir, digest), legacy_flat_blob_path(shadir, digest)):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def ensure_store_path(shadir: str, digest: str) -> str:
-    """Ensure shadir subdirectory exists and return digest path."""
-    subdir = os.path.join(shadir, digest[:2])
-    os.makedirs(subdir, exist_ok=True)
-    return os.path.join(subdir, digest)
+    """Create ``…/data/xx`` if needed and return the canonical blob path."""
+    path = blob_object_path(shadir, digest)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
 
 def find_shadir(start_dir: str) -> str | None:
@@ -484,8 +553,9 @@ def normalize_hash_arg(shadir: str, value: str) -> str | None:
 def resolve_path_to_shasum(shadir: str, path: str) -> str | None:
     """Resolve a filesystem path to its stored sha256 digest.
 
-    Accepts a symlink whose target is ``<shadir>/xx/<digest>`` (the shape
-    produced by ``--store``) or a regular file, which is hashed on the fly.
+    Accepts a symlink whose target is under ``<shadir>/data/xx/<digest>`` (or
+    legacy ``<shadir>/xx/<digest>``), as produced by ``--store``, or a regular
+    file, which is hashed on the fly.
     Raw hash strings are intentionally rejected here; use ``--rmhash`` or
     ``--lshash`` for hash-addressed operations.
     """
@@ -515,6 +585,120 @@ def resolve_db_path(shadir: str, db_path: str | None = None) -> str:
     if db_path is None:
         return os.path.join(shadir, DB_NAME)
     return expand_path(db_path)
+
+
+def _resolve_db_file_for_args(args: argparse.Namespace) -> str | None:
+    """Absolute DB path implied by global args, or None if discovery fails."""
+    if args.db:
+        return expand_path(args.db)
+    if args.shadir:
+        return resolve_db_path(expand_path(args.shadir), None)
+    found = find_shadir(os.getcwd())
+    if not found:
+        return None
+    return resolve_db_path(found, None)
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    """Return a value from the ``meta`` table or None."""
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Insert or replace a ``meta`` row."""
+    conn.execute(
+        """
+        INSERT INTO meta (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def get_shadir(conn: sqlite3.Connection) -> str:
+    """Return the configured store directory path from the database."""
+    raw = get_meta(conn, META_KEY_SHADIR)
+    if not raw:
+        raise RuntimeError("shadir missing from DB meta (internal error)")
+    return expand_path(raw)
+
+
+def sync_shadir(
+    conn: sqlite3.Connection, cli_shadir: str | None, cwd: str
+) -> str:
+    """Resolve store directory: CLI wins and is persisted; else DB; else discover."""
+    if cli_shadir:
+        abs_s = expand_path(cli_shadir)
+        set_meta(conn, META_KEY_SHADIR, abs_s)
+        return abs_s
+    stored = get_meta(conn, META_KEY_SHADIR)
+    if stored:
+        return expand_path(stored)
+    found = find_shadir(cwd)
+    if not found:
+        raise SystemExit(
+            "no shadir in database; pass --shadir once or run from a directory "
+            "tree that contains .shadup or .shadir"
+        )
+    set_meta(conn, META_KEY_SHADIR, found)
+    return found
+
+
+def init_db_schema(conn: sqlite3.Connection) -> None:
+    """Create application tables and indexes if missing."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stored_files (
+            shasum TEXT NOT NULL,
+            root TEXT NOT NULL,
+            root_rel TEXT NOT NULL,
+            dirpath TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            deleted INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_rel
+        ON stored_files(shasum, root_rel, dirpath, filename)
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS stored_files_shasum_idx ON stored_files(shasum)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS stored_files_dirpath_idx ON stored_files(dirpath)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sha_tags (
+            shasum TEXT NOT NULL PRIMARY KEY,
+            tags TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+
+
+def open_database(db_path: str) -> sqlite3.Connection:
+    """Open SQLite at *db_path*, ensure schema, print db line."""
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    out("db {db_path} size {db_size}", 0, db_path=db_path, db_size=db_size)
+    conn = sqlite3.connect(db_path)
+    init_db_schema(conn)
+    return conn
 
 
 def fetch_check_stats(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
@@ -558,56 +742,6 @@ def emit_check_report(conn: sqlite3.Connection, shadir: str, db_path: str) -> No
         kind="data",
     )
     out("check ok: shadir {shadir}", 0, shadir=shadir, kind="data")
-
-
-def open_db(shadir: str, db_path: str | None = None) -> sqlite3.Connection:
-    """Open shadir sqlite db and ensure schema.
-    If db_path is given, use it; otherwise use <shadir>/.shadup.db.
-    """
-    db_path = resolve_db_path(shadir, db_path)
-    db_dir = os.path.dirname(db_path)
-    os.makedirs(db_dir, exist_ok=True)
-    os.makedirs(shadir, exist_ok=True)
-    db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
-    out("db {db_path} size {db_size}", 0, db_path=db_path, db_size=db_size)
-    conn = sqlite3.connect(db_path)
-    # Two steps ensure a re-stored file is reactivated even if the row existed
-    # (INSERT IGNORE doesn't change deleted=1 rows).
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS stored_files (
-            shasum TEXT NOT NULL,
-            root TEXT NOT NULL,
-            root_rel TEXT NOT NULL,
-            dirpath TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            deleted INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_rel
-        ON stored_files(shasum, root_rel, dirpath, filename)
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS stored_files_shasum_idx ON stored_files(shasum)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS stored_files_dirpath_idx ON stored_files(dirpath)"
-    )
-    # sha_tags stores a JSON list of opaque tag strings keyed by sha256 hash.
-    # Many hashes can share the same tag; one hash can carry many tags.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sha_tags (
-            shasum TEXT NOT NULL PRIMARY KEY,
-            tags TEXT NOT NULL DEFAULT '[]'
-        )
-        """
-    )
-    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +899,125 @@ def plan_refresh_extracted_tag_mirrors(
     return rows
 
 
+def library_root_candidates(shadir: str) -> list[str]:
+    """Possible absolute paths to the ``files/`` library root for common layouts.
+
+    * Broad tree: ``shadir`` contains ``files/`` and ``data/`` (blobs) as siblings
+      → ``join(shadir, \"files\")``.
+    * Classic: ``…/store/.shadir`` beside ``…/store/files`` → ``dirname(shadir)/files``.
+    * Nested: ``…/flac/files/.shadir`` → library is ``…/flac/files``.
+    """
+    s = os.path.abspath(shadir)
+    base = os.path.basename(s)
+    raw: list[str] = []
+    if base in (".shadir", ".shadup"):
+        parent = os.path.dirname(s)
+        if os.path.basename(parent) == "files":
+            raw.append(parent)
+        else:
+            raw.append(os.path.join(os.path.dirname(s), "files"))
+    else:
+        raw.append(os.path.join(s, "files"))
+        raw.append(os.path.join(os.path.dirname(s), "files"))
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in raw:
+        ap = os.path.abspath(p)
+        if ap not in seen:
+            seen.add(ap)
+            out.append(ap)
+    return out
+
+
+def resolve_files_root_abs(conn: sqlite3.Connection, shadir: str) -> str | None:
+    """Resolve the absolute ``files/`` library directory for tag walks and mirrors.
+
+    Tries :func:`library_root_candidates` in order (validated against the DB when
+    possible), then ``cwd/files``, then the most common ``stored_files.root``.
+    """
+    for candidate in library_root_candidates(shadir):
+        if os.path.isdir(candidate):
+            hit = conn.execute(
+                "SELECT 1 FROM stored_files WHERE root = ? AND deleted = 0 LIMIT 1",
+                (candidate,),
+            ).fetchone()
+            if hit:
+                return candidate
+
+    cwd_files = os.path.abspath(os.path.join(os.getcwd(), "files"))
+    if os.path.isdir(cwd_files):
+        hit = conn.execute(
+            "SELECT 1 FROM stored_files WHERE root = ? AND deleted = 0 LIMIT 1",
+            (cwd_files,),
+        ).fetchone()
+        if hit:
+            return cwd_files
+
+    roots = conn.execute(
+        """
+        SELECT root, COUNT(*) AS n
+        FROM stored_files
+        WHERE deleted = 0
+        GROUP BY root
+        ORDER BY n DESC
+        """
+    ).fetchall()
+    for root, _n in roots:
+        ar = os.path.abspath(root)
+        if os.path.isdir(ar):
+            return ar
+
+    for candidate in library_root_candidates(shadir):
+        if os.path.isdir(candidate):
+            return candidate
+
+    return None
+
+
+def resolve_existing_blob_path(
+    conn: sqlite3.Connection | None,
+    shadir_abs: str,
+    digest: str,
+) -> str | None:
+    """Return the absolute path to an on-disk blob ``xx/<digest>`` if it exists.
+
+    For each candidate tree root (shadir, parents of library dirs), tries
+    ``<root>/data/xx/<digest>`` first (``data/`` holds buckets beside ``files/``),
+    then legacy flat ``<root>/xx/<digest>``. When *conn* is set, also uses
+    :func:`resolve_files_root_abs` to locate the library and derive *root*.
+    """
+    p2 = digest[:2]
+    shadir_abs = os.path.abspath(shadir_abs)
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: str) -> None:
+        ap = os.path.abspath(path)
+        if ap in seen:
+            return
+        seen.add(ap)
+        candidates.append(ap)
+
+    def add_under_tree_root(tree_root: str) -> None:
+        add(os.path.join(tree_root, "data", p2, digest))
+        add(os.path.join(tree_root, p2, digest))
+
+    add_under_tree_root(shadir_abs)
+    for lib in library_root_candidates(shadir_abs):
+        parent = os.path.dirname(lib)
+        if parent:
+            add_under_tree_root(parent)
+    if conn is not None:
+        files_root = resolve_files_root_abs(conn, shadir_abs)
+        if files_root:
+            add_under_tree_root(os.path.dirname(files_root))
+
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def _stored_relpath_to_shasum(
     conn: sqlite3.Connection, files_root_abs: str
 ) -> dict[str, str]:
@@ -833,26 +1086,16 @@ def _dir_list_path_for_key(files_root_rel: str, dir_key: str) -> str:
     return f"{fr}/{fk}"
 
 
-def _path_matches_ls_prefixes(list_path: str, prefixes: list[str]) -> bool:
-    """Same inclusion rule as :func:`list_children` for stored paths."""
-    if not prefixes:
-        return True
-    norm = list_path.replace(os.sep, "/")
-    for prefix in prefixes:
-        if os.path.isabs(prefix):
-            continue
-        p = os.path.normpath(prefix).replace(os.sep, "/")
-        if norm == p or norm.startswith(p + "/"):
-            return True
-    return False
-
-
 def handle_ls_alltags(
     conn: sqlite3.Connection, prefixes: list[str], shadir: str
 ) -> None:
-    """Print each directory under files/ with recursively computed tag sets."""
-    files_root_abs = os.path.abspath(os.path.join(os.path.dirname(shadir), "files"))
-    if not os.path.isdir(files_root_abs):
+    """Print each directory under ``files/`` with recursively aggregated tag sets.
+
+    Prefix filtering uses the same rules as ``ls`` paths (:func:`path_matches_ls_query`).
+    Pass *prefixes* empty to include every directory under ``files/``.
+    """
+    files_root_abs = resolve_files_root_abs(conn, shadir)
+    if not files_root_abs or not os.path.isdir(files_root_abs):
         return
     files_root_rel = os.path.relpath(files_root_abs, os.getcwd())
     tags_by_dir = _compute_tags_by_dir(conn, files_root_abs)
@@ -887,7 +1130,12 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
        ``files/_tags/<tag>/<basename[(n)]>`` → ``<files>/<dir_key>`` symlinks.
     """
-    files_root = os.path.abspath(os.path.join(os.path.dirname(shadir), "files"))
+    files_root = resolve_files_root_abs(conn, shadir)
+    if files_root is None:
+        raise SystemExit(
+            "refresh-extracted-tags: cannot resolve files/ root (no matching "
+            "stored_files.root on disk; try running from the library directory)"
+        )
     out("refresh-extracted-tags files_root {files_root}", 1, files_root=files_root)
     if not os.path.isdir(files_root):
         raise SystemExit(
@@ -1081,13 +1329,14 @@ def extract_from_db(
         target_rel = os.path.normpath(os.path.join(root_rel, dirpath, filename))
         if not _matches_prefix(target_rel, normalized_prefixes):
             continue
-        store_path = os.path.join(shadir, shasum[:2], shasum)
-        if not os.path.isfile(store_path):
+        store_path = first_existing_blob_path(shadir, shasum)
+        if store_path is None:
+            miss = blob_object_path(shadir, shasum)
             out(
                 "skip missing target for {dest_path} -> {store_path}",
                 0,
                 dest_path=dest_path,
-                store_path=store_path,
+                store_path=miss,
             )
             continue
         ensure_directory(dest_dir)
@@ -1136,6 +1385,53 @@ def list_db_entries(
     return entries
 
 
+def _path_to_posix_segments(path: str) -> list[str]:
+    """Split a normalized relative path into '/' segments (no empty parts)."""
+    n = os.path.normpath(path).replace(os.sep, "/").strip("/")
+    if not n:
+        return []
+    return n.split("/")
+
+
+def path_matches_ls_query(stored_path: str, prefix: str) -> bool:
+    """True if *stored_path* matches *prefix* for ``ls`` / ``lspath`` filtering.
+
+    First applies prefix-from-root rules (legacy). If those fail, matches when
+    *prefix* appears as a **contiguous sequence of path segments** anywhere in
+    *stored_path*. That covers:
+
+    - Querying by the tail of a stored path (different cwd / roots).
+    - Directory-like filters without listing from the stored tree root.
+    """
+    if stored_path == prefix or stored_path.startswith(prefix + os.sep):
+        return True
+    q_segs = _path_to_posix_segments(prefix)
+    if not q_segs:
+        return False
+    p_segs = _path_to_posix_segments(stored_path)
+    if len(q_segs) > len(p_segs):
+        return False
+    m = len(q_segs)
+    for i in range(len(p_segs) - m + 1):
+        if p_segs[i : i + m] == q_segs:
+            return True
+    return False
+
+
+def _path_matches_ls_prefixes(list_path: str, prefixes: list[str]) -> bool:
+    """Same inclusion rule as :func:`list_children` for stored directory paths."""
+    if not prefixes:
+        return True
+    norm = list_path.replace(os.sep, "/")
+    for prefix in prefixes:
+        if os.path.isabs(prefix):
+            continue
+        p = os.path.normpath(prefix).replace(os.sep, "/")
+        if path_matches_ls_query(norm, p):
+            return True
+    return False
+
+
 def list_children(
     conn: sqlite3.Connection, prefixes: list[str], recursive: bool, show_deleted: bool
 ) -> list[tuple[str, str, bool]]:
@@ -1152,7 +1448,7 @@ def list_children(
     results: dict[str, tuple[str, bool]] = {}
     for path, shasum, deleted in entries:
         for prefix in normalized:
-            if path == prefix or path.startswith(prefix + os.sep):
+            if path_matches_ls_query(path, prefix):
                 if recursive:
                     results[path] = (shasum, deleted)
                     break
@@ -1166,7 +1462,7 @@ def list_children(
 def walk_files(root: str, shadir: str, skip_dotfiles: bool) -> Iterator[str]:
     """Yield file paths under root, skipping the sha store and dotfiles."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        if is_under_dir(os.path.abspath(dirpath), shadir):
+        if is_under_sha_store_tree(os.path.abspath(dirpath), shadir):
             dirnames[:] = []
             continue
 
@@ -1177,7 +1473,7 @@ def walk_files(root: str, shadir: str, skip_dotfiles: bool) -> Iterator[str]:
             if skip_dotfiles and name.startswith("."):
                 continue
             full_path = os.path.join(dirpath, name)
-            if is_under_dir(os.path.abspath(full_path), shadir):
+            if is_under_sha_store_tree(os.path.abspath(full_path), shadir):
                 continue
             yield full_path
 
@@ -1210,9 +1506,14 @@ def walk_symlinks(
         yield abs_root
         return
     if os.path.isfile(abs_root):
+        out(
+            "skip fixlinks PATH is a regular file (expected symlink or directory): {path}",
+            0,
+            path=abs_root,
+        )
         return
     if not os.path.isdir(abs_root):
-        raise SystemExit(f"fixlinks root not found: {root}")
+        raise SystemExit(f"fixlinks PATH not found: {root}")
 
     if not recursive:
         with os.scandir(abs_root) as entries:
@@ -1221,14 +1522,14 @@ def walk_symlinks(
                 if skip_dotfiles and name.startswith("."):
                     continue
                 full_path = os.path.join(abs_root, name)
-                if is_under_dir(os.path.abspath(full_path), shadir):
+                if is_under_sha_store_tree(os.path.abspath(full_path), shadir):
                     continue
                 if os.path.islink(full_path):
                     yield full_path
         return
 
     for dirpath, dirnames, filenames in os.walk(abs_root, followlinks=False):
-        if is_under_dir(os.path.abspath(dirpath), shadir):
+        if is_under_sha_store_tree(os.path.abspath(dirpath), shadir):
             dirnames[:] = []
             continue
         if skip_dotfiles:
@@ -1237,7 +1538,7 @@ def walk_symlinks(
             if skip_dotfiles and name.startswith("."):
                 continue
             full_path = os.path.join(dirpath, name)
-            if is_under_dir(os.path.abspath(full_path), shadir):
+            if is_under_sha_store_tree(os.path.abspath(full_path), shadir):
                 continue
             if os.path.islink(full_path):
                 yield full_path
@@ -1311,15 +1612,25 @@ def handle_fixlinks(
     recursive: bool,
     paranoia: int,
 ) -> None:
-    """Repair symlinks to canonical shadir targets and update DB entries."""
+    """Repair symlinks to on-disk blob paths and update DB entries."""
     fixed = 0
     checked = 0
     shadir_abs = os.path.abspath(shadir)
     store_cwd = os.getcwd()
     for root in roots:
         abs_root = os.path.abspath(root)
-        root_rel = os.path.relpath(abs_root, store_cwd)
-        root_is_file = os.path.isfile(abs_root) or os.path.islink(abs_root)
+        if os.path.islink(abs_root):
+            root_rel = os.path.relpath(os.path.dirname(abs_root), store_cwd)
+            if root_rel == ".":
+                root_rel = ""
+            root_is_file = True
+            db_root = os.path.dirname(abs_root)
+        else:
+            root_rel = os.path.relpath(abs_root, store_cwd)
+            if root_rel == ".":
+                root_rel = ""
+            root_is_file = not os.path.isdir(abs_root)
+            db_root = abs_root
         for link_path in walk_symlinks(abs_root, shadir_abs, skip_dotfiles, recursive):
             checked += 1
             if root_is_file:
@@ -1345,18 +1656,18 @@ def handle_fixlinks(
                     out("skip no digest for {path}", 0, path=link_path)
                     continue
 
-            canonical_target = os.path.join(shadir_abs, digest[:2], digest)
-            target_exists = os.path.isfile(canonical_target)
-            target_hash_ok = True
-            if paranoia >= 1 and not target_exists:
+            canonical_target = resolve_existing_blob_path(conn, shadir_abs, digest)
+            if canonical_target is None:
                 out(
-                    "missing target {path} -> {target}",
+                    "skip no blob on disk for {path} (digest {digest})",
                     0,
                     path=link_path,
-                    target=canonical_target,
+                    digest=digest,
                 )
                 continue
-            if paranoia >= 2 and target_exists:
+
+            target_hash_ok = True
+            if paranoia >= 2:
                 actual = sha256_file(canonical_target)
                 if actual != digest:
                     target_hash_ok = False
@@ -1369,17 +1680,22 @@ def handle_fixlinks(
                     )
                     continue
 
-            needs_fix = os.path.abspath(current_target) != os.path.abspath(
-                canonical_target
-            )
+            try:
+                needs_fix = os.path.realpath(current_target) != os.path.realpath(
+                    canonical_target
+                )
+            except OSError:
+                needs_fix = os.path.abspath(current_target) != os.path.abspath(
+                    canonical_target
+                )
             if not needs_fix and paranoia == 0:
                 continue
-            if not needs_fix and paranoia > 0 and target_exists and target_hash_ok:
+            if not needs_fix and paranoia > 0 and target_hash_ok:
                 continue
 
             os.unlink(link_path)
             os.symlink(os.path.abspath(canonical_target), link_path)
-            _set_fixed_link_in_db(conn, digest, abs_root, root_rel, rel_dir, filename)
+            _set_fixed_link_in_db(conn, digest, db_root, root_rel, rel_dir, filename)
             fixed += 1
             out("fixed {path} -> {target}", 1, path=link_path, target=canonical_target)
 
@@ -1518,8 +1834,8 @@ def handle_dedup(
         if digest_result is None:
             continue
         path, digest, _size = digest_result
-        dest = os.path.join(shadir, digest[:2], digest)
-        if not os.path.exists(dest):
+        dest = first_existing_blob_path(shadir, digest)
+        if dest is None:
             continue
         rel_dir = os.path.relpath(os.path.dirname(path), abs_root)
         filename = os.path.basename(path)
@@ -1573,12 +1889,70 @@ def handle_ls(
 ) -> None:
     """Print list entries under prefixes (direct DB tags per file unless *alltags*)."""
     if alltags:
-        handle_ls_alltags(conn, prefixes, shadir)
+        normalized = normalize_prefixes(prefixes)
+        if prefixes and not normalized:
+            return
+        if not normalized:
+            handle_ls_alltags(conn, [], shadir)
+            return
+
+        cwd = os.getcwd()
+        file_entries: list[tuple[str, str, bool]] = []
+        dir_prefixes: list[str] = []
+        for p in normalized:
+            abs_p = os.path.normpath(os.path.join(cwd, p))
+            if os.path.isfile(abs_p):
+                file_entries.extend(
+                    list_children(
+                        conn, [p], recursive=False, show_deleted=show_deleted
+                    )
+                )
+            elif os.path.isdir(abs_p):
+                dir_prefixes.append(p)
+            else:
+                missing_entries = list_children(
+                    conn, [p], recursive=False, show_deleted=show_deleted
+                )
+                if missing_entries:
+                    file_entries.extend(missing_entries)
+                else:
+                    dir_prefixes.append(p)
+
+        seen_paths: dict[str, tuple[str, bool]] = {}
+        for path, shasum, deleted in file_entries:
+            seen_paths[path] = (shasum, deleted)
+        tagged: list[tuple[str, str, list[str], bool]] = [
+            (path, shasum, sorted(get_tags(conn, shasum)), deleted)
+            for path, (shasum, deleted) in sorted(seen_paths.items())
+        ]
+        if mindup > 1 and tagged:
+            grouped: dict[str, list[str]] = {}
+            for path, shasum, _tags, _deleted in tagged:
+                grouped.setdefault(shasum, []).append(path)
+            dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
+            dir_counts: dict[str, int] = {}
+            for path, shasum, _tags, _deleted in tagged:
+                if shasum not in dup_shasums:
+                    continue
+                dirpath = os.path.dirname(path)
+                dir_counts[dirpath] = dir_counts.get(dirpath, 0) + 1
+            allowed_dirs = {
+                dirpath for dirpath, count in dir_counts.items() if count >= mindup
+            }
+            tagged = [row for row in tagged if os.path.dirname(row[0]) in allowed_dirs]
+        if tagged:
+            if OUTPUT_MODE == "machine":
+                _emit_lspath_machine(tagged)
+            else:
+                _emit_lspath_pretty(tagged, show_deleted)
+        if dir_prefixes:
+            handle_ls_alltags(conn, dir_prefixes, shadir)
         return
+
     entries = list_children(
         conn, prefixes, recursive=recursive, show_deleted=show_deleted
     )
-    tagged: list[tuple[str, str, list[str], bool]] = [
+    tagged = [
         (path, shasum, sorted(get_tags(conn, shasum)), deleted)
         for path, shasum, deleted in entries
     ]
@@ -1854,23 +2228,24 @@ def handle_reindex_files(
 
 def handle_check(args: argparse.Namespace) -> int:
     """Verify shadir discovery; optionally open DB (see ``check`` help)."""
-    if args.shadir:
-        shadir = expand_path(args.shadir)
-    else:
-        found = find_shadir(os.getcwd())
-        if not found:
-            print(
-                "check failed: no .shadup/.shadir found from cwd",
-                file=sys.stderr,
-            )
-            return 1
-        shadir = found
+    resolved = _resolve_db_file_for_args(args)
+    if resolved is None:
+        print(
+            "check failed: no .shadup/.shadir found from cwd",
+            file=sys.stderr,
+        )
+        return 1
     init_db = args.shadir is not None or args.db is not None
-    user_db = expand_path(args.db) if args.db else None
-    resolved = resolve_db_path(shadir, user_db)
     if init_db:
-        with open_db(shadir, user_db) as conn:
-            emit_check_report(conn, shadir, resolved)
+        conn = open_database(resolved)
+        try:
+            with conn:
+                shadir = sync_shadir(
+                    conn, expand_path(args.shadir) if args.shadir else None, os.getcwd()
+                )
+                emit_check_report(conn, shadir, resolved)
+        finally:
+            conn.close()
         return 0
 
     if not os.path.isfile(resolved):
@@ -1879,8 +2254,27 @@ def handle_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    with sqlite3.connect(resolved) as conn:
+    conn = sqlite3.connect(resolved)
+    try:
+        init_db_schema(conn)
+        stored = get_meta(conn, META_KEY_SHADIR)
+        if stored:
+            shadir = expand_path(stored)
+        elif args.shadir:
+            shadir = expand_path(args.shadir)
+        else:
+            found = find_shadir(os.getcwd())
+            if not found:
+                print(
+                    "check failed: no shadir in database and no .shadup/.shadir "
+                    "found from cwd",
+                    file=sys.stderr,
+                )
+                return 1
+            shadir = found
         emit_check_report(conn, shadir, resolved)
+    finally:
+        conn.close()
     return 0
 
 
@@ -1895,35 +2289,36 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "check":
         return handle_check(args)
 
-    if args.shadir:
-        shadir = expand_path(args.shadir)
-    else:
-        found = find_shadir(os.getcwd())
-        if not found:
-            raise SystemExit(
-                "--shadir is required when no .shadup/.shadir directory is found"
+    db_path = _resolve_db_file_for_args(args)
+    if db_path is None:
+        raise SystemExit(
+            "--shadir is required when no .shadup/.shadir directory is found"
+        )
+    conn = open_database(db_path)
+    try:
+        with conn:
+            shadir = sync_shadir(
+                conn, expand_path(args.shadir) if args.shadir else None, os.getcwd()
             )
-        shadir = found
-    # The cwd-inside-shadir guard is only meaningful for operations that walk
-    # the user's working tree (``store``) or write files back into it
-    # (``extract``). Read-only / DB-only actions may run from inside shadir.
-    if args.action in ("store", "extract"):
-        cwd = os.path.abspath(os.curdir)
-        if is_under_dir(cwd, shadir):
-            raise SystemExit(
-                f"cwd must not be inside shadir for {args.action}: "
-                f"cwd={cwd} shadir={shadir}"
-            )
+            os.makedirs(shadir, exist_ok=True)
+            # The cwd-inside-shadir guard is only meaningful for operations that walk
+            # the user's working tree (``store``) or write files back into it
+            # (``extract``). Read-only / DB-only actions may run from inside shadir.
+            if args.action in ("store", "extract"):
+                cwd = os.path.abspath(os.curdir)
+                if is_under_dir(cwd, shadir):
+                    raise SystemExit(
+                        f"cwd must not be inside shadir for {args.action}: "
+                        f"cwd={cwd} shadir={shadir}"
+                    )
+            return dispatch_action(conn, args)
+    finally:
+        conn.close()
 
-    db_path = expand_path(args.db) if args.db else None
-    with open_db(shadir, db_path) as conn:
-        return dispatch_action(conn, shadir, args)
 
-
-def dispatch_action(
-    conn: sqlite3.Connection, shadir: str, args: argparse.Namespace
-) -> int:
+def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     """Dispatch *args.action* to the corresponding ``handle_*`` function."""
+    shadir = get_shadir(conn)
     action = args.action
     if action == "store":
         for root in args.dirs:
@@ -1981,11 +2376,11 @@ def dispatch_action(
             handle_dedup(conn, expand_path(root), shadir, args.skip_dotfiles)
         return 0
     if action == "fixlinks":
-        for root in args.dirs:
-            out("fixlinks {root}", 1, root=root)
+        for path in args.paths:
+            out("fixlinks {root}", 1, root=path)
         handle_fixlinks(
             conn,
-            [expand_path(root) for root in args.dirs],
+            [expand_path(path) for path in args.paths],
             shadir,
             args.skip_dotfiles,
             recursive=args.recursive,
@@ -1994,7 +2389,11 @@ def dispatch_action(
         return 0
     if action == "reindex-files":
         if args.dir is None:
-            files_root = os.path.join(os.path.dirname(shadir), "files")
+            resolved = resolve_files_root_abs(conn, shadir)
+            if resolved is None:
+                files_root = os.path.join(os.path.dirname(shadir), "files")
+            else:
+                files_root = resolved
         else:
             files_root = expand_path(args.dir)
         out("reindex-files {files_root}", 1, files_root=files_root)

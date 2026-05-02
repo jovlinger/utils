@@ -2,7 +2,7 @@
 """Ingest files/dirs into /mnt/sdb2/music/flac via shadup.py.
 
 Observable contract (matches deprecated/shasrv_old/ingest.sh):
-- payloads under data/XX/<sha256>
+- payloads under <store-root>/data/XX/<sha256> (``--shadir`` is the store root, not ``data/``)
 - browse tree under files/<dest_prefix>/<rel>
 - one line per file on stderr: "Doing: files/<dest_prefix>/<rel>"
 - source file removed only on successful ingest
@@ -56,7 +56,7 @@ def store_with_shadup(path_value: Path) -> None:
         str(SHADUP_PY),
         "-v",
         "--shadir",
-        str(DATA_DIR),
+        str(STORE_ROOT),
         "--db",
         str(DB_PATH),
         "store",
