@@ -54,6 +54,7 @@ def _run_importtags(
     album: Path,
     *,
     reset: bool = False,
+    dryrun: bool = False,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
@@ -68,10 +69,12 @@ def _run_importtags(
         str(shadir),
         "--metatool",
         str(metatool),
-        str(album),
     ]
     if reset:
-        cmd.insert(-1, "--reset")
+        cmd.append("--reset")
+    if dryrun:
+        cmd.append("--dryrun")
+    cmd.append(str(album))
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
 
 
@@ -243,3 +246,60 @@ def test_importtags_skips_empty_export(tmp_path: Path) -> None:
     r = _run_importtags(tmp_path, shadir, fake_mt, album)
     assert r.returncode == 0
     assert _db_tags_for_path(shadir, "work/disc/notes.txt") == ["keep"]
+
+
+def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "notes.txt").write_bytes(b"n\n")
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "prior"])
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["x"], "genre": [], "artist": null, "album": null}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    before = _db_tags_for_path(shadir, "work/disc/notes.txt")
+    r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True)
+    assert r.returncode == 0, r.stderr
+    assert "[dry-run]" in r.stdout
+    assert "would tag-add" in r.stdout
+    assert "resulting tags (after)" in r.stdout
+    assert _db_tags_for_path(shadir, "work/disc/notes.txt") == before
+
+
+def test_importtags_dryrun_reset_shows_tag_rm(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "notes.txt").write_bytes(b"n\n")
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "old"])
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["new"], "genre": [], "artist": null, "album": null}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True, reset=True)
+    assert r.returncode == 0, r.stderr
+    assert "would tag-rm" in r.stdout
+    assert '"old"' in r.stdout

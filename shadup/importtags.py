@@ -225,13 +225,19 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
             "Per directory: run metatool export-json, then shadup tag-add on one "
-            "chosen file (readme / image / first file)."
+            "chosen file (readme / image / first file). "
+            "Use --dryrun to print DB effects without writing."
         )
     )
     p.add_argument(
         "--reset",
         action="store_true",
         help="Remove existing shadup tags on the target file before adding",
+    )
+    p.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Print tag-rm / tag-add and resulting tags; do not change the database",
     )
     p.add_argument(
         "--provider",
@@ -286,6 +292,29 @@ def main(argv: list[str] | None = None) -> int:
             rel = os.path.relpath(target, cwd)
         except ValueError:
             rel = target
+        if args.dryrun:
+            current = _existing_tags_for_path(args.shadup, shadir_opt, rel)
+            if args.reset:
+                resulting = sorted(set(tags))
+            else:
+                resulting = sorted(set(current) | set(tags))
+            print(f"[dry-run] album={album_dir}", file=sys.stdout)
+            print(f"  path={rel}", file=sys.stdout)
+            if args.reset:
+                print(
+                    f"  would tag-rm: {json.dumps(current)}",
+                    file=sys.stdout,
+                )
+            print(
+                f"  would tag-add: {json.dumps(tags)}",
+                file=sys.stdout,
+            )
+            print(
+                f"  resulting tags (after): {json.dumps(resulting)}",
+                file=sys.stdout,
+            )
+            continue
+
         if args.reset:
             current = _existing_tags_for_path(args.shadup, shadir_opt, rel)
             if current:
