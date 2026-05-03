@@ -33,6 +33,7 @@ The DMZ host exposes the following ports (Agent to add to this list as needed)
 # Plan
 
 1. first step is to verify my state above for "Done" items. 
-2. then decide on ???
-3. enumerate steps to reach that goal.
+2. decide on ???
+3. research best ways to implement oauth flow. I am assuming there is a library, but maybe it is trivial? 
+4. enumerate steps to implement  the goal of authenticated exposed ports on dmz.
 
