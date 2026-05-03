@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
-# Usage: sudo ~/shadup/with-ro-remounted-rw.sh <command> [args...]
+# Remount SHASRV_MNT rw, run <command> [args...] as the current user, then remount ro.
+# Privileged steps use sudo when not root (typically: sudo mount -o remount,...).
+#
+# Usage: ~/shadup/with-ro-remounted-rw.sh <command> [args...]
 set -Eeuo pipefail
 MNT="${SHASRV_MNT:-/mnt/sdb2}"
 
 log(){ printf '[%s] %s\n' "$(date -Is)" "$*" >&2; }
 err(){ log "ERROR: $*"; }
+
+# Run a command with the privileges needed for mount(8) (root, or sudo when non-root).
+priv() {
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 need_tools() {
   local x
@@ -14,6 +26,12 @@ need_tools() {
       exit 1
     }
   done
+  if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    command -v sudo >/dev/null || {
+      err "missing sudo (needed to remount $MNT when not root)"
+      exit 1
+    }
+  fi
 }
 
 get_real_mount() {
@@ -27,7 +45,7 @@ remount_mode() {
   # Prefer mountpoint-only remount (util-linux). Device+target remount is flaky on
   # some setups; the old fallback `mount -t fstype -o ro src mnt` is a *new* mount
   # and fails with "already mounted" while leaving the fs rw.
-  if mount -o "remount,$mode" "$MNT"; then
+  if priv mount -o "remount,$mode" "$MNT"; then
     return 0
   fi
 
@@ -38,7 +56,7 @@ remount_mode() {
     err "cannot resolve real mount beneath $MNT (needed for remount,$mode)"
     return 1
   }
-  mount -o "remount,$mode" --source "$src" --target "$MNT"
+  priv mount -o "remount,$mode" --source "$src" --target "$MNT"
 }
 
 cleanup() {

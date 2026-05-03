@@ -10,6 +10,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 SHADUP_PY = Path(__file__).resolve().parent.parent / "shadup.py"
 IMPORTTAGS_PKG = Path(__file__).resolve().parent.parent
 
@@ -92,7 +94,7 @@ def _run_importtags(
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
 
 
-def test_pick_target_prefers_readme_over_audio(tmp_path: Path) -> None:
+def _load_importtags():
     from importlib.util import module_from_spec, spec_from_file_location
 
     spec = spec_from_file_location(
@@ -101,46 +103,104 @@ def test_pick_target_prefers_readme_over_audio(tmp_path: Path) -> None:
     assert spec and spec.loader
     mod = module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
 
+
+def test_pick_target_errors_when_no_symlink_into_store(tmp_path: Path) -> None:
+    mod = _load_importtags()
     album = tmp_path / "al"
     album.mkdir()
-    (album / "z.flac").write_bytes(b"a")
+    shadir = tmp_path / "store"
+    shadir.mkdir()
     (album / "readme.txt").write_bytes(b"r")
-    assert mod.pick_target_file(str(album)) == str(album / "readme.txt")
-
-
-def test_pick_target_audio_only_then_first_lex(tmp_path: Path) -> None:
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    spec = spec_from_file_location(
-        "importtags_mod", IMPORTTAGS_PKG / "importtags.py"
-    )
-    assert spec and spec.loader
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    album = tmp_path / "al"
-    album.mkdir()
-    (album / "b.flac").write_bytes(b"b")
-    (album / "a.flac").write_bytes(b"a")
-    assert mod.pick_target_file(str(album)) == str(album / "a.flac")
-
-
-def test_pick_target_audio_and_image_uses_image(tmp_path: Path) -> None:
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    spec = spec_from_file_location(
-        "importtags_mod", IMPORTTAGS_PKG / "importtags.py"
-    )
-    assert spec and spec.loader
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    album = tmp_path / "al"
-    album.mkdir()
     (album / "z.flac").write_bytes(b"a")
-    (album / "cover.jpg").write_bytes(b"j")
-    assert mod.pick_target_file(str(album)) == str(album / "cover.jpg")
+    with pytest.raises(mod.ImportTagsError, match="no symlink into sha store"):
+        mod.pick_target_file(str(album), str(shadir))
+
+
+def test_pick_target_errors_when_shadir_not_resolvable(tmp_path: Path) -> None:
+    mod = _load_importtags()
+    album = tmp_path / "only_album"
+    album.mkdir()
+    (album / "t.flac").write_bytes(b"x")
+    with pytest.raises(mod.ImportTagsError, match="resolve sha store"):
+        mod.pick_target_file(str(album), None)
+
+
+def test_pick_target_prefers_earliest_symlink_into_shadir(tmp_path: Path) -> None:
+    """Among blobs linked from the album, pick the symlink with oldest mtime."""
+    mod = _load_importtags()
+
+    shadir = tmp_path / "store"
+    digest = "aa" * 32
+    blob = shadir / "data" / digest[:2] / digest
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"x")
+
+    album = tmp_path / "al"
+    album.mkdir()
+    first = album / "zebra.flac"
+    second = album / "a.flac"
+    first.symlink_to(blob)
+    second.symlink_to(blob)
+    os.utime(first, (100, 100), follow_symlinks=False)
+    os.utime(second, (900, 900), follow_symlinks=False)
+
+    assert mod.pick_target_file(str(album), str(shadir)) == str(first)
+
+
+def test_pick_target_descends_subdirs_when_top_level_is_directories_only(
+    tmp_path: Path,
+) -> None:
+    """Album root may contain only subfolders (discs); symlinks live underneath."""
+    mod = _load_importtags()
+
+    shadir = tmp_path / "store"
+    digest = "bb" * 32
+    blob = shadir / "data" / digest[:2] / digest
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"y")
+
+    album = tmp_path / "Frank Album"
+    disc = album / "Frank Album 1,2"
+    disc.mkdir(parents=True)
+    track = disc / "01.flac"
+    track.symlink_to(blob)
+
+    assert mod.pick_target_file(str(album), str(shadir)) == str(track)
+
+
+def test_pick_target_reads_shadir_from_db_meta_without_dot_shadir_on_disk(
+    tmp_path: Path,
+) -> None:
+    """When only meta knows the store root (no ``.shadir`` dir for discovery)."""
+    mod = _load_importtags()
+
+    store = tmp_path / "flac"
+    (store / "data").mkdir(parents=True)
+    digest = "cc" * 32
+    blob = store / "data" / digest[:2] / digest
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"z")
+
+    db_file = tmp_path / "tags.db"
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('shadir', ?)",
+            (str(store.resolve()),),
+        )
+
+    album = tmp_path / "elsewhere" / "Frank Album"
+    disc = album / "Frank Album 1,2"
+    disc.mkdir(parents=True)
+    track = disc / "01.flac"
+    track.symlink_to(blob)
+
+    picked = mod.pick_target_file(str(album), None, db_path=str(db_file))
+    assert picked == str(track)
 
 
 def test_build_tags_unions_and_prefixes() -> None:
@@ -175,7 +235,6 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"notes\n")
     (album / "t.flac").write_bytes(b"audio\n")
 
     _run_shadup(tmp_path, shadir, ["store", "work"])
@@ -194,7 +253,7 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     r = _run_importtags(tmp_path, shadir, fake_mt, album)
     assert r.returncode == 0, r.stderr
 
-    tags = _db_tags_for_path(shadir, "work/disc/notes.txt")
+    tags = _db_tags_for_path(shadir, "work/disc/t.flac")
     assert tags == ["album:B2", "artist:A1", "gr", "im"]
 
 
@@ -206,7 +265,6 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"notes\n")
     (album / "t.flac").write_bytes(b"audio\n")
 
     _run_shadup(tmp_path, shadir, ["store", "work"], db=custom_db)
@@ -226,7 +284,7 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     r = _run_importtags(tmp_path, shadir, fake_mt, album, db=custom_db)
     assert r.returncode == 0, r.stderr
 
-    tags = _db_tags_for_path(shadir, "work/disc/notes.txt", db_path=custom_db)
+    tags = _db_tags_for_path(shadir, "work/disc/t.flac", db_path=custom_db)
     assert tags == ["album:B2", "artist:A1", "gr", "im"]
 
 
@@ -236,10 +294,10 @@ def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"notes\n")
+    (album / "t.flac").write_bytes(b"audio\n")
 
     _run_shadup(tmp_path, shadir, ["store", "work"])
-    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "old"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "old"])
 
     fake_mt = tmp_path / "fake-metatool"
     fake_mt.write_text(
@@ -254,7 +312,7 @@ def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
 
     r = _run_importtags(tmp_path, shadir, fake_mt, album, reset=True)
     assert r.returncode == 0, r.stderr
-    assert _db_tags_for_path(shadir, "work/disc/notes.txt") == ["new"]
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["new"]
 
 
 def test_importtags_skips_nondir(tmp_path: Path) -> None:
@@ -275,9 +333,9 @@ def test_importtags_skips_empty_export(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"n\n")
+    (album / "t.flac").write_bytes(b"a\n")
     _run_shadup(tmp_path, shadir, ["store", "work"])
-    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "keep"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "keep"])
 
     fake_mt = tmp_path / "fake-metatool"
     fake_mt.write_text(
@@ -291,7 +349,7 @@ def test_importtags_skips_empty_export(tmp_path: Path) -> None:
     os.chmod(fake_mt, 0o755)
     r = _run_importtags(tmp_path, shadir, fake_mt, album)
     assert r.returncode == 0
-    assert _db_tags_for_path(shadir, "work/disc/notes.txt") == ["keep"]
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["keep"]
 
 
 def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
@@ -300,9 +358,9 @@ def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"n\n")
+    (album / "t.flac").write_bytes(b"a\n")
     _run_shadup(tmp_path, shadir, ["store", "work"])
-    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "prior"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "prior"])
 
     fake_mt = tmp_path / "fake-metatool"
     fake_mt.write_text(
@@ -315,13 +373,13 @@ def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
     )
     os.chmod(fake_mt, 0o755)
 
-    before = _db_tags_for_path(shadir, "work/disc/notes.txt")
+    before = _db_tags_for_path(shadir, "work/disc/t.flac")
     r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True)
     assert r.returncode == 0, r.stderr
     assert "[dry-run]" in r.stdout
     assert "would tag-add" in r.stdout
     assert "resulting tags (after)" in r.stdout
-    assert _db_tags_for_path(shadir, "work/disc/notes.txt") == before
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == before
 
 
 def test_importtags_dryrun_reset_shows_tag_rm(tmp_path: Path) -> None:
@@ -330,9 +388,9 @@ def test_importtags_dryrun_reset_shows_tag_rm(tmp_path: Path) -> None:
     work = tmp_path / "work"
     album = work / "disc"
     album.mkdir(parents=True)
-    (album / "notes.txt").write_bytes(b"n\n")
+    (album / "t.flac").write_bytes(b"a\n")
     _run_shadup(tmp_path, shadir, ["store", "work"])
-    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/notes.txt", "old"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "old"])
 
     fake_mt = tmp_path / "fake-metatool"
     fake_mt.write_text(

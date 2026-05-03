@@ -114,6 +114,71 @@ def test_lshash_shows_tags_for_filtered_hash(tmp_path: Path) -> None:
     assert deleted == "0"
 
 
+def test_ls_alltags_single_file_matches_plain_ls(tmp_path: Path) -> None:
+    """``--alltags`` on a file path uses per-file tags (same rows as plain ``ls``)."""
+    shadir = tmp_path / "sha"
+    shadir.mkdir()
+    files_root = tmp_path / "files"
+    album = files_root / "album"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"x")
+
+    _run(tmp_path, shadir, ["store", "files"])
+    _run(tmp_path, shadir, ["tag-add", "files/album/t.flac", "alpha"])
+
+    plain = _run(tmp_path, shadir, ["ls", "files/album/t.flac"])
+    alltags = _run(tmp_path, shadir, ["ls", "--alltags", "files/album/t.flac"])
+    assert plain.stdout == alltags.stdout
+
+
+def test_ls_alltags_resolves_files_root_when_shadir_not_adjacent_to_files(
+    tmp_path: Path,
+) -> None:
+    """``--alltags`` finds ``files/`` via DB + cwd when ``dirname(shadir)/files`` is wrong."""
+    blob_store = tmp_path / "blob_store"
+    blob_store.mkdir()
+    lib_home = tmp_path / "music" / "flac"
+    files_root = lib_home / "files"
+    album = files_root / "album"
+    album.mkdir(parents=True)
+    (album / "x.flac").write_bytes(b"x")
+
+    _run(lib_home, blob_store, ["store", "files"])
+    _run(lib_home, blob_store, ["tag-add", "files/album/x.flac", "orphan"])
+
+    result = _run(lib_home, blob_store, ["ls", "--alltags", "files/album"])
+    rows = list(csv.reader(io.StringIO(result.stdout)))
+    assert len(rows) >= 1
+    tag_cell = next(r[1] for r in rows if r[0].replace("\\", "/").endswith("files/album"))
+    assert sorted(csv_json_tags(tag_cell)) == ["orphan"]
+
+
+def test_ls_alltags_directory_unions_descendant_tags(tmp_path: Path) -> None:
+    """``--alltags`` on a directory lists aggregated tags for that directory tree."""
+    shadir = tmp_path / "sha"
+    shadir.mkdir()
+    files_root = tmp_path / "files"
+    album = files_root / "album"
+    album.mkdir(parents=True)
+    (album / "a.flac").write_bytes(b"a")
+    (album / "b.flac").write_bytes(b"b")
+
+    _run(tmp_path, shadir, ["store", "files"])
+    _run(tmp_path, shadir, ["tag-add", "files/album/a.flac", "rock"])
+    _run(tmp_path, shadir, ["tag-add", "files/album/b.flac", "jazz"])
+
+    result = _run(tmp_path, shadir, ["ls", "--alltags", "files/album"])
+    rows = list(csv.reader(io.StringIO(result.stdout)))
+    album_row = None
+    norm_tail = str(Path("files/album"))
+    for row in rows:
+        if len(row) >= 2 and row[0].replace("\\", "/").endswith(norm_tail):
+            album_row = row
+            break
+    assert album_row is not None
+    assert sorted(csv_json_tags(album_row[1])) == ["jazz", "rock"]
+
+
 def test_lshash_show_deleted_column(tmp_path: Path) -> None:
     """With -d, deleted rows appear with deleted=1."""
     cwd, shadir, _digests = _setup_two_files(tmp_path)

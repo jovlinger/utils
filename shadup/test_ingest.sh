@@ -40,10 +40,7 @@ mk_harness() {
     ln -sf "$SHADUP_VENV" "$HARNESS/env"
     chmod +x "$HARNESS/ingest.sh" "$HARNESS/ingest.py" "$HARNESS/with-ro-remounted-rw.sh"
 
-    # Keep the binary behavior but remove root/mount requirements in test harness:
-    # - bypass sudo check
-    # - make remount wrapper a plain exec passthrough
-    sed -i '' '/if \[ "\${EUID:-\$(id -u)}" -ne 0 \]; then/,/fi/d' "$HARNESS/ingest.sh"
+    # Replace remount wrapper with a plain exec passthrough (no real mount in tests).
     cat > "$HARNESS/with-ro-remounted-rw.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

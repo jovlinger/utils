@@ -3,14 +3,17 @@
 # 
 #
 # Usage:
-#   sudo ./ingest.sh public/albumdir1 public/albumdir2 ...
-#   sudo ./ingest.sh public/albumdir*          # shell glob; one arg per album
+#   ./ingest.sh public/albumdir1 public/albumdir2 ...
+#   ./ingest.sh public/albumdir*          # shell glob; one arg per album
+#
+# Remounting the store filesystem uses sudo mount only when you are not root
+# (see with-ro-remounted-rw.sh). The ingest Python process runs as your user.
 #
 # Each directory arg's basename becomes the dest_prefix under files/,
 # so  public/MyAlbum  →  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
 #
 # CAUTION: Do NOT pass the top-level parent directory (e.g. "public").
-#   sudo ./ingest.sh public                    # WRONG
+#   ./ingest.sh public                    # WRONG
 # This would set dest_prefix="public", creating files/public/albumdir/track
 # instead of the intended files/albumdir/track — an unwanted extra level.
 # It also ingests (and deletes from source!) ALL files under public/.
@@ -39,8 +42,7 @@ err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
 }
 
 # ingest.py runs shadup.py with sys.executable, so we must exec the venv interpreter
-# by path — not `python` on PATH. sudo often resets PATH (secure_path), and the remount
-# wrapper runs "$@" in a fresh bash that only sees PATH, not our sourced activate.
+# by path — not `python` on PATH. The remount wrapper runs "$@" without sudo.
 # The ./shadup → pylauncher symlink is for CLI shadup.py only.
 SHADUP_VENV=""
 if [ -f "$SHADUP_DIR/env/bin/activate" ]; then
@@ -69,10 +71,5 @@ fi
   err "missing executable $REMOUNT"
   exit 1
 }
-
-if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-  err "run with sudo"
-  exit 1
-fi
 
 exec "$REMOUNT" "$SHADUP_PYTHON" "$INGEST_PY" "$@"
