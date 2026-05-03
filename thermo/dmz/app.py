@@ -473,6 +473,25 @@ def _verify_global_machine_request() -> Optional[tuple[int, Any]]:
     return (401, {"error": "invalid zone signature"})
 
 
+def _authorize_ui() -> Optional[Any]:
+    """
+    Gate /ui/context and /ui/command on OAuth session when OAuth is configured.
+
+    Returns None when access is granted. When OAuth is enabled and no session
+    exists, browser requests (Accept: text/html) receive a 302 to /login;
+    programmatic clients (Accept: application/json) receive 401 JSON.
+    /ui/diagnostics is intentionally left open for operator debugging.
+    """
+    if not _oauth_enabled:
+        return None
+    if session.get("user"):
+        return None
+    accept = request.headers.get("Accept", "")
+    if "text/html" in accept:
+        return redirect(url_for("login"))
+    return {"error": "authentication required"}, 401
+
+
 def _authorize_global_read() -> Optional[Any]:
     """
     Authorize GET /zones and GET /debug/logs: machine signature, OAuth session, or open
@@ -637,9 +656,12 @@ def ui_context() -> Any:
     """
     JSON for the shared thermo UI: all zones with state, environment table per zone.
 
-    Intentionally **not** gated on OAuth or machine auth (DMZ UI is open for now; protect
-    at the edge if needed).
+    Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
+    Browser clients are redirected to /login; API clients receive 401 JSON.
     """
+    denied = _authorize_ui()
+    if denied is not None:
+        return denied
     all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
     env_rows = [_environment_row_for_zone(z) for z in all_zones]
     zone_states = {z: _zone_response(z, False) for z in all_zones}
@@ -655,9 +677,11 @@ def ui_command() -> Any:
     """
     Store command JSON for ``zone`` (same storage as ``POST /zone/<z>/command``).
 
-    Open endpoint for the bundled UI (no OAuth / machine auth). Prefer reverse-proxy
-    or network policy in production.
+    Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
     """
+    denied = _authorize_ui()
+    if denied is not None:
+        return denied
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return {"error": "json object required"}, 400

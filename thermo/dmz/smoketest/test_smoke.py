@@ -155,6 +155,33 @@ def test_smoke_multiple_external_command_clients(http: requests.Session) -> None
     logger.info("ok: two clients, two zones")
 
 
+def test_smoke_unauthed_ui_redirects_to_google_oauth(http: requests.Session) -> None:
+    """
+    Unauthenticated browser GET /ui/context must end up at Google OAuth when OAuth is
+    configured on the server.  Skipped when the server reports oauth_enabled=false
+    (typical smoke runs without GOOGLE_CLIENT_ID).
+
+    To exercise this test against a real DMZ with OAuth:
+        GOOGLE_CLIENT_ID=<id> python app.py &
+        DMZ_URL=http://127.0.0.1:5000 pytest -v smoketest/test_smoke.py::test_smoke_unauthed_ui_redirects_to_google_oauth
+    """
+    diag_r = http.get(f"{BASE}/ui/diagnostics", timeout=10)
+    assert diag_r.status_code == 200, f"/ui/diagnostics returned {diag_r.status_code}"
+    if not diag_r.json().get("config", {}).get("oauth_enabled"):
+        pytest.skip("OAuth not enabled on this DMZ instance (GOOGLE_CLIENT_ID not set)")
+
+    # Simulate a browser: follow all redirects, present Accept: text/html.
+    browser = requests.Session()
+    browser.headers.update({"Accept": "text/html,application/xhtml+xml,*/*"})
+    r = browser.get(f"{BASE}/ui/context", timeout=15, allow_redirects=True)
+
+    assert "accounts.google.com" in r.url, (
+        f"Expected final redirect to accounts.google.com, got: {r.url} "
+        f"(status {r.status_code})"
+    )
+    logger.info("ok: unauthenticated /ui/context redirected to %s", r.url)
+
+
 def test_smoke_access_log_history(http: requests.Session) -> None:
     """After a deterministic request sequence, access log should mention those paths."""
     logger.info("case: /debug/logs reflects recent HTTP paths")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+from unittest.mock import patch
 
 from app import app
 
@@ -482,6 +483,55 @@ def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
         assert js["sensors"]["temp_centigrade"] == 18.0
         assert js["sensors"]["humid_percent"] == 40.0
         assert js["command"] is None
+
+
+def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
+    """GET /ui/context returns 302 to /login for browser clients when OAuth is enabled."""
+    with patch("app._oauth_enabled", True):
+        with app.test_client() as c:
+            r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
+            assert r.status_code == 302, r.get_data(as_text=True)
+            assert "/login" in r.headers.get("Location", "")
+
+
+def test_ui_context_requires_oauth_401_for_api_clients(dmz_ctx: object) -> None:
+    """GET /ui/context returns 401 JSON for API clients when OAuth is enabled."""
+    with patch("app._oauth_enabled", True):
+        with app.test_client() as c:
+            r = c.get("/ui/context", headers={"Accept": "application/json"})
+            assert r.status_code == 401
+            assert (r.get_json() or {}).get("error") == "authentication required"
+
+
+def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
+    """POST /ui/command returns 302 to /login for browser clients when OAuth is enabled."""
+    with patch("app._oauth_enabled", True):
+        with app.test_client() as c:
+            r = c.post(
+                "/ui/command",
+                json={"zone": "z1", "command": {"power": True}},
+                headers={"Accept": "text/html,*/*"},
+            )
+            assert r.status_code == 302
+            assert "/login" in r.headers.get("Location", "")
+
+
+def test_ui_context_open_without_oauth(dmz_ctx: object) -> None:
+    """GET /ui/context is open (200) when OAuth is not configured."""
+    with patch("app._oauth_enabled", False):
+        with app.test_client() as c:
+            _reset(c)
+            js = _get_200(c, "/ui/context")
+            assert "zones" in js
+
+
+def test_ui_diagnostics_always_open(dmz_ctx: object) -> None:
+    """GET /ui/diagnostics returns 200 even when OAuth is enabled (operator debugging)."""
+    with patch("app._oauth_enabled", True):
+        with app.test_client() as c:
+            r = c.get("/ui/diagnostics")
+            assert r.status_code == 200
+            assert "config" in (r.get_json() or {})
 
 
 def test_ui_command_stores_command(dmz_ctx: object) -> None:
