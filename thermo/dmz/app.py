@@ -390,7 +390,7 @@ def authorize() -> Any:
     if email != ALLOWED_EMAIL.lower():
         return {"error": f"Access restricted to {ALLOWED_EMAIL}"}, 403
     session["user"] = {"email": email}
-    return redirect(url_for("get_zones"))
+    return redirect(url_for("ui_context"))
 
 
 @app.route("/logout")
