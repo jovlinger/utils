@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 
@@ -330,13 +331,57 @@ def assertAuthAzZone(req: Any) -> None:
 ### BEGIN STATE (make this sqlite)
 commands: Dict[str, List[Any]] = defaultdict(list)
 sensors: Dict[str, List[Sensors]] = defaultdict(list)
+_ui_command_received_mono: Dict[str, float] = defaultdict(float)
+_last_zone_command_reply_mono: Dict[str, float] = defaultdict(float)
+_zone_command_clock_lock = threading.Lock()
 ### END STATE
+
+LONG_POLL_TIMEOUT_SECS: float = float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "10"))
+LONG_POLL_SLEEP_SECS: float = 1.0
 
 
 def _lastor(lst: List[Any], default: Optional[Any] = None) -> Any:
     if not lst:
         return default
     return lst[-1]
+
+
+def _mark_ui_command_received(zonename: str) -> float:
+    now_mono = time.monotonic()
+    with _zone_command_clock_lock:
+        _ui_command_received_mono[zonename] = now_mono
+    return now_mono
+
+
+def _mark_zone_command_reply_sent(zonename: str) -> float:
+    now_mono = time.monotonic()
+    with _zone_command_clock_lock:
+        _last_zone_command_reply_mono[zonename] = now_mono
+    return now_mono
+
+
+def _await_new_ui_command_or_timeout(zonename: str) -> None:
+    """
+    Long-poll gate for zone POSTs.
+
+    Snapshot the zone's last reply-sent timestamp once at request start. Wait until UI has
+    posted a newer command timestamp than that snapshot, or until timeout.
+
+    Snapshot semantics intentionally allow overlapping POSTs from the same zone: each thread
+    compares against its own start-time baseline so one thread updating "last sent" does not
+    force siblings to keep waiting after a new UI command arrives.
+    """
+    started = time.monotonic()
+    with _zone_command_clock_lock:
+        sent_baseline = _last_zone_command_reply_mono[zonename]
+    while True:
+        with _zone_command_clock_lock:
+            ui_last = _ui_command_received_mono[zonename]
+        if ui_last > sent_baseline:
+            return
+        if (time.monotonic() - started) >= LONG_POLL_TIMEOUT_SECS:
+            return
+        time.sleep(LONG_POLL_SLEEP_SECS)
 
 
 def _zone_response(zonename: str, update_access: bool) -> JSON:
@@ -586,6 +631,8 @@ def update_sensors(zonename: str) -> Any:
     _log_full_zone_state(reason="sensors", zonename=zonename)
     if isinstance(cmd_body, dict) and cmd_body:
         _replace_command_if_newer(zonename, cmd_body, source="zone-sensors")
+    _await_new_ui_command_or_timeout(zonename)
+    _mark_zone_command_reply_sent(zonename)
     return _zone_response(zonename, True)
 
 
@@ -623,7 +670,9 @@ def update_command(zonename: str) -> Any:
     if parse_err:
         return parse_err[0], parse_err[1]
     if isinstance(parsed, dict):
-        _replace_command_if_newer(zonename, parsed, source="zone-command")
+        decision = _replace_command_if_newer(zonename, parsed, source="zone-command")
+        if decision == "accepted":
+            _mark_ui_command_received(zonename)
     else:
         # Non-dict commands (legacy / test) cannot carry created_dt; keep prior behavior
         # of unconditional append so existing callers do not regress.
@@ -697,7 +746,9 @@ def ui_command() -> Any:
     if parse_err:
         return parse_err[0], parse_err[1]
     if isinstance(parsed, dict):
-        _replace_command_if_newer(zonename, parsed, source="ui-command")
+        decision = _replace_command_if_newer(zonename, parsed, source="ui-command")
+        if decision == "accepted":
+            _mark_ui_command_received(zonename)
     else:
         _append_and_trim(commands[zonename], parsed)
         _log_full_zone_state(reason="ui-command:legacy-nondict", zonename=zonename)
@@ -753,6 +804,8 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
+    _ui_command_received_mono.clear()
+    _last_zone_command_reply_mono.clear()
     _zone_attempts.clear()
     _access_log.clear()
     _log_full_zone_state(reason="test_reset")

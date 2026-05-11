@@ -20,6 +20,25 @@ if [ -z "${ZONE_PUBLIC_KEY_PATH:-}" ] && [ -z "${ZONE_PUBLIC_KEY:-}" ] && [ -f /
 	echo "start.sh: ZONE_PUBLIC_KEY_PATH=$ZONE_PUBLIC_KEY_PATH (twoway auth enforced)"
 fi
 
+# Google OAuth + Flask session: baked by dmz-boot.start from SD install/*.txt (see ./SECRETS.md).
+# Explicit env vars win. All three one-line files must exist together; otherwise we skip (avoids
+# oauth_enabled with a missing client secret).
+_oauth_id_f=/etc/dmz/google-client-id
+_oauth_sec_f=/etc/dmz/google-client-secret
+_oauth_sk_f=/etc/dmz/flask-secret-key
+if [ -z "${GOOGLE_CLIENT_ID:-}" ] && [ -f "$_oauth_id_f" ] && [ -f "$_oauth_sec_f" ] && [ -f "$_oauth_sk_f" ]; then
+	export GOOGLE_CLIENT_ID="$(head -n1 "$_oauth_id_f" | tr -d '\r')"
+	export GOOGLE_CLIENT_SECRET="$(head -n1 "$_oauth_sec_f" | tr -d '\r')"
+	export SECRET_KEY="$(head -n1 "$_oauth_sk_f" | tr -d '\r')"
+	echo "start.sh: OAuth enabled from /etc/dmz/google-client-id (+ secret + flask-secret-key)"
+elif [ -f "$_oauth_id_f" ] || [ -f "$_oauth_sec_f" ] || [ -f "$_oauth_sk_f" ]; then
+	echo "start.sh: WARNING incomplete OAuth files under /etc/dmz (need google-client-id, google-client-secret, flask-secret-key); not loading" >&2
+fi
+if [ -z "${ALLOWED_EMAIL:-}" ] && [ -f /etc/dmz/allowed-email ]; then
+	export ALLOWED_EMAIL="$(head -n1 /etc/dmz/allowed-email | tr -d '\r')"
+	echo "start.sh: ALLOWED_EMAIL from /etc/dmz/allowed-email"
+fi
+
 mount -o remount,ro / 2>/dev/null \
 	|| echo "start.sh: remount ro / not applied" >&2
 

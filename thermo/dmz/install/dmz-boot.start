@@ -141,6 +141,34 @@ if [ -f "$SD_MOUNT/install/zone-pub.pem" ]; then
 else
 	pr "  zone pub key: absent (twoway auth DISABLED — rebuild SD with --include-pub-key=...)"
 fi
+# Optional: Google OAuth + Flask SECRET_KEY (one line each). start.sh loads only if all three exist.
+_oauth_ok=1
+for _o in google-client-id google-client-secret flask-secret-key; do
+	if [ ! -f "$SD_MOUNT/install/$_o" ]; then
+		_oauth_ok=0
+		break
+	fi
+done
+if [ "$_oauth_ok" -eq 1 ]; then
+	mkdir -p "$CHROOT_DIR/etc/dmz"
+	for _o in google-client-id google-client-secret flask-secret-key; do
+		cp "$SD_MOUNT/install/$_o" "$CHROOT_DIR/etc/dmz/$_o"
+		chmod 0400 "$CHROOT_DIR/etc/dmz/$_o"
+	done
+	pr "  OAuth: installed google-client-id + google-client-secret + flask-secret-key -> /etc/dmz/ (ENABLED)"
+	if [ -f "$SD_MOUNT/install/allowed-email" ]; then
+		cp "$SD_MOUNT/install/allowed-email" "$CHROOT_DIR/etc/dmz/allowed-email"
+		chmod 0444 "$CHROOT_DIR/etc/dmz/allowed-email"
+		pr "  OAuth: allowed-email copied to /etc/dmz/allowed-email"
+	fi
+else
+	for _o in google-client-id google-client-secret flask-secret-key allowed-email; do
+		if [ -f "$SD_MOUNT/install/$_o" ]; then
+			pr "  OAuth: WARNING install/$_o present but OAuth needs all of google-client-id, google-client-secret, flask-secret-key — skipping"
+			break
+		fi
+	done
+fi
 pr ""
 
 pr ">>> 8/10 chroot prep (binds, tmpfs /tmp, tmpfs /var/log)"

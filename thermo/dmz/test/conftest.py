@@ -13,6 +13,7 @@ from typing import Iterator
 
 import pytest
 
+import app as dmz_module
 from app import app as dmz_application
 
 
@@ -34,3 +35,13 @@ def restore_zone_public_key() -> Iterator[None]:
         os.environ["ZONE_PUBLIC_KEY"] = orig
     else:
         os.environ.pop("ZONE_PUBLIC_KEY", None)
+
+
+@pytest.fixture(autouse=True)
+def fast_long_poll_defaults(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """
+    Keep tests fast: default zone long-poll timeout is disabled unless a test opts in.
+    """
+    monkeypatch.setattr(dmz_module, "LONG_POLL_TIMEOUT_SECS", 0.0)
+    monkeypatch.setattr(dmz_module, "LONG_POLL_SLEEP_SECS", 0.001)
+    yield

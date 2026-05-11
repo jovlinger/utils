@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from typing import Any
 from unittest.mock import patch
 
+import app as app_module
 from app import app
 
 
@@ -483,6 +486,73 @@ def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
         assert js["sensors"]["temp_centigrade"] == 18.0
         assert js["sensors"]["humid_percent"] == 40.0
         assert js["command"] is None
+
+
+def test_zone_sensors_long_poll_immediate_when_ui_newer(dmz_ctx: object) -> None:
+    """No sleep when a newer UI command already exists for this zone."""
+    with app.test_client() as c:
+        _reset(c)
+        with app_module._zone_command_clock_lock:
+            app_module._last_zone_command_reply_mono["zlp"] = 100.0
+            app_module._ui_command_received_mono["zlp"] = 101.0
+        with patch("app.time.sleep", side_effect=AssertionError("unexpected sleep")):
+            r = c.post("/zone/zlp/sensors", json={"temp_centigrade": 20.0})
+            assert r.status_code == 200, r.get_data(as_text=True)
+
+
+def test_zone_sensors_long_poll_timeout_updates_last_sent(dmz_ctx: object) -> None:
+    """On timeout with stale command, DMZ still replies and advances reply-sent clock."""
+    with app.test_client() as c:
+        _reset(c)
+        with patch("app.LONG_POLL_TIMEOUT_SECS", 0.02), patch(
+            "app.LONG_POLL_SLEEP_SECS", 0.005
+        ):
+            with app_module._zone_command_clock_lock:
+                app_module._last_zone_command_reply_mono["zto"] = 200.0
+                app_module._ui_command_received_mono["zto"] = 200.0
+            r = c.post("/zone/zto/sensors", json={"temp_centigrade": 18.0})
+            assert r.status_code == 200, r.get_data(as_text=True)
+            with app_module._zone_command_clock_lock:
+                assert app_module._last_zone_command_reply_mono["zto"] > 200.0
+
+
+def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -> None:
+    """
+    Overlapping zone POSTs should all return promptly once a newer UI command arrives.
+    """
+    with app.test_client() as c0:
+        _reset(c0)
+    with patch("app.LONG_POLL_TIMEOUT_SECS", 1.0), patch("app.LONG_POLL_SLEEP_SECS", 0.01):
+        results: list[tuple[int, dict]] = []
+        started = threading.Event()
+
+        def _post_worker() -> None:
+            with app.test_client() as c:
+                started.set()
+                r = c.post("/zone/zo/sensors", json={"temp_centigrade": 21.0})
+                results.append((r.status_code, r.get_json() or {}))
+
+        t1 = threading.Thread(target=_post_worker)
+        t2 = threading.Thread(target=_post_worker)
+        t1.start()
+        t2.start()
+        assert started.wait(timeout=0.5)
+        # Let both workers enter the long-poll loop before UI command arrives.
+        time.sleep(0.05)
+        with app.test_client() as c:
+            ui = c.post(
+                "/ui/command",
+                json={"zone": "zo", "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"}},
+            )
+            assert ui.status_code == 200, ui.get_data(as_text=True)
+        t1.join(timeout=1.0)
+        t2.join(timeout=1.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
+        assert len(results) == 2
+        for status_code, body in results:
+            assert status_code == 200
+            assert (body.get("command") or {}).get("mode") == "COOL"
 
 
 def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:

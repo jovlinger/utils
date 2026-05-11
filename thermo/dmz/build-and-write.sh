@@ -17,6 +17,7 @@
 #   ./build-and-write.sh /run/media/you/PIBOOT                          # Linux: mount point -> parent disk (needs lsblk)
 #   ./build-and-write.sh --include-pub-key=.secrets/zone/pub.pem        # bake in zone Ed25519 pub key (build only)
 #   ./build-and-write.sh --include-pub-key=.secrets/zone/pub.pem /Volumes/PIBOOT
+#   ./build-and-write.sh --include-oauth-dir=.secrets/oauth ...         # bake Google OAuth + Flask SECRET_KEY (see ./SECRETS.md)
 #
 # Options (parsed before the optional BLOCK_DEVICE):
 #   --include-pub-key=<path>   Bake an Ed25519 zone public key into the SD image at install/zone-pub.pem.
@@ -27,6 +28,10 @@
 #                              Conventional path: thermo/dmz/.secrets/zone/pub.pem (produced by
 #                              `make -C thermo/dmz zone-keys` — see ./SECRETS.md). Use an absolute path
 #                              or a path relative to the dmz/ directory.
+#   --include-oauth-dir=<dir>  Bake Google OAuth client id/secret + Flask SECRET_KEY into install/
+#                              as google-client-id, google-client-secret, flask-secret-key (one line
+#                              each). Optional: allowed-email. dmz-boot.start copies them into the
+#                              chroot /etc/dmz/; start.sh exports env (see ./SECRETS.md).
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
@@ -54,19 +59,22 @@ if [ "$(id -u)" = "0" ] && [ -n "${SUDO_USER:-}" ]; then
 fi
 
 usage() {
-	echo "Usage: $0 [--include-pub-key=<path>] [BLOCK_DEVICE_OR_MOUNT]" >&2
+	echo "Usage: $0 [--include-pub-key=<path>] [--include-oauth-dir=<dir>] [BLOCK_DEVICE_OR_MOUNT]" >&2
 	echo "  No args:   build dist/dmz.img only (no sudo / dd)." >&2
 	echo "  With device or mount dir: same, then unmount (background during build) and sudo dd to disk." >&2
 	echo "  --include-pub-key=<path>: bake an Ed25519 zone pub key into install/zone-pub.pem on the SD" >&2
 	echo "    image; the DMZ chroot then enforces twoway → DMZ machine auth via ZONE_PUBLIC_KEY_PATH." >&2
 	echo "    Conventional path: .secrets/zone/pub.pem (see ./SECRETS.md and ../KEYS-AND-CERTS.md)." >&2
+	echo "  --include-oauth-dir=<dir>: bake Google OAuth + Flask secret files (see ./SECRETS.md)." >&2
 	echo "  Examples: $0 /dev/disk4   $0 /dev/rdisk4   $0 /Volumes/PIBOOT   $0 /dev/sdb" >&2
 	echo "            $0 --include-pub-key=.secrets/zone/pub.pem /Volumes/PIBOOT" >&2
+	echo "            $0 --include-oauth-dir=.secrets/oauth /Volumes/PIBOOT" >&2
 	exit 2
 }
 
 WRITE_DEV=""
 INCLUDE_PUB_KEY=""
+INCLUDE_OAUTH_DIR=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help)
@@ -78,6 +86,14 @@ while [ $# -gt 0 ]; do
 		;;
 	--include-pub-key)
 		echo "Error: --include-pub-key requires a value (use --include-pub-key=<path>)" >&2
+		exit 2
+		;;
+	--include-oauth-dir=*)
+		INCLUDE_OAUTH_DIR="${1#--include-oauth-dir=}"
+		shift
+		;;
+	--include-oauth-dir)
+		echo "Error: --include-oauth-dir requires a value (use --include-oauth-dir=<dir>)" >&2
 		exit 2
 		;;
 	"")
@@ -142,6 +158,24 @@ if [ -n "$INCLUDE_PUB_KEY" ]; then
 		echo "       (expected first line: -----BEGIN PUBLIC KEY-----)" >&2
 		exit 1
 	fi
+fi
+
+OAUTH_DIR_SRC=""
+if [ -n "$INCLUDE_OAUTH_DIR" ]; then
+	case "$INCLUDE_OAUTH_DIR" in
+	/*) OAUTH_DIR_SRC="$INCLUDE_OAUTH_DIR" ;;
+	*) OAUTH_DIR_SRC="$DMZ_DIR/$INCLUDE_OAUTH_DIR" ;;
+	esac
+	if [ ! -d "$OAUTH_DIR_SRC" ]; then
+		echo "Error: --include-oauth-dir: not a directory: $OAUTH_DIR_SRC" >&2
+		exit 1
+	fi
+	for _need in google-client-id google-client-secret flask-secret-key; do
+		if [ ! -f "$OAUTH_DIR_SRC/$_need" ]; then
+			echo "Error: --include-oauth-dir: missing required file $_need in $OAUTH_DIR_SRC (see ./SECRETS.md)" >&2
+			exit 1
+		fi
+	done
 fi
 
 UMOUNT_LOG=""
@@ -316,6 +350,11 @@ if [ -n "$ZONE_PUB_KEY_SRC" ]; then
 	echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway → DMZ auth ENABLED)"
 else
 	echo "    zone pub key: <none> (twoway → DMZ auth DISABLED; use --include-pub-key to enable)"
+fi
+if [ -n "$OAUTH_DIR_SRC" ]; then
+	echo "    OAuth files: $OAUTH_DIR_SRC -> install/{google-client-id,google-client-secret,flask-secret-key} (+ allowed-email if present)"
+else
+	echo "    OAuth files: <none> (human OAuth off unless env set at runtime; use --include-oauth-dir)"
 fi
 echo ""
 
@@ -550,6 +589,14 @@ mcopy -i "$IMG_FILE" "$DMZ_DIR/install/CARD-README.txt" ::README.txt
 # consumed by start.sh which sets ZONE_PUBLIC_KEY_PATH. See ../KEYS-AND-CERTS.md.
 if [ -n "$ZONE_PUB_KEY_SRC" ]; then
 	mcopy -i "$IMG_FILE" "$ZONE_PUB_KEY_SRC" ::install/zone-pub.pem
+fi
+if [ -n "$OAUTH_DIR_SRC" ]; then
+	for _o in google-client-id google-client-secret flask-secret-key; do
+		mcopy -i "$IMG_FILE" "$OAUTH_DIR_SRC/$_o" "::install/$_o"
+	done
+	if [ -f "$OAUTH_DIR_SRC/allowed-email" ]; then
+		mcopy -i "$IMG_FILE" "$OAUTH_DIR_SRC/allowed-email" ::install/allowed-email
+	fi
 fi
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz
