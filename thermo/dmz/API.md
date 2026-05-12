@@ -6,13 +6,17 @@ Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_au
 
 ---
 
+## `GET /`
+
+After OAuth, **`GET /authorize`** redirects here with **`302 Location: /`**. If **`THERMO_UI_PUBLIC_ORIGIN`** is set (public HTML UI base URL, no path), responds **`302`** to **`{THERMO_UI_PUBLIC_ORIGIN}/`**; otherwise **`302`** to **`GET /ui/context`** (dev / single-origin setups).
+
 ## `GET /login`
 
 Starts the Google OAuth redirect flow when OAuth credentials are configured. Returns `400` with a JSON error if OAuth is not configured.
 
 ## `GET /authorize`
 
-OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, and redirects to the zone listing. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
+OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, and redirects with **`302 Location: /`** (same origin); see **`GET /`** for the next hop to the public UI or **`/ui/context`**. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
 
 ## `GET /logout`
 

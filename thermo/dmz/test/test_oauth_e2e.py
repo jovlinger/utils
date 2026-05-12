@@ -9,7 +9,7 @@ Flow under test:
   2. GET /login                               → 302 toward accounts.google.com
   3. Fake IdP callback GET /authorize         → DMZ exchanges code for userinfo
      (mocked: no real network call)
-  4. DMZ sets session cookie, redirects to /ui/context landing page;
+  4. DMZ sets session cookie, **302** to ``/`` then (if ``THERMO_UI_PUBLIC_ORIGIN`` is set) **302** to that UI root; else **302** to ``/ui/context`` for dev;
      session must encode the authenticated email
   5. Repeat GET /ui/context with live session → 200 with zone payload
   6. GET /ui/context with forged session      → 302 back to /login (rejected)
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 from flask import redirect
@@ -57,6 +58,7 @@ def test_oauth_e2e_full_flow(
     after the faked callback the session grants access to /ui/context."""
     monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", _OAUTH_E2E_PATTERN)
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    monkeypatch.delenv("THERMO_UI_PUBLIC_ORIGIN", raising=False)
     with patch("app._oauth_enabled", True), patch("app.oauth", _make_oauth_mock(), create=True):
         with app.test_client() as c:
             # Step 1: unauthenticated browser GET → redirect to /login
@@ -73,15 +75,20 @@ def test_oauth_e2e_full_flow(
             r3 = c.get("/authorize?code=FAKECODE&state=FAKESTATE")
             assert r3.status_code == 302, r3.get_data(as_text=True)
 
-            # Step 4: session must carry the authenticated email; landing page is /ui/context
+            # Step 4: session + same-origin redirect "/" (second hop may go to public UI or /ui/context)
             with c.session_transaction() as sess:
                 user: Dict[str, Any] = sess.get("user") or {}
                 assert user.get("email") == _OAUTH_E2E_EMAIL.lower(), (
                     f"Session user email mismatch: {user}"
                 )
-            assert "/ui/context" in r3.headers["Location"], (
-                f"Post-auth redirect should target /ui/context, got: {r3.headers['Location']}"
+            loc3 = (r3.headers.get("Location") or "").strip()
+            assert loc3 == "/" or urlparse(loc3).path in ("/", ""), (
+                f"Post-auth redirect should target path /, got: {loc3!r}"
             )
+            r4 = c.get("/", follow_redirects=False)
+            assert r4.status_code == 302, r4.get_data(as_text=True)
+            loc4 = (r4.headers.get("Location") or "").strip()
+            assert loc4 == "/ui/context" or loc4.endswith("/ui/context"), loc4
 
             # Step 5: same client (session cookie carried automatically) → 200
             r5 = c.get("/ui/context")

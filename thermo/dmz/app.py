@@ -501,6 +501,15 @@ def _append_and_trim(lst: List[Any], item: Any) -> None:
 # and restrict who can update what.
 
 
+@app.route("/")
+def root() -> Any:
+    """Same-origin post-OAuth step: ``/authorize`` redirects here, then we send the browser onward."""
+    origin = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
+    if origin:
+        return redirect(f"{origin}/")
+    return redirect(url_for("ui_context"))
+
+
 @app.route("/login")
 def login() -> Any:
     """Redirect to Google OAuth. Restricted to gmail.com; allowlist via regex or legacy env."""
@@ -526,7 +535,7 @@ def authorize() -> Any:
     if not email_matches_allowlist(email):
         return {"error": "Access denied (email not on allowlist)"}, 403
     session["user"] = {"email": email}
-    return redirect(url_for("ui_context"))
+    return redirect("/")
 
 
 @app.route("/logout")
