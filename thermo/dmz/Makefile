@@ -20,7 +20,7 @@ clean:
 
 # Host venv, pytest on source (./test/run.sh). No container. Subdirs with their own targets (e.g. smoketest).
 test-local:
-	./test/run.sh
+	./test/run.sh test/ ../ui/tests/
 	$(MAKE) -C smoketest test-local
 
 # In-image pytest + smoketest (Docker + live HTTP pytest under smoketest/).

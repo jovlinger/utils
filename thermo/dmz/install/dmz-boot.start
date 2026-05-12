@@ -93,8 +93,10 @@ $NETLINE
 EOF
 ip addr add "$addr" dev eth0
 ip route add default via "$gw"
-# Default route stays on $gw; resolver 1.1.1.1 (`/root/sshd.sh` LAB script copies keys then sshd).
-echo "nameserver 1.1.1.1" >/etc/resolv.conf
+# Default route stays on $gw. Multiple public resolvers: transient EAI_AGAIN on one upstream
+# (or ISP/router DNS quirks) should not break OAuth metadata fetch to accounts.google.com.
+# `/root/sshd.sh` rescue uses the same trio; chroot gets the same list after tarball extract (below).
+printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
 cp "$SD_MOUNT/install/network.conf" /root/network.conf
 dump "ip addr" ip addr
 dump "ip route" ip route
@@ -130,6 +132,9 @@ if [ -n "$_missing" ]; then
 	dump "ls CHROOT/lib" ls -la "$CHROOT_DIR/lib" 2>&1 || true
 	exit 1
 fi
+# Chroot carries its own /etc/resolv.conf from the Docker export; align with host so Python
+# (Flask OAuth) does not depend on a stale or empty resolver list from the image build.
+printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >"$CHROOT_DIR/etc/resolv.conf"
 # Zone Ed25519 pub key: every build-and-write SD image bakes install/zone-pub.pem from .secrets/zone/pub.pem on the build host.
 # When present, start.sh exports ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem so the DMZ
 # enforces twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md, ../SECRETS.md).

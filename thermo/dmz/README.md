@@ -12,7 +12,7 @@ Internet-facing rendezvous service: interior **zones** and the **controller** ex
 
 Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
-`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`pytest`** on **`test/`** (non-fatal on failure; log **`/var/log/startup_tests.log`** in Docker) → **import probes** → **`python -u app.py`**.
+`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → optional **`pytest`** on **`test/`** when **`DMZ_RUN_STARTUP_PYTEST=1`** (otherwise skipped; log **`/var/log/startup_tests.log`** when enabled in Docker) → **import probes** → **`python -u app.py`**.
 
 | Path | Role |
 |------|------|

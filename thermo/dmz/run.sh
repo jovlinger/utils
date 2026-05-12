@@ -1,7 +1,8 @@
 # Invoked by start.sh as user `dmz` in the container, or directly with a venv on a dev machine.
 # Pi chroot matches the image layout (/app/...) but has no /.dockerenv — same runtime path as Docker.
 #
-# Runs pytest on test/ (non-fatal if it fails) then import/smoke probes, then the app.
+# Startup pytest on test/ is off unless DMZ_RUN_STARTUP_PYTEST=1 (then non-fatal if it fails).
+# Then import/smoke probes, then the app.
 
 hostname
 whoami
@@ -86,7 +87,12 @@ python_probe() {
 	_probe_python_note "python_probe: done"
 }
 
-run_dmz_pytest
+if [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "1" ] || [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "true" ] || [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "yes" ]; then
+	run_dmz_pytest
+else
+	echo "run.sh: skipping startup pytest (set DMZ_RUN_STARTUP_PYTEST=1 to run test/ before probes)"
+fi
+
 python_probe
 # Bundled thermo UI (proxies Flask on PORT) on UI_PORT — image has /app/ui; dev uses ../ui.
 UI_SERVER_PATH="$APP_ROOT/ui/ui_server.py"

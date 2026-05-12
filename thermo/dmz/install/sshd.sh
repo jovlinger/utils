@@ -1,5 +1,5 @@
 #!/bin/sh
-# LAB/rescue SSH: attach eth0 to 192.168.88.x/24 (default .200), gw 192.168.88.1, DNS 1.1.1.1,
+# LAB/rescue SSH: attach eth0 to 192.168.88.x/24 (default .200), gw 192.168.88.1, public DNS (1.1.1.1 + Google),
 # install rescue pubkeys into /root/.ssh/authorized_keys from on-device paths, start sshd.
 #
 # Run from console once eth0/carrier exists:
@@ -26,7 +26,7 @@ fi
 
 addr="${ip_in}/24"
 
-echo "==> /root/sshd.sh: addr=$addr default via=$ROUTER_GATEWAY (DNS 1.1.1.1)"
+echo "==> /root/sshd.sh: addr=$addr default via=$ROUTER_GATEWAY (DNS 1.1.1.1 8.8.8.8 8.8.4.4)"
 
 # Loopback: same rationale as dmz-boot.start.
 ip link set lo up
@@ -45,7 +45,7 @@ ip route flush dev eth0 2>/dev/null || true
 ip addr add "$addr" dev eth0
 ip route add default via "$ROUTER_GATEWAY" dev eth0
 
-printf '%s\n' "nameserver 1.1.1.1" >/etc/resolv.conf
+printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
 
 _SD="/media/mmcblk0"
 KEYSRC=""
