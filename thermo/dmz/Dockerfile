@@ -27,16 +27,19 @@ RUN apk add --no-cache \
 	gcc musl-dev libffi-dev openssl-dev python3-dev
 
 WORKDIR /app
-COPY requirements.txt .
+COPY requirements.txt strip_charset_normalizer_so.py .
 # pydantic<2 still uses pydantic-core; build from source on musl / odd arches when needed.
-RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt
+# charset_normalizer ships mypyc/native *.so wheels; on linux/arm/v6 + musl they can SIGSEGV (see cd.*.so).
+# Strip them in this layer (the cross-built image) so Python uses the pure modules — same idea as pip's vendor tree.
+RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt \
+	&& python3 /app/strip_charset_normalizer_so.py
 
 # -----------------------------------------------------------------------------
 # Runtime
 # -----------------------------------------------------------------------------
 FROM alpine:3.19
 
-RUN apk add --no-cache python3 tini su-exec openssl libffi \
+RUN apk add --no-cache python3 tini su-exec openssl libffi wget \
 	&& ln -sf /usr/bin/python3 /usr/bin/python
 
 RUN addgroup -g 1000 dmz \
