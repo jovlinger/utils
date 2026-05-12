@@ -101,6 +101,8 @@ if [ -f "$UI_SERVER_PATH" ]; then
 	fi
 	export THERMO_UI_BACKEND=dmz
 	export UI_PORT="${UI_PORT:-8090}"
+	# If the HTML UI is on another public port than Flask (e.g. WAN :80 → ui_server), set
+	# THERMO_UI_LOGIN_ORIGIN to the Flask base (no trailing slash), e.g. http://duck:5000
 	python -u "$UI_SERVER_PATH" &
 fi
 # cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).

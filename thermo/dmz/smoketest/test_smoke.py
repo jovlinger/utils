@@ -8,7 +8,7 @@ Auth model (smoketest vs production)
 ------------------------------------
 - **OAuth (human / “external client” paths):** `/zones`, `/debug/logs`, and
   `POST /zone/<name>/command` use OAuth when `GOOGLE_CLIENT_ID` is set: a
-  logged-in browser session (`ALLOWED_EMAIL`) is required unless the request
+  logged-in browser session (allowlisted Google email via `ALLOWED_EMAIL_PATTERN` / `ALLOWED_EMAIL`) is required unless the request
   carries a valid zone machine signature (see below). If `GOOGLE_CLIENT_ID` is
   **unset** (typical container/smoke image), OAuth is off — no session cookie, no
   redirect. Smoketests hit those endpoints with plain JSON and succeed.

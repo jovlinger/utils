@@ -9,6 +9,8 @@ import time
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 import app as app_module
 from app import app
 
@@ -35,6 +37,27 @@ def _get_200(c, url: str) -> dict:
 
 def _reset(c, commands: dict | None = None, sensors: dict | None = None) -> None:
     _post_200(c, "/test_reset", {"commands": commands or {}, "sensors": sensors or {}})
+
+
+def test_email_matches_allowlist_regex(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", r"^a\.b@gmail\.com$")
+    assert app_module.email_matches_allowlist("A.B@gmail.com") is True
+    assert app_module.email_matches_allowlist("axb@gmail.com") is False
+
+
+def test_email_matches_allowlist_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
+    monkeypatch.setenv("ALLOWED_EMAIL", "Legacy@Example.com")
+    assert app_module.email_matches_allowlist("legacy@example.com") is True
+    assert app_module.email_matches_allowlist("other@example.com") is False
+
+
+def test_email_matches_allowlist_dev_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    assert app_module.email_matches_allowlist("jovlinger@gmail.com") is True
+    assert app_module.email_matches_allowlist("x@gmail.com") is False
 
 
 def test_update_sensors_and_command_multi_zone(dmz_ctx: object) -> None:

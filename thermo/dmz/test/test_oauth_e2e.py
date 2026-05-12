@@ -20,12 +20,16 @@ from __future__ import annotations
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
+import pytest
 from flask import redirect
 
-from app import app, ALLOWED_EMAIL
+from app import app
+
+_OAUTH_E2E_EMAIL = "oauth-e2e-test@gmail.com"
+_OAUTH_E2E_PATTERN = r"^oauth-e2e-test@gmail\.com$"
 
 _FAKE_USERINFO: Dict[str, Any] = {
-    "email": ALLOWED_EMAIL,
+    "email": _OAUTH_E2E_EMAIL,
     "name": "Test User",
     "sub": "fake-google-sub-12345",
 }
@@ -36,7 +40,7 @@ def _make_oauth_mock() -> MagicMock:
     Minimal mock for ``app.oauth``.
 
     - ``authorize_redirect`` → immediate 302 to a fake Google URL (no network).
-    - ``authorize_access_token`` → returns fake userinfo for ALLOWED_EMAIL.
+    - ``authorize_access_token`` → returns fake userinfo for the allowlisted test address.
     """
     m = MagicMock()
     m.google.authorize_redirect.side_effect = lambda *a, **kw: redirect(
@@ -46,9 +50,13 @@ def _make_oauth_mock() -> MagicMock:
     return m
 
 
-def test_oauth_e2e_full_flow(dmz_ctx: object) -> None:
+def test_oauth_e2e_full_flow(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Steps 1–5: unauthenticated access triggers the IdP redirect chain;
     after the faked callback the session grants access to /ui/context."""
+    monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", _OAUTH_E2E_PATTERN)
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
     with patch("app._oauth_enabled", True), patch("app.oauth", _make_oauth_mock(), create=True):
         with app.test_client() as c:
             # Step 1: unauthenticated browser GET → redirect to /login
@@ -68,7 +76,7 @@ def test_oauth_e2e_full_flow(dmz_ctx: object) -> None:
             # Step 4: session must carry the authenticated email; landing page is /ui/context
             with c.session_transaction() as sess:
                 user: Dict[str, Any] = sess.get("user") or {}
-                assert user.get("email") == ALLOWED_EMAIL.lower(), (
+                assert user.get("email") == _OAUTH_E2E_EMAIL.lower(), (
                     f"Session user email mismatch: {user}"
                 )
             assert "/ui/context" in r3.headers["Location"], (
@@ -80,6 +88,23 @@ def test_oauth_e2e_full_flow(dmz_ctx: object) -> None:
             assert r5.status_code == 200, r5.get_data(as_text=True)
             body: Dict[str, Any] = r5.get_json() or {}
             assert "zones" in body, f"Expected 'zones' key in /ui/context response: {body}"
+
+
+def test_oauth_callback_rejects_email_not_on_allowlist(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Google returns a valid gmail.com address that does not match the allowlist regex."""
+    monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", r"^only-this@gmail\.com$")
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    m = MagicMock()
+    m.google.authorize_access_token.return_value = {
+        "userinfo": {"email": "other@gmail.com", "sub": "x"}
+    }
+    with patch("app._oauth_enabled", True), patch("app.oauth", m, create=True):
+        with app.test_client() as c:
+            r = c.get("/authorize?code=FAKECODE&state=FAKESTATE")
+            assert r.status_code == 403, r.get_data(as_text=True)
+            assert "allowlist" in (r.get_json() or {}).get("error", "").lower()
 
 
 def test_oauth_e2e_forged_session_rejected(dmz_ctx: object) -> None:

@@ -12,12 +12,15 @@ Long-term, make the backend connection into a TCP based queue (connection is awk
 
 from collections import deque, defaultdict
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 
 from flask import Flask, g, redirect, request, session, url_for
@@ -227,7 +230,34 @@ app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET")
 
 # OAuth enabled only when credentials are set
 _oauth_enabled = bool(app.config["GOOGLE_CLIENT_ID"])
-ALLOWED_EMAIL = os.environ.get("ALLOWED_EMAIL", "jovlinger@gmail.com")
+
+
+def email_matches_allowlist(raw_email: str) -> bool:
+    """
+    Return True if the Gmail OAuth email is permitted.
+
+    Resolution order (first that applies):
+    - ``ALLOWED_EMAIL_PATTERN``: Python ``re.fullmatch`` against the whole address
+      (case-insensitive). SD images bake this from ``install/allowed-email`` via
+      ``start.sh``.
+    - ``ALLOWED_EMAIL``: legacy exact single-address match (e.g. Docker ``-e``).
+    - Default dev address ``jovlinger@gmail.com`` when neither env var is set.
+    """
+    email = (raw_email or "").strip().lower()
+    if not email:
+        return False
+    pattern = (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip()
+    if pattern:
+        try:
+            return re.fullmatch(pattern, email, flags=re.IGNORECASE) is not None
+        except re.error as exc:
+            logger.error("ALLOWED_EMAIL_PATTERN is invalid: %s", exc)
+            return False
+    legacy = (os.environ.get("ALLOWED_EMAIL") or "").strip()
+    if legacy:
+        return email == legacy.lower()
+    return email == "jovlinger@gmail.com"
+
 
 if _oauth_enabled:
     from authlib.integrations.flask_client import OAuth
@@ -239,6 +269,72 @@ if _oauth_enabled:
         client_kwargs={"scope": "openid email profile"},
         authorize_params={"hd": "gmail.com"},
     )
+
+
+def _auth_config_detail() -> Dict[str, Any]:
+    """Operator-safe auth summary (no full secrets): booleans, sources, SHA256/ID suffixes."""
+    raw_inline = os.environ.get("ZONE_PUBLIC_KEY")
+    raw_path = os.environ.get("ZONE_PUBLIC_KEY_PATH")
+    zone_enforced = bool(raw_inline or raw_path)
+    zone_source = "none"
+    pem_bytes: Optional[bytes] = None
+    if raw_inline:
+        zone_source = "ZONE_PUBLIC_KEY(inline)"
+        pem_bytes = raw_inline.strip().encode("utf-8")
+    elif raw_path:
+        zone_source = f"ZONE_PUBLIC_KEY_PATH={raw_path}"
+        try:
+            pem_bytes = Path(raw_path).read_bytes()
+        except OSError as exc:
+            zone_source = f"{zone_source} (unreadable: {exc})"
+    zone_key_last4 = "n/a"
+    if pem_bytes:
+        zone_key_last4 = hashlib.sha256(pem_bytes).hexdigest()[-4:]
+    google_id = str(app.config.get("GOOGLE_CLIENT_ID") or "")
+    google_last4 = google_id[-4:] if len(google_id) >= 4 else ("n/a" if not google_id else google_id)
+    allow_pat = (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip()
+    allowlist_mode = "regex" if allow_pat else ("legacy_env" if (os.environ.get("ALLOWED_EMAIL") or "").strip() else "dev_default")
+    allow_pat_digest = "n/a"
+    if allow_pat:
+        allow_pat_digest = hashlib.sha256(allow_pat.encode("utf-8")).hexdigest()[-4:]
+    sk = str(app.secret_key or "")
+    secret_last4 = sk[-4:] if len(sk) >= 4 else ("n/a" if not sk else sk)
+    default_dev = sk == "dev-secret-change-in-production"
+    return {
+        "zone_auth_enforced": zone_enforced,
+        "zone_pubkey_source": zone_source,
+        "zone_pubkey_sha256_last4": zone_key_last4,
+        "oauth_enabled": _oauth_enabled,
+        "google_client_id_last4": google_last4,
+        "allowlist_mode": allowlist_mode,
+        "allowlist_pattern_sha256_last4": allow_pat_digest,
+        "flask_secret_key_last4": secret_last4,
+        "flask_secret_is_default_dev": default_dev,
+        "env": os.environ.get("ENV"),
+    }
+
+
+def _log_auth_startup() -> None:
+    d = _auth_config_detail()
+    logger.info(
+        "auth startup: zone_enforced=%s zone_src=%s zone_pub_sha256_last4=%s "
+        "oauth=%s google_client_id_last4=%s allowlist_mode=%s allowlist_pat_sha256_last4=%s "
+        "flask_secret_last4=%s default_dev_secret=%s env=%s port=%s",
+        d["zone_auth_enforced"],
+        d["zone_pubkey_source"],
+        d["zone_pubkey_sha256_last4"],
+        d["oauth_enabled"],
+        d["google_client_id_last4"],
+        d["allowlist_mode"],
+        d["allowlist_pattern_sha256_last4"],
+        d["flask_secret_key_last4"],
+        d["flask_secret_is_default_dev"],
+        d.get("env"),
+        os.environ.get("PORT", "5000"),
+    )
+
+
+_log_auth_startup()
 
 
 def _client_ip(req: Any) -> str:
@@ -272,18 +368,12 @@ def _record_zone_sensor_attempt(
 
 def _diagnostics_payload() -> Dict[str, Any]:
     """Shared JSON for ``/ui/diagnostics`` and augmented ``GET /debug/logs``."""
+    cfg = _auth_config_detail()
     return {
         "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "process_start_utc": _START_UTC_ISO,
         "uptime_seconds": round(time.time() - _START_MONO, 3),
-        "config": {
-            "zone_auth_enforced": bool(
-                os.environ.get("ZONE_PUBLIC_KEY")
-                or os.environ.get("ZONE_PUBLIC_KEY_PATH")
-            ),
-            "oauth_enabled": _oauth_enabled,
-            "env": os.environ.get("ENV"),
-        },
+        "config": cfg,
         "access_log": list(_access_log),
         "zone_attempts": list(_zone_attempts),
     }
@@ -413,7 +503,7 @@ def _append_and_trim(lst: List[Any], item: Any) -> None:
 
 @app.route("/login")
 def login() -> Any:
-    """Redirect to Google OAuth. Restricted to gmail.com; only ALLOWED_EMAIL accepted."""
+    """Redirect to Google OAuth. Restricted to gmail.com; allowlist via regex or legacy env."""
     if not _oauth_enabled:
         return {"error": "OAuth not configured"}, 400
     redirect_uri = url_for("authorize", _external=True)
@@ -422,7 +512,7 @@ def login() -> Any:
 
 @app.route("/authorize")
 def authorize() -> Any:
-    """OAuth callback. Verify email is ALLOWED_EMAIL, then set session."""
+    """OAuth callback. Verify email against allowlist, then set session."""
     if not _oauth_enabled:
         return redirect(url_for("get_zones"))
     try:
@@ -431,10 +521,10 @@ def authorize() -> Any:
         return {"error": "OAuth failed"}, 400
     userinfo = token.get("userinfo") or {}
     email = (userinfo.get("email") or "").strip().lower()
-    if not email.endswith("@gmail.com"):
-        return {"error": "Only gmail.com accounts allowed"}, 403
-    if email != ALLOWED_EMAIL.lower():
-        return {"error": f"Access restricted to {ALLOWED_EMAIL}"}, 403
+    if not (email.endswith("@gmail.com") or email.endswith("@googlemail.com")):
+        return {"error": "Only Gmail addresses allowed"}, 403
+    if not email_matches_allowlist(email):
+        return {"error": "Access denied (email not on allowlist)"}, 403
     session["user"] = {"email": email}
     return redirect(url_for("ui_context"))
 
@@ -790,6 +880,15 @@ def debug_logs() -> Any:
     bundle = _diagnostics_payload()
     logs_list = list(bundle.pop("access_log"))
     return {"logs": logs_list, **bundle}
+
+
+if os.environ.get("ENV") == "UI_INTEGRATION":
+
+    @app.route("/test/ui_session", methods=["GET"])
+    def test_ui_session() -> Any:
+        """Integration tests only (``ENV=UI_INTEGRATION``): set a logged-in session."""
+        session["user"] = {"email": "integration-test@gmail.com"}
+        return {"ok": True, "email": "integration-test@gmail.com"}
 
 
 @app.route("/test_reset", methods=["POST"])

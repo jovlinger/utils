@@ -12,7 +12,7 @@ Starts the Google OAuth redirect flow when OAuth credentials are configured. Ret
 
 ## `GET /authorize`
 
-OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL`, sets the session, and redirects to the zone listing. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
+OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, and redirects to the zone listing. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
 
 ## `GET /logout`
 
@@ -32,11 +32,11 @@ Returns a JSON object of all known zones and each zone’s latest command and se
 
 ## `GET /ui/context`
 
-JSON snapshot for the shared thermo UI: **`zones`** (every zone that has ever posted sensors or command), **`environments`** (one table row per zone with latest sensor temps / humidity / time; nulls when a zone has no sensor data yet), **`zone_states`** (per-zone `command` and `sensors` as in `GET /zones`). **Not** protected by OAuth or machine auth (intended for the bundled UI; restrict at the network edge if needed).
+JSON snapshot for the shared thermo UI: **`zones`**, **`environments`**, **`zone_states`**. When Google OAuth is configured, **browser** requests (`Accept` containing `text/html`) are redirected to **`/login`**; JSON clients without a session receive **`401`**. The bundled **`ui_server`** uses a JSON probe and forwards the browser **`Cookie`** header; on **DMZ** it responds **`302`** to Flask **`/login`** when the probe gets **`401`**.
 
 ## `POST /ui/command`
 
-JSON body `{"zone": "<name>", "command": { ... }}` — same validation and storage as **`POST /zone/<zonename>/command`** (ASCII-only JSON strings). **Not** protected by OAuth or machine auth for now. Response echoes `zone`, `command`, `sensors`, and `time`.
+JSON body `{"zone": "<name>", "command": { ... }}` — same validation and storage as **`POST /zone/<zonename>/command`**. Same OAuth rules as **`GET /ui/context`** when Google OAuth is configured.
 
 ## `GET /debug/logs`
 
