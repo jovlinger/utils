@@ -164,6 +164,10 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         _symlink_mock_bins(mock_bins, mpy)
         env = _mock_subprocess_env(mock_file, home, mock_bins)
         env["THERMO_ENV_FILE"] = "config/ci.env"
+        # deploy.sh uses /run and /var/log by default; macOS has no writable /run — keep everything under td.
+        deploy_fake_root = td / "deploy_fake_root"
+        deploy_fake_root.mkdir()
+        env["THERMO_DEPLOY_ROOT"] = str(deploy_fake_root)
         _configure_mock_expectations(mpy, mock_file)
 
         result = subprocess.run(

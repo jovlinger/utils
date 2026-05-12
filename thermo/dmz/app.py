@@ -336,8 +336,9 @@ _last_zone_command_reply_mono: Dict[str, float] = defaultdict(float)
 _zone_command_clock_lock = threading.Lock()
 ### END STATE
 
+# Overridable via env (e2e subprocess) or monkeypatch on this module (dmz unit tests).
 LONG_POLL_TIMEOUT_SECS: float = float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "10"))
-LONG_POLL_SLEEP_SECS: float = 1.0
+LONG_POLL_SLEEP_SECS: float = float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0"))
 
 
 def _lastor(lst: List[Any], default: Optional[Any] = None) -> Any:

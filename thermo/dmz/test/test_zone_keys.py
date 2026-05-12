@@ -19,6 +19,11 @@ THERMO_DIR = DMZ_DIR.parent
 GEN_KEYS = THERMO_DIR / "test" / "gen_keys.py"
 MAKEFILE = DMZ_DIR / "Makefile"
 
+pytestmark = pytest.mark.skipif(
+    not GEN_KEYS.is_file() or not MAKEFILE.is_file(),
+    reason="Full thermo checkout required (dmz/Makefile + thermo/test/gen_keys.py)",
+)
+
 
 def _load_pem_pub(pem_bytes: bytes):
     from cryptography.hazmat.primitives.serialization import load_pem_public_key

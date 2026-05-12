@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, Dict, Mapping, Optional
 
 import pytest
 import requests
@@ -51,6 +52,66 @@ DMZ_URL = os.environ.get("DMZ_URL", "http://127.0.0.1:5001")
 ONBOARD_URL = os.environ.get("ONBOARD_URL", "http://127.0.0.1:5002")
 ZONE_NAME = os.environ.get("E2E_ZONE_NAME", "e2ezone")
 
+# Local subprocess DMZ: short long-poll so twoway's first POST returns quickly (app reads these at import).
+_E2E_LOCAL_DMZ_ENV: Dict[str, str] = {
+    "LONG_POLL_TIMEOUT_SECS": os.environ.get("E2E_LONG_POLL_TIMEOUT_SECS", "0.5"),
+    "LONG_POLL_SLEEP_SECS": os.environ.get("E2E_LONG_POLL_SLEEP_SECS", "0.1"),
+}
+
+# Monotonic trace origin (reset per e2e_services setup).
+_E2E_TRACE_T0: Optional[float] = None
+
+
+def _e2e_trace_reset() -> None:
+    global _E2E_TRACE_T0
+    _E2E_TRACE_T0 = None
+
+
+def _e2e_trace(msg: str) -> None:
+    """Timeline on stderr (visible in pytest output; use ``pytest -s`` to see live)."""
+    global _E2E_TRACE_T0
+    now = time.monotonic()
+    if _E2E_TRACE_T0 is None:
+        _E2E_TRACE_T0 = now
+    dt = now - _E2E_TRACE_T0
+    print(f"[e2e +{dt:7.3f}s] {msg}", file=sys.stderr, flush=True)
+
+
+def _e2e_dump_local_stderr(services: Mapping[str, Any]) -> None:
+    paths = services.get("_e2e_stderr_paths") if isinstance(services, dict) else None
+    if not paths:
+        return
+    _e2e_trace("---- subprocess stderr (local mode; read before teardown) ----")
+    for name, path in sorted(paths.items(), key=lambda x: x[0]):
+        p = Path(path)
+        _e2e_trace(f"--- {name}: {p} ---")
+        try:
+            data = p.read_bytes()
+            sys.stderr.buffer.write(data)
+            if data and not data.endswith(b"\n"):
+                sys.stderr.buffer.write(b"\n")
+        except OSError as exc:
+            _e2e_trace(f"(read failed: {exc})")
+    for label, proc in sorted(services.items()):
+        if label.startswith("_") or not isinstance(proc, subprocess.Popen):
+            continue
+        _e2e_trace(f"poll {label}={proc.poll()}")
+
+
+def _e2e_zones_trace(step: str) -> Dict[str, Any]:
+    try:
+        r = requests.get(f"{DMZ_URL}/zones", timeout=2)
+        body = r.json() if r.ok and r.text else {}
+        keys = list(body.keys()) if isinstance(body, dict) else []
+        _e2e_trace(
+            f"{step}: GET {DMZ_URL}/zones -> {r.status_code} keys={keys!r} "
+            f"has_{ZONE_NAME}={ZONE_NAME in body if isinstance(body, dict) else False}"
+        )
+        return body if isinstance(body, dict) else {}
+    except requests.RequestException as exc:
+        _e2e_trace(f"{step}: GET /zones failed: {exc!r}")
+        return {}
+
 
 def _in_docker_compose() -> bool:
     """True when running e2e against docker-compose service hostnames."""
@@ -69,43 +130,48 @@ def _gen_keys(tmpdir: Path) -> tuple[Path, Path]:
     return priv_path, pub_path
 
 
-def _start_dmz(env: dict) -> subprocess.Popen:
+def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5001", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
         [sys.executable, "app.py"],
         cwd=DMZ_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=stderr,
     )
 
 
-def _start_onboard(env: dict) -> subprocess.Popen:
+def _start_onboard(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5002", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
         [sys.executable, "app.py"],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=stderr,
     )
 
 
-def _start_twoway(env: dict) -> subprocess.Popen:
+def _twoway_endpoints() -> tuple[str, str, str]:
     readfrom = f"{ONBOARD_URL}/environment"
-    dmz = f"{DMZ_URL}/zone/{ZONE_NAME}/sensors"
+    dmz_sensors = f"{DMZ_URL}/zone/{ZONE_NAME}/sensors"
     writeto = f"{ONBOARD_URL}/daikin"
+    return readfrom, dmz_sensors, writeto
+
+
+def _start_twoway(env: dict, stderr: Any) -> subprocess.Popen:
+    readfrom, dmz_sensors, writeto = _twoway_endpoints()
     env = {
         **os.environ,
         "ENV": "DOCKERTEST",
         **env,
     }
     return subprocess.Popen(
-        [sys.executable, "twoway.py", readfrom, dmz, writeto],
+        [sys.executable, "twoway.py", readfrom, dmz_sensors, writeto],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=stderr,
     )
 
 
@@ -125,7 +191,11 @@ def _wait_for(url: str, timeout: float = 10.0) -> bool:
 @pytest.fixture
 def e2e_services():
     """Local: start dmz, onboard, twoway with temp keys. Compose: use deployed stack (HTTP only)."""
+    _e2e_trace_reset()
     if _in_docker_compose():
+        _e2e_trace(
+            f"fixture: docker_compose DMZ_URL={DMZ_URL} ONBOARD_URL={ONBOARD_URL} ZONE={ZONE_NAME}"
+        )
         if not _wait_for(f"{DMZ_URL}/zones", timeout=30):
             pytest.fail("dmz did not start (docker-compose)")
         if not _wait_for(f"{ONBOARD_URL}/help", timeout=30):
@@ -154,35 +224,56 @@ def e2e_services():
         yield {}
         return
 
+    _e2e_trace(
+        f"fixture: local_subprocess DMZ_URL={DMZ_URL} ONBOARD_URL={ONBOARD_URL} ZONE={ZONE_NAME}"
+    )
     twoway_proc: subprocess.Popen | None = None
+    err_handles: list[Any] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         priv_path, pub_path = _gen_keys(tmp)
         pub_pem = pub_path.read_text()
         priv_pem = priv_path.read_text()
 
-        dmz_env = {"ZONE_PUBLIC_KEY": pub_pem}
+        dmz_env = {**_E2E_LOCAL_DMZ_ENV, "ZONE_PUBLIC_KEY": pub_pem}
         onboard_env = {"ZONE_PRIVATE_KEY": priv_pem, "ZONE_NAME": ZONE_NAME}
 
-        dmz_proc = _start_dmz(dmz_env)
-        onboard_proc = _start_onboard(onboard_env)
+        dmz_err = open(tmp / "dmz.stderr.log", "wb", buffering=0)
+        onboard_err = open(tmp / "onboard.stderr.log", "wb", buffering=0)
+        twoway_err = open(tmp / "twoway.stderr.log", "wb", buffering=0)
+        err_handles.extend([dmz_err, onboard_err, twoway_err])
+
+        dmz_proc = _start_dmz(dmz_env, stderr=dmz_err)
+        onboard_proc = _start_onboard(onboard_env, stderr=onboard_err)
+        stderr_paths = {
+            "dmz": tmp / "dmz.stderr.log",
+            "onboard": tmp / "onboard.stderr.log",
+            "twoway": tmp / "twoway.stderr.log",
+        }
         try:
             if not _wait_for(f"{DMZ_URL}/zones", timeout=5):
                 dmz_proc.terminate()
                 onboard_proc.terminate()
                 pytest.fail("dmz did not start")
+            _e2e_trace("fixture: dmz /zones reachable")
             if not _wait_for(f"{ONBOARD_URL}/help", timeout=5):
                 dmz_proc.terminate()
                 onboard_proc.terminate()
                 pytest.fail("onboard did not start")
+            _e2e_trace("fixture: onboard /help reachable")
 
-            twoway_proc = _start_twoway(onboard_env)
+            rf, dmz_post, wt = _twoway_endpoints()
+            _e2e_trace(f"fixture: starting twoway poll={rf!r} post={dmz_post!r} writeto={wt!r}")
+
+            twoway_proc = _start_twoway(onboard_env, stderr=twoway_err)
             time.sleep(0.5)  # let twoway start
+            _e2e_trace(f"fixture: twoway started pid={twoway_proc.pid}")
 
             yield {
                 "dmz": dmz_proc,
                 "onboard": onboard_proc,
                 "twoway": twoway_proc,
+                "_e2e_stderr_paths": stderr_paths,
             }
         finally:
             if twoway_proc is not None:
@@ -195,53 +286,78 @@ def e2e_services():
                     p.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     p.kill()
+            for fh in err_handles:
+                try:
+                    fh.close()
+                except OSError:
+                    pass
 
 
 def test_e2e_sensors_and_commands(e2e_services):
     """Inject fake readings, wait for twoway sync, read from dmz. Send command, verify in onboard."""
-    r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
-    assert r.status_code == 200
-    r = requests.post(f"{ONBOARD_URL}/test/reset")
-    assert r.status_code == 200
+    try:
+        _e2e_trace("test: POST dmz /test_reset")
+        r = requests.post(f"{DMZ_URL}/test_reset", json={"commands": {}, "sensors": {}})
+        _e2e_trace(f"test: /test_reset -> {r.status_code}")
+        assert r.status_code == 200
+        _e2e_trace("test: POST onboard /test/reset")
+        r = requests.post(f"{ONBOARD_URL}/test/reset")
+        _e2e_trace(f"test: onboard /test/reset -> {r.status_code}")
+        assert r.status_code == 200
 
-    # Inject fake sensor readings on onboard
-    r = requests.post(
-        f"{ONBOARD_URL}/test/inject_readings",
-        json={"temp_centigrade": 19.5, "humid_percent": 55.0},
-    )
-    assert r.status_code == 200
+        _e2e_zones_trace("test: after resets")
 
-    # Wait for twoway to poll and push to dmz (DOCKERTEST uses 0.1s interval)
-    time.sleep(1.0)
+        # Inject fake sensor readings on onboard
+        _e2e_trace("test: POST onboard /test/inject_readings (19.5C, 55%)")
+        r = requests.post(
+            f"{ONBOARD_URL}/test/inject_readings",
+            json={"temp_centigrade": 19.5, "humid_percent": 55.0},
+        )
+        _e2e_trace(f"test: inject_readings -> {r.status_code} body[:200]={r.text[:200]!r}")
+        assert r.status_code == 200
 
-    # Read zones from dmz - should see our sensor data
-    r = requests.get(f"{DMZ_URL}/zones")
-    assert r.status_code == 200
-    zones = r.json()
-    assert ZONE_NAME in zones
-    assert zones[ZONE_NAME]["sensors"]["temp_centigrade"] == 19.5
-    assert zones[ZONE_NAME]["sensors"]["humid_percent"] == 55.0
+        # Wait for twoway to poll and push to dmz (DOCKERTEST uses 0.1s interval)
+        for i in range(10):
+            time.sleep(0.1)
+            _e2e_zones_trace(f"test: wait_{i + 1}/10 (+{(i + 1) * 0.1:.1f}s after inject)")
 
-    # Send command via dmz
-    r = requests.post(
-        f"{DMZ_URL}/zone/{ZONE_NAME}/command",
-        json={"power": True, "mode": "HEAT", "temp_c": 22},
-    )
-    assert r.status_code == 200
+        # Read zones from dmz - should see our sensor data
+        _e2e_trace("test: final GET /zones before assert")
+        r = requests.get(f"{DMZ_URL}/zones")
+        _e2e_trace(f"test: final /zones -> {r.status_code} raw[:500]={r.text[:500]!r}")
+        assert r.status_code == 200
+        zones = r.json()
+        assert ZONE_NAME in zones
+        assert zones[ZONE_NAME]["sensors"]["temp_centigrade"] == 19.5
+        assert zones[ZONE_NAME]["sensors"]["humid_percent"] == 55.0
 
-    # Wait for twoway to poll and push command to onboard
-    time.sleep(1.0)
+        # Send command via dmz
+        _e2e_trace("test: POST dmz /zone/.../command")
+        r = requests.post(
+            f"{DMZ_URL}/zone/{ZONE_NAME}/command",
+            json={"power": True, "mode": "HEAT", "temp_c": 22},
+        )
+        _e2e_trace(f"test: command -> {r.status_code}")
+        assert r.status_code == 200
 
-    # Read commands from onboard /daikin
-    r = requests.get(f"{ONBOARD_URL}/daikin")
-    assert r.status_code == 200
-    cmds = r.json()
-    assert len(cmds) >= 1
-    # Most recent command should be heat_22 -> power=True, mode=HEAT, temp 22
-    latest = cmds[0]["command"]
-    assert latest.get("power") is True
-    assert latest.get("mode") == "HEAT"
-    assert latest.get("half_c") == 44  # 22 * 2
+        # Wait for twoway to poll and push command to onboard
+        time.sleep(1.0)
+
+        # Read commands from onboard /daikin
+        _e2e_trace("test: GET onboard /daikin")
+        r = requests.get(f"{ONBOARD_URL}/daikin")
+        _e2e_trace(f"test: /daikin -> {r.status_code}")
+        assert r.status_code == 200
+        cmds = r.json()
+        assert len(cmds) >= 1
+        # Most recent command should be heat_22 -> power=True, mode=HEAT, temp 22
+        latest = cmds[0]["command"]
+        assert latest.get("power") is True
+        assert latest.get("mode") == "HEAT"
+        assert latest.get("half_c") == 44  # 22 * 2
+    except AssertionError:
+        _e2e_dump_local_stderr(e2e_services)
+        raise
 
 
 def test_e2e_partial_command_merged_on_onboard(e2e_services):

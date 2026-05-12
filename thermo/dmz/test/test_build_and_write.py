@@ -26,6 +26,11 @@ THERMO_DIR = DMZ_DIR.parent
 GEN_KEYS = THERMO_DIR / "test" / "gen_keys.py"
 BUILD = DMZ_DIR / "build-and-write.sh"
 
+pytestmark = pytest.mark.skipif(
+    not BUILD.is_file(),
+    reason="build-and-write.sh not in tree (e.g. DMZ runtime image lacks SD build scripts)",
+)
+
 
 def _have(cmd: str) -> bool:
     return shutil.which(cmd) is not None

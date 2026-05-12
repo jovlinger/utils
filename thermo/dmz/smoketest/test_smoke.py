@@ -193,13 +193,14 @@ def test_smoke_access_log_history(http: requests.Session) -> None:
 
     body = _get_json(http, "/debug/logs")
     paths: Set[str] = set(_paths_from_access_log(body["logs"]))
+    # GET /debug/logs serializes _access_log before after_request runs, so this
+    # request does not appear in the returned tail — only prior paths do.
     required = {
         "/test_reset",
         "/zone/logtest-a/sensors",
         "/zone/logtest-b/sensors",
         "/zone/logtest-a/command",
         "/zones",
-        "/debug/logs",
     }
     missing = required - paths
     assert not missing, f"access log missing paths: {missing}; have sample {list(paths)[:15]}"
