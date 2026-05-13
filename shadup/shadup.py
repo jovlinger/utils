@@ -23,6 +23,31 @@ META_KEY_SHADIR = "shadir"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
+# Characters invalid in a Windows path segment (excluding ``:``, handled below).
+_TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
+
+
+def tag_mirror_dir_name(tag: str) -> str:
+    """Map a logical DB tag to one directory name under ``files/_tags/``.
+
+    Mirrors must work on Windows and typical POSIX layouts. A legacy synthetic
+    tag like ``artist:Depeche Mode`` becomes ``artist;Depeche Mode``, matching
+    ``importtags.build_tags_from_export``. Other Windows-forbidden segment
+    characters become ``_``; ASCII control characters become ``_``. Trailing
+    spaces and periods are stripped (Windows).
+    """
+    if tag == NOTAGS_DIR_NAME:
+        return tag
+    parts: list[str] = []
+    for ch in tag:
+        if ch == ":":
+            parts.append(";")
+        elif ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
+            parts.append("_")
+        else:
+            parts.append(ch)
+    s = "".join(parts).rstrip(" .")
+    return s if s else "_empty_tag"
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
 
@@ -407,9 +432,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_trm.add_argument("tags", nargs="+", metavar="TAG", help="Tags to remove")
 
+    p_tclear = sub.add_parser(
+        "tag-clear",
+        help="Remove all tags for a stored file identified by path",
+    )
+    p_tclear.add_argument(
+        "path",
+        metavar="PATH",
+        help="Path to a stored file (symlink into shadir) or a regular file",
+    )
+
+    p_ctags = sub.add_parser(
+        "clear-tags",
+        help="Delete every tag entry in the database (destructive)",
+    )
+    p_ctags.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Required to actually delete all rows from sha_tags",
+    )
+
     sub.add_parser(
         "refresh-extracted-tags",
-        help="Rebuild _tags/ symlinks under files/ from filesystem + DB tags",
+        help=(
+            "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
+            "(per-tag folder names are sanitized for the filesystem; see tag_mirror_dir_name)"
+        ),
     )
 
     return parser
@@ -823,6 +872,37 @@ def handle_tag_rm(
     )
 
 
+def handle_tag_clear(conn: sqlite3.Connection, shadir: str, path_arg: str) -> None:
+    """Remove all tags for the stored file at *path_arg* (delete ``sha_tags`` row)."""
+    shasum = resolve_path_to_shasum(shadir, path_arg)
+    if not shasum:
+        raise SystemExit(f"cannot resolve path to stored file: {path_arg!r}")
+    conn.execute("DELETE FROM sha_tags WHERE shasum = ?", (shasum,))
+    conn.commit()
+    out(
+        "tags for {shasum}: {tags}",
+        0,
+        shasum=shasum,
+        tags=json.dumps(get_tags(conn, shasum)),
+        kind="data",
+    )
+
+
+def handle_clear_tags(conn: sqlite3.Connection, *, force: bool) -> None:
+    """Remove every row from ``sha_tags`` (only when *force* is true)."""
+    if not force:
+        print(
+            "clear-tags: no action taken (this would delete all tag rows in "
+            "sha_tags; repeat with -f / --force to proceed)",
+            file=sys.stderr,
+        )
+        return
+    cur = conn.execute("DELETE FROM sha_tags")
+    deleted = cur.rowcount
+    conn.commit()
+    out("clear-tags deleted {n} sha_tags row(s)", 0, n=deleted, kind="data")
+
+
 def _parent_dir_key(dir_key: str) -> str:
     """Parent POSIX directory key; empty if ``dir_key`` has a single segment."""
     if not dir_key or "/" not in dir_key:
@@ -1128,7 +1208,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
        unioning each file's DB tags into its directory and propagating to
        ancestors.
     2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag>/<basename[(n)]>`` → ``<files>/<dir_key>`` symlinks.
+       ``files/_tags/<tag_mirror_dir_name(tag)>/<basename[(n)]>`` →
+       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_dir_name`).
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1150,7 +1231,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
 
     for tag, name, dir_key in rows:
-        link = os.path.join(files_root, "_tags", tag, name)
+        tag_dir = tag_mirror_dir_name(tag)
+        link = os.path.join(files_root, "_tags", tag_dir, name)
         target = os.path.join(files_root, *dir_key.split("/"))
         parent = os.path.dirname(link)
         os.makedirs(parent, exist_ok=True)
@@ -1159,9 +1241,9 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
         rel_target = os.path.relpath(target, parent)
         os.symlink(rel_target, link)
         out(
-            "refresh-extracted-tags mirror {tag}/{name} -> {dir_key}",
+            "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
             2,
-            tag=tag,
+            tag_dir=tag_dir,
             name=name,
             dir_key=dir_key,
         )
@@ -2404,6 +2486,12 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
         return 0
     if action == "tag-rm":
         handle_tag_rm(conn, shadir, args.path, args.tags)
+        return 0
+    if action == "tag-clear":
+        handle_tag_clear(conn, shadir, args.path)
+        return 0
+    if action == "clear-tags":
+        handle_clear_tags(conn, force=args.force)
         return 0
     if action == "refresh-extracted-tags":
         out("refresh-extracted-tags", 1)

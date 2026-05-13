@@ -2,7 +2,9 @@
 
 Layout under ``<parent-of-shadir>/files``::
 
-  ``_tags/<tag>/<basename-or-basename(n)>`` → symlink to ``<root>/<dir-key>``
+  ``_tags/<tag_mirror_dir_name(tag)>/<basename-or-basename(n)>`` → symlink
+  to ``<root>/<dir-key>`` (logical ``tag`` is unchanged in the DB; mirror
+  directory names sanitize ``:`` and other reserved characters).
 
 * ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
 * **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
@@ -39,6 +41,7 @@ def _load_shadup() -> object:
 _sh = _load_shadup()
 plan_refresh_extracted_tag_mirrors = _sh.plan_refresh_extracted_tag_mirrors
 NOTAGS_DIR_NAME = _sh.NOTAGS_DIR_NAME
+tag_mirror_dir_name = _sh.tag_mirror_dir_name
 
 
 def _run_shadup(
@@ -151,7 +154,7 @@ def _expected_find_lines_from_plan(
 
     add_chain(fr / "_tags")
     for tag, name, _dk in rows:
-        add_chain(fr / "_tags" / tag / name)
+        add_chain(fr / "_tags" / tag_mirror_dir_name(tag) / name)
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
@@ -161,7 +164,7 @@ def _symlink_checks_from_plan(
     """(path relative to ``files_root``, expected readlink text)."""
     out: list[tuple[Path, str]] = []
     for tag, name, dk in rows:
-        rel = Path("_tags") / tag / name
+        rel = Path("_tags") / tag_mirror_dir_name(tag) / name
         target = files_root / dk
         link_parent = (files_root / rel).parent
         txt = os.path.relpath(target, link_parent)
@@ -170,13 +173,20 @@ def _symlink_checks_from_plan(
 
 
 def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
-    """Map ``_tags/<tag>/<name>`` back to dir_key using the plan."""
+    """Map ``_tags/<tag_dir>/<name>`` back to dir_key using the plan."""
     assert rel.parts[0] == "_tags"
-    tag, name = rel.parts[1], rel.parts[2]
+    tag_fs, name = rel.parts[1], rel.parts[2]
     for t, n, dk in rows:
-        if t == tag and n == name:
+        if tag_mirror_dir_name(t) == tag_fs and n == name:
             return dk
     raise AssertionError(f"no plan row for {rel}")
+
+
+def test_tag_mirror_dir_name_legacy_artist_colon() -> None:
+    assert tag_mirror_dir_name("artist:depechemode") == "artist;depechemode"
+    assert tag_mirror_dir_name("rock") == "rock"
+    assert tag_mirror_dir_name(NOTAGS_DIR_NAME) == NOTAGS_DIR_NAME
+    assert tag_mirror_dir_name('a<b>c') == "a_b_c"
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:

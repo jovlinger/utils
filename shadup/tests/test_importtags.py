@@ -64,10 +64,12 @@ def _run_importtags(
     cwd: Path,
     shadir: Path,
     metatool: str | Path,
-    album: Path,
-    *,
+    first_album: Path,
+    *rest_albums,
     reset: bool = False,
     dryrun: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
     db: Path | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
@@ -90,7 +92,12 @@ def _run_importtags(
         cmd.append("--reset")
     if dryrun:
         cmd.append("--dryrun")
-    cmd.append(str(album))
+    if verbose:
+        cmd.append("-v")
+    if debug:
+        cmd.append("--debug")
+    cmd.append(str(first_album))
+    cmd.extend(str(a) for a in rest_albums)
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
 
 
@@ -127,8 +134,8 @@ def test_pick_target_errors_when_shadir_not_resolvable(tmp_path: Path) -> None:
         mod.pick_target_file(str(album), None)
 
 
-def test_pick_target_prefers_earliest_symlink_into_shadir(tmp_path: Path) -> None:
-    """Among blobs linked from the album, pick the symlink with oldest mtime."""
+def test_pick_target_prefers_first_lexicographic_audio_symlink(tmp_path: Path) -> None:
+    """Audio symlinks first; then basename order. Ignores symlink mtime."""
     mod = _load_importtags()
 
     shadir = tmp_path / "store"
@@ -139,14 +146,33 @@ def test_pick_target_prefers_earliest_symlink_into_shadir(tmp_path: Path) -> Non
 
     album = tmp_path / "al"
     album.mkdir()
-    first = album / "zebra.flac"
-    second = album / "a.flac"
-    first.symlink_to(blob)
-    second.symlink_to(blob)
-    os.utime(first, (100, 100), follow_symlinks=False)
-    os.utime(second, (900, 900), follow_symlinks=False)
+    zebra = album / "zebra.flac"
+    a_flac = album / "a.flac"
+    zebra.symlink_to(blob)
+    a_flac.symlink_to(blob)
+    os.utime(zebra, (100, 100), follow_symlinks=False)
+    os.utime(a_flac, (900, 900), follow_symlinks=False)
 
-    assert mod.pick_target_file(str(album), str(shadir)) == str(first)
+    assert mod.pick_target_file(str(album), str(shadir)) == str(a_flac)
+
+
+def test_pick_target_prefers_audio_over_non_audio_symlink(tmp_path: Path) -> None:
+    mod = _load_importtags()
+
+    shadir = tmp_path / "store"
+    digest = "dd" * 32
+    blob = shadir / "data" / digest[:2] / digest
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"x")
+
+    album = tmp_path / "al"
+    album.mkdir()
+    aaa_txt = album / "aaa.txt"
+    zzz_flac = album / "zzz.flac"
+    aaa_txt.symlink_to(blob)
+    zzz_flac.symlink_to(blob)
+
+    assert mod.pick_target_file(str(album), str(shadir)) == str(zzz_flac)
 
 
 def test_pick_target_descends_subdirs_when_top_level_is_directories_only(
@@ -224,8 +250,8 @@ def test_build_tags_unions_and_prefixes() -> None:
         "live",
         "dup",
         "Rock",
-        "artist:The Artist",
-        "album:The LP",
+        "artist;The Artist",
+        "album;The LP",
     ]
 
 
@@ -252,9 +278,10 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
 
     r = _run_importtags(tmp_path, shadir, fake_mt, album)
     assert r.returncode == 0, r.stderr
+    assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac")
-    assert tags == ["album:B2", "artist:A1", "gr", "im"]
+    assert tags == ["album;B2", "artist;A1", "gr", "im"]
 
 
 def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
@@ -283,9 +310,10 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
 
     r = _run_importtags(tmp_path, shadir, fake_mt, album, db=custom_db)
     assert r.returncode == 0, r.stderr
+    assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac", db_path=custom_db)
-    assert tags == ["album:B2", "artist:A1", "gr", "im"]
+    assert tags == ["album;B2", "artist;A1", "gr", "im"]
 
 
 def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
@@ -312,6 +340,7 @@ def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
 
     r = _run_importtags(tmp_path, shadir, fake_mt, album, reset=True)
     assert r.returncode == 0, r.stderr
+    assert r.stdout == ".\n"
     assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["new"]
 
 
@@ -325,6 +354,7 @@ def test_importtags_skips_nondir(tmp_path: Path) -> None:
     os.chmod(fake_mt, 0o755)
     r = _run_importtags(tmp_path, shadir, fake_mt, f, check=False)
     assert r.returncode == 0
+    assert r.stdout == ""
 
 
 def test_importtags_skips_empty_export(tmp_path: Path) -> None:
@@ -349,7 +379,92 @@ def test_importtags_skips_empty_export(tmp_path: Path) -> None:
     os.chmod(fake_mt, 0o755)
     r = _run_importtags(tmp_path, shadir, fake_mt, album)
     assert r.returncode == 0
+    assert r.stdout == ""
     assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["keep"]
+
+
+def test_importtags_verbose_prints_plan_and_result(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"a\n")
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["x"], "genre": [], "artist": null, "album": null}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    r = _run_importtags(tmp_path, shadir, fake_mt, album, verbose=True)
+    assert r.returncode == 0, r.stderr
+    assert "[import]" in r.stdout
+    assert "tag-add:" in r.stdout
+    assert "tags (after):" in r.stdout
+
+
+def test_importtags_debug_prints_one_line_per_album(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"a\n")
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["x", "y"], "genre": [], "artist": null, "album": null}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    r = _run_importtags(tmp_path, shadir, fake_mt, album, debug=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().startswith("[import]")
+    assert "\t" in r.stdout
+    assert "2 tags" in r.stdout
+    assert ".\n" not in r.stdout  # quiet progress dots, not extension dots in path
+
+
+def test_importtags_two_albums_one_process_dots_one_line(tmp_path: Path) -> None:
+    """Quiet dots must stay on one line when one importtags handles many dirs."""
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    a1 = work / "a1"
+    a2 = work / "a2"
+    a1.mkdir(parents=True)
+    a2.mkdir(parents=True)
+    (a1 / "t.flac").write_bytes(b"a\n")
+    (a2 / "u.flac").write_bytes(b"b\n")
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+
+    fake_mt = tmp_path / "fake-metatool"
+    fake_mt.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' '{"tag": ["t"], "genre": [], "artist": null, "album": null}'
+            """
+        )
+    )
+    os.chmod(fake_mt, 0o755)
+
+    r = _run_importtags(tmp_path, shadir, fake_mt, a1, a2)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "..\n"
 
 
 def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
@@ -382,7 +497,7 @@ def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
     assert _db_tags_for_path(shadir, "work/disc/t.flac") == before
 
 
-def test_importtags_dryrun_reset_shows_tag_rm(tmp_path: Path) -> None:
+def test_importtags_dryrun_reset_shows_tag_clear(tmp_path: Path) -> None:
     shadir = tmp_path / "store"
     shadir.mkdir()
     work = tmp_path / "work"
@@ -405,5 +520,5 @@ def test_importtags_dryrun_reset_shows_tag_rm(tmp_path: Path) -> None:
 
     r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True, reset=True)
     assert r.returncode == 0, r.stderr
-    assert "would tag-rm" in r.stdout
+    assert "would tag-clear" in r.stdout
     assert '"old"' in r.stdout

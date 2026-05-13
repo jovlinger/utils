@@ -88,13 +88,47 @@ def _symlink_resolves_under_shadir(path: str, shadir_abs: str) -> bool:
     return sh.is_under_dir(resolved, shadir_abs)
 
 
+# Same idea as musicology ``audio.AUDIO_EXTS`` — files we treat as music tracks.
+_AUDIO_EXTS = frozenset(
+    {
+        ".mp3",
+        ".flac",
+        ".m4a",
+        ".mp4",
+        ".aac",
+        ".ogg",
+        ".oga",
+        ".opus",
+        ".wav",
+        ".aiff",
+        ".aif",
+        ".wv",
+        ".ape",
+        ".dsf",
+        ".dff",
+    }
+)
+
+
+def _pick_sort_key(path: str) -> tuple[int, str]:
+    """Prefer recognized audio extensions, then lexicographic basename."""
+    base = os.path.basename(path)
+    ext = os.path.splitext(base)[1].lower()
+    group = 0 if ext in _AUDIO_EXTS else 1
+    return (group, base)
+
+
 def pick_target_file(
     album_dir: str,
     shadir: str | None = None,
     *,
     db_path: str | None = None,
 ) -> str:
-    """Pick the earliest stored file under *album_dir* (symlink into the sha tree).
+    """Pick one stored file under *album_dir* (symlink into the sha tree).
+
+    Candidates must resolve under *shadir*. Among those, **audio extensions
+    first** (see ``_AUDIO_EXTS``), then **lexicographic basename**. Stable and
+    independent of symlink mtimes.
 
     Walks subdirectories: an album folder may contain only disc subfolders, etc.
 
@@ -135,13 +169,19 @@ def pick_target_file(
             f"no symlink into sha store {shadir_abs!r} under {album_dir!r} "
             f"(run shadup store on this tree first)"
         )
-    # Link inode mtime (``lstat``); ``getmtime`` follows symlinks to the blob.
-    stored.sort(key=lambda p: (os.lstat(p).st_mtime, os.path.basename(p)))
+    stored.sort(key=_pick_sort_key)
     return stored[0]
 
 
+# Separator for synthetic tags derived from export-json artist/album fields.
+# Must be valid in directory names on Windows and POSIX (not ``:`` ``|`` ``\``
+# ``/`` ``?`` ``*`` ``<`` ``>`` ``"``). Semicolon is rare in titles and works
+# on both platforms.
+_ART_ALB_SEP = ";"
+
+
 def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
-    """Union of ``tag`` and ``genre`` entries plus ``artist:`` / ``album:`` prefixes."""
+    """Union of ``tag`` and ``genre`` entries plus ``artist;…`` / ``album;…`` prefixes."""
     out: list[str] = []
     seen: set[str] = set()
     for key in ("tag", "genre"):
@@ -157,13 +197,13 @@ def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
                 out.append(s)
     artist = obj.get("artist")
     if isinstance(artist, str) and artist.strip():
-        t = f"artist:{artist.strip()}"
+        t = f"artist{_ART_ALB_SEP}{artist.strip()}"
         if t not in seen:
             seen.add(t)
             out.append(t)
     album = obj.get("album")
     if isinstance(album, str) and album.strip():
-        t = f"album:{album.strip()}"
+        t = f"album{_ART_ALB_SEP}{album.strip()}"
         if t not in seen:
             seen.add(t)
             out.append(t)
@@ -251,6 +291,39 @@ def _existing_tags_for_path(
     return uniq
 
 
+def _emit_import_plan_lines(
+    *,
+    album_dir: str,
+    rel: str,
+    tags: list[str],
+    reset: bool,
+    current: list[str],
+    dryrun: bool,
+) -> None:
+    """Print album/path and optional tag-clear + tag-add lines (no ``tags (after)``)."""
+    label = "[dry-run]" if dryrun else "[import]"
+    print(f"{label} album={album_dir}", file=sys.stdout)
+    print(f"  path={rel}", file=sys.stdout)
+    if reset:
+        if dryrun:
+            print(
+                f"  would tag-clear path={rel} (current tags: {json.dumps(current)})",
+                file=sys.stdout,
+            )
+        else:
+            print(
+                f"  tag-clear path={rel} (previous tags: {json.dumps(current)})",
+                file=sys.stdout,
+            )
+    tag_verb = "would tag-add" if dryrun else "tag-add"
+    print(f"  {tag_verb}: {json.dumps(tags)}", file=sys.stdout)
+
+
+def _emit_import_result_line(*, resulting: list[str], dryrun: bool) -> None:
+    tail = "resulting tags (after)" if dryrun else "tags (after)"
+    print(f"  {tail}: {json.dumps(resulting)}", file=sys.stdout)
+
+
 def _run_shadup(
     shadup_cli: str | None,
     shadir: str | None,
@@ -277,18 +350,39 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Per directory: run metatool export-json, then shadup tag-add on the "
             "earliest stored file (symlink into the sha store). Fails if the album "
-            "has no such file. Use --dryrun to print DB effects without writing."
+            "has no such file. Use --dryrun to print DB effects without writing. "
+            "Quiet mode: one dot per album on a single line (flush per dot); use "
+            "--debug for one line per album instead. Pass many DIRs in one run "
+            "(e.g. importtags … ./*/) so dots stay on one line—do not wrap importtags "
+            "in a shell loop one album per process."
         )
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print each album/path and tag-clear/tag-add like --dryrun (real mode only)",
+    )
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "After each successful import, print one line "
+            "(album basename, relative path, tag count) instead of a dot"
+        ),
     )
     p.add_argument(
         "--reset",
         action="store_true",
-        help="Remove existing shadup tags on the target file before adding",
+        help=(
+            "Run ``shadup tag-clear`` on the target file before ``tag-add`` "
+            "(drop all tags for that hash)"
+        ),
     )
     p.add_argument(
         "--dryrun",
         action="store_true",
-        help="Print tag-rm / tag-add and resulting tags; do not change the database",
+        help="Print tag-clear / tag-add and resulting tags; do not change the database",
     )
     p.add_argument(
         "--provider",
@@ -340,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
     if db_opt:
         db_opt = _expand_db_path(db_opt)
 
+    dots_printed = False
+
     for raw in args.dirs:
         album_dir = os.path.abspath(os.path.expanduser(raw))
         if not os.path.isdir(album_dir):
@@ -365,33 +461,38 @@ def main(argv: list[str] | None = None) -> int:
                 resulting = sorted(set(tags))
             else:
                 resulting = sorted(set(current) | set(tags))
-            print(f"[dry-run] album={album_dir}", file=sys.stdout)
-            print(f"  path={rel}", file=sys.stdout)
-            if args.reset:
-                print(
-                    f"  would tag-rm: {json.dumps(current)}",
-                    file=sys.stdout,
-                )
-            print(
-                f"  would tag-add: {json.dumps(tags)}",
-                file=sys.stdout,
+            _emit_import_plan_lines(
+                album_dir=album_dir,
+                rel=rel,
+                tags=tags,
+                reset=args.reset,
+                current=current,
+                dryrun=True,
             )
-            print(
-                f"  resulting tags (after): {json.dumps(resulting)}",
-                file=sys.stdout,
-            )
+            _emit_import_result_line(resulting=resulting, dryrun=True)
             continue
 
+        if args.verbose:
+            current_before = _existing_tags_for_path(
+                args.shadup, shadir_opt, db_opt, rel
+            )
+            _emit_import_plan_lines(
+                album_dir=album_dir,
+                rel=rel,
+                tags=tags,
+                reset=args.reset,
+                current=current_before,
+                dryrun=False,
+            )
+
         if args.reset:
-            current = _existing_tags_for_path(args.shadup, shadir_opt, db_opt, rel)
-            if current:
-                _run_shadup(
-                    args.shadup,
-                    shadir_opt,
-                    db_opt,
-                    ["tag-rm", rel, *current],
-                    cwd=cwd,
-                )
+            _run_shadup(
+                args.shadup,
+                shadir_opt,
+                db_opt,
+                ["tag-clear", rel],
+                cwd=cwd,
+            )
         _run_shadup(
             args.shadup,
             shadir_opt,
@@ -399,6 +500,27 @@ def main(argv: list[str] | None = None) -> int:
             ["tag-add", rel, *tags],
             cwd=cwd,
         )
+
+        if args.verbose:
+            resulting_after = _existing_tags_for_path(
+                args.shadup, shadir_opt, db_opt, rel
+            )
+            _emit_import_result_line(resulting=resulting_after, dryrun=False)
+        elif args.debug:
+            base = os.path.basename(album_dir.rstrip(os.sep))
+            print(
+                f"[import] {base}\t{rel}\t{len(tags)} tags",
+                flush=True,
+                file=sys.stdout,
+            )
+        else:
+            sys.stdout.write(".")
+            sys.stdout.flush()
+            dots_printed = True
+
+    if dots_printed:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
     return 0
 
 
