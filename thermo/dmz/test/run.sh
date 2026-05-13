@@ -15,4 +15,6 @@ fi
 cd "$DMZ"
 # shellcheck source=/dev/null
 . "$DMZ/env/bin/activate"
-python -m pytest -q
+# -v: one line per test case (node id), not only per file (-q).
+# --maxfail=3: stop after three failures (systemic bug); override: ./test/run.sh --maxfail=0
+pytest -v -ra --maxfail=3 "$@"

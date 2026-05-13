@@ -1,7 +1,10 @@
 flask
 pydantic<2
 authlib
-cryptography
+# cryptography 43+ uses Cargo.lock v4; Alpine 3.19 cargo cannot parse it when building from sdist.
+cryptography>=42,<43
+# Transitive via requests; bundled *.so (e.g. cd.*.so) SIGSEGV on armv6+musl — Dockerfile strips them after pip.
+charset-normalizer>=3.2,<4
 requests
 
 # below here is for testing. So far it is lightweight and we comingle with deployed code. But if this gets heaveir,

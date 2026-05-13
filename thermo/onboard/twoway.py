@@ -344,14 +344,22 @@ def poll_once() -> bool:
 def poll_forever() -> None:
     info("twoway poll forever start")
     slp = PERIOD_SECS
+    next_poll_not_before = time.monotonic()
     while True:
-        info(f"sleep: {slp}")
-        time.sleep(slp)
+        now = time.monotonic()
+        wait_secs = max(0.0, next_poll_not_before - now)
+        if wait_secs > 0:
+            info("sleep before poll", sleep_secs=round(wait_secs, 3), min_period_secs=slp)
+            time.sleep(wait_secs)
+        poll_started_at = time.monotonic()
         ok = poll_once()
         if ok:
             slp = PERIOD_SECS
         else:
             slp = min(PERIOD_MAX_SECS, slp + 1)
+        # Enforce minimum delay between poll starts. If the previous poll consumed most
+        # (or all) of slp, we do little/no extra sleeping on the next loop.
+        next_poll_not_before = poll_started_at + slp
 
 
 info("enter")

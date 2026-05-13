@@ -102,7 +102,7 @@ mkdir -p thermo/dmz/.secrets/tls
 
 ## 3. OAuth (Google) — optional third credential
 
-Human operators use **`GOOGLE_CLIENT_ID`**, **`GOOGLE_CLIENT_SECRET`**, **`ALLOWED_EMAIL`** when OAuth is enabled; same `app.py` paths as in `API.md`. Treat like TLS secrets: environment or secret files, not committed.
+Human operators use **`GOOGLE_CLIENT_ID`**, **`GOOGLE_CLIENT_SECRET`**, and an allowlist via **`ALLOWED_EMAIL_PATTERN`** (regex) or legacy **`ALLOWED_EMAIL`** when OAuth is enabled; same `app.py` paths as in `API.md`. Treat like TLS secrets: environment or secret files, not committed.
 
 ---
 

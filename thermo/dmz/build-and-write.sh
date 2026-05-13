@@ -10,30 +10,24 @@
 # If you are an LLM editing this file: keep `linux/arm/v6` literal everywhere it appears.
 #
 # Usage:
-#   ./build-and-write.sh                                                # build dist/dmz.img only (no sudo, no dd)
+#   ./build-and-write.sh                                                # build dist/dmz.img (requires secrets below)
 #   ./build-and-write.sh /dev/disk4                                     # macOS whole disk (or /dev/rdisk4)
 #   ./build-and-write.sh /Volumes/PIBOOT                                # macOS: mounted boot volume -> whole /dev/rdiskN
 #   ./build-and-write.sh /dev/sdb                                       # Linux whole disk
 #   ./build-and-write.sh /run/media/you/PIBOOT                          # Linux: mount point -> parent disk (needs lsblk)
-#   ./build-and-write.sh --include-pub-key=.secrets/zone/pub.pem        # bake in zone Ed25519 pub key (build only)
-#   ./build-and-write.sh --include-pub-key=.secrets/zone/pub.pem /Volumes/PIBOOT
 #
-# Options (parsed before the optional BLOCK_DEVICE):
-#   --include-pub-key=<path>   Bake an Ed25519 zone public key into the SD image at install/zone-pub.pem.
-#                              On boot, dmz-boot.start copies it to /etc/dmz/zone-pub.pem inside the
-#                              chroot, and start.sh exports ZONE_PUBLIC_KEY_PATH to point at it. With
-#                              this set, the DMZ enforces twoway → DMZ Ed25519 signatures (see
-#                              ../KEYS-AND-CERTS.md). Source the matching priv.pem to your onboard host.
-#                              Conventional path: thermo/dmz/.secrets/zone/pub.pem (produced by
-#                              `make -C thermo/dmz zone-keys` — see ./SECRETS.md). Use an absolute path
-#                              or a path relative to the dmz/ directory.
+# Every image MUST bake zone machine auth (Ed25519 pub) and Google OAuth client files.
+# Paths are fixed (no flags, no env overrides for secrets):
+#   Zone pub:  thermo/dmz/.secrets/zone/pub.pem
+#   OAuth dir: thermo/dmz/.secrets/oauth/  (google-client-id, google-client-secret,
+#              flask-secret-key, allowed-email — see ./SECRETS.md)
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
 #   Optional for SD write progress on macOS: brew install pv (bar + ETA; else periodic "still writing").
 #
-# Env overrides:
-#   DMZ_OUTPUT_IMG  Override the output .img path (default: dist/dmz.img). Used by tests.
+# Env (non-secret operational only):
+#   DMZ_OUTPUT_IMG              Output .img path (default: dist/dmz.img). Used by tests.
 #
 # ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub — at least one required: merged into
 # install/rescue_authorized_keys on FAT and apkovl /root/install/ (installed by console sh /root/sshd.sh).
@@ -54,31 +48,20 @@ if [ "$(id -u)" = "0" ] && [ -n "${SUDO_USER:-}" ]; then
 fi
 
 usage() {
-	echo "Usage: $0 [--include-pub-key=<path>] [BLOCK_DEVICE_OR_MOUNT]" >&2
-	echo "  No args:   build dist/dmz.img only (no sudo / dd)." >&2
-	echo "  With device or mount dir: same, then unmount (background during build) and sudo dd to disk." >&2
-	echo "  --include-pub-key=<path>: bake an Ed25519 zone pub key into install/zone-pub.pem on the SD" >&2
-	echo "    image; the DMZ chroot then enforces twoway → DMZ machine auth via ZONE_PUBLIC_KEY_PATH." >&2
-	echo "    Conventional path: .secrets/zone/pub.pem (see ./SECRETS.md and ../KEYS-AND-CERTS.md)." >&2
-	echo "  Examples: $0 /dev/disk4   $0 /dev/rdisk4   $0 /Volumes/PIBOOT   $0 /dev/sdb" >&2
-	echo "            $0 --include-pub-key=.secrets/zone/pub.pem /Volumes/PIBOOT" >&2
+	echo "Usage: $0 [BLOCK_DEVICE_OR_MOUNT]" >&2
+	echo "  Builds dist/dmz.img (or DMZ_OUTPUT_IMG) with zone machine auth + OAuth files ALWAYS baked." >&2
+	echo "  Secrets are ONLY read from .secrets/zone/pub.pem and .secrets/oauth/ under thermo/dmz/ (see ./SECRETS.md)." >&2
+	echo "  No overrides: missing or invalid material aborts the build." >&2
+	echo "  With device or mount: background unmount during build, then sudo dd." >&2
+	echo "  Examples: $0    $0 /dev/disk4    $0 /Volumes/PIBOOT" >&2
 	exit 2
 }
 
 WRITE_DEV=""
-INCLUDE_PUB_KEY=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help)
 		usage
-		;;
-	--include-pub-key=*)
-		INCLUDE_PUB_KEY="${1#--include-pub-key=}"
-		shift
-		;;
-	--include-pub-key)
-		echo "Error: --include-pub-key requires a value (use --include-pub-key=<path>)" >&2
-		exit 2
 		;;
 	"")
 		shift
@@ -92,7 +75,7 @@ while [ $# -gt 0 ]; do
 		shift
 		;;
 	*)
-		echo "Error: unrecognized argument '$1' (BLOCK_DEVICE must be an absolute path; options take --flag=value)" >&2
+		echo "Error: unrecognized argument '$1' (optional BLOCK_DEVICE must be an absolute path; use --help)" >&2
 		exit 2
 		;;
 	esac
@@ -125,24 +108,34 @@ REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
 RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../bin/run-with-stdout-logged.py}"
 OUTPUT_IMG="${DMZ_OUTPUT_IMG:-$DMZ_DIR/dist/dmz.img}"
 
-# Resolve --include-pub-key: accept absolute or DMZ_DIR-relative; require a real file with PEM content.
-ZONE_PUB_KEY_SRC=""
-if [ -n "$INCLUDE_PUB_KEY" ]; then
-	case "$INCLUDE_PUB_KEY" in
-	/*) ZONE_PUB_KEY_SRC="$INCLUDE_PUB_KEY" ;;
-	*) ZONE_PUB_KEY_SRC="$DMZ_DIR/$INCLUDE_PUB_KEY" ;;
-	esac
-	if [ ! -f "$ZONE_PUB_KEY_SRC" ]; then
-		echo "Error: --include-pub-key: file not found: $ZONE_PUB_KEY_SRC" >&2
-		echo "       Generate one with: make -C thermo/dmz zone-keys (see ./SECRETS.md)" >&2
-		exit 1
-	fi
-	if ! head -n1 "$ZONE_PUB_KEY_SRC" | grep -q -- "-----BEGIN PUBLIC KEY-----"; then
-		echo "Error: --include-pub-key: $ZONE_PUB_KEY_SRC does not look like a PEM public key" >&2
-		echo "       (expected first line: -----BEGIN PUBLIC KEY-----)" >&2
-		exit 1
-	fi
+# Zone public key: fixed path only (required).
+ZONE_PUB_KEY_SRC="$DMZ_DIR/.secrets/zone/pub.pem"
+if [ ! -f "$ZONE_PUB_KEY_SRC" ]; then
+	echo "Error: zone public key PEM is required (twoway → DMZ machine auth is always baked into this image)." >&2
+	echo "       Required path: $ZONE_PUB_KEY_SRC" >&2
+	echo "       Generate:       make -C thermo/dmz zone-keys" >&2
+	exit 1
 fi
+if ! head -n1 "$ZONE_PUB_KEY_SRC" | grep -q -- "-----BEGIN PUBLIC KEY-----"; then
+	echo "Error: $ZONE_PUB_KEY_SRC does not look like a PEM public key" >&2
+	echo "       (expected first line: -----BEGIN PUBLIC KEY-----)" >&2
+	exit 1
+fi
+
+# OAuth directory: fixed path only (required).
+OAUTH_DIR_SRC="$DMZ_DIR/.secrets/oauth"
+if [ ! -d "$OAUTH_DIR_SRC" ]; then
+	echo "Error: OAuth client directory is required (human Google login for DMZ UI is always baked into this image)." >&2
+	echo "       Required path: $OAUTH_DIR_SRC/" >&2
+	echo "       See: ./SECRETS.md" >&2
+	exit 1
+fi
+for _need in google-client-id google-client-secret flask-secret-key allowed-email; do
+	if [ ! -f "$OAUTH_DIR_SRC/$_need" ]; then
+		echo "Error: OAuth directory missing required file $_need in $OAUTH_DIR_SRC (see ./SECRETS.md)" >&2
+		exit 1
+	fi
+done
 
 UMOUNT_LOG=""
 UM_PID=""
@@ -312,11 +305,8 @@ else
 fi
 echo "    out: $OUTPUT_IMG"
 echo "    size: ${IMAGE_SIZE_MB}MB  platform: linux/arm/v6"
-if [ -n "$ZONE_PUB_KEY_SRC" ]; then
-	echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway → DMZ auth ENABLED)"
-else
-	echo "    zone pub key: <none> (twoway → DMZ auth DISABLED; use --include-pub-key to enable)"
-fi
+echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway → DMZ auth, always)"
+echo "    OAuth files: $OAUTH_DIR_SRC -> install/{google-client-id,google-client-secret,flask-secret-key,allowed-email}"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -472,15 +462,13 @@ REPO_NAME=$(basename "$REPO_ROOT")
 	echo "$BUILDINFO_LINE"
 	echo "repo=$REPO_NAME"
 	echo "git_sha=$GIT_SHA"
-	if [ -n "$ZONE_PUB_KEY_SRC" ]; then
-		_zone_pub_sha=$(
-			(sha256sum "$ZONE_PUB_KEY_SRC" 2>/dev/null \
-				|| shasum -a 256 "$ZONE_PUB_KEY_SRC") | awk '{print $1}'
-		)
-		echo "zone_pub_sha256=$_zone_pub_sha"
-	else
-		echo "zone_pub_sha256=none"
-	fi
+	_zone_pub_sha=$(
+		(sha256sum "$ZONE_PUB_KEY_SRC" 2>/dev/null \
+			|| shasum -a 256 "$ZONE_PUB_KEY_SRC") | awk '{print $1}'
+	)
+	echo "zone_pub_sha256=$_zone_pub_sha"
+	echo "zone_machine_auth=baked"
+	echo "oauth_client_files=baked"
 } >"$WORKDIR/buildinfo.txt"
 
 mkdir -p "$APKOVL_DIR/root"
@@ -546,11 +534,11 @@ mcopy -i "$IMG_FILE" "$WORKDIR/device-rescue_authorized_keys" ::install/rescue_a
 mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::install/buildinfo.txt
 mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
 mcopy -i "$IMG_FILE" "$DMZ_DIR/install/CARD-README.txt" ::README.txt
-# Zone pub key (Ed25519). Booted by dmz-boot.start -> /etc/dmz/zone-pub.pem inside chroot,
-# consumed by start.sh which sets ZONE_PUBLIC_KEY_PATH. See ../KEYS-AND-CERTS.md.
-if [ -n "$ZONE_PUB_KEY_SRC" ]; then
-	mcopy -i "$IMG_FILE" "$ZONE_PUB_KEY_SRC" ::install/zone-pub.pem
-fi
+# Zone pub + OAuth: always baked (paths resolved and validated at start of script).
+mcopy -i "$IMG_FILE" "$ZONE_PUB_KEY_SRC" ::install/zone-pub.pem
+for _o in google-client-id google-client-secret flask-secret-key allowed-email; do
+	mcopy -i "$IMG_FILE" "$OAUTH_DIR_SRC/$_o" "::install/$_o"
+done
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz
 ts "[7/7] mcopy done."

@@ -7,6 +7,9 @@ services:
       ENV: DOCKERTEST
       PORT: "8080"
       ZONE_PUBLIC_KEY_PATH: /keys/pub.pem
+      # Match host e2e defaults so twoway's first POST /zone/.../sensors returns before the test's ~1s wait.
+      LONG_POLL_TIMEOUT_SECS: "0.5"
+      LONG_POLL_SLEEP_SECS: "0.1"
     volumes:
       - ./keys:/keys:ro
     tmpfs:

@@ -8,7 +8,7 @@ Auth model (smoketest vs production)
 ------------------------------------
 - **OAuth (human / “external client” paths):** `/zones`, `/debug/logs`, and
   `POST /zone/<name>/command` use OAuth when `GOOGLE_CLIENT_ID` is set: a
-  logged-in browser session (`ALLOWED_EMAIL`) is required unless the request
+  logged-in browser session (allowlisted Google email via `ALLOWED_EMAIL_PATTERN` / `ALLOWED_EMAIL`) is required unless the request
   carries a valid zone machine signature (see below). If `GOOGLE_CLIENT_ID` is
   **unset** (typical container/smoke image), OAuth is off — no session cookie, no
   redirect. Smoketests hit those endpoints with plain JSON and succeed.
@@ -155,6 +155,33 @@ def test_smoke_multiple_external_command_clients(http: requests.Session) -> None
     logger.info("ok: two clients, two zones")
 
 
+def test_smoke_unauthed_ui_redirects_to_google_oauth(http: requests.Session) -> None:
+    """
+    Unauthenticated browser GET /ui/context must end up at Google OAuth when OAuth is
+    configured on the server.  Skipped when the server reports oauth_enabled=false
+    (typical smoke runs without GOOGLE_CLIENT_ID).
+
+    To exercise this test against a real DMZ with OAuth:
+        GOOGLE_CLIENT_ID=<id> python app.py &
+        DMZ_URL=http://127.0.0.1:5000 pytest -v smoketest/test_smoke.py::test_smoke_unauthed_ui_redirects_to_google_oauth
+    """
+    diag_r = http.get(f"{BASE}/ui/diagnostics", timeout=10)
+    assert diag_r.status_code == 200, f"/ui/diagnostics returned {diag_r.status_code}"
+    if not diag_r.json().get("config", {}).get("oauth_enabled"):
+        pytest.skip("OAuth not enabled on this DMZ instance (GOOGLE_CLIENT_ID not set)")
+
+    # Simulate a browser: follow all redirects, present Accept: text/html.
+    browser = requests.Session()
+    browser.headers.update({"Accept": "text/html,application/xhtml+xml,*/*"})
+    r = browser.get(f"{BASE}/ui/context", timeout=15, allow_redirects=True)
+
+    assert "accounts.google.com" in r.url, (
+        f"Expected final redirect to accounts.google.com, got: {r.url} "
+        f"(status {r.status_code})"
+    )
+    logger.info("ok: unauthenticated /ui/context redirected to %s", r.url)
+
+
 def test_smoke_access_log_history(http: requests.Session) -> None:
     """After a deterministic request sequence, access log should mention those paths."""
     logger.info("case: /debug/logs reflects recent HTTP paths")
@@ -166,13 +193,14 @@ def test_smoke_access_log_history(http: requests.Session) -> None:
 
     body = _get_json(http, "/debug/logs")
     paths: Set[str] = set(_paths_from_access_log(body["logs"]))
+    # GET /debug/logs serializes _access_log before after_request runs, so this
+    # request does not appear in the returned tail — only prior paths do.
     required = {
         "/test_reset",
         "/zone/logtest-a/sensors",
         "/zone/logtest-b/sensors",
         "/zone/logtest-a/command",
         "/zones",
-        "/debug/logs",
     }
     missing = required - paths
     assert not missing, f"access log missing paths: {missing}; have sample {list(paths)[:15]}"

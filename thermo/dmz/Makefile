@@ -8,7 +8,7 @@ all: .image
 # Plain progress: avoid `docker build -q` (no output until done — looks hung in CI / agent logs).
 DOCKER_BUILD_PROGRESS ?= plain
 
-.image: Dockerfile requirements.txt .dockerignore start.sh run.sh stage-docker-import.sh $(RUN_WITH_BIN) $(wildcard *.py) $(wildcard test/*.py) $(wildcard ../ui/*) $(wildcard ../onboard/heatpumpirctl/*.py)
+.image: Dockerfile requirements.txt strip_charset_normalizer_so.py .dockerignore start.sh run.sh stage-docker-import.sh $(RUN_WITH_BIN) $(wildcard *.py) $(wildcard test/*.py) $(wildcard ../ui/*) $(wildcard ../onboard/heatpumpirctl/*.py)
 	"$(CURDIR)/stage-docker-import.sh"
 	docker build --progress=$(DOCKER_BUILD_PROGRESS) -t jovlinger/thermo/dmz .
 	@docker image inspect jovlinger/thermo/dmz -f '{{.Id}}' | cut -d: -f2 > .image
@@ -20,7 +20,7 @@ clean:
 
 # Host venv, pytest on source (./test/run.sh). No container. Subdirs with their own targets (e.g. smoketest).
 test-local:
-	./test/run.sh
+	./test/run.sh test/ ../ui/tests/
 	$(MAKE) -C smoketest test-local
 
 # In-image pytest + smoketest (Docker + live HTTP pytest under smoketest/).

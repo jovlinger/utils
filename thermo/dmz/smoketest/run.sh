@@ -43,7 +43,10 @@ fi
 
 CONTAINER_NAME="dmz-smoketest"
 IMAGE="jovlinger/thermo/dmz"
-DMZ_URL="${DMZ_URL:-http://127.0.0.1:8080}"
+# Must match `docker run -p 8080:8080` below. Do not use inherited DMZ_URL (often a Pi
+# or compose URL in a dev shell). Override only for exotic port mappings:
+#   SMOKETEST_DMZ_URL=http://127.0.0.1:9090 ./run.sh
+DMZ_URL="${SMOKETEST_DMZ_URL:-http://127.0.0.1:8080}"
 DMZ_LOG_IN_CONTAINER="/var/log/dmz.log"
 
 cd "$DMZ"
