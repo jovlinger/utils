@@ -6,17 +6,13 @@ Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_au
 
 ---
 
-## `GET /`
-
-After OAuth, **`GET /authorize`** redirects here with **`302 Location: /`**. If **`THERMO_UI_PUBLIC_ORIGIN`** is set (public HTML UI base URL, no path), responds **`302`** to **`{THERMO_UI_PUBLIC_ORIGIN}/`**; otherwise **`302`** to **`GET /ui/context`** (dev / single-origin setups).
-
 ## `GET /login`
 
-Starts the Google OAuth redirect flow when OAuth credentials are configured. Returns `400` with a JSON error if OAuth is not configured.
+Starts the Google OAuth redirect flow when OAuth credentials are configured. Before redirecting to Google, stores **scheme + hostname** (no port) from this request in the signed session for the post-callback HTML redirect. Returns `400` with a JSON error if OAuth is not configured.
 
 ## `GET /authorize`
 
-OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, and redirects with **`302 Location: /`** (same origin); see **`GET /`** for the next hop to the public UI or **`/ui/context`**. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
+OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, then **302** to the public HTML UI root (**`THERMO_UI_PUBLIC_ORIGIN`** if set, else session value from **`GET /login`**, else scheme+hostname from this request — never **`/ui/context`** in **`Location`**). Returns **503** if none of those apply. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
 
 ## `GET /logout`
 
@@ -36,7 +32,7 @@ Returns a JSON object of all known zones and each zone’s latest command and se
 
 ## `GET /ui/context`
 
-JSON snapshot for the shared thermo UI: **`zones`**, **`environments`**, **`zone_states`**. When Google OAuth is configured, **browser** requests (`Accept` containing `text/html`) are redirected to **`/login`**; JSON clients without a session receive **`401`**. The bundled **`ui_server`** uses a JSON probe and forwards the browser **`Cookie`** header; on **DMZ** it responds **`302`** to Flask **`/login`** when the probe gets **`401`**.
+JSON snapshot for the shared thermo UI: **`zones`**, **`environments`**, **`zone_states`**. When Google OAuth is configured, **unauthenticated** browser requests (`Accept` containing `text/html`) are redirected to **`/login`**; **authenticated** browser requests are redirected to the **public HTML UI root** (same rules as the **302** from **`GET /authorize`** after login), not JSON. JSON clients use **`Accept: application/json`** (as **`ui_server`** does); without a session they receive **`401`**.
 
 ## `POST /ui/command`
 

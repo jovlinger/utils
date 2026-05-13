@@ -596,6 +596,21 @@ def test_ui_context_requires_oauth_401_for_api_clients(dmz_ctx: object) -> None:
             assert (r.get_json() or {}).get("error") == "authentication required"
 
 
+def test_ui_context_authenticated_browser_redirects_to_html_ui(
+    dmz_ctx: object,
+) -> None:
+    """OAuth on + session + browser Accept: never return JSON from GET /ui/context."""
+    with patch("app._oauth_enabled", True):
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess["user"] = {"email": "someone@gmail.com"}
+            r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
+            assert r.status_code == 302, r.get_data(as_text=True)
+            loc = (r.headers.get("Location") or "").strip()
+            assert "/ui/context" not in loc, loc
+            assert loc.endswith("/"), loc
+
+
 def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
     """POST /ui/command returns 302 to /login for browser clients when OAuth is enabled."""
     with patch("app._oauth_enabled", True):

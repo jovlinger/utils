@@ -41,7 +41,7 @@ Create a directory (convention: `thermo/dmz/.secrets/oauth/`, gitignored with th
 | `flask-secret-key` | Long random secret for Flask session signing (same value across reboots for stable cookies) |
 | `allowed-email` | **One line:** Python regex for `re.fullmatch` on the Google account email (case-insensitive). Example: `^jovlinger@gmail\\.com$` or `^jovlinger@(gmail|googlemail)\\.com$`. Required for SD images — `build-and-write.sh` refuses to build without it. Loaded as `ALLOWED_EMAIL_PATTERN` in [`start.sh`](start.sh). For Docker without this file, you may set `-e ALLOWED_EMAIL_PATTERN=...` or legacy `-e ALLOWED_EMAIL=one@address`. |
 
-**Authorized redirect URIs** in Google Cloud must include every URL your users hit for the callback, e.g. `http://jovlinger.duckdns.org:5000/authorize` if the router forwards external **5000** to Flask `PORT`, plus any LAN or HTTPS URL you use later. After `/authorize`, Flask **`302`**s to **`/`** on the API origin, then **`GET /`** **`302`**s to **`{THERMO_UI_PUBLIC_ORIGIN}/`** when that env is set (e.g. `http://jovlinger.duckdns.org` for the HTML UI on port 80); omit it only for dev/single-origin, where the second hop is **`/ui/context`**.
+**Authorized redirect URIs** in Google Cloud must include every URL your users hit for the callback, e.g. `http://jovlinger.duckdns.org:5000/authorize` if the router forwards external **5000** to Flask `PORT`, plus any LAN or HTTPS URL you use later. After `/authorize`, Flask **`302`**s once to the HTML UI: **`THERMO_UI_PUBLIC_ORIGIN`** if set, else **scheme + hostname** stored in the session when **`GET /login`** ran, else from the callback request — never **`/ui/context`** in **`Location`**.
 
 Build and flash:
 

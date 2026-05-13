@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 from flask import Flask, g, redirect, request, session, url_for
 from pydantic import BaseModel, validator
@@ -501,13 +502,43 @@ def _append_and_trim(lst: List[Any], item: Any) -> None:
 # and restrict who can update what.
 
 
-@app.route("/")
-def root() -> Any:
-    """Same-origin post-OAuth step: ``/authorize`` redirects here, then we send the browser onward."""
+# Session: HTML UI base (scheme + host, no path) captured on GET /login — survives Google round-trip.
+_SESSION_OAUTH_PUBLIC_UI_HOME = "_thermo_oauth_public_ui_home"
+
+
+def _public_ui_root_url() -> Optional[str]:
+    """
+    Default browser UI: same scheme + hostname as the current request, **no port or path**
+    (implicit port 80 / HTTPS default). Uses ``request.url`` / ``request.scheme`` — never ``/ui/context``.
+    """
+    try:
+        u = urlparse(request.url)
+    except Exception:
+        return None
+    host = u.hostname
+    if not host:
+        return None
+    scheme = (request.scheme or u.scheme or "http").lower()
+    if scheme not in ("http", "https"):
+        scheme = "http"
+    return f"{scheme}://{host}"
+
+
+def _redirect_public_ui_home_or_503() -> Any:
+    """302 to the public HTML UI root; never ``/ui/context`` in ``Location``."""
     origin = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
     if origin:
         return redirect(f"{origin}/")
-    return redirect(url_for("ui_context"))
+    login_origin = (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
+    if login_origin:
+        return redirect(f"{login_origin}/")
+    fallback = _public_ui_root_url()
+    if fallback:
+        return redirect(f"{fallback}/")
+    return (
+        {"error": "cannot derive public UI URL (set THERMO_UI_PUBLIC_ORIGIN or open /login on this host)"},
+        503,
+    )
 
 
 @app.route("/login")
@@ -515,13 +546,16 @@ def login() -> Any:
     """Redirect to Google OAuth. Restricted to gmail.com; allowlist via regex or legacy env."""
     if not _oauth_enabled:
         return {"error": "OAuth not configured"}, 400
+    home = _public_ui_root_url()
+    if home:
+        session[_SESSION_OAUTH_PUBLIC_UI_HOME] = home
     redirect_uri = url_for("authorize", _external=True)
     return oauth.google.authorize_redirect(redirect_uri, hd="gmail.com")
 
 
 @app.route("/authorize")
 def authorize() -> Any:
-    """OAuth callback. Verify email against allowlist, then set session."""
+    """OAuth callback. Verify email against allowlist, then redirect browser to HTML UI."""
     if not _oauth_enabled:
         return redirect(url_for("get_zones"))
     try:
@@ -535,21 +569,36 @@ def authorize() -> Any:
     if not email_matches_allowlist(email):
         return {"error": "Access denied (email not on allowlist)"}, 403
     session["user"] = {"email": email}
-    return redirect("/")
+    return _redirect_public_ui_home_or_503()
 
 
 @app.route("/logout")
 def logout() -> Any:
     """Clear session."""
     session.pop("user", None)
+    session.pop(_SESSION_OAUTH_PUBLIC_UI_HOME, None)
     return redirect(url_for("login") if _oauth_enabled else url_for("get_zones"))
+
+
+def _zone_public_key_configured() -> Optional[str]:
+    return os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get("ZONE_PUBLIC_KEY_PATH")
+
+
+def _zone_auth_signature_header_present() -> bool:
+    """
+    True when the request includes a non-empty zone-auth signature header
+    (header name from ``zone_auth`` when importable, else ``X-Zone-Signature``).
+    """
+    try:
+        from zone_auth import HEADER_SIGNATURE
+    except ImportError:
+        HEADER_SIGNATURE = "X-Zone-Signature"
+    return bool(request.headers.get(HEADER_SIGNATURE))
 
 
 def _verify_zone_request(zonename: str) -> Optional[tuple[int, Any]]:
     """Verify Ed25519 machine auth. Returns (status_code, response) on failure, None on success."""
-    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
-        "ZONE_PUBLIC_KEY_PATH"
-    )
+    pub_key = _zone_public_key_configured()
     if not pub_key:
         return None  # auth disabled
     try:
@@ -585,9 +634,7 @@ def _verify_global_machine_request() -> Optional[tuple[int, Any]]:
     Verify Ed25519 machine auth for routes without a zone in the URL (e.g. GET /zones).
     Returns (status_code, response) on failure, None on success.
     """
-    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
-        "ZONE_PUBLIC_KEY_PATH"
-    )
+    pub_key = _zone_public_key_configured()
     if not pub_key:
         return (401, {"error": "machine auth misconfigured"})
     try:
@@ -622,9 +669,9 @@ def _authorize_ui() -> Optional[Any]:
     """
     Gate /ui/context and /ui/command on OAuth session when OAuth is configured.
 
-    Returns None when access is granted. When OAuth is enabled and no session
-    exists, browser requests (Accept: text/html) receive a 302 to /login;
-    programmatic clients (Accept: application/json) receive 401 JSON.
+    RETURNS NONE WHEN ACCESS IS GRANTED. 
+    When OAuth is enabled and no session exists, browser requests (Accept: text/html) receive a 302 to /login; 
+    programmatic clients (Accept: application/json) receive 401 JSON. 
     /ui/diagnostics is intentionally left open for operator debugging.
     """
     if not _oauth_enabled:
@@ -646,20 +693,13 @@ def _authorize_global_read() -> Optional[Any]:
     # Zone POSTs from twoway remain signature-verified via _verify_zone_request.
     if os.environ.get("ENV") == "DOCKERTEST":
         return None
-    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
-        "ZONE_PUBLIC_KEY_PATH"
-    )
+    pub_key = _zone_public_key_configured()
     machine_ok = False
-    if pub_key:
-        try:
-            from zone_auth import HEADER_SIGNATURE
-        except ImportError:
-            HEADER_SIGNATURE = "X-Zone-Signature"
-        if request.headers.get(HEADER_SIGNATURE):
-            gerr = _verify_global_machine_request()
-            if gerr:
-                return gerr[1], gerr[0]
-            machine_ok = True
+    if pub_key and _zone_auth_signature_header_present():
+        gerr = _verify_global_machine_request()
+        if gerr:
+            return gerr[1], gerr[0]
+        machine_ok = True
     if machine_ok:
         return None
     if not pub_key:
@@ -673,6 +713,32 @@ def _authorize_global_read() -> Optional[Any]:
     if _oauth_enabled:
         return redirect(url_for("login"))
     return {"error": "machine auth required"}, 401
+
+
+def _authorize_zone_command_post(zonename: str) -> Optional[Any]:
+    """
+    Gate ``POST /zone/<zonename>/command``: Ed25519 when ``ZONE_PUBLIC_KEY`` is set,
+    else OAuth session when enabled, else machine auth or ``DOCKERTEST`` allowance.
+
+    Returns ``None`` when the request may proceed; otherwise a Flask response.
+    """
+    pub_key = _zone_public_key_configured()
+    if pub_key:
+        if _zone_auth_signature_header_present():
+            err = _verify_zone_request(zonename)
+            if err:
+                return err[1], err[0]
+        elif _oauth_enabled and session.get("user"):
+            pass
+        elif _oauth_enabled:
+            return redirect(url_for("login"))
+        else:
+            # thermo/test testdriver posts commands without signatures; twoway still signs sensors.
+            if os.environ.get("ENV") != "DOCKERTEST":
+                return {"error": "machine auth required"}, 401
+    elif _oauth_enabled and not session.get("user"):
+        return redirect(url_for("login"))
+    return None
 
 
 @app.route("/ui/diagnostics", methods=["GET"])
@@ -742,28 +808,8 @@ def update_command(zonename: str) -> Any:
     Store the JSON body as the zone’s latest command and return the zone snapshot.
     Body checks: valid UTF-8, parse as JSON, all JSON strings 7-bit ASCII only.
     """
-    pub_key = os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get(
-        "ZONE_PUBLIC_KEY_PATH"
-    )
-    if pub_key:
-        try:
-            from zone_auth import HEADER_SIGNATURE
-        except ImportError:
-            HEADER_SIGNATURE = "X-Zone-Signature"
-        if request.headers.get(HEADER_SIGNATURE):
-            err = _verify_zone_request(zonename)
-            if err:
-                return err[1], err[0]
-        elif _oauth_enabled and session.get("user"):
-            pass
-        elif _oauth_enabled:
-            return redirect(url_for("login"))
-        else:
-            # thermo/test testdriver posts commands without signatures; twoway still signs sensors.
-            if os.environ.get("ENV") != "DOCKERTEST":
-                return {"error": "machine auth required"}, 401
-    elif _oauth_enabled and not session.get("user"):
-        return redirect(url_for("login"))
+    if (denied := _authorize_zone_command_post(zonename)):
+        return denied
     assertAuthAzZone(request)
     raw = request.get_data(cache=True)
     parsed, parse_err = _parse_validated_command_json(raw)
@@ -806,11 +852,18 @@ def ui_context() -> Any:
     JSON for the shared thermo UI: all zones with state, environment table per zone.
 
     Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
-    Browser clients are redirected to /login; API clients receive 401 JSON.
+    Unauthenticated browser requests (``Accept`` contains ``text/html``) receive **302** to ``/login``.
+    Authenticated browser requests are **302**'d to the public HTML UI root (same rules as after **`GET /authorize`**), not JSON.
+    API clients (no ``text/html`` in ``Accept``) receive JSON or **401** JSON when unauthenticated.
     """
-    denied = _authorize_ui()
-    if denied is not None:
+    if (denied := _authorize_ui()):
         return denied
+    if (
+        _oauth_enabled
+        and session.get("user")
+        and "text/html" in (request.headers.get("Accept") or "")
+    ):
+        return _redirect_public_ui_home_or_503()
     all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
     env_rows = [_environment_row_for_zone(z) for z in all_zones]
     zone_states = {z: _zone_response(z, False) for z in all_zones}
@@ -828,8 +881,7 @@ def ui_command() -> Any:
 
     Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
     """
-    denied = _authorize_ui()
-    if denied is not None:
+    if (denied := _authorize_ui()):
         return denied
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -870,8 +922,7 @@ def get_zones() -> Any:
     """
     Stateless query.  Read ALL zone states, including pending commands.
     """
-    denied = _authorize_global_read()
-    if denied is not None:
+    if (denied := _authorize_global_read()):
         return denied
     assertAuthAzZone(request)
     all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
@@ -882,8 +933,7 @@ def get_zones() -> Any:
 @app.route("/debug/logs", methods=["GET"])
 def debug_logs() -> Any:
     """Return bounded in-memory access log plus diagnostics (same data as ``/ui/diagnostics``)."""
-    denied = _authorize_global_read()
-    if denied is not None:
+    if (denied := _authorize_global_read()):
         return denied
     assertAuthAzZone(request)
     bundle = _diagnostics_payload()
