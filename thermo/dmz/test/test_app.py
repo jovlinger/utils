@@ -42,6 +42,7 @@ def _reset(c, commands: dict | None = None, sensors: dict | None = None) -> None
 def test_email_matches_allowlist_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
     monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", r"^a\.b@gmail\.com$")
+    app_module.reload_dmz_config_from_environ()
     assert app_module.email_matches_allowlist("A.B@gmail.com") is True
     assert app_module.email_matches_allowlist("axb@gmail.com") is False
 
@@ -49,6 +50,7 @@ def test_email_matches_allowlist_regex(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_email_matches_allowlist_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
     monkeypatch.setenv("ALLOWED_EMAIL", "Legacy@Example.com")
+    app_module.reload_dmz_config_from_environ()
     assert app_module.email_matches_allowlist("legacy@example.com") is True
     assert app_module.email_matches_allowlist("other@example.com") is False
 
@@ -56,6 +58,7 @@ def test_email_matches_allowlist_legacy(monkeypatch: pytest.MonkeyPatch) -> None
 def test_email_matches_allowlist_dev_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    app_module.reload_dmz_config_from_environ()
     assert app_module.email_matches_allowlist("jovlinger@gmail.com") is True
     assert app_module.email_matches_allowlist("x@gmail.com") is False
 
@@ -309,6 +312,7 @@ def test_unsigned_request_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.post(
             "/zone/z1/sensors",
@@ -331,6 +335,7 @@ def test_unsigned_command_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.post(
             "/zone/z1/command",
@@ -348,6 +353,7 @@ def test_unsigned_get_zones_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.get("/zones")
         assert r.status_code == 401
@@ -367,6 +373,7 @@ def test_signed_post_command_accepted(
 
     priv_pem, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     path = "/zone/z1/command"
     body: dict = {"power": True, "mode": "HEAT", "temp_c": 21}
     body_bytes = json.dumps(body).encode()
@@ -398,6 +405,7 @@ def test_signed_get_zones_accepted(
 
     priv_pem, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     path = "/zones"
     body_bytes = b""
     sig, ts, zn = sign_request("GET", path, body_bytes, "z1", priv_pem.decode())
@@ -527,8 +535,10 @@ def test_zone_sensors_long_poll_timeout_updates_last_sent(dmz_ctx: object) -> No
     """On timeout with stale command, DMZ still replies and advances reply-sent clock."""
     with app.test_client() as c:
         _reset(c)
-        with patch("app.LONG_POLL_TIMEOUT_SECS", 0.02), patch(
-            "app.LONG_POLL_SLEEP_SECS", 0.005
+        with patch.dict(
+            app_module.CONFIG,
+            {"long_poll_timeout_secs": 0.02, "long_poll_sleep_secs": 0.005},
+            clear=False,
         ):
             with app_module._zone_command_clock_lock:
                 app_module._last_zone_command_reply_mono["zto"] = 200.0
@@ -545,7 +555,11 @@ def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -
     """
     with app.test_client() as c0:
         _reset(c0)
-    with patch("app.LONG_POLL_TIMEOUT_SECS", 1.0), patch("app.LONG_POLL_SLEEP_SECS", 0.01):
+    with patch.dict(
+        app_module.CONFIG,
+        {"long_poll_timeout_secs": 1.0, "long_poll_sleep_secs": 0.01},
+        clear=False,
+    ):
         results: list[tuple[int, dict]] = []
         started = threading.Event()
 
@@ -580,7 +594,7 @@ def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -
 
 def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
     """GET /ui/context returns 302 to /login for browser clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
             assert r.status_code == 302, r.get_data(as_text=True)
@@ -589,7 +603,7 @@ def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> Non
 
 def test_ui_context_requires_oauth_401_for_api_clients(dmz_ctx: object) -> None:
     """GET /ui/context returns 401 JSON for API clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/context", headers={"Accept": "application/json"})
             assert r.status_code == 401
@@ -600,7 +614,7 @@ def test_ui_context_authenticated_browser_redirects_to_html_ui(
     dmz_ctx: object,
 ) -> None:
     """OAuth on + session + browser Accept: never return JSON from GET /ui/context."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             with c.session_transaction() as sess:
                 sess["user"] = {"email": "someone@gmail.com"}
@@ -613,7 +627,7 @@ def test_ui_context_authenticated_browser_redirects_to_html_ui(
 
 def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
     """POST /ui/command returns 302 to /login for browser clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.post(
                 "/ui/command",
@@ -626,7 +640,7 @@ def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> Non
 
 def test_ui_context_open_without_oauth(dmz_ctx: object) -> None:
     """GET /ui/context is open (200) when OAuth is not configured."""
-    with patch("app._oauth_enabled", False):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": False}, clear=False):
         with app.test_client() as c:
             _reset(c)
             js = _get_200(c, "/ui/context")
@@ -635,7 +649,7 @@ def test_ui_context_open_without_oauth(dmz_ctx: object) -> None:
 
 def test_ui_diagnostics_always_open(dmz_ctx: object) -> None:
     """GET /ui/diagnostics returns 200 even when OAuth is enabled (operator debugging)."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/diagnostics")
             assert r.status_code == 200

@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import pytest
 from flask import redirect
 
+import app as app_module
 from app import app
 
 _OAUTH_E2E_EMAIL = "oauth-e2e-test@gmail.com"
@@ -59,7 +60,10 @@ def test_oauth_e2e_full_flow(
     monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", _OAUTH_E2E_PATTERN)
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
     monkeypatch.delenv("THERMO_UI_PUBLIC_ORIGIN", raising=False)
-    with patch("app._oauth_enabled", True), patch("app.oauth", _make_oauth_mock(), create=True):
+    app_module.reload_dmz_config_from_environ()
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False), patch(
+        "app.oauth", _make_oauth_mock(), create=True
+    ):
         with app.test_client() as c:
             # Step 1: unauthenticated browser GET → redirect to /login
             r1 = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
@@ -99,11 +103,14 @@ def test_oauth_callback_rejects_email_not_on_allowlist(
     """Google returns a valid gmail.com address that does not match the allowlist regex."""
     monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", r"^only-this@gmail\.com$")
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    app_module.reload_dmz_config_from_environ()
     m = MagicMock()
     m.google.authorize_access_token.return_value = {
         "userinfo": {"email": "other@gmail.com", "sub": "x"}
     }
-    with patch("app._oauth_enabled", True), patch("app.oauth", m, create=True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False), patch(
+        "app.oauth", m, create=True
+    ):
         with app.test_client() as c:
             r = c.get("/authorize?code=FAKECODE&state=FAKESTATE")
             assert r.status_code == 403, r.get_data(as_text=True)
@@ -112,7 +119,7 @@ def test_oauth_callback_rejects_email_not_on_allowlist(
 
 def test_oauth_e2e_forged_session_rejected(dmz_ctx: object) -> None:
     """Step 6: a plausible-looking but unsigned session cookie must not grant access."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             # Base64-looking payload with a garbage HMAC — Flask will reject the signature
             # and treat the session as empty.

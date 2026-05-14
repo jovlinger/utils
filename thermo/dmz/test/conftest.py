@@ -17,6 +17,12 @@ import app as dmz_module
 from app import app as dmz_application
 
 
+def pytest_runtest_teardown(item: pytest.Item) -> None:
+    """Keep :data:`app.CONFIG` aligned with ``os.environ`` after monkeypatch restores env."""
+    del item  # hookspec requires this parameter name
+    dmz_module.reload_dmz_config_from_environ()
+
+
 @pytest.fixture
 def dmz_ctx() -> Iterator[None]:
     ctx = dmz_application.app_context()
@@ -35,6 +41,7 @@ def restore_zone_public_key() -> Iterator[None]:
         os.environ["ZONE_PUBLIC_KEY"] = orig
     else:
         os.environ.pop("ZONE_PUBLIC_KEY", None)
+    dmz_module.reload_dmz_config_from_environ()
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +49,6 @@ def fast_long_poll_defaults(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """
     Keep tests fast: default zone long-poll timeout is disabled unless a test opts in.
     """
-    monkeypatch.setattr(dmz_module, "LONG_POLL_TIMEOUT_SECS", 0.0)
-    monkeypatch.setattr(dmz_module, "LONG_POLL_SLEEP_SECS", 0.001)
+    monkeypatch.setitem(dmz_module.CONFIG, "long_poll_timeout_secs", 0.0)
+    monkeypatch.setitem(dmz_module.CONFIG, "long_poll_sleep_secs", 0.001)
     yield

@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple, Union
+from typing import Any, Deque, Dict, List, Optional, Tuple, TypedDict, Union
 from urllib.parse import urlparse
 
 from flask import Flask, g, redirect, request, session, url_for
@@ -224,13 +224,89 @@ logger.setLevel(logging.DEBUG)
 logger.addHandler(_log_handler)
 logger.propagate = False
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
-app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID")
-app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET")
 
-# OAuth enabled only when credentials are set
-_oauth_enabled = bool(app.config["GOOGLE_CLIENT_ID"])
+class DmzConfig(TypedDict):
+    """Snapshot of DMZ runtime settings (from the environment at load / reload time).
+
+    ``env`` is the raw ``ENV`` value; ``is_*_env`` booleans are derived equality checks
+    against known mode names (``DOCKERTEST``, ``UI_INTEGRATION``).
+    """
+
+    secret_key: str
+    google_client_id: Optional[str]
+    google_client_secret: Optional[str]
+    oauth_enabled: bool
+    allowed_email_pattern: str
+    allowed_email: str
+    zone_public_key: Optional[str]
+    zone_public_key_path: Optional[str]
+    env: Optional[str]
+    is_dockertest_env: bool
+    is_ui_integration_env: bool
+    port: int
+    long_poll_timeout_secs: float
+    long_poll_sleep_secs: float
+    thermo_ui_public_origin: str
+    dmz_public_base_url: Optional[str]
+
+
+def build_dmz_config_from_environ() -> DmzConfig:
+    """Read all DMZ-relevant environment variables into one mapping."""
+    google_client_id: Optional[str] = os.environ.get("GOOGLE_CLIENT_ID")
+    google_client_secret: Optional[str] = os.environ.get("GOOGLE_CLIENT_SECRET")
+    env_raw: Optional[str] = os.environ.get("ENV")
+    thermo_ui = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
+    base_raw = (
+        os.environ.get("DMZ_PUBLIC_BASE_URL")
+        or os.environ.get("DMZ_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
+    dmz_public_base_url: Optional[str] = base_raw or None
+    port_s = os.environ.get("PORT", "5000")
+    try:
+        port: int = int(port_s)
+    except ValueError:
+        port = 5000
+    cfg: DmzConfig = {
+        "secret_key": os.environ.get("SECRET_KEY", "dev-secret-change-in-production"),
+        "google_client_id": google_client_id,
+        "google_client_secret": google_client_secret,
+        "oauth_enabled": bool(google_client_id),
+        "allowed_email_pattern": (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip(),
+        "allowed_email": (os.environ.get("ALLOWED_EMAIL") or "").strip(),
+        "zone_public_key": os.environ.get("ZONE_PUBLIC_KEY"),
+        "zone_public_key_path": os.environ.get("ZONE_PUBLIC_KEY_PATH"),
+        "env": env_raw,
+        "is_dockertest_env": env_raw == "DOCKERTEST",
+        "is_ui_integration_env": env_raw == "UI_INTEGRATION",
+        "port": port,
+        "long_poll_timeout_secs": float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "10")),
+        "long_poll_sleep_secs": float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0")),
+        "thermo_ui_public_origin": thermo_ui,
+        "dmz_public_base_url": dmz_public_base_url,
+    }
+    return cfg
+
+
+CONFIG: DmzConfig = build_dmz_config_from_environ()
+
+app = Flask(__name__)
+app.secret_key = CONFIG["secret_key"]
+app.config["GOOGLE_CLIENT_ID"] = CONFIG["google_client_id"]
+app.config["GOOGLE_CLIENT_SECRET"] = CONFIG["google_client_secret"]
+
+
+def reload_dmz_config_from_environ() -> None:
+    """
+    Rebuild :data:`CONFIG` from ``os.environ`` and sync Flask settings.
+
+    Used by tests that set ``ZONE_PUBLIC_KEY`` (or other vars) after import.
+    """
+    global CONFIG
+    CONFIG = build_dmz_config_from_environ()
+    app.secret_key = CONFIG["secret_key"]
+    app.config["GOOGLE_CLIENT_ID"] = CONFIG["google_client_id"]
+    app.config["GOOGLE_CLIENT_SECRET"] = CONFIG["google_client_secret"]
 
 
 def email_matches_allowlist(raw_email: str) -> bool:
@@ -247,20 +323,20 @@ def email_matches_allowlist(raw_email: str) -> bool:
     email = (raw_email or "").strip().lower()
     if not email:
         return False
-    pattern = (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip()
+    pattern = CONFIG["allowed_email_pattern"]
     if pattern:
         try:
             return re.fullmatch(pattern, email, flags=re.IGNORECASE) is not None
         except re.error as exc:
             logger.error("ALLOWED_EMAIL_PATTERN is invalid: %s", exc)
             return False
-    legacy = (os.environ.get("ALLOWED_EMAIL") or "").strip()
+    legacy = CONFIG["allowed_email"]
     if legacy:
         return email == legacy.lower()
     return email == "jovlinger@gmail.com"
 
 
-if _oauth_enabled:
+if CONFIG["oauth_enabled"]:
     from authlib.integrations.flask_client import OAuth
 
     oauth = OAuth(app)
@@ -274,8 +350,8 @@ if _oauth_enabled:
 
 def _auth_config_detail() -> Dict[str, Any]:
     """Operator-safe auth summary (no full secrets): booleans, sources, SHA256/ID suffixes."""
-    raw_inline = os.environ.get("ZONE_PUBLIC_KEY")
-    raw_path = os.environ.get("ZONE_PUBLIC_KEY_PATH")
+    raw_inline = CONFIG["zone_public_key"]
+    raw_path = CONFIG["zone_public_key_path"]
     zone_enforced = bool(raw_inline or raw_path)
     zone_source = "none"
     pem_bytes: Optional[bytes] = None
@@ -291,10 +367,14 @@ def _auth_config_detail() -> Dict[str, Any]:
     zone_key_last4 = "n/a"
     if pem_bytes:
         zone_key_last4 = hashlib.sha256(pem_bytes).hexdigest()[-4:]
-    google_id = str(app.config.get("GOOGLE_CLIENT_ID") or "")
+    google_id = str(CONFIG["google_client_id"] or "")
     google_last4 = google_id[-4:] if len(google_id) >= 4 else ("n/a" if not google_id else google_id)
-    allow_pat = (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip()
-    allowlist_mode = "regex" if allow_pat else ("legacy_env" if (os.environ.get("ALLOWED_EMAIL") or "").strip() else "dev_default")
+    allow_pat = CONFIG["allowed_email_pattern"]
+    allowlist_mode = (
+        "regex"
+        if allow_pat
+        else ("legacy_env" if CONFIG["allowed_email"] else "dev_default")
+    )
     allow_pat_digest = "n/a"
     if allow_pat:
         allow_pat_digest = hashlib.sha256(allow_pat.encode("utf-8")).hexdigest()[-4:]
@@ -305,13 +385,14 @@ def _auth_config_detail() -> Dict[str, Any]:
         "zone_auth_enforced": zone_enforced,
         "zone_pubkey_source": zone_source,
         "zone_pubkey_sha256_last4": zone_key_last4,
-        "oauth_enabled": _oauth_enabled,
+        "oauth_enabled": CONFIG["oauth_enabled"],
         "google_client_id_last4": google_last4,
         "allowlist_mode": allowlist_mode,
         "allowlist_pattern_sha256_last4": allow_pat_digest,
         "flask_secret_key_last4": secret_last4,
         "flask_secret_is_default_dev": default_dev,
-        "env": os.environ.get("ENV"),
+        "env": CONFIG["env"],
+        "dmz_public_base_url": CONFIG["dmz_public_base_url"],
     }
 
 
@@ -331,7 +412,7 @@ def _log_auth_startup() -> None:
         d["flask_secret_key_last4"],
         d["flask_secret_is_default_dev"],
         d.get("env"),
-        os.environ.get("PORT", "5000"),
+        CONFIG["port"],
     )
 
 
@@ -427,10 +508,6 @@ _last_zone_command_reply_mono: Dict[str, float] = defaultdict(float)
 _zone_command_clock_lock = threading.Lock()
 ### END STATE
 
-# Overridable via env (e2e subprocess) or monkeypatch on this module (dmz unit tests).
-LONG_POLL_TIMEOUT_SECS: float = float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "10"))
-LONG_POLL_SLEEP_SECS: float = float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0"))
-
 
 def _lastor(lst: List[Any], default: Optional[Any] = None) -> Any:
     if not lst:
@@ -471,9 +548,9 @@ def _await_new_ui_command_or_timeout(zonename: str) -> None:
             ui_last = _ui_command_received_mono[zonename]
         if ui_last > sent_baseline:
             return
-        if (time.monotonic() - started) >= LONG_POLL_TIMEOUT_SECS:
+        if (time.monotonic() - started) >= CONFIG["long_poll_timeout_secs"]:
             return
-        time.sleep(LONG_POLL_SLEEP_SECS)
+        time.sleep(CONFIG["long_poll_sleep_secs"])
 
 
 def _zone_response(zonename: str, update_access: bool) -> JSON:
@@ -526,7 +603,7 @@ def _public_ui_root_url() -> Optional[str]:
 
 def _redirect_public_ui_home_or_503() -> Any:
     """302 to the public HTML UI root; never ``/ui/context`` in ``Location``."""
-    origin = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
+    origin = CONFIG["thermo_ui_public_origin"]
     if origin:
         return redirect(f"{origin}/")
     login_origin = (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
@@ -544,7 +621,7 @@ def _redirect_public_ui_home_or_503() -> Any:
 @app.route("/login")
 def login() -> Any:
     """Redirect to Google OAuth. Restricted to gmail.com; allowlist via regex or legacy env."""
-    if not _oauth_enabled:
+    if not CONFIG["oauth_enabled"]:
         return {"error": "OAuth not configured"}, 400
     home = _public_ui_root_url()
     if home:
@@ -556,7 +633,7 @@ def login() -> Any:
 @app.route("/authorize")
 def authorize() -> Any:
     """OAuth callback. Verify email against allowlist, then redirect browser to HTML UI."""
-    if not _oauth_enabled:
+    if not CONFIG["oauth_enabled"]:
         return redirect(url_for("get_zones"))
     try:
         token = oauth.google.authorize_access_token()
@@ -577,11 +654,11 @@ def logout() -> Any:
     """Clear session."""
     session.pop("user", None)
     session.pop(_SESSION_OAUTH_PUBLIC_UI_HOME, None)
-    return redirect(url_for("login") if _oauth_enabled else url_for("get_zones"))
+    return redirect(url_for("login") if CONFIG["oauth_enabled"] else url_for("get_zones"))
 
 
 def _zone_public_key_configured() -> Optional[str]:
-    return os.environ.get("ZONE_PUBLIC_KEY") or os.environ.get("ZONE_PUBLIC_KEY_PATH")
+    return CONFIG["zone_public_key"] or CONFIG["zone_public_key_path"]
 
 
 def _zone_auth_signature_header_present() -> bool:
@@ -669,12 +746,13 @@ def _authorize_ui() -> Optional[Any]:
     """
     Gate /ui/context and /ui/command on OAuth session when OAuth is configured.
 
-    RETURNS NONE WHEN ACCESS IS GRANTED. 
-    When OAuth is enabled and no session exists, browser requests (Accept: text/html) receive a 302 to /login; 
-    programmatic clients (Accept: application/json) receive 401 JSON. 
-    /ui/diagnostics is intentionally left open for operator debugging.
+
+    RETURNS NONE WHEN ACCESS IS GRANTED.
+    When OAuth is enabled and no session exists, browser requests 
+    (``Accept: text/html``) receive a **302** to ``/login``; programmatic clients receive **401** JSON.
+    ``/ui/diagnostics`` is intentionally left open for operator debugging.
     """
-    if not _oauth_enabled:
+    if not CONFIG["oauth_enabled"]:
         return None
     if session.get("user"):
         return None
@@ -691,7 +769,7 @@ def _authorize_global_read() -> Optional[Any]:
     """
     # Black-box docker-compose testdriver polls GET /zones without Ed25519 headers.
     # Zone POSTs from twoway remain signature-verified via _verify_zone_request.
-    if os.environ.get("ENV") == "DOCKERTEST":
+    if CONFIG["is_dockertest_env"]:
         return None
     pub_key = _zone_public_key_configured()
     machine_ok = False
@@ -703,14 +781,14 @@ def _authorize_global_read() -> Optional[Any]:
     if machine_ok:
         return None
     if not pub_key:
-        if not _oauth_enabled:
+        if not CONFIG["oauth_enabled"]:
             return None
         if session.get("user"):
             return None
         return redirect(url_for("login"))
-    if _oauth_enabled and session.get("user"):
+    if CONFIG["oauth_enabled"] and session.get("user"):
         return None
-    if _oauth_enabled:
+    if CONFIG["oauth_enabled"]:
         return redirect(url_for("login"))
     return {"error": "machine auth required"}, 401
 
@@ -728,15 +806,15 @@ def _authorize_zone_command_post(zonename: str) -> Optional[Any]:
             err = _verify_zone_request(zonename)
             if err:
                 return err[1], err[0]
-        elif _oauth_enabled and session.get("user"):
+        elif CONFIG["oauth_enabled"] and session.get("user"):
             pass
-        elif _oauth_enabled:
+        elif CONFIG["oauth_enabled"]:
             return redirect(url_for("login"))
         else:
             # thermo/test testdriver posts commands without signatures; twoway still signs sensors.
-            if os.environ.get("ENV") != "DOCKERTEST":
+            if not CONFIG["is_dockertest_env"]:
                 return {"error": "machine auth required"}, 401
-    elif _oauth_enabled and not session.get("user"):
+    elif CONFIG["oauth_enabled"] and not session.get("user"):
         return redirect(url_for("login"))
     return None
 
@@ -859,7 +937,7 @@ def ui_context() -> Any:
     if (denied := _authorize_ui()):
         return denied
     if (
-        _oauth_enabled
+        CONFIG["oauth_enabled"]
         and session.get("user")
         and "text/html" in (request.headers.get("Accept") or "")
     ):
@@ -941,7 +1019,7 @@ def debug_logs() -> Any:
     return {"logs": logs_list, **bundle}
 
 
-if os.environ.get("ENV") == "UI_INTEGRATION":
+if CONFIG["is_ui_integration_env"]:
 
     @app.route("/test/ui_session", methods=["GET"])
     def test_ui_session() -> Any:
@@ -972,4 +1050,4 @@ def test_reset() -> Any:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=CONFIG["port"])
