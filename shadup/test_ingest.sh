@@ -36,17 +36,18 @@ mk_harness() {
     cp "$SCRIPT_DIR/ingest.sh" "$HARNESS/ingest.sh"
     cp "$SCRIPT_DIR/ingest.py" "$HARNESS/ingest.py"
     cp "$SCRIPT_DIR/shadup.py" "$HARNESS/shadup.py"
-    cp "$SCRIPT_DIR/with-ro-remounted-rw.sh" "$HARNESS/with-ro-remounted-rw.sh"
     ln -sf "$SHADUP_VENV" "$HARNESS/env"
-    chmod +x "$HARNESS/ingest.sh" "$HARNESS/ingest.py" "$HARNESS/with-ro-remounted-rw.sh"
+    chmod +x "$HARNESS/ingest.sh" "$HARNESS/ingest.py"
 
-    # Replace remount wrapper with a plain exec passthrough (no real mount in tests).
+    # Stub remount wrapper (no real mount in tests); ingest.sh resolves the real
+    # script from ../bin, so point JOVLINGER_BIN at this harness directory.
     cat > "$HARNESS/with-ro-remounted-rw.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 exec "$@"
 EOF
     chmod +x "$HARNESS/with-ro-remounted-rw.sh"
+    export JOVLINGER_BIN="$HARNESS"
 }
 
 assert_relative_data_link() {
