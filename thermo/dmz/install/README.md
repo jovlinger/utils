@@ -23,7 +23,7 @@ Pi rescue (**`sh /root/sshd.sh`**) installs **`install/rescue_authorized_keys`**
 | `../dmz.conf` | **Source** for tweakable settings; `build-and-write.sh` generates the rows below. |
 | `network.conf` | Generated one line: `ADDR/CIDR GATEWAY` (editable on the card before boot). |
 | `dns.conf` | Generated: one resolver IPv4 per line → host + chroot `resolv.conf`. |
-| `dmz-app.env` | Generated: `PORT`, `UI_PORT`, optional public URLs, `LONG_POLL_*`, `LOG_LEVEL` → chroot `/etc/dmz/dmz-app.env`. |
+| `dmz-app.env` | Generated: `PORT`, `UI_PORT`, `OAUTH_SESSION_LIFETIME_SECS`, optional public URLs, `LONG_POLL_*`, `LOG_LEVEL` → chroot `/etc/dmz/dmz-app.env`. |
 | `sshd-on-boot` | Generated: `yes` or `no` - pubkey-only sshd on the DMZ network at boot. |
 | `buildinfo.txt` | Written at image build time (build id + git). |
 | `dmz-boot.start` | Source for apkovl `/etc/local.d/` (also embedded in `dmz.apkovl.tar.gz` on the card). |

@@ -11,7 +11,7 @@ Long-term, make the backend connection into a TCP based queue (connection is awk
 """
 
 from collections import deque, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -238,6 +238,7 @@ class DmzConfig(TypedDict):
     long_poll_timeout_secs: float
     long_poll_sleep_secs: float
     log_level: str
+    oauth_session_lifetime_secs: int
     thermo_ui_public_origin: str
     dmz_public_base_url: Optional[str]
 
@@ -259,6 +260,11 @@ def build_dmz_config_from_environ() -> DmzConfig:
         port: int = int(port_s)
     except ValueError:
         port = 5000
+    oauth_life_s = os.environ.get("OAUTH_SESSION_LIFETIME_SECS", "2592000").strip()
+    try:
+        oauth_session_lifetime_secs: int = max(0, int(oauth_life_s))
+    except ValueError:
+        oauth_session_lifetime_secs = 0
     cfg: DmzConfig = {
         "secret_key": os.environ.get("SECRET_KEY", "dev-secret-change-in-production"),
         "google_client_id": google_client_id,
@@ -275,6 +281,7 @@ def build_dmz_config_from_environ() -> DmzConfig:
         "long_poll_timeout_secs": float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "60")),
         "long_poll_sleep_secs": float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0")),
         "log_level": (os.environ.get("LOG_LEVEL") or "DEBUG").strip().upper(),
+        "oauth_session_lifetime_secs": oauth_session_lifetime_secs,
         "thermo_ui_public_origin": thermo_ui,
         "dmz_public_base_url": dmz_public_base_url,
     }
@@ -289,6 +296,18 @@ app.config["GOOGLE_CLIENT_ID"] = CONFIG["google_client_id"]
 app.config["GOOGLE_CLIENT_SECRET"] = CONFIG["google_client_secret"]
 
 
+def _apply_flask_session_lifetime() -> None:
+    """Set Flask ``PERMANENT_SESSION_LIFETIME`` from ``OAUTH_SESSION_LIFETIME_SECS``."""
+    secs = CONFIG["oauth_session_lifetime_secs"]
+    if secs > 0:
+        app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(seconds=secs)
+    else:
+        app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=31)
+
+
+_apply_flask_session_lifetime()
+
+
 def reload_dmz_config_from_environ() -> None:
     """
     Rebuild :data:`CONFIG` from ``os.environ`` and sync Flask settings.
@@ -301,6 +320,7 @@ def reload_dmz_config_from_environ() -> None:
     app.config["GOOGLE_CLIENT_ID"] = CONFIG["google_client_id"]
     app.config["GOOGLE_CLIENT_SECRET"] = CONFIG["google_client_secret"]
     set_log_level(CONFIG["log_level"])
+    _apply_flask_session_lifetime()
 
 
 def email_matches_allowlist(raw_email: str) -> bool:
@@ -387,6 +407,7 @@ def _auth_config_detail() -> Dict[str, Any]:
         "flask_secret_is_default_dev": default_dev,
         "env": CONFIG["env"],
         "dmz_public_base_url": CONFIG["dmz_public_base_url"],
+        "oauth_session_lifetime_secs": CONFIG["oauth_session_lifetime_secs"],
     }
 
 
@@ -395,7 +416,8 @@ def _log_auth_startup() -> None:
     logger.info(
         "auth startup: zone_enforced=%s zone_src=%s zone_pub_sha256_last4=%s "
         "oauth=%s google_client_id_last4=%s allowlist_mode=%s allowlist_pat_sha256_last4=%s "
-        "flask_secret_last4=%s default_dev_secret=%s env=%s port=%s",
+        "flask_secret_last4=%s default_dev_secret=%s env=%s port=%s "
+        "oauth_session_lifetime_secs=%s",
         d["zone_auth_enforced"],
         d["zone_pubkey_source"],
         d["zone_pubkey_sha256_last4"],
@@ -407,6 +429,7 @@ def _log_auth_startup() -> None:
         d["flask_secret_is_default_dev"],
         d.get("env"),
         CONFIG["port"],
+        d["oauth_session_lifetime_secs"],
     )
 
 
@@ -640,6 +663,8 @@ def authorize() -> Any:
     if not email_matches_allowlist(email):
         return {"error": "Access denied (email not on allowlist)"}, 403
     session["user"] = {"email": email}
+    if CONFIG["oauth_session_lifetime_secs"] > 0:
+        session.permanent = True
     return _redirect_public_ui_home_or_503()
 
 
