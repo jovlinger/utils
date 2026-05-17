@@ -10,9 +10,12 @@
 # Pubkey source (first match wins):
 #   FAT: /media/mmcblk0/install/rescue_authorized_keys (editable on SD; overwritten each image build),
 #   apkovl: /root/install/rescue_authorized_keys (baked at flash time from same content).
-# Build merges ~/.ssh/id_*.pub on the builder into those paths; sshd stays off until this script runs.
+# Build merges ~/.ssh/id_*.pub on the builder into those paths; sshd stays off until this script runs
+# (unless dmz.conf SSHD_ON_BOOT=yes baked sshd-on-boot on the card).
 
 set -e
+
+. /root/install/dmz-sshd-common.sh
 
 ROUTER_GATEWAY="${ROUTER_GATEWAY:-192.168.88.1}"
 ip_main="${1:-192.168.88.200}"
@@ -45,72 +48,14 @@ ip route flush dev eth0 2>/dev/null || true
 ip addr add "$addr" dev eth0
 ip route add default via "$ROUTER_GATEWAY" dev eth0
 
-printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
+dmz_install_resolv_conf
 
-_SD="/media/mmcblk0"
-KEYSRC=""
-if [ -d "${_SD}/install" ] && [ -s "${_SD}/install/rescue_authorized_keys" ]; then
-	KEYSRC="${_SD}/install/rescue_authorized_keys"
-	echo "==> installing pubkeys from SD FAT install/rescue_authorized_keys"
-elif [ -s /root/install/rescue_authorized_keys ]; then
-	KEYSRC="/root/install/rescue_authorized_keys"
-	echo "==> installing pubkeys from baked /root/install/rescue_authorized_keys"
-else
-	echo "Error: no rescue_authorized_keys on device." >&2
-	echo "  Image build must populate install/rescue_authorized_keys (from builder ~/.ssh/*.pub)." >&2
-	echo "  Or mount FAT and place install/rescue_authorized_keys on the SD." >&2
-	exit 1
-fi
+dmz_install_rescue_authorized_keys
+dmz_start_sshd_daemon
 
-if ! grep -qE '^[[:space:]]*(ssh-|ecdsa-sha2-|ssh-ed25519|sk-ssh-|sk-ecdsa-sha2-|cert-authority)' "$KEYSRC"; then
-	echo "Error: $KEYSRC has no pubkey lines (expected OpenSSH authorized_keys entries)." >&2
-	exit 1
-fi
-
-mkdir -p /root/.ssh
-chmod 700 /root/.ssh
-
-cp "$KEYSRC" /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-
-SSHD_BIN=""
-for _c in /usr/sbin/sshd /sbin/sshd; do
-	if [ -x "$_c" ]; then
-		SSHD_BIN="$_c"
-		break
-	fi
-done
-if [ -z "$SSHD_BIN" ]; then
-	echo "Error: sshd binary missing — rebuild SD (apkovl bundles openssh)." >&2
-	exit 1
-fi
-
-mkdir -p /etc/ssh/sshd_config.d
-cat >/etc/ssh/sshd_config.d/50-dmz-rescue.conf <<'EOF'
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PubkeyAuthentication yes
-PermitRootLogin prohibit-password
-AuthenticationMethods publickey
-LogLevel VERBOSE
-EOF
-
-ssh-keygen -A >/dev/null 2>&1 || ssh-keygen -A
-
-rc-service sshd stop 2>/dev/null || true
-rc-update del sshd default 2>/dev/null || true
-killall sshd 2>/dev/null || true
-rm -f /run/sshd.pid 2>/dev/null || true
-
-SSHD_LOG=/var/log/sshd.log
-touch "$SSHD_LOG"
-chmod 644 "$SSHD_LOG"
-"$SSHD_BIN" -D -E "$SSHD_LOG" &
-echo "$!" >/run/dmz-sshd-raw.pid
-
-echo "sshd started (pubkey-only). ssh root@${ip_in}"
-echo "  log: tail -f $SSHD_LOG"
-echo "  stop: kill \$(cat /run/dmz-sshd-raw.pid) 2>/dev/null || killall sshd"
+_ip_show=$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{print $4}' | head -n1)
+echo "  ssh root@${_ip_show:-$ip_in}"
+echo "  stop: kill \$(cat /run/dmz-sshd-raw.pid 2>/dev/null) 2>/dev/null || killall sshd"
 
 ip addr show dev eth0 || true
 ip route show || true

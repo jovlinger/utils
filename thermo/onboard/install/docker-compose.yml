@@ -78,6 +78,8 @@ services:
       DMZ_HOST: ${DMZ_HOST:-jovlinger.duckdns.org}
       DMZ_PORT: ${DMZ_PORT:-5000}
       DMZ_URL: ${DMZ_URL:-}
+      # Must be >= DMZ LONG_POLL_TIMEOUT_SECS (+ margin baked into DMZ_HTTP_TIMEOUT_SECS).
+      LONG_POLL_TIMEOUT_SECS: ${LONG_POLL_TIMEOUT_SECS:-60}
       ZONE_NAME: ${ZONE_NAME:-zoneymczoneface}
       # Twoway reads ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM). The in-container
       # path is fixed at /etc/thermo/zone-priv.pem; if that file is absent (because the host

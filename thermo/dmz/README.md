@@ -49,7 +49,7 @@ docker run --rm -p 8080:8080 jovlinger/thermo/dmz
 
 The image is a **256MB FAT** volume: Alpine Raspberry Pi **3.19.0 armhf** boot files, **`dmz_rootfs.tar`** (docker export of **`linux/arm/v6`**), **`dmz.apkovl.tar.gz`** (haveged + **`install/dmz-boot.start`** as OpenRC `local.d`). Boot logs to **`/tmp/boot.log`** on the Pi RAM root; the app logs to **`/var/log/dmz.log`** (bind-mounted through the chroot). Boot brings up **`eth0`** from **`install/network.conf`**, extracts the tarball, **chroots** into it, runs **`/sbin/tini -- /app/start.sh`** — same chain as the container (including **`run-with-stdout-logged.py`**).
 
-Edit **`install/network.conf`** on the FAT partition before first boot if the defaults are wrong.
+Edit **`dmz.conf`** before **`./build-and-write.sh`** (network, sshd-on-boot, long-poll, log level). You can still tweak **`install/network.conf`** on the FAT before first boot.
 
 **Home router DMZ (Pi not on LAN subnet, public port 5000, DuckDNS `jovlinger.duckdns.org`):** see **[`install/ROUTERBOARD-DMZ.md`](install/ROUTERBOARD-DMZ.md)**.
 

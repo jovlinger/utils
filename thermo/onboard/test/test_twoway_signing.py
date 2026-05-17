@@ -34,7 +34,7 @@ _ARGV: List[str] = [
     "http://127.0.0.1:1/daikin",
 ]
 
-# Boot twoway, then exit before poll_forever() can run. ``info("enter")`` is the last log
+# Boot twoway, then exit before poll_forever() can run. ``logger.info("enter")`` is the last log
 # line emitted at module top-level before the `if __name__ == "__main__":` guard, so we
 # install an audit hook that abort()s right after the module import completes. We avoid
 # `if __name__ == "__main__"` by importing twoway as a module (not running it).

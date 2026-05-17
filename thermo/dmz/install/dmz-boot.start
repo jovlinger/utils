@@ -47,6 +47,9 @@ test -d "$SD_MOUNT/install"
 dump "ls SD_MOUNT" ls -la "$SD_MOUNT"
 dump "ls install" ls -la "$SD_MOUNT/install"
 pr "network.conf: $(grep -v '^[[:space:]]*#' "$SD_MOUNT/install/network.conf" | head -n1)"
+if [ -f "$SD_MOUNT/install/sshd-on-boot" ]; then
+	pr "sshd-on-boot: $(head -n1 "$SD_MOUNT/install/sshd-on-boot" | tr -d '\r')"
+fi
 pr "buildinfo: $(cat "$SD_MOUNT/install/buildinfo.txt")"
 pr ""
 
@@ -93,14 +96,41 @@ $NETLINE
 EOF
 ip addr add "$addr" dev eth0
 ip route add default via "$gw"
-# Default route stays on $gw. Multiple public resolvers: transient EAI_AGAIN on one upstream
-# (or ISP/router DNS quirks) should not break OAuth metadata fetch to accounts.google.com.
-# `/root/sshd.sh` rescue uses the same trio; chroot gets the same list after tarball extract (below).
-printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
+# Resolvers from install/dns.conf (from dmz.conf at image build).
+if [ -f /root/install/dmz-sshd-common.sh ]; then
+	# shellcheck source=/dev/null
+	. /root/install/dmz-sshd-common.sh
+	dmz_install_resolv_conf
+else
+	printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
+fi
 cp "$SD_MOUNT/install/network.conf" /root/network.conf
+[ -f "$SD_MOUNT/install/dns.conf" ] && cp "$SD_MOUNT/install/dns.conf" /root/dns.conf
 dump "ip addr" ip addr
 dump "ip route" ip route
 dump "resolv.conf" cat /etc/resolv.conf
+_sshd_boot=no
+if [ -f "$SD_MOUNT/install/sshd-on-boot" ]; then
+	_sshd_boot=$(head -n1 "$SD_MOUNT/install/sshd-on-boot" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+fi
+case "$_sshd_boot" in
+yes | true | 1 | on)
+	if [ -f /root/install/dmz-sshd-common.sh ]; then
+		# shellcheck source=/dev/null
+		. /root/install/dmz-sshd-common.sh
+		if dmz_install_rescue_authorized_keys && dmz_start_sshd_daemon; then
+			pr "  sshd-on-boot: started (pubkey-only on DMZ network)"
+		else
+			pr "  sshd-on-boot: FAILED (see console)"
+		fi
+	else
+		pr "  sshd-on-boot: yes but /root/install/dmz-sshd-common.sh missing"
+	fi
+	;;
+*)
+	pr "  sshd-on-boot: no (rescue: sh /root/sshd.sh)"
+	;;
+esac
 pr ""
 
 pr ">>> 6/10 entropy + clock"
@@ -132,9 +162,8 @@ if [ -n "$_missing" ]; then
 	dump "ls CHROOT/lib" ls -la "$CHROOT_DIR/lib" 2>&1 || true
 	exit 1
 fi
-# Chroot carries its own /etc/resolv.conf from the Docker export; align with host so Python
-# (Flask OAuth) does not depend on a stale or empty resolver list from the image build.
-printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >"$CHROOT_DIR/etc/resolv.conf"
+# Chroot carries its own /etc/resolv.conf from the Docker export; align with host resolvers.
+cp /etc/resolv.conf "$CHROOT_DIR/etc/resolv.conf"
 # Zone Ed25519 pub key: every build-and-write SD image bakes install/zone-pub.pem from .secrets/zone/pub.pem on the build host.
 # When present, start.sh exports ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem so the DMZ
 # enforces twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md, ../SECRETS.md).
@@ -173,6 +202,12 @@ else
 			break
 		fi
 	done
+fi
+if [ -f "$SD_MOUNT/install/dmz-app.env" ]; then
+	mkdir -p "$CHROOT_DIR/etc/dmz"
+	cp "$SD_MOUNT/install/dmz-app.env" "$CHROOT_DIR/etc/dmz/dmz-app.env"
+	chmod 0444 "$CHROOT_DIR/etc/dmz/dmz-app.env"
+	pr "  dmz-app.env: installed -> /etc/dmz/dmz-app.env (long-poll, LOG_LEVEL)"
 fi
 pr ""
 

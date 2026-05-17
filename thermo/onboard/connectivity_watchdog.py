@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
 import subprocess
@@ -26,7 +27,11 @@ from urllib.parse import urlparse
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import log  # noqa: E402
+from logging_config import configure_logging, format_kv  # noqa: E402
+
+configure_logging("onboard")
+# Example: 2026-05-13T19:04:05.789Z INFO onboard connectivity_watchdog:400 start run_id='watchdog-1' …
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DMZ_SCHEME = "http"
 _DEFAULT_DMZ_HOST = "jovlinger.duckdns.org"
@@ -397,7 +402,10 @@ def main() -> None:
     keep_incidents = _env_int("CONNECTIVITY_INCIDENT_KEEP", 15)
     run_id = os.environ.get("CONNECTIVITY_RUN_ID", "watchdog-1")
 
-    log("watchdog", "start", run_id=run_id, interval=interval, threshold=threshold)
+    logger.info(
+        "start%s",
+        format_kv(run_id=run_id, interval=interval, threshold=threshold),
+    )
     consecutive = 0
     in_episode = False
     episode_dumped = False
@@ -411,25 +419,27 @@ def main() -> None:
 
         if ok:
             if in_episode:
-                log(
-                    "watchdog",
-                    "recovered",
-                    run_id=run_id,
-                    dmz=detail_summary(dmz_ok, dmz_detail),
-                    onboard=detail_summary(ob_ok, ob_detail),
+                logger.info(
+                    "recovered%s",
+                    format_kv(
+                        run_id=run_id,
+                        dmz=detail_summary(dmz_ok, dmz_detail),
+                        onboard=detail_summary(ob_ok, ob_detail),
+                    ),
                 )
             consecutive = 0
             in_episode = False
             episode_dumped = False
         else:
             consecutive += 1
-            log(
-                "watchdog",
-                "check_fail",
-                run_id=run_id,
-                consecutive=consecutive,
-                dmz=detail_summary(dmz_ok, dmz_detail),
-                onboard=detail_summary(ob_ok, ob_detail),
+            logger.info(
+                "check_fail%s",
+                format_kv(
+                    run_id=run_id,
+                    consecutive=consecutive,
+                    dmz=detail_summary(dmz_ok, dmz_detail),
+                    onboard=detail_summary(ob_ok, ob_detail),
+                ),
             )
             in_episode = True
             if consecutive >= threshold and not episode_dumped:
@@ -445,9 +455,15 @@ def main() -> None:
                 header = json.dumps(meta, indent=2) + "\n\n--- snapshot ---\n"
                 try:
                     path = write_incident_bundle(header + snap, dump_dir, keep_incidents)
-                    log("watchdog", "incident_written", run_id=run_id, path=str(path))
+                    logger.info(
+                        "incident_written%s",
+                        format_kv(run_id=run_id, path=str(path)),
+                    )
                 except OSError as e:
-                    log("watchdog", "incident_write_failed", run_id=run_id, error=str(e))
+                    logger.info(
+                        "incident_write_failed%s",
+                        format_kv(run_id=run_id, error=str(e)),
+                    )
                 episode_dumped = True
 
         if hw_interval > 0:
@@ -457,11 +473,16 @@ def main() -> None:
                 try:
                     m = hw_health_metrics_compact()
                     if m:
-                        log("watchdog", "hw_health", run_id=run_id, **m)
+                        logger.info("hw_health%s", format_kv(run_id=run_id, **m))
                     else:
-                        log("watchdog", "hw_health", run_id=run_id, note="empty")
+                        logger.info(
+                            "hw_health%s", format_kv(run_id=run_id, note="empty")
+                        )
                 except Exception as e:  # noqa: BLE001 — never kill watchdog
-                    log("watchdog", "hw_health_failed", run_id=run_id, error=str(e))
+                    logger.info(
+                        "hw_health_failed%s",
+                        format_kv(run_id=run_id, error=str(e)),
+                    )
 
         time.sleep(interval)
 

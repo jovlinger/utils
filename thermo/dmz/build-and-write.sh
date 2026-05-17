@@ -29,6 +29,9 @@
 # Env (non-secret operational only):
 #   DMZ_OUTPUT_IMG              Output .img path (default: dist/dmz.img). Used by tests.
 #
+# Tweakable runtime settings: edit dmz.conf in this directory (network, sshd-on-boot,
+# long-poll, log level). build-and-write.sh applies them to install/ on the FAT image.
+#
 # ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub — at least one required: merged into
 # install/rescue_authorized_keys on FAT and apkovl /root/install/ (installed by console sh /root/sshd.sh).
 
@@ -107,6 +110,11 @@ DMZ_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
 RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../bin/run-with-stdout-logged.py}"
 OUTPUT_IMG="${DMZ_OUTPUT_IMG:-$DMZ_DIR/dist/dmz.img}"
+DMZ_CONF="$DMZ_DIR/dmz.conf"
+if [ ! -f "$DMZ_CONF" ]; then
+	echo "Error: missing tweakable settings file: $DMZ_CONF" >&2
+	exit 1
+fi
 
 # Zone public key: fixed path only (required).
 ZONE_PUB_KEY_SRC="$DMZ_DIR/.secrets/zone/pub.pem"
@@ -274,6 +282,11 @@ if [ -n "$WRITE_DEV" ]; then
 fi
 
 WORKDIR="$(mktemp -d)"
+GEN_INSTALL="$WORKDIR/install-gen"
+mkdir -p "$GEN_INSTALL"
+chmod +x "$DMZ_DIR/install/parse-dmz-conf.sh"
+"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_CONF" "$GEN_INSTALL"
+ts "[build] dmz.conf -> network.conf, dns.conf, dmz-app.env, sshd-on-boot ($(head -n1 "$GEN_INSTALL/network.conf" | tr -d '\n'))"
 cleanup() {
 	[ -n "$UMOUNT_LOG" ] && rm -f "$UMOUNT_LOG" 2>/dev/null || true
 	rm -rf "$WORKDIR" 2>/dev/null || true
@@ -423,8 +436,15 @@ chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ss
 mkdir -p "$APKOVL_DIR/root/.ssh" "$APKOVL_DIR/root/install"
 cp "$DMZ_DIR/install/sshd.sh" "$APKOVL_DIR/root/sshd.sh"
 chmod +x "$APKOVL_DIR/root/sshd.sh"
+cp "$DMZ_DIR/install/dmz-sshd-common.sh" "$APKOVL_DIR/root/install/dmz-sshd-common.sh"
+chmod +x "$APKOVL_DIR/root/install/dmz-sshd-common.sh"
 cp "$RESCUE_AUTH_KEYS" "$APKOVL_DIR/root/install/rescue_authorized_keys"
 chmod 644 "$APKOVL_DIR/root/install/rescue_authorized_keys"
+# dns.conf is copied onto FAT at [7/7]; mirror defaults into apkovl for pre-mount boot.
+if [ -f "$GEN_INSTALL/dns.conf" ]; then
+	cp "$GEN_INSTALL/dns.conf" "$APKOVL_DIR/root/install/dns.conf"
+	chmod 644 "$APKOVL_DIR/root/install/dns.conf"
+fi
 : >"$APKOVL_DIR/root/.ssh/authorized_keys"
 chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 
@@ -433,8 +453,9 @@ if command -v sha256sum >/dev/null 2>&1; then
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/sshd.sh" \
+			for f in "$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
+				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -445,8 +466,9 @@ else
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/sshd.sh" \
+			for f in "$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
+				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -527,7 +549,14 @@ mmd -i "$IMG_FILE" ::install
 mmd -i "$IMG_FILE" ::debug
 for f in "$DMZ_DIR/install"/*; do
 	[ -e "$f" ] || continue
-	mcopy -i "$IMG_FILE" "$f" "::install/$(basename "$f")"
+	_base=$(basename "$f")
+	case "$_base" in
+	network.conf | dns.conf | dmz-app.env | sshd-on-boot) continue ;;
+	esac
+	mcopy -i "$IMG_FILE" "$f" "::install/$_base"
+done
+for _gen in network.conf dns.conf dmz-app.env sshd-on-boot; do
+	mcopy -i "$IMG_FILE" "$GEN_INSTALL/$_gen" "::install/$_gen"
 done
 cp "$RESCUE_AUTH_KEYS" "$WORKDIR/device-rescue_authorized_keys"
 mcopy -i "$IMG_FILE" "$WORKDIR/device-rescue_authorized_keys" ::install/rescue_authorized_keys

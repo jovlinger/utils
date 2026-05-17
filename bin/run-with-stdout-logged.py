@@ -25,7 +25,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
+
+# Log rotation failure at most once per logpath per process (otherwise every log line
+# after FILELIMIT retriggers rename() and floods stderr).
+_rotation_skip_logged: Set[str] = set()
 
 
 def isodatetime_suffix() -> str:
@@ -48,16 +52,21 @@ def rotate_if_needed(logpath: Path, filelimit: int, totallimit: int) -> None:
     try:
         logpath.rename(rotated)
     except OSError as exc:
-        # rename() fails with EBUSY if logpath is a mount point (e.g. a file bind-mount).
-        # Log the problem to stderr and skip rotation rather than propagating the
-        # exception, which would unwind the read loop into proc.wait() and deadlock
-        # the logger while the child's pipe buffer fills up.
-        print(
-            f"run-with-stdout-logged.py: rotation skipped ({exc}); "
-            f"logpath={logpath} may be a mount point",
-            file=sys.stderr,
-            flush=True,
-        )
+        # rename() fails with EBUSY if logpath is a mount point (e.g. a file bind-mount),
+        # or with EACCES if the parent directory is not writable by this user (common when
+        # /var/log is root:root 0755 but the log file is owned by a non-root user).
+        # Log once per logpath and skip rotation rather than propagating the exception,
+        # which would unwind the read loop into proc.wait() and deadlock the logger while
+        # the child's pipe buffer fills up.
+        key = str(logpath.resolve())
+        if key not in _rotation_skip_logged:
+            _rotation_skip_logged.add(key)
+            print(
+                f"run-with-stdout-logged.py: rotation skipped ({exc}); "
+                f"logpath={logpath} (mount point or parent dir not writable by this user)",
+                file=sys.stderr,
+                flush=True,
+            )
         return
     logpath.touch()
     prune_until_total_at_most(logpath, totallimit)

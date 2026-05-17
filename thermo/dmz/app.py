@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import re
-import sys
 import threading
 import time
 from pathlib import Path
@@ -26,6 +25,12 @@ from urllib.parse import urlparse
 
 from flask import Flask, g, redirect, request, session, url_for
 from pydantic import BaseModel, validator
+
+from logging_config import configure_logging, set_log_level
+
+configure_logging("dmz")
+# Example: 2026-05-17T13:40:23.905Z INFO dmz app:396 auth startup: zone_enforced=True zone_src=… oauth=…
+logger = logging.getLogger(__name__)
 
 JSON = Union[Dict, str, int]
 
@@ -211,20 +216,6 @@ def _log_full_zone_state(reason: str, zonename: Optional[str] = None) -> None:
         logger.debug("zone state log failed reason=%s err=%s", reason, e)
 
 
-# Logging: isodatetime, DEBUG, to stdout (Docker / process manager capture)
-_log_handler = logging.StreamHandler(sys.stdout)
-_log_handler.setLevel(logging.DEBUG)
-_log_fmt = logging.Formatter(
-    "%(asctime)s.%(msecs)03dZ %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S"
-)
-_log_fmt.converter = time.gmtime
-_log_handler.setFormatter(_log_fmt)
-logger = logging.getLogger("dmz")
-logger.setLevel(logging.DEBUG)
-logger.addHandler(_log_handler)
-logger.propagate = False
-
-
 class DmzConfig(TypedDict):
     """Snapshot of DMZ runtime settings (from the environment at load / reload time).
 
@@ -246,6 +237,7 @@ class DmzConfig(TypedDict):
     port: int
     long_poll_timeout_secs: float
     long_poll_sleep_secs: float
+    log_level: str
     thermo_ui_public_origin: str
     dmz_public_base_url: Optional[str]
 
@@ -280,8 +272,9 @@ def build_dmz_config_from_environ() -> DmzConfig:
         "is_dockertest_env": env_raw == "DOCKERTEST",
         "is_ui_integration_env": env_raw == "UI_INTEGRATION",
         "port": port,
-        "long_poll_timeout_secs": float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "10")),
+        "long_poll_timeout_secs": float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "60")),
         "long_poll_sleep_secs": float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0")),
+        "log_level": (os.environ.get("LOG_LEVEL") or "DEBUG").strip().upper(),
         "thermo_ui_public_origin": thermo_ui,
         "dmz_public_base_url": dmz_public_base_url,
     }
@@ -307,6 +300,7 @@ def reload_dmz_config_from_environ() -> None:
     app.secret_key = CONFIG["secret_key"]
     app.config["GOOGLE_CLIENT_ID"] = CONFIG["google_client_id"]
     app.config["GOOGLE_CLIENT_SECRET"] = CONFIG["google_client_secret"]
+    set_log_level(CONFIG["log_level"])
 
 
 def email_matches_allowlist(raw_email: str) -> bool:

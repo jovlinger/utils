@@ -6,6 +6,10 @@
 set -eu
 
 mkdir -p /var/log /tmp
+# run-with-stdout-logged rotates by renaming LOGPATH in this directory; that needs write
+# access on the parent. Pi dmz-boot mounts tmpfs /var/log as root:root 0755, so rename()
+# would fail with EACCES for user dmz even when dmz.log is chowned to dmz.
+chown dmz:dmz /var/log 2>/dev/null || true
 touch /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 chown dmz:dmz /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 
@@ -44,6 +48,15 @@ fi
 if [ -z "${ALLOWED_EMAIL_PATTERN:-}" ] && [ -f /etc/dmz/allowed-email ]; then
 	export ALLOWED_EMAIL_PATTERN="$(head -n1 /etc/dmz/allowed-email | tr -d '\r')"
 	echo "start.sh: ALLOWED_EMAIL_PATTERN from /etc/dmz/allowed-email (re.fullmatch)"
+fi
+
+# Runtime tuning from dmz.conf (baked to install/dmz-app.env at image build).
+if [ -f /etc/dmz/dmz-app.env ]; then
+	set -a
+	# shellcheck disable=SC1091
+	. /etc/dmz/dmz-app.env
+	set +a
+	echo "start.sh: loaded /etc/dmz/dmz-app.env (PORT=${PORT:-unset} UI_PORT=${UI_PORT:-unset} LOG_LEVEL=${LOG_LEVEL:-unset})"
 fi
 
 mount -o remount,ro / 2>/dev/null \

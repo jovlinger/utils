@@ -45,7 +45,7 @@ build: .image.app .image.twoway
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
 	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.app
 
-.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py common.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
+.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py common.py logging_config.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
 	"$(CURDIR)/stage-docker-import.sh"
 	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
