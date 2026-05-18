@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import signal
 import threading
 import time
 from pathlib import Path
@@ -43,6 +44,44 @@ _ZONE_ATTEMPT_MAXLEN = 200
 _zone_attempts: Deque[Dict[str, Any]] = deque(maxlen=_ZONE_ATTEMPT_MAXLEN)
 _START_MONO: float = time.time()
 _START_UTC_ISO: str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+# Repeat-log suppression (zone state dump + obsolete command DEBUG).
+_last_zone_state_fingerprint: Optional[str] = None
+_zone_state_log_suppressed_count: int = 0
+_last_obsolete_log_fingerprint: Optional[str] = None
+_obsolete_log_suppressed_count: int = 0
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    norm = raw.strip().lower()
+    if norm in ("1", "true", "yes", "on"):
+        return True
+    if norm in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _zone_state_log_suppress_repeat() -> int:
+    """Log again after this many consecutive suppressed identical fingerprints."""
+    raw = os.environ.get("ZONE_STATE_LOG_SUPPRESS_REPEAT", "10").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 10
+    return max(1, n)
 
 
 class ZoneRequest(BaseModel):
@@ -160,13 +199,7 @@ def _replace_command_if_newer(zonename: str, cmd: Dict[str, Any], source: str) -
     last = _lastor(commands[zonename])
     last_dt = last.get("created_dt") if isinstance(last, dict) else None
     if isinstance(last_dt, str) and last_dt and incoming_dt <= last_dt:
-        logger.debug(
-            "zone command obsolete; ignored zone=%s source=%s incoming=%s stored=%s",
-            zonename,
-            source,
-            incoming_dt,
-            last_dt,
-        )
+        _log_zone_command_obsolete(zonename, source, incoming_dt, last_dt, cmd)
         return "obsolete"
     _append_and_trim(commands[zonename], cmd)
     logger.info(
@@ -196,6 +229,112 @@ def _full_zone_state_snapshot() -> Dict[str, Dict[str, Any]]:
     return snap
 
 
+def _prune_snap_for_fingerprint(obj: Any) -> Any:
+    """Copy *obj* without volatile fields (``sensors``, keys ending in ``_dt``) Recursively."""
+    if isinstance(obj, dict):
+        pruned: Dict[str, Any] = {}
+        for key, value in obj.items():
+            if key == "sensors" or key.endswith("_dt"):
+                continue
+            pruned[key] = _prune_snap_for_fingerprint(value)
+        return pruned
+    if isinstance(obj, list):
+        return [_prune_snap_for_fingerprint(item) for item in obj]
+    return obj
+
+
+def _zone_state_fingerprint(snap: Dict[str, Dict[str, Any]]) -> str:
+    """SHA-256 of JSON for *snap* with volatile keys removed."""
+    pruned = _prune_snap_for_fingerprint(snap)
+    payload = json.dumps(pruned, default=str, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _obsolete_log_fingerprint(
+    zonename: str,
+    source: str,
+    incoming_dt: str,
+    stored_dt: str,
+    cmd: Dict[str, Any],
+) -> str:
+    payload = {
+        "zone": zonename,
+        "source": source,
+        "incoming_dt": incoming_dt,
+        "stored_dt": stored_dt,
+        "command": _prune_snap_for_fingerprint(cmd),
+    }
+    blob = json.dumps(payload, default=str, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _obsolete_repeat_suppression_active() -> bool:
+    """True when identical obsolete DEBUG lines may be collapsed."""
+    return CONFIG["obsolete_log_suppress_repeat"] > 1
+
+
+def _should_emit_repeat_log(
+    fp: str,
+    last_fp: Optional[str],
+    suppressed_count: int,
+    repeat_max: int,
+) -> Tuple[bool, int]:
+    """Return (emit_now, new_suppressed_count)."""
+    if last_fp == fp:
+        suppressed_count += 1
+        if suppressed_count < repeat_max:
+            return False, suppressed_count
+        return True, 0
+    return True, 0
+
+
+def _log_zone_command_obsolete(
+    zonename: str,
+    source: str,
+    incoming_dt: str,
+    stored_dt: str,
+    cmd: Dict[str, Any],
+) -> None:
+    global _last_obsolete_log_fingerprint, _obsolete_log_suppressed_count
+    if not _obsolete_repeat_suppression_active():
+        logger.debug(
+            "zone command obsolete; ignored zone=%s source=%s incoming=%s stored=%s",
+            zonename,
+            source,
+            incoming_dt,
+            stored_dt,
+        )
+        return
+    fp = _obsolete_log_fingerprint(zonename, source, incoming_dt, stored_dt, cmd)
+    repeat_max = CONFIG["obsolete_log_suppress_repeat"]
+    emit, _obsolete_log_suppressed_count = _should_emit_repeat_log(
+        fp,
+        _last_obsolete_log_fingerprint,
+        _obsolete_log_suppressed_count,
+        repeat_max,
+    )
+    _last_obsolete_log_fingerprint = fp
+    if not emit:
+        return
+    logger.debug(
+        "zone command obsolete; ignored zone=%s source=%s incoming=%s stored=%s fingerprint=%s",
+        zonename,
+        source,
+        incoming_dt,
+        stored_dt,
+        fp[:16],
+    )
+
+
+def _reset_repeat_log_suppression() -> None:
+    global _last_zone_state_fingerprint, _zone_state_log_suppressed_count
+    global _last_obsolete_log_fingerprint, _obsolete_log_suppressed_count
+    _last_zone_state_fingerprint = None
+    _zone_state_log_suppressed_count = 0
+    _last_obsolete_log_fingerprint = None
+    _obsolete_log_suppressed_count = 0
+
+
 def _log_full_zone_state(reason: str, zonename: Optional[str] = None) -> None:
     """Emit a single DEBUG line with the full ``{zone: {command, sensors}}`` snapshot.
 
@@ -203,13 +342,30 @@ def _log_full_zone_state(reason: str, zonename: Optional[str] = None) -> None:
     complete authoritative state at each transition. ``reason`` and ``zonename`` (if any)
     explain what just changed; the snapshot itself is the entire DMZ state, not just the
     mutated zone, since cross-zone visibility is the point.
+
+    Identical pruned state (no ``sensors`` / ``*_dt``) is logged once, then suppressed until
+    the fingerprint changes or ``ZONE_STATE_LOG_SUPPRESS_REPEAT`` identical updates
+    have been skipped (then one repeat log and the counter resets).
     """
+    global _last_zone_state_fingerprint, _zone_state_log_suppressed_count
     try:
         snap = _full_zone_state_snapshot()
+        fp = _zone_state_fingerprint(snap)
+        repeat_max = _zone_state_log_suppress_repeat()
+        emit, _zone_state_log_suppressed_count = _should_emit_repeat_log(
+            fp,
+            _last_zone_state_fingerprint,
+            _zone_state_log_suppressed_count,
+            repeat_max,
+        )
+        _last_zone_state_fingerprint = fp
+        if not emit:
+            return
         logger.debug(
-            "zone state changed reason=%s zone=%s state=%s",
+            "zone state changed reason=%s zone=%s fingerprint=%s state=%s",
             reason,
             zonename or "*",
+            fp[:16],
             json.dumps(snap, default=str, sort_keys=True),
         )
     except Exception as e:
@@ -238,6 +394,7 @@ class DmzConfig(TypedDict):
     long_poll_timeout_secs: float
     long_poll_sleep_secs: float
     log_level: str
+    obsolete_log_suppress_repeat: int
     oauth_session_lifetime_secs: int
     thermo_ui_public_origin: str
     dmz_public_base_url: Optional[str]
@@ -281,6 +438,7 @@ def build_dmz_config_from_environ() -> DmzConfig:
         "long_poll_timeout_secs": float(os.environ.get("LONG_POLL_TIMEOUT_SECS", "60")),
         "long_poll_sleep_secs": float(os.environ.get("LONG_POLL_SLEEP_SECS", "1.0")),
         "log_level": (os.environ.get("LOG_LEVEL") or "DEBUG").strip().upper(),
+        "obsolete_log_suppress_repeat": _env_int("OBSOLETE_LOG_SUPPRESS_REPEAT", 10),
         "oauth_session_lifetime_secs": oauth_session_lifetime_secs,
         "thermo_ui_public_origin": thermo_ui,
         "dmz_public_base_url": dmz_public_base_url,
@@ -306,6 +464,70 @@ def _apply_flask_session_lifetime() -> None:
 
 
 _apply_flask_session_lifetime()
+
+# Runtime tuning file (generated from thermo/dmz/dmz.conf at image build).
+# Pi: copied to chroot /etc/dmz/dmz-app.env by install/dmz-boot.start (from SD install/dmz-app.env).
+DEFAULT_DMZ_APP_ENV_PATH = "/etc/dmz/dmz-app.env"
+_config_reload_signal_installed = False
+
+
+def dmz_app_env_path() -> Path:
+    """Path to the KEY=value env file re-read on config reload."""
+    return Path(os.environ.get("DMZ_APP_ENV_PATH", DEFAULT_DMZ_APP_ENV_PATH))
+
+
+def load_dmz_app_env_file(path: Optional[Path] = None) -> bool:
+    """Load KEY=value lines from *path* into ``os.environ``. Returns True if file existed."""
+    env_path = path if path is not None else dmz_app_env_path()
+    if not env_path.is_file():
+        return False
+    with env_path.open(encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, val = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            if key:
+                os.environ[key] = val
+    return True
+
+
+def reload_dmz_config_from_disk() -> bool:
+    """Re-read dmz-app.env from disk, then rebuild :data:`CONFIG`. Returns True if file found."""
+    path = dmz_app_env_path()
+    found = load_dmz_app_env_file(path)
+    reload_dmz_config_from_environ()
+    _wake_long_poll_waiters_for_config_reload()
+    logger.info(
+        "config reloaded from disk path=%s found=%s log_level=%s "
+        "obsolete_log_suppress_repeat=%s long_poll_timeout_secs=%s port=%s",
+        path,
+        found,
+        CONFIG["log_level"],
+        CONFIG["obsolete_log_suppress_repeat"],
+        CONFIG["long_poll_timeout_secs"],
+        CONFIG["port"],
+    )
+    return found
+
+
+def _on_sigusr1_reload_config(signum: int, frame: Any) -> None:
+    del signum, frame
+    reload_dmz_config_from_disk()
+
+
+def install_config_reload_signal() -> None:
+    """Register SIGUSR1 → reload dmz-app.env + CONFIG (Unix only)."""
+    global _config_reload_signal_installed
+    if _config_reload_signal_installed:
+        return
+    if not hasattr(signal, "SIGUSR1"):
+        return
+    signal.signal(signal.SIGUSR1, _on_sigusr1_reload_config)
+    _config_reload_signal_installed = True
 
 
 def reload_dmz_config_from_environ() -> None:
@@ -501,7 +723,7 @@ def _after_request(response: Any) -> Any:
             else len(request.get_data())
         )
         resp_size = getattr(response, "content_length", None) or "-"
-        logger.debug(
+        logger.trace(
             "request %s %s body=%s -> %d response_len=%s",
             request.method,
             request.path,
@@ -544,6 +766,14 @@ def _mark_zone_command_reply_sent(zonename: str) -> float:
     with _zone_command_clock_lock:
         _last_zone_command_reply_mono[zonename] = now_mono
     return now_mono
+
+
+def _wake_long_poll_waiters_for_config_reload() -> None:
+    """Bump UI-command mono time so in-flight zone long-polls return promptly."""
+    now_mono = time.monotonic()
+    with _zone_command_clock_lock:
+        for zonename in set(commands.keys()) | set(sensors.keys()):
+            _ui_command_received_mono[zonename] = now_mono
 
 
 def _await_new_ui_command_or_timeout(zonename: str) -> None:
@@ -1064,9 +1294,15 @@ def test_reset() -> Any:
     _last_zone_command_reply_mono.clear()
     _zone_attempts.clear()
     _access_log.clear()
+    _reset_repeat_log_suppression()
     _log_full_zone_state(reason="test_reset")
     return '"ok"'
 
 
 if __name__ == "__main__":
+    install_config_reload_signal()
+    logger.info(
+        "SIGUSR1 reloads runtime config from %s (source: thermo/dmz/dmz.conf at image build)",
+        dmz_app_env_path(),
+    )
     app.run(host="0.0.0.0", port=CONFIG["port"])

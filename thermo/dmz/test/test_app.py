@@ -671,3 +671,120 @@ def test_ui_command_stores_command(dmz_ctx: object) -> None:
         zones = _get_200(c, "/zones")
         assert "z9" in zones
         assert zones["z9"]["command"]["mode"] == "AUTO"
+
+
+def test_zone_state_fingerprint_ignores_sensors_and_dt() -> None:
+    a = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t1"},
+            "sensors": {"temp_centigrade": 20.0, "created_dt": "s1"},
+        }
+    }
+    b = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t2"},
+            "sensors": {"temp_centigrade": 99.0, "humid_percent": 1.0},
+        }
+    }
+    assert app_module._zone_state_fingerprint(a) == app_module._zone_state_fingerprint(b)
+
+
+def test_zone_state_fingerprint_changes_when_command_changes() -> None:
+    a = {"z1": {"command": {"mode": "HEAT"}, "sensors": {}}}
+    b = {"z1": {"command": {"mode": "COOL"}, "sensors": {}}}
+    assert app_module._zone_state_fingerprint(a) != app_module._zone_state_fingerprint(b)
+
+
+def test_log_full_zone_state_suppresses_repeat_fingerprint(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("ZONE_STATE_LOG_SUPPRESS_REPEAT", "3")
+    app_module._reset_repeat_log_suppression()
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="a", zonename="z1")
+        app_module._log_full_zone_state(reason="b", zonename="z1")
+        app_module._log_full_zone_state(reason="c", zonename="z1")
+        app_module._log_full_zone_state(reason="d", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=a" in lines[0]
+    assert "reason=d" in lines[1]
+
+
+def test_log_full_zone_state_logs_on_fingerprint_change(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.sensors.clear()
+    app_module.commands["z1"] = [{"mode": "HEAT"}]
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="first", zonename="z1")
+        app_module.commands["z1"] = [{"mode": "COOL"}]
+        app_module._log_full_zone_state(reason="second", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=first" in lines[0]
+    assert "reason=second" in lines[1]
+
+
+def test_obsolete_log_suppresses_repeat_fingerprint(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 3}):
+        _run_obsolete_suppress_repeat_test(caplog)
+
+
+def _run_obsolete_suppress_repeat_test(caplog: pytest.LogCaptureFixture) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.commands["z1"] = [{"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}]
+    stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        for _ in range(4):
+            assert (
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+                == "obsolete"
+            )
+    lines = [r.message for r in caplog.records if "zone command obsolete" in r.message]
+    assert len(lines) == 2
+
+
+def test_obsolete_log_not_suppressed_when_repeat_count_le_one(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 1}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]
+
+
+def test_obsolete_log_not_suppressed_when_repeat_zero(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 0}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]
