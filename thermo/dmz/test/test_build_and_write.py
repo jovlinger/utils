@@ -233,3 +233,9 @@ def test_build_always_bakes_zone_pub_and_oauth_into_fat_image(tmp_path: Path) ->
         assert "oauth_client_files=baked" in info, (
             "buildinfo.txt must declare oauth_client_files=baked:\n" + info
         )
+        assert "git_branch=" in info and "git_dirty=" in info, (
+            "buildinfo.txt must record git branch and dirty status:\n" + info
+        )
+        assert "source_sha256=" in info, (
+            "buildinfo.txt must record the source hash used for BUILD_ID:\n" + info
+        )

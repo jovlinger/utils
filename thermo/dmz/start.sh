@@ -13,6 +13,11 @@ chown dmz:dmz /var/log 2>/dev/null || true
 touch /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 chown dmz:dmz /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 
+if [ -f /etc/dmz/buildinfo.txt ]; then
+	_buildinfo_first=$(head -n1 /etc/dmz/buildinfo.txt | tr -d '\r')
+	echo "start.sh: buildinfo ${_buildinfo_first} (/version reads /etc/dmz/buildinfo.txt)"
+fi
+
 mount -t tmpfs -o nosuid,nodev,size=64m tmpfs /tmp 2>/dev/null \
 	|| echo "start.sh: tmpfs /tmp skipped" >&2
 

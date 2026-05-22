@@ -6,6 +6,10 @@ Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_au
 
 ---
 
+## `GET /version`
+
+Open JSON build provenance endpoint for deployment checks. On SD images, `build-and-write.sh` writes `install/buildinfo.txt` and `dmz-boot.start` copies it into the chroot as `/etc/dmz/buildinfo.txt`, so this endpoint can report `build_id`, `build_date_utc`, `git_sha`, `git_branch`, `git_dirty`, and `source_sha256`. Local dev runs without buildinfo return `{ "available": false }`.
+
 ## `GET /login`
 
 Starts the Google OAuth redirect flow when OAuth credentials are configured. Before redirecting to Google, stores **scheme + hostname** (no port) from this request in the signed session for the post-callback HTML redirect. Returns `400` with a JSON error if OAuth is not configured.

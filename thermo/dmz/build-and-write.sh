@@ -453,7 +453,12 @@ if command -v sha256sum >/dev/null 2>&1; then
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
+				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
+				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
+				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
 				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
 				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
@@ -466,7 +471,12 @@ else
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
+				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
+				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
+				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
 				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
 				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
@@ -479,11 +489,25 @@ BUILD_ID=$(echo "$BUILD_HASH" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILDINFO_LINE="${BUILD_ID} ${BUILD_DATE}"
 GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+GIT_BRANCH=$(git -C "$REPO_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "unknown")
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	if git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- \
+		&& git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules --; then
+		GIT_DIRTY=false
+	else
+		GIT_DIRTY=true
+	fi
+else
+	GIT_DIRTY=unknown
+fi
 REPO_NAME=$(basename "$REPO_ROOT")
 {
 	echo "$BUILDINFO_LINE"
 	echo "repo=$REPO_NAME"
 	echo "git_sha=$GIT_SHA"
+	echo "git_branch=$GIT_BRANCH"
+	echo "git_dirty=$GIT_DIRTY"
+	echo "source_sha256=$BUILD_HASH"
 	_zone_pub_sha=$(
 		(sha256sum "$ZONE_PUB_KEY_SRC" 2>/dev/null \
 			|| shasum -a 256 "$ZONE_PUB_KEY_SRC") | awk '{print $1}'

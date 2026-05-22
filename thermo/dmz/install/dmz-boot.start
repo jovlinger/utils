@@ -203,6 +203,12 @@ else
 		fi
 	done
 fi
+if [ -f "$SD_MOUNT/install/buildinfo.txt" ]; then
+	mkdir -p "$CHROOT_DIR/etc/dmz"
+	cp "$SD_MOUNT/install/buildinfo.txt" "$CHROOT_DIR/etc/dmz/buildinfo.txt"
+	chmod 0444 "$CHROOT_DIR/etc/dmz/buildinfo.txt"
+	pr "  buildinfo: installed -> /etc/dmz/buildinfo.txt (/version provenance)"
+fi
 if [ -f "$SD_MOUNT/install/dmz-app.env" ]; then
 	mkdir -p "$CHROOT_DIR/etc/dmz"
 	cp "$SD_MOUNT/install/dmz-app.env" "$CHROOT_DIR/etc/dmz/dmz-app.env"

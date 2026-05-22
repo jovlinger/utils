@@ -25,7 +25,7 @@ Pi rescue (**`sh /root/sshd.sh`**) installs **`install/rescue_authorized_keys`**
 | `dns.conf` | Generated: one resolver IPv4 per line → host + chroot `resolv.conf`. |
 | `dmz-app.env` | Generated: `PORT`, `UI_PORT`, `OAUTH_SESSION_LIFETIME_SECS`, optional public URLs, `LONG_POLL_*`, `LOG_LEVEL`, `OBSOLETE_LOG_SUPPRESS_REPEAT` → chroot `/etc/dmz/dmz-app.env`. |
 | `sshd-on-boot` | Generated: `yes` or `no` - pubkey-only sshd on the DMZ network at boot. |
-| `buildinfo.txt` | Written at image build time (build id + git). |
+| `buildinfo.txt` | Written at image build time (build id, git, source hash); copied to chroot `/etc/dmz/buildinfo.txt` for `GET /version`. |
 | `dmz-boot.start` | Source for apkovl `/etc/local.d/` (also embedded in `dmz.apkovl.tar.gz` on the card). |
 | `sshd.sh` | Copied to **`/root/sshd.sh`**: if **`install/network.conf`** exists, uses that ADDR/gw (production); else LAB **`192.168.88.200/24`** (or **`sh /root/sshd.sh lab`**). Installs **`rescue_authorized_keys`**, starts pubkey-only **`sshd`**. Not run at boot unless **`sshd-on-boot=yes`**. |
 | `install/rescue_authorized_keys` (on FAT) | **Authoritative** pubkey lines (**not** secrets). Created/overwritten **each image build** from builder **`~/.ssh`**; mirrored to apkovl **`/root/install/`** for identical content when FAT is unplugged or before mount. **`/root/sshd.sh`** installs from FAT first, fallback apkovl. |

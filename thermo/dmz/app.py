@@ -633,6 +633,77 @@ def _auth_config_detail() -> Dict[str, Any]:
     }
 
 
+DEFAULT_BUILDINFO_PATHS: Tuple[Path, ...] = (
+    Path("/etc/dmz/buildinfo.txt"),
+    Path("/app/buildinfo.txt"),
+    Path("/BUILD.txt"),
+)
+
+
+def _candidate_buildinfo_paths() -> List[Path]:
+    """Return buildinfo probe paths, with ``DMZ_BUILDINFO_PATH`` taking precedence."""
+    override = (os.environ.get("DMZ_BUILDINFO_PATH") or "").strip()
+    paths: List[Path] = []
+    if override:
+        paths.append(Path(override))
+    paths.extend(DEFAULT_BUILDINFO_PATHS)
+    return paths
+
+
+def _parse_buildinfo(text: str, source: str) -> Dict[str, Any]:
+    """Parse build-and-write.sh buildinfo.txt into an operator-safe JSON object."""
+    out: Dict[str, Any] = {
+        "available": True,
+        "source": source,
+    }
+    first_data_line = True
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if first_data_line and "=" not in line:
+            parts = line.split(None, 1)
+            out["build_id"] = parts[0]
+            if len(parts) > 1:
+                out["build_date_utc"] = parts[1]
+            first_data_line = False
+            continue
+        first_data_line = False
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        clean_key = key.strip()
+        if clean_key:
+            out[clean_key] = value.strip()
+    return out
+
+
+def _build_version_payload() -> Dict[str, Any]:
+    """Return image provenance visible to operators and deployment checks."""
+    tried: List[str] = []
+    for path in _candidate_buildinfo_paths():
+        path_s = str(path)
+        if path_s in tried:
+            continue
+        tried.append(path_s)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        return _parse_buildinfo(text, path_s)
+    return {
+        "available": False,
+        "source": "none",
+        "paths_tried": tried,
+    }
+
+
+@app.route("/version", methods=["GET"])
+def version() -> Any:
+    """Open build provenance endpoint for checking which image is live."""
+    return _build_version_payload()
+
+
 def _log_auth_startup() -> None:
     d = _auth_config_detail()
     logger.info(
@@ -694,6 +765,7 @@ def _diagnostics_payload() -> Dict[str, Any]:
         "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "process_start_utc": _START_UTC_ISO,
         "uptime_seconds": round(time.time() - _START_WALL, 3),
+        "version": _build_version_payload(),
         "config": cfg,
         "access_log": list(_access_log),
         "zone_attempts": list(_zone_attempts),

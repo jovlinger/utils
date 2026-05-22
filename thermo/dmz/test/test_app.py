@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -302,6 +303,53 @@ def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(dmz_ctx: ob
         zlast = d["zone_attempts"][-1]
         assert zlast["outcome"] == "accepted"
         assert zlast["zone"] == "a"
+
+
+def test_version_endpoint_reads_buildinfo(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GET /version exposes build provenance copied into the running image."""
+    del dmz_ctx
+    buildinfo = tmp_path / "buildinfo.txt"
+    buildinfo.write_text(
+        "ABCDEF12 2026-05-22T13:00:00Z\n"
+        "repo=utils\n"
+        "git_sha=123456789abc\n"
+        "git_branch=supply-chainbreak\n"
+        "git_dirty=false\n"
+        "source_sha256=" + "a" * 64 + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DMZ_BUILDINFO_PATH", str(buildinfo))
+
+    with app.test_client() as c:
+        r = c.get("/version")
+        assert r.status_code == 200
+        js = r.get_json() or {}
+        assert js["available"] is True
+        assert js["build_id"] == "ABCDEF12"
+        assert js["build_date_utc"] == "2026-05-22T13:00:00Z"
+        assert js["git_sha"] == "123456789abc"
+        assert js["git_branch"] == "supply-chainbreak"
+        assert js["source_sha256"] == "a" * 64
+
+        diag = c.get("/ui/diagnostics").get_json() or {}
+        assert diag["version"]["git_sha"] == "123456789abc"
+
+
+def test_version_endpoint_reports_missing_buildinfo(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Local dev runs can lack image buildinfo; report that explicitly."""
+    del dmz_ctx
+    monkeypatch.setenv("DMZ_BUILDINFO_PATH", str(tmp_path / "missing-buildinfo.txt"))
+    monkeypatch.setattr(app_module, "DEFAULT_BUILDINFO_PATHS", tuple())
+
+    with app.test_client() as c:
+        js = c.get("/version").get_json() or {}
+        assert js["available"] is False
+        assert js["source"] == "none"
+        assert str(tmp_path / "missing-buildinfo.txt") in js["paths_tried"]
 
 
 def test_unsigned_request_rejected_when_auth_required(
