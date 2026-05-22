@@ -22,7 +22,7 @@ from logging_config import format_kv
 
 logger = logging.getLogger(__name__)
 
-LIRC_TX = "/dev/lirc0"
+LIRC_TX = (os.environ.get("IR_DEVICE") or "/dev/lirc0").strip()
 IR_KIND = "heatpump_ir"
 IR_DIALECT = "Daikin/ARC452A9"
 IR_DEVICE = "lirc:%s" % LIRC_TX

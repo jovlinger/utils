@@ -16,6 +16,7 @@ from flask import Flask, request
 from anavilib import HTU21D, send_daikin_state
 from common import is_test_env
 from constants import help_msg
+from deployment_config import OnboardDeploymentConfig, config_from_environ
 from heatpumpirctl import State
 from logging_config import configure_logging, format_kv, get_log_level, set_log_level
 
@@ -31,10 +32,14 @@ c = defaultdict(lambda: 0)
 MANAGE_TOKEN_ENVVAR = "MANAGE_TOKEN"
 
 
+def _onboard_deployment_config() -> OnboardDeploymentConfig:
+    """Current onboard deployment config from environment variables."""
+    return config_from_environ()
+
+
 def _onboard_ui_zone_name() -> str:
     """Zone label for UI and ``GET /ui/context`` (defaults when unset)."""
-    z = (os.environ.get("ZONE_NAME") or "").strip()
-    return z if z else "default"
+    return _onboard_deployment_config().zone_name
 
 
 def _manage_auth_ok() -> bool:
@@ -46,11 +51,13 @@ def _manage_auth_ok() -> bool:
 
 def _state_snapshot() -> Dict[str, Any]:
     """Return an internal state snapshot for forensics and testing."""
+    deployment = _onboard_deployment_config()
     return {
         "time": datetime.now().isoformat(),
         "pid": os.getpid(),
         "log_level": get_log_level(),
         "log_path": os.environ.get("LOG_PATH"),
+        "deployment": deployment.to_public_dict(),
         "fake_sensor": {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
@@ -491,7 +498,8 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
 @app.route("/ui/context", methods=["GET"])
 def ui_context():
     """JSON for the shared thermo UI: one zone, local environment, latest command."""
-    zn = _onboard_ui_zone_name()
+    deployment = _onboard_deployment_config()
+    zn = deployment.zone_name
     env = _environment_dict()
     env_row: Dict[str, Any] = {
         "zone": zn,
@@ -504,6 +512,7 @@ def ui_context():
         "zones": [zn],
         "environments": [env_row],
         "zone_states": {zn: {"command": cmd, "sensors": None}},
+        "deployment": deployment.to_public_dict(),
     }
 
 
@@ -555,6 +564,17 @@ def set_daikin():
 
 
 if __name__ == "__main__":
+    deployment = _onboard_deployment_config()
     port = int(os.environ.get("PORT", 5000))
-    logger.info("starting%s", format_kv(host="0.0.0.0", port=port))
+    logger.info(
+        "starting%s",
+        format_kv(
+            host="0.0.0.0",
+            port=port,
+            zone=deployment.zone_name,
+            hardware_profile=deployment.hardware_profile,
+            send_behavior=deployment.send_behavior,
+            report_behavior=deployment.report_behavior,
+        ),
+    )
     app.run(host="0.0.0.0", port=port)

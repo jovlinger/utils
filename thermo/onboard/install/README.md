@@ -5,14 +5,14 @@
 ## Quick commands
 
 ```bash
-export THERMO_ENV_FILE=config/kitchen.env   # or config/den.env — path relative to thermo/
+export THERMO_ENV_FILE=config/kitchen.env   # or config/den.env - path relative to thermo/
 cd ~/github.com/jovlinger/utils
 git pull
 cd thermo/onboard/install
 ./deploy-compose.sh
 ```
 
-First-time: copy a template from [`../../config/deploy.env.sample`](../../config/deploy.env.sample) to `../../config/<name>.env` (gitignored), set `THERMO_ENV_FILE` as above, then deploy. Copy `env.example` to `.env` only for compose overrides (`ZONE_NAME`, …), or set variables in `~/.local.sh`.
+First-time: copy [`../../config/kitchen.env.sample`](../../config/kitchen.env.sample) to `../../config/<name>.env` (gitignored), set `ZONE_NAME` and the onboard behavior choices, set `THERMO_ENV_FILE` as above, then deploy. Copy `env.example` to `.env` only for local compose overrides, or set variables in `~/.local.sh`.
 
 | File | Purpose |
 |------|---------|

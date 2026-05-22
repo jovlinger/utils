@@ -61,11 +61,11 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
    cd ~/github.com/jovlinger/utils
    git pull
   ```
-2. **Choose a config env file** (see [`thermo/config/README.md`](../config/README.md)): copy `thermo/config/deploy.env.sample` to `thermo/config/kitchen.env` (or `den.env`, … — `*.env` is gitignored). Set:
+2. **Choose a config env file** (see [`thermo/config/README.md`](../config/README.md)): copy `thermo/config/kitchen.env.sample` to `thermo/config/kitchen.env` (or create `den.env` from the same template; `*.env` is gitignored). Set:
   ```bash
    export THERMO_ENV_FILE=config/kitchen.env
   ```
-   Use a distinct file per onboard unit. Override lab URLs in that file or in `~/.local.sh` / `install/.env` as needed.
+   Use a distinct file per onboard unit. Set a unique `ZONE_NAME`, then select `ONBOARD_HARDWARE_PROFILE`, `ONBOARD_SEND_BEHAVIOR`, and `ONBOARD_REPORT_BEHAVIOR` in that file.
 3. **Run the deploy script** (pulls images and starts the stack):
   ```bash
    cd thermo/onboard/install

@@ -2,7 +2,6 @@
 # Logs go to LOG_PATH (default /tmp/onboard.log) via run-with-stdout-logged.py.
 # When run locally, asserts pip env exists.
 
-# this hardcodes "this" onboard zone's name as zoneymczoneface
 # Use 127.0.0.1 for onboard (host network has no Docker DNS). Override DMZ_URL or DMZ_HOST in the environment;
 # Optional: export THERMO_ENV_FILE=config/kitchen.env and THERMO_ROOT is set below.
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,6 +19,7 @@ if [ -z "${DMZ_URL:-}" ]; then
 fi
 ONBOARD="${ONBOARD_URL:-http://127.0.0.1:5000}"
 DMZ="${DMZ_URL}"
+ZONE="${ZONE_NAME:-kitchen}"
 LOG_PATH="${LOG_PATH:-/tmp/onboard.log}"
 LOG_FILELIMIT="${LOG_FILELIMIT:-1048576}"
 LOG_TOTALLIMIT="${LOG_TOTALLIMIT:-2097152}"
@@ -41,7 +41,7 @@ if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
   exit 1
 fi
 . "$SCRIPT_DIR/env/bin/activate"
-python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/zoneymczoneface/sensors" "${ONBOARD}/daikin" &
+python twoway.py "${ONBOARD}/environment" "${DMZ}/zone/${ZONE}/sensors" "${ONBOARD}/daikin" &
 export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 if [ "${THERMO_UI_DISABLE:-0}" != "1" ]; then
 	python "$SCRIPT_DIR/../ui/ui_server.py" &

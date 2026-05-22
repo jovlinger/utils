@@ -9,7 +9,7 @@ ONBOARD_URL="${ONBOARD_URL:-http://127.0.0.1:5000}"
 if [ -z "${DMZ_URL:-}" ]; then
 	DMZ_URL="${DMZ_SCHEME}://${DMZ_HOST}:${DMZ_PORT}"
 fi
-ZONE="${ZONE_NAME:-zoneymczoneface}"
+ZONE="${ZONE_NAME:-kitchen}"
 LOG_DIR="${LOG_DIR:-/var/log/thermo-onboard}"
 LOG_PATH="${LOG_PATH:-$LOG_DIR/twoway.log}"
 LOG_FILELIMIT="${LOG_FILELIMIT:-1048576}"
