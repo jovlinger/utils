@@ -363,6 +363,7 @@ def test_manage_get_state(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "pid" in r.json
     assert "log_level" in r.json
     assert "fake_sensor" in r.json
+    assert r.json["deployment"]["hardware_profile"] == "pi_zero_2w_htu21d_ir"
 
 
 def test_manage_set_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -422,6 +423,8 @@ def test_ui_context_single_zone(monkeypatch: pytest.MonkeyPatch) -> None:
     assert js["environments"][0]["temperature_centigrade"] is not None
     assert js["zone_states"]["pizero"]["command"]["mode"] == "COOL"
     assert js["zone_states"]["pizero"]["sensors"] is None
+    assert js["deployment"]["zone_name"] == "pizero"
+    assert js["deployment"]["send_behavior"] == "ir_daikin"
 
 
 def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:

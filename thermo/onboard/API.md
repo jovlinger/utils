@@ -44,7 +44,7 @@ Runs one management action from a JSON body (`action`, plus action-specific fiel
 
 ## `GET /ui/context`
 
-JSON snapshot for the shared thermo UI: **`zones`** (single element: `ZONE_NAME` or `"default"`), **`environments`** (one row: local sensor / time), **`zone_states`** (that zone’s latest command and `sensors: null`).
+JSON snapshot for the shared thermo UI: **`zones`** (single element: `ZONE_NAME` or `"default"`), **`environments`** (one row: local sensor / time), **`zone_states`** (that zone's latest command and `sensors: null`), and **`deployment`** (the selected hardware/send/report config).
 
 ## `POST /ui/command`
 
