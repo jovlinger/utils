@@ -524,8 +524,8 @@ def test_zone_sensors_long_poll_immediate_when_ui_newer(dmz_ctx: object) -> None
     with app.test_client() as c:
         _reset(c)
         with app_module._zone_command_clock_lock:
-            app_module._last_zone_command_reply_mono["zlp"] = 100.0
-            app_module._ui_command_received_mono["zlp"] = 101.0
+            app_module._last_zone_command_reply_at["zlp"] = 100.0
+            app_module._ui_command_received_at["zlp"] = 101.0
         with patch("app.time.sleep", side_effect=AssertionError("unexpected sleep")):
             r = c.post("/zone/zlp/sensors", json={"temp_centigrade": 20.0})
             assert r.status_code == 200, r.get_data(as_text=True)
@@ -541,12 +541,12 @@ def test_zone_sensors_long_poll_timeout_updates_last_sent(dmz_ctx: object) -> No
             clear=False,
         ):
             with app_module._zone_command_clock_lock:
-                app_module._last_zone_command_reply_mono["zto"] = 200.0
-                app_module._ui_command_received_mono["zto"] = 200.0
+                app_module._last_zone_command_reply_at["zto"] = 200.0
+                app_module._ui_command_received_at["zto"] = 200.0
             r = c.post("/zone/zto/sensors", json={"temp_centigrade": 18.0})
             assert r.status_code == 200, r.get_data(as_text=True)
             with app_module._zone_command_clock_lock:
-                assert app_module._last_zone_command_reply_mono["zto"] > 200.0
+                assert app_module._last_zone_command_reply_at["zto"] > 200.0
 
 
 def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -> None:

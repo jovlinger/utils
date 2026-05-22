@@ -65,3 +65,6 @@ def test_rescue_script_brings_loopback_up(dmz_dir: Path) -> None:
     assert "ip addr add 127.0.0.1/8 dev lo" in text, (
         "rescue script no longer assigns 127.0.0.1/8 to lo"
     )
+    assert "dmz_read_network_conf" in text, (
+        "sshd.sh should use production network.conf when present"
+    )

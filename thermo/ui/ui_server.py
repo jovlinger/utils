@@ -756,33 +756,63 @@ def _make_server(port: int) -> _UiHTTPServer:
     return _UiHTTPServer(("0.0.0.0", port), Handler)
 
 
+def _print_ui_diagnostics_summary() -> bool:
+    """Log backend auth flags from ``/ui/diagnostics``. Returns True on success."""
+    with urllib.request.urlopen(f"{APP_BASE}/ui/diagnostics", timeout=4) as r:
+        d = json.loads(r.read().decode())
+    cfg = d.get("config") or {}
+    print(
+        "ui_server startup (backend /ui/diagnostics): "
+        f"zone_auth_enforced={cfg.get('zone_auth_enforced')} "
+        f"zone_pubkey_sha256_last4={cfg.get('zone_pubkey_sha256_last4')} "
+        f"oauth_enabled={cfg.get('oauth_enabled')} "
+        f"google_client_id_last4={cfg.get('google_client_id_last4')} "
+        f"flask_secret_key_last4={cfg.get('flask_secret_key_last4')} "
+        f"default_dev_secret={cfg.get('flask_secret_is_default_dev')}",
+        flush=True,
+    )
+    return True
+
+
+def _retry_ui_diagnostics_summary(ports: List[int], attempts: int = 60) -> None:
+    """Background retries when Flask was not up at ui_server process start."""
+    import time
+
+    for _ in range(attempts):
+        time.sleep(1.0)
+        try:
+            if _print_ui_diagnostics_summary():
+                return
+        except Exception:
+            continue
+    print(
+        f"ui_server: /ui/diagnostics still unreadable after {attempts}s "
+        f"(backend={APP_BASE}); UI may serve without Flask until backend is up",
+        flush=True,
+    )
+
+
 def _log_ui_startup_auth(ports: List[int]) -> None:
-    """One-shot stderr lines: bind addresses + backend auth flags (from /ui/diagnostics)."""
+    """Stderr lines: bind addresses + backend auth flags (from /ui/diagnostics)."""
     print(
         f"ui_server startup: listen 0.0.0.0 ports={ports} backend={APP_BASE} "
         f"THERMO_UI_BACKEND={_ui_backend()}",
         flush=True,
     )
     try:
-        with urllib.request.urlopen(f"{APP_BASE}/ui/diagnostics", timeout=4) as r:
-            d = json.loads(r.read().decode())
-        cfg = d.get("config") or {}
-        print(
-            "ui_server startup (backend /ui/diagnostics): "
-            f"zone_auth_enforced={cfg.get('zone_auth_enforced')} "
-            f"zone_pubkey_sha256_last4={cfg.get('zone_pubkey_sha256_last4')} "
-            f"oauth_enabled={cfg.get('oauth_enabled')} "
-            f"google_client_id_last4={cfg.get('google_client_id_last4')} "
-            f"flask_secret_key_last4={cfg.get('flask_secret_key_last4')} "
-            f"default_dev_secret={cfg.get('flask_secret_is_default_dev')}",
-            flush=True,
-        )
+        _print_ui_diagnostics_summary()
     except Exception as exc:
         print(
             f"ui_server startup: /ui/diagnostics not readable yet ({exc!r}); "
-            "retry after DMZ Flask is up — dmz log contains 'auth startup:'",
+            "retrying in background",
             flush=True,
         )
+        threading.Thread(
+            target=_retry_ui_diagnostics_summary,
+            args=(ports,),
+            daemon=True,
+            name="ui-diagnostics-retry",
+        ).start()
 
 
 def main() -> None:

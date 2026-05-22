@@ -1,35 +1,54 @@
 #!/bin/sh
-# LAB/rescue SSH: attach eth0 to 192.168.88.x/24 (default .200), gw 192.168.88.1, public DNS (1.1.1.1 + Google),
-# install rescue pubkeys into /root/.ssh/authorized_keys from on-device paths, start sshd.
+# Rescue / manual SSH: install rescue pubkeys, configure eth0, start sshd.
 #
-# Run from console once eth0/carrier exists:
+# Production (SD install/network.conf or /root/network.conf from dmz-boot):
 #   sh /root/sshd.sh
-# Last octet only (still /24, gw unchanged):
-#   sh /root/sshd.sh 99
+# Uses ADDR/CIDR + gateway from network.conf (same as dmz-boot eth0).
+#
+# LAB on MikroTik LAN only (no network.conf, or force lab):
+#   sh /root/sshd.sh lab
+#   sh /root/sshd.sh lab 99          # last octet .99, gw 192.168.88.1
+#   sh /root/sshd.sh 192.168.88.200  # legacy: explicit LAB address
 #
 # Pubkey source (first match wins):
-#   FAT: /media/mmcblk0/install/rescue_authorized_keys (editable on SD; overwritten each image build),
-#   apkovl: /root/install/rescue_authorized_keys (baked at flash time from same content).
-# Build merges ~/.ssh/id_*.pub on the builder into those paths; sshd stays off until this script runs
-# (unless dmz.conf SSHD_ON_BOOT=yes baked sshd-on-boot on the card).
+#   FAT: /media/mmcblk0/install/rescue_authorized_keys
+#   apkovl: /root/install/rescue_authorized_keys
 
 set -e
 
 . /root/install/dmz-sshd-common.sh
 
-ROUTER_GATEWAY="${ROUTER_GATEWAY:-192.168.88.1}"
-ip_main="${1:-192.168.88.200}"
+_use_lab=0
+_ip_arg=""
+case "${1:-}" in
+lab | LAB)
+	_use_lab=1
+	_ip_arg="${2:-192.168.88.200}"
+	;;
+"")
+	;;
+*)
+	_use_lab=1
+	_ip_arg="$1"
+	;;
+esac
 
-if echo "$ip_main" | grep -q '^[0-9]\{1,3\}$'; then
-	prefix="$(echo "$ROUTER_GATEWAY" | sed 's/\.[0-9]*$//')"
-	ip_in="${prefix}.${ip_main}"
+if [ "$_use_lab" -eq 0 ] && dmz_read_network_conf; then
+	addr="$dmz_net_addr"
+	ROUTER_GATEWAY="$dmz_net_gw"
+	echo "==> /root/sshd.sh: production network.conf addr=$addr via=$ROUTER_GATEWAY"
 else
-	ip_in="$ip_main"
+	ROUTER_GATEWAY="${ROUTER_GATEWAY:-192.168.88.1}"
+	ip_main="${_ip_arg:-192.168.88.200}"
+	if echo "$ip_main" | grep -q '^[0-9]\{1,3\}$'; then
+		prefix="$(echo "$ROUTER_GATEWAY" | sed 's/\.[0-9]*$//')"
+		ip_in="${prefix}.${ip_main}"
+	else
+		ip_in="$ip_main"
+	fi
+	addr="${ip_in}/24"
+	echo "==> /root/sshd.sh: LAB addr=$addr default via=$ROUTER_GATEWAY (DNS from install/dns.conf or public)"
 fi
-
-addr="${ip_in}/24"
-
-echo "==> /root/sshd.sh: addr=$addr default via=$ROUTER_GATEWAY (DNS 1.1.1.1 8.8.8.8 8.8.4.4)"
 
 # Loopback: same rationale as dmz-boot.start.
 ip link set lo up
@@ -54,7 +73,7 @@ dmz_install_rescue_authorized_keys
 dmz_start_sshd_daemon
 
 _ip_show=$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{print $4}' | head -n1)
-echo "  ssh root@${_ip_show:-$ip_in}"
+echo "  ssh root@${_ip_show:-${addr%/*}}"
 echo "  stop: kill \$(cat /run/dmz-sshd-raw.pid 2>/dev/null) 2>/dev/null || killall sshd"
 
 ip addr show dev eth0 || true

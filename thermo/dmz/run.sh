@@ -94,6 +94,30 @@ else
 fi
 
 python_probe
+
+_wait_flask_diagnostics() {
+	_port="${PORT:-5000}"
+	_tries=0
+	while [ "$_tries" -lt 120 ]; do
+		if python -u -c "
+import sys
+import urllib.request
+try:
+    urllib.request.urlopen('http://127.0.0.1:${_port}/ui/diagnostics', timeout=1)
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+" 2>/dev/null; then
+			echo "run.sh: Flask /ui/diagnostics ready on port ${_port}"
+			return 0
+		fi
+		_tries=$((_tries + 1))
+		sleep 0.5
+	done
+	echo "run.sh: WARNING Flask /ui/diagnostics not ready after 60s; starting ui_server anyway" >&2
+	return 1
+}
+
 # Bundled thermo UI (proxies Flask on PORT) on UI_PORT — image has /app/ui; dev uses ../ui.
 UI_SERVER_PATH="$APP_ROOT/ui/ui_server.py"
 if [ ! -f "$UI_SERVER_PATH" ]; then
@@ -107,9 +131,21 @@ if [ -f "$UI_SERVER_PATH" ]; then
 	fi
 	export THERMO_UI_BACKEND=dmz
 	export UI_PORT="${UI_PORT:-8090}"
+	# Flask must listen before ui_server: otherwise startup probes /ui/diagnostics fail and
+	# GET / on UI_PORT serves HTML without hitting Flask (no werkzeug / access_log lines).
+	echo "run.sh: starting Flask (PORT=${PORT:-5000}) before ui_server (UI_PORT=${UI_PORT})"
+	python -u app.py &
+	APP_PID=$!
+	_wait_flask_diagnostics || true
 	# If the HTML UI is on another public port than Flask (e.g. WAN :80 → ui_server), set
 	# THERMO_UI_LOGIN_ORIGIN to the Flask base (no trailing slash), e.g. http://duck:5000
 	python -u "$UI_SERVER_PATH" &
+	UI_PID=$!
+	wait "$APP_PID"
+	_rc=$?
+	kill "$UI_PID" 2>/dev/null || true
+	wait "$UI_PID" 2>/dev/null || true
+	exit "$_rc"
 fi
 # cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).
 exec python -u app.py

@@ -42,7 +42,7 @@ _access_log: Deque[Dict[str, Any]] = deque(maxlen=ACCESS_LOG_MAXLEN)
 # In-memory only (no disk): recent zone POST outcomes for operator debugging (twoway ↔ DMZ).
 _ZONE_ATTEMPT_MAXLEN = 200
 _zone_attempts: Deque[Dict[str, Any]] = deque(maxlen=_ZONE_ATTEMPT_MAXLEN)
-_START_MONO: float = time.time()
+_START_WALL: float = time.time()
 _START_UTC_ISO: str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # Repeat-log suppression (zone state dump + obsolete command DEBUG).
@@ -693,7 +693,7 @@ def _diagnostics_payload() -> Dict[str, Any]:
     return {
         "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "process_start_utc": _START_UTC_ISO,
-        "uptime_seconds": round(time.time() - _START_MONO, 3),
+        "uptime_seconds": round(time.time() - _START_WALL, 3),
         "config": cfg,
         "access_log": list(_access_log),
         "zone_attempts": list(_zone_attempts),
@@ -717,6 +717,12 @@ def _after_request(response: Any) -> Any:
     """Log every endpoint access with result HTTP status."""
     if request.endpoint and request.endpoint != "static":
         _log_access(request.method, request.path, response.status_code)
+        logger.info(
+            "request %s %s -> %s",
+            request.method,
+            request.path,
+            response.status_code,
+        )
         req_size = (
             request.content_length
             if request.content_length is not None
@@ -742,8 +748,9 @@ def assertAuthAzZone(req: Any) -> None:
 ### BEGIN STATE (make this sqlite)
 commands: Dict[str, List[Any]] = defaultdict(list)
 sensors: Dict[str, List[Sensors]] = defaultdict(list)
-_ui_command_received_mono: Dict[str, float] = defaultdict(float)
-_last_zone_command_reply_mono: Dict[str, float] = defaultdict(float)
+# Wall-clock floats (``time.time()``), comparable across NTP adjustments.
+_ui_command_received_at: Dict[str, float] = defaultdict(float)
+_last_zone_command_reply_at: Dict[str, float] = defaultdict(float)
 _zone_command_clock_lock = threading.Lock()
 ### END STATE
 
@@ -755,47 +762,50 @@ def _lastor(lst: List[Any], default: Optional[Any] = None) -> Any:
 
 
 def _mark_ui_command_received(zonename: str) -> float:
-    now_mono = time.monotonic()
+    now = time.time()
     with _zone_command_clock_lock:
-        _ui_command_received_mono[zonename] = now_mono
-    return now_mono
+        _ui_command_received_at[zonename] = now
+    return now
 
 
 def _mark_zone_command_reply_sent(zonename: str) -> float:
-    now_mono = time.monotonic()
+    now = time.time()
     with _zone_command_clock_lock:
-        _last_zone_command_reply_mono[zonename] = now_mono
-    return now_mono
+        _last_zone_command_reply_at[zonename] = now
+    return now
 
 
 def _wake_long_poll_waiters_for_config_reload() -> None:
-    """Bump UI-command mono time so in-flight zone long-polls return promptly."""
-    now_mono = time.monotonic()
+    """Bump UI-command wall time so in-flight zone long-polls return promptly."""
+    now = time.time()
     with _zone_command_clock_lock:
         for zonename in set(commands.keys()) | set(sensors.keys()):
-            _ui_command_received_mono[zonename] = now_mono
+            _ui_command_received_at[zonename] = now
 
 
 def _await_new_ui_command_or_timeout(zonename: str) -> None:
     """
     Long-poll gate for zone POSTs.
 
-    Snapshot the zone's last reply-sent timestamp once at request start. Wait until UI has
-    posted a newer command timestamp than that snapshot, or until timeout.
+    Snapshot the zone's last reply-sent wall time once at request start. Wait until UI has
+    posted a newer command time than that snapshot, or until timeout.
+
+    Uses ``time.time()`` (not monotonic) so timestamps stay aligned with log lines and
+    ``created_dt`` after NTP sets the system clock during boot.
 
     Snapshot semantics intentionally allow overlapping POSTs from the same zone: each thread
     compares against its own start-time baseline so one thread updating "last sent" does not
     force siblings to keep waiting after a new UI command arrives.
     """
-    started = time.monotonic()
+    started = time.time()
     with _zone_command_clock_lock:
-        sent_baseline = _last_zone_command_reply_mono[zonename]
+        sent_baseline = _last_zone_command_reply_at[zonename]
     while True:
         with _zone_command_clock_lock:
-            ui_last = _ui_command_received_mono[zonename]
+            ui_last = _ui_command_received_at[zonename]
         if ui_last > sent_baseline:
             return
-        if (time.monotonic() - started) >= CONFIG["long_poll_timeout_secs"]:
+        if (time.time() - started) >= CONFIG["long_poll_timeout_secs"]:
             return
         time.sleep(CONFIG["long_poll_sleep_secs"])
 
@@ -1290,8 +1300,8 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
-    _ui_command_received_mono.clear()
-    _last_zone_command_reply_mono.clear()
+    _ui_command_received_at.clear()
+    _last_zone_command_reply_at.clear()
     _zone_attempts.clear()
     _access_log.clear()
     _reset_repeat_log_suppression()

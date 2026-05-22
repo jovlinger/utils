@@ -27,7 +27,7 @@ Pi rescue (**`sh /root/sshd.sh`**) installs **`install/rescue_authorized_keys`**
 | `sshd-on-boot` | Generated: `yes` or `no` - pubkey-only sshd on the DMZ network at boot. |
 | `buildinfo.txt` | Written at image build time (build id + git). |
 | `dmz-boot.start` | Source for apkovl `/etc/local.d/` (also embedded in `dmz.apkovl.tar.gz` on the card). |
-| `sshd.sh` | Sources repo script copied to **`/root/sshd.sh`**: LAB **`192.168.88.0/24`** + copies **`install/rescue_authorized_keys`** (card) or **`/root/install/rescue_authorized_keys`** (apkovl) into **`authorized_keys`**, starts **`sshd`**. Requires **non-empty** rescue keys baked at **`build-and-write`** from builder **`~/.ssh/*.pub`**. Not run at boot. |
+| `sshd.sh` | Copied to **`/root/sshd.sh`**: if **`install/network.conf`** exists, uses that ADDR/gw (production); else LAB **`192.168.88.200/24`** (or **`sh /root/sshd.sh lab`**). Installs **`rescue_authorized_keys`**, starts pubkey-only **`sshd`**. Not run at boot unless **`sshd-on-boot=yes`**. |
 | `install/rescue_authorized_keys` (on FAT) | **Authoritative** pubkey lines (**not** secrets). Created/overwritten **each image build** from builder **`~/.ssh`**; mirrored to apkovl **`/root/install/`** for identical content when FAT is unplugged or before mount. **`/root/sshd.sh`** installs from FAT first, fallback apkovl. |
 | `CARD-README.txt` | Short human notes; copied to `README.txt` on FAT root. |
 | [`ROUTERBOARD-DMZ.md`](ROUTERBOARD-DMZ.md) | Home DMZ **design**: Pi outside LAN NAT, separate subnet, port **5000**, DuckDNS **`jovlinger.duckdns.org`**—so topology is not re-argued from scratch. |
