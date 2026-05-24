@@ -1,7 +1,7 @@
 #!/bin/bash
 # Rebuild image, run the same container shape as `make runlocal` (default entrypoint,
 # port 8080), wait for HTTP, then pytest test_smoke.py against the live server from
-# the repo venv (../env).
+# the repo venv (../.venv).
 #
 # Usage:
 #   ./smoketest/run.sh
@@ -9,7 +9,7 @@
 #   ./smoketest/run.sh --leave-container
 #   ./smoketest/run.sh --no-cache --leave-container
 #
-# Requires: docker, curl, venv at ../env (see test/run.sh).
+# Requires: docker, curl, venv at ../.venv (see test/run.sh).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,11 +30,9 @@ for arg in "$@"; do
 	esac
 done
 
-if [ ! -f "$DMZ/env/bin/activate" ]; then
-	echo "No venv at $DMZ/env." >&2
-	echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/dmz" >&2
-	exit 1
-fi
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$DMZ" "$UTILS_ROOT"
 
 if ! command -v docker >/dev/null 2>&1; then
 	echo "docker not found." >&2
@@ -51,7 +49,7 @@ DMZ_LOG_IN_CONTAINER="/var/log/dmz.log"
 
 cd "$DMZ"
 # shellcheck source=/dev/null
-. "$DMZ/env/bin/activate"
+. "$VENV_DIR/bin/activate"
 
 dump_container_app_log_tail() {
 	local n="${1:-60}"
