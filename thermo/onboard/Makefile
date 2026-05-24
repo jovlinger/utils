@@ -74,6 +74,20 @@ push: build
 		push_with_retry "$$img" || exit 1; \
 	done
 
+pull: 
+	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
+	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
+	@pull_no_retry() { \
+		img=$$1; \
+		docker pull "$$img" && { echo "[push] ok: $$img"; return 0; }; \
+		echo "[pull] giving up on $$img after 1 attempts" >&2; \
+		return 1; \
+	}; \
+	for img in $(IMAGE_APP):$(TAG) $(IMAGE_TWOWAY):$(TAG); do \
+		pull_no_retry "$$img" || exit 1; \
+	done
+
+
 clean:
 	@docker image rm $(IMAGE_APP):$(TAG) 2>/dev/null || true
 	@docker image rm $(IMAGE_TWOWAY):$(TAG) 2>/dev/null || true
