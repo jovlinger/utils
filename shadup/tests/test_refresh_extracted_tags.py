@@ -2,18 +2,18 @@
 
 Layout under ``<parent-of-shadir>/files``::
 
-  ``_tags/<tag_mirror_dir_name(tag)>/<basename-or-basename(n)>`` → symlink
+  ``_tags/<tag_mirror_dir_name(tag)>/<basename-or-basename(n)>`` -> symlink
   to ``<root>/<dir-key>`` (logical ``tag`` is unchanged in the DB; mirror
   directory names sanitize ``:`` and other reserved characters).
 
 * ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
-* **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
+* **Directory tags** = union over **direct children** (files use DB tags; subdirs use
   their computed set).
-* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, … when
+* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, ... when
   the same basename appears more than once (see :func:`plan_refresh_extracted_tag_mirrors`).
 
 The user worked example under ``test_user_abcdf_tree_mirror_plan``; one line in
-their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) —
+their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) --
 the test encodes the corrected plan.
 """
 
@@ -81,7 +81,7 @@ def _depth(dir_key: str) -> int:
 def compute_dir_tags_from_file_specs(
     files_root: Path, file_specs: list[tuple[Path, list[str]]]
 ) -> dict[str, frozenset[str]]:
-    """Directory relpath (``\"\"`` = root) → recursive-union tag set."""
+    """Directory relpath (``\"\"`` = root) -> recursive-union tag set."""
     rel_pairs: list[tuple[Path, frozenset[str]]] = [
         (p.relative_to(files_root), frozenset(tags)) for p, tags in file_specs
     ]
@@ -190,7 +190,7 @@ def test_tag_mirror_dir_name_legacy_artist_colon() -> None:
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
-    """Precomputed tag sets from the a/b/f … tree.`."""
+    """Precomputed tag sets from the a/b/f ... tree.`."""
     tags_by_dir: dict[str, frozenset[str]] = {
         "a": frozenset({"x", "y", "z"}),
         "a/b": frozenset({"x", "y"}),
@@ -217,7 +217,7 @@ def test_user_abcdf_tree_mirror_plan() -> None:
 def _build_three_level_two_plus_two(
     files_root: Path,
 ) -> list[tuple[Path, list[str]]]:
-    """3 levels: levels 0–1 have 2 files + 2 dirs; level-2 dirs are leaves (2 files)."""
+    """3 levels: levels 0-1 have 2 files + 2 dirs; level-2 dirs are leaves (2 files)."""
     spec: list[tuple[Path, list[str]]] = []
 
     def rel(p: Path) -> Path:
@@ -278,7 +278,7 @@ def test_golden_directory_tags_three_level_tree(
 def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     three_level_fixture: tuple[Path, Path, list[tuple[Path, list[str]]]],
 ) -> None:
-    """Store → tag-add → extract → refresh; ``find`` + symlinks match ``plan_*``."""
+    """Store -> tag-add -> extract -> refresh; ``find`` + symlinks match ``plan_*``."""
     shadir, files_root, file_specs = three_level_fixture
     assert len(file_specs) == 14
 

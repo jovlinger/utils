@@ -11,12 +11,12 @@
 # Python process runs as your user.
 #
 # Each directory arg's basename becomes the dest_prefix under files/,
-# so  public/MyAlbum  →  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
+# so  public/MyAlbum  ->  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
 #
 # CAUTION: Do NOT pass the top-level parent directory (e.g. "public").
 #   ./ingest.sh public                    # WRONG
 # This would set dest_prefix="public", creating files/public/albumdir/track
-# instead of the intended files/albumdir/track — an unwanted extra level.
+# instead of the intended files/albumdir/track -- an unwanted extra level.
 # It also ingests (and deletes from source!) ALL files under public/.
 #
 # Recovery if you did this by mistake:
@@ -29,7 +29,7 @@
 
 set -Eeuo pipefail
 
-# Real utils/shadup directory (resolves e.g. ~/ingest.sh → .../utils/shadup/ingest.sh).
+# Real utils/shadup directory (resolves e.g. ~/ingest.sh -> .../utils/shadup/ingest.sh).
 SHADUP_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 UTILS_ROOT="$(cd "$SHADUP_DIR/.." && pwd)"
 INGEST_PY="$SHADUP_DIR/ingest.py"
@@ -44,8 +44,8 @@ err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
 }
 
 # ingest.py runs shadup.py with sys.executable, so we must exec the venv interpreter
-# by path — not `python` on PATH. The remount wrapper runs "$@" without sudo.
-# The ./shadup → pylauncher symlink is for CLI shadup.py only.
+# by path -- not `python` on PATH. The remount wrapper runs "$@" without sudo.
+# The ./shadup -> pylauncher symlink is for CLI shadup.py only.
 SHADUP_VENV=""
 if [ -f "$SHADUP_DIR/env/bin/activate" ]; then
   SHADUP_VENV="$SHADUP_DIR/env"

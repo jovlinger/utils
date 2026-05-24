@@ -88,7 +88,7 @@ def _symlink_resolves_under_shadir(path: str, shadir_abs: str) -> bool:
     return sh.is_under_dir(resolved, shadir_abs)
 
 
-# Same idea as musicology ``audio.AUDIO_EXTS`` — files we treat as music tracks.
+# Same idea as musicology ``audio.AUDIO_EXTS`` -- files we treat as music tracks.
 _AUDIO_EXTS = frozenset(
     {
         ".mp3",
@@ -181,7 +181,7 @@ _ART_ALB_SEP = ";"
 
 
 def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
-    """Union of ``tag`` and ``genre`` entries plus ``artist;…`` / ``album;…`` prefixes."""
+    """Union of ``tag`` and ``genre`` entries plus ``artist;...`` / ``album;...`` prefixes."""
     out: list[str] = []
     seen: set[str] = set()
     for key in ("tag", "genre"):
@@ -353,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
             "has no such file. Use --dryrun to print DB effects without writing. "
             "Quiet mode: one dot per album on a single line (flush per dot); use "
             "--debug for one line per album instead. Pass many DIRs in one run "
-            "(e.g. importtags … ./*/) so dots stay on one line—do not wrap importtags "
+            "(e.g. importtags ... ./*/) so dots stay on one line--do not wrap importtags "
             "in a shell loop one album per process."
         )
     )

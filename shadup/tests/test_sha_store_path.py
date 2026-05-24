@@ -14,13 +14,13 @@ _SPEC.loader.exec_module(_MOD)
 
 
 def test_library_under_files_not_considered_sha_store() -> None:
-    """``files/…`` under a broad flac shadir must still be walked."""
+    """``files/...`` under a broad flac shadir must still be walked."""
     t = _MOD.is_under_sha_store_tree
     assert not t("/mnt/music/flac/files/Album/a.flac", "/mnt/music/flac")
 
 
 def test_hex_bucket_considered_sha_store() -> None:
-    """Legacy flat ``shadir/f1/…`` (no ``data/`` prefix)."""
+    """Legacy flat ``shadir/f1/...`` (no ``data/`` prefix)."""
     t = _MOD.is_under_sha_store_tree
     assert t("/mnt/music/flac/f1/ab12cd", "/mnt/music/flac")
 
