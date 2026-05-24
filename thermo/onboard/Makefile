@@ -1,9 +1,10 @@
 # Build and push thermo-onboard-app and thermo-onboard-twoway to GHCR.
 # Pi Zero 2 W: arm64 or armhf. Requires CR_PAT for push.
 #
-# Deploy (on the Pi or any host with this repo): from thermo/onboard run
+# Deploy a room target: from thermo/onboard run
 #   make deploy
-# That runs install/deploy.sh with REPO_PATH set to the utils checkout (git pull + deploy-compose).
+# That runs install/deploy.sh with REPO_PATH set to the utils checkout, sources
+# THERMO_ENV_FILE, and dispatches to hardware/<backend>/install/deploy.sh.
 .PHONY: all build images push push_images clean test test-local test-docker ci deploy
 
 IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
@@ -30,7 +31,7 @@ RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
 
 DOCKERFILES := Dockerfile.onboard Dockerfile.twoway
 ENTRYPOINTS := docker-entrypoint-onboard.sh docker-entrypoint-twoway.sh
-PY_SRC := $(wildcard *.py) $(wildcard heatpumpirctl/*.py)
+PY_SRC := $(wildcard *.py) $(wildcard common/*.py) $(wildcard common/heatpumpirctl/*.py) $(wildcard heatpumpirctl/*.py) $(wildcard hardware/pizero2w/*.py)
 
 all: build
 
@@ -45,7 +46,7 @@ build: .image.app .image.twoway
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
 	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.app
 
-.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py common.py logging_config.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
+.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py logging_config.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
 	"$(CURDIR)/stage-docker-import.sh"
 	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
@@ -100,8 +101,8 @@ ci:
 	git push origin $$BRANCH
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
 
-# On-target deploy: git pull at REPO root, then thermo/onboard/install/deploy-compose.sh (docker compose pull + up).
-# Requires THERMO_ENV_FILE (e.g. export THERMO_ENV_FILE=config/kitchen.env) — see thermo/config/README.md.
+# Room deploy: source THERMO_ENV_FILE, then dispatch to the configured hardware backend.
+# Requires THERMO_ENV_FILE (e.g. export THERMO_ENV_FILE=config/kitchen.env) - see thermo/config/README.md.
 # Default REPO root is two levels up from this dir (onboard -> thermo -> utils).
 # Override checkout: make deploy DEPLOY_REPO=/path/to/utils
 DEPLOY_REPO ?= $(abspath $(CURDIR)/../..)

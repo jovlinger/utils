@@ -5,8 +5,8 @@ Files here are copied to **`install/`** on the boot FAT by `build-and-write.sh`.
 ## Stable rescue SSH host keys (not in git)
 
 Pi rescue (**`sh /root/sshd.sh`**) installs **`install/rescue_authorized_keys`** into **`/root/.ssh`** then starts **`sshd`**. Stable **SSH host keys** across flashes:
-- **Directory:** **`../.secrets/ssh-host/`** (listed in **`../.gitignore`**).
-- **Generate once per clone** (or copy `.secrets/` between machines if you want identical keys):
+- **Directory:** **`../../priv/ssh-host/`** (listed in **`../../.gitignore`**).
+- **Generate once per clone** (or copy `thermo/priv/` between machines if you want identical keys):
 
   ```bash
   cd thermo/dmz
@@ -16,7 +16,7 @@ Pi rescue (**`sh /root/sshd.sh`**) installs **`install/rescue_authorized_keys`**
 
 - **`build-and-write.sh`** copies **`ssh_host_ed25519_*`** and **`ssh_host_rsa_*`** into the apkovl as **`/etc/ssh/`**. If keys are missing, the build runs the generator, then copies them.
 
-**Security:** treat **`../.secrets/`** like private material (backup if you care, never commit).
+**Security:** treat **`../../priv/`** like private material (backup if you care, never commit).
 
 | File | Role |
 |------|------|

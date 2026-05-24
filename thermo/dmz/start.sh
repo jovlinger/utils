@@ -23,7 +23,7 @@ mount -t tmpfs -o nosuid,nodev,size=64m tmpfs /tmp 2>/dev/null \
 
 # Zone Ed25519 pub key (twoway → DMZ machine auth). Baked on every SD image by build-and-write.sh
 # (Pi: /etc/dmz/zone-pub.pem in the chroot, copied by dmz-boot.start). Local docker can also bind
-# -v $PWD/.secrets/zone/pub.pem:/etc/dmz/zone-pub.pem:ro. An explicit env wins.
+# -v ../config/zone/pub.pem:/etc/dmz/zone-pub.pem:ro. An explicit env wins.
 if [ -z "${ZONE_PUBLIC_KEY_PATH:-}" ] && [ -z "${ZONE_PUBLIC_KEY:-}" ] && [ -f /etc/dmz/zone-pub.pem ]; then
 	export ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem
 	echo "start.sh: ZONE_PUBLIC_KEY_PATH=$ZONE_PUBLIC_KEY_PATH (twoway auth enforced)"

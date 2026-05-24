@@ -164,7 +164,7 @@ if [ -n "$_missing" ]; then
 fi
 # Chroot carries its own /etc/resolv.conf from the Docker export; align with host resolvers.
 cp /etc/resolv.conf "$CHROOT_DIR/etc/resolv.conf"
-# Zone Ed25519 pub key: every build-and-write SD image bakes install/zone-pub.pem from .secrets/zone/pub.pem on the build host.
+# Zone Ed25519 pub key: every build-and-write SD image bakes install/zone-pub.pem from thermo/config/zone/pub.pem on the build host.
 # When present, start.sh exports ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem so the DMZ
 # enforces twoway → DMZ machine auth (see ../KEYS-AND-CERTS.md, ../SECRETS.md).
 if [ -f "$SD_MOUNT/install/zone-pub.pem" ]; then
@@ -173,7 +173,7 @@ if [ -f "$SD_MOUNT/install/zone-pub.pem" ]; then
 	chmod 0444 "$CHROOT_DIR/etc/dmz/zone-pub.pem"
 	pr "  zone pub key: installed at /etc/dmz/zone-pub.pem (twoway auth ENABLED)"
 else
-	pr "  zone pub key: absent (twoway auth DISABLED — rebuild SD with thermo/dmz/.secrets/zone/pub.pem baked via build-and-write.sh)"
+	pr "  zone pub key: absent (twoway auth DISABLED - rebuild SD with thermo/config/zone/pub.pem baked via build-and-write.sh)"
 fi
 # Optional: Google OAuth + Flask SECRET_KEY (one line each). start.sh loads only if all three exist.
 _oauth_ok=1

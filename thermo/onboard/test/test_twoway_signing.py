@@ -91,7 +91,7 @@ def test_no_key_emits_loud_warn_at_startup() -> None:
 def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     """Generated keypair => INFO line with stable 16-hex-char key_sha256 fingerprint.
 
-    Operator can compare this to DMZ's `cat /etc/dmz/zone-pub.pem | … fingerprint` to
+    Operator can compare this to DMZ's `cat /etc/dmz/zone-pub.pem | ... fingerprint` to
     confirm both sides hold the same keypair without having to copy the key around.
     """
     sys.path.insert(0, str(_ONBOARD))

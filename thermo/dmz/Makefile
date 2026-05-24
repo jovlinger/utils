@@ -35,10 +35,14 @@ test: test-local test-docker
 runlocal: .image
 	docker run --rm -it -p 8080:8080 jovlinger/thermo/dmz
 
-# Ed25519 zone machine-auth keypair under .secrets/zone/ (gitignored via .secrets/). Onboard keeps priv.pem;
+# Ed25519 zone machine-auth keypair: private half under ../priv/zone/ (gitignored),
+# public half under ../config/zone/ (committed). Onboard keeps priv.pem;
 # configure DMZ with ZONE_PUBLIC_KEY or ZONE_PUBLIC_KEY_PATH pointing at pub.pem. See ../KEYS-AND-CERTS.md.
 zone-keys:
 	@test -f "$(CURDIR)/.venv/bin/python" || test -f "$(CURDIR)/env/bin/python" || { echo "Run ../../create_pipenv.sh thermo/dmz first" >&2; exit 1; }
-	@mkdir -p "$(CURDIR)/.secrets/zone"
+	@mkdir -p "$(CURDIR)/../priv/zone"
+	@mkdir -p "$(CURDIR)/../config/zone"
 	@PY=$$([ -f "$(CURDIR)/.venv/bin/python" ] && echo "$(CURDIR)/.venv/bin/python" || echo "$(CURDIR)/env/bin/python"); \
-		THERMO_ZONE_KEYS_DIR="$(CURDIR)/.secrets/zone" "$$PY" "$(CURDIR)/../test/gen_keys.py"
+		THERMO_ZONE_PRIVATE_KEYS_DIR="$(CURDIR)/../priv/zone" \
+		THERMO_ZONE_PUBLIC_KEYS_DIR="$(CURDIR)/../config/zone" \
+		"$$PY" "$(CURDIR)/../test/gen_keys.py"

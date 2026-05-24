@@ -26,7 +26,8 @@ LOG_TOTALLIMIT="${LOG_TOTALLIMIT:-2097152}"
 export LOG_PATH
 
 if [ -f /.dockerenv ]; then
-  # Production uses docker-compose: onboard-app + twoway containers (see install/docker-compose.yml).
+  # Production uses docker-compose: onboard-app + twoway containers
+  # (see hardware/pizero2w/install/docker-compose.yml).
   # Legacy single image: use docker-entrypoint-onboard.sh / Dockerfile.onboard only.
   exec ./docker-entrypoint-onboard.sh
 fi

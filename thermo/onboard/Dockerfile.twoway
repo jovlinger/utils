@@ -19,9 +19,11 @@ COPY .docker-import/run-with-stdout-logged.py /app/bin/run-with-stdout-logged.py
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY twoway.py common.py zone_auth.py connectivity_watchdog.py \
+COPY twoway.py zone_auth.py connectivity_watchdog.py logging_config.py \
     docker-entrypoint-twoway.sh docker-entrypoint-watchdog.sh ./
 COPY heatpumpirctl/ ./heatpumpirctl/
+COPY common/ ./common/
+COPY hardware/ ./hardware/
 
 RUN chmod +x /app/bin/run-with-stdout-logged.py \
     /app/docker-entrypoint-twoway.sh /app/docker-entrypoint-watchdog.sh
