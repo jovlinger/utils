@@ -131,3 +131,109 @@ def test_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DMZ_URL", "http://dmz:5000/")
     base = manage._dmz_base()
     assert base == "http://dmz:5000"
+
+
+def test_no_args_prints_usage_exit_0() -> None:
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = manage.main([])
+    assert code == 0
+    assert "healthz" in err.getvalue()
+    assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in err.getvalue()
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help", "-help"])
+def test_help_flags_print_full_doc(flag: str) -> None:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = manage.main([flag])
+    assert code == 0
+    text = out.getvalue()
+    assert "CLI for the DMZ HTTP API" in text
+    assert "healthz" in text
+    assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in text
+
+
+def test_healthz_calls_ui_diagnostics_unsigned(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DMZ_URL", "http://127.0.0.1:9")
+    calls: list[tuple] = []
+
+    def _fake_request_json(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return 200, {"uptime_seconds": 1.0, "config": {"oauth_enabled": False}}
+
+    monkeypatch.setattr(manage, "_request_json", _fake_request_json)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = manage.main(["healthz"])
+    assert code == 0
+    assert len(calls) == 1
+    method, path, kwargs = calls[0]
+    assert method == "GET"
+    assert path == "/ui/diagnostics"
+    assert kwargs["sign"] is False
+    assert "uptime_seconds" in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("exc", "needle"),
+    [
+        (
+            manage.requests.exceptions.ConnectionError(
+                "HTTPConnectionPool(host='127.0.0.1', port=9): Max retries exceeded "
+                "(Caused by NewConnectionError: [Errno 61] Connection refused))"
+            ),
+            "connection refused",
+        ),
+        (
+            manage.requests.exceptions.ConnectionError(
+                "HTTPConnectionPool(host='no-such-host.invalid', port=5000): Max retries exceeded "
+                "(Caused by NameResolutionError: Failed to resolve 'no-such-host.invalid')"
+            ),
+            "host not found",
+        ),
+    ],
+)
+def test_connection_errors_are_succinct(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+    needle: str,
+) -> None:
+    monkeypatch.setenv("DMZ_URL", "http://127.0.0.1:9")
+
+    def _boom(*_a, **_k):
+        raise exc
+
+    monkeypatch.setattr(manage.requests, "get", _boom)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        with pytest.raises(SystemExit) as ei:
+            manage.main(["healthz"])
+    assert ei.value.code == 1
+    text = err.getvalue()
+    assert needle in text.lower()
+    assert "traceback" not in text.lower()
+    assert text.count("\n") <= 2
+
+
+def test_oauth_redirect_to_login_is_succinct(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DMZ_URL", "http://jovlinger.duckdns.org:5000")
+
+    class _Resp:
+        status_code = 302
+        headers = {"Location": "/login"}
+        content = b""
+        text = ""
+
+    monkeypatch.setattr(manage, "_http_request", lambda *a, **k: _Resp())
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        with pytest.raises(SystemExit) as ei:
+            manage.main(["zones"])
+    assert ei.value.code == 1
+    text = err.getvalue()
+    assert "OAuth redirect" in text
+    assert "/login" in text
+    assert "ZONE_PRIVATE_KEY" in text
+    assert "traceback" not in text.lower()
+    assert text.count("\n") <= 2

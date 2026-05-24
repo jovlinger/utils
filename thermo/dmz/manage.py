@@ -19,6 +19,7 @@ Actions (first arg) map to app routes:
   sensors <zone> [body...]       — POST /zone/<zone>/sensors
   command <zone> [body...]      — POST /zone/<zone>/command
   zones                         — GET /zones
+  healthz                       — GET /ui/diagnostics (unsigned; uptime, config, access tail)
   debug_logs | logs             — GET /debug/logs
   test_reset [json]             — POST /test_reset (unsigned; testing only)
   updatezone <zone> key=val...  — GET /zones, merge key=val into command, POST command
@@ -46,6 +47,8 @@ python manage.py authorize
 python manage.py logout
 Debug logs
 
+python manage.py healthz
+  DMZ_URL=http://your-host:5000 ./manage.py healthz
 python manage.py debug_logs
 # same as:
 python manage.py logs
@@ -61,8 +64,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
+
+# macOS system/LibreSSL Pythons trigger urllib3 v2 noise on import; harmless for this CLI.
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 import requests
 
@@ -94,6 +101,28 @@ _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
     raise SystemExit(code)
+
+
+_HELP_FLAGS = frozenset({"-h", "--help", "-help"})
+
+
+def _print_help() -> int:
+    print((__doc__ or "").strip())
+    return 0
+
+
+def _usage() -> int:
+    print(
+        "usage: manage.py "
+        "{login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
+        file=sys.stderr,
+    )
+    print(
+        "Set DMZ_URL to the DMZ base. Example:\n"
+        "  DMZ_URL=http://your-host:5000 ./manage.py healthz",
+        file=sys.stderr,
+    )
+    return 0
 
 
 def _dmz_base() -> str:
@@ -196,6 +225,107 @@ def _json_dumps_body(payload: Dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+def _connection_error_message(url: str, exc: BaseException) -> str:
+    """One-line hint when DMZ_URL does not resolve or accept a connection."""
+    parsed = urlparse(url)
+    host = parsed.netloc or parsed.hostname or url
+    msg = str(exc.__cause__ or exc).strip() or type(exc).__name__
+    lower = msg.lower()
+    if any(
+        needle in lower
+        for needle in (
+            "nodename nor servname",
+            "name or service not known",
+            "getaddrinfo failed",
+            "temporary failure in name resolution",
+            "failed to resolve",
+        )
+    ):
+        return f"DMZ unreachable: host not found ({host!r}; check DMZ_URL)"
+    if "connection refused" in lower:
+        return f"DMZ unreachable: connection refused ({url})"
+    if "network is unreachable" in lower:
+        return f"DMZ unreachable: network unreachable ({host})"
+    if "timed out" in lower or "timeout" in lower:
+        return f"DMZ unreachable: timed out ({url})"
+    first_line = msg.splitlines()[0]
+    return f"DMZ unreachable: {first_line} ({url})"
+
+
+def _is_oauth_redirect(location: str) -> bool:
+    """True when Location is DMZ /login or an external OAuth/Sign-In URL."""
+    if not location:
+        return False
+    parsed = urlparse(location if "://" in location else f"http://x{location}")
+    path = (parsed.path or location).lower()
+    if path.rstrip("/") in ("/login", "/authorize", "/logout"):
+        return True
+    host = (parsed.netloc or "").lower()
+    if "accounts.google.com" in host or host.endswith(".google.com"):
+        return True
+    return "oauth" in path or "signin" in path
+
+
+def _redirect_error_message(url: str, response: requests.Response) -> str:
+    loc = (response.headers.get("Location") or "").strip()
+    if loc and not loc.startswith(("http://", "https://")):
+        base = urlparse(url)
+        loc = urljoin(f"{base.scheme}://{base.netloc}/", loc.lstrip("/"))
+    target = f" → {loc}" if loc else ""
+    if _is_oauth_redirect(loc):
+        return (
+            f"DMZ OAuth redirect: {response.status_code}{target} "
+            f"(authentication required; set ZONE_PRIVATE_KEY + ZONE_NAME for machine auth)"
+        )
+    return f"DMZ unexpected redirect: {response.status_code}{target} ({url})"
+
+
+def _html_instead_of_json_message(url: str, body: str = "") -> str:
+    lower = body[:4096].lower()
+    if (
+        "accounts.google.com" in lower
+        or "signin" in lower
+        or _is_oauth_redirect(url)
+    ):
+        return (
+            f"DMZ OAuth redirect: received HTML login page instead of JSON ({url}). "
+            "Set ZONE_PRIVATE_KEY + ZONE_NAME for machine auth."
+        )
+    return (
+        f"DMZ returned HTML instead of JSON ({url}). "
+        "Expected JSON; check DMZ_URL and authentication."
+    )
+
+
+def _http_request(
+    method: str,
+    url: str,
+    *,
+    headers: Dict[str, str],
+    data: Optional[bytes],
+    timeout: int,
+) -> requests.Response:
+    try:
+        if method.upper() == "GET":
+            return requests.get(
+                url, headers=headers, timeout=timeout, allow_redirects=False
+            )
+        if method.upper() == "POST":
+            return requests.post(
+                url, data=data, headers=headers, timeout=timeout, allow_redirects=False
+            )
+        _die(f"unsupported method: {method}")
+    except requests.exceptions.Timeout:
+        _die(f"DMZ unreachable: timed out after {timeout}s ({url})", code=1)
+    except requests.exceptions.SSLError as exc:
+        _die(f"DMZ TLS error: {exc} ({url})", code=1)
+    except requests.exceptions.ConnectionError as exc:
+        _die(_connection_error_message(url, exc), code=1)
+    except requests.exceptions.RequestException as exc:
+        _die(f"DMZ request failed: {exc} ({url})", code=1)
+    raise AssertionError("unreachable")
+
+
 def _request_json(
     method: str,
     path: str,
@@ -218,12 +348,9 @@ def _request_json(
         if parsed.query:
             req_path = f"{req_path}?{parsed.query}"
         headers.update(_sign_headers(method, req_path, body_bytes, zone_for_sign))
-    if method.upper() == "GET":
-        r = requests.get(url, headers=headers, timeout=60)
-    elif method.upper() == "POST":
-        r = requests.post(url, data=data, headers=headers, timeout=60)
-    else:
-        _die(f"unsupported method: {method}")
+    r = _http_request(method, url, headers=headers, data=data, timeout=60)
+    if 300 <= r.status_code < 400:
+        _die(_redirect_error_message(url, r), code=1)
     if not r.content:
         return r.status_code, None
     ctype = (r.headers.get("Content-Type") or "").lower()
@@ -232,7 +359,10 @@ def _request_json(
             return r.status_code, r.json()
         except ValueError:
             return r.status_code, r.text
-    return r.status_code, r.text
+    text = r.text
+    if "text/html" in ctype or text.lstrip().startswith("<"):
+        _die(_html_instead_of_json_message(url, text), code=1)
+    return r.status_code, text
 
 
 def _emit(status: int, body: Union[dict, list, str, None]) -> int:
@@ -376,10 +506,9 @@ def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        _die(
-            "usage: manage.py "
-            "{login|authorize|logout|sensors|command|zones|debug_logs|logs|test_reset|updatezone} ..."
-        )
+        return _usage()
+    if args[0] in _HELP_FLAGS:
+        return _print_help()
     action = args[0]
     rest = args[1:]
 
@@ -399,6 +528,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             "/zones",
             zone_for_sign=zn,
             sign=bool(key_mat),
+        )
+        return _emit(st, body)
+
+    if action == "healthz":
+        st, body = _request_json(
+            "GET",
+            "/ui/diagnostics",
+            zone_for_sign="",
+            sign=False,
         )
         return _emit(st, body)
 
