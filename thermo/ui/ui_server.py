@@ -184,12 +184,70 @@ def _dmz_diagnostics_export_block() -> str:
         return "<p><b>Diagnostics JSON</b> unavailable (Flask backend unreachable).</p>"
 
 
-def _fetch_ui_context() -> Optional[Dict[str, Any]]:
+def _fetch_ui_context_json(
+    cookie_header: Optional[str],
+) -> tuple[Optional[Dict[str, Any]], int]:
+    """
+    GET Flask ``/ui/context`` as a programmatic client (``Accept: application/json``).
+
+    Returns ``(payload, http_code)``. ``401`` means OAuth is on and there is no
+    session — DMZ ``ui_server`` must redirect the browser to Flask ``/login``.
+    ``0`` means transport/parse failure (treat like missing context for onboard).
+    """
+    req = urllib.request.Request(
+        f"{APP_BASE}/ui/context",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    ch = (cookie_header or "").strip()
+    if ch:
+        req.add_header("Cookie", ch)
     try:
-        with urllib.request.urlopen(f"{APP_BASE}/ui/context", timeout=3) as r:
-            return json.loads(r.read().decode())
+        with urllib.request.urlopen(req, timeout=3) as r:
+            raw = r.read().decode()
+            return json.loads(raw), int(r.status)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, 401
+        return None, int(e.code)
     except Exception:
-        return None
+        return None, 0
+
+
+def _fetch_ui_context(cookie_header: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    ctx, code = _fetch_ui_context_json(cookie_header)
+    if code == 200 and isinstance(ctx, dict):
+        return ctx
+    return None
+
+
+def _flask_login_url(handler: BaseHTTPRequestHandler) -> str:
+    """Absolute ``/login`` URL on the Flask app (different port than ``ui_server``)."""
+    explicit = (os.environ.get("THERMO_UI_LOGIN_ORIGIN") or "").strip().rstrip("/")
+    if explicit:
+        return f"{explicit}/login"
+    host = (handler.headers.get("Host") or "127.0.0.1").strip()
+    if ":" in host and not host.startswith("["):
+        host_only, tail = host.rsplit(":", 1)
+        if tail.isdigit():
+            host = host_only
+    proto = (
+        "https"
+        if (handler.headers.get("X-Forwarded-Proto") or "").strip().lower() == "https"
+        else "http"
+    )
+    try:
+        pub = int(os.environ.get("THERMO_DMZ_FLASK_PUBLIC_PORT", str(PORT_APP)))
+    except ValueError:
+        pub = PORT_APP
+    return f"{proto}://{host}:{pub}/login"
+
+
+def _send_flask_login_redirect(handler: BaseHTTPRequestHandler) -> None:
+    loc = _flask_login_url(handler)
+    handler.send_response(302)
+    handler.send_header("Location", loc)
+    handler.end_headers()
 
 
 def _fetch_manage_status(token: str) -> str:
@@ -495,7 +553,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/" or self.path.startswith("/?"):
             from heatpumpirctl import State
 
-            ctx = _fetch_ui_context()
+            cookie_header = (self.headers.get("Cookie") or "").strip() or None
+            ctx, code = _fetch_ui_context_json(cookie_header)
+            if _ui_backend() == "dmz" and code == 401:
+                _send_flask_login_redirect(self)
+                return
+
             zone = _parse_zone_from_path(self.path, ctx) or (
                 (ctx.get("zones") or [None])[0] if ctx else None
             )
@@ -525,10 +588,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == "/":
+            cookie_header = (self.headers.get("Cookie") or "").strip() or None
+            ctx, code = _fetch_ui_context_json(cookie_header)
+            if _ui_backend() == "dmz" and code == 401:
+                _send_flask_login_redirect(self)
+                return
+
             length = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(length) if length else b""
             form = urllib.parse.parse_qs(body, keep_blank_values=True)
-            ctx = _fetch_ui_context()
             zones: List[str] = []
             if ctx and isinstance(ctx.get("zones"), list):
                 zones = [str(z) for z in ctx["zones"]]
@@ -547,11 +615,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not ui_zone or (zones and ui_zone not in zones):
                     ui_zone = zones[0] if zones else "default"
                 cmd = _form_to_command(form)
-                msg = self._post_ui_command(ui_zone, cmd)
+                msg = self._post_ui_command(ui_zone, cmd, cookie_header=cookie_header)
                 from heatpumpirctl import State
 
                 state = State.from_json(cmd)
-                ctx2 = _fetch_ui_context()
+                ctx2, _ = _fetch_ui_context_json(cookie_header)
                 html_out = render_template(
                     state, ctx=ctx2 or ctx, selected_zone=ui_zone, msg=msg
                 )
@@ -564,7 +632,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
-    def _post_ui_command(self, zone: str, cmd: Dict[str, Any]) -> str:
+    def _post_ui_command(
+        self, zone: str, cmd: Dict[str, Any], cookie_header: Optional[str] = None
+    ) -> str:
         body_obj = {"zone": zone, "command": cmd}
         body = json.dumps(body_obj).encode("utf-8")
         req = urllib.request.Request(
@@ -573,6 +643,9 @@ class Handler(BaseHTTPRequestHandler):
             method="POST",
             headers={"Content-Type": "application/json"},
         )
+        ch = (cookie_header or "").strip()
+        if ch:
+            req.add_header("Cookie", ch)
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 d = json.loads(r.read().decode())
@@ -683,6 +756,65 @@ def _make_server(port: int) -> _UiHTTPServer:
     return _UiHTTPServer(("0.0.0.0", port), Handler)
 
 
+def _print_ui_diagnostics_summary() -> bool:
+    """Log backend auth flags from ``/ui/diagnostics``. Returns True on success."""
+    with urllib.request.urlopen(f"{APP_BASE}/ui/diagnostics", timeout=4) as r:
+        d = json.loads(r.read().decode())
+    cfg = d.get("config") or {}
+    print(
+        "ui_server startup (backend /ui/diagnostics): "
+        f"zone_auth_enforced={cfg.get('zone_auth_enforced')} "
+        f"zone_pubkey_sha256_last4={cfg.get('zone_pubkey_sha256_last4')} "
+        f"oauth_enabled={cfg.get('oauth_enabled')} "
+        f"google_client_id_last4={cfg.get('google_client_id_last4')} "
+        f"flask_secret_key_last4={cfg.get('flask_secret_key_last4')} "
+        f"default_dev_secret={cfg.get('flask_secret_is_default_dev')}",
+        flush=True,
+    )
+    return True
+
+
+def _retry_ui_diagnostics_summary(ports: List[int], attempts: int = 60) -> None:
+    """Background retries when Flask was not up at ui_server process start."""
+    import time
+
+    for _ in range(attempts):
+        time.sleep(1.0)
+        try:
+            if _print_ui_diagnostics_summary():
+                return
+        except Exception:
+            continue
+    print(
+        f"ui_server: /ui/diagnostics still unreadable after {attempts}s "
+        f"(backend={APP_BASE}); UI may serve without Flask until backend is up",
+        flush=True,
+    )
+
+
+def _log_ui_startup_auth(ports: List[int]) -> None:
+    """Stderr lines: bind addresses + backend auth flags (from /ui/diagnostics)."""
+    print(
+        f"ui_server startup: listen 0.0.0.0 ports={ports} backend={APP_BASE} "
+        f"THERMO_UI_BACKEND={_ui_backend()}",
+        flush=True,
+    )
+    try:
+        _print_ui_diagnostics_summary()
+    except Exception as exc:
+        print(
+            f"ui_server startup: /ui/diagnostics not readable yet ({exc!r}); "
+            "retrying in background",
+            flush=True,
+        )
+        threading.Thread(
+            target=_retry_ui_diagnostics_summary,
+            args=(ports,),
+            daemon=True,
+            name="ui-diagnostics-retry",
+        ).start()
+
+
 def main() -> None:
     if (os.environ.get("THERMO_UI_DISABLE") or "").strip().lower() in (
         "1",
@@ -695,6 +827,7 @@ def main() -> None:
         )
         return
     ports = _all_ui_ports()
+    _log_ui_startup_auth(ports)
     if len(ports) == 1:
         server = _make_server(ports[0])
         print(f"UI on http://0.0.0.0:{ports[0]} (backend={_ui_backend()})")

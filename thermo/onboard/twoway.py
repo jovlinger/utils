@@ -1,37 +1,22 @@
 # this probably wants its own docker container
 
 import json
-from typing import Optional, Tuple
+import logging
 import os
 import sys
 import time
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
 
-# Same logging as app (configured in common)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import jsonT, log, log_debug, log_error, log_warning
+from common import jsonT
+from logging_config import configure_logging, format_kv
 
-
-def info(msg: str, **kwargs) -> None:
-    """Log via common.log (same format as app)."""
-    log("twoway", msg, **kwargs)
-
-
-def err(msg: str, **kwargs) -> None:
-    """Log at ERROR (same kwargs style as info)."""
-    log_error("twoway", msg, **kwargs)
-
-
-def warn(msg: str, **kwargs) -> None:
-    """Log at WARNING (same kwargs style as info)."""
-    log_warning("twoway", msg, **kwargs)
-
-
-def dbg(msg: str, **kwargs) -> None:
-    """Log at DEBUG (same kwargs style as info)."""
-    log_debug("twoway", msg, **kwargs)
+configure_logging("twoway")
+# Example: 2026-05-17T13:40:23.905Z INFO twoway twoway:45 start argv=['twoway.py', 'http://…', …]
+logger = logging.getLogger(__name__)
 
 
 usage = """
@@ -57,7 +42,7 @@ URL2 must be the sensors endpoint; the command URL is derived by replacing ``/se
 > make dockertest
 """
 
-info("start", argv=sys.argv)
+logger.info("start%s", format_kv(argv=sys.argv))
 
 assert len(sys.argv) == 4
 
@@ -102,17 +87,19 @@ def _probe_signing(zone_name: str, key_ref: Optional[str]) -> None:
     """
     global SIGNING_ENABLED, _PRIVATE_KEY_OBJ, _KEY_FINGERPRINT
     if not key_ref:
-        warn(
+        logger.warning(
             "zone auth DISABLED on client; DMZ POSTs will 401 if DMZ enforces auth. "
             "Set ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM) to enable. "
             "See thermo/KEYS-AND-CERTS.md."
         )
         return
     if not zone_name:
-        err(
+        logger.error(
             "zone auth MISCONFIGURED: ZONE_PRIVATE_KEY* set but ZONE_NAME is empty "
-            "(could not extract from DMZ URL path /zone/<name>/sensors). Signing disabled.",
-            key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+            "(could not extract from DMZ URL path /zone/<name>/sensors). Signing disabled.%s",
+            format_kv(
+                key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+            ),
         )
         return
     try:
@@ -121,29 +108,32 @@ def _probe_signing(zone_name: str, key_ref: Optional[str]) -> None:
         key_obj = _load_private_key(key_ref)
         fingerprint = public_key_fingerprint(key_obj)
     except FileNotFoundError as e:
-        err(
+        logger.error(
             "zone auth MISCONFIGURED: private key file not found. "
-            "Bind-mount it into the container; see thermo/onboard/install/docker-compose.yml.",
-            key_ref=key_ref,
-            error=str(e),
+            "Bind-mount it into the container; see thermo/onboard/install/docker-compose.yml.%s",
+            format_kv(key_ref=key_ref, error=str(e)),
         )
         return
     except Exception as e:
-        err(
+        logger.error(
             "zone auth MISCONFIGURED: failed to load Ed25519 private key. "
-            "Expected PEM (PKCS8) or 32 raw bytes. Signing disabled.",
-            key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
-            error=f"{type(e).__name__}: {e}",
+            "Expected PEM (PKCS8) or 32 raw bytes. Signing disabled.%s",
+            format_kv(
+                key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+                error=f"{type(e).__name__}: {e}",
+            ),
         )
         return
     SIGNING_ENABLED = True
     _PRIVATE_KEY_OBJ = key_obj
     _KEY_FINGERPRINT = fingerprint
-    info(
-        "zone auth ENABLED",
-        zone=zone_name,
-        key_sha256=fingerprint,
-        key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+    logger.info(
+        "zone auth ENABLED%s",
+        format_kv(
+            zone=zone_name,
+            key_sha256=fingerprint,
+            key_ref=key_ref if not key_ref.startswith("-----") else "<inline-pem>",
+        ),
     )
 
 
@@ -152,23 +142,43 @@ _probe_signing(ZONE_NAME, ZONE_PRIVATE_KEY)
 # Request path used for Ed25519 signing (must match DMZ URL path).
 DMZ_SIGN_PATH: str = _parsed_dmz.path or "/zone/default/sensors"
 
-TIMEOUT_SECS: float = 10.0
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
+
+
+# Onboard GET/POST are fast; DMZ POST /zone/.../sensors long-polls (see DMZ LONG_POLL_*).
+ONBOARD_HTTP_TIMEOUT_SECS: float = _env_float("ONBOARD_HTTP_TIMEOUT_SECS", 10.0)
+_LONG_POLL_TIMEOUT_SECS: float = _env_float("LONG_POLL_TIMEOUT_SECS", 60.0)
+_DMZ_HTTP_TIMEOUT_MARGIN_SECS: float = _env_float("DMZ_HTTP_TIMEOUT_MARGIN_SECS", 10.0)
+DMZ_HTTP_TIMEOUT_SECS: float = _env_float(
+    "DMZ_HTTP_TIMEOUT_SECS",
+    _LONG_POLL_TIMEOUT_SECS + _DMZ_HTTP_TIMEOUT_MARGIN_SECS,
+)
+
 PERIOD_SECS: float = 5.0
 PERIOD_MAX_SECS: float = 60.0
 
-info(
-    "twoway config",
-    readfrom=readfrom,
-    dmz=dmz,
-    writeto=writeto,
-    dmz_sign_path=DMZ_SIGN_PATH,
-    zone_name=ZONE_NAME or "(unset)",
-    signing_enabled=SIGNING_ENABLED,
-    key_sha256=_KEY_FINGERPRINT or "(none)",
-    timeout_secs=TIMEOUT_SECS,
-    period_max_secs=PERIOD_MAX_SECS,
-    period_secs=PERIOD_SECS,
-    env=os.environ.get("ENV", ""),
+logger.info(
+    "twoway config%s",
+    format_kv(
+        readfrom=readfrom,
+        dmz=dmz,
+        writeto=writeto,
+        dmz_sign_path=DMZ_SIGN_PATH,
+        zone_name=ZONE_NAME or "(unset)",
+        signing_enabled=SIGNING_ENABLED,
+        key_sha256=_KEY_FINGERPRINT or "(none)",
+        onboard_http_timeout_secs=ONBOARD_HTTP_TIMEOUT_SECS,
+        dmz_http_timeout_secs=DMZ_HTTP_TIMEOUT_SECS,
+        long_poll_timeout_secs=_LONG_POLL_TIMEOUT_SECS,
+        period_max_secs=PERIOD_MAX_SECS,
+        period_secs=PERIOD_SECS,
+        env=os.environ.get("ENV", ""),
+    ),
 )
 
 
@@ -218,17 +228,29 @@ def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:
             HEADER_ZONE: zonename,
         }
     except Exception as e:
-        err("sign failed unexpectedly (key was loaded at startup)", error=str(e))
+        logger.exception(
+            "sign failed unexpectedly (key was loaded at startup)%s",
+            format_kv(error=str(e)),
+        )
         return {}
 
 
-def get_json(url: str, extra_headers: Optional[dict] = None) -> Tuple[jsonT, bool]:
-    dbg("get request", url=url)
+def get_json(
+    url: str,
+    extra_headers: Optional[dict] = None,
+    *,
+    timeout: Optional[float] = None,
+) -> Tuple[jsonT, bool]:
+    logger.debug("get request%s", format_kv(url=url))
     headers = {"Accept": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
-    r = requests.get(url, headers=headers, timeout=TIMEOUT_SECS)
-    info("get response", url=url, status=r.status_code)
+    r = requests.get(
+        url,
+        headers=headers,
+        timeout=timeout if timeout is not None else ONBOARD_HTTP_TIMEOUT_SECS,
+    )
+    logger.info("get response%s", format_kv(url=url, status=r.status_code))
     if not r.ok:
         return (r.text, False)
     if not r.text:
@@ -240,7 +262,11 @@ def get_json(url: str, extra_headers: Optional[dict] = None) -> Tuple[jsonT, boo
 
 
 def post_json(
-    url: str, body: dict, extra_headers: Optional[dict] = None
+    url: str,
+    body: dict,
+    extra_headers: Optional[dict] = None,
+    *,
+    timeout: Optional[float] = None,
 ) -> Tuple[jsonT, bool, int]:
     """POST JSON; return (parsed-or-raw body, ok, status_code).
 
@@ -248,12 +274,17 @@ def post_json(
     distinguish HTTP error classes — in particular 401-with-no-headers (we forgot to sign)
     from 401-with-headers (DMZ rejected the signature).
     """
-    dbg("post request", url=url)
+    logger.debug("post request%s", format_kv(url=url))
     headers = {"Content-type": "application/json", "Accept": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
-    r = requests.post(url, json=body, headers=headers, timeout=TIMEOUT_SECS)
-    info("post response", url=url, status=r.status_code)
+    r = requests.post(
+        url,
+        json=body,
+        headers=headers,
+        timeout=timeout if timeout is not None else ONBOARD_HTTP_TIMEOUT_SECS,
+    )
+    logger.info("post response%s", format_kv(url=url, status=r.status_code))
     if r.status_code != 200:
         return (r.text, False, r.status_code)
     try:
@@ -291,9 +322,11 @@ def poll_once() -> bool:
         # 1/3: pull onboard's current sensors AND last-applied command (with created_dt).
         env, ok_get = get_json(readfrom)
         if not ok_get:
-            err("get from onboard failed: aborting poll", error=env)
+            logger.error("get from onboard failed: aborting poll%s", format_kv(error=env))
             return False
-        dbg("poll_once 1/3 ONBOARD -> twoway env+command", env=env)
+        logger.debug(
+            "poll_once 1/3 ONBOARD -> twoway env+command%s", format_kv(env=env)
+        )
 
         # 2/3: POST {sensors, command?} to DMZ. DMZ replaces its stored command only when
         # ours is strictly newer than what it already has (logged on DMZ side as
@@ -303,21 +336,24 @@ def poll_once() -> bool:
         extra = _sign_headers("POST", DMZ_SIGN_PATH, body_bytes, ZONE_NAME)
         signed = bool(extra)
         res, ok_dmz, status = post_json(
-            dmz, dmz_body, extra_headers=extra if extra else None
+            dmz,
+            dmz_body,
+            extra_headers=extra if extra else None,
+            timeout=DMZ_HTTP_TIMEOUT_SECS,
         )
-        dbg(
-            "poll_once 2/3 twoway -> DMZ returning zone state",
-            res=res,
-            ok_dmz=ok_dmz,
-            status=status,
+        logger.debug(
+            "poll_once 2/3 twoway -> DMZ returning zone state%s",
+            format_kv(res=res, ok_dmz=ok_dmz, status=status),
         )
         if not ok_dmz:
-            err(
-                "post to DMZ failed: aborting poll",
-                status=status,
-                signed=signed,
-                hint=_explain_dmz_failure(status, signed),
-                error=res,
+            logger.error(
+                "post to DMZ failed: aborting poll%s",
+                format_kv(
+                    status=status,
+                    signed=signed,
+                    hint=_explain_dmz_failure(status, signed),
+                    error=res,
+                ),
             )
             return False
 
@@ -327,37 +363,52 @@ def poll_once() -> bool:
         # symmetric across both gates.
         write_res, ok_write, _wstatus = post_json(writeto, res)
         if not ok_write:
-            err("post to onboard failed: aborting poll", error=write_res, res=res)
+            logger.error(
+                "post to onboard failed: aborting poll%s",
+                format_kv(error=write_res, res=res),
+            )
             return False
-        dbg(
-            "poll_once 3/3 twoway -> ONBOARD returning apply result",
-            writeto=writeto,
-            res=write_res,
-            ok_write=ok_write,
+        logger.debug(
+            "poll_once 3/3 twoway -> ONBOARD returning apply result%s",
+            format_kv(writeto=writeto, res=write_res, ok_write=ok_write),
         )
     except Exception as e:
-        err("failed", error=str(e))
+        logger.exception("failed%s", format_kv(error=str(e)))
         return False
     return True
 
 
 def poll_forever() -> None:
-    info("twoway poll forever start")
+    logger.info("twoway poll forever start")
     slp = PERIOD_SECS
+    next_poll_not_before = time.monotonic()
     while True:
-        info(f"sleep: {slp}")
-        time.sleep(slp)
+        now = time.monotonic()
+        wait_secs = max(0.0, next_poll_not_before - now)
+        if wait_secs > 0:
+            logger.info(
+                "sleep before poll%s",
+                format_kv(
+                    sleep_secs=round(wait_secs, 3),
+                    min_period_secs=slp,
+                ),
+            )
+            time.sleep(wait_secs)
+        poll_started_at = time.monotonic()
         ok = poll_once()
         if ok:
             slp = PERIOD_SECS
         else:
             slp = min(PERIOD_MAX_SECS, slp + 1)
+        # Enforce minimum delay between poll starts. If the previous poll consumed most
+        # (or all) of slp, we do little/no extra sleeping on the next loop.
+        next_poll_not_before = poll_started_at + slp
 
 
-info("enter")
+logger.info("enter")
 if __name__ == "__main__":
     if os.environ.get("ENV") in ["DOCKERTEST"]:
         PERIOD_SECS = 0.1
-        info("twoway dockertest override", period_secs=PERIOD_SECS)
+        logger.info("twoway dockertest override%s", format_kv(period_secs=PERIOD_SECS))
     poll_forever()
-info("exit")
+logger.info("exit")

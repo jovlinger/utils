@@ -4,12 +4,7 @@ Main entry point.
 Use as an import for testing. Must use the flask cmd line to start
 """
 
-from anavilib import HTU21D, send_daikin_state
-from common import is_test_env, log, log_debug
-from constants import help_msg
-
-from collections import deque
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 import json
 import logging
@@ -18,20 +13,17 @@ from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 from flask import Flask, request
 
+from anavilib import HTU21D, send_daikin_state
+from common import is_test_env
+from constants import help_msg
 from heatpumpirctl import State
-from common import get_log_level, set_log_level
+from logging_config import configure_logging, format_kv, get_log_level, set_log_level
+
+configure_logging("onboard")
+# Example: 2026-05-17T13:40:23.905Z INFO onboard app:136 request path='/environment'
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-
-def out(msg: str, **kwargs) -> None:
-    """Log via common.log (same format as twoway)."""
-    log("app", msg, **kwargs)
-
-
-def dbg(msg: str, **kwargs) -> None:
-    """Log at DEBUG (same kwargs style as info)."""
-    log_debug("app", msg, **kwargs)
 
 
 c = defaultdict(lambda: 0)
@@ -88,7 +80,6 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
     if action == "inject_log":
         level_name = str(payload.get("level", "INFO")).upper().strip()
         message = str(payload.get("message", "injected-log"))
-        logger = logging.getLogger("onboard")
         level = getattr(logging, level_name, None)
         if not isinstance(level, int):
             return {"error": "invalid level"}, 400
@@ -102,17 +93,17 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
 
     if action == "assert":
         msg = str(payload.get("message", "management assertion failure"))
-        out("management assert", message=msg)
+        logger.info("management assert%s", format_kv(message=msg))
         raise AssertionError(msg)
 
     if action == "raise":
         msg = str(payload.get("message", "management runtime failure"))
-        out("management raise", message=msg)
+        logger.info("management raise%s", format_kv(message=msg))
         raise RuntimeError(msg)
 
     if action == "fatal":
         code = _parse_exit_code(payload.get("code", 99))
-        out("management fatal exit", code=code)
+        logger.info("management fatal exit%s", format_kv(code=code))
         os._exit(code)
 
     if action == "set_log_level":
@@ -120,7 +111,7 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         updated = set_log_level(level_name)
         if not updated:
             return {"error": "invalid level"}, 400
-        out("management set log level", log_level=updated)
+        logger.info("management set log level%s", format_kv(log_level=updated))
         return {"ok": True, "action": action, "level": updated}, 200
 
     if action == "reset":
@@ -132,7 +123,7 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         _last_applied_state = State()
         _last_command_created_dt = None
         daikin_cmds.clear()
-        out("management reset state")
+        logger.info("management reset state")
         return {"ok": True, "action": action}, 200
 
     return {"error": "unknown action"}, 400
@@ -142,7 +133,7 @@ def _management_action(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
 def root(path):
     """This is just a test route to make sure the server is running."""
     global c
-    out("request", path=path)
+    logger.info("request%s", format_kv(path=path))
     c[path] += 1
     return f"<P>Hello my name is {path} / {c} </P>"
 
@@ -205,7 +196,7 @@ def _environment_dict() -> Dict[str, Any]:
             "command": cmd,
         }
     except Exception as e:
-        out("environment", error=str(e))
+        logger.info("environment%s", format_kv(error=str(e)))
         return {
             "temperature_centigrade": None,
             "humidity_percent": None,
@@ -387,23 +378,23 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
     receiver wall-clock when the body did not provide one.
     """
     global _last_daikin_ir_fingerprint, _last_applied_state, _last_command_created_dt
-    dbg("set_daikin", js=js)
+    logger.debug("set_daikin%s", format_kv(js=js))
     cmd_obj = js.get("command") if isinstance(js, dict) else js
     if cmd_obj is None:
-        dbg("no command in zone state; skipping /daikin")
+        logger.debug("no command in zone state; skipping /daikin")
         return {
             "sent": False,
             "reason": "no command",
             "environment": _environment_dict(),
         }, 200
     if not isinstance(cmd_obj, dict):
-        out("Invalid command: expected dict, got %s" % type(cmd_obj).__name__)
+        logger.info("Invalid command: expected dict, got %s", type(cmd_obj).__name__)
         return {"error": "EmptyCmd"}, 400
     merged = _command_dict_for_state(cmd_obj)
     if not merged:
-        dbg(
-            "set_daikin no state fields in command",
-            keys=list(cmd_obj.keys()),
+        logger.debug(
+            "set_daikin no state fields in command%s",
+            format_kv(keys=list(cmd_obj.keys())),
         )
         return {
             "sent": False,
@@ -421,9 +412,9 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
         # commands that arrived after a fresher local change).  No created_dt at all on
         # an inbound twoway command is also stale: we cannot prove it is newer.
         if incoming_created_dt is None:
-            dbg(
-                "twoway command has no created_dt; treating as obsolete",
-                tracked=_last_command_created_dt,
+            logger.debug(
+                "twoway command has no created_dt; treating as obsolete%s",
+                format_kv(tracked=_last_command_created_dt),
             )
             return {
                 "sent": False,
@@ -434,36 +425,42 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
             _last_command_created_dt is not None
             and incoming_created_dt <= _last_command_created_dt
         ):
-            dbg(
-                "twoway command obsolete; ignored",
-                incoming_created_dt=incoming_created_dt,
-                tracked_created_dt=_last_command_created_dt,
+            logger.debug(
+                "twoway command obsolete; ignored%s",
+                format_kv(
+                    incoming_created_dt=incoming_created_dt,
+                    tracked_created_dt=_last_command_created_dt,
+                ),
             )
             return {
                 "sent": False,
                 "reason": "obsolete",
                 "environment": _environment_dict(),
             }, 200
-        out(
-            "twoway command accepted",
-            incoming_created_dt=incoming_created_dt,
-            previous_created_dt=_last_command_created_dt,
+        logger.info(
+            "twoway command accepted%s",
+            format_kv(
+                incoming_created_dt=incoming_created_dt,
+                previous_created_dt=_last_command_created_dt,
+            ),
         )
     try:
         if from_dmz_twoway:
             base = _last_applied_state.to_json()
             merged_for_state = {**base, **merged}
-            dbg(
-                "set_daikin merge twoway command into last state",
-                merged_incoming=merged,
+            logger.debug(
+                "set_daikin merge twoway command into last state%s",
+                format_kv(merged_incoming=merged),
             )
             state = State.from_json(merged_for_state)
         else:
-            dbg("set_daikin state preconvert", merged=merged)
+            logger.debug(
+                "set_daikin state preconvert%s", format_kv(merged=merged)
+            )
             state = State.from_json(merged)
-        dbg("set_daikin state", state=state)
+        logger.debug("set_daikin state%s", format_kv(state=state))
     except (KeyError, ValueError, TypeError) as e:
-        out("Invalid command: %s" % e)
+        logger.info("Invalid command: %s", e)
         return {"error": "InvalidCmd", "detail": str(e)}, 400
 
     ts = datetime.now()
@@ -477,7 +474,7 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
     )
     fp = _daikin_state_fingerprint(state)
     if _last_daikin_ir_fingerprint is not None and fp == _last_daikin_ir_fingerprint:
-        out("SET_DAIKIN unchanged (no IR): %s" % state.summary())
+        logger.info("SET_DAIKIN unchanged (no IR): %s", state.summary())
         _last_applied_state = state
         _last_command_created_dt = new_created_dt
         return _daikin_response_payload(ts_iso, state, sent=False, unchanged=True), 200
@@ -487,7 +484,7 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
     _last_applied_state = state
     _last_command_created_dt = new_created_dt
     daikin_cmds.append((ts, state, success))
-    out("SET_DAIKIN: %s" % state.summary())
+    logger.info("SET_DAIKIN: %s", state.summary())
     return _daikin_response_payload(ts_iso, state, sent=success), 200
 
 
@@ -559,5 +556,5 @@ def set_daikin():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    out("starting", host="0.0.0.0", port=port)
+    logger.info("starting%s", format_kv(host="0.0.0.0", port=port))
     app.run(host="0.0.0.0", port=port)

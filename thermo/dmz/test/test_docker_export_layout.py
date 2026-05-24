@@ -16,12 +16,15 @@ DOCKER_IMAGE = "jovlinger/thermo/dmz:armv6"
 
 
 def _image_exists(name: str) -> bool:
-    r = subprocess.run(
-        ["docker", "image", "inspect", name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        r = subprocess.run(
+            ["docker", "image", "inspect", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
     return r.returncode == 0
 
 

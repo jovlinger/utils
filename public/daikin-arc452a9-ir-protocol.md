@@ -1,45 +1,38 @@
-# Onboard requirements
+# Daikin ARC452A9 IR protocol — reverse-engineered byte map
 
-This document describes the current onboard behavior and the requirements for
-interfacing with the ANAVI IR pHAT hardware: the IR transceiver and the
-temperature/humidity sensor.
+## Clickbait
 
-## Scope
+The Daikin **ARC452A9** wireless remote does not match any of the public
+reverse-engineering write-ups you will find by searching: blafois documents the
+**ARC470A1** (three frames per button, different fixed bytes) and rdlab covers
+the **ARC433A46** (similar timing, different layout). Captured against a real
+ARC452A9 with an ANAVI IR pHAT (LIRC, 38 kHz, GPIO 17 RX / 18 TX) on a Raspberry
+Pi, every button press is **two frames** — an 8-byte fixed F1 (`11 da 27 f0 00
+00 00 02`) and a 19-byte state frame F3 — separated by a **~30 ms** inter-frame
+gap. Anyone re-using LIRC's default **5000 µs** receiver timeout will
+silently fragment every transmission; you must pass `--timeout 200000`
+(200 ms) to capture full frames. The F3 byte map below was confirmed by
+single-variable button captures for **mode, temperature, fan speed (incl.
+Silent and Auto), vertical swing, powerful, and presence/away**, and the
+**checksum** is just `sum(preceding bytes) & 0xFF`. Differences from the
+blafois ARC470A1 spec (frame count, F1 byte 3 = `0xf0` vs `0x00`, F3 byte
+`0x0f` = `0xc0` vs `0xc1`, byte 5 bit 1, …) are called out inline so anyone
+working from the older write-up can pivot without redoing the captures.
 
-The onboard service:
-- Exposes a simple HTTP API for environment data and IR commands.
-- Reads temperature/humidity from the ANAVI IR pHAT (HTU21D via I2C).
-- Transmits and receives IR to control a Daikin heat-pump head unit.
+---
 
-## Existing behavior (current repo state)
+## Hardware setup used for captures
 
-From `onboard/app.py` and `onboard/anavilib.py`:
-- Flask app serves on port `5000` by default.
-- `GET /environment` reads the HTU21D over I2C and returns
-  `temperature_centigrade` and `humidity_percent`.
-- `GET /daikin` returns an in-memory map of commands.
-- `POST /daikin` stores an incoming command but does not transmit IR yet.
-- `HTU21D` access is implemented via `smbus` on I2C bus `1`.
-- In test environments (`ENV=TEST` or `ENV=DOCKERTEST`), I2C is mocked by
-  `smbus_fake`.
-
-## Hardware interfaces
-
-### I2C (temperature/humidity)
-
-- I2C bus: `1` (`/dev/i2c-1`).
-- Sensor: HTU21D, address `0x40`.
-- Commands: `0xE3` temperature, `0xE5` humidity, `0xFE` reset.
-
-### IR transceiver (ANAVI IR pHAT)
-
-- `/dev/lirc0` = TX (GPIO 18).
-- `/dev/lirc1` = RX (GPIO 17).
+- IR receiver / transmitter: **ANAVI IR pHAT** on a Raspberry Pi
+  - `/dev/lirc0` = TX (GPIO 18)
+  - `/dev/lirc1` = RX (GPIO 17)
 - Carrier: 38 kHz (handled by hardware/LIRC).
 - The RX device cannot measure carrier frequency (hardware limitation).
-- **Critical:** The default LIRC receiver timeout is **5000 µs (5 ms)**.
+- **Critical:** the default LIRC receiver timeout is **5000 µs (5 ms)**;
   Daikin inter-frame gaps are ~30 ms, so the default fragments every
-  transmission. Must set `--timeout 200000` (200 ms) when receiving.
+  transmission. Use `ir-ctl --receive --mode2 --timeout 200000` (200 ms).
+
+---
 
 ## Daikin IR protocol — ARC452A9
 
@@ -187,20 +180,25 @@ So: **F1 byte 6**; **F3 bytes 7, 9, 0x0e, 0x0f, 0x11**; **F3 byte 5[3]**; **F3 0
 | Quiet/Silent toggle | Confirm fan 0xB and edge cases | byte 8 high nibble |
 
 Each test: capture baseline, change ONE setting, capture again, diff.
-Use `ir_capture.py -t 200000` for reliable full-frame capture.
+Use `ir-ctl --receive --mode2 --timeout 200000` for reliable full-frame capture.
 
-### daikin-send.py known issues
+### Common encoding mistakes when porting from the blafois ARC470A1 spec
 
-The send code (`scribble/daikin-send.py`) was written from the blafois spec
-before we had captures. Known issues vs ARC452A9 reality:
+These are the specific bytes where a sender derived from the blafois ARC470A1
+write-up will be wrong on a real ARC452A9 unit:
 
-1. **byte5 power encoding:** Send uses `0x09` (bit0 + bit3) for ON.
-   Captures show `0x01` (bit0 only). bit3 is not used on ARC452A9.
-2. **F1 header:** Send uses `11 da 27 00 c5`. ARC452A9 uses `11 da 27 f0 00`.
-3. **Frame 2:** Send includes F2 (`11 da 27 00 42 ...`). ARC452A9 omits it.
-4. **byte 0x0f:** Send uses `0xc1`. ARC452A9 captures show `0xc0`.
+1. **byte 5 power encoding:** blafois-derived senders use `0x09` (bit0 + bit3)
+   for ON. ARC452A9 captures show `0x01` (bit0 only). bit3 is not used on
+   ARC452A9.
+2. **F1 header:** blafois-derived senders use `11 da 27 00 c5`. ARC452A9 uses
+   `11 da 27 f0 00`.
+3. **Frame 2:** blafois-derived senders include an F2 frame
+   (`11 da 27 00 42 ...`). ARC452A9 omits it; only F1+F3 are sent.
+4. **F3 byte 0x0f:** blafois-derived senders use `0xc1`. ARC452A9 captures show
+   `0xc0`.
 
-These must be fixed before sending to the head unit.
+All four must be fixed before a ported sender will be accepted by an ARC452A9
+head unit.
 
 ### Timing and receiver configuration
 
@@ -215,35 +213,23 @@ These must be fixed before sending to the head unit.
 | LIRC receiver timeout | 200000 µs | required (default 5000 fragments) |
 | Full transmission | ~50 ms | F1 + gap + F3 |
 
-### Tools
+### Tooling
 
-All Daikin ARC452A9 parsing and encoding live in **`onboard/heatpumpirctl/`** (State, ARC452A9.load/dump/loads/dumps, iter_frames, decode_segment, iter_events). The scribble scripts are thin wrappers:
+You only need two things to capture and decode ARC452A9 on a Pi with an
+ANAVI IR pHAT (or any LIRC-compatible IR receiver/transmitter):
 
-| Tool | Purpose |
-|------|---------|
-| `scribble/ir_capture.py` | Raw capture only (mode2, no interpretation) |
-| `scribble/daikin-recv.py` | Thin CLI: ir-ctl → heatpumpirctl → print State (live or `--parse-log`) |
-| `scribble/daikin-send.py` | Thin CLI: args → State → heatpumpirctl.dumps → ir-ctl --send |
-| `scribble/extract_all_frames.py` | Thin: log → heatpumpirctl.iter_frames → print hex |
-
-Capture files: `scribble/captures/` — plain text `.log` files, one per run.
+- **`ir-ctl`** (part of `v4l-utils`) for raw capture and send:
+  - Capture: `ir-ctl -d /dev/lirc1 --receive --mode2 --timeout 200000`
+  - Send: `ir-ctl -d /dev/lirc0 --send <file>` where the file contains
+    `pulse N` / `space N` lines (µs).
+- A small decoder that walks the pulse/space stream, finds the ~3490/~1750 µs
+  start mark, slices on the ~30 ms gap into F1 and F3, and applies the byte
+  map above. The protocol is simple enough to implement in under 200 lines
+  of Python; the open-source implementation that backed these captures
+  lives at [jovlinger/utils — `thermo/onboard/heatpumpirctl/`](https://github.com/jovlinger/utils/tree/main/thermo/onboard/heatpumpirctl).
 
 ### Reference links
 
 - [blafois/Daikin-IR-Reverse](https://github.com/blafois/Daikin-IR-Reverse) — ARC470A1 protocol (primary reference, differs from ARC452A9)
 - [rdlab Daikin IR protocol](https://rdlab.cdmt.vn/experience/daikin-ir-protocol) — ARC433A46 timing and layout
 - [IRremoteESP8266](https://github.com/crankyoldgit/IRremoteESP8266) — ARC433 timing constants (ARC452A9 not in supported list)
-
-## Ports and endpoints
-
-- Onboard Flask API: `5000` (configurable via `PORT` env var).
-- I2C: `/dev/i2c-1` (bus 1).
-- IR TX: `/dev/lirc0` (GPIO 18).
-- IR RX: `/dev/lirc1` (GPIO 17).
-
-## Open questions / TODOs
-
-- Fix `daikin-send.py` for ARC452A9 (see known issues above).
-- Capture the remaining unknowns (swing, econo, clock encoding, quiet/silent).
-- Define the command schema that `POST /daikin` should accept.
-- Validate: send a generated command and confirm the head unit responds.

@@ -14,17 +14,25 @@ PI_HOST="${1:-}"
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
+# THERMO_DEPLOY_ROOT: optional prefix for tests / hosts without writable /run (e.g. macOS).
+# When set, log paths become $ROOT/run/thermo-onboard-log and symlink $ROOT/var/log/thermo-onboard (no sudo).
 ensure_tmpfs_log_symlink() {
 	LOG_LINK="/var/log/thermo-onboard"
 	LOG_TMPFS_DIR="/run/thermo-onboard-log"
 	OLD_DIR_BACKUP="/var/log/thermo-onboard.pre-tmpfs"
 	AS_ROOT=""
-	if [ "$(id -u)" -ne 0 ]; then
+	if [ -n "${THERMO_DEPLOY_ROOT:-}" ]; then
+		_root="${THERMO_DEPLOY_ROOT%/}"
+		LOG_TMPFS_DIR="$_root/run/thermo-onboard-log"
+		LOG_LINK="$_root/var/log/thermo-onboard"
+		OLD_DIR_BACKUP="$_root/var/log/thermo-onboard.pre-tmpfs"
+	elif [ "$(id -u)" -ne 0 ]; then
 		AS_ROOT="sudo"
 	fi
 
 	$AS_ROOT mkdir -p "$LOG_TMPFS_DIR"
 	$AS_ROOT chmod 0755 "$LOG_TMPFS_DIR"
+	$AS_ROOT mkdir -p "$(dirname "$LOG_LINK")"
 
 	if [ -L "$LOG_LINK" ]; then
 		_target="$(readlink "$LOG_LINK" 2>/dev/null || true)"

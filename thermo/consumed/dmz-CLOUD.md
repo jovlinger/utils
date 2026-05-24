@@ -78,4 +78,4 @@ Set in container or environment:
 - `GOOGLE_CLIENT_ID` — from Google Cloud Console OAuth 2.0 credentials
 - `GOOGLE_CLIENT_SECRET`
 - `SECRET_KEY` — Flask session signing (random 32+ bytes)
-- `ALLOWED_EMAIL` — e.g. `jovlinger@gmail.com` (optional; defaults to single-user allowlist)
+- `ALLOWED_EMAIL_PATTERN` — regex (`re.fullmatch`) for allowed Google logins, or legacy `ALLOWED_EMAIL` for one exact address (optional in dev; SD images bake `allowed-email` → pattern)

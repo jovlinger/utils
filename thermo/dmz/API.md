@@ -8,11 +8,11 @@ Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_au
 
 ## `GET /login`
 
-Starts the Google OAuth redirect flow when OAuth credentials are configured. Returns `400` with a JSON error if OAuth is not configured.
+Starts the Google OAuth redirect flow when OAuth credentials are configured. Before redirecting to Google, stores **scheme + hostname** (no port) from this request in the signed session for the post-callback HTML redirect. Returns `400` with a JSON error if OAuth is not configured.
 
 ## `GET /authorize`
 
-OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL`, sets the session, and redirects to the zone listing. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
+OAuth callback: exchanges the authorization code, checks the Gmail address against `ALLOWED_EMAIL_PATTERN` (regex `re.fullmatch`, from `install/allowed-email` on SD) or legacy exact `ALLOWED_EMAIL`, sets the session, then **302** to the public HTML UI root (**`THERMO_UI_PUBLIC_ORIGIN`** if set, else session value from **`GET /login`**, else scheme+hostname from this request — never **`/ui/context`** in **`Location`**). Returns **503** if none of those apply. On failure returns `400`/`403` with JSON errors; if OAuth is disabled, redirects to `GET /zones`.
 
 ## `GET /logout`
 
@@ -32,11 +32,11 @@ Returns a JSON object of all known zones and each zone’s latest command and se
 
 ## `GET /ui/context`
 
-JSON snapshot for the shared thermo UI: **`zones`** (every zone that has ever posted sensors or command), **`environments`** (one table row per zone with latest sensor temps / humidity / time; nulls when a zone has no sensor data yet), **`zone_states`** (per-zone `command` and `sensors` as in `GET /zones`). **Not** protected by OAuth or machine auth (intended for the bundled UI; restrict at the network edge if needed).
+JSON snapshot for the shared thermo UI: **`zones`**, **`environments`**, **`zone_states`**. When Google OAuth is configured, **unauthenticated** browser requests (`Accept` containing `text/html`) are redirected to **`/login`**; **authenticated** browser requests are redirected to the **public HTML UI root** (same rules as the **302** from **`GET /authorize`** after login), not JSON. JSON clients use **`Accept: application/json`** (as **`ui_server`** does); without a session they receive **`401`**.
 
 ## `POST /ui/command`
 
-JSON body `{"zone": "<name>", "command": { ... }}` — same validation and storage as **`POST /zone/<zonename>/command`** (ASCII-only JSON strings). **Not** protected by OAuth or machine auth for now. Response echoes `zone`, `command`, `sensors`, and `time`.
+JSON body `{"zone": "<name>", "command": { ... }}` — same validation and storage as **`POST /zone/<zonename>/command`**. Same OAuth rules as **`GET /ui/context`** when Google OAuth is configured.
 
 ## `GET /debug/logs`
 

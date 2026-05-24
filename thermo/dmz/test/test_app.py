@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
+import app as app_module
 from app import app
 
 
@@ -32,6 +37,30 @@ def _get_200(c, url: str) -> dict:
 
 def _reset(c, commands: dict | None = None, sensors: dict | None = None) -> None:
     _post_200(c, "/test_reset", {"commands": commands or {}, "sensors": sensors or {}})
+
+
+def test_email_matches_allowlist_regex(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", r"^a\.b@gmail\.com$")
+    app_module.reload_dmz_config_from_environ()
+    assert app_module.email_matches_allowlist("A.B@gmail.com") is True
+    assert app_module.email_matches_allowlist("axb@gmail.com") is False
+
+
+def test_email_matches_allowlist_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
+    monkeypatch.setenv("ALLOWED_EMAIL", "Legacy@Example.com")
+    app_module.reload_dmz_config_from_environ()
+    assert app_module.email_matches_allowlist("legacy@example.com") is True
+    assert app_module.email_matches_allowlist("other@example.com") is False
+
+
+def test_email_matches_allowlist_dev_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAIL_PATTERN", raising=False)
+    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    app_module.reload_dmz_config_from_environ()
+    assert app_module.email_matches_allowlist("jovlinger@gmail.com") is True
+    assert app_module.email_matches_allowlist("x@gmail.com") is False
 
 
 def test_update_sensors_and_command_multi_zone(dmz_ctx: object) -> None:
@@ -283,6 +312,7 @@ def test_unsigned_request_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.post(
             "/zone/z1/sensors",
@@ -305,6 +335,7 @@ def test_unsigned_command_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.post(
             "/zone/z1/command",
@@ -322,6 +353,7 @@ def test_unsigned_get_zones_rejected_when_auth_required(
 
     _, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     with app.test_client() as c:
         r = c.get("/zones")
         assert r.status_code == 401
@@ -341,6 +373,7 @@ def test_signed_post_command_accepted(
 
     priv_pem, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     path = "/zone/z1/command"
     body: dict = {"power": True, "mode": "HEAT", "temp_c": 21}
     body_bytes = json.dumps(body).encode()
@@ -372,6 +405,7 @@ def test_signed_get_zones_accepted(
 
     priv_pem, pub_pem = generate_keypair()
     os.environ["ZONE_PUBLIC_KEY"] = pub_pem.decode()
+    app_module.reload_dmz_config_from_environ()
     path = "/zones"
     body_bytes = b""
     sig, ts, zn = sign_request("GET", path, body_bytes, "z1", priv_pem.decode())
@@ -485,9 +519,82 @@ def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
         assert js["command"] is None
 
 
+def test_zone_sensors_long_poll_immediate_when_ui_newer(dmz_ctx: object) -> None:
+    """No sleep when a newer UI command already exists for this zone."""
+    with app.test_client() as c:
+        _reset(c)
+        with app_module._zone_command_clock_lock:
+            app_module._last_zone_command_reply_at["zlp"] = 100.0
+            app_module._ui_command_received_at["zlp"] = 101.0
+        with patch("app.time.sleep", side_effect=AssertionError("unexpected sleep")):
+            r = c.post("/zone/zlp/sensors", json={"temp_centigrade": 20.0})
+            assert r.status_code == 200, r.get_data(as_text=True)
+
+
+def test_zone_sensors_long_poll_timeout_updates_last_sent(dmz_ctx: object) -> None:
+    """On timeout with stale command, DMZ still replies and advances reply-sent clock."""
+    with app.test_client() as c:
+        _reset(c)
+        with patch.dict(
+            app_module.CONFIG,
+            {"long_poll_timeout_secs": 0.02, "long_poll_sleep_secs": 0.005},
+            clear=False,
+        ):
+            with app_module._zone_command_clock_lock:
+                app_module._last_zone_command_reply_at["zto"] = 200.0
+                app_module._ui_command_received_at["zto"] = 200.0
+            r = c.post("/zone/zto/sensors", json={"temp_centigrade": 18.0})
+            assert r.status_code == 200, r.get_data(as_text=True)
+            with app_module._zone_command_clock_lock:
+                assert app_module._last_zone_command_reply_at["zto"] > 200.0
+
+
+def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -> None:
+    """
+    Overlapping zone POSTs should all return promptly once a newer UI command arrives.
+    """
+    with app.test_client() as c0:
+        _reset(c0)
+    with patch.dict(
+        app_module.CONFIG,
+        {"long_poll_timeout_secs": 1.0, "long_poll_sleep_secs": 0.01},
+        clear=False,
+    ):
+        results: list[tuple[int, dict]] = []
+        started = threading.Event()
+
+        def _post_worker() -> None:
+            with app.test_client() as c:
+                started.set()
+                r = c.post("/zone/zo/sensors", json={"temp_centigrade": 21.0})
+                results.append((r.status_code, r.get_json() or {}))
+
+        t1 = threading.Thread(target=_post_worker)
+        t2 = threading.Thread(target=_post_worker)
+        t1.start()
+        t2.start()
+        assert started.wait(timeout=0.5)
+        # Let both workers enter the long-poll loop before UI command arrives.
+        time.sleep(0.05)
+        with app.test_client() as c:
+            ui = c.post(
+                "/ui/command",
+                json={"zone": "zo", "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"}},
+            )
+            assert ui.status_code == 200, ui.get_data(as_text=True)
+        t1.join(timeout=1.0)
+        t2.join(timeout=1.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
+        assert len(results) == 2
+        for status_code, body in results:
+            assert status_code == 200
+            assert (body.get("command") or {}).get("mode") == "COOL"
+
+
 def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
     """GET /ui/context returns 302 to /login for browser clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
             assert r.status_code == 302, r.get_data(as_text=True)
@@ -496,16 +603,31 @@ def test_ui_context_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> Non
 
 def test_ui_context_requires_oauth_401_for_api_clients(dmz_ctx: object) -> None:
     """GET /ui/context returns 401 JSON for API clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/context", headers={"Accept": "application/json"})
             assert r.status_code == 401
             assert (r.get_json() or {}).get("error") == "authentication required"
 
 
+def test_ui_context_authenticated_browser_redirects_to_html_ui(
+    dmz_ctx: object,
+) -> None:
+    """OAuth on + session + browser Accept: never return JSON from GET /ui/context."""
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess["user"] = {"email": "someone@gmail.com"}
+            r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
+            assert r.status_code == 302, r.get_data(as_text=True)
+            loc = (r.headers.get("Location") or "").strip()
+            assert "/ui/context" not in loc, loc
+            assert loc.endswith("/"), loc
+
+
 def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> None:
     """POST /ui/command returns 302 to /login for browser clients when OAuth is enabled."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.post(
                 "/ui/command",
@@ -518,7 +640,7 @@ def test_ui_command_requires_oauth_redirect_for_browsers(dmz_ctx: object) -> Non
 
 def test_ui_context_open_without_oauth(dmz_ctx: object) -> None:
     """GET /ui/context is open (200) when OAuth is not configured."""
-    with patch("app._oauth_enabled", False):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": False}, clear=False):
         with app.test_client() as c:
             _reset(c)
             js = _get_200(c, "/ui/context")
@@ -527,7 +649,7 @@ def test_ui_context_open_without_oauth(dmz_ctx: object) -> None:
 
 def test_ui_diagnostics_always_open(dmz_ctx: object) -> None:
     """GET /ui/diagnostics returns 200 even when OAuth is enabled (operator debugging)."""
-    with patch("app._oauth_enabled", True):
+    with patch.dict(app_module.CONFIG, {"oauth_enabled": True}, clear=False):
         with app.test_client() as c:
             r = c.get("/ui/diagnostics")
             assert r.status_code == 200
@@ -549,3 +671,120 @@ def test_ui_command_stores_command(dmz_ctx: object) -> None:
         zones = _get_200(c, "/zones")
         assert "z9" in zones
         assert zones["z9"]["command"]["mode"] == "AUTO"
+
+
+def test_zone_state_fingerprint_ignores_sensors_and_dt() -> None:
+    a = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t1"},
+            "sensors": {"temp_centigrade": 20.0, "created_dt": "s1"},
+        }
+    }
+    b = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t2"},
+            "sensors": {"temp_centigrade": 99.0, "humid_percent": 1.0},
+        }
+    }
+    assert app_module._zone_state_fingerprint(a) == app_module._zone_state_fingerprint(b)
+
+
+def test_zone_state_fingerprint_changes_when_command_changes() -> None:
+    a = {"z1": {"command": {"mode": "HEAT"}, "sensors": {}}}
+    b = {"z1": {"command": {"mode": "COOL"}, "sensors": {}}}
+    assert app_module._zone_state_fingerprint(a) != app_module._zone_state_fingerprint(b)
+
+
+def test_log_full_zone_state_suppresses_repeat_fingerprint(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("ZONE_STATE_LOG_SUPPRESS_REPEAT", "3")
+    app_module._reset_repeat_log_suppression()
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="a", zonename="z1")
+        app_module._log_full_zone_state(reason="b", zonename="z1")
+        app_module._log_full_zone_state(reason="c", zonename="z1")
+        app_module._log_full_zone_state(reason="d", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=a" in lines[0]
+    assert "reason=d" in lines[1]
+
+
+def test_log_full_zone_state_logs_on_fingerprint_change(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.sensors.clear()
+    app_module.commands["z1"] = [{"mode": "HEAT"}]
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="first", zonename="z1")
+        app_module.commands["z1"] = [{"mode": "COOL"}]
+        app_module._log_full_zone_state(reason="second", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=first" in lines[0]
+    assert "reason=second" in lines[1]
+
+
+def test_obsolete_log_suppresses_repeat_fingerprint(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 3}):
+        _run_obsolete_suppress_repeat_test(caplog)
+
+
+def _run_obsolete_suppress_repeat_test(caplog: pytest.LogCaptureFixture) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.commands["z1"] = [{"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}]
+    stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        for _ in range(4):
+            assert (
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+                == "obsolete"
+            )
+    lines = [r.message for r in caplog.records if "zone command obsolete" in r.message]
+    assert len(lines) == 2
+
+
+def test_obsolete_log_not_suppressed_when_repeat_count_le_one(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 1}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]
+
+
+def test_obsolete_log_not_suppressed_when_repeat_zero(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 0}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]

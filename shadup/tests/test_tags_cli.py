@@ -1,4 +1,4 @@
-"""CLI tests for ``tag-add`` / ``tag-rm`` (PATH-addressed, AWS-style)."""
+"""CLI tests for tag subcommands (PATH-addressed, AWS-style)."""
 
 from __future__ import annotations
 
@@ -105,3 +105,39 @@ def test_tag_add_requires_at_least_one_tag(tmp_path: Path) -> None:
 
     result = _run(tmp_path, shadir, ["tag-add", str(stored_link)], check=False)
     assert result.returncode != 0
+
+
+def test_tag_clear_removes_all_tags_for_path(tmp_path: Path) -> None:
+    cwd, shadir, stored_link, shasum = _setup_stored(tmp_path)
+    _run(cwd, shadir, ["tag-add", str(stored_link), "a", "b"])
+    assert _db_tags(shadir, shasum) == ["a", "b"]
+
+    _run(cwd, shadir, ["tag-clear", str(stored_link)])
+    assert _db_tags(shadir, shasum) == []
+
+
+def _count_sha_tags_rows(shadir: Path) -> int:
+    with sqlite3.connect(shadir / ".shadup.db") as conn:
+        row = conn.execute("SELECT COUNT(*) FROM sha_tags").fetchone()
+    return int(row[0]) if row else 0
+
+
+def test_clear_tags_no_force_warns_and_noop(tmp_path: Path) -> None:
+    cwd, shadir, stored_link, shasum = _setup_stored(tmp_path)
+    _run(cwd, shadir, ["tag-add", str(stored_link), "x"])
+    assert _count_sha_tags_rows(shadir) == 1
+
+    r = _run(cwd, shadir, ["clear-tags"], check=True)
+    assert "no action taken" in r.stderr
+    assert _count_sha_tags_rows(shadir) == 1
+    assert _db_tags(shadir, shasum) == ["x"]
+
+
+def test_clear_tags_force_wipes_table(tmp_path: Path) -> None:
+    cwd, shadir, stored_link, shasum = _setup_stored(tmp_path)
+    _run(cwd, shadir, ["tag-add", str(stored_link), "x"])
+    assert _count_sha_tags_rows(shadir) == 1
+
+    _run(cwd, shadir, ["clear-tags", "-f"])
+    assert _count_sha_tags_rows(shadir) == 0
+    assert _db_tags(shadir, shasum) == []

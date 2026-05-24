@@ -26,7 +26,7 @@ The DMZ host exposes the following ports:
   (twoway, onboard) when `ZONE_PUBLIC_KEY`/`ZONE_PUBLIC_KEY_PATH` is set. Done.
   Google OAuth (Authlib) implemented for human-facing routes (`/zones`,
   `/debug/logs`, `POST /zone/*/command`) when `GOOGLE_CLIENT_ID` is set.
-  Restricted to `ALLOWED_EMAIL` (default `jovlinger@gmail.com`). Done.
+  Restricted to `ALLOWED_EMAIL_PATTERN` (regex from SD `allowed-email` or env) or legacy `ALLOWED_EMAIL`. Done.
 
 - **jovlinger.duckdns.org:8090** (`UI_PORT` in Docker; not port 80)
   `ui_server.py` — ThreadingHTTPServer (not Flask). Proxies `/ui/context`,

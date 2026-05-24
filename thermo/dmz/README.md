@@ -12,7 +12,7 @@ Internet-facing rendezvous service: interior **zones** and the **controller** ex
 
 Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
-`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → **`pytest`** on **`test/`** (non-fatal on failure; log **`/var/log/startup_tests.log`** in Docker) → **import probes** → **`python -u app.py`**.
+`tini` → **`start.sh`** (root: tmpfs **`/tmp`** only — leaves **`/var/log/dmz.log`** visible for bind mounts; best-effort read-only remount of `/`) → **`su-exec`** → **`run-with-stdout-logged.py`** (stdout/stderr → **`/var/log/dmz.log`**, rotation) → **`run.sh`** → optional **`pytest`** on **`test/`** when **`DMZ_RUN_STARTUP_PYTEST=1`** (otherwise skipped; log **`/var/log/startup_tests.log`** when enabled in Docker) → **import probes** → **`python -u app.py`**.
 
 | Path | Role |
 |------|------|
@@ -44,12 +44,12 @@ docker run --rm -p 8080:8080 jovlinger/thermo/dmz
 ## Pi 1B: bootable SD image (same root as Docker, `dd` to card)
 
 1. **Required:** at least one **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, or **`id_rsa.pub`** on the **build machine** — merged into **`install/rescue_authorized_keys`** on the FAT and **`/root/install/`** in the apkovl so **`sh /root/sshd.sh`** can install **`authorized_keys`** and start **`sshd`**. Stable **host keys**: **[`../.secrets/ssh-host/`](../.secrets/)** (`../.gitignore`).
-2. From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/…`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free. **Write progress:** Linux uses GNU **`dd status=progress`**. On macOS, **`brew install pv`** gives a byte-accurate bar and ETA; without **`pv`**, the script prints a **heartbeat every 20s** so long writes are not silent.
+2. Prepare **`thermo/dmz/.secrets/zone/pub.pem`** and **`thermo/dmz/.secrets/oauth/`** (see **[`SECRETS.md`](SECRETS.md)**); **`./build-and-write.sh`** fails fast if required files are missing (paths are fixed; no overrides). From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/…`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free. **Write progress:** Linux uses GNU **`dd status=progress`**. On macOS, **`brew install pv`** gives a byte-accurate bar and ETA; without **`pv`**, the script prints a **heartbeat every 20s** so long writes are not silent.
 3. Eject the card, insert in Pi 1B, power on.
 
 The image is a **256MB FAT** volume: Alpine Raspberry Pi **3.19.0 armhf** boot files, **`dmz_rootfs.tar`** (docker export of **`linux/arm/v6`**), **`dmz.apkovl.tar.gz`** (haveged + **`install/dmz-boot.start`** as OpenRC `local.d`). Boot logs to **`/tmp/boot.log`** on the Pi RAM root; the app logs to **`/var/log/dmz.log`** (bind-mounted through the chroot). Boot brings up **`eth0`** from **`install/network.conf`**, extracts the tarball, **chroots** into it, runs **`/sbin/tini -- /app/start.sh`** — same chain as the container (including **`run-with-stdout-logged.py`**).
 
-Edit **`install/network.conf`** on the FAT partition before first boot if the defaults are wrong.
+Edit **`dmz.conf`** before **`./build-and-write.sh`** (network, sshd-on-boot, long-poll, log level). You can still tweak **`install/network.conf`** on the FAT before first boot.
 
 **Home router DMZ (Pi not on LAN subnet, public port 5000, DuckDNS `jovlinger.duckdns.org`):** see **[`install/ROUTERBOARD-DMZ.md`](install/ROUTERBOARD-DMZ.md)**.
 

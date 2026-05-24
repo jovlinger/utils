@@ -1,7 +1,8 @@
 # Invoked by start.sh as user `dmz` in the container, or directly with a venv on a dev machine.
 # Pi chroot matches the image layout (/app/...) but has no /.dockerenv — same runtime path as Docker.
 #
-# Runs pytest on test/ (non-fatal if it fails) then import/smoke probes, then the app.
+# Startup pytest on test/ is off unless DMZ_RUN_STARTUP_PYTEST=1 (then non-fatal if it fails).
+# Then import/smoke probes, then the app.
 
 hostname
 whoami
@@ -19,12 +20,15 @@ _probe_python_note() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_IS_CONTAINER=0
 APP_ROOT=""
-# Host dev machine: repo checkout with create_pipenv venv (not Docker, not Pi).
-if [ -f "$SCRIPT_DIR/env/bin/activate" ]; then
+# Host dev machine: repo checkout with create_pipenv .venv (not Docker, not Pi).
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+if resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT" 2>/dev/null; then
 	# shellcheck source=/dev/null
-	. "$SCRIPT_DIR/env/bin/activate"
+	. "$VENV_DIR/bin/activate"
 	APP_ROOT="$SCRIPT_DIR"
 	echo "run.sh: dev uname -m=$(uname -m)"
 # Local Docker container (/.dockerenv) or Pi 1B: same image tree under /app after chroot.
@@ -34,7 +38,8 @@ elif [ -f /.dockerenv ] || [ -f /app/app.py ]; then
 	echo "run.sh: image/chroot uname -m=$(uname -m) user=$(id -u) $(id -un)"
 # Neither a dev venv nor /app layout (mis-copy or wrong cwd).
 else
-	echo "No venv at $SCRIPT_DIR/env and not an image layout (missing /app/app.py)." >&2
+	echo "No venv at $SCRIPT_DIR/.venv and not an image layout (missing /app/app.py)." >&2
+	echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/dmz" >&2
 	exit 1
 fi
 cd "$APP_ROOT" || exit 1
@@ -86,8 +91,37 @@ python_probe() {
 	_probe_python_note "python_probe: done"
 }
 
-run_dmz_pytest
+if [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "1" ] || [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "true" ] || [ "${DMZ_RUN_STARTUP_PYTEST:-}" = "yes" ]; then
+	run_dmz_pytest
+else
+	echo "run.sh: skipping startup pytest (set DMZ_RUN_STARTUP_PYTEST=1 to run test/ before probes)"
+fi
+
 python_probe
+
+_wait_flask_diagnostics() {
+	_port="${PORT:-5000}"
+	_tries=0
+	while [ "$_tries" -lt 120 ]; do
+		if python -u -c "
+import sys
+import urllib.request
+try:
+    urllib.request.urlopen('http://127.0.0.1:${_port}/ui/diagnostics', timeout=1)
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+" 2>/dev/null; then
+			echo "run.sh: Flask /ui/diagnostics ready on port ${_port}"
+			return 0
+		fi
+		_tries=$((_tries + 1))
+		sleep 0.5
+	done
+	echo "run.sh: WARNING Flask /ui/diagnostics not ready after 60s; starting ui_server anyway" >&2
+	return 1
+}
+
 # Bundled thermo UI (proxies Flask on PORT) on UI_PORT — image has /app/ui; dev uses ../ui.
 UI_SERVER_PATH="$APP_ROOT/ui/ui_server.py"
 if [ ! -f "$UI_SERVER_PATH" ]; then
@@ -101,7 +135,21 @@ if [ -f "$UI_SERVER_PATH" ]; then
 	fi
 	export THERMO_UI_BACKEND=dmz
 	export UI_PORT="${UI_PORT:-8090}"
+	# Flask must listen before ui_server: otherwise startup probes /ui/diagnostics fail and
+	# GET / on UI_PORT serves HTML without hitting Flask (no werkzeug / access_log lines).
+	echo "run.sh: starting Flask (PORT=${PORT:-5000}) before ui_server (UI_PORT=${UI_PORT})"
+	python -u app.py &
+	APP_PID=$!
+	_wait_flask_diagnostics || true
+	# If the HTML UI is on another public port than Flask (e.g. WAN :80 → ui_server), set
+	# THERMO_UI_LOGIN_ORIGIN to the Flask base (no trailing slash), e.g. http://duck:5000
 	python -u "$UI_SERVER_PATH" &
+	UI_PID=$!
+	wait "$APP_PID"
+	_rc=$?
+	kill "$UI_PID" 2>/dev/null || true
+	wait "$UI_PID" 2>/dev/null || true
+	exit "$_rc"
 fi
 # cwd is $APP_ROOT; relative app.py is enough (no need to repeat $APP_ROOT on the command line).
 exec python -u app.py

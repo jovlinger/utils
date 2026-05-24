@@ -23,6 +23,31 @@ META_KEY_SHADIR = "shadir"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
+# Characters invalid in a Windows path segment (excluding ``:``, handled below).
+_TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
+
+
+def tag_mirror_dir_name(tag: str) -> str:
+    """Map a logical DB tag to one directory name under ``files/_tags/``.
+
+    Mirrors must work on Windows and typical POSIX layouts. A legacy synthetic
+    tag like ``artist:Depeche Mode`` becomes ``artist;Depeche Mode``, matching
+    ``importtags.build_tags_from_export``. Other Windows-forbidden segment
+    characters become ``_``; ASCII control characters become ``_``. Trailing
+    spaces and periods are stripped (Windows).
+    """
+    if tag == NOTAGS_DIR_NAME:
+        return tag
+    parts: list[str] = []
+    for ch in tag:
+        if ch == ":":
+            parts.append(";")
+        elif ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
+            parts.append("_")
+        else:
+            parts.append(ch)
+    s = "".join(parts).rstrip(" .")
+    return s if s else "_empty_tag"
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
 
@@ -225,8 +250,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files and directories starting with '.' (default: true)",
     )
 
+    extract_description = (
+        "Extract files back to their original paths.\n\n"
+        "Materialization: by default, extract writes a hardlink when the target "
+        "is on the same filesystem as shadir and a copy when it is on a "
+        "different filesystem. With -s / --symlink, extract writes symlinks to "
+        "the stored blobs."
+    )
     p_extract = sub.add_parser(
-        "extract", help="Extract files back to their original paths"
+        "extract",
+        help="Extract files back to their original paths",
+        description=extract_description,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_extract.add_argument(
         "prefixes",
@@ -236,6 +271,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_extract.add_argument(
         "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_extract.add_argument(
+        "-s",
+        "--symlink",
+        action="store_true",
+        help=(
+            "Extract as symlinks to stored blobs instead of the default "
+            "same-filesystem hardlinks or cross-filesystem copies"
+        ),
     )
 
     p_ls = sub.add_parser(
@@ -407,9 +451,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_trm.add_argument("tags", nargs="+", metavar="TAG", help="Tags to remove")
 
+    p_tclear = sub.add_parser(
+        "tag-clear",
+        help="Remove all tags for a stored file identified by path",
+    )
+    p_tclear.add_argument(
+        "path",
+        metavar="PATH",
+        help="Path to a stored file (symlink into shadir) or a regular file",
+    )
+
+    p_ctags = sub.add_parser(
+        "clear-tags",
+        help="Delete every tag entry in the database (destructive)",
+    )
+    p_ctags.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Required to actually delete all rows from sha_tags",
+    )
+
     sub.add_parser(
         "refresh-extracted-tags",
-        help="Rebuild _tags/ symlinks under files/ from filesystem + DB tags",
+        help=(
+            "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
+            "(per-tag folder names are sanitized for the filesystem; see tag_mirror_dir_name)"
+        ),
     )
 
     return parser
@@ -823,6 +891,37 @@ def handle_tag_rm(
     )
 
 
+def handle_tag_clear(conn: sqlite3.Connection, shadir: str, path_arg: str) -> None:
+    """Remove all tags for the stored file at *path_arg* (delete ``sha_tags`` row)."""
+    shasum = resolve_path_to_shasum(shadir, path_arg)
+    if not shasum:
+        raise SystemExit(f"cannot resolve path to stored file: {path_arg!r}")
+    conn.execute("DELETE FROM sha_tags WHERE shasum = ?", (shasum,))
+    conn.commit()
+    out(
+        "tags for {shasum}: {tags}",
+        0,
+        shasum=shasum,
+        tags=json.dumps(get_tags(conn, shasum)),
+        kind="data",
+    )
+
+
+def handle_clear_tags(conn: sqlite3.Connection, *, force: bool) -> None:
+    """Remove every row from ``sha_tags`` (only when *force* is true)."""
+    if not force:
+        print(
+            "clear-tags: no action taken (this would delete all tag rows in "
+            "sha_tags; repeat with -f / --force to proceed)",
+            file=sys.stderr,
+        )
+        return
+    cur = conn.execute("DELETE FROM sha_tags")
+    deleted = cur.rowcount
+    conn.commit()
+    out("clear-tags deleted {n} sha_tags row(s)", 0, n=deleted, kind="data")
+
+
 def _parent_dir_key(dir_key: str) -> str:
     """Parent POSIX directory key; empty if ``dir_key`` has a single segment."""
     if not dir_key or "/" not in dir_key:
@@ -1128,7 +1227,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
        unioning each file's DB tags into its directory and propagating to
        ancestors.
     2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag>/<basename[(n)]>`` → ``<files>/<dir_key>`` symlinks.
+       ``files/_tags/<tag_mirror_dir_name(tag)>/<basename[(n)]>`` →
+       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_dir_name`).
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1150,7 +1250,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
 
     for tag, name, dir_key in rows:
-        link = os.path.join(files_root, "_tags", tag, name)
+        tag_dir = tag_mirror_dir_name(tag)
+        link = os.path.join(files_root, "_tags", tag_dir, name)
         target = os.path.join(files_root, *dir_key.split("/"))
         parent = os.path.dirname(link)
         os.makedirs(parent, exist_ok=True)
@@ -1159,9 +1260,9 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
         rel_target = os.path.relpath(target, parent)
         os.symlink(rel_target, link)
         out(
-            "refresh-extracted-tags mirror {tag}/{name} -> {dir_key}",
+            "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
             2,
-            tag=tag,
+            tag_dir=tag_dir,
             name=name,
             dir_key=dir_key,
         )
@@ -1242,39 +1343,44 @@ def _matches_prefix(target_rel: str, normalized_prefixes: list[str]) -> bool:
     )
 
 
-def _prepare_extract_target(dest_path: str, store_path: str) -> bool:
+def _prepare_extract_target(dest_path: str, store_path: str, symlink: bool) -> bool:
     if os.path.isdir(dest_path):
         raise RuntimeError(f"extract target is a directory: {dest_path}")
     if os.path.exists(dest_path):
         if os.path.islink(dest_path):
             os.unlink(dest_path)
-        elif os.path.samefile(dest_path, store_path):
+        elif not symlink and os.path.samefile(dest_path, store_path):
             return False
         elif os.path.isfile(dest_path):
             os.unlink(dest_path)
     return True
 
 
-def _link_or_copy(store_path: str, dest_path: str, dest_dir: str) -> int:
+def _same_filesystem(store_path: str, dest_dir: str) -> bool:
+    return os.stat(store_path).st_dev == os.stat(dest_dir).st_dev
+
+
+def _link_copy_or_symlink(
+    store_path: str, dest_path: str, dest_dir: str, symlink: bool
+) -> int:
     store_stat = os.stat(store_path)
     size = store_stat.st_size
-    if store_stat.st_dev == os.stat(dest_dir).st_dev:
-        try:
-            os.link(store_path, dest_path)
-            out(
-                "hardlink {dest_path} <- {store_path}",
-                2,
-                dest_path=dest_path,
-                store_path=store_path,
-            )
-        except OSError:
-            shutil.copy2(store_path, dest_path)
-            out(
-                "copy {dest_path} <- {store_path}",
-                2,
-                dest_path=dest_path,
-                store_path=store_path,
-            )
+    if symlink:
+        os.symlink(os.path.abspath(store_path), dest_path)
+        out(
+            "symlink {dest_path} <- {store_path}",
+            2,
+            dest_path=dest_path,
+            store_path=store_path,
+        )
+    elif _same_filesystem(store_path, dest_dir):
+        os.link(store_path, dest_path)
+        out(
+            "hardlink {dest_path} <- {store_path}",
+            2,
+            dest_path=dest_path,
+            store_path=store_path,
+        )
     else:
         shutil.copy2(store_path, dest_path)
         out(
@@ -1286,7 +1392,7 @@ def _link_or_copy(store_path: str, dest_path: str, dest_dir: str) -> int:
     return size
 
 
-def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
+def _restore_orphan_symlink(abs_prefix: str, shadir_real: str, symlink: bool) -> int:
     if not os.path.islink(abs_prefix):
         return 0
     resolved = os.path.realpath(abs_prefix)
@@ -1294,14 +1400,10 @@ def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
         return 0
     store_stat = os.stat(resolved)
     size = store_stat.st_size
+    if symlink:
+        return 0
     os.unlink(abs_prefix)
-    if store_stat.st_dev == os.stat(os.path.dirname(abs_prefix)).st_dev:
-        try:
-            os.link(resolved, abs_prefix)
-        except OSError:
-            shutil.copy2(resolved, abs_prefix)
-    else:
-        shutil.copy2(resolved, abs_prefix)
+    _link_copy_or_symlink(resolved, abs_prefix, os.path.dirname(abs_prefix), symlink)
     out(
         "extracted {dest_path} <- {store_path}",
         1,
@@ -1312,7 +1414,11 @@ def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
 
 
 def extract_from_db(
-    conn: sqlite3.Connection, shadir: str, prefixes: list[str], show_deleted: bool
+    conn: sqlite3.Connection,
+    shadir: str,
+    prefixes: list[str],
+    show_deleted: bool,
+    symlink: bool,
 ) -> int:
     """Extract files listed in db that match any path prefix."""
     normalized_prefixes, abs_prefixes = _normalize_extract_prefixes(prefixes)
@@ -1340,10 +1446,10 @@ def extract_from_db(
             )
             continue
         ensure_directory(dest_dir)
-        if not _prepare_extract_target(dest_path, store_path):
+        if not _prepare_extract_target(dest_path, store_path, symlink):
             seen_paths.add(dest_path)
             continue
-        size = _link_or_copy(store_path, dest_path, dest_dir)
+        size = _link_copy_or_symlink(store_path, dest_path, dest_dir, symlink)
         extracted_bytes += size
         seen_paths.add(dest_path)
         out(
@@ -1355,7 +1461,7 @@ def extract_from_db(
     for abs_prefix in abs_prefixes:
         if abs_prefix in seen_paths:
             continue
-        restored = _restore_orphan_symlink(abs_prefix, shadir_real)
+        restored = _restore_orphan_symlink(abs_prefix, shadir_real, symlink)
         if restored:
             extracted_bytes += restored
             seen_paths.add(abs_prefix)
@@ -1871,10 +1977,16 @@ def handle_dedup(
 
 
 def handle_extract(
-    conn: sqlite3.Connection, prefixes: list[str], shadir: str, show_deleted: bool
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    shadir: str,
+    show_deleted: bool,
+    symlink: bool,
 ) -> None:
     """Extract files from the db that match prefix paths."""
-    extracted_bytes = extract_from_db(conn, shadir, prefixes, show_deleted=show_deleted)
+    extracted_bytes = extract_from_db(
+        conn, shadir, prefixes, show_deleted=show_deleted, symlink=symlink
+    )
     out("extracted bytes: {extracted_bytes}", 0, extracted_bytes=extracted_bytes)
 
 
@@ -2328,7 +2440,13 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     if action == "extract":
         for prefix in args.prefixes:
             out("extract {prefix}", 1, prefix=prefix)
-        handle_extract(conn, args.prefixes, shadir, show_deleted=args.show_deleted)
+        handle_extract(
+            conn,
+            args.prefixes,
+            shadir,
+            show_deleted=args.show_deleted,
+            symlink=args.symlink,
+        )
         return 0
     if action in ("ls", "lspath"):
         for prefix in args.prefixes:
@@ -2404,6 +2522,12 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
         return 0
     if action == "tag-rm":
         handle_tag_rm(conn, shadir, args.path, args.tags)
+        return 0
+    if action == "tag-clear":
+        handle_tag_clear(conn, shadir, args.path)
+        return 0
+    if action == "clear-tags":
+        handle_clear_tags(conn, force=args.force)
         return 0
     if action == "refresh-extracted-tags":
         out("refresh-extracted-tags", 1)

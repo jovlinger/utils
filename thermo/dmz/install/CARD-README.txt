@@ -1,6 +1,8 @@
 DMZ Pi 1B — Alpine diskless + Docker-exported root (dmz_rootfs.tar)
 
-Edit install/network.conf on this card (one line: ADDR/CIDR GATEWAY) before first boot if needed.
+Network and app tuning are baked from thermo/dmz/dmz.conf at image build (install/network.conf, install/dns.conf, install/dmz-app.env, install/sshd-on-boot on this card). You may edit those on the FAT before first boot without rebuilding.
+
+Optional: place install/google-client-id, install/google-client-secret, and install/flask-secret-key (one line each) to turn on Google OAuth for the DMZ UI; see thermo/dmz/SECRETS.md. All three required together.
 
 Boot: firmware loads kernel from this FAT volume; Alpine applies dmz.apkovl.tar.gz; /etc/local.d/dmz-boot.start brings up eth0, extracts dmz_rootfs.tar, chroots into it, runs the same entrypoint as docker run (tini → start.sh → run-with-stdout-logged.py → run.sh → app). Verbose boot steps are appended to /tmp/boot.log on the Pi; app log file lives on chroot tmpfs and /var/log/dmz.log on the host is a symlink there (tail -f /var/log/dmz.log).
 

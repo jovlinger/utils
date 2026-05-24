@@ -45,20 +45,7 @@ def rotate_if_needed(logpath: Path, filelimit: int, totallimit: int) -> None:
         return
     suffix = isodatetime_suffix()
     rotated = Path(str(logpath) + "." + suffix)
-    try:
-        logpath.rename(rotated)
-    except OSError as exc:
-        # rename() fails with EBUSY if logpath is a mount point (e.g. a file bind-mount).
-        # Log the problem to stderr and skip rotation rather than propagating the
-        # exception, which would unwind the read loop into proc.wait() and deadlock
-        # the logger while the child's pipe buffer fills up.
-        print(
-            f"run-with-stdout-logged.py: rotation skipped ({exc}); "
-            f"logpath={logpath} may be a mount point",
-            file=sys.stderr,
-            flush=True,
-        )
-        return
+    logpath.rename(rotated)
     logpath.touch()
     prune_until_total_at_most(logpath, totallimit)
 

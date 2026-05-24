@@ -1,6 +1,6 @@
 # Umbrella targets for the whole thermo/ tree (wired subtrees only — see each Makefile).
 #
-#   make thermo-envs — refresh host venvs when requirements*.txt change (stamps live under each env/).
+#   make thermo-envs — refresh host venvs when requirements*.txt change (stamps live under each .venv/).
 #   make test-local  — thermo-envs, then each component’s host-only tests (test/ sources THERMO_ENV_FILE, default config/test.env.sample).
 #   make test-docker — thermo-envs (for smoketest / gen_keys), then Docker / compose suites.
 #   make test        — thermo-envs once, then test-local-only + test-docker-only.
@@ -14,18 +14,18 @@ TEST_PIP_PREREQ := $(wildcard test/requirements*.txt)
 
 .PHONY: test test-local test-docker thermo-envs test-local-only test-docker-only
 
-thermo-envs: dmz/env/.thermo-pip-stamp onboard/env/.thermo-pip-stamp test/env/.thermo-pip-stamp
+thermo-envs: dmz/.venv/.thermo-pip-stamp onboard/.venv/.thermo-pip-stamp test/.venv/.thermo-pip-stamp
 
-# Host venv: only utils/create_pipenv.sh (--sync when requirements changed; creates env if missing).
-dmz/env/.thermo-pip-stamp: $(DMZ_PIP_PREREQ)
+# Host venv: only utils/create_pipenv.sh (--sync when requirements changed; creates .venv if missing).
+dmz/.venv/.thermo-pip-stamp: $(DMZ_PIP_PREREQ)
 	"$(CREATE_PIPENV)" --sync thermo/dmz
 	@touch $@
 
-onboard/env/.thermo-pip-stamp: $(ONBOARD_PIP_PREREQ)
+onboard/.venv/.thermo-pip-stamp: $(ONBOARD_PIP_PREREQ)
 	"$(CREATE_PIPENV)" --sync thermo/onboard
 	@touch $@
 
-test/env/.thermo-pip-stamp: $(TEST_PIP_PREREQ)
+test/.venv/.thermo-pip-stamp: $(TEST_PIP_PREREQ)
 	"$(CREATE_PIPENV)" --sync thermo/test
 	@touch $@
 

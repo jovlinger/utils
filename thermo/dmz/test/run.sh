@@ -6,13 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ="$(cd "$SCRIPT_DIR/.." && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-if [ ! -f "$DMZ/env/bin/activate" ]; then
-	echo "No venv at $DMZ/env." >&2
-	echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/dmz" >&2
-	exit 1
-fi
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$DMZ" "$UTILS_ROOT"
 
 cd "$DMZ"
 # shellcheck source=/dev/null
-. "$DMZ/env/bin/activate"
-python -m pytest -q
+. "$VENV_DIR/bin/activate"
+# -v: one line per test case (node id), not only per file (-q).
+# --maxfail=3: stop after three failures (systemic bug); override: ./test/run.sh --maxfail=0
+pytest -v -ra --maxfail=3 "$@"

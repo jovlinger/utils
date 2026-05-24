@@ -7,7 +7,8 @@
 #   ./ingest.sh public/albumdir*          # shell glob; one arg per album
 #
 # Remounting the store filesystem uses sudo mount only when you are not root
-# (see with-ro-remounted-rw.sh). The ingest Python process runs as your user.
+# (see bin/with-ro-remounted-rw.sh, on PATH as with-ro-remounted-rw). The ingest
+# Python process runs as your user.
 #
 # Each directory arg's basename becomes the dest_prefix under files/,
 # so  public/MyAlbum  →  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
@@ -32,7 +33,8 @@ set -Eeuo pipefail
 SHADUP_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 UTILS_ROOT="$(cd "$SHADUP_DIR/.." && pwd)"
 INGEST_PY="$SHADUP_DIR/ingest.py"
-REMOUNT="$SHADUP_DIR/with-ro-remounted-rw.sh"
+BIN_DIR="$(cd "${JOVLINGER_BIN:-$UTILS_ROOT/../bin}" && pwd)"
+REMOUNT="${WITH_RO_REMOUNTED_RW:-$BIN_DIR/with-ro-remounted-rw.sh}"
 
 err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
 

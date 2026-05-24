@@ -19,6 +19,11 @@ THERMO_DIR = DMZ_DIR.parent
 GEN_KEYS = THERMO_DIR / "test" / "gen_keys.py"
 MAKEFILE = DMZ_DIR / "Makefile"
 
+pytestmark = pytest.mark.skipif(
+    not GEN_KEYS.is_file() or not MAKEFILE.is_file(),
+    reason="Full thermo checkout required (dmz/Makefile + thermo/test/gen_keys.py)",
+)
+
 
 def _load_pem_pub(pem_bytes: bytes):
     from cryptography.hazmat.primitives.serialization import load_pem_public_key
@@ -113,3 +118,14 @@ def test_makefile_zone_keys_target_invariants() -> None:
 
     assert "zone-keys" in re.search(r"^\.PHONY:\s*(.+)$", text, flags=re.MULTILINE).group(1), \
         "`zone-keys` must be declared .PHONY"
+
+
+def test_load_private_key_rejects_ssh_login_key_path() -> None:
+    sys.path.insert(0, str(DMZ_DIR))
+    try:
+        from zone_auth import _load_private_key
+    finally:
+        sys.path.pop(0)
+
+    with pytest.raises(ValueError, match="SSH login key"):
+        _load_private_key("~/.ssh/id_ed25519")

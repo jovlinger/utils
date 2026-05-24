@@ -4,9 +4,9 @@ Living backlog for heat-pump / IR / onboard work. Numbered sections are stable I
 
 ## 1. Time: clocks and timers
 
-- **Capture IR sequences** (per `thermo/onboard/ANAVI_DAIKIN.md`: `scribble/ir_capture.py -t 200000`, logs under `scribble/captures/`) to **support or contradict** the working theory that **remote clock** and **timer on/off** targets are encoded as **minutes past midnight** (`int`; theory often summarized as **0..1440**, while `ARC452A9` currently treats sane timer values as **0..1439** inclusive). Resolve edge cases: **00:00**, **24:00** / **1440**, and **next-day wrap** on-wire.
+- **Capture IR sequences** (per `public/daikin-arc452a9-ir-protocol.md`: `scribble/ir_capture.py -t 200000`, logs under `scribble/captures/`) to **support or contradict** the working theory that **remote clock** and **timer on/off** targets are encoded as **minutes past midnight** (`int`; theory often summarized as **0..1440**, while `ARC452A9` currently treats sane timer values as **0..1439** inclusive). Resolve edge cases: **00:00**, **24:00** / **1440**, and **next-day wrap** on-wire.
 - Run **single-variable diffs**: set clock only, set timer on only, set timer off only, and combined; map changes to F3 bytes `0x0a`–`0x0c` and byte 5 timer bits.
-- When the model is confirmed or revised, update **`thermo/onboard/ANAVI_DAIKIN.md`** and, if needed, `State` / JSON field names (e.g. `timer_*_time` as `HH:MM` vs internal minute-of-day).
+- When the model is confirmed or revised, update **`public/daikin-arc452a9-ir-protocol.md`** and, if needed, `State` / JSON field names (e.g. `timer_*_time` as `HH:MM` vs internal minute-of-day).
 
 ## 2. Onboard: repeated desired state must not repeat IR
 
