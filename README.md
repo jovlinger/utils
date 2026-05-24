@@ -1,8 +1,23 @@
 # utils
 
-Sub-projects are each run in their own virtualenv and `requirements.txt`. Create an `env` in each and ignore it in git.
+Sub-projects each have their own **`requirements.txt`** and a **project-local venv**.
 
-**Convention:** Scripts that need pip assert the env exists; if not, they point to `create_pipenv.sh` to generate it. Use **`./create_pipenv.sh --sync <path>`** to refresh an existing venv after `requirements*.txt` changes (e.g. `thermo/Makefile` stamps). One env per `utils/<dir>/env`. For `bin/`, use `bin/setup-venv.sh` (single shared `.venv`).
+## Venv layout (do not mix these up)
+
+| Tree | Venv path | How to create |
+|------|-----------|---------------|
+| **`utils/<project>/`** | **`utils/<project>/.venv/`** | `./create_pipenv.sh <project>` from utils root (e.g. `thermo/dmz`) |
+| **`bin/`** (sibling repo) | **`bin/.venv/`** (one shared venv for all bin scripts) | `bin/setup-venv.sh` |
+
+Examples:
+
+- `utils/thermo/dmz/manage.py` → use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
+- `utils/shadup/ingest.sh` → use **`utils/shadup/.venv`**.
+- `bin/pylauncher.sh` → use **`bin/.venv`**.
+
+If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, `./manage.py` will run with the **wrong** Python and miss project deps (e.g. `cryptography`). **`deactivate`**, then **`source thermo/dmz/.venv/bin/activate`**.
+
+Legacy **`env/`** directories (older thermo layout) are migrated to **`.venv/`** automatically the next time you run **`create_pipenv.sh`** on that project.
 
 ## Prereq (once)
 
@@ -10,17 +25,18 @@ Sub-projects are each run in their own virtualenv and `requirements.txt`. Create
 python3 -m venv --help
 ```
 
-If that fails, use Python 3.3+ or install `python3-venv`. No need to install `virtualenv`; `venv` is standard.
+If that fails, use Python 3.3+ or install `python3-venv`.
 
-## Create envs
+## Create / refresh envs
 
 From the utils root:
 
 ```bash
 ./create_pipenv.sh thermo/dmz thermo/onboard thermo/test dedup shadup
+./create_pipenv.sh --sync thermo/dmz   # re-pip-install after requirements change
 ```
 
-Or create envs in all sub-projects that have `requirements.txt`:
+Or all top-level projects with `requirements.txt`:
 
 ```bash
 for d in */; do
@@ -28,15 +44,15 @@ for d in */; do
 done
 ```
 
-For subdirs whose deps live in a subpath (e.g. `esp32/volctrl/requirements.txt`), create the venv there manually: `cd esp32 && python3 -m venv env && ... && pip install -r volctrl/requirements.txt`.
+Nested deps (e.g. `esp32/volctrl/requirements.txt`): create `.venv` in that subpath manually.
 
-## Use a project’s env
+## Use a project venv
 
 ```bash
-cd esp32
-source env/bin/activate
-pip install -r volctrl/requirements.txt
-# ... run stuff ...
+cd thermo/dmz
+source .venv/bin/activate
+./manage.py healthz
 deactivate
 ```
 
+Scripts can source **`utils/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.

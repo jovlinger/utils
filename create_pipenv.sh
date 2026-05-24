@@ -1,19 +1,19 @@
 #!/bin/sh
-# Create virtualenv (env/) for one or more utils sub-projects.
-# Each project gets utils/<path>/env with requirements.txt installed.
+# Create virtualenv (.venv/) for one or more utils sub-projects.
+# Each project gets utils/<path>/.venv with requirements.txt installed.
 #
 # Usage:
 #   ./create_pipenv.sh [--sync|-s] PROJECT_PATH [PROJECT_PATH ...]
 #
-# Without --sync: skip projects whose env/ already exists (initial create only).
-# With --sync: (re)install requirements into env/ even when it already exists (e.g. Makefile stamps).
+# Without --sync: skip projects whose .venv/ already exists (initial create only).
+# With --sync: (re)install requirements into .venv/ even when it already exists.
 #
 # Examples:
 #   ./create_pipenv.sh thermo/dmz thermo/onboard
 #   ./create_pipenv.sh thermo/dmz
 #   ./create_pipenv.sh --sync thermo/dmz
 #
-# Convention: one env per utils/<dir>/env. For bin/, use bin/setup-venv.sh.
+# Convention: utils/<project>/.venv (per-project). For jovlinger/bin/, use bin/setup-venv.sh → bin/.venv.
 # See utils/README.md.
 
 set -e
@@ -42,7 +42,7 @@ if [ $# -eq 0 ]; then
   echo "Usage: $0 [--sync|-s] PROJECT_PATH [PROJECT_PATH ...]"
   echo ""
   echo "  PROJECT_PATH  Relative path from utils root (e.g. thermo/dmz, dedup)"
-  echo "  --sync        Re-run pip install when env/ already exists"
+  echo "  --sync        Re-run pip install when .venv/ already exists"
   echo ""
   echo "Examples:"
   echo "  $0 thermo/dmz thermo/onboard"
@@ -55,16 +55,30 @@ if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; 
   echo "Python is not installed or not on PATH." >&2
   exit 1
 fi
+
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+  echo "Error: deactivate before create_pipenv (VIRTUAL_ENV=$VIRTUAL_ENV)." >&2
+  echo "Project .venv must be created from system python3, not bin/.venv or another utils venv." >&2
+  exit 1
+fi
+
 PYTHON_BIN="$(command -v python3 2>/dev/null || command -v python)"
 
 for PROJECT_REL in "$@"; do
-  ENV_DIR="$UTILS_ROOT/$PROJECT_REL/env"
-  REQ_FILE="$UTILS_ROOT/$PROJECT_REL/requirements.txt"
-  DEV_REQ="$UTILS_ROOT/$PROJECT_REL/requirements-dev.txt"
+  PROJECT_DIR="$UTILS_ROOT/$PROJECT_REL"
+  ENV_DIR="$PROJECT_DIR/.venv"
+  LEGACY_ENV="$PROJECT_DIR/env"
+  REQ_FILE="$PROJECT_DIR/requirements.txt"
+  DEV_REQ="$PROJECT_DIR/requirements-dev.txt"
 
-  if [ ! -d "$UTILS_ROOT/$PROJECT_REL" ]; then
+  if [ ! -d "$PROJECT_DIR" ]; then
     echo "Error: No such project $PROJECT_REL" >&2
     exit 1
+  fi
+
+  if [ -f "$LEGACY_ENV/bin/activate" ] && [ ! -f "$ENV_DIR/bin/activate" ]; then
+    echo "Migrating legacy env/ → .venv/ for $PROJECT_REL..."
+    mv "$LEGACY_ENV" "$ENV_DIR"
   fi
 
   # Subshell so activate does not leak into the rest of this script.

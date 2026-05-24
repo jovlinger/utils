@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import sys
 
 import manage
 import pytest
@@ -237,3 +238,43 @@ def test_oauth_redirect_to_login_is_succinct(monkeypatch: pytest.MonkeyPatch) ->
     assert "ZONE_PRIVATE_KEY" in text
     assert "traceback" not in text.lower()
     assert text.count("\n") <= 2
+
+
+def test_zones_signs_with_default_zone_when_zone_name_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ZONE_NAME", raising=False)
+    monkeypatch.setenv("DMZ_URL", "http://127.0.0.1:9")
+    calls: list[str] = []
+
+    def _fake_request_json(method, path, **kwargs):
+        calls.append(kwargs.get("zone_for_sign", ""))
+        return 200, {}
+
+    monkeypatch.setattr(manage, "_request_json", _fake_request_json)
+    code = manage.main(["zones"])
+    assert code == 0
+    assert calls == ["cli"]
+
+
+def test_missing_cryptography_shows_venv_local_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZONE_PRIVATE_KEY_PATH", "/fake/priv.pem")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("cryptography not installed; pip install cryptography")
+
+    import zone_auth
+
+    monkeypatch.setattr(zone_auth, "sign_request", _boom)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        with pytest.raises(SystemExit) as ei:
+            manage._sign_headers("GET", "/zones", b"", "cli")
+    assert ei.value.code == 1
+    text = err.getvalue()
+    assert sys.executable in text
+    assert "bin/.venv" in text
+    assert "thermo/dmz" in text or ".venv" in text
+    assert "not a system-wide" in text or "not bin/.venv" in text

@@ -38,6 +38,7 @@ runlocal: .image
 # Ed25519 zone machine-auth keypair under .secrets/zone/ (gitignored via .secrets/). Onboard keeps priv.pem;
 # configure DMZ with ZONE_PUBLIC_KEY or ZONE_PUBLIC_KEY_PATH pointing at pub.pem. See ../KEYS-AND-CERTS.md.
 zone-keys:
-	@test -f "$(CURDIR)/env/bin/python" || { echo "Run ../../create_pipenv.sh thermo/dmz first" >&2; exit 1; }
+	@test -f "$(CURDIR)/.venv/bin/python" || test -f "$(CURDIR)/env/bin/python" || { echo "Run ../../create_pipenv.sh thermo/dmz first" >&2; exit 1; }
 	@mkdir -p "$(CURDIR)/.secrets/zone"
-	@THERMO_ZONE_KEYS_DIR="$(CURDIR)/.secrets/zone" "$(CURDIR)/env/bin/python" "$(CURDIR)/../test/gen_keys.py"
+	@PY=$$([ -f "$(CURDIR)/.venv/bin/python" ] && echo "$(CURDIR)/.venv/bin/python" || echo "$(CURDIR)/env/bin/python"); \
+		THERMO_ZONE_KEYS_DIR="$(CURDIR)/.secrets/zone" "$$PY" "$(CURDIR)/../test/gen_keys.py"
