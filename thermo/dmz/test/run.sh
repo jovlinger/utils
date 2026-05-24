@@ -7,7 +7,7 @@ DMZ="$(cd "$SCRIPT_DIR/.." && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # shellcheck source=/dev/null
-. "$UTILS_ROOT/venv-resolve.sh"
+. "$UTILS_ROOT/lib/venv-resolve.sh"
 resolve_utils_venv "$DMZ" "$UTILS_ROOT"
 
 cd "$DMZ"

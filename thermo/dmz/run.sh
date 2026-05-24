@@ -25,7 +25,7 @@ RUNTIME_IS_CONTAINER=0
 APP_ROOT=""
 # Host dev machine: repo checkout with create_pipenv .venv (not Docker, not Pi).
 # shellcheck source=/dev/null
-. "$UTILS_ROOT/venv-resolve.sh"
+. "$UTILS_ROOT/lib/venv-resolve.sh"
 if resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT" 2>/dev/null; then
 	# shellcheck source=/dev/null
 	. "$VENV_DIR/bin/activate"

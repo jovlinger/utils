@@ -2,6 +2,8 @@
 
 Sub-projects each have their own **`requirements.txt`** and a **project-local venv**.
 
+Shared shell helpers live in **`lib/`** (e.g. **`lib/venv-resolve.sh`**).
+
 ## Venv layout (do not mix these up)
 
 | Tree | Venv path | How to create |
@@ -55,4 +57,4 @@ source .venv/bin/activate
 deactivate
 ```
 
-Scripts can source **`utils/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.
+Scripts can source **`lib/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.

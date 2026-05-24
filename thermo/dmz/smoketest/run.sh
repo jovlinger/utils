@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 
 # shellcheck source=/dev/null
-. "$UTILS_ROOT/venv-resolve.sh"
+. "$UTILS_ROOT/lib/venv-resolve.sh"
 resolve_utils_venv "$DMZ" "$UTILS_ROOT"
 
 if ! command -v docker >/dev/null 2>&1; then

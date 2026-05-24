@@ -141,18 +141,27 @@ def test_no_args_prints_usage_exit_0() -> None:
     assert code == 0
     assert "healthz" in err.getvalue()
     assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in err.getvalue()
+    assert "./manage.py help" in err.getvalue()
 
 
-@pytest.mark.parametrize("flag", ["-h", "--help", "-help"])
-def test_help_flags_print_full_doc(flag: str) -> None:
+def test_help_action_prints_full_doc() -> None:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        code = manage.main([flag])
+        code = manage.main(["help"])
     assert code == 0
     text = out.getvalue()
     assert "CLI for the DMZ HTTP API" in text
     assert "healthz" in text
     assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in text
+
+
+def test_dash_help_is_unknown_action() -> None:
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        with pytest.raises(SystemExit) as ei:
+            manage.main(["--help"])
+    assert ei.value.code == 2
+    assert "unknown action" in err.getvalue()
 
 
 def test_healthz_calls_ui_diagnostics_unsigned(monkeypatch: pytest.MonkeyPatch) -> None:

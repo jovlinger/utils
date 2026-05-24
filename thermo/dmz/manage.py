@@ -21,6 +21,7 @@ the command line (``command``/``sensors``/``updatezone``). Omit for ``zones``,
 ``debug_logs``, and ``healthz``.
 
 Actions (first arg) map to app routes:
+  help                          — full documentation (this module docstring)
   login | authorize | logout     — GET OAuth helpers (browser-oriented)
   sensors <zone> [body...]       — POST /zone/<zone>/sensors
   command <zone> [body...]      — POST /zone/<zone>/command
@@ -110,9 +111,6 @@ def _die(msg: str, code: int = 2) -> None:
     raise SystemExit(code)
 
 
-_HELP_FLAGS = frozenset({"-h", "--help", "-help"})
-
-
 def _print_help() -> int:
     print((__doc__ or "").strip())
     return 0
@@ -121,12 +119,13 @@ def _print_help() -> int:
 def _usage() -> int:
     print(
         "usage: manage.py "
-        "{login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
+        "{help|login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
         file=sys.stderr,
     )
     print(
         "Set DMZ_URL to the DMZ base. Example:\n"
-        "  DMZ_URL=http://your-host:5000 ./manage.py healthz",
+        "  DMZ_URL=http://your-host:5000 ./manage.py healthz\n"
+        "Run ./manage.py help for full documentation.",
         file=sys.stderr,
     )
     return 0
@@ -644,10 +643,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         return _usage()
-    if args[0] in _HELP_FLAGS:
-        return _print_help()
     action = args[0]
     rest = args[1:]
+
+    if action == "help":
+        return _print_help()
 
     # OAuth helpers: no machine signing (browser flow).
     if action in ("login", "authorize", "logout"):
