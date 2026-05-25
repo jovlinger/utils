@@ -1,6 +1,8 @@
 env
 .docker-import/
 install/.env
+hardware/*/install/.env
+hardware/*/install/.deploy-metadata.env
 
 # Make/docker image stamp files (see Makefile .image.app / .image.twoway)
 .image

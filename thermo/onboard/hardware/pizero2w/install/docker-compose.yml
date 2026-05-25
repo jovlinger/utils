@@ -13,6 +13,8 @@ services:
     container_name: thermo-onboard-app
     network_mode: host
     restart: unless-stopped
+    env_file:
+      - .deploy-metadata.env
     logging:
       driver: "none"
     volumes:
@@ -52,6 +54,8 @@ services:
     container_name: thermo-onboard-twoway
     network_mode: host
     restart: unless-stopped
+    env_file:
+      - .deploy-metadata.env
     depends_on:
       - onboard
     logging:

@@ -12,6 +12,7 @@ These tests catch the regression from 2026-04-19, where twoway silently shipped 
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -179,3 +180,55 @@ def test_config_summary_reflects_signing_state(
     assert expected_signing_enabled_field in log, (
         f"[{case_label}] expected '{expected_signing_enabled_field}' in config line; got:\n{log}"
     )
+
+
+def test_dmz_body_includes_deployment_metadata() -> None:
+    """Twoway piggybacks public deploy metadata beside sensors and command."""
+    env_overrides = {
+        "THERMO_DEPLOY_GIT_SHA": "abcdef1234567890",
+        "THERMO_DEPLOY_GIT_SHA_SHORT": "abcdef1",
+        "THERMO_DEPLOY_GIT_BRANCH": "rooms",
+        "THERMO_DEPLOY_GIT_DIRTY": "0",
+        "THERMO_DEPLOY_ENV_FILE": "config/kitchen.env",
+        "THERMO_DEPLOY_BACKEND": "pizero2w",
+        "THERMO_DEPLOY_HARDWARE_PROFILE": "pi_zero_2w_htu21d_ir",
+        "THERMO_DEPLOY_ZONE_NAME": "kitchen",
+    }
+    code = (
+        "import json, os, sys\n"
+        f"sys.argv = {_ARGV!r}\n"
+        f"sys.path.insert(0, {str(_ONBOARD)!r})\n"
+        "import twoway\n"
+        "body = twoway._env_to_dmz_body({\n"
+        "    'temperature_centigrade': 19.3,\n"
+        "    'humidity_percent': 41.9,\n"
+        "    'command': {'mode': 'FAN', 'created_dt': '2026-05-25T12:47:36'},\n"
+        "})\n"
+        "print('RESULT:' + json.dumps(body, sort_keys=True))\n"
+    )
+    env = os.environ.copy()
+    env.update(env_overrides)
+    env["LOG_LEVEL"] = "DEBUG"
+    p = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert p.returncode == 0, f"twoway body subprocess failed:\n{p.stdout}\n{p.stderr}"
+    result_lines = [line for line in p.stdout.splitlines() if line.startswith("RESULT:")]
+    assert result_lines, f"missing RESULT line:\n{p.stdout}\n{p.stderr}"
+    body = json.loads(result_lines[-1].removeprefix("RESULT:"))
+    assert body["sensors"] == {"humid_percent": 41.9, "temp_centigrade": 19.3}
+    assert body["command"]["mode"] == "FAN"
+    assert body["deployment"] == {
+        "backend": "pizero2w",
+        "env_file": "config/kitchen.env",
+        "git_branch": "rooms",
+        "git_dirty": "0",
+        "git_sha": "abcdef1234567890",
+        "git_sha_short": "abcdef1",
+        "hardware_profile": "pi_zero_2w_htu21d_ir",
+        "zone_name": "kitchen",
+    }

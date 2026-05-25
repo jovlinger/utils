@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import pytest
 
@@ -83,13 +83,28 @@ def _load_mock_cmd_module(mpy: Path, mock_file: Path) -> Any:
     return mod
 
 
-def _configure_mock_expectations(mpy: Path, mock_file: Path) -> None:
+def _configure_mock_expectations(
+    mpy: Path,
+    mock_file: Path,
+    repo: Optional[Path] = None,
+) -> None:
     mod = _load_mock_cmd_module(mpy, mock_file)
     mod.reset_mocks()
     for spec in _DEPLOY_EXPECTED_INVOCATIONS:
         cmd = spec[0]
         argv = list(spec[1:])
         mod.set_mock(cmd, argv, 0, "", "")
+    if repo is not None:
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "HEAD"], 0, "abcdef1234567890\n", "")
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--short", "HEAD"], 0, "abcdef1\n", "")
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"], 0, "rooms\n", "")
+        mod.set_mock(
+            "git",
+            ["-C", str(repo), "status", "--porcelain", "--untracked-files=no"],
+            0,
+            "",
+            "",
+        )
 
 
 def _symlink_mock_bins(target_dir: Path, mpy: Path) -> None:
@@ -174,7 +189,7 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         deploy_fake_root = td / "deploy_fake_root"
         deploy_fake_root.mkdir()
         env["THERMO_DEPLOY_ROOT"] = str(deploy_fake_root)
-        _configure_mock_expectations(mpy, mock_file)
+        _configure_mock_expectations(mpy, mock_file, fixture)
 
         result = subprocess.run(
             [
@@ -197,6 +212,21 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         assert "pizero2w-deploy" in result.stdout
         assert f"[deploy] REPO_PATH={fixture}" in result.stdout
         assert "ERROR: No mock configured" not in result.stderr
+        metadata = (
+            fixture
+            / "thermo"
+            / "onboard"
+            / "hardware"
+            / "pizero2w"
+            / "install"
+            / ".deploy-metadata.env"
+        ).read_text(encoding="ascii")
+        assert "THERMO_DEPLOY_GIT_SHA_SHORT=abcdef1\n" in metadata
+        assert "THERMO_DEPLOY_GIT_BRANCH=rooms\n" in metadata
+        assert "THERMO_DEPLOY_GIT_DIRTY=0\n" in metadata
+        assert "THERMO_DEPLOY_ENV_FILE=config/ci.env\n" in metadata
+        assert "THERMO_DEPLOY_BACKEND=pizero2w\n" in metadata
+        assert "THERMO_DEPLOY_HARDWARE_PROFILE=pi_zero_2w_htu21d_ir\n" in metadata
 
         config = json.loads(mock_file.read_text())
         for spec in _DEPLOY_EXPECTED_INVOCATIONS:

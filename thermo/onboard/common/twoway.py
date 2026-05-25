@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import time
-from typing import Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -162,6 +162,16 @@ DMZ_HTTP_TIMEOUT_SECS: float = _env_float(
 
 PERIOD_SECS: float = 5.0
 PERIOD_MAX_SECS: float = 60.0
+_DEPLOYMENT_METADATA_ENV_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("git_sha", "THERMO_DEPLOY_GIT_SHA"),
+    ("git_sha_short", "THERMO_DEPLOY_GIT_SHA_SHORT"),
+    ("git_branch", "THERMO_DEPLOY_GIT_BRANCH"),
+    ("git_dirty", "THERMO_DEPLOY_GIT_DIRTY"),
+    ("env_file", "THERMO_DEPLOY_ENV_FILE"),
+    ("backend", "THERMO_DEPLOY_BACKEND"),
+    ("hardware_profile", "THERMO_DEPLOY_HARDWARE_PROFILE"),
+    ("zone_name", "THERMO_DEPLOY_ZONE_NAME"),
+)
 
 logger.info(
     "twoway config%s",
@@ -201,7 +211,24 @@ def _env_to_dmz_body(env: dict) -> dict:
     cmd = env.get("command") if isinstance(env, dict) else None
     if isinstance(cmd, dict) and cmd:
         body["command"] = cmd
+    deployment = _deployment_metadata_from_env()
+    if deployment:
+        body["deployment"] = deployment
     return body
+
+
+def _deployment_metadata_from_env(
+    environ: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    """Public deploy metadata to piggyback on the zone sensors update."""
+    if environ is None:
+        environ = os.environ
+    metadata: Dict[str, str] = {}
+    for public_key, env_key in _DEPLOYMENT_METADATA_ENV_KEYS:
+        value = environ.get(env_key, "").strip()
+        if value:
+            metadata[public_key] = value
+    return metadata
 
 
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:

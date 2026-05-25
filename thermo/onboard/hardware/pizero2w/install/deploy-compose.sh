@@ -29,6 +29,33 @@ if [ -z "${DMZ_URL:-}" ] && [ -n "${DMZ_HOST:-}" ]; then
 	export DMZ_URL="${DMZ_SCHEME}://${DMZ_HOST}:${DMZ_PORT}"
 fi
 
+write_deploy_metadata() {
+	repo_root="$(cd "$THERMO_ROOT/.." && pwd)"
+	metadata_file="$INSTALL_DIR/.deploy-metadata.env"
+	git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+	git_sha_short="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || true)"
+	git_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+	if [ -n "$(git -C "$repo_root" status --porcelain --untracked-files=no 2>/dev/null || true)" ]; then
+		git_dirty="1"
+	else
+		git_dirty="0"
+	fi
+
+	{
+		printf 'THERMO_DEPLOY_GIT_SHA=%s\n' "$git_sha"
+		printf 'THERMO_DEPLOY_GIT_SHA_SHORT=%s\n' "$git_sha_short"
+		printf 'THERMO_DEPLOY_GIT_BRANCH=%s\n' "$git_branch"
+		printf 'THERMO_DEPLOY_GIT_DIRTY=%s\n' "$git_dirty"
+		printf 'THERMO_DEPLOY_ENV_FILE=%s\n' "$THERMO_ENV_FILE"
+		printf 'THERMO_DEPLOY_BACKEND=%s\n' "${ONBOARD_DEPLOY_BACKEND:-pizero2w}"
+		printf 'THERMO_DEPLOY_HARDWARE_PROFILE=%s\n' "${ONBOARD_HARDWARE_PROFILE:-pi_zero_2w_htu21d_ir}"
+		printf 'THERMO_DEPLOY_ZONE_NAME=%s\n' "${ZONE_NAME:-kitchen}"
+	} >"$metadata_file"
+	log "Wrote deploy metadata: $metadata_file"
+}
+
+write_deploy_metadata
+
 # Allow variable substitution in docker-compose.yml (optional file)
 if [ ! -f .env ]; then
 	touch .env
