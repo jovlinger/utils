@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import pytest
 
@@ -83,18 +83,33 @@ def _load_mock_cmd_module(mpy: Path, mock_file: Path) -> Any:
     return mod
 
 
-def _configure_mock_expectations(mpy: Path, mock_file: Path) -> None:
+def _configure_mock_expectations(
+    mpy: Path,
+    mock_file: Path,
+    repo: Optional[Path] = None,
+) -> None:
     mod = _load_mock_cmd_module(mpy, mock_file)
     mod.reset_mocks()
     for spec in _DEPLOY_EXPECTED_INVOCATIONS:
         cmd = spec[0]
         argv = list(spec[1:])
         mod.set_mock(cmd, argv, 0, "", "")
+    if repo is not None:
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "HEAD"], 0, "abcdef1234567890\n", "")
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--short", "HEAD"], 0, "abcdef1\n", "")
+        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"], 0, "rooms\n", "")
+        mod.set_mock(
+            "git",
+            ["-C", str(repo), "status", "--porcelain", "--untracked-files=no"],
+            0,
+            "",
+            "",
+        )
 
 
 def _symlink_mock_bins(target_dir: Path, mpy: Path) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("git", "docker"):
+    for name in ("git", "docker", "ssh"):
         link = target_dir / name
         if link.exists() or link.is_symlink():
             link.unlink()
@@ -107,6 +122,15 @@ _DEPLOY_EXPECTED_INVOCATIONS: Tuple[Tuple[str, ...], ...] = (
     ("docker", "compose", "up", "-d"),
     ("docker", "compose", "ps"),
 )
+
+
+def _copy_pizero2w_backend(fixture: Path, onboard: Path) -> None:
+    backend_rel = Path("thermo/onboard/hardware/pizero2w/install")
+    backend_dst = fixture / backend_rel
+    backend_src = onboard / "hardware" / "pizero2w" / "install"
+    backend_dst.mkdir(parents=True)
+    for name in ("deploy.sh", "deploy-compose.sh", "docker-compose.yml"):
+        shutil.copy2(backend_src / name, backend_dst / name)
 
 
 def test_thermo_extdeps_dir() -> None:
@@ -131,9 +155,7 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
     mpy = mock_cmd_path()
     onboard = onboard_dir()
     thermo_root = onboard.parent
-    src_compose = onboard / "install" / "deploy-compose.sh"
     src_loader = thermo_root / "config" / "source-thermo-env.sh"
-    assert src_compose.is_file(), f"missing {src_compose}"
     assert src_loader.is_file(), f"missing {src_loader}"
 
     with tempfile.TemporaryDirectory() as td_raw:
@@ -145,18 +167,17 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         home = td / "home"
         home.mkdir()
 
-        install_rel = Path("thermo/onboard/install")
-        inst = fixture / install_rel
-        inst.mkdir(parents=True)
-        shutil.copy2(src_compose, inst / "deploy-compose.sh")
-
         cfg = fixture / "thermo" / "config"
         cfg.mkdir(parents=True)
         shutil.copy2(src_loader, cfg / "source-thermo-env.sh")
         (cfg / "ci.env").write_text(
-            "DMZ_SCHEME=http\nDMZ_HOST=127.0.0.1\nDMZ_PORT=5000\n",
+            "DMZ_SCHEME=http\n"
+            "DMZ_HOST=127.0.0.1\n"
+            "DMZ_PORT=5000\n"
+            "ONBOARD_DEPLOY_BACKEND=pizero2w\n",
             encoding="ascii",
         )
+        _copy_pizero2w_backend(fixture, onboard)
 
         subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
         assert (fixture / ".git").exists()
@@ -164,11 +185,11 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         _symlink_mock_bins(mock_bins, mpy)
         env = _mock_subprocess_env(mock_file, home, mock_bins)
         env["THERMO_ENV_FILE"] = "config/ci.env"
-        # deploy.sh uses /run and /var/log by default; macOS has no writable /run — keep everything under td.
+        # deploy.sh uses /run and /var/log by default; macOS has no writable /run - keep everything under td.
         deploy_fake_root = td / "deploy_fake_root"
         deploy_fake_root.mkdir()
         env["THERMO_DEPLOY_ROOT"] = str(deploy_fake_root)
-        _configure_mock_expectations(mpy, mock_file)
+        _configure_mock_expectations(mpy, mock_file, fixture)
 
         result = subprocess.run(
             [
@@ -187,14 +208,109 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
         assert "Deploy complete." in result.stdout
+        assert "Deploy backend=pizero2w" in result.stdout
+        assert "pizero2w-deploy" in result.stdout
         assert f"[deploy] REPO_PATH={fixture}" in result.stdout
         assert "ERROR: No mock configured" not in result.stderr
+        metadata = (
+            fixture
+            / "thermo"
+            / "onboard"
+            / "hardware"
+            / "pizero2w"
+            / "install"
+            / ".deploy-metadata.env"
+        ).read_text(encoding="ascii")
+        assert "THERMO_DEPLOY_GIT_SHA_SHORT=abcdef1\n" in metadata
+        assert "THERMO_DEPLOY_GIT_BRANCH=rooms\n" in metadata
+        assert "THERMO_DEPLOY_GIT_DIRTY=0\n" in metadata
+        assert "THERMO_DEPLOY_ENV_FILE=config/ci.env\n" in metadata
+        assert "THERMO_DEPLOY_BACKEND=pizero2w\n" in metadata
+        assert "THERMO_DEPLOY_HARDWARE_PROFILE=pi_zero_2w_htu21d_ir\n" in metadata
 
         config = json.loads(mock_file.read_text())
         for spec in _DEPLOY_EXPECTED_INVOCATIONS:
             key = f"{spec[0]} {' '.join(spec[1:])}"
             assert key in config
             assert config[key]["exit_code"] == 0
+
+
+@pytest.mark.skipif(
+    not mock_cmd_path().is_file(),
+    reason=f"extdeps missing mock_cmd.py (expected {mock_cmd_path()})",
+)
+def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
+    mpy = mock_cmd_path()
+    onboard = onboard_dir()
+    thermo_root = onboard.parent
+    src_loader = thermo_root / "config" / "source-thermo-env.sh"
+    assert src_loader.is_file(), f"missing {src_loader}"
+
+    with tempfile.TemporaryDirectory() as td_raw:
+        td = Path(td_raw)
+        fixture = td / "repo"
+        fixture.mkdir()
+        mock_file = td / "mock_config.json"
+        mock_bins = td / "mockbins"
+        home = td / "home"
+        home.mkdir()
+
+        cfg = fixture / "thermo" / "config"
+        cfg.mkdir(parents=True)
+        shutil.copy2(src_loader, cfg / "source-thermo-env.sh")
+        (cfg / "ci.env").write_text(
+            "DMZ_SCHEME=http\n"
+            "DMZ_HOST=127.0.0.1\n"
+            "DMZ_PORT=5000\n"
+            "ZONE_NAME=kitchen\n"
+            "ONBOARD_DEPLOY_BACKEND=pizero2w\n"
+            "ONBOARD_DEPLOY_HOST=pizerokitchen.local\n"
+            "ONBOARD_DEPLOY_USER=johan\n"
+            "ONBOARD_DEPLOY_REPO=/home/johan/github.com/jovlinger/utils\n"
+            "ONBOARD_DEPLOY_ENV_FILE=config/ci.env\n",
+            encoding="ascii",
+        )
+        _copy_pizero2w_backend(fixture, onboard)
+
+        subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
+        assert (fixture / ".git").exists()
+
+        _symlink_mock_bins(mock_bins, mpy)
+        env = _mock_subprocess_env(mock_file, home, mock_bins)
+        env["THERMO_ENV_FILE"] = "config/ci.env"
+        mod = _load_mock_cmd_module(mpy, mock_file)
+        mod.reset_mocks()
+        remote_cmd = (
+            'cd /home/johan/github.com/jovlinger/utils && git pull && export THERMO_ENV_FILE="config/ci.env" '
+            'ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 && make -C thermo/onboard '
+            'deploy DEPLOY_REPO="$(pwd)"'
+        )
+        mod.set_mock("ssh", ["johan@pizerokitchen.local", remote_cmd], 0, "", "")
+
+        result = subprocess.run(
+            [
+                "make",
+                "-C",
+                str(onboard),
+                "deploy",
+                f"DEPLOY_REPO={fixture}",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        assert "Deploy backend=pizero2w" in result.stdout
+        assert "Remote deploy to johan@pizerokitchen.local" in result.stdout
+        assert "ERROR: No mock configured" not in result.stderr
+
+        config = json.loads(mock_file.read_text())
+        key = f"ssh johan@pizerokitchen.local {remote_cmd}"
+        assert key in config
+        assert config[key]["exit_code"] == 0
 
 
 def test_deploy_repo_override_reaches_deploy_sh() -> None:

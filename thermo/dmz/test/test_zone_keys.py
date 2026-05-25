@@ -1,6 +1,6 @@
 """Coverage for `make zone-keys` and the gen_keys.py helper it invokes.
 
-The Makefile target only wraps `THERMO_ZONE_KEYS_DIR=... gen_keys.py`, so the
+The Makefile target only wraps `THERMO_ZONE_*_KEYS_DIR=... gen_keys.py`, so the
 behavioural test runs `gen_keys.py` directly (no venv assumption) and a
 separate test enforces the Makefile invariants so the wrapper cannot drift.
 """
@@ -111,10 +111,14 @@ def test_makefile_zone_keys_target_invariants() -> None:
 
     assert "gen_keys.py" in recipe, \
         "zone-keys recipe must invoke ../test/gen_keys.py (single source of truth)"
-    assert "THERMO_ZONE_KEYS_DIR=" in recipe, \
-        "zone-keys recipe must set THERMO_ZONE_KEYS_DIR (so output dir is overridable in tests)"
-    assert ".secrets/zone" in recipe, \
-        "zone-keys recipe must write into .secrets/zone (gitignored, see SECRETS.md)"
+    assert "THERMO_ZONE_PRIVATE_KEYS_DIR=" in recipe, \
+        "zone-keys recipe must set THERMO_ZONE_PRIVATE_KEYS_DIR"
+    assert "THERMO_ZONE_PUBLIC_KEYS_DIR=" in recipe, \
+        "zone-keys recipe must set THERMO_ZONE_PUBLIC_KEYS_DIR"
+    assert "../priv/zone" in recipe, \
+        "zone-keys recipe must write private material into thermo/priv/zone"
+    assert "../config/zone" in recipe, \
+        "zone-keys recipe must write public material into thermo/config/zone"
 
     assert "zone-keys" in re.search(r"^\.PHONY:\s*(.+)$", text, flags=re.MULTILINE).group(1), \
         "`zone-keys` must be declared .PHONY"

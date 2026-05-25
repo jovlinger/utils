@@ -30,7 +30,7 @@ HEADER_TIMESTAMP = "X-Zone-Timestamp"
 HEADER_ZONE = "X-Zone-Name"
 
 _ZONE_KEY_HINT = (
-    "Zone machine auth uses thermo/dmz/.secrets/zone/priv.pem "
+    "Zone machine auth uses thermo/priv/zone/priv.pem "
     "(PKCS8 PEM from `make -C thermo/dmz zone-keys`), matching pub.pem on the DMZ. "
     "See thermo/KEYS-AND-CERTS.md."
 )

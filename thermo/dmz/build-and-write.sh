@@ -17,10 +17,10 @@
 #   ./build-and-write.sh /run/media/you/PIBOOT                          # Linux: mount point -> parent disk (needs lsblk)
 #
 # Every image MUST bake zone machine auth (Ed25519 pub) and Google OAuth client files.
-# Paths are fixed (no flags, no env overrides for secrets):
-#   Zone pub:  thermo/dmz/.secrets/zone/pub.pem
-#   OAuth dir: thermo/dmz/.secrets/oauth/  (google-client-id, google-client-secret,
-#              flask-secret-key, allowed-email — see ./SECRETS.md)
+# Paths are fixed (no flags, no env overrides):
+#   Zone pub:        thermo/config/zone/pub.pem
+#   OAuth public:    thermo/config/oauth/google-client-id
+#   OAuth private:   thermo/priv/oauth/google-client-secret, flask-secret-key, allowed-email
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
@@ -53,7 +53,8 @@ fi
 usage() {
 	echo "Usage: $0 [BLOCK_DEVICE_OR_MOUNT]" >&2
 	echo "  Builds dist/dmz.img (or DMZ_OUTPUT_IMG) with zone machine auth + OAuth files ALWAYS baked." >&2
-	echo "  Secrets are ONLY read from .secrets/zone/pub.pem and .secrets/oauth/ under thermo/dmz/ (see ./SECRETS.md)." >&2
+	echo "  Public material is read from thermo/config/{zone,oauth}; private material from thermo/priv/oauth (see ./SECRETS.md)." >&2
+	echo "  Required: thermo/config/zone/pub.pem, thermo/config/oauth/google-client-id, and thermo/priv/oauth/{google-client-secret,flask-secret-key,allowed-email}." >&2
 	echo "  No overrides: missing or invalid material aborts the build." >&2
 	echo "  With device or mount: background unmount during build, then sudo dd." >&2
 	echo "  Examples: $0    $0 /dev/disk4    $0 /Volumes/PIBOOT" >&2
@@ -107,6 +108,7 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_DIR="$SCRIPT_DIR"
+THERMO_DIR="$(cd "$DMZ_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
 RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../extdeps/run-with-stdout-logged.py}"
 OUTPUT_IMG="${DMZ_OUTPUT_IMG:-$DMZ_DIR/dist/dmz.img}"
@@ -117,9 +119,9 @@ if [ ! -f "$DMZ_CONF" ]; then
 fi
 
 # Zone public key: fixed path only (required).
-ZONE_PUB_KEY_SRC="$DMZ_DIR/.secrets/zone/pub.pem"
+ZONE_PUB_KEY_SRC="$THERMO_DIR/config/zone/pub.pem"
 if [ ! -f "$ZONE_PUB_KEY_SRC" ]; then
-	echo "Error: zone public key PEM is required (twoway → DMZ machine auth is always baked into this image)." >&2
+	echo "Error: zone public key PEM is required (twoway -> DMZ machine auth is always baked into this image)." >&2
 	echo "       Required path: $ZONE_PUB_KEY_SRC" >&2
 	echo "       Generate:       make -C thermo/dmz zone-keys" >&2
 	exit 1
@@ -130,17 +132,30 @@ if ! head -n1 "$ZONE_PUB_KEY_SRC" | grep -q -- "-----BEGIN PUBLIC KEY-----"; the
 	exit 1
 fi
 
-# OAuth directory: fixed path only (required).
-OAUTH_DIR_SRC="$DMZ_DIR/.secrets/oauth"
-if [ ! -d "$OAUTH_DIR_SRC" ]; then
-	echo "Error: OAuth client directory is required (human Google login for DMZ UI is always baked into this image)." >&2
-	echo "       Required path: $OAUTH_DIR_SRC/" >&2
+# OAuth files: fixed paths only (required).
+OAUTH_PUBLIC_DIR_SRC="$THERMO_DIR/config/oauth"
+OAUTH_PRIVATE_DIR_SRC="$THERMO_DIR/priv/oauth"
+if [ ! -d "$OAUTH_PUBLIC_DIR_SRC" ]; then
+	echo "Error: OAuth public config directory is required (human Google login for DMZ UI is always baked into this image)." >&2
+	echo "       Required path: $OAUTH_PUBLIC_DIR_SRC/" >&2
 	echo "       See: ./SECRETS.md" >&2
 	exit 1
 fi
-for _need in google-client-id google-client-secret flask-secret-key allowed-email; do
-	if [ ! -f "$OAUTH_DIR_SRC/$_need" ]; then
-		echo "Error: OAuth directory missing required file $_need in $OAUTH_DIR_SRC (see ./SECRETS.md)" >&2
+if [ ! -d "$OAUTH_PRIVATE_DIR_SRC" ]; then
+	echo "Error: OAuth private directory is required (human Google login for DMZ UI is always baked into this image)." >&2
+	echo "       Required path: $OAUTH_PRIVATE_DIR_SRC/" >&2
+	echo "       See: ./SECRETS.md" >&2
+	exit 1
+fi
+for _need in google-client-id; do
+	if [ ! -f "$OAUTH_PUBLIC_DIR_SRC/$_need" ]; then
+		echo "Error: OAuth public directory missing required file $_need in $OAUTH_PUBLIC_DIR_SRC (see ./SECRETS.md)" >&2
+		exit 1
+	fi
+done
+for _need in google-client-secret flask-secret-key allowed-email; do
+	if [ ! -f "$OAUTH_PRIVATE_DIR_SRC/$_need" ]; then
+		echo "Error: OAuth private directory missing required file $_need in $OAUTH_PRIVATE_DIR_SRC (see ./SECRETS.md)" >&2
 		exit 1
 	fi
 done
@@ -318,8 +333,9 @@ else
 fi
 echo "    out: $OUTPUT_IMG"
 echo "    size: ${IMAGE_SIZE_MB}MB  platform: linux/arm/v6"
-echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway → DMZ auth, always)"
-echo "    OAuth files: $OAUTH_DIR_SRC -> install/{google-client-id,google-client-secret,flask-secret-key,allowed-email}"
+echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway -> DMZ auth, always)"
+echo "    OAuth public files: $OAUTH_PUBLIC_DIR_SRC -> install/{google-client-id}"
+echo "    OAuth private files: $OAUTH_PRIVATE_DIR_SRC -> install/{google-client-secret,flask-secret-key,allowed-email}"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -416,8 +432,9 @@ ln -sf ../../init.d/local "$APKOVL_DIR/etc/runlevels/default/local"
 : >"$APKOVL_DIR/etc/apk/world"
 echo "dmz" >"$APKOVL_DIR/etc/hostname"
 
-# Stable rescue sshd host keys (gitignored .secrets/); avoids known_hosts churn each flash.
-SECRETS_SSH="$DMZ_DIR/.secrets/ssh-host"
+# Stable rescue sshd host keys; avoids known_hosts churn each flash.
+SECRETS_SSH="$THERMO_DIR/priv/ssh-host"
+PUBLIC_SSH="$THERMO_DIR/config/ssh-host"
 if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ]; then
 	ts "[6/7] first-time: generating rescue SSH host keys -> $SECRETS_SSH"
 	"$DMZ_DIR/install/gen-dmz-rescue-host-keys.sh"
@@ -426,9 +443,13 @@ if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ] || [ ! -f "$SECRETS_SSH/ssh_host
 	echo "Error: missing host keys under $SECRETS_SSH (run install/gen-dmz-rescue-host-keys.sh)." >&2
 	exit 1
 fi
+if [ ! -f "$PUBLIC_SSH/ssh_host_ed25519_key.pub" ] || [ ! -f "$PUBLIC_SSH/ssh_host_rsa_key.pub" ]; then
+	echo "Error: missing public host keys under $PUBLIC_SSH (run install/gen-dmz-rescue-host-keys.sh)." >&2
+	exit 1
+fi
 mkdir -p "$APKOVL_DIR/etc/ssh"
-cp "$SECRETS_SSH/ssh_host_ed25519_key" "$SECRETS_SSH/ssh_host_ed25519_key.pub" \
-	"$SECRETS_SSH/ssh_host_rsa_key" "$SECRETS_SSH/ssh_host_rsa_key.pub" \
+cp "$SECRETS_SSH/ssh_host_ed25519_key" "$PUBLIC_SSH/ssh_host_ed25519_key.pub" \
+	"$SECRETS_SSH/ssh_host_rsa_key" "$PUBLIC_SSH/ssh_host_rsa_key.pub" \
 	"$APKOVL_DIR/etc/ssh/"
 chmod 600 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key"
 chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key.pub"
@@ -589,8 +610,11 @@ mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
 mcopy -i "$IMG_FILE" "$DMZ_DIR/install/CARD-README.txt" ::README.txt
 # Zone pub + OAuth: always baked (paths resolved and validated at start of script).
 mcopy -i "$IMG_FILE" "$ZONE_PUB_KEY_SRC" ::install/zone-pub.pem
-for _o in google-client-id google-client-secret flask-secret-key allowed-email; do
-	mcopy -i "$IMG_FILE" "$OAUTH_DIR_SRC/$_o" "::install/$_o"
+for _o in google-client-id; do
+	mcopy -i "$IMG_FILE" "$OAUTH_PUBLIC_DIR_SRC/$_o" "::install/$_o"
+done
+for _o in google-client-secret flask-secret-key allowed-email; do
+	mcopy -i "$IMG_FILE" "$OAUTH_PRIVATE_DIR_SRC/$_o" "::install/$_o"
 done
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz

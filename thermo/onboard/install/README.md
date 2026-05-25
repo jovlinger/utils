@@ -1,28 +1,23 @@
-# Install scripts (Pi)
+# Install dispatchers
 
-**Primary documentation:** [../README.md](../README.md) — two GHCR images, `docker-compose.yml`, `deploy-compose.sh`, systemd, troubleshooting.
+**Primary documentation:** [../README.md](../README.md).
 
 ## Quick commands
 
 ```bash
-export THERMO_ENV_FILE=config/kitchen.env   # or config/den.env - path relative to thermo/
-cd ~/github.com/jovlinger/utils
-git pull
-cd thermo/onboard/install
-./deploy-compose.sh
+THERMO_ENV_FILE=config/kitchen.env make -C thermo/onboard deploy
 ```
 
-First-time: copy [`../../config/kitchen.env.sample`](../../config/kitchen.env.sample) to `../../config/<name>.env` (gitignored), set `ZONE_NAME` and the onboard behavior choices, set `THERMO_ENV_FILE` as above, then deploy. Copy `env.example` to `.env` only for local compose overrides, or set variables in `~/.local.sh`.
+The top-level install scripts source `THERMO_ENV_FILE`, read `ONBOARD_DEPLOY_BACKEND`, and dispatch to `../hardware/<backend>/install/`.
+For Pi Zero 2 W deployments, the concrete compose and systemd files live in `../hardware/pizero2w/install/`.
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Stack: app + twoway; optional **connectivity-watchdog** via profile `thermo-watchdog` (needs current GHCR twoway image) |
-| `deploy-compose.sh` | `docker compose pull` + `up -d` (requires `THERMO_ENV_FILE`; sources `thermo/config/source-thermo-env.sh` then `~/.local.sh`) |
-| `deploy.sh` | `git pull` (repo root) then `deploy-compose.sh` |
-| `install-systemd.sh` | Installs `thermo-onboard.service` for boot |
-| `env.example` | Template for `.env` |
-| `run-onboard.sh` | **Deprecated** — old single-container runner |
-| `onboard.service` | **Deprecated** — old systemd unit |
+| `deploy.sh` | Common dispatcher used by `make deploy` |
+| `deploy-compose.sh` | Compatibility wrapper for local backend compose deploys |
+| `install-systemd.sh` | Compatibility wrapper for the backend systemd installer |
+| `run-onboard.sh` | Deprecated old single-container runner |
+| `onboard.service` | Deprecated old systemd unit |
 
 ## GHCR
 

@@ -1,15 +1,9 @@
-"""
-Duck-typed mocks for smbus (``thermo/onboard/test/conftest.py`` injects this as
-``sys.modules["smbus"]`` so HTU21D tests run without real I2C).
-"""
+"""Compatibility wrapper for Pi Zero 2 W SMBus test fake."""
 
+from __future__ import annotations
 
-class SMBus:
-    def __init__(self, busno):
-        pass
+import sys
 
-    def write_byte(self, addr, cmd):
-        pass
+from hardware.pizero2w import smbus_fake as _impl
 
-    def read_i2c_block_data(self, addr, cmd, val) -> tuple[int, int, int]:
-        return 123, 34, 56
+sys.modules[__name__] = _impl

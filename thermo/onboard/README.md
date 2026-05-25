@@ -16,7 +16,7 @@ Two **separate** container images on **GHCR**:
 
 If a link 404s (e.g. package not linked to this repo), open [your packages](https://github.com/jovlinger?tab=packages), or go to the **utils** repo → **Packages** in the right sidebar (or **Code** → find **Packages** under the repo name on the new UI).
 
-They are started together with **Docker Compose** (`install/docker-compose.yml`): **host networking**, **CPU limits** via `deploy.resources` (memory cgroup limits are not set — they are often unsupported on Raspberry Pi OS and only produce warnings), bounded **ulimits** for open files, and **no Docker json log growth** (`logging: driver: none`) because each process logs **only** through `**run-with-stdout-logged.py`** into bind-mounted files under `**/var/log/thermo-onboard/**`.
+They are started together with **Docker Compose** (`hardware/pizero2w/install/docker-compose.yml`): **host networking**, **CPU limits** via `deploy.resources` (memory cgroup limits are not set - they are often unsupported on Raspberry Pi OS and only produce warnings), bounded **ulimits** for open files, and **no Docker json log growth** (`logging: driver: none`) because each process logs **only** through `**run-with-stdout-logged.py`** into bind-mounted files under `**/var/log/thermo-onboard/**`.
 
 ## Log files (host)
 
@@ -30,7 +30,7 @@ After deploy, on the Pi:
 | `twoway.log`      | Twoway sync          |
 | `connectivity-watchdog.log` | Optional **connectivity-watchdog** service (see below) |
 
-**Connectivity watchdog (optional):** the `connectivity-watchdog` service uses the same image as twoway and needs `docker-entrypoint-watchdog.sh` inside that image. Until GHCR `thermo-onboard-twoway:latest` is rebuilt from the current repo, leave **`COMPOSE_PROFILES`** unset so `deploy-compose.sh` only starts app + twoway. After you `make push` (or CI builds the image), add `COMPOSE_PROFILES=thermo-watchdog` to `install/.env` or `~/.local.sh` and redeploy to start the watchdog.
+**Connectivity watchdog (optional):** the `connectivity-watchdog` service uses the same image as twoway and needs `docker-entrypoint-watchdog.sh` inside that image. Until GHCR `thermo-onboard-twoway:latest` is rebuilt from the current repo, leave **`COMPOSE_PROFILES`** unset so `deploy-compose.sh` only starts app + twoway. After you `make push` (or CI builds the image), add `COMPOSE_PROFILES=thermo-watchdog` to `hardware/pizero2w/install/.env` or `~/.local.sh` and redeploy to start the watchdog.
 
 Rotation is handled inside the container by `run-with-stdout-logged.py` (`LOG_FILELIMIT` / `LOG_TOTALLIMIT`, default 1 MiB file / 2 MiB rotated total per stream — same idea as before).
 
@@ -52,40 +52,44 @@ sudo mount /var/log/thermo-onboard
 
 If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or `~/.local.sh`) to that path and ensure it exists at boot.
 
-## Deploy on `pizero.local` (upgrade loop)
+## Deploy a room target
 
-**Prerequisites:** Docker + Compose v2 plugin, user in group `docker`, I2C + LIRC devices as before, optional GHCR token in `~/.local.sh` if images are private.
+**Prerequisites:** Docker + Compose v2 plugin, user in group `docker`, I2C + LIRC devices as before, optional GHCR token in `~/.local.sh` if images are private. Put zone private keys under `thermo/priv/zone/priv.pem` on the target host.
 
-1. **Clone/pull** the repo on the Pi (example path):
+1. **Choose a config env file** (see [`thermo/config/README.md`](../config/README.md)): copy `thermo/config/kitchen.env.sample` to `thermo/config/kitchen.env` (or create `bedroom.env` from the same template; room env files are committed). Set the room identity and destination:
   ```bash
-   cd ~/github.com/jovlinger/utils
-   git pull
+   ZONE_NAME=kitchen
+   ONBOARD_DEPLOY_BACKEND=pizero2w
+   ONBOARD_DEPLOY_HOST=pizerokitchen.local
+   ONBOARD_DEPLOY_ENV_FILE=config/kitchen.env
   ```
-2. **Choose a config env file** (see [`thermo/config/README.md`](../config/README.md)): copy `thermo/config/kitchen.env.sample` to `thermo/config/kitchen.env` (or create `den.env` from the same template; `*.env` is gitignored). Set:
+2. **Run the deploy dispatcher**:
   ```bash
    export THERMO_ENV_FILE=config/kitchen.env
+   make -C thermo/onboard deploy
   ```
-   Use a distinct file per onboard unit. Set a unique `ZONE_NAME`, then select `ONBOARD_HARDWARE_PROFILE`, `ONBOARD_SEND_BEHAVIOR`, and `ONBOARD_REPORT_BEHAVIOR` in that file.
-3. **Run the deploy script** (pulls images and starts the stack):
+   For `pizero2w`, this SSHes to the target, pulls git, and runs the same deploy command locally with the room env file.
+3. **Optional: local deploy on the target**:
   ```bash
-   cd thermo/onboard/install
-   chmod +x deploy-compose.sh install-systemd.sh
-   ./deploy-compose.sh
+   cd ~/github.com/jovlinger/utils
+   export THERMO_ENV_FILE=config/kitchen.env
+   ONBOARD_DEPLOY_LOCAL=1 make -C thermo/onboard deploy
   ```
 4. **Optional: systemd** so reboot brings the stack up:
   ```bash
    mkdir -p ~/.config/thermo-onboard
    echo 'THERMO_ENV_FILE=config/kitchen.env' > ~/.config/thermo-onboard/environment
+   cd thermo/onboard/hardware/pizero2w/install
    sudo ./install-systemd.sh
    sudo systemctl enable --now thermo-onboard
   ```
-   The unit reads `~/.config/thermo-onboard/environment` for `THERMO_ENV_FILE`, then runs `deploy-compose.sh` from `install/`. Adjust paths in `thermo-onboard.service.in` only if your checkout layout differs; `install-systemd.sh` substitutes `@@INSTALL@@`, `@@USER@@`, and `@@HOME@@`.
+   The unit reads `~/.config/thermo-onboard/environment` for `THERMO_ENV_FILE`, then runs `deploy-compose.sh` from `hardware/pizero2w/install/`.
 
-**Each upgrade:** `git pull` → `./deploy-compose.sh` from `install/` (same as step 3). Systemd will **not** auto-pull new images until you run deploy again or restart the unit after a pull — for upgrades, run `./deploy-compose.sh` manually or re-run the service after `git pull`.
+**Each upgrade:** run `THERMO_ENV_FILE=config/<room>.env make -C thermo/onboard deploy`. Systemd will **not** auto-pull new images until you run deploy again or restart the unit after a pull.
 
 ## Resource limits
 
-Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is not capped in Compose (cgroup memory is unreliable on many Pi kernels); keep footprint in check with log rotation (`LOG_*LIMIT`) and host `ulimits`. Tune `deploy.resources` and `ulimits` in `install/docker-compose.yml` for your Pi. Add `pids` limits if your Compose version supports them under `deploy.resources.limits`.
+Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is not capped in Compose (cgroup memory is unreliable on many Pi kernels); keep footprint in check with log rotation (`LOG_*LIMIT`) and host `ulimits`. Tune `deploy.resources` and `ulimits` in `hardware/pizero2w/install/docker-compose.yml` for your Pi. Add `pids` limits if your Compose version supports them under `deploy.resources.limits`.
 
 ## Troubleshooting
 
@@ -97,7 +101,7 @@ Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is no
 - `**docker compose up` fails on `vcgencmd` or `/dev/vchiq`:** Those are for Pi SoC temperature and throttle flags on the **connectivity-watchdog** service. Remove the `vcgencmd` bind and `devices:` entry for that service when developing on a non-Pi host.
 - **Compose ignores `deploy.resources`:** On some older Compose versions, limits apply only in Swarm. Upgrade Docker/Compose, or add equivalent `docker run` flags via `docker compose` override (see Docker docs).
 - **No lines in `docker logs`:** Expected — logging driver is `none`. Use the files under `/var/log/thermo-onboard/`.
-- **Stale images:** Run `./deploy-compose.sh` after `git pull`; it always `**docker compose pull`** before `**up**`.
+- **Stale images:** Run `THERMO_ENV_FILE=config/<room>.env make -C thermo/onboard deploy`; the Pi backend always runs `docker compose pull` before `up`.
 - By far the biggest issue is intermittent wifi issues with the pizero 2W (revision unknown).  Apparently there is a known brcmfmac issue. This may be the cause. (but we won't know tonight since the pizero went off-air again)
   > the brcmfmac firmware crashes hard and leaves the SDIO bus in a dead state — the whole system becomes unresponsive and only a power cycle helps. The 60-second disassociation cycle (a confirmed open firmware bug as of March 2026) runs continuously in the background, and after enough cycles the firmware state machine corrupts. The multi-AP same-SSID setup is an amplifying factor — brcmfmac's autonomous roaming is a documented crash path. PSU undervoltage during a WiFi TX burst can trigger the same crash.
 

@@ -1,9 +1,10 @@
 env
 .image
-
-config/*.env
+# Room deploy specs are committed so target hosts can deploy after git pull.
+# Keep ad-hoc local overrides private with names like config/local.env.
+config/local*.env
+config/private*.env
 priv/*
-
 \#*#
 */__pycache__
 .venv

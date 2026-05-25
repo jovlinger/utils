@@ -29,18 +29,16 @@ So the DMZ **does** offer the bundled HTML UI, but in the stock image it listens
 ### Onboard `docker-compose`: enable twoway signing
 
 1. On the Pi (or build host), `make -C thermo/dmz zone-keys` (or copy `pub.pem` / `priv.pem` from a secure channel).
-2. Place **`priv.pem`** on the onboard host (e.g. `/etc/thermo/zone/priv.pem`, mode `0400`, root or service user).
-3. Add a **read-only** bind mount on the **twoway** service (and **connectivity-watchdog** if used) so the path exists in-container, e.g. `- /etc/thermo/zone:/keys:ro`.
-4. In **`install/.env`** (or `~/.local.sh`):  
-   `ZONE_PRIVATE_KEY_PATH=/keys/priv.pem`  
-   and ensure **`ZONE_NAME`** matches the DMZ URL path (`…/zone/<ZONE_NAME>/sensors`).
+2. Place **`priv.pem`** on the onboard host at **`thermo/priv/zone/priv.pem`** (mode `0400`).
+3. The Pi compose backend bind-mounts **`thermo/priv/zone/`** into twoway by default.
+4. Ensure **`ZONE_NAME`** matches the DMZ URL path (`.../zone/<ZONE_NAME>/sensors`).
 5. On the **DMZ** host (separate compose / Pi image env): set **`ZONE_PUBLIC_KEY_PATH`** (or inline **`ZONE_PUBLIC_KEY`**) to **`pub.pem`**, same material as generated with `priv.pem`.
 
 Order matters: deploy **pub** on DMZ first if you need a short window where signing is optional; once DMZ requires signatures, twoway must have **priv** or sensor posts will **401**.
 
 ### Generate and distribute
 
-**Option A — Makefile (writes under `thermo/dmz/.secrets/zone/`, gitignored):**
+**Option A - Makefile (writes private key under `thermo/priv/zone/`, public key under `thermo/config/zone/`):**
 
 ```bash
 # From repo root, after venv exists:
@@ -48,7 +46,7 @@ Order matters: deploy **pub** on DMZ first if you need a short window where sign
 make -C thermo/dmz zone-keys
 ```
 
-This writes **`priv.pem`** and **`pub.pem`**. Keep **`priv.pem`** only on the onboard host (or secrets manager). Install **`pub.pem`** on the DMZ host and point **`ZONE_PUBLIC_KEY_PATH`** at it (Docker bind-mount, Pi chroot, etc.).
+This writes **`thermo/priv/zone/priv.pem`** and **`thermo/config/zone/pub.pem`**. Keep **`priv.pem`** only on the onboard host (or secrets manager). DMZ image builds bake **`pub.pem`** from the committed config path.
 
 **Option B — Compose / CI (writes `thermo/test/keys/`, gitignored):**
 
@@ -84,7 +82,7 @@ Public browsers need a cert chained to a public CA (typically **Let’s Encrypt*
 
 ### Gitignore and layout
 
-- **DMZ checkout:** `thermo/dmz/.gitignore` already ignores **`.secrets/`**. Use e.g. **`.secrets/zone/`** for Ed25519 (`make zone-keys`) and **`.secrets/tls/`** for copies of `fullchain.pem` / `privkey.pem` (or symlinks) if you do not mount host `/etc/letsencrypt` directly.
+- **Repo checkout:** `thermo/.gitignore` ignores **`thermo/priv/`** except for its README. Use **`thermo/priv/zone/`** for Ed25519 private keys, **`thermo/config/zone/`** for public keys, **`thermo/priv/oauth/`** for OAuth secrets/private allowlists, **`thermo/config/oauth/`** for public OAuth config, and **`thermo/priv/tls/`** for local TLS private key copies or symlinks if you do not mount host `/etc/letsencrypt` directly.
 - **Let’s Encrypt on the Pi** usually lives under **`/etc/letsencrypt/live/<hostname>/`** — do not copy into git; bind-mount read-only into Docker/chroot as described in `HTTPS-TRUSTED-CERT.md`.
 
 ### Makefile for TLS
@@ -94,8 +92,8 @@ Cert issuance is **interactive** (standalone certbot on :80, or DNS-01 with Duck
 After issuance, optional local copies for compose experiments:
 
 ```bash
-mkdir -p thermo/dmz/.secrets/tls
-# Then copy or symlink fullchain.pem and privkey.pem into that directory; keep .secrets/ out of git.
+mkdir -p thermo/priv/tls
+# Then copy or symlink fullchain.pem and privkey.pem into that directory.
 ```
 
 ---
@@ -110,6 +108,9 @@ Human operators use **`GOOGLE_CLIENT_ID`**, **`GOOGLE_CLIENT_SECRET`**, and an a
 
 | Asset | Role | Typical location |
 |-------|------|------------------|
-| `priv.pem` / `pub.pem` | Zone Ed25519 | `make -C thermo/dmz zone-keys` → `.secrets/zone/` |
-| LE `fullchain.pem` / `privkey.pem` | HTTPS | `/etc/letsencrypt/...` or `.secrets/tls/` copies |
-| OAuth client secret | Browser login to DMZ | env / `.secrets` / host-only file |
+| `priv.pem` | Zone Ed25519 private key | `make -C thermo/dmz zone-keys` -> `thermo/priv/zone/` |
+| `pub.pem` | Zone Ed25519 public key | `make -C thermo/dmz zone-keys` -> `thermo/config/zone/` |
+| LE `privkey.pem` | HTTPS private key | `/etc/letsencrypt/...` or `thermo/priv/tls/` copies |
+| LE `fullchain.pem` | HTTPS public cert chain | `/etc/letsencrypt/...` or committed config if useful |
+| OAuth client secret / Flask secret / allowed email | Browser login to DMZ | `thermo/priv/oauth/` or host-only env |
+| OAuth client ID | Browser login to DMZ | `thermo/config/oauth/` |
