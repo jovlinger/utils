@@ -5,9 +5,17 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+from pathlib import Path
 
 import manage
 import pytest
+
+
+def test_manage_launcher_points_to_pylauncher() -> None:
+    dmz_dir = Path(__file__).resolve().parent.parent
+    launcher = dmz_dir / "manage"
+    assert launcher.is_symlink()
+    assert launcher.readlink() == Path("../../extdeps/pylauncher.sh")
 
 
 def test_zone_without_kv_prints_help_then_state_on_stdout(
@@ -140,8 +148,8 @@ def test_no_args_prints_usage_exit_0() -> None:
         code = manage.main([])
     assert code == 0
     assert "healthz" in err.getvalue()
-    assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in err.getvalue()
-    assert "./manage.py help" in err.getvalue()
+    assert "DMZ_URL=http://your-host:5000 manage healthz" in err.getvalue()
+    assert "manage help" in err.getvalue()
 
 
 def test_help_action_prints_full_doc() -> None:
@@ -152,7 +160,7 @@ def test_help_action_prints_full_doc() -> None:
     text = out.getvalue()
     assert "CLI for the DMZ HTTP API" in text
     assert "healthz" in text
-    assert "DMZ_URL=http://your-host:5000 ./manage.py healthz" in text
+    assert "DMZ_URL=http://your-host:5000 manage healthz" in text
 
 
 def test_dash_help_is_unknown_action() -> None:

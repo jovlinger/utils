@@ -108,7 +108,7 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
-RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../bin/run-with-stdout-logged.py}"
+RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../extdeps/run-with-stdout-logged.py}"
 OUTPUT_IMG="${DMZ_OUTPUT_IMG:-$DMZ_DIR/dist/dmz.img}"
 DMZ_CONF="$DMZ_DIR/dmz.conf"
 if [ ! -f "$DMZ_CONF" ]; then
@@ -327,7 +327,7 @@ if ! command -v docker >/dev/null 2>&1; then
 	exit 1
 fi
 
-ts "[0/7] stage .docker-import (bin/run-with-stdout-logged.py)"
+ts "[0/7] stage .docker-import (extdeps/run-with-stdout-logged.py)"
 "$DMZ_DIR/stage-docker-import.sh"
 
 ts "[1/7] docker buildx (linux/arm/v6)..."

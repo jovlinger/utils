@@ -1,7 +1,9 @@
 env
 .image
-# Private env files (see config/*.env.sample templates)
+
 config/*.env
+priv/*
+
 \#*#
 */__pycache__
 .venv

@@ -18,7 +18,7 @@ Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 |------|------|
 | `Dockerfile` | Multi-stage build: Python deps (pydantic **&lt; 2** / pydantic-core from source on musl when needed) |
 | `start.sh` | Privileged setup, then drop to `dmz` with log wrapper around `run.sh` |
-| `bin/run-with-stdout-logged.py` (repo root) | Snapshotted from sister `bin` repo; staged into `.docker-import/` before image build. Refresh: `make -C bin all` |
+| `extdeps/run-with-stdout-logged.py` (repo root) | Snapshotted from sister `bin` repo; staged into `.docker-import/` before image build. Refresh: `make -C extdeps all` |
 | `run.sh` | Always `pytest -q test` on `test/`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
 | `app.py` | Flask API |
 | `requirements.txt` | Runtime deps including **`requests`** (for **`manage.py`**) and **`pytest`** for in-container tests; **`requirements-dev.txt`** includes the same set for host venv (`-r requirements.txt`) |

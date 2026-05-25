@@ -1,7 +1,7 @@
 .PHONY: all clean test test-local test-docker runlocal zone-keys
 
-# Log wrapper: ../../bin/run-with-stdout-logged.py. Refresh: make -C ../../bin all
-RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
+# Log wrapper: ../../extdeps/run-with-stdout-logged.py. Refresh: make -C ../../extdeps all
+RUN_WITH_BIN := $(abspath $(CURDIR)/../../extdeps/run-with-stdout-logged.py)
 
 all: .image
 

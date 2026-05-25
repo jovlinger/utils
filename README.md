@@ -13,11 +13,11 @@ Shared shell helpers live in **`lib/`** (e.g. **`lib/venv-resolve.sh`**).
 
 Examples:
 
-- `utils/thermo/dmz/manage.py` → use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
+- `utils/thermo/dmz/manage` -> use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
 - `utils/shadup/ingest.sh` → use **`utils/shadup/.venv`**.
-- `bin/pylauncher.sh` → use **`bin/.venv`**.
+- `extdeps/pylauncher.sh` -> launch through the caller script's local `.venv/` or legacy `env/`.
 
-If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, `./manage.py` will run with the **wrong** Python and miss project deps (e.g. `cryptography`). **`deactivate`**, then **`source thermo/dmz/.venv/bin/activate`**.
+If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, run `manage` through its launcher or deactivate before using `./manage.py` directly.
 
 Legacy **`env/`** directories (older thermo layout) are migrated to **`.venv/`** automatically the next time you run **`create_pipenv.sh`** on that project.
 
@@ -48,13 +48,11 @@ done
 
 Nested deps (e.g. `esp32/volctrl/requirements.txt`): create `.venv` in that subpath manually.
 
-## Use a project venv
+## Use a project launcher
 
 ```bash
-cd thermo/dmz
-source .venv/bin/activate
-./manage.py healthz
-deactivate
+PATH="$PWD/thermo/dmz:$PATH"
+manage healthz
 ```
 
 Scripts can source **`lib/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.

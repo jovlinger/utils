@@ -13,7 +13,12 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 CMD_NAME="$(basename "$0")"
 VENV_DIR="$SCRIPT_DIR/.venv"
+LEGACY_VENV_DIR="$SCRIPT_DIR/env"
 SETUP_VENV="$SCRIPT_DIR/setup-venv.sh"
+
+if [ ! -f "$VENV_DIR/bin/activate" ] && [ -f "$LEGACY_VENV_DIR/bin/activate" ]; then
+  VENV_DIR="$LEGACY_VENV_DIR"
+fi
 
 read_min_python_version() {
   MIN_MAJOR=3

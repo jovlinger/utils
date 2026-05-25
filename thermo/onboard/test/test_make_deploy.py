@@ -6,9 +6,9 @@ Drive commands via :func:`mock_cmd_path`: symlink fixture ``test/bin/git``,
 ``make deploy`` against a fixture repo tree.
 
 Layout: ``run-with-stdout-logged.py`` / ``mock_cmd.py`` are snapshotted under
-``bin/`` at the utils repo root (refresh: ``make -C bin all`` from repo root).
+``extdeps/`` at the utils repo root (refresh: ``make -C extdeps all`` from repo root).
 ``Makefile`` ``RUN_WITH_BIN`` / ``stage-docker-import.sh`` use
-``../../bin/run-with-stdout-logged.py`` from ``thermo/onboard``.
+``../../extdeps/run-with-stdout-logged.py`` from ``thermo/onboard``.
 
 mock_cmd matches invocations by exact ``cmd + args`` string (see ``MOCK_FILE`` JSON).
 Tests register expectations via ``set_mock`` (imported), not ``--mock_match``, because
@@ -36,12 +36,12 @@ def _utils_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
-def thermo_bin_repo_dependencies_dir() -> Path:
-    return (_utils_root() / "bin").resolve()
+def thermo_extdeps_dir() -> Path:
+    return (_utils_root() / "extdeps").resolve()
 
 
 def mock_cmd_path() -> Path:
-    return thermo_bin_repo_dependencies_dir() / "mock_cmd.py"
+    return thermo_extdeps_dir() / "mock_cmd.py"
 
 
 def onboard_dir() -> Path:
@@ -49,8 +49,8 @@ def onboard_dir() -> Path:
 
 
 @contextmanager
-def thermo_bin_repo_first_on_path() -> Iterator[None]:
-    bin_dir = str(thermo_bin_repo_dependencies_dir())
+def thermo_extdeps_first_on_path() -> Iterator[None]:
+    bin_dir = str(thermo_extdeps_dir())
     old = os.environ.get("PATH")
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{old or ''}"
     try:
@@ -109,23 +109,23 @@ _DEPLOY_EXPECTED_INVOCATIONS: Tuple[Tuple[str, ...], ...] = (
 )
 
 
-def test_thermo_bin_repo_dependencies_dir() -> None:
+def test_thermo_extdeps_dir() -> None:
     utils = _utils_root()
-    expected = (utils / "bin").resolve()
-    assert thermo_bin_repo_dependencies_dir() == expected
+    expected = (utils / "extdeps").resolve()
+    assert thermo_extdeps_dir() == expected
 
 
-def test_thermo_bin_repo_first_on_path_restores_path() -> None:
+def test_thermo_extdeps_first_on_path_restores_path() -> None:
     old = os.environ.get("PATH")
-    with thermo_bin_repo_first_on_path():
+    with thermo_extdeps_first_on_path():
         head = os.environ["PATH"].split(os.pathsep, 1)[0]
-        assert head == str(thermo_bin_repo_dependencies_dir())
+        assert head == str(thermo_extdeps_dir())
     assert os.environ.get("PATH") == old
 
 
 @pytest.mark.skipif(
     not mock_cmd_path().is_file(),
-    reason=f"sister bin repo missing mock_cmd.py (expected {mock_cmd_path()})",
+    reason=f"extdeps missing mock_cmd.py (expected {mock_cmd_path()})",
 )
 def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
     mpy = mock_cmd_path()

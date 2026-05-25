@@ -14,7 +14,7 @@ CLI argument.
 Usage:
   DMZ_URL=http://host:5000   # or host:5000 (treated as http://…)
   ZONE_PRIVATE_KEY_PATH=... \\
-    python manage.py <action> [args...]
+    manage <action> [args...]
 
 Optional: ZONE_NAME — only needed when it differs from the zone you pass on
 the command line (``command``/``sensors``/``updatezone``). Omit for ``zones``,
@@ -35,33 +35,33 @@ Actions (first arg) map to app routes:
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. mode=HEAT temp_c=22 power=true).
 
-python manage.py zones
+manage zones
 One zone: dump current zone JSON (from GET /zones, then print that entry)
 
-python manage.py updatezone myzone
+manage updatezone myzone
 One zone: merge key=value into that zone’s command and POST
 
-python manage.py updatezone myzone power=true mode=HEAT half_c=45 fan=F4
+manage updatezone myzone power=true mode=HEAT half_c=45 fan=F4
 
 Direct POSTs (body is either key=value pairs or one JSON object string)
 
-python manage.py sensors myzone temp_centigrade=20.5
-python manage.py command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage sensors myzone temp_centigrade=20.5
+manage command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
 OAuth helpers (browser-oriented; no zone signing)
 
-python manage.py login
-python manage.py authorize
-python manage.py logout
+manage login
+manage authorize
+manage logout
 Debug logs
 
-python manage.py healthz
-  DMZ_URL=http://your-host:5000 ./manage.py healthz
-python manage.py debug_logs
+manage healthz
+  DMZ_URL=http://your-host:5000 manage healthz
+manage debug_logs
 # same as:
-python manage.py logs
+manage logs
 Test reset (unsigned; testing)
 
-python manage.py test_reset
+manage test_reset
 Machine auth: one Ed25519 keypair for the whole DMZ (``ZONE_PRIVATE_KEY`` or
 ``ZONE_PRIVATE_KEY_PATH``). Zone-scoped actions take the zone name as a CLI arg.
 
@@ -118,14 +118,14 @@ def _print_help() -> int:
 
 def _usage() -> int:
     print(
-        "usage: manage.py "
+        "usage: manage "
         "{help|login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
         file=sys.stderr,
     )
     print(
         "Set DMZ_URL to the DMZ base. Example:\n"
-        "  DMZ_URL=http://your-host:5000 ./manage.py healthz\n"
-        "Run ./manage.py help for full documentation.",
+        "  DMZ_URL=http://your-host:5000 manage healthz\n"
+        "Run manage help for full documentation.",
         file=sys.stderr,
     )
     return 0
@@ -268,7 +268,7 @@ def _cryptography_install_hint() -> str:
                 f"  rm -rf {os.path.join(SCRIPT_DIR, '.venv')}",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                f"  manage ...",
             ]
         )
         return "\n".join(lines)
@@ -279,7 +279,7 @@ def _cryptography_install_hint() -> str:
                 f"  deactivate                    # drop bin/.venv if active",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                f"  manage ...",
                 "",
             ]
         )
@@ -296,7 +296,7 @@ def _cryptography_install_hint() -> str:
                 "Create the project venv first:",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                f"  manage ...",
             ]
         )
     return "\n".join(lines)
@@ -561,7 +561,7 @@ def _updatezone_help_message() -> str:
     pretty = json.dumps(example, indent=2, sort_keys=True)
     pretty_kv = _flat_dict_as_updatezone_kv_args(example)
     return (
-        "usage: manage.py updatezone <zone> key=value ...\n"
+        "usage: manage updatezone <zone> key=value ...\n"
         "\n"
         "Merges each key=value into the zone's command dict and POSTs it. Key names match "
         "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
@@ -572,7 +572,7 @@ def _updatezone_help_message() -> str:
         f"{pretty}\n"
         "\n"
         "Same payload as one line of flat key=value args:\n"
-        f"  manage.py updatezone <zone> {pretty_kv}\n"
+        f"  manage updatezone <zone> {pretty_kv}\n"
         "\n"
         "Note: from_json() also accepts temp_c (°C) instead of half_c. "
         "mode: AUTO, DRY, COOL, HEAT, FAN. fan: F1..F5, AUTO, SILENT."

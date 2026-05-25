@@ -1,16 +1,16 @@
 # Manually refreshed snapshots from the sister `bin` repo (no submodules).
 #
-# Files in *this* ``utils/bin/`` are committed copies. Default source checkout:
+# Files in *this* ``utils/extdeps/`` are committed copies. Default source checkout:
 # ``../../bin`` = sibling of ``utils/`` (``.../jovlinger/utils`` + ``.../jovlinger/bin``).
 #
-#   make -C bin all
+#   make -C extdeps all
 #
 # Override:
 #
-#   make -C bin BIN_REPO=/path/to/bin all
+#   make -C extdeps BIN_REPO=/path/to/bin all
 #
-# Thermo references ``../../bin/run-with-stdout-logged.py`` from ``thermo/onboard``.
-# ``utils/*/`` launchers (e.g. ``shadup``) symlink ``../bin/pylauncher.sh``.
+# Thermo references ``../../extdeps/run-with-stdout-logged.py`` from ``thermo/onboard``.
+# ``utils/*/`` launchers (e.g. ``shadup``) symlink ``../extdeps/pylauncher.sh``.
 #
 # Why not requirements.txt (yet): Docker builds COPY these files from the repo
 # tree into image context; pip installs into site-packages, not a stable path for
@@ -29,9 +29,9 @@ VERSION := $(CURDIR)/VERSION
 
 .PHONY: all
 all:
-	@test -f "$(SRC_RUN)" || (echo "bin: missing $(SRC_RUN)" >&2; echo "  Clone bin next to utils or: make BIN_REPO=/path/to/bin all" >&2; exit 1)
-	@test -f "$(SRC_MOCK)" || (echo "bin: missing $(SRC_MOCK)" >&2; echo "  Clone bin next to utils or: make BIN_REPO=/path/to/bin all" >&2; exit 1)
-	@test -f "$(SRC_PYLAUNCHER)" || (echo "bin: missing $(SRC_PYLAUNCHER)" >&2; echo "  Clone bin next to utils or: make BIN_REPO=/path/to/bin all" >&2; exit 1)
+	@test -f "$(SRC_RUN)" || (echo "extdeps: missing $(SRC_RUN)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
+	@test -f "$(SRC_MOCK)" || (echo "extdeps: missing $(SRC_MOCK)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
+	@test -f "$(SRC_PYLAUNCHER)" || (echo "extdeps: missing $(SRC_PYLAUNCHER)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
 	cp -p "$(SRC_RUN)" "$(DST_RUN)"
 	cp -p "$(SRC_MOCK)" "$(DST_MOCK)"
 	cp -p "$(SRC_PYLAUNCHER)" "$(DST_PYLAUNCHER)"
