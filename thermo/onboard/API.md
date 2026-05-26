@@ -2,7 +2,7 @@
 
 ## Flask app (port `PORT`, default 5000)
 
-Import the WSGI/Flask instance as **`app`** from **`app`** after adding `thermo/onboard` to `PYTHONPATH`. Daikin command JSON maps to **`State`** in **`heatpumpirctl`** (`heatpumpirctl.State`, `State.from_json`, `State.to_json`). Static help text is in **`constants.help_msg`** (`constants`).
+For the Pi Zero 2 W backend, import the WSGI/Flask instance as **`app`** from **`hardware.pizero2w.app`** after adding `thermo/onboard` to `PYTHONPATH`. Daikin command JSON maps to **`State`** in **`common.heatpumpirctl`** (`State.from_json`, `State.to_json`). Static help text is in **`common.constants.help_msg`**.
 
 ---
 

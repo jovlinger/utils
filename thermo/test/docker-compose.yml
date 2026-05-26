@@ -21,7 +21,7 @@ services:
     image: ghcr.io/jovlinger/thermo-onboard-app:latest
     build:
       context: ../onboard
-      dockerfile: Dockerfile.onboard
+      dockerfile: hardware/pizero2w/Dockerfile.onboard
     environment:
       ENV: DOCKERTEST
       PORT: "5000"
@@ -37,7 +37,7 @@ services:
     image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
     build:
       context: ../onboard
-      dockerfile: Dockerfile.twoway
+      dockerfile: hardware/pizero2w/Dockerfile.twoway
     environment:
       ENV: DOCKERTEST
       ONBOARD_URL: http://onboard:5000

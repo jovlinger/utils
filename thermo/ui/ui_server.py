@@ -400,7 +400,7 @@ def render_template(
     selected_zone: str,
     msg: str = "",
 ) -> str:
-    from heatpumpirctl import Fan, Mode, State
+    from common.heatpumpirctl import Fan, Mode, State
 
     def opt(val: str, sel: str) -> str:
         c = " selected" if val == sel else ""
@@ -492,7 +492,7 @@ def render_template(
 
 
 def _state_for_zone(ctx: Optional[Dict[str, Any]], zone: str) -> Any:
-    from heatpumpirctl import State
+    from common.heatpumpirctl import State
 
     default = State()
     if not ctx or not isinstance(ctx.get("zone_states"), dict):
@@ -551,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
-            from heatpumpirctl import State
+            from common.heatpumpirctl import State
 
             cookie_header = (self.headers.get("Cookie") or "").strip() or None
             ctx, code = _fetch_ui_context_json(cookie_header)
@@ -616,7 +616,7 @@ class Handler(BaseHTTPRequestHandler):
                     ui_zone = zones[0] if zones else "default"
                 cmd = _form_to_command(form)
                 msg = self._post_ui_command(ui_zone, cmd, cookie_header=cookie_header)
-                from heatpumpirctl import State
+                from common.heatpumpirctl import State
 
                 state = State.from_json(cmd)
                 ctx2, _ = _fetch_ui_context_json(cookie_header)

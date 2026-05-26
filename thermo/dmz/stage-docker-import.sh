@@ -17,15 +17,15 @@ if [ ! -f "$SRC" ]; then
 fi
 cp "$SRC" "$DST"
 
-HP_SRC="$DMZ/../onboard/heatpumpirctl"
-HP_DST="$DMZ/.docker-import/heatpumpirctl"
-if [ ! -d "$HP_SRC" ]; then
-	echo "dmz: missing heatpumpirctl: $HP_SRC" >&2
+COMMON_SRC="$DMZ/../onboard/common"
+COMMON_DST="$DMZ/.docker-import/common"
+if [ ! -d "$COMMON_SRC" ]; then
+	echo "dmz: missing onboard common package: $COMMON_SRC" >&2
 	exit 1
 fi
-rm -rf "$HP_DST"
-mkdir -p "$HP_DST"
-cp -R "$HP_SRC"/. "$HP_DST/"
+rm -rf "$COMMON_DST"
+mkdir -p "$COMMON_DST"
+cp -R "$COMMON_SRC"/. "$COMMON_DST/"
 
 UI_SRC="$DMZ/../ui"
 UI_DST="$DMZ/.docker-import/ui"

@@ -22,4 +22,4 @@ if [ "${THERMO_UI_DISABLE:-0}" != "1" ]; then
 		python ui/ui_server.py &
 fi
 exec python ./bin/run-with-stdout-logged.py "$LOG_PATH_APP" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-	python app.py
+	python -m hardware.pizero2w.app

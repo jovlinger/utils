@@ -1,9 +1,9 @@
 # Pi Zero 2 W: arm64 or armhf. GHCR: ghcr.io/jovlinger/thermo-onboard-app
 # App + thermo/ui (twoway is a separate image).
-# Local: docker build -f Dockerfile.onboard -t ghcr.io/jovlinger/thermo-onboard-app .
+# Local from thermo/onboard: make build
 #
 # !!! ARCHITECTURE NOTE !!!
-# Production target is Pi Zero 2 W (default linux/arm/v7 — see ../onboard/Makefile PLATFORM).
+# Production target is Pi Zero 2 W (default linux/arm/v7; see this directory's Makefile).
 # Do NOT pin a platform in the FROM line below (no `FROM --platform=...`); the platform must come
 # from `docker buildx build --platform` so the Makefile / CI can pick it.
 
@@ -21,8 +21,8 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY .docker-import/ui/ /app/ui/
 COPY . .
-RUN chmod +x /app/bin/run-with-stdout-logged.py /app/docker-entrypoint-onboard.sh
+RUN chmod +x /app/bin/run-with-stdout-logged.py /app/hardware/pizero2w/docker-entrypoint-onboard.sh
 
 EXPOSE 5000 8080 80
 
-CMD ["./docker-entrypoint-onboard.sh"]
+CMD ["./hardware/pizero2w/docker-entrypoint-onboard.sh"]

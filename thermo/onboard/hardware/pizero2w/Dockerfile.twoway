@@ -1,8 +1,8 @@
 # Twoway sync only. GHCR: ghcr.io/jovlinger/thermo-onboard-twoway
-# Local: docker build -f Dockerfile.twoway -t ghcr.io/jovlinger/thermo-onboard-twoway .
+# Local from thermo/onboard: make build
 #
 # !!! ARCHITECTURE NOTE !!!
-# Production target is Pi Zero 2 W (default linux/arm/v7 — see ../onboard/Makefile PLATFORM).
+# Production target is Pi Zero 2 W (default linux/arm/v7; see this directory's Makefile).
 # Do NOT pin a platform in the FROM line below (no `FROM --platform=...`); the platform must come
 # from `docker buildx build --platform` so the Makefile / CI can pick it.
 
@@ -19,13 +19,11 @@ COPY .docker-import/run-with-stdout-logged.py /app/bin/run-with-stdout-logged.py
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY twoway.py zone_auth.py connectivity_watchdog.py logging_config.py \
-    docker-entrypoint-twoway.sh docker-entrypoint-watchdog.sh ./
-COPY heatpumpirctl/ ./heatpumpirctl/
 COPY common/ ./common/
 COPY hardware/ ./hardware/
 
 RUN chmod +x /app/bin/run-with-stdout-logged.py \
-    /app/docker-entrypoint-twoway.sh /app/docker-entrypoint-watchdog.sh
+    /app/hardware/pizero2w/docker-entrypoint-twoway.sh \
+    /app/hardware/pizero2w/docker-entrypoint-watchdog.sh
 
-CMD ["./docker-entrypoint-twoway.sh"]
+CMD ["./hardware/pizero2w/docker-entrypoint-twoway.sh"]

@@ -15,7 +15,7 @@ from common import jsonT
 from common.logging_config import configure_logging, format_kv
 
 configure_logging("twoway")
-# Example: 2026-05-17T13:40:23.905Z INFO twoway twoway:45 start argv=['twoway.py', 'http://…', …]
+# Example: 2026-05-17T13:40:23.905Z INFO twoway twoway:45 start argv=['common.twoway', 'http://...', ...]
 logger = logging.getLogger(__name__)
 
 
@@ -110,8 +110,7 @@ def _probe_signing(zone_name: str, key_ref: Optional[str]) -> None:
     except FileNotFoundError as e:
         logger.error(
             "zone auth MISCONFIGURED: private key file not found. "
-            "Bind-mount it into the container; see "
-            "thermo/onboard/hardware/pizero2w/install/docker-compose.yml.%s",
+            "Bind-mount it into the container or set ZONE_PRIVATE_KEY_PATH.%s",
             format_kv(key_ref=key_ref, error=str(e)),
         )
         return
@@ -334,8 +333,7 @@ def _explain_dmz_failure(status: int, signed: bool) -> str:
         return (
             "DMZ requires zone auth and we sent NO signature headers (401). Set "
             "ZONE_PRIVATE_KEY_PATH and bind-mount the priv key into the twoway container "
-            "(see thermo/onboard/hardware/pizero2w/install/docker-compose.yml "
-            "+ thermo/KEYS-AND-CERTS.md)."
+            "(see the selected hardware backend compose file and thermo/KEYS-AND-CERTS.md)."
         )
     if status == 403:
         return f"DMZ accepted the signature but forbade the action (403). Check zone allowlist."

@@ -120,7 +120,7 @@ services:
     restart: unless-stopped
     depends_on:
       - onboard
-    entrypoint: ["/app/docker-entrypoint-watchdog.sh"]
+    entrypoint: ["/app/hardware/pizero2w/docker-entrypoint-watchdog.sh"]
     logging:
       driver: "none"
     volumes:

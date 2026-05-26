@@ -15,4 +15,4 @@ export CONNECTIVITY_LOG_PATH="$LOG_PATH"
 export TWOWAY_LOG_PATH="${TWOWAY_LOG_PATH:-$LOG_DIR/twoway.log}"
 
 exec python ./bin/run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-  python connectivity_watchdog.py
+  python -m hardware.pizero2w.connectivity_watchdog

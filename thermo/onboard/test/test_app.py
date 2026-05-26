@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-import app
-import constants
-from heatpumpirctl import State
+from common.constants import help_msg
+from common.heatpumpirctl import State
+from hardware.pizero2w import app
 
 
 def equalish(a: object, b: object) -> bool:
@@ -39,7 +39,7 @@ def equalish_float(a: float, b: object) -> bool:
 def test_help() -> None:
     """Test using local call."""
     msg = app.help().get("msg")
-    assert constants.help_msg == msg
+    assert help_msg == msg
 
 
 def test_get_daikin_empty_queue_shows_last_applied_default() -> None:

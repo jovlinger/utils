@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deployment_config import (
+from common.deployment_config import (
     DEFAULT_HARDWARE_PROFILE,
     DEFAULT_IR_DEVICE,
     DEFAULT_IR_TRANSPORT,

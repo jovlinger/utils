@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import requests
 
-import connectivity_watchdog
-from connectivity_watchdog import (
+from hardware.pizero2w import connectivity_watchdog
+from hardware.pizero2w.connectivity_watchdog import (
     check_http_reachable,
     decode_pi_throttled,
     parse_measure_temp_line,

@@ -5,7 +5,7 @@ This is the main export of the onboard project, and the flask app.pyy
 is just a stub api for it.
 
 This library will require system libraries like i2c to be installed,
-and hopefully described in onboard/README.md
+and hopefully described in hardware/pizero2w/README.md
 """
 
 from __future__ import annotations

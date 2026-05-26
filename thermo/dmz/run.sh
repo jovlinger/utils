@@ -128,7 +128,7 @@ if [ ! -f "$UI_SERVER_PATH" ]; then
 	UI_SERVER_PATH="$APP_ROOT/../ui/ui_server.py"
 fi
 if [ -f "$UI_SERVER_PATH" ]; then
-	if [ -d "$APP_ROOT/heatpumpirctl" ]; then
+	if [ -d "$APP_ROOT/common" ]; then
 		export PYTHONPATH="${APP_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 	else
 		export PYTHONPATH="${APP_ROOT}:${APP_ROOT}/../onboard${PYTHONPATH:+:$PYTHONPATH}"
