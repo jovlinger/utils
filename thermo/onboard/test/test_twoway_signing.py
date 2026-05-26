@@ -12,6 +12,7 @@ These tests catch the regression from 2026-04-19, where twoway silently shipped 
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -112,6 +113,32 @@ def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     ), f"expected key_sha256={expected_fp}; got:\n{log}"
     assert "zone='testzone'" in log or "zone=testzone" in log
     assert "DISABLED" not in log
+    assert "MISCONFIGURED" not in log
+
+
+def test_inline_base64_private_key_env_emits_enabled() -> None:
+    """ZONE_PRIVATE_KEY accepts one-line base64 DER, matching operator env files."""
+    sys.path.insert(0, str(_ONBOARD))
+    from cryptography.hazmat.primitives import serialization
+    from common.zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
+
+    priv_pem, _pub_pem = generate_keypair()
+    priv = _load_private_key(priv_pem.decode())
+    priv_der = priv.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    inline_key = base64.b64encode(priv_der).decode()
+    expected_fp = public_key_fingerprint(_load_private_key(inline_key))
+
+    out, errlog, rc = _run_twoway({"ZONE_PRIVATE_KEY": inline_key})
+    assert rc == 0, f"twoway boot failed: rc={rc}\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
+    log = out + errlog
+    assert "zone auth ENABLED" in log, f"expected ENABLED line; got:\n{log}"
+    assert (
+        f"key_sha256='{expected_fp}'" in log or f"key_sha256={expected_fp}" in log
+    ), f"expected key_sha256={expected_fp}; got:\n{log}"
     assert "MISCONFIGURED" not in log
 
 

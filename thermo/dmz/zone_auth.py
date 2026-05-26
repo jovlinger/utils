@@ -8,6 +8,7 @@ Payload: method + path + timestamp + body_hash (SHA256 of raw body).
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import os
 import time
@@ -37,14 +38,30 @@ _ZONE_KEY_HINT = (
 
 
 def _read_key_bytes(path_or_pem: str) -> bytes:
-    if path_or_pem.strip().startswith("-----"):
-        return (
-            path_or_pem.encode()
-            if isinstance(path_or_pem, str)
-            else path_or_pem
-        )
-    with open(path_or_pem, "rb") as f:
+    key_ref = path_or_pem.strip()
+    if key_ref.startswith("-----"):
+        return key_ref.encode() if isinstance(key_ref, str) else key_ref
+    path = os.path.expanduser(key_ref)
+    if not os.path.exists(path):
+        decoded = _decode_inline_base64_key(key_ref)
+        if decoded is not None:
+            return decoded
+    with open(path, "rb") as f:
         return f.read()
+
+
+def _decode_inline_base64_key(key_ref: str) -> Optional[bytes]:
+    """Decode one-line base64 key material from env vars, not arbitrary paths."""
+    compact = "".join(key_ref.split())
+    if not compact:
+        return None
+    try:
+        decoded = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(decoded) == 32 or decoded.startswith(b"0"):
+        return decoded
+    return None
 
 
 def _looks_like_ssh_login_key(path_or_pem: str) -> bool:
@@ -106,6 +123,19 @@ def _load_private_key(path_or_pem: str) -> "Ed25519PrivateKey":
                 "zone machine auth requires an Ed25519 private key. " + _ZONE_KEY_HINT
             )
         return key
+    if data.startswith(b"0"):
+        try:
+            key = serialization.load_der_private_key(data, password=None)
+        except Exception as exc:
+            raise ValueError(
+                "could not load DER private key (expected base64 PKCS8 from `make zone-keys`). "
+                + _ZONE_KEY_HINT
+            ) from exc
+        if not isinstance(key, Ed25519PrivateKey):
+            raise ValueError(
+                "zone machine auth requires an Ed25519 private key. " + _ZONE_KEY_HINT
+            )
+        return key
     return Ed25519PrivateKey.from_private_bytes(data)
 
 
@@ -116,18 +146,22 @@ def _load_public_key(path_or_pem: str) -> "Ed25519PublicKey":
             "cryptography not installed; install with: python -m pip install cryptography "
             "(use the same python that runs manage.py — see manage.py signing error for details)"
         )
-    if path_or_pem.strip().startswith("-----"):
+    key_ref = path_or_pem.strip()
+    if key_ref.startswith("-----"):
         from cryptography.hazmat.primitives import serialization
 
         return serialization.load_pem_public_key(
-            path_or_pem.encode() if isinstance(path_or_pem, str) else path_or_pem
+            key_ref.encode() if isinstance(key_ref, str) else key_ref
         )
-    with open(path_or_pem, "rb") as f:
-        data = f.read()
+    data = _read_key_bytes(key_ref)
     if data.startswith(b"-----"):
         from cryptography.hazmat.primitives import serialization
 
         return serialization.load_pem_public_key(data)
+    if data.startswith(b"0"):
+        from cryptography.hazmat.primitives import serialization
+
+        return serialization.load_der_public_key(data)
     return Ed25519PublicKey.from_public_bytes(data)
 
 

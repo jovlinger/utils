@@ -7,6 +7,7 @@ separate test enforces the Makefile invariants so the wrapper cannot drift.
 
 from __future__ import annotations
 
+import base64
 import re
 import subprocess
 import sys
@@ -95,6 +96,30 @@ def test_gen_keys_priv_and_pub_actually_match(tmp_path: Path) -> None:
     assert not verify_request(
         "POST", "/zone/other/sensors", body, "other", sig, ts, str(out_dir / "pub.pem")
     ), "signature must be bound to method+path+zone"
+
+
+def test_sign_request_accepts_inline_base64_der_private_key() -> None:
+    """ZONE_PRIVATE_KEY may contain one-line base64 DER from a PEM body."""
+    sys.path.insert(0, str(DMZ_DIR))
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from zone_auth import generate_keypair, sign_request, verify_request
+    finally:
+        sys.path.pop(0)
+
+    priv_pem, pub_pem = generate_keypair()
+    priv = _load_pem_priv(priv_pem)
+    priv_der = priv.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    inline_key = base64.b64encode(priv_der).decode()
+    body = b"{}"
+    sig, ts, zone = sign_request("GET", "/zones", body, "cli", inline_key)
+
+    assert zone == "cli"
+    assert verify_request("GET", "/zones", body, "cli", sig, ts, pub_pem.decode())
 
 
 def test_makefile_zone_keys_target_invariants() -> None:
