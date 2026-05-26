@@ -13,7 +13,7 @@
 #   ./create_pipenv.sh thermo/dmz
 #   ./create_pipenv.sh --sync thermo/dmz
 #
-# Convention: utils/<project>/.venv (per-project). For jovlinger/bin/, use bin/setup-venv.sh → bin/.venv.
+# Convention: utils/<project>/.venv (per-project). For jovlinger/bin/, use bin/setup-venv.sh -> bin/.venv.
 # See utils/README.md.
 
 set -e
@@ -77,9 +77,13 @@ for PROJECT_REL in "$@"; do
   fi
 
   if [ -f "$LEGACY_ENV/bin/activate" ] && [ ! -f "$ENV_DIR/bin/activate" ]; then
-    echo "Migrating legacy env/ → .venv/ for $PROJECT_REL..."
+    echo "Migrating legacy env/ -> .venv/ for $PROJECT_REL..."
     mv "$LEGACY_ENV" "$ENV_DIR"
   fi
+
+  venv_has_python() {
+    [ -x "$ENV_DIR/bin/python3" ] || [ -x "$ENV_DIR/bin/python" ]
+  }
 
   # Subshell so activate does not leak into the rest of this script.
   run_pip_install() {
@@ -98,6 +102,11 @@ for PROJECT_REL in "$@"; do
       fi
     )
   }
+
+  if [ -f "$ENV_DIR/bin/activate" ] && ! venv_has_python; then
+    echo "Removing stale venv at $ENV_DIR (missing python executable)."
+    rm -rf "$ENV_DIR"
+  fi
 
   if [ -f "$ENV_DIR/bin/activate" ]; then
     if [ "$SYNC" -eq 1 ]; then

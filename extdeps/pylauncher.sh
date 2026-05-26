@@ -9,9 +9,24 @@ case "$SELF" in
   */*) ;;
   *) SELF="$(command -v "$SELF")" ;;
 esac
-# If invoked via $PATH, resolve the real file so we can locate the repo root.
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 CMD_NAME="$(basename "$0")"
+
+# A PATH directory can expose binlinks/foo -> project/foo. Follow only that
+# outer shim so the project-local launcher still defines the venv location.
+if [ -L "$SELF" ]; then
+  LINK_TARGET=$(readlink "$SELF" 2>/dev/null || true)
+  if [ -n "$LINK_TARGET" ]; then
+    case "$LINK_TARGET" in
+      /*) TARGET_PATH="$LINK_TARGET" ;;
+      *) TARGET_PATH="$SCRIPT_DIR/$LINK_TARGET" ;;
+    esac
+    if [ "$(basename "$TARGET_PATH")" = "$CMD_NAME" ]; then
+      TARGET_DIR="$(cd "$(dirname "$TARGET_PATH")" && pwd)"
+      SCRIPT_DIR="$TARGET_DIR"
+    fi
+  fi
+fi
 VENV_DIR="$SCRIPT_DIR/.venv"
 LEGACY_VENV_DIR="$SCRIPT_DIR/env"
 SETUP_VENV="$SCRIPT_DIR/setup-venv.sh"
@@ -36,9 +51,9 @@ read_min_python_version() {
 }
 
 venv_python_bin() {
-  if [ -x "$VENV_DIR/bin/python3" ] || [ -L "$VENV_DIR/bin/python3" ]; then
+  if [ -x "$VENV_DIR/bin/python3" ]; then
     echo "$VENV_DIR/bin/python3"
-  elif [ -x "$VENV_DIR/bin/python" ] || [ -L "$VENV_DIR/bin/python" ]; then
+  elif [ -x "$VENV_DIR/bin/python" ]; then
     echo "$VENV_DIR/bin/python"
   else
     return 1

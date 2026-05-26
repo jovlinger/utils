@@ -14,8 +14,12 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 
 if [ -f "$VENV_DIR/bin/activate" ]; then
-  echo "Venv already exists at $VENV_DIR."
-  exit 0
+  if [ -x "$VENV_DIR/bin/python3" ] || [ -x "$VENV_DIR/bin/python" ]; then
+    echo "Venv already exists at $VENV_DIR."
+    exit 0
+  fi
+  echo "Removing stale venv at $VENV_DIR (missing python executable)."
+  rm -rf "$VENV_DIR"
 fi
 
 # Need Python >= 3.10 (shadup.py uses PEP 604 "X | None" syntax).
