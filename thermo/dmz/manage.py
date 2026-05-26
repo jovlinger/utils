@@ -30,7 +30,7 @@ Actions (first arg) map to app routes:
   debug_logs | logs             — GET /debug/logs
   test_reset [json]             — POST /test_reset (unsigned; testing only)
   updatezone <zone> key=val...  — GET /zones, merge key=val into command, POST command
-    (see onboard heatpumpirctl.State; run updatezone with no args for a full JSON example)
+    (see common.heatpumpirctl.State; run updatezone with no args for a full JSON example)
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. mode=HEAT temp_c=22 power=true).
@@ -85,11 +85,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-# Repo layout: thermo/dmz/manage.py → thermo/onboard/heatpumpirctl (State)
+# Repo layout: thermo/dmz/manage.py -> thermo/onboard/common/heatpumpirctl (State)
 _ONBOARD_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "onboard"))
 
-# When heatpumpirctl is not importable (e.g. DMZ Docker image has no onboard tree), help text
-# still matches State.to_json() for the same builder chain — keep in sync with onboard.
+# When common.heatpumpirctl is not importable, help text still matches
+# State.to_json() for the same builder chain. Keep in sync with onboard.
 _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "power": True,
     "mode": "HEAT",
@@ -514,11 +514,11 @@ def _emit(status: int, body: Union[dict, list, str, None]) -> int:
 
 
 def _onboard_state_example_dict() -> Dict[str, Any]:
-    """Fully-populated onboard heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
+    """Fully-populated common.heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
     if _ONBOARD_ROOT not in sys.path:
         sys.path.insert(0, _ONBOARD_ROOT)
     try:
-        from heatpumpirctl import Fan, Mode, State
+        from common.heatpumpirctl import Fan, Mode, State
     except ImportError:
         return dict(_FALLBACK_ONBOARD_STATE_EXAMPLE)
 
@@ -564,7 +564,7 @@ def _updatezone_help_message() -> str:
         "usage: manage updatezone <zone> key=value ...\n"
         "\n"
         "Merges each key=value into the zone's command dict and POSTs it. Key names match "
-        "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
+        "common.heatpumpirctl.State.to_json() / from_json() - the same object you send as "
         '{"command": ...} to POST /daikin on the Pi. The DMZ stores the command object '
         "as JSON (7-bit ASCII strings only); onboard owns parsing and IR.\n"
         "\n"

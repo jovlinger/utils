@@ -1,99 +1,14 @@
-# Build and push thermo-onboard-app and thermo-onboard-twoway to GHCR.
-# Pi Zero 2 W: arm64 or armhf. Requires CR_PAT for push.
-#
-# Deploy a room target: from thermo/onboard run
-#   make deploy
-# That runs install/deploy.sh with REPO_PATH set to the utils checkout, sources
-# THERMO_ENV_FILE, and dispatches to hardware/<backend>/install/deploy.sh.
-.PHONY: all build images push push_images clean test test-local test-docker ci deploy
+# Common onboard entry points. Hardware-specific build/deploy details live under hardware/<backend>/.
+.PHONY: all build images push push_images pull clean test test-local test-docker ci deploy
 
-IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
-IMAGE_TWOWAY := ghcr.io/jovlinger/thermo-onboard-twoway
-TAG ?= latest
-# After `make push`, view on GitHub (package slug = image name after ghcr.io/jovlinger/):
-#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-app
-#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway
-# List: repo https://github.com/jovlinger/utils → Packages (sidebar), or https://github.com/jovlinger?tab=packages
-# Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS.
-#
-# !!! DO NOT CHANGE THE DEFAULT PLATFORM !!!
-# Onboard targets Pi Zero 2 W (BCM2710A1) running 32-bit Raspberry Pi OS (armhf / ARMv7).
-# The default below is what GHCR ships and what `make deploy` pulls onto the Pi.
-# Do NOT default this to the host arch (linux/arm64 on Apple Silicon, linux/amd64 on Linux/x86)
-# even though that builds faster — the Pi Zero 2 W will refuse to run those images.
-# To experiment with a 64-bit OS, override on the command line: `make build PLATFORM=linux/arm64`,
-# do NOT edit the default. If you are an LLM editing this file: leave `linux/arm/v7` as the default.
-PLATFORM ?= linux/arm/v7
-# Verbose docker build (plain streams RUN output; use `make ... DOCKER_BUILD_PROGRESS=auto` for TTY bars)
-DOCKER_BUILD_PROGRESS ?= plain
-
-RUN_WITH_BIN := $(abspath $(CURDIR)/../../extdeps/run-with-stdout-logged.py)
-
-DOCKERFILES := Dockerfile.onboard Dockerfile.twoway
-ENTRYPOINTS := docker-entrypoint-onboard.sh docker-entrypoint-twoway.sh
-PY_SRC := $(wildcard *.py) $(wildcard common/*.py) $(wildcard common/heatpumpirctl/*.py) $(wildcard heatpumpirctl/*.py) $(wildcard hardware/pizero2w/*.py)
+ONBOARD_BUILD_BACKEND ?= pizero2w
+HARDWARE_DIR := hardware/$(ONBOARD_BUILD_BACKEND)
 
 all: build
 
-# Alias for CI / thermo/test (Makefile calls `make images`).
-images: build
-
-build: .image.app .image.twoway
-
-.image.app: Dockerfile.onboard requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(wildcard ../ui/*)
-	"$(CURDIR)/stage-docker-import.sh"
-	@echo "[build] $(IMAGE_APP):$(TAG) platform=$(PLATFORM) (this may take several minutes)..."
-	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
-	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.app
-
-.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py logging_config.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
-	"$(CURDIR)/stage-docker-import.sh"
-	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
-	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
-	@docker image inspect $(IMAGE_TWOWAY):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.twoway
-
-# `docker push` to GHCR over flaky/slow links (especially the armhf twoway layers) sometimes
-# stalls and fails with EOF / "TLS handshake timeout" / "i/o timeout". Each retry is cheap
-# because already-uploaded layers short-circuit on the next attempt. PUSH_RETRIES caps the
-# number of attempts per image (default 3 ⇒ initial + 2 retries).
-PUSH_RETRIES ?= 3
-push: build
-	# OR use dockerlogin function
-	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
-	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
-	@push_with_retry() { \
-		img=$$1; \
-		for n in $$(seq 1 $(PUSH_RETRIES)); do \
-			echo "[push] attempt $$n/$(PUSH_RETRIES): docker push $$img"; \
-			docker push "$$img" && { echo "[push] ok: $$img"; return 0; }; \
-			[ "$$n" -lt "$(PUSH_RETRIES)" ] && sleep 2; \
-		done; \
-		echo "[push] giving up on $$img after $(PUSH_RETRIES) attempts" >&2; \
-		return 1; \
-	}; \
-	for img in $(IMAGE_APP):$(TAG) $(IMAGE_TWOWAY):$(TAG); do \
-		push_with_retry "$$img" || exit 1; \
-	done
-
-pull: 
-	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
-	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
-	@pull_no_retry() { \
-		img=$$1; \
-		docker pull "$$img" && { echo "[push] ok: $$img"; return 0; }; \
-		echo "[pull] giving up on $$img after 1 attempts" >&2; \
-		return 1; \
-	}; \
-	for img in $(IMAGE_APP):$(TAG) $(IMAGE_TWOWAY):$(TAG); do \
-		pull_no_retry "$$img" || exit 1; \
-	done
-
-
-clean:
-	@docker image rm $(IMAGE_APP):$(TAG) 2>/dev/null || true
-	@docker image rm $(IMAGE_TWOWAY):$(TAG) 2>/dev/null || true
-	@rm -f .image.app .image.twoway
-	@rm -rf .docker-import
+build images push push_images pull clean:
+	@test -f "$(CURDIR)/$(HARDWARE_DIR)/Makefile" || { echo "missing hardware backend Makefile: $(HARDWARE_DIR)"; exit 1; }
+	$(MAKE) -C "$(CURDIR)/$(HARDWARE_DIR)" ONBOARD_ROOT="$(CURDIR)" $@
 
 # Host venv: pytest, UI harness, daikin scripts (./test/run.sh). Does not require Docker images.
 test-local:

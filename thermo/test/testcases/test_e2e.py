@@ -7,8 +7,8 @@ to read sensors and send commands, then verifies commands appear in onboard.
 
 Docker images (must match ``thermo/test/docker-compose.yml`` and ``thermo/onboard/Makefile``):
 
-- ``THERMO_ONBOARD_IMAGE`` — Flask + UI (``Dockerfile.onboard``).
-- ``THERMO_ONBOARD_TWOWAY_IMAGE`` — twoway sync (``Dockerfile.twoway``).
+- ``THERMO_ONBOARD_IMAGE`` - Flask + UI (``hardware/pizero2w/Dockerfile.onboard``).
+- ``THERMO_ONBOARD_TWOWAY_IMAGE`` - twoway sync (``hardware/pizero2w/Dockerfile.twoway``).
 
 Build locally before compose: from ``thermo/onboard`` run ``make images`` (or ``make test_e2e``
 from ``thermo/test``, which invokes that). Push to GHCR: ``make push_images`` (needs ``CR_PAT``).
@@ -144,7 +144,7 @@ def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
 def _start_onboard(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5002", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
-        [sys.executable, "app.py"],
+        [sys.executable, "-m", "hardware.pizero2w.app"],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -167,7 +167,7 @@ def _start_twoway(env: dict, stderr: Any) -> subprocess.Popen:
         **env,
     }
     return subprocess.Popen(
-        [sys.executable, "twoway.py", readfrom, dmz_sensors, writeto],
+        [sys.executable, "-m", "common.twoway", readfrom, dmz_sensors, writeto],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,

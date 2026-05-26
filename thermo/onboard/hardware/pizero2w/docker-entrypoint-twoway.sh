@@ -24,4 +24,4 @@ mkdir -p "$(dirname "$LOG_PATH")"
 export LOG_PATH
 
 exec python ./bin/run-with-stdout-logged.py "$LOG_PATH" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" \
-  python twoway.py "$READ" "$DMZ_SENSORS" "$WRITE"
+  python -m common.twoway "$READ" "$DMZ_SENSORS" "$WRITE"

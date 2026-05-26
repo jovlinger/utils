@@ -4,7 +4,8 @@
 # Override: DMZ_RUN_WITH_SRC=/absolute/path/to/run-with-stdout-logged.py
 set -eu
 
-ONBOARD="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ONBOARD="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENDORED="$ONBOARD/../../extdeps/run-with-stdout-logged.py"
 SRC="${DMZ_RUN_WITH_SRC:-$VENDORED}"
 DST="$ONBOARD/.docker-import/run-with-stdout-logged.py"

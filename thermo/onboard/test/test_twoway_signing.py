@@ -1,13 +1,13 @@
 """Loud-on-misconfig smoke tests for twoway zone auth.
 
-Why subprocess and not import: ``twoway.py`` runs configuration + key probing at module
+Why subprocess and not import: ``common.twoway`` runs configuration + key probing at module
 import time (so the loud WARN/ERROR/INFO fires before any polling). Re-importing inside a
 single pytest process would leak state across tests, and we want to assert the *startup*
 log line — exactly what an operator sees when they `docker logs thermo-onboard-twoway`.
 
 These tests catch the regression from 2026-04-19, where twoway silently shipped with
 ``signing_enabled=False`` and every DMZ POST 401'd with no client-side hint as to why
-(see the thermo/onboard/twoway.py `_probe_signing` docstring).
+(see the `common.twoway` `_probe_signing` docstring).
 """
 
 from __future__ import annotations
@@ -24,12 +24,12 @@ import pytest
 _HERE = Path(__file__).resolve().parent
 _ONBOARD = _HERE.parent
 
-# Args twoway.py asserts on (URL1 URL2 URL3). Hosts/ports are intentionally unreachable so
+# Args common.twoway asserts on (URL1 URL2 URL3). Hosts/ports are intentionally unreachable so
 # the polling loop never starts a real request — we exit before `poll_forever()` runs by
 # raising in a sys.settrace hook (see _RUN_TWOWAY_BOOT below). The DMZ URL contains a
 # /zone/<name>/ segment so ZONE_NAME is auto-extracted (mirrors prod URL shape).
 _ARGV: List[str] = [
-    "twoway.py",
+    "common.twoway",
     "http://127.0.0.1:1/environment",
     "http://127.0.0.1:1/zone/testzone/sensors",
     "http://127.0.0.1:1/daikin",
@@ -43,7 +43,7 @@ _RUN_TWOWAY_BOOT = (
     "import sys, os\n"
     "sys.argv = {argv!r}\n"
     "sys.path.insert(0, {onboard!r})\n"
-    "import twoway  # noqa: F401  -- module-import side effects ARE the test\n"
+    "import common.twoway  # noqa: F401  -- module-import side effects ARE the test\n"
     "sys.exit(0)\n"
 )
 
@@ -96,7 +96,7 @@ def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     confirm both sides hold the same keypair without having to copy the key around.
     """
     sys.path.insert(0, str(_ONBOARD))
-    from zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
+    from common.zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
 
     priv_pem, _pub_pem = generate_keypair()
     priv_path = tmp_path / "priv.pem"
@@ -167,7 +167,7 @@ def test_config_summary_reflects_signing_state(
     overrides: Dict[str, str] = {}
     if key_present:
         sys.path.insert(0, str(_ONBOARD))
-        from zone_auth import generate_keypair
+        from common.zone_auth import generate_keypair
 
         priv_pem, _ = generate_keypair()
         priv_path = tmp_path / "priv.pem"
@@ -198,7 +198,7 @@ def test_dmz_body_includes_deployment_metadata() -> None:
         "import json, os, sys\n"
         f"sys.argv = {_ARGV!r}\n"
         f"sys.path.insert(0, {str(_ONBOARD)!r})\n"
-        "import twoway\n"
+        "import common.twoway as twoway\n"
         "body = twoway._env_to_dmz_body({\n"
         "    'temperature_centigrade': 19.3,\n"
         "    'humidity_percent': 41.9,\n"

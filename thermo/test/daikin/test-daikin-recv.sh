@@ -63,8 +63,8 @@ echo "DEBUG: running 2-frame ARC452A9 round-trip test..."
 rt_out="$(_timeout 10 python3 -c "
 import sys, os
 sys.path.insert(0, os.path.join('..', 'onboard'))
-from heatpumpirctl import State, Mode, Fan
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import State, Mode, Fan
+from common.heatpumpirctl import ARC452A9 as proto
 
 s = State().set_power(True).set_mode(Mode.HEAT).set_temp(22).set_fan(Fan.AUTO)
 f1, f3 = proto.dump(s)
