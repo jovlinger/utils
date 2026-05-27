@@ -34,6 +34,10 @@ After deploy, on the Pi:
 
 Rotation is handled inside the container by `run-with-stdout-logged.py` (`LOG_FILELIMIT` / `LOG_TOTALLIMIT`, default 1 MiB file / 2 MiB rotated total per stream — same idea as before).
 
+The app also exposes `GET /healthz`: basic app/deployment health, whether the
+active log path appears to be on tmpfs, and a bounded in-memory rolling log
+buffer. This endpoint lives on the Flask app container, not `twoway`.
+
 ### Preferred for SD wear reduction: host tmpfs
 
 To avoid SD card write wear, keep the existing bind mount path and mount the host log directory as `tmpfs`.

@@ -1,0 +1,69 @@
+[package]
+name = "thermo-pico2w"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "thermo-pico2w-host-check"
+path = "src/main.rs"
+required-features = ["std"]
+
+[[bin]]
+name = "status_blinky"
+path = "src/bin/status_blinky.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
+[[bin]]
+name = "ledw_status"
+path = "src/bin/ledw_status.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
+[features]
+default = ["std"]
+firmware = [
+  "dep:embassy-net",
+  "dep:cortex-m",
+  "dep:cortex-m-rt",
+  "dep:cyw43",
+  "dep:cyw43-pio",
+  "dep:embassy-executor",
+  "dep:embassy-rp",
+  "dep:embassy-sync",
+  "dep:embassy-time",
+  "dep:embassy-usb",
+  "dep:embedded-io-async",
+  "dep:embedded-hal",
+  "dep:panic-halt",
+  "dep:rp235x-hal",
+  "dep:static_cell",
+]
+std = []
+
+[dependencies]
+base64ct = { version = "1.7.3", default-features = false }
+cortex-m = { version = "0.7.7", optional = true }
+cortex-m-rt = { version = "0.7.5", optional = true }
+cyw43 = { version = "0.7.0", optional = true }
+cyw43-pio = { version = "0.10.0", optional = true }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["fast"] }
+embassy-executor = { version = "0.10.0", features = ["executor-thread", "platform-cortex-m"], optional = true }
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "dhcpv4-hostname", "dns", "medium-ethernet", "tcp", "udp"], optional = true }
+embassy-rp = { version = "0.10.0", features = ["binary-info", "critical-section-impl", "rp235xa", "time-driver", "unstable-pac"], optional = true }
+embassy-sync = { version = "0.8.0", optional = true }
+embassy-time = { version = "0.5.1", optional = true }
+embassy-usb = { version = "0.6.0", default-features = false, optional = true }
+embedded-io-async = { version = "0.7.0", optional = true }
+embedded-hal = { version = "1.0.0", optional = true }
+heapless = "0.9.3"
+panic-halt = { version = "0.2.0", optional = true }
+rp235x-hal = { version = "0.4.0", features = ["binary-info", "critical-section-impl", "rt"], optional = true }
+sha2 = { version = "0.10", default-features = false }
+static_cell = { version = "2.1.1", optional = true }

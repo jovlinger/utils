@@ -20,7 +20,9 @@ from common.heatpumpirctl import State
 from common.logging_config import (
     configure_logging,
     format_kv,
+    get_log_buffer_capacity,
     get_log_level,
+    get_recent_log_messages,
     set_log_level,
 )
 from hardware.pizero2w.anavilib import HTU21D, send_daikin_state
@@ -74,6 +76,46 @@ def _state_snapshot() -> Dict[str, Any]:
             "PORT": os.environ.get("PORT"),
             "DMZ_URL": os.environ.get("DMZ_URL"),
         },
+    }
+
+
+def _active_log_path() -> Optional[str]:
+    return os.environ.get("LOG_PATH") or os.environ.get("LOG_PATH_APP")
+
+
+def _mount_info_for_path(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return {"path": None, "available": False, "is_tmpfs": None}
+    real_path = os.path.realpath(path)
+    probe_path = real_path if os.path.exists(real_path) else os.path.dirname(real_path)
+    best: Dict[str, Any] = {}
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as f:
+            for raw in f:
+                parts = raw.rstrip("\n").split(" ")
+                if " - " not in raw or len(parts) < 10:
+                    continue
+                sep = parts.index("-")
+                mount_point = parts[4].replace("\\040", " ")
+                fs_type = parts[sep + 1]
+                if probe_path == mount_point or probe_path.startswith(mount_point.rstrip("/") + "/"):
+                    if len(mount_point) > len(best.get("mount_point", "")):
+                        best = {
+                            "mount_point": mount_point,
+                            "fs_type": fs_type,
+                        }
+    except OSError:
+        best = {}
+
+    fs_type = best.get("fs_type")
+    tmpfs_like_prefix = real_path.startswith(("/run/", "/tmp/", "/dev/shm/"))
+    return {
+        "path": path,
+        "real_path": real_path,
+        "available": True,
+        "mount_point": best.get("mount_point"),
+        "fs_type": fs_type,
+        "is_tmpfs": bool(fs_type == "tmpfs" or (fs_type is None and tmpfs_like_prefix)),
     }
 
 
@@ -338,6 +380,37 @@ def logs():
         return {"lines": list(reversed(tail))}
     except OSError:
         return {"lines": []}, 200
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Basic onboard app health plus recent in-memory log messages."""
+    try:
+        limit = int(request.args.get("n", "50"))
+    except ValueError:
+        limit = 50
+    limit = max(0, min(limit, get_log_buffer_capacity()))
+    log_path = _active_log_path()
+    snapshot = _state_snapshot()
+    return {
+        "ok": True,
+        "service": "onboard-app",
+        "hardware_backend": "pizero2w",
+        "time": snapshot["time"],
+        "pid": snapshot["pid"],
+        "log_level": snapshot["log_level"],
+        "deployment": snapshot["deployment"],
+        "queues": {
+            "daikin_size": snapshot["daikin_queue_size"],
+            "daikin_capacity": snapshot["daikin_queue_capacity"],
+        },
+        "log_storage": _mount_info_for_path(log_path),
+        "log_buffer": {
+            "capacity": get_log_buffer_capacity(),
+            "returned": limit,
+            "lines": get_recent_log_messages(limit),
+        },
+    }, 200
 
 
 @app.route("/manage", methods=["GET"])

@@ -13,6 +13,10 @@ DEFAULT_REPORT_BEHAVIOR = "sensor_readings"
 DEFAULT_SENSOR_DRIVER = "htu21d"
 DEFAULT_IR_TRANSPORT = "lirc"
 DEFAULT_IR_DEVICE = "/dev/lirc0"
+PICO2W_HARDWARE_PROFILE = "pico2w_aht20_ir"
+PICO2W_SENSOR_DRIVER = "aht20"
+PICO2W_IR_TRANSPORT = "pico_gpio"
+PICO2W_IR_DEVICE = "gp14"
 
 
 @dataclass(frozen=True)
@@ -59,7 +63,15 @@ SUPPORTED_HARDWARE_PROFILES: Mapping[str, HardwareProfile] = {
         ir_device=DEFAULT_IR_DEVICE,
         send_behaviors=frozenset({DEFAULT_SEND_BEHAVIOR}),
         report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),
-    )
+    ),
+    PICO2W_HARDWARE_PROFILE: HardwareProfile(
+        name=PICO2W_HARDWARE_PROFILE,
+        sensor_driver=PICO2W_SENSOR_DRIVER,
+        ir_transport=PICO2W_IR_TRANSPORT,
+        ir_device=PICO2W_IR_DEVICE,
+        send_behaviors=frozenset({DEFAULT_SEND_BEHAVIOR}),
+        report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),
+    ),
 }
 
 

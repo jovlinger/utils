@@ -42,6 +42,46 @@ def test_help() -> None:
     assert help_msg == msg
 
 
+def test_healthz_returns_basic_health_and_recent_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_PATH", "/run/thermo-onboard-log/onboard-app.log")
+    client = app.app.test_client()
+    app.logger.info("test healthz rolling log marker")
+
+    r = client.get("/healthz?n=5")
+
+    assert r.status_code == 200
+    body = r.json
+    assert body["ok"] is True
+    assert body["service"] == "onboard-app"
+    assert body["hardware_backend"] == "pizero2w"
+    assert body["log_buffer"]["returned"] == 5
+    assert any("test healthz rolling log marker" in line for line in body["log_buffer"]["lines"])
+    assert body["log_storage"]["path"] == "/run/thermo-onboard-log/onboard-app.log"
+
+
+def test_mount_info_for_tmpfs_log_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.os.path, "exists", lambda _path: True)
+    mountinfo = (
+        "10 1 0:1 / / rw,relatime - overlay overlay rw\n"
+        "20 1 0:2 / /run rw,nosuid,nodev - tmpfs tmpfs rw,size=16384k\n"
+    )
+
+    def fake_open(path: str, *args: object, **kwargs: object):
+        if path == "/proc/self/mountinfo":
+            from io import StringIO
+
+            return StringIO(mountinfo)
+        raise AssertionError(path)
+
+    monkeypatch.setattr(app, "open", fake_open, raising=False)
+
+    info = app._mount_info_for_path("/run/thermo-onboard-log/onboard-app.log")
+
+    assert info["mount_point"] == "/run"
+    assert info["fs_type"] == "tmpfs"
+    assert info["is_tmpfs"] is True
+
+
 def test_get_daikin_empty_queue_shows_last_applied_default() -> None:
     """GET /daikin with no history returns one row: default off / AUTO / 20°C."""
     app.daikin_cmds.clear()

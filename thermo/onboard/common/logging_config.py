@@ -11,6 +11,8 @@ import logging
 import os
 import sys
 import time
+from collections import deque
+from threading import RLock
 from typing import Any, Optional
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -24,6 +26,22 @@ _VALID_LOG_LEVELS = {
 }
 
 _configured = False
+_LOG_BUFFER_DEFAULT_LINES = 200
+_log_buffer_lock = RLock()
+_log_buffer: deque[str] = deque(
+    maxlen=int(os.environ.get("ONBOARD_HEALTH_LOG_LINES", str(_LOG_BUFFER_DEFAULT_LINES)))
+)
+
+
+class _RollingLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+        except Exception:
+            self.handleError(record)
+            return
+        with _log_buffer_lock:
+            _log_buffer.append(msg)
 
 
 class _ServiceFilter(logging.Filter):
@@ -63,12 +81,32 @@ def configure_logging(service: str) -> None:
     handler.setFormatter(formatter)
     handler.addFilter(_ServiceFilter(service))
     root.addHandler(handler)
+
+    rolling_handler = _RollingLogHandler()
+    rolling_handler.setFormatter(formatter)
+    rolling_handler.addFilter(_ServiceFilter(service))
+    root.addHandler(rolling_handler)
     _configured = True
 
 
 def get_log_level() -> str:
     """Return current root logger level name."""
     return logging.getLevelName(logging.getLogger().getEffectiveLevel())
+
+
+def get_recent_log_messages(limit: Optional[int] = None) -> list[str]:
+    """Return newest-first formatted log messages from the in-memory ring."""
+    with _log_buffer_lock:
+        lines = list(_log_buffer)
+    lines.reverse()
+    if limit is None:
+        return lines
+    return lines[: max(0, limit)]
+
+
+def get_log_buffer_capacity() -> int:
+    """Return configured in-memory log ring capacity."""
+    return _log_buffer.maxlen or 0
 
 
 def set_log_level(level_name: str) -> Optional[str]:

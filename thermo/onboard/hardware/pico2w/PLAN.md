@@ -19,7 +19,36 @@ Initial hardware target:
   Use Pico GPIO for the signal line. Confirm module voltage behavior before
   tying any 5 V-powered `DAT`/`OUT` line directly to a Pico input.
 - Temperature/humidity sensor: I2C AHT20/ATH20 module. Use Pico I2C `SDA`,
-  `SCL`, `VCC`, and `GND`; exact GPIO pin assignments are still open.
+  `SCL`, `VCC`, and `GND`.
+- Initial pin assignment: AHT20 on I2C0 (`SDA` GP4, `SCL` GP5), IR TX module
+  signal on GP14, IR RX module signal on GP15. Power modules from `3V3_OUT`
+  unless the IR module is verified safe for 5 V with level shifting.
+- Status LED: onboard LED labeled `LEDW`, driven through the CYW43 WiFi chip
+  rather than a normal RP2350 GPIO. LEDW is single-color, so the yellow, blue,
+  green, and red status names are rendered as distinct blink patterns.
+
+### Wiring Sketch
+
+```mermaid
+flowchart LR
+  pico["Raspberry Pi Pico2W"]
+  aht["AHT20 temp/humidity module"]
+  irtx["38 kHz IR transmitter module"]
+  irrx["38 kHz IR receiver module"]
+
+  pico -- "3V3_OUT -> VCC" --> aht
+  pico -- "GND -> GND" --> aht
+  pico -- "GP4 / I2C0 SDA -> SDA" --> aht
+  pico -- "GP5 / I2C0 SCL -> SCL" --> aht
+
+  pico -- "3V3_OUT -> VCC" --> irtx
+  pico -- "GND -> GND" --> irtx
+  pico -- "GP14 -> DAT" --> irtx
+
+  pico -- "3V3_OUT -> VCC" --> irrx
+  pico -- "GND -> GND" --> irrx
+  pico -- "GP15 <- OUT" --> irrx
+```
 
 ---
 
@@ -28,11 +57,36 @@ Initial hardware target:
 ### Startup
 
 1. Power on.
-2. Initialize the CYW43439 WiFi chip (SPI bus, load firmware blob).
-3. Connect to SSID `lumiere` using stored credentials. Blink LED at 1 Hz while
+2. Blink status LED with the yellow pattern while reading the compiled/env
+   configuration.
+3. Initialize the CYW43439 WiFi chip (SPI bus, load firmware blob).
+4. Connect to SSID `lumiere` using stored credentials. Blink LED at 1 Hz while
    associating; solid LED on successful DHCP lease.
-4. Load Ed25519 private key from flash (compiled in or stored in last flash sector).
-5. Enter the main poll loop.
+5. Load Ed25519 private key from flash (compiled in or stored in last flash sector).
+6. Enter the main poll loop.
+
+### Status LED Contract
+
+- 1 pulse: happy path marker that a DMZ poll has started.
+- 2 pulses: sending an IR command.
+- 3 pulses: startup/configuration.
+- 4 pulses: real error paths, such as required sensor failure,
+  network errors, signing errors, parse errors, or IR transmit failures.
+  Missing AHT20 hardware with `SENSOR_BOOT_REQUIRED=0` is a fallback reading,
+  not a red/error status.
+
+### Zone Health
+
+The Pico2W firmware owns a bounded rolling log buffer. `GET /healthz` on the
+default onboard app port (`5000`) returns basic firmware health and that log
+buffer. The buffer keeps 64 entries and returns up to 32 newest-first entries;
+there is no file log on the Pico.
+
+During bring-up, USB CDC serial is the primary debug path. It mirrors the same
+rolling health log before WiFi and DHCP are available, so developers can see
+`wifi join start`, `wifi join failed`, `wifi wait dhcp`, and
+`wifi and dhcp ready` without soldering a UART or SWD header. Treat `/healthz`
+as a verification step only after the serial log proves WiFi and DHCP are up.
 
 ### Main Poll Loop
 
@@ -48,17 +102,21 @@ LOOP:
                        X-Zone-Name:      <zone_name>
               timeout: POST_TIMEOUT_SECONDS (default 600)
   if response == timeout or network error:
+    blink_status(RED)
     wait POST_RETRY_SECS (default 5, exponential backoff to 60)
     GOTO LOOP
   if response.status != 200:
+    blink_status(RED)
     log_error(response.status)
     wait POST_RETRY_SECS
     GOTO LOOP
   zone_state <- parse_json(response.body)
   cmd        <- zone_state["command"]      # may be null
   if cmd != null AND cmd["created_dt"] > last_applied_created_dt:
+    blink_status(BLUE)
     transmit_ir(cmd)
     last_applied_created_dt <- cmd["created_dt"]
+  blink_status(GREEN)
   GOTO LOOP
 ```
 
@@ -67,14 +125,19 @@ before returning the zone state. The pico's POST_TIMEOUT_SECONDS must comfortabl
 exceed that margin. The pico therefore blocks in the POST for up to ~70 s normally
 and up to 600 s at the hard cap.
 
-### Sensor Stub (Phase 1)
+### Accurate Sensors With Optional Boot
 
-Until the AHT20/ATH20 temperature/humidity sensor and the IR transmitter are physically
-wired to the Pico2W, the firmware returns fake values:
+The selected hardware profile uses the AHT20/ATH20 temperature/humidity sensor
+for production readings. During bring-up, missing sensor hardware is not a boot
+failure when `SENSOR_BOOT_REQUIRED=0`; the firmware logs the read failure and
+uses fallback values for that poll:
 
 - `temp_centigrade`: 21.0 (fixed)
 - `humid_percent`: 50.0 (fixed)
 - IR transmit: log "IR STUB: would send <state>" -- do not drive the GPIO pin.
+
+Once the sensor and IR hardware are attached, set `SENSOR_BOOT_REQUIRED=1` to
+fail fast on a missing AHT20.
 
 ---
 
@@ -246,6 +309,10 @@ skew > 300 s).
 ---
 
 ## Language Architecture Sketches
+
+Current implementation target: Rust with an Embassy-style async architecture.
+The first checked-in scaffold keeps protocol and sensor fallback logic testable
+on the host while the embedded WiFi/HTTP/IR drivers are added.
 
 ### 1. MicroPython
 
@@ -491,10 +558,73 @@ static void poll_loop(void) {
         }
     }
 }
+```
 
 ---
 
-### 5. uLisp
+### 5. MicroCC on-device C JIT
+
+Goal: research MicroCC as the on-device C compiler path while Rust remains the
+active firmware implementation. MicroCC claims a self-hosting C compiler for
+Cortex-M microcontrollers that runs on Raspberry Pi Pico, compiles C to ARM
+Thumb machine code, and executes the compiled code from SRAM.
+
+**Runtime requirements:** The MicroCC README reports a 64 KB GC heap, about a
+26 KB UF2 including compiler, REPL, and samples, and ~10 ms compile time on the
+133 MHz RP2040 Cortex-M0+. That is plausibly small enough for Pico 2 W class
+hardware, but must be remeasured with the CYW43/WiFi stack, HTTP, Ed25519, JSON,
+sensor drivers, source storage, generated code, and app state all present.
+
+**Target fit:** MicroCC targets ARM Thumb-1 for Cortex-M0+. Pico 2 W's RP2350
+Arm cores are Cortex-M33, so Thumb-1-style generated code should be a plausible
+subset when running the Arm cores, but this still needs hardware validation.
+Confirm SRAM execution, function-pointer Thumb bit handling, cache/barrier
+requirements, and any TrustZone/MPU execute restrictions in the chosen boot
+configuration.
+
+**Library availability:** MicroCC provides the compiler and JIT codegen. Hardware
+access should still come from a fixed native firmware layer, not arbitrary C
+includes. The JIT C sees a narrow `thermo_host.h` API for WiFi, HTTP, AHT20
+sensor reads, IR send/receive, Ed25519 signing, time, logging, and flash storage.
+
+**Robustness:** Experimental but better aligned than TinyCC for this idea
+because MicroCC is already aimed at Pico-class Cortex-M JIT execution. Keep a
+known-good compiled fallback loop in the base firmware so a bad C source update
+or boot compile failure cannot brick the unit.
+
+**Bugginess:** Unknown. The public repository is small and appears early-stage.
+The highest-risk areas are C subset limits, ABI drift between `thermo_host.h`
+and the firmware host layer, generated code bounds, and memory pressure once the
+real network stack is linked.
+
+**Observability:** Strong during compile if the base firmware exposes MicroCC
+diagnostics over USB serial. Runtime debugging is weaker than Rust unless the
+JIT stores symbol names and source line mappings.
+
+**Other -ilities:** The research deployment unit becomes `.c`/`.h` source copied
+into flash, with no host compile step for application logic. This is attractive
+for fast field changes if the compiler footprint, C subset, and failure
+isolation are acceptable.
+
+**Boot model:**
+
+```c
+/* Stored in flash as thermo_app.c and compiled by MicroCC at boot. */
+#include "thermo_host.h"
+
+int thermo_app_poll_once(const ThermoHost *host, ThermoState *state) {
+    ThermoSensors sensors;
+    if (host->read_aht20(&sensors) != 0) {
+        sensors.temp_centigrade = 21.0f;
+        sensors.humid_percent = 50.0f;
+    }
+    return host->post_sensors_and_apply_command(&sensors, state);
+}
+```
+
+---
+
+### 6. uLisp
 
 **Library availability:** uLisp (David Johnson-Davies) is a Lisp interpreter
 that runs on ARM Cortex-M (Arduino-compatible boards) including RP2040. There is
@@ -543,7 +673,7 @@ structured concurrency.
 
 ---
 
-### 6. Forth (Zeptoforth)
+### 7. Forth (Zeptoforth)
 
 **Chosen Forth:** zeptoforth (Travis Bemann, MIT license). Targets RP2040
 natively. Has: multitasking (cooperative and preemptive), GPIO, I2C, SPI, UART,
@@ -605,24 +735,24 @@ makes live debugging possible even in production builds.
 
 ## Language Comparison Summary
 
-| Criterion           | MicroPython | Rust/embassy | Chibi-Scheme | ANSI C   | uLisp    | Forth/zeptoforth |
-|---------------------|-------------|--------------|--------------|----------|----------|------------------|
-| Viability on pico2w | Yes         | Yes          | Yes          | Yes      | Yes      | Yes              |
-| Ed25519 support     | Port needed | Crate exists | C ext        | TweetNaCl| C ext    | Hand-port needed |
-| Flash (app only)    | ~200 KB     | ~100 KB      | ~160 KB      | ~80 KB   | ~60 KB   | ~40 KB           |
-| RAM (app heap)      | ~200 KB     | <16 KB       | 64-128 KB    | <16 KB   | ~32 KB   | <16 KB           |
-| Robustness          | Moderate    | High         | Moderate     | High     | Low      | Moderate         |
-| Library quality     | Good        | Good/growing | Thin         | Best     | Moderate | Thin             |
-| Bugginess           | Low-mod     | Low-mod      | Low (interp) | Low      | Moderate | Moderate         |
-| Observability       | Excellent   | Good (RTT)   | Good (REPL)  | Moderate | Good     | Good (REPL)      |
-| Iteration speed     | Fast        | Slow         | Moderate     | Slow     | Fastest  | Fast             |
-| Production fitness  | Good        | Best         | Moderate     | Good     | Poor     | Moderate         |
+| Criterion           | MicroPython | Rust/embassy | Chibi-Scheme | ANSI C   | MicroCC on-device | uLisp    | Forth/zeptoforth |
+|---------------------|-------------|--------------|--------------|----------|-------------------|----------|------------------|
+| Viability on pico2w | Yes         | Yes          | Yes          | Yes      | Research-plausible| Yes      | Yes              |
+| Ed25519 support     | Port needed | Crate exists | C ext        | TweetNaCl| Host ABI          | C ext    | Hand-port needed |
+| Flash (app only)    | ~200 KB     | ~100 KB      | ~160 KB      | ~80 KB   | ~26 KB compiler   | ~60 KB   | ~40 KB           |
+| RAM (app heap)      | ~200 KB     | <16 KB       | 64-128 KB    | <16 KB   | 64 KB compiler    | ~32 KB   | <16 KB           |
+| Robustness          | Moderate    | High         | Moderate     | High     | Experimental      | Low      | Moderate         |
+| Library quality     | Good        | Good/growing | Thin         | Best     | Early-stage       | Moderate | Thin             |
+| Bugginess           | Low-mod     | Low-mod      | Low (interp) | Low      | Unknown           | Moderate | Moderate         |
+| Observability       | Excellent   | Good (RTT)   | Good (REPL)  | Moderate | Compile logs      | Good     | Good (REPL)      |
+| Iteration speed     | Fast        | Slow         | Moderate     | Slow     | Fast if viable    | Fastest  | Fast             |
+| Production fitness  | Good        | Best         | Moderate     | Good     | Research path     | Poor     | Moderate         |
 
-**Recommendation:** MicroPython for fastest path to a working prototype (REPL,
-no compile, good WiFi). Rust/embassy for production if long-term reliability and
-type safety matter more than iteration speed. The two are not mutually exclusive:
-prototype in MicroPython, rewrite the hot path in Rust once the protocol is
-stable.
+**Recommendation:** Rust/embassy is the selected implementation target for this
+bring-up because reliability and type safety matter more than initial iteration
+speed. MicroCC on-device JIT is the research path worth testing separately
+because it could make C source the deployment unit if it fits and survives
+boot-time compile failure safely.
 
 ---
 
@@ -633,6 +763,9 @@ stable.
   last-sector flash page).
 - Decide NTP server (default: pool.ntp.org; consider a LAN NTP if the house
   router provides one).
-- GPIO pin assignments for IR TX, IR RX, and AHT20/ATH20 I2C once hardware is physically
-  attached.
+- Measure MicroCC on RP2350-class hardware with the real base firmware linked:
+  compiler footprint, compile heap, generated code size, SRAM execution, and
+  C subset limits.
+- Confirm IR module voltage behavior before connecting any 5 V-powered signal
+  line to a Pico input.
 - OTA update strategy (UF2 drag-and-drop is sufficient for now).

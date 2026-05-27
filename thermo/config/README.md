@@ -73,10 +73,12 @@ ONBOARD_DEPLOY_BACKEND=esp32
 ## Templates
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | **`test.env.sample`** | Localhost URLs for `thermo/test` e2e (ports 5001 / 5002). |
 | **`deploy.env.sample`** | Example DMZ scheme/host/port for production-style deploy. |
 | **`kitchen.env.sample`** | Concrete first onboard deployment: kitchen Pi Zero 2 W + HTU21D + Daikin IR. |
+| **`kitchen-pico2w.env`** | Kitchen Pico2W deployment: AHT20 sensor, Pico GPIO IR, Rust firmware. |
+| **`office-pico2w.env`** | Office Pico2W deployment: AHT20 sensor, Pico GPIO IR, Rust firmware. |
 
 Copy to `config/<name>.env` (ignored), adjust, then `export THERMO_ENV_FILE=config/<name>.env`.
 

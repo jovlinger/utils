@@ -50,6 +50,29 @@ def test_config_accepts_kitchen_deployment() -> None:
     }
 
 
+def test_config_accepts_kitchen_pico2w_deployment() -> None:
+    cfg = config_from_environ(
+        {
+            "ZONE_NAME": "kitchen",
+            "ONBOARD_HARDWARE_PROFILE": "pico2w_aht20_ir",
+            "ONBOARD_SEND_BEHAVIOR": "ir_daikin",
+            "ONBOARD_REPORT_BEHAVIOR": "sensor_readings",
+            "SENSOR_DRIVER": "aht20",
+            "IR_TRANSPORT": "pico_gpio",
+            "IR_DEVICE": "gp14",
+        }
+    )
+    assert cfg.to_public_dict() == {
+        "zone_name": "kitchen",
+        "hardware_profile": "pico2w_aht20_ir",
+        "send_behavior": "ir_daikin",
+        "report_behavior": "sensor_readings",
+        "sensor_driver": "aht20",
+        "ir_transport": "pico_gpio",
+        "ir_device": "gp14",
+    }
+
+
 def test_config_rejects_unknown_behavior() -> None:
     with pytest.raises(ValueError, match="ONBOARD_SEND_BEHAVIOR"):
         config_from_environ({"ONBOARD_SEND_BEHAVIOR": "mqtt"})
@@ -77,3 +100,35 @@ def test_kitchen_env_sample_matches_supported_config() -> None:
     cfg = config_from_environ(values)
     assert cfg.zone_name == "kitchen"
     assert cfg.hardware_profile == "pi_zero_2w_htu21d_ir"
+
+
+def test_kitchen_pico2w_env_matches_supported_config() -> None:
+    sample_path = Path(__file__).resolve().parents[2] / "config" / "kitchen-pico2w.env"
+    values: dict[str, str] = {}
+    for raw in sample_path.read_text(encoding="ascii").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        assert sep == "=", line
+        values[key] = value
+
+    cfg = config_from_environ(values)
+    assert cfg.zone_name == "kitchen"
+    assert cfg.hardware_profile == "pico2w_aht20_ir"
+
+
+def test_office_pico2w_env_matches_supported_config() -> None:
+    sample_path = Path(__file__).resolve().parents[2] / "config" / "office-pico2w.env"
+    values: dict[str, str] = {}
+    for raw in sample_path.read_text(encoding="ascii").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        assert sep == "=", line
+        values[key] = value
+
+    cfg = config_from_environ(values)
+    assert cfg.zone_name == "office"
+    assert cfg.hardware_profile == "pico2w_aht20_ir"
