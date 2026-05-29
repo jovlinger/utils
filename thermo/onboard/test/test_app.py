@@ -59,6 +59,18 @@ def test_healthz_returns_basic_health_and_recent_logs(monkeypatch: pytest.Monkey
     assert body["log_storage"]["path"] == "/run/thermo-onboard-log/onboard-app.log"
 
 
+def test_environment_includes_recent_logs_for_dmz_post() -> None:
+    client = app.app.test_client()
+    app.logger.info("test environment rolling log marker")
+
+    r = client.get("/environment")
+
+    assert r.status_code == 200
+    body = r.json
+    assert "log_buffer" in body
+    assert any("test environment rolling log marker" in line for line in body["log_buffer"]["lines"])
+
+
 def test_mount_info_for_tmpfs_log_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app.os.path, "exists", lambda _path: True)
     mountinfo = (

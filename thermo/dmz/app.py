@@ -112,6 +112,7 @@ class Sensors(BaseModel):
 class ZoneState(BaseModel):
     command: Optional[Any] = None
     sensors: Optional[Sensors] = None
+    logs: Optional[Dict[str, Any]] = None
 
 
 def _json_strings_only_ascii(value: Any) -> Optional[str]:
@@ -221,11 +222,11 @@ def _full_zone_state_snapshot() -> Dict[str, Dict[str, Any]]:
     the entire DMZ state on every mutation; cheap (one-deep dict + Pydantic .dict()).
     """
     snap: Dict[str, Dict[str, Any]] = {}
-    for z in sorted(set(commands.keys()) | set(sensors.keys())):
-        cmd = _lastor(commands[z])
-        sns = _lastor(sensors[z])
+    for z in sorted(set(commands.keys()) | set(sensors.keys()) | set(zone_logs.keys())):
+        cmd = _lastor(commands.get(z, []))
+        sns = _lastor(sensors.get(z, []))
         sns_d = sns.dict() if hasattr(sns, "dict") else sns
-        snap[z] = {"command": cmd, "sensors": sns_d}
+        snap[z] = {"command": cmd, "sensors": sns_d, "logs": zone_logs.get(z)}
     return snap
 
 
@@ -820,6 +821,7 @@ def assertAuthAzZone(req: Any) -> None:
 ### BEGIN STATE (make this sqlite)
 commands: Dict[str, List[Any]] = defaultdict(list)
 sensors: Dict[str, List[Sensors]] = defaultdict(list)
+zone_logs: Dict[str, Dict[str, Any]] = {}
 # Wall-clock floats (``time.time()``), comparable across NTP adjustments.
 _ui_command_received_at: Dict[str, float] = defaultdict(float)
 _last_zone_command_reply_at: Dict[str, float] = defaultdict(float)
@@ -884,13 +886,53 @@ def _await_new_ui_command_or_timeout(zonename: str) -> None:
 
 def _zone_response(zonename: str, update_access: bool) -> JSON:
     """Craft the json for one zone's response"""
-    cmd = _lastor(commands[zonename])
-    sns = _lastor(sensors[zonename])
+    cmd = _lastor(commands.get(zonename, []))
+    sns = _lastor(sensors.get(zonename, []))
     if cmd is not None and update_access:
         _mark_command_accessed(cmd)
-    ret = ZoneState(command=cmd, sensors=sns).dict()
+    ret = ZoneState(command=cmd, sensors=sns, logs=zone_logs.get(zonename)).dict()
     print(f"_zone_response({zonename}, {update_access}) -> {ret}")
     return ret
+
+
+def _normalize_zone_log_lines(payload: Any, *, limit: int = 80) -> List[str]:
+    """Return newest-first, ASCII-only, de-duped onboard log lines from a POST payload."""
+    if payload is None:
+        return []
+    raw_lines: Any
+    if isinstance(payload, dict):
+        raw_lines = payload.get("lines")
+    else:
+        raw_lines = payload
+    if not isinstance(raw_lines, list):
+        return []
+
+    seen: set[str] = set()
+    lines: List[str] = []
+    for raw in raw_lines:
+        if not isinstance(raw, str):
+            continue
+        clean = raw.replace("\r", " ").replace("\n", " ").strip()
+        clean = "".join(ch if ord(ch) < 128 else "?" for ch in clean)
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        lines.append(clean[:500])
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _update_zone_logs(zonename: str, payload: Any) -> None:
+    """Store the last reported onboard log tail for a zone."""
+    lines = _normalize_zone_log_lines(payload)
+    if not lines:
+        return
+    zone_logs[zonename] = {
+        "received_dt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "count": len(lines),
+        "lines": lines,
+    }
 
 
 MAXLEN = 10000
@@ -1198,11 +1240,14 @@ def update_sensors(zonename: str) -> Any:
     if isinstance(body, dict) and ("sensors" in body or "command" in body):
         sensors_body = body.get("sensors") or {}
         cmd_body = body.get("command")
+        logs_body = body.get("logs") or body.get("log_buffer")
     else:
         sensors_body = body
         cmd_body = None
+        logs_body = None
     sns = Sensors(**sensors_body)
     _append_and_trim(sensors[zonename], sns)
+    _update_zone_logs(zonename, logs_body)
     _log_full_zone_state(reason="sensors", zonename=zonename)
     if isinstance(cmd_body, dict) and cmd_body:
         _replace_command_if_newer(zonename, cmd_body, source="zone-sensors")
@@ -1273,7 +1318,7 @@ def ui_context() -> Any:
         and "text/html" in (request.headers.get("Accept") or "")
     ):
         return _redirect_public_ui_home_or_503()
-    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    all_zones = sorted(set(commands.keys()) | set(sensors.keys()) | set(zone_logs.keys()))
     env_rows = [_environment_row_for_zone(z) for z in all_zones]
     zone_states = {z: _zone_response(z, False) for z in all_zones}
     return {
@@ -1334,7 +1379,7 @@ def get_zones() -> Any:
     if (denied := _authorize_global_read()):
         return denied
     assertAuthAzZone(request)
-    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    all_zones = sorted(set(commands.keys()) | set(sensors.keys()) | set(zone_logs.keys()))
     res = {zonename: _zone_response(zonename, False) for zonename in all_zones}
     return res
 
@@ -1372,6 +1417,11 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
+    if "logs" in updates:
+        zone_logs.clear()
+        zone_logs.update(updates.get("logs", {}))
+    elif "commands" in updates or "sensors" in updates:
+        zone_logs.clear()
     _ui_command_received_at.clear()
     _last_zone_command_reply_at.clear()
     _zone_attempts.clear()

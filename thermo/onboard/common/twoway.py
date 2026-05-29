@@ -12,7 +12,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import jsonT
-from common.logging_config import configure_logging, format_kv
+from common.logging_config import configure_logging, format_kv, get_recent_log_messages
 
 configure_logging("twoway")
 # Example: 2026-05-17T13:40:23.905Z INFO twoway twoway:45 start argv=['common.twoway', 'http://...', ...]
@@ -210,10 +210,36 @@ def _env_to_dmz_body(env: dict) -> dict:
     cmd = env.get("command") if isinstance(env, dict) else None
     if isinstance(cmd, dict) and cmd:
         body["command"] = cmd
+    logs = _combined_log_lines(env)
+    if logs:
+        body["logs"] = {"lines": logs}
     deployment = _deployment_metadata_from_env()
     if deployment:
         body["deployment"] = deployment
     return body
+
+
+def _combined_log_lines(env: dict, *, limit: int = 80) -> list[str]:
+    """Newest-first onboard log lines to piggyback to DMZ."""
+    lines: list[str] = []
+    log_buffer = env.get("log_buffer") if isinstance(env, dict) else None
+    if isinstance(log_buffer, dict):
+        raw_lines = log_buffer.get("lines")
+        if isinstance(raw_lines, list):
+            lines.extend(str(line) for line in raw_lines if isinstance(line, str))
+    lines.extend(get_recent_log_messages(limit))
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        clean = line.replace("\r", " ").replace("\n", " ").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean[:500])
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _deployment_metadata_from_env(

@@ -15,6 +15,7 @@ pub fn build_sensor_post_body<const N: usize>(
     config: &DeviceConfig,
     reading: SensorReading,
     last_applied_command_json: Option<&str>,
+    log_lines: &[&str],
 ) -> Result<String<N>, core::fmt::Error> {
     let mut body: String<N> = String::new();
     write!(
@@ -27,12 +28,46 @@ pub fn build_sensor_post_body<const N: usize>(
             write!(body, ",\"command\":{}", command_json)?;
         }
     }
+    if !log_lines.is_empty() {
+        write!(body, ",\"logs\":{{\"lines\":[")?;
+        let mut first = true;
+        for line in log_lines {
+            if line.is_empty() {
+                continue;
+            }
+            if !first {
+                write!(body, ",")?;
+            }
+            first = false;
+            write_json_string(&mut body, line)?;
+        }
+        write!(body, "]}}")?;
+    }
     write!(
         body,
         ",\"deployment\":{{\"hardware_profile\":\"{}\",\"zone_name\":\"{}\"}}}}",
         config.hardware_profile, config.zone_name
     )?;
     Ok(body)
+}
+
+fn write_json_string<const N: usize>(
+    out: &mut String<N>,
+    value: &str,
+) -> Result<(), core::fmt::Error> {
+    out.push('"').map_err(|_| core::fmt::Error)?;
+    for byte in value.bytes() {
+        match byte {
+            b'"' => out.push_str("\\\"").map_err(|_| core::fmt::Error)?,
+            b'\\' => out.push_str("\\\\").map_err(|_| core::fmt::Error)?,
+            b'\n' => out.push_str("\\n").map_err(|_| core::fmt::Error)?,
+            b'\r' => out.push_str("\\r").map_err(|_| core::fmt::Error)?,
+            b'\t' => out.push_str("\\t").map_err(|_| core::fmt::Error)?,
+            0x20..=0x7e => out.push(byte as char).map_err(|_| core::fmt::Error)?,
+            _ => out.push('?').map_err(|_| core::fmt::Error)?,
+        }
+    }
+    out.push('"').map_err(|_| core::fmt::Error)
 }
 
 pub fn extract_command_created_dt(response_body: &str) -> Option<&str> {
@@ -224,7 +259,7 @@ mod tests {
             source: SensorSource::Fallback,
         };
 
-        let body = build_sensor_post_body::<256>(&config, reading, None).unwrap();
+        let body = build_sensor_post_body::<256>(&config, reading, None, &[]).unwrap();
 
         assert_eq!(
             body.as_str(),
@@ -261,5 +296,26 @@ mod tests {
         let body = "{\"server_time_utc\":\"2026-05-27T04:25:00.123456Z\"}";
 
         assert_eq!(parse_server_time_utc_epoch(body), Some(1_779_855_900));
+    }
+
+    #[test]
+    fn builds_post_body_with_logs() {
+        let config = DeviceConfig::kitchen_pico2w();
+        let reading = SensorReading {
+            temp_centigrade: 21.0,
+            humid_percent: 50.0,
+            source: SensorSource::Fallback,
+        };
+
+        let body = build_sensor_post_body::<512>(
+            &config,
+            reading,
+            None,
+            &["poll start", "command stale", "quote \" escaped"],
+        )
+        .unwrap();
+
+        assert!(body.contains("\"logs\":{\"lines\":[\"poll start\",\"command stale\""));
+        assert!(body.contains("quote \\\" escaped"));
     }
 }

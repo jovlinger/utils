@@ -360,6 +360,35 @@ def _env_table_rows(ctx: Mapping[str, Any]) -> str:
     return "\n".join(rows)
 
 
+def _zone_logs_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str:
+    if not ctx:
+        return ""
+    states = ctx.get("zone_states")
+    if not isinstance(states, dict):
+        return ""
+    zone_state = states.get(selected_zone)
+    if not isinstance(zone_state, dict):
+        return ""
+    logs = zone_state.get("logs")
+    if not isinstance(logs, dict):
+        return ""
+    lines = logs.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return ""
+    received = logs.get("received_dt")
+    heading = ""
+    if received:
+        heading = f"<span>last reported {html.escape(str(received))}</span><br>"
+    rendered = [
+        _format_log_line(str(line))
+        for line in lines
+        if isinstance(line, str) and line.strip()
+    ]
+    if not rendered:
+        return ""
+    return heading + "<br>".join(rendered)
+
+
 def _zone_options_html(zones: List[str], selected: str) -> str:
     opts: List[str] = []
     for z in zones:
@@ -432,6 +461,7 @@ def render_template(
 
     env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="4">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
+    zone_logs_html = _zone_logs_html(ctx, sel_zone)
 
     if _ui_backend() == "dmz":
         manage_fragment = ""
@@ -450,6 +480,7 @@ def render_template(
         .replace("$state_summary", state_summary)
         .replace("$msg", html.escape(msg))
         .replace("$logs", logs_html)
+        .replace("$zone_logs", zone_logs_html)
         .replace("$help_msg", help_msg_html)
         .replace("$about_msg", about_msg_html)
         .replace("$state_json", state_json)

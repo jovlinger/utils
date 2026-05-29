@@ -232,12 +232,18 @@ def _environment_dict() -> Dict[str, Any]:
     global _fake_temp, _fake_humid
     ts = datetime.now()
     cmd = _last_command_with_created_dt()
+    log_buffer = {
+        "capacity": get_log_buffer_capacity(),
+        "returned": min(80, get_log_buffer_capacity()),
+        "lines": get_recent_log_messages(80),
+    }
     if _fake_temp is not None and _fake_humid is not None:
         return {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
             "time": ts.isoformat(),
             "command": cmd,
+            "log_buffer": log_buffer,
         }
     try:
         htu = HTU21D.singleton()
@@ -248,6 +254,7 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": _round1(hum),
             "time": ts.isoformat(),
             "command": cmd,
+            "log_buffer": log_buffer,
         }
     except Exception as e:
         logger.info("environment%s", format_kv(error=str(e)))
@@ -256,6 +263,7 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": None,
             "time": ts.isoformat(),
             "command": cmd,
+            "log_buffer": log_buffer,
         }
 
 

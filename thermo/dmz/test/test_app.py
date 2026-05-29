@@ -553,6 +553,35 @@ def test_sensors_with_piggybacked_command_nested_body(dmz_ctx: object) -> None:
         assert js2["command"]["mode"] == "HEAT"
 
 
+def test_sensors_with_onboard_logs_are_deduped_and_exposed(dmz_ctx: object) -> None:
+    """Zone POSTs can carry newest-first onboard logs for UI visibility."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zlog/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "logs": {
+                    "lines": [
+                        "2026-05-27T01:00:00.000Z INFO onboard action taken",
+                        "2026-05-27T01:00:00.000Z INFO onboard action taken",
+                        "2026-05-27T01:00:01.000Z DEBUG onboard command stale",
+                    ]
+                },
+            },
+        )
+
+        assert js["logs"]["count"] == 2
+        assert js["logs"]["lines"] == [
+            "2026-05-27T01:00:00.000Z INFO onboard action taken",
+            "2026-05-27T01:00:01.000Z DEBUG onboard command stale",
+        ]
+
+        ctx = _get_200(c, "/ui/context")
+        assert ctx["zone_states"]["zlog"]["logs"]["lines"] == js["logs"]["lines"]
+
+
 def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
     """Backward-compat: a flat sensors dict (no ``sensors``/``command`` keys) is accepted."""
     with app.test_client() as c:

@@ -169,6 +169,13 @@ fn latest_health_log(health: &'static HealthMutex) -> &'static str {
     })
 }
 
+fn recent_log_lines<const N: usize>(health: &'static HealthMutex) -> [&'static str; N] {
+    health.lock(|cell| {
+        let state = cell.borrow();
+        state.log.newest_first::<N>()
+    })
+}
+
 async fn write_health_log_snapshot(
     class: &mut CdcAcmClass<'static, UsbDriver<'static, USB>>,
     health: &'static HealthMutex,
@@ -440,30 +447,7 @@ async fn fetch_dmz_clock(
     health: &'static HealthMutex,
 ) -> Result<DmzClock, PollError> {
     health_log(health, "clock fetch start");
-    let mut body: String<4096> = String::new();
-    let status_code = http_request::<512, 4096>(
-        stack,
-        config,
-        "GET",
-        "/ui/diagnostics",
-        "",
-        None,
-        &mut body,
-        health,
-    )
-    .await?;
-    if status_code != 200 {
-        health_log(health, "clock fetch non-200");
-        return Err(PollError::HttpStatus);
-    }
-    health_log(health, "clock parse start");
-    let epoch_seconds = match parse_server_time_utc_epoch(body.as_str()) {
-        Some(epoch_seconds) => epoch_seconds,
-        None => {
-            health_log(health, "clock parse failed");
-            return Err(PollError::Parse);
-        }
-    };
+    let epoch_seconds = http_get_stream_server_time(stack, config, health).await?;
     health_log(health, "clock fetch ok");
     Ok(DmzClock {
         epoch_seconds,
@@ -490,7 +474,8 @@ async fn poll_once(
     } else {
         Some(last_command_json.as_str())
     };
-    let body = build_sensor_post_body::<1536>(config, reading, command_for_body)
+    let log_lines = recent_log_lines::<24>(health);
+    let body = build_sensor_post_body::<4096>(config, reading, command_for_body, &log_lines)
         .map_err(|_| PollError::BuildBody)?;
     health_log(health, "poll body built");
 
@@ -518,7 +503,7 @@ async fn poll_once(
 
     let mut response_body: String<4096> = String::new();
     health_log(health, "dmz post start");
-    let status_code = http_request::<2048, 8192>(
+    let status_code = http_request::<6144, 8192>(
         stack,
         config,
         "POST",
@@ -736,6 +721,133 @@ async fn http_request<const REQ: usize, const RAW: usize>(
         })?;
     health_log(health, "http parse ok");
     Ok(status_code)
+}
+
+async fn http_get_stream_server_time(
+    stack: Stack<'static>,
+    config: &DeviceConfig,
+    health: &'static HealthMutex,
+) -> Result<u64, PollError> {
+    health_log(health, "clock stream dns start");
+    let addrs = stack
+        .dns_query(config.dmz_host, DnsQueryType::A)
+        .await
+        .map_err(|_| PollError::Dns)?;
+    let addr = addrs.first().copied().ok_or(PollError::Dns)?;
+    health_log(health, "clock stream dns ok");
+
+    let mut rx_buffer = [0_u8; 2048];
+    let mut tx_buffer = [0_u8; 512];
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    socket.set_timeout(Some(Duration::from_secs(config.post_timeout_secs)));
+    health_log(health, "clock stream connect start");
+    socket
+        .connect((addr, config.dmz_port))
+        .await
+        .map_err(|_| PollError::Connect)?;
+    health_log(health, "clock stream connect ok");
+
+    let mut request: String<256> = String::new();
+    write!(
+        request,
+        "GET /ui/diagnostics HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        config.dmz_host, config.dmz_port
+    )
+    .map_err(|_| PollError::BuildBody)?;
+    health_log(health, "clock stream request built");
+
+    write_all(&mut socket, request.as_bytes())
+        .await
+        .map_err(|error| {
+            health_log(health, "clock stream write failed");
+            error
+        })?;
+    socket.flush().await.map_err(|_| {
+        health_log(health, "clock stream flush failed");
+        PollError::Write
+    })?;
+    health_log(health, "clock stream write ok");
+
+    let mut window: String<512> = String::new();
+    let mut read_buffer = [0_u8; 256];
+    let mut status_seen = false;
+    let mut headers_done = false;
+    health_log(health, "clock stream read start");
+    loop {
+        match socket.read(&mut read_buffer).await {
+            Ok(0) => {
+                health_log(health, "clock stream read eof");
+                break;
+            }
+            Ok(n) => {
+                health_log(health, "clock stream read chunk");
+                let chunk = str::from_utf8(&read_buffer[..n]).map_err(|_| {
+                    health_log(health, "clock stream utf8 failed");
+                    PollError::Read
+                })?;
+                append_rolling(&mut window, chunk);
+
+                if !status_seen {
+                    if let Some(status_code) = parse_http_status(window.as_str()) {
+                        status_seen = true;
+                        if status_code == 200 {
+                            health_log(health, "clock stream status 200");
+                        } else {
+                            health_log(health, "clock stream non-200");
+                            return Err(PollError::HttpStatus);
+                        }
+                    }
+                }
+
+                if !headers_done && window.find("\r\n\r\n").is_some() {
+                    headers_done = true;
+                    health_log(health, "clock stream headers done");
+                }
+
+                if headers_done {
+                    health_log(health, "clock stream parse time start");
+                    if let Some(epoch_seconds) = parse_server_time_utc_epoch(window.as_str()) {
+                        health_log(health, "clock stream parse time ok");
+                        return Ok(epoch_seconds);
+                    }
+                }
+            }
+            Err(_) => {
+                health_log(health, "clock stream read failed");
+                return Err(PollError::Read);
+            }
+        }
+    }
+
+    if !status_seen {
+        health_log(health, "clock stream status missing");
+    } else if !headers_done {
+        health_log(health, "clock stream headers missing");
+    } else {
+        health_log(health, "clock stream time missing");
+    }
+    Err(PollError::Parse)
+}
+
+fn append_rolling<const N: usize>(window: &mut String<N>, chunk: &str) {
+    if window.push_str(chunk).is_ok() {
+        return;
+    }
+
+    let keep_from = window
+        .len()
+        .saturating_sub(N.saturating_div(2))
+        .min(window.len());
+    let mut rolled: String<N> = String::new();
+    let _ = rolled.push_str(&window.as_str()[keep_from..]);
+    window.clear();
+    let _ = window.push_str(rolled.as_str());
+
+    if window.push_str(chunk).is_err() {
+        let start = chunk.len().saturating_sub(N.saturating_sub(1));
+        window.clear();
+        let _ = window.push_str(&chunk[start..]);
+    }
 }
 
 async fn write_all(socket: &mut TcpSocket<'_>, mut bytes: &[u8]) -> Result<(), PollError> {
