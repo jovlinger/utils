@@ -7,9 +7,11 @@ pub struct DeviceConfig {
     pub onboard_port: u16,
     pub post_timeout_secs: u64,
     pub hardware_profile: &'static str,
+    pub send_behavior: &'static str,
     pub sensor_driver: &'static str,
     pub sensor_required_at_boot: bool,
     pub ir_transport: &'static str,
+    pub ir_protocol: &'static str,
     pub ir_tx_gpio: u8,
     pub ir_rx_gpio: u8,
     pub i2c_sda_gpio: u8,
@@ -28,9 +30,11 @@ impl DeviceConfig {
             onboard_port: 5000,
             post_timeout_secs: 600,
             hardware_profile: "pico2w_aht20_ir",
+            send_behavior: "ir_heatpump",
             sensor_driver: "aht20",
             sensor_required_at_boot: false,
             ir_transport: "pico_gpio",
+            ir_protocol: "daikin_arc452a9",
             ir_tx_gpio: 14,
             ir_rx_gpio: 15,
             i2c_sda_gpio: 4,
@@ -61,11 +65,17 @@ impl DeviceConfig {
         if let Some(hardware_profile) = option_env!("ONBOARD_HARDWARE_PROFILE") {
             config.hardware_profile = hardware_profile;
         }
+        if let Some(send_behavior) = option_env!("ONBOARD_SEND_BEHAVIOR") {
+            config.send_behavior = send_behavior;
+        }
         if let Some(sensor_driver) = option_env!("SENSOR_DRIVER") {
             config.sensor_driver = sensor_driver;
         }
         if let Some(ir_transport) = option_env!("IR_TRANSPORT") {
             config.ir_transport = ir_transport;
+        }
+        if let Some(ir_protocol) = option_env!("ONBOARD_IR_PROTOCOL") {
+            config.ir_protocol = ir_protocol;
         }
         if let Some(status_led_driver) = option_env!("PICO2W_STATUS_LED_DRIVER") {
             config.status_led_driver = status_led_driver;
@@ -150,12 +160,14 @@ mod tests {
 
         assert_eq!(config.zone_name, "kitchen");
         assert_eq!(config.hardware_profile, "pico2w_aht20_ir");
+        assert_eq!(config.send_behavior, "ir_heatpump");
         assert_eq!(config.onboard_port, 5000);
         assert_eq!(config.post_timeout_secs, 600);
         assert_eq!(config.sensor_driver, "aht20");
         assert!(!config.sensor_required_at_boot);
         assert_eq!(config.ir_tx_gpio, 14);
         assert_eq!(config.ir_rx_gpio, 15);
+        assert_eq!(config.ir_protocol, "daikin_arc452a9");
         assert_eq!(config.i2c_sda_gpio, 4);
         assert_eq!(config.i2c_scl_gpio, 5);
         assert_eq!(config.status_led_driver, "cyw43_ledw");

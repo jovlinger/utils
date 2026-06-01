@@ -582,6 +582,30 @@ def test_sensors_with_onboard_logs_are_deduped_and_exposed(dmz_ctx: object) -> N
         assert ctx["zone_states"]["zlog"]["logs"]["lines"] == js["logs"]["lines"]
 
 
+def test_sensors_with_network_metadata_are_exposed(dmz_ctx: object) -> None:
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/znet/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "network": {
+                    "local_ip": "192.168.1.44",
+                    "onboard_url": "http://192.168.1.44:5000",
+                },
+            },
+        )
+
+        assert js["network"]["local_ip"] == "192.168.1.44"
+        ctx = _get_200(c, "/ui/context")
+        assert (
+            ctx["zone_states"]["znet"]["network"]["onboard_url"]
+            == "http://192.168.1.44:5000"
+        )
+        assert ctx["environments"][0]["network"]["local_ip"] == "192.168.1.44"
+
+
 def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
     """Backward-compat: a flat sensors dict (no ``sensors``/``command`` keys) is accepted."""
     with app.test_client() as c:

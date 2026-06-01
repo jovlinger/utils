@@ -475,8 +475,15 @@ async fn poll_once(
         Some(last_command_json.as_str())
     };
     let log_lines = recent_log_lines::<24>(health);
-    let body = build_sensor_post_body::<4096>(config, reading, command_for_body, &log_lines)
-        .map_err(|_| PollError::BuildBody)?;
+    let local_ip = local_ipv4_string::<16>(stack);
+    let body = build_sensor_post_body::<4096>(
+        config,
+        reading,
+        command_for_body,
+        &log_lines,
+        local_ip.as_deref(),
+    )
+    .map_err(|_| PollError::BuildBody)?;
     health_log(health, "poll body built");
 
     let mut path: String<96> = String::new();
@@ -973,7 +980,7 @@ async fn run_healthz_server(
         {
             health_log(health, "healthz route matched");
             let mut body: String<3072> = String::new();
-            build_healthz_body(&mut body, &config, health);
+            build_healthz_body(&mut body, &config, stack, health);
             health_log(health, "healthz body built");
             let mut response: String<4096> = String::new();
             if write!(
@@ -1071,25 +1078,42 @@ async fn send_onboard_response(
 fn build_healthz_body<const N: usize>(
     out: &mut String<N>,
     config: &DeviceConfig,
+    stack: Stack<'static>,
     health: &'static HealthMutex,
 ) {
+    let local_ip = local_ipv4_string::<16>(stack);
     health.lock(|cell| {
         let state = cell.borrow();
         let logs = state.log.newest_first::<HEALTH_LOG_RETURNED>();
         let _ = write!(
             out,
-            "{{\"ok\":true,\"service\":\"onboard-app\",\"hardware_backend\":\"pico2w\",\"time\":null,\"pid\":null,\"log_level\":\"INFO\",\"deployment\":{{\"zone_name\":\"{}\",\"hardware_profile\":\"{}\",\"send_behavior\":\"ir_daikin\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"{}\",\"ir_transport\":\"{}\",\"ir_device\":\"gp{}\"}},\"queues\":{{\"daikin_size\":0,\"daikin_capacity\":0}},\"log_storage\":{{\"path\":null,\"type\":\"memory\"}},\"pico\":{{\"uptime_seconds\":{},\"wifi_ready\":{},\"last_poll_ok\":{},\"poll_successes\":{},\"poll_errors\":{},\"ir_stub_sends\":{}}},\"log_buffer\":{{\"capacity\":{},\"returned\":{},\"lines\":[",
+            "{{\"ok\":true,\"service\":\"onboard-app\",\"hardware_backend\":\"pico2w\",\"time\":null,\"pid\":null,\"log_level\":\"INFO\",\"deployment\":{{\"zone_name\":\"{}\",\"hardware_profile\":\"{}\",\"send_behavior\":\"{}\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"{}\",\"ir_transport\":\"{}\",\"ir_device\":\"gp{}\",\"ir_protocol\":\"{}\"}},\"queues\":{{\"daikin_size\":0,\"daikin_capacity\":0}},\"log_storage\":{{\"path\":null,\"type\":\"memory\"}},\"pico\":{{\"uptime_seconds\":{},\"wifi_ready\":{},\"last_poll_ok\":{},\"poll_successes\":{},\"poll_errors\":{},\"ir_stub_sends\":{}}},",
             config.zone_name,
             config.hardware_profile,
+            config.send_behavior,
             config.sensor_driver,
             config.ir_transport,
             config.ir_tx_gpio,
+            config.ir_protocol,
             Instant::now().as_secs(),
             json_bool(state.wifi_ready),
             json_bool(state.last_poll_ok),
             state.poll_successes,
             state.poll_errors,
-            state.ir_stub_sends,
+            state.ir_stub_sends
+        );
+        if let Some(local_ip) = local_ip.as_ref() {
+            let _ = write!(
+                out,
+                "\"network\":{{\"local_ip\":\"{}\",\"onboard_url\":\"http://{}:{}\"}},",
+                local_ip, local_ip, config.onboard_port
+            );
+        } else {
+            let _ = out.push_str("\"network\":{},");
+        }
+        let _ = write!(
+            out,
+            "\"log_buffer\":{{\"capacity\":{},\"returned\":{},\"lines\":[",
             state.log.capacity(),
             state.log.len().min(HEALTH_LOG_RETURNED)
         );
@@ -1116,6 +1140,19 @@ fn build_logs_body<const N: usize>(out: &mut String<N>, health: &'static HealthM
         write_log_array(out, logs);
         let _ = out.push_str("],\"path\":null}");
     });
+}
+
+fn local_ipv4_string<const N: usize>(stack: Stack<'static>) -> Option<String<N>> {
+    let config = stack.config_v4()?;
+    let octets = config.address.address().octets();
+    let mut out: String<N> = String::new();
+    write!(
+        out,
+        "{}.{}.{}.{}",
+        octets[0], octets[1], octets[2], octets[3]
+    )
+    .ok()?;
+    Some(out)
 }
 
 fn write_log_array<const N: usize, const L: usize>(out: &mut String<N>, logs: [&str; L]) {

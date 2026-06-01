@@ -72,7 +72,11 @@ if [ -n "$PICO2W_UF2_VOLUME_OVERRIDE" ]; then
 	PICO2W_UF2_VOLUME="$PICO2W_UF2_VOLUME_OVERRIDE"
 fi
 PICO2W_DEPLOY_ACTION="${PICO2W_DEPLOY_ACTION:-check}"
-PICO2W_UF2_VOLUME="${PICO2W_UF2_VOLUME:-/Volumes/RPI-RP2}"
+if [ "${THERMO_DEPLOY_EXECUTE:-0}" != "1" ] && [ "$PICO2W_DEPLOY_ACTION" = "flash" ]; then
+	log "check only: --deploy=true not provided, so flash is disabled"
+	PICO2W_DEPLOY_ACTION=check
+fi
+PICO2W_UF2_VOLUME="${PICO2W_UF2_VOLUME:-/Volumes/RP2350}"
 PICO2W_UF2_PATH="${PICO2W_UF2_PATH:-$PICO_DIR/target/$PICO2W_TARGET/release/ledw_status_rp2350.uf2}"
 
 if [ -z "${PICO2W_ZONE_PRIVATE_KEY_B64:-}" ] && [ -n "${ZONE_PRIVATE_KEY:-}" ]; then

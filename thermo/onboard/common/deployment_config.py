@@ -5,10 +5,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, FrozenSet, Mapping, Optional
 
+from common.heatpumpirctl.profiles import (
+    DEFAULT_IR_PROTOCOL,
+    GENERIC_SEND_BEHAVIOR,
+    HAIER_YRW02,
+    LEGACY_DAIKIN_SEND_BEHAVIOR,
+    MIDEA_CLASSIC,
+    SEND_BEHAVIOR_PROTOCOL_ALIASES,
+    normalize_protocol_name,
+    protocol_from_env,
+)
+
 
 DEFAULT_ZONE_NAME = "default"
 DEFAULT_HARDWARE_PROFILE = "pi_zero_2w_htu21d_ir"
-DEFAULT_SEND_BEHAVIOR = "ir_daikin"
+DEFAULT_SEND_BEHAVIOR = GENERIC_SEND_BEHAVIOR
 DEFAULT_REPORT_BEHAVIOR = "sensor_readings"
 DEFAULT_SENSOR_DRIVER = "htu21d"
 DEFAULT_IR_TRANSPORT = "lirc"
@@ -28,6 +39,7 @@ class HardwareProfile:
     ir_transport: str
     ir_device: str
     send_behaviors: FrozenSet[str]
+    ir_protocols: FrozenSet[str]
     report_behaviors: FrozenSet[str]
 
 
@@ -42,6 +54,7 @@ class OnboardDeploymentConfig:
     sensor_driver: str
     ir_transport: str
     ir_device: str
+    ir_protocol: str
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -52,7 +65,17 @@ class OnboardDeploymentConfig:
             "sensor_driver": self.sensor_driver,
             "ir_transport": self.ir_transport,
             "ir_device": self.ir_device,
+            "ir_protocol": self.ir_protocol,
         }
+
+
+SUPPORTED_SEND_BEHAVIORS: FrozenSet[str] = frozenset(
+    {GENERIC_SEND_BEHAVIOR, LEGACY_DAIKIN_SEND_BEHAVIOR}
+    | set(SEND_BEHAVIOR_PROTOCOL_ALIASES)
+)
+SUPPORTED_HEATPUMP_PROTOCOLS: FrozenSet[str] = frozenset(
+    {DEFAULT_IR_PROTOCOL, MIDEA_CLASSIC, HAIER_YRW02}
+)
 
 
 SUPPORTED_HARDWARE_PROFILES: Mapping[str, HardwareProfile] = {
@@ -61,7 +84,8 @@ SUPPORTED_HARDWARE_PROFILES: Mapping[str, HardwareProfile] = {
         sensor_driver=DEFAULT_SENSOR_DRIVER,
         ir_transport=DEFAULT_IR_TRANSPORT,
         ir_device=DEFAULT_IR_DEVICE,
-        send_behaviors=frozenset({DEFAULT_SEND_BEHAVIOR}),
+        send_behaviors=SUPPORTED_SEND_BEHAVIORS,
+        ir_protocols=SUPPORTED_HEATPUMP_PROTOCOLS,
         report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),
     ),
     PICO2W_HARDWARE_PROFILE: HardwareProfile(
@@ -69,7 +93,8 @@ SUPPORTED_HARDWARE_PROFILES: Mapping[str, HardwareProfile] = {
         sensor_driver=PICO2W_SENSOR_DRIVER,
         ir_transport=PICO2W_IR_TRANSPORT,
         ir_device=PICO2W_IR_DEVICE,
-        send_behaviors=frozenset({DEFAULT_SEND_BEHAVIOR}),
+        send_behaviors=SUPPORTED_SEND_BEHAVIORS,
+        ir_protocols=SUPPORTED_HEATPUMP_PROTOCOLS,
         report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),
     ),
 }
@@ -129,6 +154,19 @@ def config_from_environ(
             f"unsupported ONBOARD_SEND_BEHAVIOR={send_behavior!r} "
             f"for {hardware_profile}; supported: {supported}"
         )
+    ir_protocol = normalize_protocol_name(
+        _env_value(
+            environ,
+            "ONBOARD_IR_PROTOCOL",
+            protocol_from_env(environ, send_behavior),
+        )
+    )
+    if ir_protocol not in profile.ir_protocols:
+        supported = ", ".join(sorted(profile.ir_protocols))
+        raise ValueError(
+            f"unsupported ONBOARD_IR_PROTOCOL={ir_protocol!r} "
+            f"for {hardware_profile}; supported: {supported}"
+        )
 
     report_behavior = _env_value(
         environ,
@@ -165,4 +203,5 @@ def config_from_environ(
         sensor_driver=sensor_driver,
         ir_transport=ir_transport,
         ir_device=ir_device,
+        ir_protocol=ir_protocol,
     )

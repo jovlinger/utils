@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import socket
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 from flask import Flask, request
@@ -25,7 +26,7 @@ from common.logging_config import (
     get_recent_log_messages,
     set_log_level,
 )
-from hardware.pizero2w.anavilib import HTU21D, send_daikin_state
+from hardware.pizero2w.anavilib import HTU21D, send_heatpump_state
 
 configure_logging("onboard")
 # Example: 2026-05-17T13:40:23.905Z INFO onboard app:136 request path='/environment'
@@ -49,6 +50,32 @@ def _onboard_ui_zone_name() -> str:
     return _onboard_deployment_config().zone_name
 
 
+def _best_effort_local_ip() -> Optional[str]:
+    """Return the outbound local IPv4 address, if the OS can infer one."""
+    override = os.environ.get("ONBOARD_LOCAL_IP", "").strip()
+    if override:
+        return override
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))
+            return str(sock.getsockname()[0])
+    except OSError:
+        return None
+
+
+def _network_metadata() -> Dict[str, str]:
+    """Best-effort network details for direct operator access."""
+    metadata: Dict[str, str] = {}
+    local_ip = _best_effort_local_ip()
+    if local_ip:
+        metadata["local_ip"] = local_ip
+        metadata["onboard_url"] = "http://%s:%s" % (
+            local_ip,
+            os.environ.get("PORT", "5000"),
+        )
+    return metadata
+
+
 def _manage_auth_ok() -> bool:
     """Allow management operations only with a matching token."""
     token = os.environ.get(MANAGE_TOKEN_ENVVAR, "")
@@ -65,6 +92,7 @@ def _state_snapshot() -> Dict[str, Any]:
         "log_level": get_log_level(),
         "log_path": os.environ.get("LOG_PATH"),
         "deployment": deployment.to_public_dict(),
+        "network": _network_metadata(),
         "fake_sensor": {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
@@ -232,6 +260,7 @@ def _environment_dict() -> Dict[str, Any]:
     global _fake_temp, _fake_humid
     ts = datetime.now()
     cmd = _last_command_with_created_dt()
+    network = _network_metadata()
     log_buffer = {
         "capacity": get_log_buffer_capacity(),
         "returned": min(80, get_log_buffer_capacity()),
@@ -243,6 +272,7 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": _round1(_fake_humid),
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
             "log_buffer": log_buffer,
         }
     try:
@@ -254,6 +284,7 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": _round1(hum),
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
             "log_buffer": log_buffer,
         }
     except Exception as e:
@@ -263,6 +294,7 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": None,
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
             "log_buffer": log_buffer,
         }
 
@@ -571,7 +603,7 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
         _last_applied_state = state
         _last_command_created_dt = new_created_dt
         return _daikin_response_payload(ts_iso, state, sent=False, unchanged=True), 200
-    success = send_daikin_state(state)
+    success = send_heatpump_state(state)
     if success:
         _last_daikin_ir_fingerprint = fp
     _last_applied_state = state
@@ -592,6 +624,7 @@ def ui_context():
         "temperature_centigrade": env.get("temperature_centigrade"),
         "humidity_percent": env.get("humidity_percent"),
         "time": env.get("time"),
+        "network": env.get("network"),
     }
     cmd = _latest_command_dict_for_ui()
     return {

@@ -16,6 +16,7 @@ pub fn build_sensor_post_body<const N: usize>(
     reading: SensorReading,
     last_applied_command_json: Option<&str>,
     log_lines: &[&str],
+    local_ip: Option<&str>,
 ) -> Result<String<N>, core::fmt::Error> {
     let mut body: String<N> = String::new();
     write!(
@@ -26,6 +27,15 @@ pub fn build_sensor_post_body<const N: usize>(
     if let Some(command_json) = last_applied_command_json {
         if !command_json.is_empty() {
             write!(body, ",\"command\":{}", command_json)?;
+        }
+    }
+    if let Some(local_ip) = local_ip {
+        if !local_ip.is_empty() {
+            write!(
+                body,
+                ",\"network\":{{\"local_ip\":\"{}\",\"onboard_url\":\"http://{}:{}\"}}",
+                local_ip, local_ip, config.onboard_port
+            )?;
         }
     }
     if !log_lines.is_empty() {
@@ -45,8 +55,8 @@ pub fn build_sensor_post_body<const N: usize>(
     }
     write!(
         body,
-        ",\"deployment\":{{\"hardware_profile\":\"{}\",\"zone_name\":\"{}\"}}}}",
-        config.hardware_profile, config.zone_name
+        ",\"deployment\":{{\"hardware_profile\":\"{}\",\"zone_name\":\"{}\",\"send_behavior\":\"{}\",\"ir_protocol\":\"{}\"}}}}",
+        config.hardware_profile, config.zone_name, config.send_behavior, config.ir_protocol
     )?;
     Ok(body)
 }
@@ -259,12 +269,28 @@ mod tests {
             source: SensorSource::Fallback,
         };
 
-        let body = build_sensor_post_body::<256>(&config, reading, None, &[]).unwrap();
+        let body = build_sensor_post_body::<384>(&config, reading, None, &[], None).unwrap();
 
         assert_eq!(
             body.as_str(),
-            "{\"sensors\":{\"temp_centigrade\":21.0,\"humid_percent\":50.0},\"deployment\":{\"hardware_profile\":\"pico2w_aht20_ir\",\"zone_name\":\"kitchen\"}}"
+            "{\"sensors\":{\"temp_centigrade\":21.0,\"humid_percent\":50.0},\"deployment\":{\"hardware_profile\":\"pico2w_aht20_ir\",\"zone_name\":\"kitchen\",\"send_behavior\":\"ir_heatpump\",\"ir_protocol\":\"daikin_arc452a9\"}}"
         );
+    }
+
+    #[test]
+    fn builds_post_body_with_network_metadata() {
+        let config = DeviceConfig::kitchen_pico2w();
+        let reading = SensorReading {
+            temp_centigrade: 21.0,
+            humid_percent: 50.0,
+            source: SensorSource::Fallback,
+        };
+
+        let body = build_sensor_post_body::<512>(&config, reading, None, &[], Some("192.168.1.23"))
+            .unwrap();
+
+        assert!(body.contains("\"network\":{\"local_ip\":\"192.168.1.23\""));
+        assert!(body.contains("\"onboard_url\":\"http://192.168.1.23:5000\""));
     }
 
     #[test]
@@ -312,6 +338,7 @@ mod tests {
             reading,
             None,
             &["poll start", "command stale", "quote \" escaped"],
+            None,
         )
         .unwrap();
 

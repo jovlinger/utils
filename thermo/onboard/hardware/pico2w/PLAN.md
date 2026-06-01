@@ -23,6 +23,10 @@ Initial hardware target:
 - Initial pin assignment: AHT20 on I2C0 (`SDA` GP4, `SCL` GP5), IR TX module
   signal on GP14, IR RX module signal on GP15. Power modules from `3V3_OUT`
   unless the IR module is verified safe for 5 V with level shifting.
+- Verified 2026-05-31: MicroPython on the Pico2W scanned the AHT20 at `0x38`
+  on I2C0 (`SDA` GP4, `SCL` GP5). Breath test readings rose from about
+  23.7 C / 51% RH to about 24.5 C / 61% RH over 10 seconds, so this wiring is
+  the baseline Pico template unless a room needs specific tweaks.
 - Status LED: onboard LED labeled `LEDW`, driven through the CYW43 WiFi chip
   rather than a normal RP2350 GPIO. LEDW is single-color, so the yellow, blue,
   green, and red status names are rendered as distinct blink patterns.
@@ -33,17 +37,31 @@ Initial hardware target:
 flowchart LR
   pico["Raspberry Pi Pico2W"]
   aht["AHT20 temp/humidity module"]
-  irtx["38 kHz IR transmitter module"]
-  irrx["38 kHz IR receiver module"]
 
   pico -- "3V3_OUT -> VCC" --> aht
   pico -- "GND -> GND" --> aht
   pico -- "GP4 / I2C0 SDA -> SDA" --> aht
   pico -- "GP5 / I2C0 SCL -> SCL" --> aht
+```
+
+---
+
+```mermaid
+flowchart LR
+  pico["Raspberry Pi Pico2W"]
+  irtx["38 kHz IR transmitter module"]
 
   pico -- "3V3_OUT -> VCC" --> irtx
   pico -- "GND -> GND" --> irtx
   pico -- "GP14 -> DAT" --> irtx
+```
+
+---
+
+```mermaid
+flowchart LR
+  pico["Raspberry Pi Pico2W"]
+  irrx["38 kHz IR receiver module"]
 
   pico -- "3V3_OUT -> VCC" --> irrx
   pico -- "GND -> GND" --> irrx
