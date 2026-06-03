@@ -230,6 +230,7 @@ def test_dmz_body_includes_deployment_metadata() -> None:
         "    'temperature_centigrade': 19.3,\n"
         "    'humidity_percent': 41.9,\n"
         "    'command': {'mode': 'FAN', 'created_dt': '2026-05-25T12:47:36'},\n"
+        "    'network': {'local_ip': '192.168.1.44', 'onboard_url': 'http://192.168.1.44:5000'},\n"
         "})\n"
         "print('RESULT:' + json.dumps(body, sort_keys=True))\n"
     )
@@ -249,6 +250,10 @@ def test_dmz_body_includes_deployment_metadata() -> None:
     body = json.loads(result_lines[-1].removeprefix("RESULT:"))
     assert body["sensors"] == {"humid_percent": 41.9, "temp_centigrade": 19.3}
     assert body["command"]["mode"] == "FAN"
+    assert body["network"] == {
+        "local_ip": "192.168.1.44",
+        "onboard_url": "http://192.168.1.44:5000",
+    }
     assert body["deployment"] == {
         "backend": "pizero2w",
         "env_file": "config/kitchen.env",

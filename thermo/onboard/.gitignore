@@ -9,4 +9,5 @@ hardware/*/install/.deploy-metadata.env
 .image.app
 .image.twoway
 .pytest_cache/
+hardware/*/target/
 

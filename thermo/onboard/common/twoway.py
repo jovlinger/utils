@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from typing import Dict, Mapping, Optional, Tuple
@@ -12,7 +13,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import jsonT
-from common.logging_config import configure_logging, format_kv
+from common.logging_config import configure_logging, format_kv, get_recent_log_messages
 
 configure_logging("twoway")
 # Example: 2026-05-17T13:40:23.905Z INFO twoway twoway:45 start argv=['common.twoway', 'http://...', ...]
@@ -210,10 +211,69 @@ def _env_to_dmz_body(env: dict) -> dict:
     cmd = env.get("command") if isinstance(env, dict) else None
     if isinstance(cmd, dict) and cmd:
         body["command"] = cmd
+    logs = _combined_log_lines(env)
+    if logs:
+        body["logs"] = {"lines": logs}
+    network = env.get("network") if isinstance(env, dict) else None
+    if isinstance(network, dict) and network:
+        body["network"] = network
+    else:
+        network = _network_metadata_from_os()
+        if network:
+            body["network"] = network
     deployment = _deployment_metadata_from_env()
     if deployment:
         body["deployment"] = deployment
     return body
+
+
+def _best_effort_local_ip() -> Optional[str]:
+    """Return the outbound local IPv4 address, if the OS can infer one."""
+    override = os.environ.get("ONBOARD_LOCAL_IP", "").strip()
+    if override:
+        return override
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))
+            return str(sock.getsockname()[0])
+    except OSError:
+        return None
+
+
+def _network_metadata_from_os() -> Dict[str, str]:
+    """Best-effort local network metadata for DMZ zone state."""
+    metadata: Dict[str, str] = {}
+    local_ip = _best_effort_local_ip()
+    if local_ip:
+        metadata["local_ip"] = local_ip
+        metadata["onboard_url"] = "http://%s:%s" % (
+            local_ip,
+            os.environ.get("PORT", "5000"),
+        )
+    return metadata
+
+
+def _combined_log_lines(env: dict, *, limit: int = 80) -> list[str]:
+    """Newest-first onboard log lines to piggyback to DMZ."""
+    lines: list[str] = []
+    log_buffer = env.get("log_buffer") if isinstance(env, dict) else None
+    if isinstance(log_buffer, dict):
+        raw_lines = log_buffer.get("lines")
+        if isinstance(raw_lines, list):
+            lines.extend(str(line) for line in raw_lines if isinstance(line, str))
+    lines.extend(get_recent_log_messages(limit))
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        clean = line.replace("\r", " ").replace("\n", " ").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean[:500])
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _deployment_metadata_from_env(

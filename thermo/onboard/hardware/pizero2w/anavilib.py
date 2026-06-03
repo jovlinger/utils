@@ -18,13 +18,13 @@ import tempfile
 from typing import Any
 
 from common import is_test_env
+from common.heatpumpirctl import profiles
 from common.logging_config import format_kv
 
 logger = logging.getLogger(__name__)
 
 LIRC_TX = (os.environ.get("IR_DEVICE") or "/dev/lirc0").strip()
 IR_KIND = "heatpump_ir"
-IR_DIALECT = "Daikin/ARC452A9"
 IR_DEVICE = "lirc:%s" % LIRC_TX
 
 
@@ -42,14 +42,24 @@ def _payload_sha256(mode2: str) -> str:
     return hashlib.sha256(mode2.encode("utf-8")).hexdigest()
 
 
-def send_daikin_state(state: Any) -> bool:
-    """Send Daikin IR state via ir-ctl. Return True if sent, False on error."""
+def _protocol_name() -> str:
+    send_behavior = (
+        os.environ.get("ONBOARD_SEND_BEHAVIOR") or profiles.LEGACY_DAIKIN_SEND_BEHAVIOR
+    ).strip()
+    return profiles.protocol_from_env(os.environ, send_behavior)
+
+
+def send_heatpump_state(state: Any) -> bool:
+    """Send heat-pump IR state via ir-ctl. Return True if sent, False on error."""
+    protocol_name = _protocol_name()
+    spec = profiles.protocol_spec(protocol_name)
     if is_test_env():
         logger.debug(
             "send_skipped%s",
             format_kv(
                 kind=IR_KIND,
-                dialect=IR_DIALECT,
+                dialect=spec.display_name,
+                protocol=spec.name,
                 device=IR_DEVICE,
                 reason="test_env",
                 state_summary=_state_summary(state),
@@ -57,25 +67,25 @@ def send_daikin_state(state: Any) -> bool:
         )
         return True
 
-    from common.heatpumpirctl import ARC452A9 as proto
-
     logger.debug(
         "encode_start%s",
         format_kv(
             kind=IR_KIND,
-            dialect=IR_DIALECT,
+            dialect=spec.display_name,
+            protocol=spec.name,
             device=IR_DEVICE,
             state_summary=_state_summary(state),
         ),
     )
     try:
-        mode2 = proto.dumps(state)
+        mode2 = profiles.dumps(state, protocol_name)
     except Exception as e:
         logger.error(
             "encode_failed%s",
             format_kv(
                 kind=IR_KIND,
-                dialect=IR_DIALECT,
+                dialect=spec.display_name,
+                protocol=spec.name,
                 device=IR_DEVICE,
                 error=str(e),
             ),
@@ -89,7 +99,8 @@ def send_daikin_state(state: Any) -> bool:
         "encoded%s",
         format_kv(
             kind=IR_KIND,
-            dialect=IR_DIALECT,
+            dialect=spec.display_name,
+            protocol=spec.name,
             device=IR_DEVICE,
             mode2_bytes=len(mode2.encode("utf-8")),
             mode2_lines=line_count,
@@ -107,7 +118,8 @@ def send_daikin_state(state: Any) -> bool:
                 "ir_send%s",
                 format_kv(
                     kind=IR_KIND,
-                    dialect=IR_DIALECT,
+                    dialect=spec.display_name,
+                    protocol=spec.name,
                     device=IR_DEVICE,
                     payload_sha256_prefix=digest[:16],
                 ),
@@ -115,12 +127,22 @@ def send_daikin_state(state: Any) -> bool:
             argv = ["ir-ctl", "-d", LIRC_TX, "--send", path]
             logger.debug(
                 "ir_ctl_invoke%s",
-                format_kv(kind=IR_KIND, dialect=IR_DIALECT, argv=argv),
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=spec.display_name,
+                    protocol=spec.name,
+                    argv=argv,
+                ),
             )
             subprocess.run(argv, check=True)
             logger.debug(
                 "ir_ctl_sent_ok%s",
-                format_kv(kind=IR_KIND, dialect=IR_DIALECT, device=IR_DEVICE),
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=spec.display_name,
+                    protocol=spec.name,
+                    device=IR_DEVICE,
+                ),
             )
             return True
         finally:
@@ -130,13 +152,19 @@ def send_daikin_state(state: Any) -> bool:
             "ir_ctl_failed%s",
             format_kv(
                 kind=IR_KIND,
-                dialect=IR_DIALECT,
+                dialect=spec.display_name,
+                protocol=spec.name,
                 device=IR_DEVICE,
                 payload_sha256_prefix=digest[:16],
                 error=str(e),
             ),
         )
         return False
+
+
+def send_daikin_state(state: Any) -> bool:
+    """Compatibility wrapper for old call sites and tests."""
+    return send_heatpump_state(state)
 
 
 def get_smbus():

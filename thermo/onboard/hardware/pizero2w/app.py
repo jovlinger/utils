@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import socket
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 from flask import Flask, request
@@ -20,10 +21,12 @@ from common.heatpumpirctl import State
 from common.logging_config import (
     configure_logging,
     format_kv,
+    get_log_buffer_capacity,
     get_log_level,
+    get_recent_log_messages,
     set_log_level,
 )
-from hardware.pizero2w.anavilib import HTU21D, send_daikin_state
+from hardware.pizero2w.anavilib import HTU21D, send_heatpump_state
 
 configure_logging("onboard")
 # Example: 2026-05-17T13:40:23.905Z INFO onboard app:136 request path='/environment'
@@ -47,6 +50,32 @@ def _onboard_ui_zone_name() -> str:
     return _onboard_deployment_config().zone_name
 
 
+def _best_effort_local_ip() -> Optional[str]:
+    """Return the outbound local IPv4 address, if the OS can infer one."""
+    override = os.environ.get("ONBOARD_LOCAL_IP", "").strip()
+    if override:
+        return override
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))
+            return str(sock.getsockname()[0])
+    except OSError:
+        return None
+
+
+def _network_metadata() -> Dict[str, str]:
+    """Best-effort network details for direct operator access."""
+    metadata: Dict[str, str] = {}
+    local_ip = _best_effort_local_ip()
+    if local_ip:
+        metadata["local_ip"] = local_ip
+        metadata["onboard_url"] = "http://%s:%s" % (
+            local_ip,
+            os.environ.get("PORT", "5000"),
+        )
+    return metadata
+
+
 def _manage_auth_ok() -> bool:
     """Allow management operations only with a matching token."""
     token = os.environ.get(MANAGE_TOKEN_ENVVAR, "")
@@ -63,6 +92,7 @@ def _state_snapshot() -> Dict[str, Any]:
         "log_level": get_log_level(),
         "log_path": os.environ.get("LOG_PATH"),
         "deployment": deployment.to_public_dict(),
+        "network": _network_metadata(),
         "fake_sensor": {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
@@ -74,6 +104,46 @@ def _state_snapshot() -> Dict[str, Any]:
             "PORT": os.environ.get("PORT"),
             "DMZ_URL": os.environ.get("DMZ_URL"),
         },
+    }
+
+
+def _active_log_path() -> Optional[str]:
+    return os.environ.get("LOG_PATH") or os.environ.get("LOG_PATH_APP")
+
+
+def _mount_info_for_path(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return {"path": None, "available": False, "is_tmpfs": None}
+    real_path = os.path.realpath(path)
+    probe_path = real_path if os.path.exists(real_path) else os.path.dirname(real_path)
+    best: Dict[str, Any] = {}
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as f:
+            for raw in f:
+                parts = raw.rstrip("\n").split(" ")
+                if " - " not in raw or len(parts) < 10:
+                    continue
+                sep = parts.index("-")
+                mount_point = parts[4].replace("\\040", " ")
+                fs_type = parts[sep + 1]
+                if probe_path == mount_point or probe_path.startswith(mount_point.rstrip("/") + "/"):
+                    if len(mount_point) > len(best.get("mount_point", "")):
+                        best = {
+                            "mount_point": mount_point,
+                            "fs_type": fs_type,
+                        }
+    except OSError:
+        best = {}
+
+    fs_type = best.get("fs_type")
+    tmpfs_like_prefix = real_path.startswith(("/run/", "/tmp/", "/dev/shm/"))
+    return {
+        "path": path,
+        "real_path": real_path,
+        "available": True,
+        "mount_point": best.get("mount_point"),
+        "fs_type": fs_type,
+        "is_tmpfs": bool(fs_type == "tmpfs" or (fs_type is None and tmpfs_like_prefix)),
     }
 
 
@@ -190,12 +260,20 @@ def _environment_dict() -> Dict[str, Any]:
     global _fake_temp, _fake_humid
     ts = datetime.now()
     cmd = _last_command_with_created_dt()
+    network = _network_metadata()
+    log_buffer = {
+        "capacity": get_log_buffer_capacity(),
+        "returned": min(80, get_log_buffer_capacity()),
+        "lines": get_recent_log_messages(80),
+    }
     if _fake_temp is not None and _fake_humid is not None:
         return {
             "temperature_centigrade": _round1(_fake_temp),
             "humidity_percent": _round1(_fake_humid),
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
+            "log_buffer": log_buffer,
         }
     try:
         htu = HTU21D.singleton()
@@ -206,6 +284,8 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": _round1(hum),
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
+            "log_buffer": log_buffer,
         }
     except Exception as e:
         logger.info("environment%s", format_kv(error=str(e)))
@@ -214,6 +294,8 @@ def _environment_dict() -> Dict[str, Any]:
             "humidity_percent": None,
             "time": ts.isoformat(),
             "command": cmd,
+            "network": network,
+            "log_buffer": log_buffer,
         }
 
 
@@ -338,6 +420,37 @@ def logs():
         return {"lines": list(reversed(tail))}
     except OSError:
         return {"lines": []}, 200
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Basic onboard app health plus recent in-memory log messages."""
+    try:
+        limit = int(request.args.get("n", "50"))
+    except ValueError:
+        limit = 50
+    limit = max(0, min(limit, get_log_buffer_capacity()))
+    log_path = _active_log_path()
+    snapshot = _state_snapshot()
+    return {
+        "ok": True,
+        "service": "onboard-app",
+        "hardware_backend": "pizero2w",
+        "time": snapshot["time"],
+        "pid": snapshot["pid"],
+        "log_level": snapshot["log_level"],
+        "deployment": snapshot["deployment"],
+        "queues": {
+            "daikin_size": snapshot["daikin_queue_size"],
+            "daikin_capacity": snapshot["daikin_queue_capacity"],
+        },
+        "log_storage": _mount_info_for_path(log_path),
+        "log_buffer": {
+            "capacity": get_log_buffer_capacity(),
+            "returned": limit,
+            "lines": get_recent_log_messages(limit),
+        },
+    }, 200
 
 
 @app.route("/manage", methods=["GET"])
@@ -490,7 +603,7 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
         _last_applied_state = state
         _last_command_created_dt = new_created_dt
         return _daikin_response_payload(ts_iso, state, sent=False, unchanged=True), 200
-    success = send_daikin_state(state)
+    success = send_heatpump_state(state)
     if success:
         _last_daikin_ir_fingerprint = fp
     _last_applied_state = state
@@ -511,6 +624,7 @@ def ui_context():
         "temperature_centigrade": env.get("temperature_centigrade"),
         "humidity_percent": env.get("humidity_percent"),
         "time": env.get("time"),
+        "network": env.get("network"),
     }
     cmd = _latest_command_dict_for_ui()
     return {

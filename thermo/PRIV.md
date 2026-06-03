@@ -13,6 +13,10 @@ thermo/priv/
     google-client-secret
     flask-secret-key
     allowed-email
+  pico2w/
+    office.env
+    bedroom.env
+    kitchen.env
   ssh-host/
     ssh_host_ed25519_key
     ssh_host_rsa_key
@@ -29,3 +33,9 @@ thermo/config/
 
 `make -C thermo/dmz zone-keys` writes `priv/zone/priv.pem` and
 `config/zone/pub.pem`.
+
+Committed zone manifests point `ZONE_PRIVATE_KEY_PATH` at
+`$THERMO_ROOT/priv/zone/priv.pem`. Pico2W private env files are sourced by the
+Pico deploy script after the committed room config. For example,
+`thermo/priv/pico2w/office.env` should hold `PICO2W_WIFI_PASSWORD` and any
+private overrides.
