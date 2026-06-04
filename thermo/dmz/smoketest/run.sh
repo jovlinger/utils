@@ -86,11 +86,17 @@ fi
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 echo "==> docker run (same as make runlocal: -p 8080:8080, default entrypoint), detached"
+# Match test/conftest.py fast_long_poll_defaults: live HTTP smoketest uses 30s client timeout;
+# default LONG_POLL_TIMEOUT_SECS=60 would make POST /zone/*/sensors hang until ReadTimeout.
+SMOKETEST_ENV=(
+	-e LONG_POLL_TIMEOUT_SECS=0
+	-e LONG_POLL_SLEEP_SECS=0.001
+)
 if [ "$LEAVE_CONTAINER" -eq 1 ]; then
 	# No --rm so the container stays after this script exits (still running).
-	docker run -d -p 8080:8080 --name "$CONTAINER_NAME" "$IMAGE"
+	docker run -d -p 8080:8080 --name "$CONTAINER_NAME" "${SMOKETEST_ENV[@]}" "$IMAGE"
 else
-	docker run -d --rm -p 8080:8080 --name "$CONTAINER_NAME" "$IMAGE"
+	docker run -d --rm -p 8080:8080 --name "$CONTAINER_NAME" "${SMOKETEST_ENV[@]}" "$IMAGE"
 fi
 
 echo "==> wait for HTTP (GET /zones, up to 120s; container runs pytest+probes before app)"
