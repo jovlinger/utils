@@ -6,13 +6,14 @@ import os
 import socket
 import sys
 import time
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import jsonT
+from common.deploy_metadata import deployment_post_metadata
 from common.logging_config import configure_logging, format_kv, get_recent_log_messages
 
 configure_logging("twoway")
@@ -162,17 +163,6 @@ DMZ_HTTP_TIMEOUT_SECS: float = _env_float(
 
 PERIOD_SECS: float = 5.0
 PERIOD_MAX_SECS: float = 60.0
-_DEPLOYMENT_METADATA_ENV_KEYS: Tuple[Tuple[str, str], ...] = (
-    ("git_sha", "THERMO_DEPLOY_GIT_SHA"),
-    ("git_sha_short", "THERMO_DEPLOY_GIT_SHA_SHORT"),
-    ("git_branch", "THERMO_DEPLOY_GIT_BRANCH"),
-    ("git_dirty", "THERMO_DEPLOY_GIT_DIRTY"),
-    ("env_file", "THERMO_DEPLOY_ENV_FILE"),
-    ("backend", "THERMO_DEPLOY_BACKEND"),
-    ("hardware_profile", "THERMO_DEPLOY_HARDWARE_PROFILE"),
-    ("zone_name", "THERMO_DEPLOY_ZONE_NAME"),
-)
-
 logger.info(
     "twoway config%s",
     format_kv(
@@ -221,9 +211,7 @@ def _env_to_dmz_body(env: dict) -> dict:
         network = _network_metadata_from_os()
         if network:
             body["network"] = network
-    deployment = _deployment_metadata_from_env()
-    if deployment:
-        body["deployment"] = deployment
+    body["deployment"] = deployment_post_metadata()
     return body
 
 
@@ -274,20 +262,6 @@ def _combined_log_lines(env: dict, *, limit: int = 80) -> list[str]:
         if len(out) >= limit:
             break
     return out
-
-
-def _deployment_metadata_from_env(
-    environ: Optional[Mapping[str, str]] = None,
-) -> Dict[str, str]:
-    """Public deploy metadata to piggyback on the zone sensors update."""
-    if environ is None:
-        environ = os.environ
-    metadata: Dict[str, str] = {}
-    for public_key, env_key in _DEPLOYMENT_METADATA_ENV_KEYS:
-        value = environ.get(env_key, "").strip()
-        if value:
-            metadata[public_key] = value
-    return metadata
 
 
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> dict:

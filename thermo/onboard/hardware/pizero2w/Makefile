@@ -1,6 +1,6 @@
 # Build and push Pi Zero 2 W thermo-onboard images to GHCR.
 # Default target platform is 32-bit Raspberry Pi OS on Pi Zero 2 W.
-.PHONY: all build images push push_images pull clean
+.PHONY: all build test images push push_images pull clean
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
 
@@ -31,6 +31,9 @@ all: build
 images: build
 
 build: $(APP_MARKER) $(TWOWAY_MARKER)
+
+test:
+	@echo "[pizero2w] image build only; Python tests: make -C $(ONBOARD_ROOT) test"
 
 $(APP_MARKER): Dockerfile.onboard $(ONBOARD_ROOT)/requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(UI_SRC)
 	"$(CURDIR)/stage-docker-import.sh"

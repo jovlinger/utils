@@ -29,9 +29,11 @@ $diagnostics_export_section
 <p><b>Current time:</b> <code>$now_iso</code></p>
 <p><b>Environment</b></p>
 <table class="env">
-<tr><th>Zone</th><th>Temp °C</th><th>Humidity %</th><th>Time</th></tr>
+<tr><th>Zone</th><th>Temp °C</th><th>Humidity %</th><th>Time</th><th>Hardware</th><th>Git</th></tr>
 $env_table_rows
 </table>
+<p><b>Zone deployment</b></p>
+<div class="loglines">$zone_deployment</div>
 <p><b>State (summary):</b> $state_summary</p>
 <p><b>State (full JSON):</b></p>
 <pre>$state_json_pretty</pre>

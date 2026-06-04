@@ -1,8 +1,13 @@
 # Build/check/deploy Pico2W Rust firmware.
-.PHONY: all build check host-check firmware-check firmware-build images push push_images pull clean deploy print-config
+.PHONY: all build test check host-check firmware-check firmware-build images push push_images pull clean deploy print-config
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
+REPO_ROOT ?= $(abspath $(CURDIR)/../../../..)
 CARGO ?= $(if $(wildcard $(HOME)/.cargo/bin/cargo),$(HOME)/.cargo/bin/cargo,cargo)
+THERMO_DEPLOY_GIT_SHA ?= $(shell git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null)
+THERMO_DEPLOY_GIT_SHA_SHORT ?= $(shell git -C "$(REPO_ROOT)" rev-parse --short HEAD 2>/dev/null)
+THERMO_DEPLOY_BACKEND ?= pico2w
+export THERMO_DEPLOY_GIT_SHA THERMO_DEPLOY_GIT_SHA_SHORT THERMO_DEPLOY_BACKEND
 PICO2W_TARGET ?= thumbv8m.main-none-eabihf
 PICO2W_LEGACY_TARGET ?= thumbv6m-none-eabi
 CARGO_MANIFEST := $(CURDIR)/Cargo.toml
@@ -10,6 +15,8 @@ CARGO_MANIFEST := $(CURDIR)/Cargo.toml
 all: build
 
 build: host-check firmware-check
+
+test: host-check
 
 check: build
 

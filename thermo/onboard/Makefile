@@ -1,42 +1,53 @@
-# Common onboard entry points. Hardware-specific build/deploy details live under hardware/<backend>/.
-.PHONY: all build images push push_images pull clean test test-local test-docker ci deploy
+# Thermo onboard: shared build/test and per-zone deploy under zones/.
+.PHONY: all build clean test deploy deploy-zone ci
 
-ONBOARD_BUILD_BACKEND ?= pizero2w
-HARDWARE_DIR := hardware/$(ONBOARD_BUILD_BACKEND)
+ONBOARD_ROOT := $(abspath $(CURDIR))
+THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
+REPO_ROOT := $(abspath $(THERMO_ROOT)/..)
+HARDWARE_BACKENDS := pizero2w pico2w
+ZONES := kitchen office bedroom
 
 all: build
 
-build images push push_images pull clean:
-	@test -f "$(CURDIR)/$(HARDWARE_DIR)/Makefile" || { echo "missing hardware backend Makefile: $(HARDWARE_DIR)"; exit 1; }
-	$(MAKE) -C "$(CURDIR)/$(HARDWARE_DIR)" ONBOARD_ROOT="$(CURDIR)" $@
+build:
+	@for backend in $(HARDWARE_BACKENDS); do \
+		echo "[onboard] build hardware/$$backend"; \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" build || exit $$?; \
+	done
 
-# Host venv: pytest, UI harness, daikin scripts (./test/run.sh). Does not require Docker images.
-test-local:
+clean:
+	@for backend in $(HARDWARE_BACKENDS); do \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" clean || exit $$?; \
+	done
+
+test:
 	./test/run.sh
 
-# Compose / image integration lives under ../test (dockertest). Avoid duplicate image builds here.
-test-docker:
-	@echo "onboard: no standalone test-docker recipe (stack: cd ../test && make test-docker)"
-	@true
+# Called from zones/<zone>/Makefile (see mk/zone.mk).
+deploy-zone:
+	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-zone: THERMO_ENV_FILE not set"; exit 1; }
+	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-zone: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
+	REPO_PATH="$(REPO_ROOT)" \
+		EXPECTED_ONBOARD_DEPLOY_BACKEND="$(EXPECTED_ONBOARD_DEPLOY_BACKEND)" \
+		THERMO_DEPLOY_EXECUTE="$(THERMO_DEPLOY_EXECUTE)" \
+		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
+		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh"
 
-test: test-local test-docker
+# Convenience: make deploy ZONE=office [THERMO_DEPLOY_EXECUTE=1]
+ZONE ?=
+deploy:
+	@if [ -z "$(ZONE)" ]; then \
+		echo "Usage: make deploy ZONE=<kitchen|office|bedroom> [THERMO_DEPLOY_EXECUTE=1]"; \
+		echo "   or: make -C zones/<zone> deploy [THERMO_DEPLOY_EXECUTE=1]"; \
+		exit 1; \
+	fi
+	$(MAKE) -C zones/$(ZONE) deploy THERMO_DEPLOY_EXECUTE="$(THERMO_DEPLOY_EXECUTE)"
 
 ci:
-	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	@BRANCH=$$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD); \
 	test "$$BRANCH" = main || test "$$BRANCH" = master || { echo "Run from main or master"; exit 1; }; \
 	echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ci-trigger && \
-	git add .ci-trigger && \
-	git commit -m "ci: trigger thermo-onboard build" && \
-	git push origin $$BRANCH
+	git -C "$(REPO_ROOT)" add thermo/onboard/.ci-trigger && \
+	git -C "$(REPO_ROOT)" commit -m "ci: trigger thermo-onboard build" && \
+	git -C "$(REPO_ROOT)" push origin $$BRANCH
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
-
-# Room deploy: source THERMO_ENV_FILE, then dispatch to the configured hardware backend.
-# Requires THERMO_ENV_FILE (e.g. export THERMO_ENV_FILE=config/kitchen.env) - see thermo/config/README.md.
-# Default REPO root is two levels up from this dir (onboard -> thermo -> utils).
-# Override checkout: make deploy DEPLOY_REPO=/path/to/utils
-DEPLOY_REPO ?= $(abspath $(CURDIR)/../..)
-deploy:
-	@test -f "$(CURDIR)/install/deploy.sh" || { echo "deploy: missing install/deploy.sh"; exit 1; }
-	@test -e "$(DEPLOY_REPO)/.git" || { echo "deploy: DEPLOY_REPO must be a git working tree: $(DEPLOY_REPO)"; exit 1; }
-	@echo "[deploy] REPO_PATH=$(DEPLOY_REPO)"
-	REPO_PATH="$(DEPLOY_REPO)" /bin/sh "$(CURDIR)/install/deploy.sh"

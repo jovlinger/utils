@@ -582,6 +582,40 @@ def test_sensors_with_onboard_logs_are_deduped_and_exposed(dmz_ctx: object) -> N
         assert ctx["zone_states"]["zlog"]["logs"]["lines"] == js["logs"]["lines"]
 
 
+def test_sensors_with_deployment_metadata_are_stored(dmz_ctx: object) -> None:
+    """Zone POSTs can carry onboard deployment metadata for UI visibility."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zdep/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "deployment": {
+                    "hardware_profile": "pi_zero_2w_htu21d_ir",
+                    "git_sha": "abcdef1234567890",
+                    "git_sha_short": "abcdef1",
+                    "backend": "pizero2w",
+                    "zone_name": "zdep",
+                },
+            },
+        )
+
+        assert js["deployment"]["hardware_profile"] == "pi_zero_2w_htu21d_ir"
+        assert js["deployment"]["git_sha_short"] == "abcdef1"
+        assert "received_dt" in js["deployment"]
+
+        ctx = _get_200(c, "/ui/context")
+        assert (
+            ctx["zone_states"]["zdep"]["deployment"]["git_sha"]
+            == "abcdef1234567890"
+        )
+        dep_row = next(
+            r for r in ctx["environments"] if r.get("zone") == "zdep"
+        )
+        assert dep_row["deployment"]["backend"] == "pizero2w"
+
+
 def test_sensors_with_network_metadata_are_exposed(dmz_ctx: object) -> None:
     with app.test_client() as c:
         _reset(c)

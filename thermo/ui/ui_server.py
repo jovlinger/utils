@@ -343,6 +343,17 @@ def _form_to_command(form: Dict[bytes, List[bytes]]) -> Dict[str, Any]:
     return cmd
 
 
+def _deployment_brief(deployment: Any) -> tuple[str, str]:
+    """Return (hardware, git) one-line labels for the environment table."""
+    if not isinstance(deployment, dict):
+        return "—", "—"
+    hardware = deployment.get("hardware_profile") or deployment.get("backend") or ""
+    git = deployment.get("git_sha_short") or deployment.get("git_sha") or ""
+    hw_s = html.escape(str(hardware)) if hardware else "—"
+    git_s = html.escape(str(git)) if git else "—"
+    return hw_s, git_s
+
+
 def _env_table_rows(ctx: Mapping[str, Any]) -> str:
     rows: List[str] = []
     for row in ctx.get("environments") or []:
@@ -354,10 +365,48 @@ def _env_table_rows(ctx: Mapping[str, Any]) -> str:
         ts = html.escape(_format_time(str(row.get("time", "") or "")))
         tc_s = "—" if tc is None else html.escape(str(tc))
         hm_s = "—" if hm is None else html.escape(str(hm))
-        rows.append(f"<tr><td>{z}</td><td>{tc_s}</td><td>{hm_s}</td><td>{ts}</td></tr>")
+        hw_s, git_s = _deployment_brief(row.get("deployment"))
+        rows.append(
+            f"<tr><td>{z}</td><td>{tc_s}</td><td>{hm_s}</td><td>{ts}</td>"
+            f"<td>{hw_s}</td><td>{git_s}</td></tr>"
+        )
     if not rows:
-        rows.append('<tr><td colspan="4">No environment data</td></tr>')
+        rows.append('<tr><td colspan="6">No environment data</td></tr>')
     return "\n".join(rows)
+
+
+def _zone_deployment_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str:
+    if not ctx:
+        return ""
+    states = ctx.get("zone_states")
+    if not isinstance(states, dict):
+        return ""
+    zone_state = states.get(selected_zone)
+    if not isinstance(zone_state, dict):
+        return ""
+    deployment = zone_state.get("deployment")
+    if not isinstance(deployment, dict) or not deployment:
+        return ""
+    received = deployment.get("received_dt")
+    heading = ""
+    if received:
+        heading = (
+            f"<span>reported {html.escape(str(received))}</span><br>"
+        )
+    lines: List[str] = []
+    for key in sorted(deployment):
+        if key == "received_dt":
+            continue
+        value = deployment.get(key)
+        if value is None or value == "":
+            continue
+        lines.append(
+            f"<code>{html.escape(str(key))}</code>: "
+            f"{html.escape(str(value))}"
+        )
+    if not lines:
+        return ""
+    return heading + "<br>".join(lines)
 
 
 def _zone_logs_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str:
@@ -459,9 +508,10 @@ def render_template(
     sel_zone = selected_zone if selected_zone in zones else zones[0]
     refresh_href = "/?zone=" + urllib.parse.quote(sel_zone, safe="")
 
-    env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="4">—</td></tr>'
+    env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="6">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
     zone_logs_html = _zone_logs_html(ctx, sel_zone)
+    zone_deployment_html = _zone_deployment_html(ctx, sel_zone)
 
     if _ui_backend() == "dmz":
         manage_fragment = ""
@@ -481,6 +531,7 @@ def render_template(
         .replace("$msg", html.escape(msg))
         .replace("$logs", logs_html)
         .replace("$zone_logs", zone_logs_html)
+        .replace("$zone_deployment", zone_deployment_html)
         .replace("$help_msg", help_msg_html)
         .replace("$about_msg", about_msg_html)
         .replace("$state_json", state_json)

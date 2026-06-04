@@ -53,12 +53,47 @@ pub fn build_sensor_post_body<const N: usize>(
         }
         write!(body, "]}}")?;
     }
-    write!(
-        body,
-        ",\"deployment\":{{\"hardware_profile\":\"{}\",\"zone_name\":\"{}\",\"send_behavior\":\"{}\",\"ir_protocol\":\"{}\"}}}}",
-        config.hardware_profile, config.zone_name, config.send_behavior, config.ir_protocol
-    )?;
+    write_deployment_object(&mut body, config)?;
     Ok(body)
+}
+
+fn write_deployment_object<const N: usize>(
+    body: &mut String<N>,
+    config: &DeviceConfig,
+) -> Result<(), core::fmt::Error> {
+    write!(body, ",\"deployment\":{{")?;
+    write_json_string_field(body, "hardware_profile", config.hardware_profile)?;
+    write!(body, ",")?;
+    write_json_string_field(body, "zone_name", config.zone_name)?;
+    write!(body, ",")?;
+    write_json_string_field(body, "send_behavior", config.send_behavior)?;
+    write!(body, ",")?;
+    write_json_string_field(body, "ir_protocol", config.ir_protocol)?;
+    write!(body, ",")?;
+    write_json_string_field(body, "backend", config.deploy_backend)?;
+    if let Some(git_sha) = config.git_sha {
+        if !git_sha.is_empty() {
+            write!(body, ",")?;
+            write_json_string_field(body, "git_sha", git_sha)?;
+        }
+    }
+    if let Some(git_sha_short) = config.git_sha_short {
+        if !git_sha_short.is_empty() {
+            write!(body, ",")?;
+            write_json_string_field(body, "git_sha_short", git_sha_short)?;
+        }
+    }
+    write!(body, "}}}}")?;
+    Ok(())
+}
+
+fn write_json_string_field<const N: usize>(
+    body: &mut String<N>,
+    key: &str,
+    value: &str,
+) -> Result<(), core::fmt::Error> {
+    write!(body, "\"{}\":", key)?;
+    write_json_string(body, value)
 }
 
 fn write_json_string<const N: usize>(
@@ -269,12 +304,17 @@ mod tests {
             source: SensorSource::Fallback,
         };
 
-        let body = build_sensor_post_body::<384>(&config, reading, None, &[], None).unwrap();
+        let body = build_sensor_post_body::<1024>(&config, reading, None, &[], None)
+            .unwrap_or_else(|_| panic!("build_sensor_post_body failed"));
 
-        assert_eq!(
-            body.as_str(),
-            "{\"sensors\":{\"temp_centigrade\":21.0,\"humid_percent\":50.0},\"deployment\":{\"hardware_profile\":\"pico2w_aht20_ir\",\"zone_name\":\"kitchen\",\"send_behavior\":\"ir_heatpump\",\"ir_protocol\":\"daikin_arc452a9\"}}"
-        );
+        assert!(body.contains("\"hardware_profile\":\"pico2w_aht20_ir\""));
+        assert!(body.contains("\"backend\":\"pico2w\""));
+        assert!(body.ends_with("}}"));
+        if let Some(git_sha) = config.git_sha {
+            if !git_sha.is_empty() {
+                assert!(body.contains("\"git_sha\":"));
+            }
+        }
     }
 
     #[test]

@@ -138,7 +138,7 @@ def test_kitchen_pico2w_env_matches_supported_config() -> None:
 
 
 def test_office_pico2w_env_matches_supported_config() -> None:
-    sample_path = Path(__file__).resolve().parents[2] / "config" / "office-pico2w.env"
+    sample_path = Path(__file__).resolve().parents[1] / "zones" / "office" / "zone.env"
     values: dict[str, str] = {}
     for raw in sample_path.read_text(encoding="ascii").splitlines():
         line = raw.strip()

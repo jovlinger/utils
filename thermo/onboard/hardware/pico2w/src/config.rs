@@ -7,6 +7,9 @@ pub struct DeviceConfig {
     pub onboard_port: u16,
     pub post_timeout_secs: u64,
     pub hardware_profile: &'static str,
+    pub deploy_backend: &'static str,
+    pub git_sha: Option<&'static str>,
+    pub git_sha_short: Option<&'static str>,
     pub send_behavior: &'static str,
     pub sensor_driver: &'static str,
     pub sensor_required_at_boot: bool,
@@ -30,6 +33,9 @@ impl DeviceConfig {
             onboard_port: 5000,
             post_timeout_secs: 600,
             hardware_profile: "pico2w_aht20_ir",
+            deploy_backend: "pico2w",
+            git_sha: option_env!("THERMO_DEPLOY_GIT_SHA"),
+            git_sha_short: option_env!("THERMO_DEPLOY_GIT_SHA_SHORT"),
             send_behavior: "ir_heatpump",
             sensor_driver: "aht20",
             sensor_required_at_boot: false,
@@ -64,6 +70,15 @@ impl DeviceConfig {
         );
         if let Some(hardware_profile) = option_env!("ONBOARD_HARDWARE_PROFILE") {
             config.hardware_profile = hardware_profile;
+        }
+        if let Some(deploy_backend) = option_env!("THERMO_DEPLOY_BACKEND") {
+            config.deploy_backend = deploy_backend;
+        }
+        if let Some(git_sha) = option_env!("THERMO_DEPLOY_GIT_SHA") {
+            config.git_sha = Some(git_sha);
+        }
+        if let Some(git_sha_short) = option_env!("THERMO_DEPLOY_GIT_SHA_SHORT") {
+            config.git_sha_short = Some(git_sha_short);
         }
         if let Some(send_behavior) = option_env!("ONBOARD_SEND_BEHAVIOR") {
             config.send_behavior = send_behavior;
