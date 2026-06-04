@@ -23,10 +23,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_IS_CONTAINER=0
 APP_ROOT=""
+VENV_RESOLVE="$UTILS_ROOT/lib/venv-resolve.sh"
 # Host dev machine: repo checkout with create_pipenv .venv (not Docker, not Pi).
-# shellcheck source=/dev/null
-. "$UTILS_ROOT/lib/venv-resolve.sh"
-if resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT" 2>/dev/null; then
+if [ -f "$VENV_RESOLVE" ]; then
+	# shellcheck source=/dev/null
+	. "$VENV_RESOLVE"
+fi
+if [ -f "$VENV_RESOLVE" ] && resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT" 2>/dev/null; then
 	# shellcheck source=/dev/null
 	. "$VENV_DIR/bin/activate"
 	APP_ROOT="$SCRIPT_DIR"
@@ -38,7 +41,7 @@ elif [ -f /.dockerenv ] || [ -f /app/app.py ]; then
 	echo "run.sh: image/chroot uname -m=$(uname -m) user=$(id -u) $(id -un)"
 # Neither a dev venv nor /app layout (mis-copy or wrong cwd).
 else
-	echo "No venv at $SCRIPT_DIR/.venv and not an image layout (missing /app/app.py)." >&2
+	echo "No venv helper at $VENV_RESOLVE and not an image layout (missing /app/app.py)." >&2
 	echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/dmz" >&2
 	exit 1
 fi

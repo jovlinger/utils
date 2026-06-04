@@ -60,7 +60,8 @@ def _staged_thermo_material(tmp_path: Path) -> Iterator[tuple[Path, Path, Path]]
     priv = THERMO_DIR / "priv"
     config_zone = THERMO_DIR / "config" / "zone"
     config_oauth = THERMO_DIR / "config" / "oauth"
-    paths = (priv, config_zone, config_oauth)
+    config_ssh_host = THERMO_DIR / "config" / "ssh-host"
+    paths = (priv, config_zone, config_oauth, config_ssh_host)
     backups: list[tuple[Path, Path]] = []
     for idx, path in enumerate(paths):
         if path.exists():

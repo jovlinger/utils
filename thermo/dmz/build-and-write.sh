@@ -355,6 +355,17 @@ docker buildx build \
 	"$DMZ_DIR"
 ts "[1/7] done."
 
+ts "[1a/7] image test suite (pytest + default startup)..."
+docker run --rm --platform linux/arm/v6 \
+	--workdir /app \
+	--entrypoint python \
+	"$DOCKER_IMAGE" \
+	-m pytest -q test
+DMZ_DOCKER_IMAGE="$DOCKER_IMAGE" \
+	DMZ_DOCKER_PLATFORM="linux/arm/v6" \
+	/bin/sh "$DMZ_DIR/test/docker-startup-viability.sh"
+ts "[1a/7] done."
+
 ROOTFS_TAR="$WORKDIR/dmz_rootfs.tar"
 ts "[2/7] docker export -> dmz_rootfs.tar"
 cid=$(docker create --platform linux/arm/v6 --entrypoint /bin/true "$DOCKER_IMAGE")
@@ -477,6 +488,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
 				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
 				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/test/docker-startup-viability.sh" \
 				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
 				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
 				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
@@ -495,6 +507,7 @@ else
 			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
 				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
 				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/test/docker-startup-viability.sh" \
 				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
 				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
 				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
