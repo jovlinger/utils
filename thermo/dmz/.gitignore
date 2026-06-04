@@ -1,5 +1,12 @@
-env
-.venv
+env/*
+!env/
+!env/README.md
+venv/*
+!venv/
+!venv/README.md
+.venv/*
+!.venv/
+!.venv/README.md
 .image
 dist/
 .docker-import/

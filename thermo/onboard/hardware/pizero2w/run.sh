@@ -35,12 +35,11 @@ if [ -f /.dockerenv ]; then
 fi
 
 RUN_WITH_STDOUT="$UTILS_ROOT/extdeps/run-with-stdout-logged.py"
-if [ ! -f "$ONBOARD_ROOT/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD_ROOT/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-. "$ONBOARD_ROOT/env/bin/activate"
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD_ROOT" "$UTILS_ROOT"
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
 export PYTHONPATH="$ONBOARD_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 python -m common.twoway "${ONBOARD}/environment" "${DMZ}/zone/${ZONE}/sensors" "${ONBOARD}/daikin" &
 if [ "${THERMO_UI_DISABLE:-0}" != "1" ]; then

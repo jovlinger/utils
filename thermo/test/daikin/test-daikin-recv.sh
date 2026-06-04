@@ -10,12 +10,11 @@ UTILS_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIBBLE="$THERMO_DIR/scribble"
 export PATH="${TEST_DIR}:${PATH}"
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-. "$ONBOARD/env/bin/activate"
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$UTILS_ROOT"
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
 
 cd "$SCRIBBLE"
 

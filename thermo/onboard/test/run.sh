@@ -1,21 +1,20 @@
 #!/bin/bash
 # Run all onboard-related tests: unit tests, UI integration, daikin integration.
-# Uses thermo/onboard/env venv and requirements.txt.
+# Uses the nearest thermo/onboard venv marker and requirements.txt.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$UTILS_ROOT"
 
 cd "$ONBOARD"
-. "$ONBOARD/env/bin/activate"
-python -m pytest -q test
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
+pytest -q test
 
 bash "$SCRIPT_DIR/test_ui.sh"
 

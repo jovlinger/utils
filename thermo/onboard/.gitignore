@@ -1,4 +1,12 @@
-env
+env/*
+!env/
+!env/README.md
+venv/*
+!venv/
+!venv/README.md
+.venv/*
+!.venv/
+!.venv/README.md
 .docker-import/
 install/.env
 hardware/*/install/.env

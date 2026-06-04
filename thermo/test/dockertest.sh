@@ -25,20 +25,15 @@ dockertest_log() {
 dockertest_log "start pid=$$ pwd=$PWD PLATFORM=${PLATFORM:-<unset>} DOCKER_BUILDKIT=$DOCKER_BUILDKIT"
 
 # gen_keys.py needs zone_auth (thermo/dmz) or thermo/test deps
-if [ ! -f "$THERMO/test/env/bin/activate" ] && [ ! -f "$THERMO/dmz/env/bin/activate" ]; then
-	echo "No venv at thermo/test/env or thermo/dmz/env." >&2
-	echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/test thermo/dmz" >&2
-	exit 1
-fi
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT"
+PYTHON_BIN="$(utils_venv_python_bin "$VENV_DIR")"
 
 # Generate Ed25519 keys for machine auth (twoway -> dmz)
 mkdir -p keys
 dockertest_log "gen_keys: begin"
-if [ -f "$THERMO/test/env/bin/python" ]; then
-	"$THERMO/test/env/bin/python" gen_keys.py 2>/dev/null || true
-elif [ -f "$THERMO/dmz/env/bin/python" ]; then
-	"$THERMO/dmz/env/bin/python" gen_keys.py 2>/dev/null || true
-fi
+"$PYTHON_BIN" gen_keys.py 2>/dev/null || true
 dockertest_log "gen_keys: done"
 
 dockertest_log "docker compose up --build --exit-code-from testdriver (streaming to log + stdout)"

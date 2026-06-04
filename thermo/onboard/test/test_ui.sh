@@ -13,12 +13,10 @@ FAKE_IRCTL_DIR="$THERMO/test/daikin"
 PORT_APP=$((50000 + RANDOM % 1000))
 PORT_UI=$((51000 + RANDOM % 1000))
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-PYTHON="$ONBOARD/env/bin/python"
+# shellcheck source=/dev/null
+. "$COMMON_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$COMMON_ROOT"
+PYTHON="$(utils_venv_python_bin "$VENV_DIR")"
 
 cd "$ONBOARD"
 export PYTHONPATH="$ONBOARD${PYTHONPATH:+:$PYTHONPATH}"

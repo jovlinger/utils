@@ -1,4 +1,12 @@
-env
+/env/*
+!/env/
+!/env/README.md
+/venv/*
+!/venv/
+!/venv/README.md
+/.venv/*
+!/.venv/
+!/.venv/README.md
 .image
 # Room deploy specs are committed so target hosts can deploy after git pull.
 # Keep ad-hoc local overrides private with names like config/local.env.
@@ -7,4 +15,3 @@ config/private*.env
 priv/*
 \#*#
 */__pycache__
-.venv

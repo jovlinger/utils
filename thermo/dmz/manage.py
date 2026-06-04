@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env venv-run
 """
 CLI for the DMZ HTTP API (see app.py).
 
@@ -185,8 +185,8 @@ def _sign_zone_name(explicit: str = "") -> str:
 
 
 def _project_venv_python() -> Optional[str]:
-    """Preferred project venv interpreter (.venv, then legacy env/)."""
-    for sub in (".venv", "env"):
+    """Preferred project venv interpreter (.venv, venv, then legacy env/)."""
+    for sub in (".venv", "venv", "env"):
         py = os.path.join(SCRIPT_DIR, sub, "bin", "python")
         if os.path.isfile(py):
             return py

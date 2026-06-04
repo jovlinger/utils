@@ -7,17 +7,11 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SHADUP_VENV=""
-if [ -f "$SCRIPT_DIR/env/bin/activate" ]; then
-  SHADUP_VENV="$SCRIPT_DIR/env"
-elif [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
-  SHADUP_VENV="$SCRIPT_DIR/.venv"
-else
-  echo "No venv under $SCRIPT_DIR (env/ or .venv/)." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh shadup   or   $SCRIPT_DIR/setup-venv.sh" >&2
-  exit 1
-fi
-. "$SHADUP_VENV/bin/activate"
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$SCRIPT_DIR" "$UTILS_ROOT"
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
 
 TEST_BASE="/tmp/shadup_test_ingest_$$"
 HARNESS="$TEST_BASE/harness"
@@ -36,7 +30,7 @@ mk_harness() {
     cp "$SCRIPT_DIR/ingest.sh" "$HARNESS/ingest.sh"
     cp "$SCRIPT_DIR/ingest.py" "$HARNESS/ingest.py"
     cp "$SCRIPT_DIR/shadup.py" "$HARNESS/shadup.py"
-    ln -sf "$SHADUP_VENV" "$HARNESS/env"
+    ln -sf "$VENV_DIR" "$HARNESS/env"
     chmod +x "$HARNESS/ingest.sh" "$HARNESS/ingest.py"
 
     # Stub remount wrapper (no real mount in tests); ingest.sh resolves the real

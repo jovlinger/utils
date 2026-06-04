@@ -10,10 +10,9 @@ test-local:
 	export THERMO_ROOT="$(THERMO_ROOT)"; \
 	export THERMO_ENV_FILE="$(THERMO_ENV_FILE)"; \
 	. "$(THERMO_ROOT)/config/source-thermo-env.sh"; \
-	if [ -f "$(CURDIR)/../dmz/env/bin/python" ]; then PY="$(CURDIR)/../dmz/env/bin/python"; \
-	elif [ -f "$(CURDIR)/env/bin/python" ]; then PY="$(CURDIR)/env/bin/python"; \
-	else echo "test-local: need thermo/dmz/env or thermo/test/env (create_pipenv.sh thermo/dmz thermo/test)" >&2; exit 1; \
-	fi; \
+	. "$(THERMO_ROOT)/../lib/venv-resolve.sh"; \
+	resolve_utils_venv "$(CURDIR)" "$(THERMO_ROOT)/.." >/dev/null; \
+	PY="$$(utils_venv_python_bin "$$VENV_DIR")"; \
 	cd "$(CURDIR)" && "$$PY" -m pytest -q testcases/
 
 # Builds dmz + onboard images + testdriver, then docker compose (full stack).

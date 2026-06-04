@@ -4,18 +4,91 @@ from __future__ import annotations
 
 import contextlib
 import io
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import manage
 import pytest
 
 
-def test_manage_launcher_points_to_pylauncher() -> None:
+def _find_utils_root() -> Optional[Path]:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "lib" / "venv-resolve.sh").is_file():
+            return parent
+    return None
+
+
+UTILS_ROOT = _find_utils_root()
+VENV_RESOLVE = UTILS_ROOT / "lib" / "venv-resolve.sh" if UTILS_ROOT else None
+
+
+def _make_fake_venv(base: Path, name: str = ".venv") -> Path:
+    venv = base / name
+    bin_dir = venv / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "activate").write_text("# fake activate\n", encoding="utf-8")
+    (bin_dir / "python").symlink_to(sys.executable)
+    return venv
+
+
+def _resolve_venv(start: Path, utils_root: Path) -> subprocess.CompletedProcess[str]:
+    assert VENV_RESOLVE is not None
+    script = (
+        '. "$1"; '
+        'resolve_utils_venv "$2" "$3"; '
+        'printf "%s\\n" "$VENV_DIR"; '
+        'utils_venv_python_bin "$VENV_DIR"'
+    )
+    return subprocess.run(
+        ["/bin/sh", "-c", script, "sh", str(VENV_RESOLVE), str(start), str(utils_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_venv_resolver_walks_up_to_nearest_complete_venv(tmp_path: Path) -> None:
+    if VENV_RESOLVE is None:
+        pytest.skip("utils venv resolver is not present in this layout")
+    project = tmp_path / "project"
+    deep = project / "a" / "b"
+    deep.mkdir(parents=True)
+    expected = _make_fake_venv(project)
+
+    res = _resolve_venv(deep, tmp_path)
+
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.splitlines()[0] == str(expected)
+
+
+def test_venv_resolver_stops_at_empty_marker(tmp_path: Path) -> None:
+    if VENV_RESOLVE is None:
+        pytest.skip("utils venv resolver is not present in this layout")
+    project = tmp_path / "project"
+    deep = project / "sub" / "tool"
+    deep.mkdir(parents=True)
+    _make_fake_venv(project)
+    marker = project / "sub" / ".venv"
+    marker.mkdir()
+    (marker / "README.md").write_text("# marker\n", encoding="utf-8")
+
+    res = _resolve_venv(deep, tmp_path)
+
+    assert res.returncode == 1
+    assert "No usable venv" in res.stderr
+    assert str(marker) in res.stderr
+
+
+def test_manage_launcher_uses_venv_run() -> None:
     dmz_dir = Path(__file__).resolve().parent.parent
     launcher = dmz_dir / "manage"
+    manage_py = dmz_dir / "manage.py"
     assert launcher.is_symlink()
-    assert launcher.readlink() == Path("../../extdeps/pylauncher.sh")
+    assert launcher.resolve() == manage_py.resolve()
+    shebang = manage_py.read_text(encoding="utf-8").splitlines()[0]
+    assert "venv-run" in shebang
 
 
 def test_zone_without_kv_prints_help_then_state_on_stdout(

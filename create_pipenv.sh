@@ -76,9 +76,38 @@ for PROJECT_REL in "$@"; do
     exit 1
   fi
 
+  marker_dir_is_empty_or_readme_only() {
+    entries="$(ls -A "$ENV_DIR" 2>/dev/null || true)"
+    [ -z "$entries" ] || [ "$entries" = "README.md" ]
+  }
+
+  ensure_venv_marker_readme() {
+    if [ ! -f "$ENV_DIR/README.md" ]; then
+      cat >"$ENV_DIR/README.md" <<EOF
+# Project virtualenv marker
+
+This directory marks where the project-local Python virtualenv belongs.
+The launcher searches upward for the nearest .venv, venv, or env directory.
+
+Only this README is meant to be committed; the generated virtualenv contents
+stay local to the machine.
+EOF
+    fi
+  }
+
   if [ -f "$LEGACY_ENV/bin/activate" ] && [ ! -f "$ENV_DIR/bin/activate" ]; then
+    if [ -d "$ENV_DIR" ]; then
+      if marker_dir_is_empty_or_readme_only; then
+        rm -rf "$ENV_DIR"
+      else
+        echo "Error: $ENV_DIR exists but is not a venv or marker-only directory." >&2
+        echo "Move it aside before migrating $LEGACY_ENV." >&2
+        exit 1
+      fi
+    fi
     echo "Migrating legacy env/ -> .venv/ for $PROJECT_REL..."
     mv "$LEGACY_ENV" "$ENV_DIR"
+    ensure_venv_marker_readme
   fi
 
   venv_has_python() {
@@ -109,6 +138,7 @@ for PROJECT_REL in "$@"; do
   fi
 
   if [ -f "$ENV_DIR/bin/activate" ]; then
+    ensure_venv_marker_readme
     if [ "$SYNC" -eq 1 ]; then
       echo "Syncing venv at $ENV_DIR..."
       run_pip_install
@@ -120,5 +150,6 @@ for PROJECT_REL in "$@"; do
 
   echo "Creating venv at $ENV_DIR..."
   "$PYTHON_BIN" -m venv "$ENV_DIR"
+  ensure_venv_marker_readme
   run_pip_install
 done

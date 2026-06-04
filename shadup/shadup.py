@@ -1,3 +1,4 @@
+#!/usr/bin/env venv-run
 """Deduplicate files by sha256 into a shared store with symlinks."""
 
 import argparse

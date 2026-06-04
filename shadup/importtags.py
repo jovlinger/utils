@@ -1,3 +1,4 @@
+#!/usr/bin/env venv-run
 """Import metatool ``export-json`` metadata as shadup tags on one file per album dir."""
 
 from __future__ import annotations

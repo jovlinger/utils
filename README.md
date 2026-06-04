@@ -8,14 +8,14 @@ Shared shell helpers live in **`lib/`** (e.g. **`lib/venv-resolve.sh`**).
 
 | Tree | Venv path | How to create |
 |------|-----------|---------------|
-| **`utils/<project>/`** | **`utils/<project>/.venv/`** | `./create_pipenv.sh <project>` from utils root (e.g. `thermo/dmz`) |
+| **`utils/<project>/`** | nearest **`.venv/`**, **`venv/`**, or legacy **`env/`** marker walking upward | `./create_pipenv.sh <project>` from utils root (e.g. `thermo/dmz`) |
 | **`bin/`** (sibling repo) | **`bin/.venv/`** (one shared venv for all bin scripts) | `bin/setup-venv.sh` |
 
 Examples:
 
 - `utils/thermo/dmz/manage` -> use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
 - `utils/shadup/ingest.sh` → use **`utils/shadup/.venv`**.
-- `extdeps/pylauncher.sh` -> launch through the caller script's local `.venv/` or legacy `env/`.
+- Python CLIs use `#!/usr/bin/env venv-run` on their `.py` files; put `utils/extdeps` (or sibling `bin/`) on `PATH` so the shebang resolves. `venv-run` walks up for the nearest `.venv/`, `venv/`, or legacy `env/` marker.
 
 If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, run `manage` through its launcher or deactivate before using `./manage.py` directly.
 
@@ -51,8 +51,8 @@ Nested deps (e.g. `esp32/volctrl/requirements.txt`): create `.venv` in that subp
 ## Use a project launcher
 
 ```bash
-PATH="$PWD/thermo/dmz:$PATH"
+PATH="$PWD/extdeps:$PWD/thermo/dmz:$PATH"
 manage healthz
 ```
 
-Scripts can source **`lib/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.
+Scripts can source **`lib/venv-resolve.sh`** to pick the nearest `.venv`, `venv`, or legacy `env` marker and fail with the right setup hint. Empty marker directories keep the intended venv root in git with only `README.md`; generated venv contents stay untracked.

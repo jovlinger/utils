@@ -39,10 +39,11 @@ runlocal: .image
 # public half under ../config/zone/ (committed). Onboard keeps priv.pem;
 # configure DMZ with ZONE_PUBLIC_KEY or ZONE_PUBLIC_KEY_PATH pointing at pub.pem. See ../KEYS-AND-CERTS.md.
 zone-keys:
-	@test -f "$(CURDIR)/.venv/bin/python" || test -f "$(CURDIR)/env/bin/python" || { echo "Run ../../create_pipenv.sh thermo/dmz first" >&2; exit 1; }
 	@mkdir -p "$(CURDIR)/../priv/zone"
 	@mkdir -p "$(CURDIR)/../config/zone"
-	@PY=$$([ -f "$(CURDIR)/.venv/bin/python" ] && echo "$(CURDIR)/.venv/bin/python" || echo "$(CURDIR)/env/bin/python"); \
+	@. "$(CURDIR)/../../lib/venv-resolve.sh"; \
+		resolve_utils_venv "$(CURDIR)" "$(CURDIR)/../.." >/dev/null; \
+		PY="$$(utils_venv_python_bin "$$VENV_DIR")"; \
 		THERMO_ZONE_PRIVATE_KEYS_DIR="$(CURDIR)/../priv/zone" \
 		THERMO_ZONE_PUBLIC_KEYS_DIR="$(CURDIR)/../config/zone" \
 		"$$PY" "$(CURDIR)/../test/gen_keys.py"
