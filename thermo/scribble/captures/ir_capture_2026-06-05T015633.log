@@ -1,0 +1,17 @@
+# ir_capture log — 2026-06-05T00:56:33.073192+00:00
+# device: /dev/lirc1
+# command: ir-ctl -d /dev/lirc1 --receive --mode2 --measure-carrier --timeout 200000
+#
+# --- features ---
+# Receive features /dev/lirc1:
+#  - Device can receive raw IR
+#  - Can report decoded scancodes and protocol
+#  - Receiving timeout 12664 microseconds
+#  - Can set receiving timeout min 1 microseconds, max 1250000 microseconds
+# Send features /dev/lirc1:
+#  - Device cannot send
+# --- end features ---
+
+# 2026-06-05T00:56:33.083524+00:00  description=office-pico-cool-on-off
+# stderr: /dev/lirc1: device cannot measure carrier
+

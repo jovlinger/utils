@@ -1,0 +1,25 @@
+NOTE that I pressed 4 sequences, but only 2 claimed captured. 
+johan@pizero:~/github.com/jovlinger/utils/thermo/scribble $ ./ir_capture.py 
+[ir_capture] logging to /home/johan/github.com/jovlinger/utils/thermo/scribble/captures/ir_capture_2026-06-05T135930.log
+[ir_capture] command: ir-ctl -d /dev/lirc1 --receive --mode2
+[ir_capture] features:
+Receive features /dev/lirc1:
+ - Device can receive raw IR
+ - Can report decoded scancodes and protocol
+ - Receiving timeout 200000 microseconds
+ - Can set receiving timeout min 1 microseconds, max 1250000 microseconds
+Send features /dev/lirc1:
+ - Device cannot send
+
+Description (empty to exit): off -> on  
+Press remote now; press Enter when done.
+  300 lines captured  on -> off
+
+  Captured 300 lines.
+Description (empty to exit): on 71 -> on 72
+Press remote now; press Enter when done.
+  300 lines captured  on 72 fan lo -> on 72 fan med 
+
+  Captured 300 lines.
+Description (empty to exit): 
+Saved 2 record(s) to /home/johan/github.com/jovlinger/utils/thermo/scribble/captures/ir_capture_2026-06-05T135930.log
