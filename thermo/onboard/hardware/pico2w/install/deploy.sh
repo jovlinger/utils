@@ -7,6 +7,11 @@ PICO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO="${REPO_PATH:-$(cd "$PICO_DIR/../../../.." && pwd)}"
 THERMO_ROOT="$REPO/thermo"
 export THERMO_ROOT
+PICO2W_PREFLIGHT=0
+if [ "${1:-}" = "--preflight" ]; then
+	PICO2W_PREFLIGHT=1
+	shift
+fi
 
 log() { echo "[pico2w-deploy] $*"; }
 
@@ -17,7 +22,6 @@ fi
 
 : "${THERMO_ENV_FILE:?set THERMO_ENV_FILE e.g. export THERMO_ENV_FILE=config/kitchen-pico2w.env}"
 
-PICO2W_DEPLOY_ACTION_OVERRIDE="${PICO2W_DEPLOY_ACTION:-}"
 PICO2W_UF2_PATH_OVERRIDE="${PICO2W_UF2_PATH:-}"
 PICO2W_UF2_VOLUME_OVERRIDE="${PICO2W_UF2_VOLUME:-}"
 
@@ -62,29 +66,63 @@ if [ ! -x "$ELF2UF2" ]; then
 	ELF2UF2=elf2uf2-rs
 fi
 PICO2W_TARGET="${PICO2W_TARGET:-thumbv8m.main-none-eabihf}"
-if [ -n "$PICO2W_DEPLOY_ACTION_OVERRIDE" ]; then
-	PICO2W_DEPLOY_ACTION="$PICO2W_DEPLOY_ACTION_OVERRIDE"
-fi
 if [ -n "$PICO2W_UF2_PATH_OVERRIDE" ]; then
 	PICO2W_UF2_PATH="$PICO2W_UF2_PATH_OVERRIDE"
 fi
 if [ -n "$PICO2W_UF2_VOLUME_OVERRIDE" ]; then
 	PICO2W_UF2_VOLUME="$PICO2W_UF2_VOLUME_OVERRIDE"
 fi
-PICO2W_DEPLOY_ACTION="${PICO2W_DEPLOY_ACTION:-check}"
-if [ "${THERMO_DEPLOY_EXECUTE:-0}" != "1" ] && [ "$PICO2W_DEPLOY_ACTION" = "flash" ]; then
-	log "check only: --deploy=true not provided, so flash is disabled"
-	PICO2W_DEPLOY_ACTION=check
-fi
 PICO2W_UF2_VOLUME="${PICO2W_UF2_VOLUME:-/Volumes/RP2350}"
 PICO2W_UF2_PATH="${PICO2W_UF2_PATH:-$PICO_DIR/target/$PICO2W_TARGET/release/ledw_status_rp2350.uf2}"
+
+volume_is_mounted() {
+	mount | grep " on $PICO2W_UF2_VOLUME " >/dev/null 2>&1
+}
+
+require_pico_volume_ready() {
+	timeout_secs="${PICO2W_VOLUME_READY_TIMEOUT_SECS:-5}"
+	if ! volume_is_mounted; then
+		echo "Pico boot volume not mounted: $PICO2W_UF2_VOLUME" >&2
+		echo "Hold BOOTSEL while plugging in the Pico2W, then retry." >&2
+		return 1
+	fi
+	(ls "$PICO2W_UF2_VOLUME" >/dev/null 2>&1) &
+	pid=$!
+	sleep "$timeout_secs"
+	if kill -0 "$pid" 2>/dev/null; then
+		kill "$pid" 2>/dev/null || true
+		echo "Pico boot volume is mounted but not responding: $PICO2W_UF2_VOLUME" >&2
+		echo "Unmount or replug the board in BOOTSEL mode, then retry." >&2
+		return 1
+	fi
+	if ! wait "$pid"; then
+		echo "Pico boot volume is mounted but not readable: $PICO2W_UF2_VOLUME" >&2
+		return 1
+	fi
+}
+
+wait_for_pico_volume_unmounted() {
+	timeout_secs="${PICO2W_VOLUME_EJECT_TIMEOUT_SECS:-15}"
+	elapsed=0
+	while [ "$elapsed" -lt "$timeout_secs" ]; do
+		if ! volume_is_mounted; then
+			log "Pico boot volume disappeared after UF2 copy."
+			return 0
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+	echo "Pico boot volume is still mounted after UF2 copy: $PICO2W_UF2_VOLUME" >&2
+	echo "Treating deploy as failed because the board did not reboot/eject." >&2
+	return 1
+}
 
 if [ -z "${PICO2W_ZONE_PRIVATE_KEY_B64:-}" ] && [ -n "${ZONE_PRIVATE_KEY:-}" ]; then
 	PICO2W_ZONE_PRIVATE_KEY_B64="$ZONE_PRIVATE_KEY"
 	export PICO2W_ZONE_PRIVATE_KEY_B64
 fi
 
-if [ "$PICO2W_DEPLOY_ACTION" = "flash" ] && [ -z "${PICO2W_ZONE_PRIVATE_KEY_B64:-}" ] && [ -z "${ZONE_PRIVATE_KEY:-}" ]; then
+if [ -z "${PICO2W_ZONE_PRIVATE_KEY_B64:-}" ] && [ -z "${ZONE_PRIVATE_KEY:-}" ]; then
 	ZONE_PRIVATE_KEY_PATH="${ZONE_PRIVATE_KEY_PATH:-$THERMO_ROOT/priv/zone/priv.pem}"
 	if [ -f "$ZONE_PRIVATE_KEY_PATH" ]; then
 		if [ -z "${PYTHON_BIN:-}" ]; then
@@ -115,25 +153,23 @@ PY
 	fi
 fi
 
-if [ "$PICO2W_DEPLOY_ACTION" = "flash" ]; then
-	: "${PICO2W_WIFI_PASSWORD:?set PICO2W_WIFI_PASSWORD in $PICO2W_PRIV_ENV}"
-	: "${PICO2W_ZONE_PRIVATE_KEY_B64:?set ZONE_PRIVATE_KEY_PATH or PICO2W_ZONE_PRIVATE_KEY_B64 in private env}"
+: "${PICO2W_WIFI_PASSWORD:?set PICO2W_WIFI_PASSWORD in $PICO2W_PRIV_ENV}"
+: "${PICO2W_ZONE_PRIVATE_KEY_B64:?set ZONE_PRIVATE_KEY_PATH or PICO2W_ZONE_PRIVATE_KEY_B64 in private env}"
+
+if [ "$PICO2W_PREFLIGHT" = "1" ]; then
+	log "preflight repo=$REPO env=$THERMO_ENV_FILE target=$PICO2W_TARGET"
+	require_pico_volume_ready
+	log "Preflight complete."
+	exit 0
 fi
 
-log "repo=$REPO env=$THERMO_ENV_FILE action=$PICO2W_DEPLOY_ACTION target=$PICO2W_TARGET"
-case "${PICO2W_DEPLOY_ACTION:-check}" in
-check)
-	"$MAKE" -C "$PICO_DIR" CARGO="$CARGO" PICO2W_TARGET="$PICO2W_TARGET" build
-	;;
-firmware-check)
-	"$MAKE" -C "$PICO_DIR" CARGO="$CARGO" PICO2W_TARGET="$PICO2W_TARGET" firmware-check
-	;;
-flash)
-	"$MAKE" -C "$PICO_DIR" CARGO="$CARGO" PICO2W_TARGET="$PICO2W_TARGET" build firmware-build
-	PICO2W_ELF_PATH="$PICO_DIR/target/$PICO2W_TARGET/release/ledw_status"
-	if [ -f "$PICO2W_ELF_PATH" ]; then
-		"$ELF2UF2" "$PICO2W_ELF_PATH" "$PICO2W_UF2_PATH"
-		"${PYTHON_BIN:-python3}" - "$PICO2W_UF2_PATH" <<'PY'
+log "repo=$REPO env=$THERMO_ENV_FILE action=flash target=$PICO2W_TARGET"
+require_pico_volume_ready
+"$MAKE" -C "$PICO_DIR" CARGO="$CARGO" PICO2W_TARGET="$PICO2W_TARGET" build firmware-build
+PICO2W_ELF_PATH="$PICO_DIR/target/$PICO2W_TARGET/release/ledw_status"
+if [ -f "$PICO2W_ELF_PATH" ]; then
+	"$ELF2UF2" "$PICO2W_ELF_PATH" "$PICO2W_UF2_PATH"
+	"${PYTHON_BIN:-python3}" - "$PICO2W_UF2_PATH" <<'PY'
 import struct
 import sys
 from pathlib import Path
@@ -150,30 +186,25 @@ for offset in range(0, len(data), 512):
         struct.pack_into("<I", data, offset + 28, 0xE48BFF59)
 path.write_bytes(data)
 PY
-	fi
-	: "${PICO2W_UF2_PATH:?set PICO2W_UF2_PATH to the built .uf2 before PICO2W_DEPLOY_ACTION=flash}"
-	if [ ! -f "$PICO2W_UF2_PATH" ]; then
-		echo "PICO2W_UF2_PATH not found: $PICO2W_UF2_PATH" >&2
-		exit 1
-	fi
-	if [ ! -d "$PICO2W_UF2_VOLUME" ]; then
-		echo "Pico boot volume not mounted: $PICO2W_UF2_VOLUME" >&2
-		echo "Hold BOOTSEL while plugging in the Pico2W, then retry." >&2
-		exit 1
-	fi
-	if cp -X "$PICO2W_UF2_PATH" "$PICO2W_UF2_VOLUME/" 2>/dev/null; then
-		:
-	else
-		cp "$PICO2W_UF2_PATH" "$PICO2W_UF2_VOLUME/"
-	fi
-	log "Copied $(basename "$PICO2W_UF2_PATH") to $PICO2W_UF2_VOLUME"
-	log "After reboot, open USB serial debug before trusting WiFi/DHCP:"
-	log "  ls /dev/cu.usbmodem*"
-	log "  screen /dev/cu.usbmodemXXXX 115200"
-	;;
-*)
-	echo "unsupported PICO2W_DEPLOY_ACTION=${PICO2W_DEPLOY_ACTION}" >&2
+fi
+: "${PICO2W_UF2_PATH:?set PICO2W_UF2_PATH to the built .uf2 before deploy}"
+if [ ! -f "$PICO2W_UF2_PATH" ]; then
+	echo "PICO2W_UF2_PATH not found: $PICO2W_UF2_PATH" >&2
 	exit 1
-	;;
-esac
+fi
+if [ ! -d "$PICO2W_UF2_VOLUME" ]; then
+	echo "Pico boot volume not mounted: $PICO2W_UF2_VOLUME" >&2
+	echo "Hold BOOTSEL while plugging in the Pico2W, then retry." >&2
+	exit 1
+fi
+if cp -X "$PICO2W_UF2_PATH" "$PICO2W_UF2_VOLUME/" 2>/dev/null; then
+	:
+else
+	cp "$PICO2W_UF2_PATH" "$PICO2W_UF2_VOLUME/"
+fi
+log "Copied $(basename "$PICO2W_UF2_PATH") to $PICO2W_UF2_VOLUME"
+wait_for_pico_volume_unmounted
+log "After reboot, open USB serial debug before trusting WiFi/DHCP:"
+log "  ls /dev/cu.usbmodem*"
+log "  screen /dev/cu.usbmodemXXXX 115200"
 log "Deploy complete."

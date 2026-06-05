@@ -24,21 +24,11 @@ is_local_host() {
 	return 1
 }
 
-if [ "${THERMO_DEPLOY_EXECUTE:-0}" != "1" ]; then
-	if [ -n "$HOST" ] && [ "${ONBOARD_DEPLOY_LOCAL:-0}" != "1" ] && ! is_local_host "$HOST"; then
-		log "check only: would SSH deploy to $USER_NAME@$HOST repo=$REMOTE_REPO env=$REMOTE_ENV_FILE"
-	else
-		log "check only: would deploy locally repo=$REPO env=${THERMO_ENV_FILE:-}"
-	fi
-	log "Pass --deploy=true to perform the deploy."
-	exit 0
-fi
-
 if [ -n "$HOST" ] && [ "${ONBOARD_DEPLOY_LOCAL:-0}" != "1" ] && ! is_local_host "$HOST"; then
 	: "${REMOTE_ENV_FILE:?set ONBOARD_DEPLOY_ENV_FILE or THERMO_ENV_FILE for remote deploy}"
 	log "Remote deploy to $USER_NAME@$HOST repo=$REMOTE_REPO env=$REMOTE_ENV_FILE"
 	ssh "$USER_NAME@$HOST" \
-		"cd $REMOTE_REPO && git pull && export THERMO_ENV_FILE=\"$REMOTE_ENV_FILE\" THERMO_DEPLOY_EXECUTE=1 ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 && make -C thermo/onboard deploy DEPLOY_REPO=\"\$(pwd)\""
+		"cd $REMOTE_REPO && git pull && export THERMO_ENV_FILE=\"$REMOTE_ENV_FILE\" ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 && make -C thermo/onboard deploy ZONE=kitchen DEPLOY_REPO=\"\$(pwd)\""
 	log "Deploy complete."
 	exit 0
 fi

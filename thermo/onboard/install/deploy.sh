@@ -15,17 +15,12 @@ if [ ! -d "$REPO" ]; then
 fi
 
 : "${THERMO_ENV_FILE:?set THERMO_ENV_FILE e.g. export THERMO_ENV_FILE=config/kitchen.env}"
-PICO2W_DEPLOY_ACTION_OVERRIDE="${PICO2W_DEPLOY_ACTION:-}"
 PICO2W_UF2_PATH_OVERRIDE="${PICO2W_UF2_PATH:-}"
 PICO2W_UF2_VOLUME_OVERRIDE="${PICO2W_UF2_VOLUME:-}"
 set -a
 # shellcheck source=/dev/null
 . "$THERMO_ROOT/config/source-thermo-env.sh"
 set +a
-if [ -n "$PICO2W_DEPLOY_ACTION_OVERRIDE" ]; then
-	PICO2W_DEPLOY_ACTION="$PICO2W_DEPLOY_ACTION_OVERRIDE"
-	export PICO2W_DEPLOY_ACTION
-fi
 if [ -n "$PICO2W_UF2_PATH_OVERRIDE" ]; then
 	PICO2W_UF2_PATH="$PICO2W_UF2_PATH_OVERRIDE"
 	export PICO2W_UF2_PATH
@@ -37,13 +32,14 @@ fi
 
 ONBOARD_DEPLOY_BACKEND="${ONBOARD_DEPLOY_BACKEND:-pizero2w}"
 export ONBOARD_DEPLOY_BACKEND
-if [ "${THERMO_DEPLOY_EXECUTE:-0}" = "1" ] && [ "$ONBOARD_DEPLOY_BACKEND" = "pico2w" ]; then
-	PICO2W_DEPLOY_ACTION=flash
-	export PICO2W_DEPLOY_ACTION
-fi
 if [ -n "${EXPECTED_ONBOARD_DEPLOY_BACKEND:-}" ] && [ "$ONBOARD_DEPLOY_BACKEND" != "$EXPECTED_ONBOARD_DEPLOY_BACKEND" ]; then
 	log "Manifest backend=$ONBOARD_DEPLOY_BACKEND does not match expected backend=$EXPECTED_ONBOARD_DEPLOY_BACKEND"
 	exit 1
+fi
+
+if [ "${1:-}" = "--preflight" ] && [ "$ONBOARD_DEPLOY_BACKEND" != "pico2w" ]; then
+	log "No deploy preflight for backend=$ONBOARD_DEPLOY_BACKEND"
+	exit 0
 fi
 
 BACKEND_DEPLOY="$REPO/thermo/onboard/hardware/$ONBOARD_DEPLOY_BACKEND/install/deploy.sh"

@@ -162,6 +162,29 @@ def test_command_accepts_arbitrary_object_keys(dmz_ctx: object) -> None:
         assert js["command"]["temp_c"] == 21
 
 
+def test_command_accepts_raw_ir_sequence_contract(dmz_ctx: object) -> None:
+    """Raw IR commands are regular command objects delivered unchanged."""
+    with app.test_client() as c:
+        _reset(c)
+        body = {
+            "command_type": "raw_ir_sequence",
+            "sequence": [4500, -4500, 560, -1600, 560, -520],
+            "carrier_hz": 38000,
+        }
+
+        js = _post_200(c, "/zone/zir/command", body)
+        stamped = js["command"].get("created_dt")
+        assert js["command"]["command_type"] == "raw_ir_sequence"
+        assert js["command"]["sequence"] == [4500, -4500, 560, -1600, 560, -520]
+        assert js["command"]["carrier_hz"] == 38000
+        assert isinstance(stamped, str) and stamped
+
+        poll = _onboard_post_sensors(c, "zir", 20.0)
+        assert poll["command"]["command_type"] == "raw_ir_sequence"
+        assert poll["command"]["sequence"] == body["sequence"]
+        assert poll["command"]["created_dt"] == stamped
+
+
 def _onboard_post_sensors(
     c, zone: str, temp: float, humid: float | None = None
 ) -> dict:

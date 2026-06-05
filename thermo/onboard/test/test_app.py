@@ -5,6 +5,7 @@ import pytest
 from common.constants import help_msg
 from common.heatpumpirctl import State
 from hardware.pizero2w import app
+from hardware.pizero2w.anavilib import raw_ir_sequence_to_mode2
 
 
 def equalish(a: object, b: object) -> bool:
@@ -512,3 +513,38 @@ def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.json["command"]["mode"] == "HEAT"
     assert r.json["sent"] is True
     assert r.json["sensors"] is None
+
+
+def test_raw_ir_sequence_to_mode2() -> None:
+    assert raw_ir_sequence_to_mode2([4500, -4500, 560, -1600]) == (
+        "pulse 4500\nspace 4500\npulse 560\nspace 1600\n"
+    )
+
+
+def test_ui_command_sends_raw_ir_sequence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENV", "TEST")
+    app._last_command_created_dt = None
+    sent: list[tuple] = []
+
+    def _fake_send_raw_ir_sequence(sequence, carrier_hz=38000):
+        sent.append((sequence, carrier_hz))
+        return True
+
+    monkeypatch.setattr(app, "send_raw_ir_sequence", _fake_send_raw_ir_sequence)
+    client = app.app.test_client()
+    r = client.post(
+        "/ui/command",
+        json={
+            "zone": "ignored",
+            "command": {
+                "command_type": "raw_ir_sequence",
+                "sequence": [4500, -4500, 560, -1600],
+                "carrier_hz": 38000,
+            },
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json["command"]["command_type"] == "raw_ir_sequence"
+    assert r.json["sent"] is True
+    assert sent == [([4500, -4500, 560, -1600], 38000)]

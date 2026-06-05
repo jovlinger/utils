@@ -37,6 +37,10 @@ push push_images pull:
 
 print-config:
 	@echo "ONBOARD_ROOT=$(ONBOARD_ROOT)"
+
+.PHONY: hat-stl
+hat-stl:
+	python3 hat/generate_sensor_hat_stl.py
 	@echo "CARGO=$(CARGO)"
 	@echo "PICO2W_TARGET=$(PICO2W_TARGET)"
 	@echo "PICO2W_LEGACY_TARGET=$(PICO2W_LEGACY_TARGET)"

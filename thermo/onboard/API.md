@@ -30,6 +30,20 @@ Returns a JSON array of recent Daikin commands (newest first), each entry with `
 
 Accepts JSON with a `command` object (or a top-level command dict), parses it as **`heatpumpirctl.State`**, sends it over IR, records it in the rolling queue, and returns `time`, `command`, and `sent` boolean.
 
+Capable backends also accept raw IR replay commands:
+
+```json
+{
+  "command": {
+    "command_type": "raw_ir_sequence",
+    "sequence": [4500, -4500, 560, -1600, 560, -520],
+    "carrier_hz": 38000
+  }
+}
+```
+
+Positive `sequence` values are marks/pulses in microseconds; negative values are spaces in microseconds. `carrier_hz` may be omitted and defaults to `38000`.
+
 ## `GET /logs`
 
 Returns JSON with up to the last 200 lines of the log file at `LOG_PATH` (key `lines`), or empty lines if the path is missing or unreadable. Lines are ordered **newest first** (reverse chronological within the tail window).

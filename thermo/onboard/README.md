@@ -26,11 +26,8 @@ Each zone directory has `build`, `clean`, `test`, and `deploy`. Chain is
 # Kitchen (Pi Zero 2 W)
 make -C thermo/onboard/zones/kitchen deploy
 
-# Office (Pico2W, AHT20 + IR TX, Midea) -- check only
+# Office (Pico2W, AHT20 + IR TX, Midea)
 make -C thermo/onboard/zones/office deploy
-
-# Office -- flash UF2 to /Volumes/RP2350
-make -C thermo/onboard/zones/office deploy THERMO_DEPLOY_EXECUTE=1
 
 # Bedroom (Pico2W, Haier)
 make -C thermo/onboard/zones/bedroom deploy
@@ -39,13 +36,13 @@ make -C thermo/onboard/zones/bedroom deploy
 From onboard root:
 
 ```bash
-make -C thermo/onboard deploy ZONE=office THERMO_DEPLOY_EXECUTE=1
+make -C thermo/onboard deploy ZONE=office
 ```
 
 Pico2W flash needs `thermo/priv/pico2w/<zone>.env` (WiFi password) and the board
 in BOOTSEL. See [`hardware/pico2w/README.md`](hardware/pico2w/README.md).
 
-Legacy wrapper (still works): `./deploy-room.sh pico2w office-pico2w.env --deploy=true`
+Legacy wrapper (still works): `./deploy-room.sh pico2w office-pico2w.env`
 
 Pi Zero 2 W: [`hardware/pizero2w/README.md`](hardware/pizero2w/README.md).
 Committed room templates also remain under [`../config/`](../config/README.md);

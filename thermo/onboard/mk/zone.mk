@@ -1,6 +1,5 @@
 # Shared targets for thermo/onboard/zones/<zone>/Makefile
-# Include after setting ZONE_MAKEFILE, EXPECTED_ONBOARD_DEPLOY_BACKEND, and optionally
-# THERMO_DEPLOY_EXECUTE (default 0; use 1 to flash Pico2W firmware).
+# Include after setting ZONE_MAKEFILE and EXPECTED_ONBOARD_DEPLOY_BACKEND.
 
 ifndef ZONE_MAKEFILE
 $(error set ZONE_MAKEFILE := $$(abspath $$(lastword $$(MAKEFILE_LIST))) in zones/<zone>/Makefile before including this file)
@@ -11,10 +10,10 @@ THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
 REPO_ROOT := $(abspath $(THERMO_ROOT)/..)
 ZONE_DIR := $(abspath $(dir $(ZONE_MAKEFILE)))
 ZONE_NAME := $(notdir $(ZONE_DIR))
-THERMO_ENV_FILE := zones/$(ZONE_NAME)/zone.env
-THERMO_DEPLOY_EXECUTE ?= 0
+THERMO_ENV_FILE := onboard/zones/$(ZONE_NAME)/zone.env
+DEPLOY_REPO ?=
 
-.PHONY: all build clean test deploy print-config
+.PHONY: all build clean test deploy predeploy print-config
 
 all: build
 
@@ -23,7 +22,6 @@ print-config:
 	@echo "ZONE_DIR=$(ZONE_DIR)"
 	@echo "THERMO_ENV_FILE=$(THERMO_ENV_FILE)"
 	@echo "EXPECTED_ONBOARD_DEPLOY_BACKEND=$(EXPECTED_ONBOARD_DEPLOY_BACKEND)"
-	@echo "THERMO_DEPLOY_EXECUTE=$(THERMO_DEPLOY_EXECUTE)"
 
 build:
 	$(MAKE) -C $(ONBOARD_ROOT) build
@@ -34,8 +32,14 @@ clean:
 test: build
 	$(MAKE) -C $(ONBOARD_ROOT) test
 
-deploy: test
+predeploy:
+	$(MAKE) -C $(ONBOARD_ROOT) deploy-preflight \
+		THERMO_ENV_FILE=$(THERMO_ENV_FILE) \
+		EXPECTED_ONBOARD_DEPLOY_BACKEND=$(EXPECTED_ONBOARD_DEPLOY_BACKEND) \
+		DEPLOY_REPO=$(DEPLOY_REPO)
+
+deploy: predeploy test
 	$(MAKE) -C $(ONBOARD_ROOT) deploy-zone \
 		THERMO_ENV_FILE=$(THERMO_ENV_FILE) \
 		EXPECTED_ONBOARD_DEPLOY_BACKEND=$(EXPECTED_ONBOARD_DEPLOY_BACKEND) \
-		THERMO_DEPLOY_EXECUTE=$(THERMO_DEPLOY_EXECUTE)
+		DEPLOY_REPO=$(DEPLOY_REPO)

@@ -69,15 +69,13 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
   ```
 2. **Run the deploy dispatcher**:
   ```bash
-   export THERMO_ENV_FILE=config/kitchen.env
-   make -C thermo/onboard deploy
+   make -C thermo/onboard deploy ZONE=kitchen
   ```
    For `pizero2w`, this SSHes to the target, pulls git, and runs the same deploy command locally with the room env file.
 3. **Optional: local deploy on the target**:
   ```bash
    cd ~/github.com/jovlinger/utils
-   export THERMO_ENV_FILE=config/kitchen.env
-   ONBOARD_DEPLOY_LOCAL=1 make -C thermo/onboard deploy
+   ONBOARD_DEPLOY_LOCAL=1 make -C thermo/onboard deploy ZONE=kitchen
   ```
 4. **Optional: systemd** so reboot brings the stack up:
   ```bash
@@ -89,7 +87,7 @@ If you prefer a different tmpfs path, set `THERMO_LOG_DIR` (in `install/.env` or
   ```
    The unit reads `~/.config/thermo-onboard/environment` for `THERMO_ENV_FILE`, then runs `deploy-compose.sh` from `install/`.
 
-**Each upgrade:** run `THERMO_ENV_FILE=config/<room>.env make -C thermo/onboard deploy`. Systemd will **not** auto-pull new images until you run deploy again or restart the unit after a pull.
+**Each upgrade:** run `make -C thermo/onboard deploy ZONE=kitchen`. Systemd will **not** auto-pull new images until you run deploy again or restart the unit after a pull.
 
 ## Resource limits
 
@@ -105,7 +103,7 @@ Compose sets **CPU** per service via `deploy.resources.limits`. **Memory** is no
 - `**docker compose up` fails on `vcgencmd` or `/dev/vchiq`:** Those are for Pi SoC temperature and throttle flags on the **connectivity-watchdog** service. Remove the `vcgencmd` bind and `devices:` entry for that service when developing on a non-Pi host.
 - **Compose ignores `deploy.resources`:** On some older Compose versions, limits apply only in Swarm. Upgrade Docker/Compose, or add equivalent `docker run` flags via `docker compose` override (see Docker docs).
 - **No lines in `docker logs`:** Expected — logging driver is `none`. Use the files under `/var/log/thermo-onboard/`.
-- **Stale images:** Run `THERMO_ENV_FILE=config/<room>.env make -C thermo/onboard deploy`; the Pi backend always runs `docker compose pull` before `up`.
+- **Stale images:** Run `make -C thermo/onboard deploy ZONE=kitchen`; the Pi backend always runs `docker compose pull` before `up`.
 - By far the biggest issue is intermittent wifi issues with the pizero 2W (revision unknown).  Apparently there is a known brcmfmac issue. This may be the cause. (but we won't know tonight since the pizero went off-air again)
   > the brcmfmac firmware crashes hard and leaves the SDIO bus in a dead state — the whole system becomes unresponsive and only a power cycle helps. The 60-second disassociation cycle (a confirmed open firmware bug as of March 2026) runs continuously in the background, and after enough cycles the firmware state machine corrupts. The multi-AP same-SSID setup is an amplifying factor — brcmfmac's autonomous roaming is a documented crash path. PSU undervoltage during a WiFi TX burst can trigger the same crash.
 

@@ -12,5 +12,5 @@ build clean test:
 	done
 
 deploy:
-	@echo "Deploy one zone: make -C zones/<zone> deploy [THERMO_DEPLOY_EXECUTE=1]"
+	@echo "Deploy one zone: make -C zones/<zone> deploy"
 	@exit 1

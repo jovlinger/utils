@@ -26,7 +26,12 @@ from common.logging_config import (
     get_recent_log_messages,
     set_log_level,
 )
-from hardware.pizero2w.anavilib import HTU21D, send_heatpump_state
+from hardware.pizero2w.anavilib import (
+    HTU21D,
+    RAW_IR_COMMAND_TYPE,
+    send_heatpump_state,
+    send_raw_ir_sequence,
+)
 
 configure_logging("onboard")
 # Example: 2026-05-17T13:40:23.905Z INFO onboard app:136 request path='/environment'
@@ -492,6 +497,68 @@ def _latest_command_dict_for_ui() -> Dict[str, Any]:
     return state.to_json()
 
 
+def _handle_raw_ir_command(
+    cmd_obj: Dict[str, Any],
+    from_dmz_twoway: bool,
+    incoming_created_dt: Any,
+) -> Tuple[Any, int]:
+    global _last_command_created_dt
+    if from_dmz_twoway:
+        if incoming_created_dt is None:
+            logger.debug(
+                "twoway raw IR command has no created_dt; treating as obsolete%s",
+                format_kv(tracked=_last_command_created_dt),
+            )
+            return {
+                "sent": False,
+                "reason": "obsolete (missing created_dt)",
+                "environment": _environment_dict(),
+            }, 200
+        if (
+            _last_command_created_dt is not None
+            and incoming_created_dt <= _last_command_created_dt
+        ):
+            logger.debug(
+                "twoway raw IR command obsolete; ignored%s",
+                format_kv(
+                    incoming_created_dt=incoming_created_dt,
+                    tracked_created_dt=_last_command_created_dt,
+                ),
+            )
+            return {
+                "sent": False,
+                "reason": "obsolete",
+                "environment": _environment_dict(),
+            }, 200
+
+    ts = datetime.now()
+    ts_iso = ts.isoformat()
+    new_created_dt = (
+        incoming_created_dt
+        if isinstance(incoming_created_dt, str) and incoming_created_dt
+        else ts_iso
+    )
+    try:
+        success = send_raw_ir_sequence(
+            cmd_obj.get("sequence"),
+            cmd_obj.get("carrier_hz", 38000),
+        )
+    except (TypeError, ValueError) as e:
+        logger.info("Invalid raw IR command: %s", e)
+        return {"error": "InvalidCmd", "detail": str(e)}, 400
+
+    command = dict(cmd_obj)
+    command["created_dt"] = new_created_dt
+    _last_command_created_dt = new_created_dt
+    logger.info("SET_RAW_IR: entries=%s sent=%s", len(command.get("sequence", [])), success)
+    return {
+        "time": ts_iso,
+        "command": command,
+        "environment": _environment_dict(),
+        "sent": success,
+    }, 200
+
+
 def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
     """Shared implementation for ``POST /daikin`` and ``POST /ui/command``.
 
@@ -515,6 +582,13 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
     if not isinstance(cmd_obj, dict):
         logger.info("Invalid command: expected dict, got %s", type(cmd_obj).__name__)
         return {"error": "EmptyCmd"}, 400
+    from_dmz_twoway = isinstance(js, dict) and "sensors" in js
+    incoming_created_dt = (
+        cmd_obj.get("created_dt") if isinstance(cmd_obj, dict) else None
+    )
+    if cmd_obj.get("command_type") == RAW_IR_COMMAND_TYPE:
+        return _handle_raw_ir_command(cmd_obj, from_dmz_twoway, incoming_created_dt)
+
     merged = _command_dict_for_state(cmd_obj)
     if not merged:
         logger.debug(
@@ -526,11 +600,6 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
             "reason": "no state fields in command",
             "environment": _environment_dict(),
         }, 200
-
-    from_dmz_twoway = isinstance(js, dict) and "sensors" in js
-    incoming_created_dt = (
-        cmd_obj.get("created_dt") if isinstance(cmd_obj, dict) else None
-    )
 
     if from_dmz_twoway:
         # Strictly-newer gate: skip stale round-trips of our own command (or older DMZ

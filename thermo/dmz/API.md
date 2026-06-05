@@ -30,6 +30,18 @@ Accepts JSON sensor readings for the named zone, appends them to in-memory state
 
 Accepts the JSON body and passes it through to zone command storage, returning that zone’s snapshot. Aside from auth, the server only checks that the body is well-formed JSON (UTF-8) and that every JSON string (object keys and string values) is 7-bit ASCII; otherwise it returns `400`. With a configured zone public key, either valid machine-signed requests or an authenticated browser session (when Google OAuth is enabled) may be used; otherwise OAuth may be required for human operators.
 
+Raw IR replay uses the same command store. Capable onboards recognize:
+
+```json
+{
+  "command_type": "raw_ir_sequence",
+  "sequence": [4500, -4500, 560, -1600, 560, -520],
+  "carrier_hz": 38000
+}
+```
+
+Positive `sequence` values are marks/pulses in microseconds; negative values are spaces in microseconds. `carrier_hz` is optional and currently expected to be `38000` when present.
+
 ## `GET /zones`
 
 Returns a JSON object of all known zones and each zone’s latest command and sensor state. Authorization follows `_authorize_global_read`: machine-signed request, OAuth session, or open access when neither machine auth nor OAuth is enforcing, depending on environment variables.

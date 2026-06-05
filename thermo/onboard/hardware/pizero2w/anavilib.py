@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 LIRC_TX = (os.environ.get("IR_DEVICE") or "/dev/lirc0").strip()
 IR_KIND = "heatpump_ir"
 IR_DEVICE = "lirc:%s" % LIRC_TX
+RAW_IR_COMMAND_TYPE = "raw_ir_sequence"
+RAW_IR_CARRIER_HZ = 38_000
+RAW_IR_MAX_SEQUENCE_LEN = 1024
+RAW_IR_MAX_DURATION_US = 1_250_000
 
 
 def _state_summary(state: Any) -> str:
@@ -47,6 +51,123 @@ def _protocol_name() -> str:
         os.environ.get("ONBOARD_SEND_BEHAVIOR") or profiles.LEGACY_DAIKIN_SEND_BEHAVIOR
     ).strip()
     return profiles.protocol_from_env(os.environ, send_behavior)
+
+
+def _send_mode2_payload(mode2: str, dialect: str, protocol: str) -> bool:
+    digest = _payload_sha256(mode2)
+    first_line = mode2.split("\n", 1)[0] if mode2 else ""
+    line_count = mode2.count("\n") + (1 if mode2 else 0)
+    logger.debug(
+        "encoded%s",
+        format_kv(
+            kind=IR_KIND,
+            dialect=dialect,
+            protocol=protocol,
+            device=IR_DEVICE,
+            mode2_bytes=len(mode2.encode("utf-8")),
+            mode2_lines=line_count,
+            sha256=digest,
+            first_line_preview=first_line[:160],
+        ),
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(mode2)
+            path = f.name
+        try:
+            logger.info(
+                "ir_send%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    device=IR_DEVICE,
+                    payload_sha256_prefix=digest[:16],
+                ),
+            )
+            argv = ["ir-ctl", "-d", LIRC_TX, "--send", path]
+            logger.debug(
+                "ir_ctl_invoke%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    argv=argv,
+                ),
+            )
+            subprocess.run(argv, check=True)
+            logger.debug(
+                "ir_ctl_sent_ok%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    device=IR_DEVICE,
+                ),
+            )
+            return True
+        finally:
+            os.unlink(path)
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError) as e:
+        logger.error(
+            "ir_ctl_failed%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=dialect,
+                protocol=protocol,
+                device=IR_DEVICE,
+                payload_sha256_prefix=digest[:16],
+                error=str(e),
+            ),
+        )
+        return False
+
+
+def raw_ir_sequence_to_mode2(sequence: Any) -> str:
+    if not isinstance(sequence, list):
+        raise ValueError("raw IR sequence must be a list")
+    if not sequence:
+        raise ValueError("raw IR sequence must not be empty")
+    if len(sequence) > RAW_IR_MAX_SEQUENCE_LEN:
+        raise ValueError(f"raw IR sequence max length is {RAW_IR_MAX_SEQUENCE_LEN}")
+
+    lines: list[str] = []
+    for index, value in enumerate(sequence):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"raw IR sequence entry {index} must be an integer")
+        if value == 0:
+            raise ValueError(f"raw IR sequence entry {index} must not be zero")
+        duration = abs(value)
+        if duration > RAW_IR_MAX_DURATION_US:
+            raise ValueError(
+                f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us"
+            )
+        lines.append("%s %d" % ("pulse" if value > 0 else "space", duration))
+    return "\n".join(lines) + "\n"
+
+
+def send_raw_ir_sequence(sequence: Any, carrier_hz: Any = RAW_IR_CARRIER_HZ) -> bool:
+    """Send a raw signed microsecond sequence via ir-ctl mode2 text."""
+    if isinstance(carrier_hz, bool) or not isinstance(carrier_hz, int):
+        raise ValueError("raw IR carrier_hz must be an integer")
+    if carrier_hz != RAW_IR_CARRIER_HZ:
+        raise ValueError("raw IR carrier_hz must be 38000")
+    mode2 = raw_ir_sequence_to_mode2(sequence)
+    if is_test_env():
+        logger.debug(
+            "send_skipped%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=RAW_IR_COMMAND_TYPE,
+                protocol=RAW_IR_COMMAND_TYPE,
+                device=IR_DEVICE,
+                reason="test_env",
+                mode2_lines=len(mode2.splitlines()),
+            ),
+        )
+        return True
+    return _send_mode2_payload(mode2, RAW_IR_COMMAND_TYPE, RAW_IR_COMMAND_TYPE)
 
 
 def send_heatpump_state(state: Any) -> bool:
@@ -92,74 +213,7 @@ def send_heatpump_state(state: Any) -> bool:
         )
         return False
 
-    digest = _payload_sha256(mode2)
-    first_line = mode2.split("\n", 1)[0] if mode2 else ""
-    line_count = mode2.count("\n") + (1 if mode2 else 0)
-    logger.debug(
-        "encoded%s",
-        format_kv(
-            kind=IR_KIND,
-            dialect=spec.display_name,
-            protocol=spec.name,
-            device=IR_DEVICE,
-            mode2_bytes=len(mode2.encode("utf-8")),
-            mode2_lines=line_count,
-            sha256=digest,
-            first_line_preview=first_line[:160],
-        ),
-    )
-
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write(mode2)
-            path = f.name
-        try:
-            logger.info(
-                "ir_send%s",
-                format_kv(
-                    kind=IR_KIND,
-                    dialect=spec.display_name,
-                    protocol=spec.name,
-                    device=IR_DEVICE,
-                    payload_sha256_prefix=digest[:16],
-                ),
-            )
-            argv = ["ir-ctl", "-d", LIRC_TX, "--send", path]
-            logger.debug(
-                "ir_ctl_invoke%s",
-                format_kv(
-                    kind=IR_KIND,
-                    dialect=spec.display_name,
-                    protocol=spec.name,
-                    argv=argv,
-                ),
-            )
-            subprocess.run(argv, check=True)
-            logger.debug(
-                "ir_ctl_sent_ok%s",
-                format_kv(
-                    kind=IR_KIND,
-                    dialect=spec.display_name,
-                    protocol=spec.name,
-                    device=IR_DEVICE,
-                ),
-            )
-            return True
-        finally:
-            os.unlink(path)
-    except (FileNotFoundError, OSError, subprocess.CalledProcessError) as e:
-        logger.error(
-            "ir_ctl_failed%s",
-            format_kv(
-                kind=IR_KIND,
-                dialect=spec.display_name,
-                protocol=spec.name,
-                device=IR_DEVICE,
-                payload_sha256_prefix=digest[:16],
-                error=str(e),
-            ),
-        )
-        return False
+    return _send_mode2_payload(mode2, spec.display_name, spec.name)
 
 
 def send_daikin_state(state: Any) -> bool:

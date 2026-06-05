@@ -152,10 +152,35 @@ uses fallback values for that poll:
 
 - `temp_centigrade`: 21.0 (fixed)
 - `humid_percent`: 50.0 (fixed)
-- IR transmit: log "IR STUB: would send <state>" -- do not drive the GPIO pin.
+- IR transmit: drive the GP14 IR LED for accepted Midea commands and log
+  "IR sent command".
 
 Once the sensor and IR hardware are attached, set `SENSOR_BOOT_REQUIRED=1` to
 fail fast on a missing AHT20.
+
+### Office Midea IR Reference
+
+The Office remote capture in `thermo/scribble/captures` matches the
+Coolix / Midea24-style byte-complement protocol, not IRremoteESP8266's native
+`IRMideaAC` checksum protocol.
+
+References to keep with the implementation work:
+
+- IRremoteESP8266 `ir_Coolix`: byte plus inverse encoding, 4.4 ms header,
+  560 us mark, 1.6 ms / 560 us spaces, and about a 5.2 ms packet gap:
+  <https://github.com/crankyoldgit/IRremoteESP8266/blob/master/src/ir_Coolix.cpp>
+- IRremoteESP8266 `sendMidea24`: describes this as a 48-bit NEC-like form with
+  alternate inverted bytes and 24 bits of real data:
+  <https://github.com/crankyoldgit/IRremoteESP8266/blob/master/src/ir_Midea.cpp>
+- Standalone `esp-midea-ir` encoder: same `B2 xx yy` data packet expanded with
+  complement bytes:
+  <https://github.com/sheinz/esp-midea-ir/blob/master/midea-ir.c>
+
+Current Office evidence: each normal command sends the complement-paired state
+packet twice, then a third 48-bit `D5 ...` packet after the same roughly 5.2 ms
+gap. Example power-on sequence: `B2 4D 9F 60 60 9F`,
+`B2 4D 9F 60 60 9F`, then `D5 28 20 01 00 1E`. The existing transmitter only
+sends the first two packets, so the third packet is the likely missing piece.
 
 ---
 

@@ -18,7 +18,7 @@ use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbInterruptHandl
 use embassy_rp::{bind_interrupts, dma};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{block_for, Duration, Instant, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State as CdcAcmState};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig, UsbDevice};
@@ -27,8 +27,11 @@ use panic_halt as _;
 use static_cell::StaticCell;
 use thermo_pico2w::{
     build_sensor_post_body, command_is_new, extract_command_created_dt, extract_command_json,
+    for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frames, parse_heatpump_command,
     parse_server_time_utc_epoch, pattern_for_event, wifi_password, wifi_ssid, zone_private_key_b64,
-    DeviceConfig, RollingLog, SensorReading, SensorSource, StatusEvent, ZoneAuth,
+    DeviceConfig, MideaClassicFrames, RollingLog, SensorReading, SensorSource, StatusEvent,
+    ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US, MIDEA_SPACE_ONE_US, MIDEA_SPACE_ZERO_US,
+    MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
 };
 
 type HealthMutex = Mutex<CriticalSectionRawMutex, RefCell<HealthState>>;
@@ -42,7 +45,7 @@ struct HealthState {
     last_poll_ok: bool,
     poll_successes: u32,
     poll_errors: u32,
-    ir_stub_sends: u32,
+    ir_sends: u32,
 }
 
 impl HealthState {
@@ -53,7 +56,7 @@ impl HealthState {
             last_poll_ok: false,
             poll_successes: 0,
             poll_errors: 0,
-            ir_stub_sends: 0,
+            ir_sends: 0,
         }
     }
 }
@@ -63,7 +66,7 @@ impl HealthState {
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_name!(c"Thermo Pico2W Poller"),
     embassy_rp::binary_info::rp_program_description!(
-        c"Thermo Pico2W real DMZ long-poll with fake sensor and fake IR"
+        c"Thermo Pico2W real DMZ long-poll with fake sensor and Midea IR TX"
     ),
     embassy_rp::binary_info::rp_cargo_version!(),
     embassy_rp::binary_info::rp_program_build_attribute!(),
@@ -285,6 +288,7 @@ async fn main(spawner: Spawner) {
 
     status(&mut control, StatusEvent::ReadingEnv).await;
     let config = DeviceConfig::from_compile_env();
+    let mut ir_tx = Output::new(p.PIN_14, Level::Low);
     health_log(health, "cyw43 init complete");
     health_log(health, "config loaded");
 
@@ -349,6 +353,7 @@ async fn main(spawner: Spawner) {
             &auth,
             stack,
             &clock,
+            &mut ir_tx,
             &mut last_command_json,
             &mut last_applied_created_dt,
         )
@@ -462,6 +467,7 @@ async fn poll_once(
     auth: &ZoneAuth,
     stack: Stack<'static>,
     clock: &DmzClock,
+    ir_tx: &mut Output<'static>,
     last_command_json: &mut String<1024>,
     last_applied_created_dt: &mut String<64>,
 ) -> Result<(), PollError> {
@@ -532,7 +538,7 @@ async fn poll_once(
         health_log(health, "command newer");
         let command_json = extract_command_json(response_body.as_str()).ok_or(PollError::Parse)?;
         status(control, StatusEvent::SendingIr).await;
-        fake_transmit_ir(command_json, health)?;
+        transmit_ir_command(command_json, config, ir_tx, health)?;
         last_applied_created_dt.clear();
         last_applied_created_dt
             .push_str(response_created_dt.ok_or(PollError::Parse)?)
@@ -559,13 +565,90 @@ fn fake_sensor_reading() -> SensorReading {
     }
 }
 
-fn fake_transmit_ir(_command_json: &str, health: &'static HealthMutex) -> Result<(), PollError> {
+fn transmit_ir_command(
+    command_json: &str,
+    config: &DeviceConfig,
+    ir_tx: &mut Output<'static>,
+    health: &'static HealthMutex,
+) -> Result<(), PollError> {
+    if is_raw_ir_command(command_json) {
+        transmit_raw_ir_sequence(command_json, ir_tx, health)?;
+        return Ok(());
+    }
+    if config.ir_protocol != "midea_classic" {
+        health_log(health, "IR protocol unsupported");
+        return Err(PollError::IrProtocol);
+    }
+    let command = parse_heatpump_command(command_json).ok_or(PollError::Parse)?;
+    let frames = midea_classic_frames(command);
+    transmit_midea_classic(ir_tx, frames);
     health.lock(|cell| {
         let mut state = cell.borrow_mut();
-        state.ir_stub_sends = state.ir_stub_sends.saturating_add(1);
-        state.log.push("IR STUB: would send command");
+        state.ir_sends = state.ir_sends.saturating_add(1);
+        state.log.push("IR sent command");
     });
     Ok(())
+}
+
+fn transmit_raw_ir_sequence(
+    command_json: &str,
+    ir_tx: &mut Output<'static>,
+    health: &'static HealthMutex,
+) -> Result<(), PollError> {
+    for_each_raw_ir_duration(command_json, |_| {}).ok_or(PollError::Parse)?;
+    for_each_raw_ir_duration(command_json, |duration_us| {
+        if duration_us > 0 {
+            transmit_mark(ir_tx, duration_us as u64);
+        } else {
+            transmit_space(ir_tx, i64::from(duration_us).unsigned_abs());
+        }
+    })
+    .ok_or(PollError::Parse)?;
+    health.lock(|cell| {
+        let mut state = cell.borrow_mut();
+        state.ir_sends = state.ir_sends.saturating_add(1);
+        state.log.push("IR sent raw command");
+    });
+    Ok(())
+}
+
+fn transmit_midea_classic(ir_tx: &mut Output<'static>, frames: MideaClassicFrames) {
+    let mut frame_index = 0;
+    while frame_index < frames.count {
+        transmit_mark(ir_tx, MIDEA_START_PULSE_US);
+        transmit_space(ir_tx, MIDEA_START_SPACE_US);
+        let frame = frames.frames[frame_index];
+        for byte in frame {
+            let mut bit_index = 8;
+            while bit_index > 0 {
+                bit_index -= 1;
+                transmit_mark(ir_tx, MIDEA_PULSE_US);
+                if ((byte >> bit_index) & 1) == 1 {
+                    transmit_space(ir_tx, MIDEA_SPACE_ONE_US);
+                } else {
+                    transmit_space(ir_tx, MIDEA_SPACE_ZERO_US);
+                }
+            }
+        }
+        transmit_mark(ir_tx, MIDEA_PULSE_US);
+        transmit_space(ir_tx, MIDEA_GAP_US);
+        frame_index += 1;
+    }
+}
+
+fn transmit_mark(ir_tx: &mut Output<'static>, duration_us: u64) {
+    let cycles = (duration_us + 13) / 26;
+    for _ in 0..cycles {
+        ir_tx.set_high();
+        block_for(Duration::from_micros(13));
+        ir_tx.set_low();
+        block_for(Duration::from_micros(13));
+    }
+}
+
+fn transmit_space(ir_tx: &mut Output<'static>, duration_us: u64) {
+    ir_tx.set_low();
+    block_for(Duration::from_micros(duration_us));
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -575,6 +658,7 @@ enum PollError {
     Connect,
     Dns,
     HttpStatus,
+    IrProtocol,
     Parse,
     Read,
     Sign,
@@ -589,6 +673,7 @@ impl PollError {
             PollError::Connect => "poll failed: connect",
             PollError::Dns => "poll failed: dns",
             PollError::HttpStatus => "poll failed: http status",
+            PollError::IrProtocol => "poll failed: ir protocol",
             PollError::Parse => "poll failed: parse",
             PollError::Read => "poll failed: read",
             PollError::Sign => "poll failed: sign",
@@ -1087,7 +1172,7 @@ fn build_healthz_body<const N: usize>(
         let logs = state.log.newest_first::<HEALTH_LOG_RETURNED>();
         let _ = write!(
             out,
-            "{{\"ok\":true,\"service\":\"onboard-app\",\"hardware_backend\":\"pico2w\",\"time\":null,\"pid\":null,\"log_level\":\"INFO\",\"deployment\":{{\"zone_name\":\"{}\",\"hardware_profile\":\"{}\",\"send_behavior\":\"{}\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"{}\",\"ir_transport\":\"{}\",\"ir_device\":\"gp{}\",\"ir_protocol\":\"{}\"}},\"queues\":{{\"daikin_size\":0,\"daikin_capacity\":0}},\"log_storage\":{{\"path\":null,\"type\":\"memory\"}},\"pico\":{{\"uptime_seconds\":{},\"wifi_ready\":{},\"last_poll_ok\":{},\"poll_successes\":{},\"poll_errors\":{},\"ir_stub_sends\":{}}},",
+            "{{\"ok\":true,\"service\":\"onboard-app\",\"hardware_backend\":\"pico2w\",\"time\":null,\"pid\":null,\"log_level\":\"INFO\",\"deployment\":{{\"zone_name\":\"{}\",\"hardware_profile\":\"{}\",\"send_behavior\":\"{}\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"{}\",\"ir_transport\":\"{}\",\"ir_device\":\"gp{}\",\"ir_protocol\":\"{}\"}},\"queues\":{{\"daikin_size\":0,\"daikin_capacity\":0}},\"log_storage\":{{\"path\":null,\"type\":\"memory\"}},\"pico\":{{\"uptime_seconds\":{},\"wifi_ready\":{},\"last_poll_ok\":{},\"poll_successes\":{},\"poll_errors\":{},\"ir_sends\":{},\"ir_stub_sends\":{}}},",
             config.zone_name,
             config.hardware_profile,
             config.send_behavior,
@@ -1100,7 +1185,8 @@ fn build_healthz_body<const N: usize>(
             json_bool(state.last_poll_ok),
             state.poll_successes,
             state.poll_errors,
-            state.ir_stub_sends
+            state.ir_sends,
+            state.ir_sends
         );
         if let Some(local_ip) = local_ip.as_ref() {
             let _ = write!(

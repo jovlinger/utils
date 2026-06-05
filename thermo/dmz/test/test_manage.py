@@ -163,6 +163,68 @@ def test_state_example_matches_to_json() -> None:
     assert "timer_on_active" in d
 
 
+def test_raw_ir_parser_accepts_signed_integer_text() -> None:
+    payload = manage._parse_raw_ir_text("4500 -4500, 560 -1600\n560 -520\n")
+
+    assert payload == {
+        "command_type": "raw_ir_sequence",
+        "sequence": [4500, -4500, 560, -1600, 560, -520],
+        "carrier_hz": 38000,
+    }
+
+
+def test_raw_ir_parser_accepts_json_object() -> None:
+    payload = manage._parse_raw_ir_text(
+        '{"sequence":[9000,-4500,560,-560],"carrier_hz":38000}'
+    )
+
+    assert payload["command_type"] == "raw_ir_sequence"
+    assert payload["sequence"] == [9000, -4500, 560, -560]
+    assert payload["carrier_hz"] == 38000
+
+
+def test_raw_ir_parser_rejects_zero_duration() -> None:
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        with pytest.raises(SystemExit) as ei:
+            manage._parse_raw_ir_text("[4500, 0, -560]")
+
+    assert ei.value.code == 2
+    assert "must not be zero" in err.getvalue()
+
+
+def test_rawir_posts_typed_command_from_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_file = tmp_path / "capture.txt"
+    raw_file.write_text("4500 -4500 560 -1600\n", encoding="utf-8")
+    calls: list[tuple] = []
+
+    def _fake_request_json(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(manage, "_request_json", _fake_request_json)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = manage.main(["rawir", "office", str(raw_file)])
+
+    assert code == 0
+    assert len(calls) == 1
+    method, path, kwargs = calls[0]
+    assert method == "POST"
+    assert path == "/zone/office/command"
+    assert kwargs["zone_for_sign"] == "office"
+    assert kwargs["sign"] is True
+    assert kwargs["body"] == {
+        "command_type": "raw_ir_sequence",
+        "sequence": [4500, -4500, 560, -1600],
+        "carrier_hz": 38000,
+    }
+    assert '"ok": true' in out.getvalue()
+
+
 def _stderr_on_dmz_base() -> tuple[int, str]:
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):

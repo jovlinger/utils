@@ -15,11 +15,8 @@ Examples:
 export THERMO_ENV_FILE=config/test.env.sample
 make -C thermo/test test-local
 
-# Deploy an onboard room target (copy template first)
-cp thermo/config/kitchen.env.sample thermo/config/kitchen.env
-# edit kitchen.env: host, ZONE_NAME, behavior choices, etc.
-export THERMO_ENV_FILE=config/kitchen.env
-make -C thermo/onboard deploy
+# Deploy an onboard room target
+make -C thermo/onboard/zones/kitchen deploy
 ```
 
 Hardware-local deploy shortcuts are also available:
@@ -27,17 +24,14 @@ Hardware-local deploy shortcuts are also available:
 ```bash
 cd thermo/onboard/hardware/pico2w
 ./deploy.sh office-pico2w.env
-./deploy.sh office-pico2w.env --deploy=true
 
 cd thermo/onboard/hardware/pizero2w
 ./deploy.sh kitchen.env
-./deploy.sh kitchen.env --deploy=true
 ```
 
-Without `--deploy=true`, both shortcuts run in check mode. With
-`--deploy=true`, the Pico2W shortcut flashes and requires the board in BOOTSEL
-mode. The Pi Zero 2 W shortcut reads `ONBOARD_DEPLOY_HOST`; it SSHes when run
-from another machine and deploys locally when already on the target host.
+The Pico2W shortcut flashes and requires the board in BOOTSEL mode. The Pi Zero
+2 W shortcut reads `ONBOARD_DEPLOY_HOST`; it SSHes when run from another machine
+and deploys locally when already on the target host.
 
 Multiple units in one house: keep **`config/kitchen.env`**, **`config/bedroom.env`**, each with its own `ZONE_NAME`, deploy backend, destination host, and runtime overrides; pick the file when deploying that room.
 
@@ -69,7 +63,7 @@ also set `PICO2W_PRIV_ENV` to the ignored per-room private env file, such as
 `$THERMO_ROOT/priv/pico2w/office.env`; that file holds `PICO2W_WIFI_PASSWORD`
 and any private overrides.
 
-`ONBOARD_DEPLOY_BACKEND` selects the host-type deployment implementation under `thermo/onboard/hardware/<backend>/install/`. For example, `pizero2w` deploys by SSHing to `ONBOARD_DEPLOY_HOST`, pulling git in `ONBOARD_DEPLOY_REPO`, then running `make -C thermo/onboard deploy` on the target with `ONBOARD_DEPLOY_ENV_FILE`.
+`ONBOARD_DEPLOY_BACKEND` selects the host-type deployment implementation under `thermo/onboard/hardware/<backend>/install/`. For example, `pizero2w` deploys by SSHing to `ONBOARD_DEPLOY_HOST`, pulling git in `ONBOARD_DEPLOY_REPO`, then running `make -C thermo/onboard deploy ZONE=kitchen` on the target with `ONBOARD_DEPLOY_ENV_FILE`.
 
 The initial supported hardware profile is `pi_zero_2w_htu21d_ir`: Raspberry Pi Zero 2 W, HTU21D temperature/humidity sensor on I2C, and a LIRC IR sender. Pico2W targets use `pico2w_aht20_ir`.
 

@@ -25,6 +25,7 @@ Actions (first arg) map to app routes:
   login | authorize | logout     — GET OAuth helpers (browser-oriented)
   sensors <zone> [body...]       — POST /zone/<zone>/sensors
   command <zone> [body...]      — POST /zone/<zone>/command
+  rawir <zone> <file>           - POST raw IR sequence command from file
   zones                         — GET /zones
   healthz                       — GET /ui/diagnostics (unsigned; uptime, config, access tail)
   debug_logs | logs             — GET /debug/logs
@@ -47,6 +48,7 @@ Direct POSTs (body is either key=value pairs or one JSON object string)
 
 manage sensors myzone temp_centigrade=20.5
 manage command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage rawir myzone capture-sequence.txt
 OAuth helpers (browser-oriented; no zone signing)
 
 manage login
@@ -105,6 +107,11 @@ _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "timer_off_minutes": 120,
 }
 
+RAW_IR_COMMAND_TYPE = "raw_ir_sequence"
+RAW_IR_DEFAULT_CARRIER_HZ = 38_000
+RAW_IR_MAX_SEQUENCE_LEN = 1024
+RAW_IR_MAX_DURATION_US = 1_250_000
+
 
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
@@ -119,7 +126,7 @@ def _print_help() -> int:
 def _usage() -> int:
     print(
         "usage: manage "
-        "{help|login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
+        "{help|login|authorize|logout|sensors|command|rawir|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
         file=sys.stderr,
     )
     print(
@@ -353,6 +360,74 @@ def _parse_body_args(argv: List[str]) -> Dict[str, Any]:
             _die(f"empty key in: {item!r}")
         out[key] = val.strip()
     return out
+
+
+def _validate_raw_ir_sequence(raw: Any) -> List[int]:
+    if not isinstance(raw, list):
+        _die("raw IR sequence must be a JSON array or signed integer list")
+    if not raw:
+        _die("raw IR sequence must not be empty")
+    if len(raw) > RAW_IR_MAX_SEQUENCE_LEN:
+        _die(f"raw IR sequence too long: max {RAW_IR_MAX_SEQUENCE_LEN} entries")
+
+    out: List[int] = []
+    for index, value in enumerate(raw):
+        if isinstance(value, bool) or not isinstance(value, int):
+            _die(f"raw IR sequence entry {index} must be an integer")
+        if value == 0:
+            _die(f"raw IR sequence entry {index} must not be zero")
+        if abs(value) > RAW_IR_MAX_DURATION_US:
+            _die(
+                f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us"
+            )
+        out.append(value)
+    return out
+
+
+def _parse_raw_ir_text(text: str) -> Dict[str, Any]:
+    clean = text.strip()
+    if not clean:
+        _die("raw IR file is empty")
+
+    carrier_hz = RAW_IR_DEFAULT_CARRIER_HZ
+    if clean.startswith("[") or clean.startswith("{"):
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            _die(f"invalid raw IR JSON: {exc}")
+        if isinstance(parsed, dict):
+            command_type = parsed.get("command_type", RAW_IR_COMMAND_TYPE)
+            if command_type != RAW_IR_COMMAND_TYPE:
+                _die(f"unsupported raw IR command_type: {command_type!r}")
+            sequence = _validate_raw_ir_sequence(parsed.get("sequence"))
+            raw_carrier = parsed.get("carrier_hz", carrier_hz)
+            if isinstance(raw_carrier, bool) or not isinstance(raw_carrier, int):
+                _die("raw IR carrier_hz must be an integer")
+            carrier_hz = raw_carrier
+        else:
+            sequence = _validate_raw_ir_sequence(parsed)
+    else:
+        tokens = clean.replace(",", " ").split()
+        try:
+            sequence = _validate_raw_ir_sequence([int(token) for token in tokens])
+        except ValueError as exc:
+            _die(f"raw IR text contains a non-integer token: {exc}")
+
+    if carrier_hz <= 0:
+        _die("raw IR carrier_hz must be positive")
+    return {
+        "command_type": RAW_IR_COMMAND_TYPE,
+        "sequence": sequence,
+        "carrier_hz": carrier_hz,
+    }
+
+
+def _read_raw_ir_command_file(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return _parse_raw_ir_text(f.read())
+    except OSError as exc:
+        _die(f"cannot read raw IR file {path!r}: {exc}", code=1)
 
 
 def _json_dumps_body(payload: Dict[str, Any]) -> bytes:
@@ -638,6 +713,18 @@ def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
     return _emit(st2, resp)
 
 
+def _cmd_rawir(zone: str, path: str) -> int:
+    payload = _read_raw_ir_command_file(path)
+    st, body = _request_json(
+        "POST",
+        f"/zone/{zone}/command",
+        zone_for_sign=zone,
+        body=payload,
+        sign=True,
+    )
+    return _emit(st, body)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _warn_if_wrong_interpreter()
     args = list(sys.argv[1:] if argv is None else argv)
@@ -700,6 +787,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             _die(_updatezone_help_message())
         zone = rest[0]
         return _cmd_updatezone(zone, rest[1:])
+
+    if action in ("rawir", "raw-ir"):
+        if len(rest) != 2:
+            _die("rawir <zone> <file>")
+        return _cmd_rawir(rest[0], rest[1])
 
     if action == "sensors":
         if not rest:

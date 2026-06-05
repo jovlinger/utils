@@ -1,5 +1,5 @@
 # Thermo onboard: shared build/test and per-zone deploy under zones/.
-.PHONY: all build clean test deploy deploy-zone ci
+.PHONY: all build clean test deploy deploy-preflight deploy-zone ci
 
 ONBOARD_ROOT := $(abspath $(CURDIR))
 THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
@@ -24,24 +24,33 @@ test:
 	./test/run.sh
 
 # Called from zones/<zone>/Makefile (see mk/zone.mk).
+DEPLOY_REPO ?=
+deploy-preflight:
+	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-preflight: THERMO_ENV_FILE not set"; exit 1; }
+	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-preflight: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
+	REPO_PATH="$(if $(DEPLOY_REPO),$(DEPLOY_REPO),$(REPO_ROOT))" \
+		EXPECTED_ONBOARD_DEPLOY_BACKEND="$(EXPECTED_ONBOARD_DEPLOY_BACKEND)" \
+		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
+		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh" --preflight
+
 deploy-zone:
 	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-zone: THERMO_ENV_FILE not set"; exit 1; }
 	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-zone: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
-	REPO_PATH="$(REPO_ROOT)" \
+	REPO_PATH="$(if $(DEPLOY_REPO),$(DEPLOY_REPO),$(REPO_ROOT))" \
 		EXPECTED_ONBOARD_DEPLOY_BACKEND="$(EXPECTED_ONBOARD_DEPLOY_BACKEND)" \
-		THERMO_DEPLOY_EXECUTE="$(THERMO_DEPLOY_EXECUTE)" \
 		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
 		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh"
 
-# Convenience: make deploy ZONE=office [THERMO_DEPLOY_EXECUTE=1]
+# Convenience: make deploy ZONE=office
 ZONE ?=
 deploy:
 	@if [ -z "$(ZONE)" ]; then \
-		echo "Usage: make deploy ZONE=<kitchen|office|bedroom> [THERMO_DEPLOY_EXECUTE=1]"; \
-		echo "   or: make -C zones/<zone> deploy [THERMO_DEPLOY_EXECUTE=1]"; \
+		echo "Usage: make deploy ZONE=<kitchen|office|bedroom>"; \
+		echo "   or: make -C zones/<zone> deploy"; \
 		exit 1; \
 	fi
-	$(MAKE) -C zones/$(ZONE) deploy THERMO_DEPLOY_EXECUTE="$(THERMO_DEPLOY_EXECUTE)"
+	$(MAKE) -C zones/$(ZONE) deploy \
+		DEPLOY_REPO="$(DEPLOY_REPO)"
 
 ci:
 	@BRANCH=$$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD); \

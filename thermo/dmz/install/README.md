@@ -37,3 +37,5 @@ Boot diagnostics go to **`/tmp/boot.log`** on the Pi; app output is **`/tmp/dmz_
 Edit **`dmz.conf`** on the build host and rebuild, or edit **`install/network.conf`** (and optionally **`dmz-app.env`** / **`sshd-on-boot`**) on the mounted FAT before boot.
 
 On a running Pi, edit **`/etc/dmz/dmz-app.env`** inside the chroot and send **`kill -USR1 <dmz-pid>`** to reload `LOG_LEVEL`, long-poll timeouts, and obsolete-log suppression without rebooting (see `app.py` `reload_dmz_config_from_disk`).
+
+**Hot reload (no SD reburn):** `start.sh` sets **`RUN_WITH_STDOUT_RUNFILE=/tmp/dmz.run`**. While that file exists, **`run-with-stdout-logged.py`** restarts **`run.sh`** after each exit. Copy updated Python into **`/tmp/dmz_rootfs/app/`**, then kill **`app.py`** or **`run.sh`** inside the chroot (runfile stays). **Stop:** `rm /tmp/dmz_rootfs/tmp/dmz.run` (or host path into chroot tmpfs), then stop the process tree (e.g. kill **`tini -- /app/start.sh`** from the rescue shell).

@@ -5,7 +5,7 @@
 ## Quick commands
 
 ```bash
-THERMO_ENV_FILE=config/kitchen.env make -C thermo/onboard deploy
+make -C thermo/onboard deploy ZONE=kitchen
 ```
 
 The top-level install scripts source `THERMO_ENV_FILE`, read `ONBOARD_DEPLOY_BACKEND`, and dispatch to `hardware/<backend>/install/`.

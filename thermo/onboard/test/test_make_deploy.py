@@ -64,11 +64,19 @@ def thermo_extdeps_first_on_path() -> Iterator[None]:
 
 def _mock_subprocess_env(mock_file: Path, home: Path, mock_bins: Path) -> Dict[str, str]:
     env = os.environ.copy()
+    real_home = Path(env.get("HOME", os.path.expanduser("~")))
+    real_cargo = real_home / ".cargo/bin/cargo"
     env["MOCK_FILE"] = str(mock_file)
     env["HOME"] = str(home)
     env.pop("CR_PAT", None)
     path = env.get("PATH", "")
     env["PATH"] = f"{mock_bins}{os.pathsep}{path}"
+    if real_cargo.is_file():
+        env["CARGO"] = str(real_cargo)
+    if (real_home / ".cargo").is_dir():
+        env["CARGO_HOME"] = str(real_home / ".cargo")
+    if (real_home / ".rustup").is_dir():
+        env["RUSTUP_HOME"] = str(real_home / ".rustup")
     return env
 
 
@@ -133,6 +141,12 @@ def _copy_pizero2w_backend(fixture: Path, onboard: Path) -> None:
         shutil.copy2(backend_src / name, backend_dst / name)
 
 
+def _copy_kitchen_zone_env(fixture: Path, text: str) -> None:
+    zone_dst = fixture / "thermo" / "onboard" / "zones" / "kitchen"
+    zone_dst.mkdir(parents=True)
+    (zone_dst / "zone.env").write_text(text, encoding="ascii")
+
+
 def test_thermo_extdeps_dir() -> None:
     utils = _utils_root()
     expected = (utils / "extdeps").resolve()
@@ -177,6 +191,15 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
             "ONBOARD_DEPLOY_BACKEND=pizero2w\n",
             encoding="ascii",
         )
+        _copy_kitchen_zone_env(
+            fixture,
+            "DMZ_SCHEME=http\n"
+            "DMZ_HOST=127.0.0.1\n"
+            "DMZ_PORT=5000\n"
+            "ZONE_NAME=kitchen\n"
+            "ONBOARD_DEPLOY_BACKEND=pizero2w\n"
+            "ONBOARD_HARDWARE_PROFILE=pi_zero_2w_htu21d_ir\n",
+        )
         _copy_pizero2w_backend(fixture, onboard)
 
         subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
@@ -196,7 +219,9 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
                 "make",
                 "-C",
                 str(onboard),
-                "deploy",
+                "deploy-zone",
+                "THERMO_ENV_FILE=onboard/zones/kitchen/zone.env",
+                "EXPECTED_ONBOARD_DEPLOY_BACKEND=pizero2w",
                 f"DEPLOY_REPO={fixture}",
             ],
             env=env,
@@ -210,7 +235,7 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         assert "Deploy complete." in result.stdout
         assert "Deploy backend=pizero2w" in result.stdout
         assert "pizero2w-deploy" in result.stdout
-        assert f"[deploy] REPO_PATH={fixture}" in result.stdout
+        assert f'REPO_PATH="{fixture}"' in result.stdout
         assert "ERROR: No mock configured" not in result.stderr
         metadata = (
             fixture
@@ -224,7 +249,7 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         assert "THERMO_DEPLOY_GIT_SHA_SHORT=abcdef1\n" in metadata
         assert "THERMO_DEPLOY_GIT_BRANCH=rooms\n" in metadata
         assert "THERMO_DEPLOY_GIT_DIRTY=0\n" in metadata
-        assert "THERMO_DEPLOY_ENV_FILE=config/ci.env\n" in metadata
+        assert "THERMO_DEPLOY_ENV_FILE=onboard/zones/kitchen/zone.env\n" in metadata
         assert "THERMO_DEPLOY_BACKEND=pizero2w\n" in metadata
         assert "THERMO_DEPLOY_HARDWARE_PROFILE=pi_zero_2w_htu21d_ir\n" in metadata
 
@@ -270,6 +295,18 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
             "ONBOARD_DEPLOY_ENV_FILE=config/ci.env\n",
             encoding="ascii",
         )
+        _copy_kitchen_zone_env(
+            fixture,
+            "DMZ_SCHEME=http\n"
+            "DMZ_HOST=127.0.0.1\n"
+            "DMZ_PORT=5000\n"
+            "ZONE_NAME=kitchen\n"
+            "ONBOARD_DEPLOY_BACKEND=pizero2w\n"
+            "ONBOARD_DEPLOY_HOST=pizerokitchen.local\n"
+            "ONBOARD_DEPLOY_USER=johan\n"
+            "ONBOARD_DEPLOY_REPO=/home/johan/github.com/jovlinger/utils\n"
+            "ONBOARD_DEPLOY_ENV_FILE=onboard/zones/kitchen/zone.env\n",
+        )
         _copy_pizero2w_backend(fixture, onboard)
 
         subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
@@ -281,9 +318,9 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
         mod = _load_mock_cmd_module(mpy, mock_file)
         mod.reset_mocks()
         remote_cmd = (
-            'cd /home/johan/github.com/jovlinger/utils && git pull && export THERMO_ENV_FILE="config/ci.env" '
+            'cd /home/johan/github.com/jovlinger/utils && git pull && export THERMO_ENV_FILE="onboard/zones/kitchen/zone.env" '
             'ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 && make -C thermo/onboard '
-            'deploy DEPLOY_REPO="$(pwd)"'
+            'deploy ZONE=kitchen DEPLOY_REPO="$(pwd)"'
         )
         mod.set_mock("ssh", ["johan@pizerokitchen.local", remote_cmd], 0, "", "")
 
@@ -292,7 +329,9 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
                 "make",
                 "-C",
                 str(onboard),
-                "deploy",
+                "deploy-zone",
+                "THERMO_ENV_FILE=onboard/zones/kitchen/zone.env",
+                "EXPECTED_ONBOARD_DEPLOY_BACKEND=pizero2w",
                 f"DEPLOY_REPO={fixture}",
             ],
             env=env,
@@ -317,7 +356,16 @@ def test_deploy_repo_override_reaches_deploy_sh() -> None:
     onboard = onboard_dir()
     fake_repo = "/tmp/thermo_make_deploy_dry_run_placeholder"
     out = subprocess.run(
-        ["make", "-n", "-C", str(onboard), "deploy", f"DEPLOY_REPO={fake_repo}"],
+        [
+            "make",
+            "-n",
+            "-C",
+            str(onboard),
+            "deploy-zone",
+            "THERMO_ENV_FILE=onboard/zones/kitchen/zone.env",
+            "EXPECTED_ONBOARD_DEPLOY_BACKEND=pizero2w",
+            f"DEPLOY_REPO={fake_repo}",
+        ],
         capture_output=True,
         text=True,
         check=True,

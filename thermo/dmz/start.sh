@@ -67,4 +67,12 @@ fi
 mount -o remount,ro / 2>/dev/null \
 	|| echo "start.sh: remount ro / not applied" >&2
 
+# Supervised restarts: while /tmp/dmz.run exists, run-with-stdout-logged relaunches run.sh
+# after exit (hot reload: scp code, kill app.py or run.sh). Clean stop: rm /tmp/dmz.run
+# then kill the app tree (or SIGTERM run-with-stdout-logged's child); no further restart.
+export RUN_WITH_STDOUT_RUNFILE=/tmp/dmz.run
+: >"$RUN_WITH_STDOUT_RUNFILE"
+chmod 644 "$RUN_WITH_STDOUT_RUNFILE" 2>/dev/null || true
+echo "start.sh: supervised runfile=$RUN_WITH_STDOUT_RUNFILE (rm file + stop app for shutdown)"
+
 exec su-exec dmz python /app/run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 /bin/sh /app/run.sh
