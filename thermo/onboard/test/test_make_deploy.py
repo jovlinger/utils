@@ -318,10 +318,14 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
         mod = _load_mock_cmd_module(mpy, mock_file)
         mod.reset_mocks()
         remote_cmd = (
-            'cd /home/johan/github.com/jovlinger/utils && git pull && export THERMO_ENV_FILE="onboard/zones/kitchen/zone.env" '
-            'ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 && make -C thermo/onboard '
-            'deploy ZONE=kitchen DEPLOY_REPO="$(pwd)"'
+            "cd /home/johan/github.com/jovlinger/utils && git fetch origin master && git checkout master "
+            '&& git pull --ff-only origin master && ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 '
+            'make -C thermo/onboard deploy-zone THERMO_ENV_FILE="onboard/zones/kitchen/zone.env" '
+            'EXPECTED_ONBOARD_DEPLOY_BACKEND=pizero2w DEPLOY_REPO="$(pwd)"'
         )
+        assert "git checkout master" in remote_cmd
+        assert "deploy-zone" in remote_cmd
+        assert "make -C thermo/onboard deploy ZONE=" not in remote_cmd
         mod.set_mock("ssh", ["johan@pizerokitchen.local", remote_cmd], 0, "", "")
 
         result = subprocess.run(
