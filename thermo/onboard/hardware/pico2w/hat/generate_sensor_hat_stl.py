@@ -18,23 +18,28 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, List, Sequence, Tuple
+from typing import Iterable, List, Sequence, Tuple
 
 Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
 
-# 1/8 inch board and raised copper-tape traces
+# 1/8 inch board with two raised feature levels for copper-tape routing.
 INCH_MM = 25.4
 BASE_THICKNESS_MM = INCH_MM / 8.0
+UNCONNECTED_RAISE_MM = 1.25
 TRACE_RAISE_MM = INCH_MM / 8.0
 PIN_HOLE_DIAMETER_MM = 1.1
-MOUNT_HOLE_DIAMETER_MM = 2.2
-SENSOR_HOLE_DIAMETER_MM = 1.1
+MOUNT_HOLE_DIAMETER_MM = 2.4
+SENSOR_HOLE_DIAMETER_MM = 2.1
 GRID_MM = 0.5
-TRACE_WIDTH_MM = 2.0
-RAIL_WIDTH_MM = 2.8
-LABEL_DEPTH_MM = 0.35
-LABEL_HEIGHT_MM = 0.8
+TRACE_WIDTH_MM = 1.35
+RAIL_WIDTH_MM = 1.775
+PICO_PAD_WIDTH_MM = 1.7
+SENSOR_PAD_WIDTH_MM = 2.35
+MOUNT_PAD_WIDTH_MM = 3.4
+BOARD_MARGIN_MM = 2.0
+USB_CUT_WIDTH_MM = 9.0
+USB_CUT_NORTH_Y_MM = -24.8
 
 # Pico through-hole pads (KiCad footprint, board center at origin)
 PICO_PADS_MM: dict[int, Tuple[float, float]] = {
@@ -93,9 +98,9 @@ PIN_GP5 = 7
 PIN_GP14 = 19
 PIN_GP15 = 20
 PIN_3V3_A = 36
-PIN_3V3_B = 39
 PIN_GND_A = 3
 PIN_GND_B = 8
+PIN_GND_C = 38
 
 PITCH_MM = 2.54
 
@@ -124,6 +129,19 @@ class BoxSolid:
     z0: float
     z1: float
     label: str | None = None
+
+
+@dataclass(frozen=True)
+class Variant:
+    name: str
+    trace_text_lines: Tuple[str, ...]
+    legacy_alias: bool = False
+
+
+VARIANTS: Tuple[Variant, ...] = (
+    Variant("up-side", ("UP", "SIDE"), True),
+    Variant("pico-side", ("PICO", "SIDE"), False),
+)
 
 
 class Mesh:
@@ -314,16 +332,6 @@ def plate_with_holes_tris(
     return tris
 
 
-def manhattan_path(
-    p0: Tuple[float, float], p1: Tuple[float, float]
-) -> List[Tuple[float, float]]:
-    x0, y0 = p0
-    x1, y1 = p1
-    if abs(x0 - x1) < 1e-6 and abs(y0 - y1) < 1e-6:
-        return [(x0, y0)]
-    return [(x0, y0), (x1, y0), (x1, y1)]
-
-
 def trace_boxes_from_path(
     points: Sequence[Tuple[float, float]],
     width: float,
@@ -343,24 +351,82 @@ def trace_boxes_from_path(
     return boxes
 
 
-def subtract_label(box: BoxSolid, text: str) -> Tuple[BoxSolid, BoxSolid | None]:
-    if not text:
-        return box, None
-    cx = (box.x0 + box.x1) * 0.5
-    cy = (box.y0 + box.y1) * 0.5
-    length = max(box.x1 - box.x0, box.y1 - box.y0)
-    lw = min(length * 0.75, len(text) * LABEL_HEIGHT_MM * 0.65)
-    lh = LABEL_HEIGHT_MM
-    recess = BoxSolid(
-        cx - lw * 0.5,
-        cy - lh * 0.5,
-        cx + lw * 0.5,
-        cy + lh * 0.5,
-        box.z1 - LABEL_DEPTH_MM,
-        box.z1,
-        None,
-    )
-    return box, recess
+def pad_box(
+    center: Tuple[float, float], width: float, z0: float, z1: float, label: str | None
+) -> BoxSolid:
+    half = width * 0.5
+    x, y = center
+    return BoxSolid(x - half, y - half, x + half, y + half, z0, z1, label)
+
+
+TEXT_FONT: dict[str, Tuple[str, ...]] = {
+    "B": ("110", "101", "110", "101", "110"),
+    "C": ("111", "100", "100", "100", "111"),
+    "D": ("110", "101", "101", "101", "110"),
+    "E": ("111", "100", "110", "100", "111"),
+    "I": ("111", "010", "010", "010", "111"),
+    "O": ("111", "101", "101", "101", "111"),
+    "P": ("110", "101", "110", "100", "100"),
+    "S": ("111", "100", "111", "001", "111"),
+    "U": ("101", "101", "101", "101", "111"),
+}
+
+
+def text_boxes(
+    text: str,
+    center: Tuple[float, float],
+    cell: float,
+    z0: float,
+    z1: float,
+) -> List[BoxSolid]:
+    text = text.upper()
+    char_width = 3
+    char_gap = 1
+    total_cols = 0
+    for char in text:
+        total_cols += char_width if char != " " else char_width
+        total_cols += char_gap
+    total_cols = max(total_cols - char_gap, 0)
+    total_width = total_cols * cell
+    total_height = 5 * cell
+    x_start = center[0] - total_width * 0.5
+    y_top = center[1] + total_height * 0.5
+    boxes: List[BoxSolid] = []
+    col_offset = 0
+
+    for char in text:
+        rows = TEXT_FONT.get(char)
+        if rows is not None:
+            for row_idx, row in enumerate(rows):
+                for col_idx, bit in enumerate(row):
+                    if bit != "1":
+                        continue
+                    x0 = x_start + (col_offset + col_idx) * cell
+                    y1 = y_top - row_idx * cell
+                    boxes.append(BoxSolid(x0, y1 - cell, x0 + cell, y1, z0, z1, None))
+        col_offset += char_width + char_gap
+
+    return boxes
+
+
+def multiline_text_boxes(
+    lines: Sequence[str],
+    center: Tuple[float, float],
+    cell: float,
+    line_gap: float,
+    z0: float,
+    z1: float,
+) -> List[BoxSolid]:
+    line_height = 5 * cell
+    total_height = len(lines) * line_height + max(len(lines) - 1, 0) * line_gap
+    y_top = center[1] + total_height * 0.5
+    boxes: List[BoxSolid] = []
+
+    for index, line in enumerate(lines):
+        line_center_y = y_top - line_height * 0.5 - index * (line_height + line_gap)
+        boxes.extend(text_boxes(line, (center[0], line_center_y), cell, z0, z1))
+
+    return boxes
 
 
 def all_holes(sensor_sites: Sequence[Tuple[float, float]]) -> List[Hole]:
@@ -377,25 +443,28 @@ def all_holes(sensor_sites: Sequence[Tuple[float, float]]) -> List[Hole]:
     return holes
 
 
-def sensor_module_holes() -> Tuple[List[Tuple[float, float]], dict[str, Tuple[float, float]]]:
+def sensor_module_holes(
+    variant: Variant,
+) -> Tuple[List[Tuple[float, float]], dict[str, Tuple[float, float]]]:
     """Return all sensor pad centers and named signal pad targets."""
-    # AHT20 4-pin row between header rows (VCC, SDA, SCL, GND left-to-right).
-    aht_y = -10.0
-    aht_x0 = -3.81
-    aht: List[Tuple[float, float]] = []
-    for i in range(4):
-        aht.append((aht_x0 + i * PITCH_MM, aht_y))
+    # Module rows stay between the Pico header rows. Both variants use this
+    # trace-side order; flat-side modules must be oriented to match it.
+    aht_y = -11.43
+    aht_x0 = -6.35
+    aht: List[Tuple[float, float]] = [(aht_x0 + i * PITCH_MM, aht_y) for i in range(4)]
+    irtx_y = 8.89
+    irrx_y = 16.51
     pads = {
-        "aht_vcc": aht[0],
-        "aht_sda": aht[1],
-        "aht_scl": aht[2],
-        "aht_gnd": aht[3],
-        "irtx_vcc": (-14.0, 2.0),
-        "irtx_dat": (-14.0, 4.54),
-        "irtx_gnd": (-14.0, 7.08),
-        "irrx_vcc": (14.0, 2.0),
-        "irrx_out": (14.0, 4.54),
-        "irrx_gnd": (14.0, 7.08),
+        "aht_sda": aht[0],
+        "aht_scl": aht[1],
+        "aht_gnd": aht[2],
+        "aht_vcc": aht[3],
+        "irtx_dat": (-3.81, irtx_y),
+        "irtx_gnd": (-1.27, irtx_y),
+        "irtx_vcc": (1.27, irtx_y),
+        "irrx_out": (-3.81, irrx_y),
+        "irrx_gnd": (-1.27, irrx_y),
+        "irrx_vcc": (1.27, irrx_y),
     }
     sites: List[Tuple[float, float]] = list(aht)
     for key in ("irtx_vcc", "irtx_dat", "irtx_gnd", "irrx_vcc", "irrx_out", "irrx_gnd"):
@@ -403,61 +472,190 @@ def sensor_module_holes() -> Tuple[List[Tuple[float, float]], dict[str, Tuple[fl
     return sites, pads
 
 
-def build_trace_boxes(pads: dict[str, Tuple[float, float]]) -> List[BoxSolid]:
+def intended_trace_points(pads: dict[str, Tuple[float, float]]) -> List[Tuple[float, float]]:
+    points: List[Tuple[float, float]] = [
+        PICO_PADS_MM[PIN_GP4],
+        PICO_PADS_MM[PIN_GP5],
+        PICO_PADS_MM[PIN_GP14],
+        PICO_PADS_MM[PIN_GP15],
+        PICO_PADS_MM[PIN_3V3_A],
+        PICO_PADS_MM[PIN_GND_A],
+        PICO_PADS_MM[PIN_GND_B],
+        PICO_PADS_MM[PIN_GND_C],
+    ]
+    points.extend(pads.values())
+    return points
+
+
+def build_unconnected_boxes(pads: dict[str, Tuple[float, float]]) -> List[BoxSolid]:
+    z0 = BASE_THICKNESS_MM
+    z1 = BASE_THICKNESS_MM + UNCONNECTED_RAISE_MM
+    connected = set(intended_trace_points(pads))
+    boxes: List[BoxSolid] = []
+
+    for _pin, center in PICO_PADS_MM.items():
+        if center not in connected:
+            boxes.append(pad_box(center, PICO_PAD_WIDTH_MM, z0, z1, None))
+
+    for center in PICO_MOUNT_HOLES_MM:
+        boxes.append(pad_box(center, MOUNT_PAD_WIDTH_MM, z0, z1, None))
+
+    return boxes
+
+
+def build_trace_boxes(variant: Variant, pads: dict[str, Tuple[float, float]]) -> List[BoxSolid]:
     z0 = BASE_THICKNESS_MM
     z1 = BASE_THICKNESS_MM + TRACE_RAISE_MM
 
     def pt(pin: int) -> Tuple[float, float]:
         return PICO_PADS_MM[pin]
 
-    rail_y1 = 14.0
+    rail_gnd_x = -1.27
+    rail_3v3_x = 1.27
+    rail_y0 = -19.05
+    rail_y1 = 18.0
+    rail_half = RAIL_WIDTH_MM * 0.5
     rails: List[BoxSolid] = [
-        BoxSolid(-2.9, -24.0, -0.1, rail_y1, z0, z1, "3V3"),
-        BoxSolid(0.1, -24.0, 2.9, rail_y1, z0, z1, "GND"),
+        BoxSolid(rail_gnd_x - rail_half, rail_y0, rail_gnd_x + rail_half, rail_y1, z0, z1, "GND"),
+        BoxSolid(rail_3v3_x - rail_half, -13.97, rail_3v3_x + rail_half, rail_y1, z0, z1, "3V3"),
     ]
 
     def trace(points: Sequence[Tuple[float, float]], label: str) -> List[BoxSolid]:
         return trace_boxes_from_path(points, TRACE_WIDTH_MM, z0, z1, label)
 
+    def pico_pad(center: Tuple[float, float], label: str) -> BoxSolid:
+        return pad_box(center, PICO_PAD_WIDTH_MM, z0, z1, label)
+
+    def module_pad(center: Tuple[float, float], label: str) -> BoxSolid:
+        return pad_box(center, SENSOR_PAD_WIDTH_MM, z0, z1, label)
+
     boxes: List[BoxSolid] = []
     boxes.extend(rails)
 
-    boxes.extend(
-        trace(
-            manhattan_path(pt(PIN_3V3_A), pads["aht_vcc"])
-            + manhattan_path(pads["aht_vcc"], pads["irtx_vcc"])[1:]
-            + manhattan_path(pads["irtx_vcc"], pads["irrx_vcc"])[1:],
-            "3V3",
-        )
-    )
-    boxes.extend(
-        trace(
-            manhattan_path(pt(PIN_GND_A), pads["aht_gnd"])
-            + manhattan_path(pads["aht_gnd"], pads["irtx_gnd"])[1:]
-            + manhattan_path(pads["irtx_gnd"], pads["irrx_gnd"])[1:],
-            "GND",
-        )
-    )
-    boxes.extend(trace(manhattan_path(pt(PIN_GP4), pads["aht_sda"]), "GP4"))
-    boxes.extend(trace(manhattan_path(pt(PIN_GP5), pads["aht_scl"]), "GP5"))
-    boxes.extend(trace(manhattan_path(pt(PIN_GP14), pads["irtx_dat"]), "GP14"))
-    boxes.extend(trace(manhattan_path(pt(PIN_GP15), pads["irrx_out"]), "GP15"))
+    for pin, label in (
+        (PIN_GP4, "GP4"),
+        (PIN_GP5, "GP5"),
+        (PIN_GP14, "GP14"),
+        (PIN_GP15, "GP15"),
+        (PIN_3V3_A, "3V3"),
+        (PIN_GND_A, "GND"),
+        (PIN_GND_B, "GND"),
+        (PIN_GND_C, "GND"),
+    ):
+        boxes.append(pico_pad(pt(pin), label))
 
-    boxes.extend(trace(manhattan_path(pt(PIN_3V3_B), (-1.4, -20.0)), "3V3"))
-    boxes.extend(trace(manhattan_path(pt(PIN_GND_B), (1.4, -20.0)), "GND"))
+    for key, label in (
+        ("aht_vcc", "3V3"),
+        ("aht_sda", "GP4"),
+        ("aht_scl", "GP5"),
+        ("aht_gnd", "GND"),
+        ("irtx_vcc", "3V3"),
+        ("irtx_dat", "GP14"),
+        ("irtx_gnd", "GND"),
+        ("irrx_vcc", "3V3"),
+        ("irrx_out", "GP15"),
+        ("irrx_gnd", "GND"),
+    ):
+        boxes.append(module_pad(pads[key], label))
+
+    boxes.extend(trace([pt(PIN_3V3_A), (rail_3v3_x, pt(PIN_3V3_A)[1])], "3V3"))
+    boxes.extend(trace([pt(PIN_GND_A), (rail_gnd_x, pt(PIN_GND_A)[1])], "GND"))
+    boxes.extend(trace([pt(PIN_GND_B), (rail_gnd_x, pt(PIN_GND_B)[1])], "GND"))
+    boxes.extend(trace([pt(PIN_GND_C), (rail_gnd_x, pt(PIN_GND_C)[1])], "GND"))
+
+    boxes.extend(trace([pt(PIN_GP4), pads["aht_sda"]], "GP4"))
+    boxes.extend(
+        trace(
+            [
+                pt(PIN_GP5),
+                (-3.81, pt(PIN_GP5)[1]),
+                pads["aht_scl"],
+            ],
+            "GP5",
+        )
+    )
+    boxes.extend(
+        trace(
+            [
+                pt(PIN_GP14),
+                (-7.11, pt(PIN_GP14)[1]),
+                (-7.11, pads["irtx_dat"][1]),
+                pads["irtx_dat"],
+            ],
+            "GP14",
+        )
+    )
+    boxes.extend(
+        trace(
+            [
+                pt(PIN_GP15),
+                (-5.08, pt(PIN_GP15)[1]),
+                (-5.08, pads["irrx_out"][1]),
+                pads["irrx_out"],
+            ],
+            "GP15",
+        )
+    )
 
     return boxes
 
 
-def build_mesh() -> Mesh:
+def holes_for_box(box: BoxSolid, holes: Sequence[Hole]) -> List[Hole]:
+    touching: List[Hole] = []
+    for hole in holes:
+        if (
+            box.x0 - hole.radius <= hole.x <= box.x1 + hole.radius
+            and box.y0 - hole.radius <= hole.y <= box.y1 + hole.radius
+        ):
+            touching.append(hole)
+    return touching
+
+
+def boxes_overlap(a: BoxSolid, b: BoxSolid) -> bool:
+    return min(a.x1, b.x1) > max(a.x0, b.x0) and min(a.y1, b.y1) > max(a.y0, b.y0)
+
+
+def validate_trace_boxes(boxes: Sequence[BoxSolid]) -> None:
+    problems: List[str] = []
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1 :]:
+            if a.label is None or b.label is None or a.label == b.label:
+                continue
+            if boxes_overlap(a, b):
+                problems.append(f"{a.label} overlaps {b.label}")
+    if problems:
+        raise ValueError("High-layer net overlap: " + "; ".join(problems[:5]))
+
+
+def board_bounds(holes: Sequence[Hole]) -> Tuple[float, float, float, float]:
+    x0 = min(hole.x - hole.radius for hole in holes) - BOARD_MARGIN_MM
+    y0 = min(hole.y - hole.radius for hole in holes) - BOARD_MARGIN_MM
+    x1 = max(hole.x + hole.radius for hole in holes) + BOARD_MARGIN_MM
+    y1 = max(hole.y + hole.radius for hole in holes) + BOARD_MARGIN_MM
+    return x0, y0, x1, y1
+
+
+def build_emboss_boxes(variant: Variant) -> List[BoxSolid]:
+    z0 = BASE_THICKNESS_MM
+    text_z1 = BASE_THICKNESS_MM + UNCONNECTED_RAISE_MM
+    trace_z1 = BASE_THICKNESS_MM + TRACE_RAISE_MM
+    boxes: List[BoxSolid] = []
+    boxes.extend(text_boxes("USB", (0.0, -23.45), 0.34, z0, text_z1))
+    boxes.extend(multiline_text_boxes(variant.trace_text_lines, (0.0, 23.50), 0.34, 0.34, z0, text_z1))
+    boxes.extend(
+        trace_boxes_from_path([(5.20, 19.05), (7.20, 19.05)], TRACE_WIDTH_MM, z0, trace_z1)
+    )
+    return boxes
+
+
+def build_mesh(variant: Variant) -> Mesh:
     mesh = Mesh()
-    sensor_sites, pads = sensor_module_holes()
+    sensor_sites, pads = sensor_module_holes(variant)
     holes = all_holes(sensor_sites)
+    board_x0, board_y0, board_x1, board_y1 = board_bounds(holes)
 
-    board_x0, board_x1 = -20.0, 20.0
-    board_y0, board_y1 = -32.0, 30.0
-
-    usb_cut = RectCut(-7.0, -30.5, 7.0, -25.5)
+    usb_half = USB_CUT_WIDTH_MM * 0.5
+    usb_cut = RectCut(-usb_half, board_y0, usb_half, USB_CUT_NORTH_Y_MM)
     mesh.extend(
         plate_with_holes_tris(
             board_x0,
@@ -471,28 +669,57 @@ def build_mesh() -> Mesh:
         )
     )
 
-    trace_boxes = build_trace_boxes(pads)
-    for box in trace_boxes:
-        solid, recess = subtract_label(box, box.label or "")
-        mesh.extend(box_tris(solid.x0, solid.y0, solid.x1, solid.y1, solid.z0, solid.z1))
-        if recess is not None:
+    def add_feature_box(box: BoxSolid) -> None:
+        box_holes = holes_for_box(box, holes)
+        if box_holes:
             mesh.extend(
-                box_tris(recess.x0, recess.y0, recess.x1, recess.y1, recess.z0, recess.z1)
+                plate_with_holes_tris(
+                    box.x0,
+                    box.y0,
+                    box.x1,
+                    box.y1,
+                    box.z0,
+                    box.z1,
+                    box_holes,
+                )
             )
+        else:
+            mesh.extend(box_tris(box.x0, box.y0, box.x1, box.y1, box.z0, box.z1))
+
+    for box in build_unconnected_boxes(pads):
+        add_feature_box(box)
+
+    trace_boxes = build_trace_boxes(variant, pads)
+    validate_trace_boxes(trace_boxes)
+    for box in trace_boxes:
+        add_feature_box(box)
+
+    for box in build_emboss_boxes(variant):
+        add_feature_box(box)
 
     return mesh
 
 
 def main() -> None:
     out_dir = Path(__file__).resolve().parent
-    out_path = out_dir / "thermo-pico2w-sensor-hat-v1.stl"
-    mesh = build_mesh()
-    mesh.write_ascii_stl(out_path, "thermo_pico2w_sensor_hat_v1")
-    tri_count = len(mesh.triangles)
-    print(f"Wrote {out_path}")
-    print(f"Triangles: {tri_count}")
+    for variant in VARIANTS:
+        out_path = out_dir / f"thermo-pico2w-sensor-hat-v1-{variant.name}.stl"
+        mesh = build_mesh(variant)
+        mesh.write_ascii_stl(out_path, f"thermo_pico2w_sensor_hat_v1_{variant.name.replace('-', '_')}")
+        if variant.legacy_alias:
+            legacy_path = out_dir / "thermo-pico2w-sensor-hat-v1.stl"
+            mesh.write_ascii_stl(legacy_path, "thermo_pico2w_sensor_hat_v1")
+            print(f"Wrote {legacy_path}")
+        tri_count = len(mesh.triangles)
+        print(f"Wrote {out_path}")
+        print(f"Variant: {variant.name}")
+        print(f"Triangles: {tri_count}")
     print(f"Base thickness: {BASE_THICKNESS_MM:.3f} mm (1/8 in)")
+    print(f"Unconnected raise: {UNCONNECTED_RAISE_MM:.3f} mm")
     print(f"Trace raise: {TRACE_RAISE_MM:.3f} mm (1/8 in)")
+    print(f"Trace width: {TRACE_WIDTH_MM:.3f} mm")
+    print(f"Pico pad width: {PICO_PAD_WIDTH_MM:.3f} mm")
+    print(f"Sensor pad width: {SENSOR_PAD_WIDTH_MM:.3f} mm")
     print("Pins routed: GP4 SDA, GP5 SCL, GP14 IR TX, GP15 IR RX, 3V3, GND")
 
 
