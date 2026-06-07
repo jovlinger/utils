@@ -1,0 +1,126 @@
+# Text voxel design for thermo Pico2W sensor HAT, up-side variant.
+# UNIT_MM=2.54
+# Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
+# Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
+# Rows north to south.
+# Legend: X=solid substrate, o=Pico pin pad, O=device leg pad, .=empty/air.
+# Trace tiles: |=vertical, -=horizontal, +=intersection.
+# Routing intent (adjacent cells, never a digraph in one cell):
+#   -O = horizontal trace into a leg pad O
+#   -- = horizontal trace segment (continue net)
+#   OO = adjacent leg pads with no trace between (isolated)
+# Layer trace uses o/O on pads; traces use - | + only on empty cells between pads.
+
+layer base (6, 10, 22)
+      XXXXXXXXXX
+GP15  XoXXXXXXoX GP16
+GP14  XoXXXXXXoX GP17
+GND   XoXXXXXXoX GND
+GP13  XoXXOOOXoX GP18  IR RX: OUT GND VCC
+GP12  XoXXXXXXoX GP19
+GP11  XoXXXXXXoX GP20
+GP10  XoXXOOOXoX GP21  IR TX: DAT GND VCC
+GND   XoXXXXXXoX GND
+GP9   XoXXXXXXoX GP22
+GP8   XoXXXXXXoX RUN
+GP7   XoXXXXXXoX GP26
+GP6   XoXXXXXXoX GP27
+GND   XoXXXXXXoX GND
+GP5   XoXXXXXXoX GP28
+GP4   XoXOOOOXoX ADCV  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7
+GP3   XoXXXXXXoX 3V3
+GP2   XoXXXXXXoX 3EN
+GND   XoXXXXXXoX GND
+GP1   XoXXXXXXoX VSYS
+GP0   XoXXXXXXoX VBUS
+      XXXXXXXXXX
+
+# Trace layer iteration 0: c5 GND rail, c6 3V3 rail, header taps.
+# Pico header: c1 = west (-8.89), c8 = east (8.89).
+# Module IR RX row GP13 (y=16.51): c4=OUT, c5=GND, c6=VCC
+# Module IR TX row GP10 (y=8.89):  c4=DAT, c5=GND, c6=VCC
+# AHT20 on GP4 row only (y=-11.43); GPIO taps GP4 pin6 SDA, GP5 pin7 SCL (row above).
+# Planned signals: use nearest suitable GPIO; only GND/V and other special pins are fixed.
+# Planned power taps: 3V3 pin36 row GP3 c8; GND pin3 row GP18 c1, pin8 row GP13 c1.
+
+layer trace (6, 10, 22)
+      ..........
+GP15  .o...||.o. GP16
+GP14  .o...||.o. GP17
+GND   .o...||.o. GND
+GP13  .o--OOO.o. GP18  IR RX: OUT GND VCC; cols c1=o- c3=- c4=O
+GP12  .o...||.o. GP19
+GP11  .o...||.o. GP20
+GP10  .o--OOO.o. GP21  IR TX: DAT GND VCC; cols c1=o- c3=- c4=O
+GND   .o...||.o. GND
+GP9   .o...||.o. GP22
+GP8   .o...||.o. RUN
+GP7   .o...||.o. GP26
+GP6   .o...||.o. GP27
+GND   .o...||.o. GND
+GP5   .o--┐||.o. GP28  SCL cols c1=o- c3=- c4=┐
+GP4   .o-OOOO.o. GP35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; cols c1=o- c3=O c4=O
+GP3   .o...|├-o. 3V3  cols c5=| c6=├ c8=-o
+GP2   .o...||.o. 3EN
+GND   .o---┤|.o. GND  cols c1=o- c5=┤ c6=|
+GP1   .o...||.o. VSYS
+GP0   .o...||.o. VBUS
+      ..........
+
+# scratch
+# iteration 3 IR TX done: GP10 .o--OOO.o. connects GP10.c1 to DAT at GP10.c4.
+# iteration 2 IR RX reassigned to nearest GPIO: GP13 .o--OOO.o. connects GP13.c1 to OUT at GP13.c4.
+# Non-power GPIO pins are interchangeable; prefer shortest clean route unless user pins a GPIO.
+# iteration 1.5 SCL redrawn: GP5 .o--┐||.o.; '-' bridges over SDA, corner lands on SCL.
+# Do not use GP6 as a bridge unless GP6 is intentionally part of that net.
+# iteration 1 SDA done: GP4 .o-OOOO.o. cols c1=o- c3=O (-O into SDA leg).
+# iteration 0 complete. Rails c5=GND c6=3V3. Taps: GND:4.c1 west (pin 3), GP3.c8 east (pin 36).
+# duplicate row labels: GND:1..GND:4 north to south; GND:4 is south tap row.
+# column map: c2 buffer; IR legs c4-c6; AHT20 GP4 row c3-c6; rails c5 GND c6 3V3.
+
+# todo
+# --- iteration 0 DONE (power only; no signal traces) ---
+# rails: c5 GND, c6 3V3 (|.o...||.o.| pattern on non-module rows)
+# header taps: GND:4.c1 .o---┤|.o.; GP3 .o...|├-o. cols c5=| c6=├ c8=-o
+# power connections (leg -> pin via rail):
+#   GP4.c5  AHT20 GND leg  -> GND:4.c1
+#   GP10.c5 IR TX GND leg  -> GND:4.c1
+#   GP13.c5 IR RX GND leg  -> GND:4.c1
+#   GP4.c6  AHT20 3V3 leg  -> GP3.c8
+#   GP10.c6 IR TX VCC leg  -> GP3.c8
+#   GP13.c6 IR RX VCC leg  -> GP3.c8
+# --- iteration 1 DONE: AHT20 SDA ---
+#   GP4.c3  SDA leg  -> GP4.c1  Pico GP4 / I2C0 SDA (physical pin 6)
+# --- iteration 1.5 DONE: AHT20 SCL ---
+#   GP4.c4  SCL leg  -> GP5.c1  Pico GP5 / I2C0 SCL (physical pin 7)
+# --- iteration 2 DONE: IR RX ---
+#   GP13.c4 OUT leg  -> GP13.c1 Pico GP13 (nearest interchangeable GPIO)
+# --- iteration 3 DONE: IR TX ---
+#   GP10.c4 DAT leg  -> GP10.c1 Pico GP10 (nearest interchangeable GPIO)
+# module order: AHT20, IR RX, IR TX
+# disjoint required: SDA SCL OUT DAT GND 3V3 (no shared copper between nets)
+# risks: a bridge over OO is allowed only when its tiles do not vertically contact both legs.
+
+# trace intents
+# net GND GND:4.c1 GP13.c5 GP10.c5 GP4.c5
+# net 3V3 GP3.c8 GP13.c6 GP10.c6 GP4.c6
+# disjoint GND 3V3
+# net SDA GP4.c1 GP4.c3
+# disjoint SDA GND
+# disjoint SDA 3V3
+# net SCL GP5.c1 GP4.c4
+# disjoint SDA SCL
+# disjoint SCL GND
+# disjoint SCL 3V3
+# net OUT GP13.c1 GP13.c4
+# disjoint OUT SDA
+# disjoint OUT SCL
+# disjoint OUT GND
+# disjoint OUT 3V3
+# net DAT GP10.c1 GP10.c4
+# disjoint OUT DAT
+# disjoint DAT SDA
+# disjoint DAT SCL
+# disjoint DAT GND
+# disjoint DAT 3V3
+# all planned signal nets routed

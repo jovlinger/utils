@@ -1,351 +1,227 @@
-# Pico2W Sensor HAT STL Plan
+Slicer
 
-This plan describes the generated copper-tape circuit-board STL variants in
-this directory. The generator source of truth is `generate_sensor_hat_stl.py`.
+In computer science, this is known as a voxel-based or tile-based procedural generation system, similar to how games
+like Minecraft or SimCity construct complex worlds from a limited set of blocks.
 
-## Goal
+educes complex 3D CAD modeling into a simple 2D text matrix (ASCII art) that an AI or a Python script can easily
+manipulate.  Here is an analysis of how this process works, the predefined STL library you need, and the hidden
+technical challenge you must address.
 
-Build a first-iteration 3D-printed Pico 2 W sensor HAT that acts like a
-single-layer PCB for copper tape.
+1. The Mapping System (ASCII to 3D Grid)
 
-The printed part carries:
+Your agent defines a 3D array (X, Y, Z layers). A standard prototyping grid uses UNIT= 2.54 mm (0.1 inch) pin spacing.
+The exact spacing determined by our pico STL research You map your ASCII characters to distinct STL "tiles" that are
+exactly UNIT X UNIT
 
-- A Raspberry Pi Pico 2 W through-hole footprint.
-- AHT20 temperature/humidity module pads.
-- 38 kHz IR transmitter module pads.
-- 38 kHz IR receiver module pads.
-- Raised, tapeable traces for `3V3`, `GND`, `GP4`, `GP5`, `GP14`, and `GP15`.
+* o = Pin Hole througo Pad:  (below), with a narrow center subtracted.  The negative shape hole should also be somewhat proud in both verticals so as to not create phantom faces. 
+* O = Same as pin hole, but 150% diameter of pin. (The exact multipliier TBD)
+* | = Vertical Trace: A solid rectangular bar running North-South.
+* - = Horizontal Trace: A solid rectangular bar running East-West.
+* + = Intersection: A cross-shaped block.
+* ?  = Corners: L-shaped blocks. (Easy for agent, hard to type, so we need human equivalents). Maybe / \ and the reader will map.  EG \ ->  left-to-bottom or top-to-right depending on incoming traces OR we can just use + with some corners left unattached.
+*   = Empty Space: A blank tile (air) 
+* X = Solid subtrate 
 
-The top surface intentionally uses only three functional heights:
+2. How the Agent Generates the STL
 
-- Base: the lowest top surface for un-routed board area.
-- Unconnected: mid-height collars around holes that should not receive copper.
-- Trace: the highest raised conductors and pads for copper tape.
+Instead of dynamically calculating complex 3D geometry from scratch, your agent does a simple Search and Placeroutine:
 
-Embossed orientation labels are mid-height features, matching the unconnected
-mounting-hole collars so the letters are less fragile. They do not add another
-functional height.
+1. The agent writes or reads the ASCII grid.
+2. A Python script reads the grid coordinate (e.g., Row 4, Col 5).
+3. It multiplies the coordinate by your grid size (e.g., $X = 4 \times 2.54$, $Y = 5 \times 2.54$).
+4. It loads the predefined STL tile for that character and applies a 3D translation (shift) to those coordinates.
+5. It appends all the shifted triangles into one massive master STL file.
+3. The Slicer Advantage (The Fusion Magic)
+Because you asked about slicer fusion in the previous turn, this is where your workflow excels.
+If your script simply dumps all these STL tiles into a single file, they will overlap perfectly at the boundaries (e.g., the edge of trace - will exactly touch the edge of ). As established, the slicer will automatically dissolve the internal walls and fuse your ASCII art into one single, continuous, 3D-printable circuit board prototype.
+4. The Critical Challenge: Non-Manifold Edges
+There is one major trap your agent must avoid: Coincident Faces.
+If tile A and tile B sit exactly flush against each other ($0.0\text{ mm}$ clearance), math errors in the exporter or slicer can create "non-manifold" geometry (infinitely thin walls that confuse the slicer).
+The Fix: Design your predefined STL tiles to slightly overlap. Instead of making a tile exactly UNIT wide, make the connecting traces stick out by UNIT + 0.1 mm (overlapping by 0.05 mm on each side into the next cell). This guarantees the slicer will perfectly fuse them without glitching.
+corner XAn 
 
-## Variants
+5. Current Project State (2026-06)
 
-The generator produces two physical variants:
+## STL baseline (PLAN.md)
 
-- `up-side`: components mount from the raised trace side. The trace side is the
-  working top side, and the Pico pins enter from the flat bottom side.
-- `pico-side`: components mount from the flat side. Their pins pass through all
-  layers to the raised trace side. The trace-side module pin order is the same
-  as `up-side`; orient the flat-side modules so their pins match that order.
+The parametric generator (`generate_sensor_hat_stl.py`) currently emits
+**hole-only** solid base plates for both variants:
 
-Both variants keep all copper paths as a single raised trace layer. Both variants
-emboss `USB` near the south USB end and emboss the variant name on the trace
-side between the north mounting holes.
+* `thermo-pico2w-sensor-hat-v1-up-side.stl`
+* `thermo-pico2w-sensor-hat-v1-pico-side.stl`
 
-## Cardinal Directions And Coordinate System
+All raised traces, pads, collars, labels, and dummy marks were removed after
+repeated non-manifold / shorting failures. The legacy
+`thermo-pico2w-sensor-hat-v1.stl` (restored from commit `63c2c0d`) is kept as a
+static comparison mesh and is **not** regenerated by `make hat-stl`.
 
-All coordinates are in millimeters. View the board from the raised trace side.
-In this top view:
+Hole sizes match PLAN.md: Pico pin 1.10 mm, device leg 1.55 mm. Four corner
+mounting holes are omitted. `pico-side` mirrors device-leg holes across X=0.
 
-- `+Y` is north.
-- `-Y` is south.
-- `-X` is west.
-- `+X` is east.
-- `+Z` is up from the printer bed.
+Routing will return only after the base geometry slices and prints cleanly.
 
-The Pico 2 W USB connector is at the south end (`-Y`). The antenna end is north
-(`+Y`). The USB pocket is centered near the south edge of the HAT.
+## Voxel design files
 
-In the `up-side` variant, the Pico pins enter from the flat bottom side of the
-printed board and the AHT20/IR modules mount from the raised trace side.
+Design iteration moved from direct STL mesh edits to text voxel files in this
+directory:
 
-In the `pico-side` variant, the AHT20/IR modules mount from the flat side and
-their pins pass through the board to reach the raised trace side. The Pico pins
-also pass through the board; clip overlong pins after assembly if needed.
+* `up-side.vox` -- active design file (components on trace side)
+* `pico-side.vox` -- mirrored hole map; trace layer still empty
+* `check_vox.py` -- local validator (run often during edits)
 
-## Board Envelope
+Each file defines two layers: `base` (substrate + holes) and `trace` (raised
+copper-tape routing). The grid is one 2.54 mm cell per column/row.
 
-The board outline is tightened around the outer through-hole edges with about
-2 mm margin. The current generated board envelope is:
-
-- West edge: about `x = -11.44`
-- East edge: about `x = 11.44`
-- South edge: about `y = -26.70`
-- North edge: about `y = 26.70`
-- Overall size: about `22.88 mm x 53.40 mm`
-
-The Pico electrical routing stays between the Pico header rows, inside
-`x = -8.89` through `x = 8.89`. The board should not grow beyond the hole-edge
-margin unless a connector clearance requires it.
-
-USB pocket:
-
-- `x = -4.50` through `x = 4.50`
-- from the south board edge to about `y = -24.80`
-
-Pico mounting holes:
-
-| Hole | X | Y |
-| --- | ---: | ---: |
-| SW | -5.70 | -23.50 |
-| NW | -5.70 | 23.50 |
-| SE | 5.70 | -23.50 |
-| NE | 5.70 | 23.50 |
-
-## Heights And Widths
-
-The STL is generated Z-up.
-
-| Feature | Z top | Notes |
-| --- | ---: | --- |
-| Base top | 3.175 | 1/8 inch base thickness |
-| Unconnected collar top | 4.425 | Base plus 1.25 mm |
-| Trace top | 6.350 | Base plus 1/8 inch raised trace |
-
-Current horizontal dimensions:
-
-| Feature | Size |
-| --- | ---: |
-| Pico through-hole diameter | 1.10 mm |
-| Sensor/module through-hole diameter | 2.10 mm |
-| Mounting-hole diameter | 2.40 mm |
-| Signal trace width | 1.35 mm |
-| Center rail width | 1.775 mm |
-| Pico connected pad width | 1.70 mm square |
-| Sensor/module connected pad width | 2.35 mm square |
-| Mounting pad/collar width | 3.40 mm square |
-
-All holes are through-holes through every layer that overlaps them: base,
-mid-height unconnected collars, highest traces, highest pads, and orientation
-labels
-features if they ever overlap a hole. The sensor/module holes are approximately
-twice the Pico pin-hole diameter.
-
-Adjacent 2.35 mm sensor/module pads on the 2.54 mm pitch have about 0.19 mm
-nominal edge-to-edge clearance. The two center rails are on 2.54 mm pitch and
-have about 0.765 mm nominal edge-to-edge clearance.
-
-## Pico Header Layout
-
-The Pico header holes follow the official KiCad Pico footprint, centered on the
-board coordinate origin. The west column is `x = -8.89`. The east column is
-`x = 8.89`.
-
-The west column is numbered from south to north:
-
-| Pin | X | Y |
-| ---: | ---: | ---: |
-| 1 | -8.89 | -24.13 |
-| 2 | -8.89 | -21.59 |
-| 3 | -8.89 | -19.05 |
-| 4 | -8.89 | -16.51 |
-| 5 | -8.89 | -13.97 |
-| 6 | -8.89 | -11.43 |
-| 7 | -8.89 | -8.89 |
-| 8 | -8.89 | -6.35 |
-| 9 | -8.89 | -3.81 |
-| 10 | -8.89 | -1.27 |
-| 11 | -8.89 | 1.27 |
-| 12 | -8.89 | 3.81 |
-| 13 | -8.89 | 6.35 |
-| 14 | -8.89 | 8.89 |
-| 15 | -8.89 | 11.43 |
-| 16 | -8.89 | 13.97 |
-| 17 | -8.89 | 16.51 |
-| 18 | -8.89 | 19.05 |
-| 19 | -8.89 | 21.59 |
-| 20 | -8.89 | 24.13 |
-
-The east column is numbered from north to south:
-
-| Pin | X | Y |
-| ---: | ---: | ---: |
-| 21 | 8.89 | 24.13 |
-| 22 | 8.89 | 21.59 |
-| 23 | 8.89 | 19.05 |
-| 24 | 8.89 | 16.51 |
-| 25 | 8.89 | 13.97 |
-| 26 | 8.89 | 11.43 |
-| 27 | 8.89 | 8.89 |
-| 28 | 8.89 | 6.35 |
-| 29 | 8.89 | 3.81 |
-| 30 | 8.89 | 1.27 |
-| 31 | 8.89 | -1.27 |
-| 32 | 8.89 | -3.81 |
-| 33 | 8.89 | -6.35 |
-| 34 | 8.89 | -8.89 |
-| 35 | 8.89 | -11.43 |
-| 36 | 8.89 | -13.97 |
-| 37 | 8.89 | -16.51 |
-| 38 | 8.89 | -19.05 |
-| 39 | 8.89 | -21.59 |
-| 40 | 8.89 | -24.13 |
-
-## Connected Pico Pins
-
-Only these Pico header positions receive highest-layer trace pads:
-
-| Pico pin | Net | Coordinate |
-| ---: | --- | --- |
-| 3 | GND | `(-8.89, -19.05)` |
-| 6 | GP4 / I2C0 SDA | `(-8.89, -11.43)` |
-| 7 | GP5 / I2C0 SCL | `(-8.89, -8.89)` |
-| 8 | GND | `(-8.89, -6.35)` |
-| 19 | GP14 / IR TX | `(-8.89, 21.59)` |
-| 20 | GP15 / IR RX | `(-8.89, 24.13)` |
-| 36 | 3V3 | `(8.89, -13.97)` |
-| 38 | GND | `(8.89, -19.05)` |
-
-Every other Pico header hole gets a mid-height unconnected collar. The collar
-keeps the through-hole visible and supported, but it should not receive copper
-tape.
-
-## Sensor And Module Pads
-
-All module pads are on 2.54 mm pitch and stay inside the two Pico header rows.
-The module orientation is chosen to make one-layer trace routing possible
-without crossing. Both variants use the same trace-side hole order. In the
-`pico-side` variant, mount modules from the flat side in the orientation that
-makes their pins match this trace-side order.
-
-`up-side` AHT20 row, west to east:
-
-| Module pin | Net | Coordinate |
-| --- | --- | --- |
-| SDA | GP4 | `(-6.35, -11.43)` |
-| SCL | GP5 | `(-3.81, -11.43)` |
-| GND | GND | `(-1.27, -11.43)` |
-| 3V3 | 3V3 | `(1.27, -11.43)` |
-
-`up-side` IR transmitter row, west to east:
-
-| Module pin | Net | Coordinate |
-| --- | --- | --- |
-| DAT | GP14 | `(-3.81, 8.89)` |
-| GND | GND | `(-1.27, 8.89)` |
-| VCC | 3V3 | `(1.27, 8.89)` |
-
-`up-side` IR receiver row, west to east:
-
-| Module pin | Net | Coordinate |
-| --- | --- | --- |
-| OUT | GP15 | `(-3.81, 16.51)` |
-| GND | GND | `(-1.27, 16.51)` |
-| VCC | 3V3 | `(1.27, 16.51)` |
-
-## Routed Nets
-
-The HAT is a single-layer raised-trace design. There are no vias and no
-crossovers. The two variants share the same electrical trace topology; they
-differ by embossing and intended assembly side.
-
-### Power Rails
-
-Two vertical center rails run north/south between the Pico header rows:
-
-| Net | X center | Y range | Width |
-| --- | ---: | ---: | ---: |
-| GND | -1.27 | -19.05 to 18.00 | 1.775 mm |
-| 3V3 | 1.27 | -13.97 to 18.00 | 1.775 mm |
-
-The 3V3 rail is fed from Pico pin 36 by a horizontal trace:
+### Layer header format
 
 ```text
-(8.89, -13.97) -> (1.27, -13.97)
+layer NAME (horizontal_offset, width_columns, height_rows)
 ```
 
-The GND rail is fed from three Pico GND pins:
+Example: `layer base (6, 10, 22)` means the checked diagram occupies columns
+6..15 (10 data cols) plus one border column on each side. Pin labels sit outside
+that window on the left and right.
+
+The checker validates columns `offset-1 .. offset+width+1` and exactly `height`
+rows per layer. Both `base` and `trace` must be present.
+
+### Border and pin labels
+
+Each layer row is wrapped in an `X` border (solid substrate). Pin names (GP15,
+GND, module pin order, etc.) are printed outside the checked window for human
+orientation only.
+
+Columns west to east (interior, excluding borders):
 
 ```text
-(-8.89, -19.05) -> (-1.27, -19.05)
-(-8.89,  -6.35) -> (-1.27,  -6.35)
-( 8.89, -19.05) -> (-1.27, -19.05)
+       c0    c1    c2    c3    c4    c5    c6    c7
+x = -8.89 -6.35 -3.81 -1.27  1.27  3.81  6.35  8.89
 ```
 
-The `up-side` module power pads sit directly on, or close to, these rails:
+Rows run north to south (GP15 / IR-RX north, GP0 / AHT20 south).
 
-- AHT20 GND at `(-1.27, -11.43)`
-- AHT20 3V3 at `(1.27, -11.43)`
-- IR TX GND at `(-1.27, 8.89)`
-- IR TX VCC at `(1.27, 8.89)`
-- IR RX GND at `(-1.27, 16.51)`
-- IR RX VCC at `(1.27, 16.51)`
+### Character legend
 
-The routing takes advantage of multiple Pico GND pins so GND can be tied into
-the center rail from both sides while staying inside the Pico header rows.
+**Base layer**
 
-### Signal Routes
+* `X` = solid substrate tile (including border)
+* `o` = Pico pin through-hole
+* `O` = device leg through-hole
 
-GP4 to AHT20 SDA:
+**Trace layer**
+
+* `.` = empty / air (no raised copper)
+* `o` = Pico pin pad (trace connects here)
+* `O` = device leg pad (trace connects here)
+* `|` / `-` / `+` = vertical / horizontal / intersection trace tiles
+* Unicode box glyphs also allowed in `.vox` files (treated as human-readable
+  binary): vertical/horizontal/corner/junction variants (U+2500 block)
+
+**Connection semantics (adjacent cells, never a digraph in one cell)**
+
+* `-O` = horizontal trace meeting a leg pad (want connection)
+* `--` = horizontal trace segment (continue same net)
+* `OO` = adjacent leg pads with no trace between (want no connection)
+* Trace paths use `-`, `|`, `+` only on `.` cells between pads; pads use `o`/`O`
+
+### Sequential trace design process
+
+Regenerate the trace layer in order, re-reading the file between steps. Use
+comment lines at the end of the file as scratch / state memory between
+iterations:
+
+1. Lay Pico pin pads (`o` at every used GPIO / power pin)
+2. Lay center 3V3 and GND rails (parallel, between Pico pin rows)
+3. Lay device leg pads (`O` at AHT20 and IR module holes)
+4. Connect leg pads to chosen Pico pins with explicit paths
+
+GPIO reassignment is cheap: pick convenient pins rather than forcing awkward
+routes. Early target nets:
+
+* AHT20: SDA, SCL, GND, 3V3 (originally GP4/GP5)
+* IR TX: DAT, GND, 3V3 (originally GP14)
+* IR RX: OUT, GND, 3V3 (originally GP15)
+
+### `up-side.vox` trace status
+
+First trace attempts used Unicode box-drawing paths row-by-row. Review showed
+connectivity bugs in the top rows: GP15/GP14 stubs not reaching IR pads, GND
+rails not clearly tied to GP13/GP10 module GND legs, ambiguous junctions.
+
+A second pass switched to explicit `+`, `-`, `|` tiles with `o`/`O` on pads
+only. Current routing intent (see scratch comments at file end):
+
+* GP15/GP14 vertical bus at c1, branching at row GP13/GP10 into IR module
+  OUT/DAT pads at c3
+* GP5/GP4 routes south into AHT20 SCL/SDA at c3/c2
+* GND taps at rows GP13 and GP18 into center rail c4; 3V3 tap at GP3 into
+  rail c5
+* Adjacent `OO` between SCL/SDA and between module GND/VCC legs (no short)
+
+This layout still needs human review before STL tile export. `pico-side.vox`
+trace layer remains blank until `up-side.vox` is accepted.
+
+### Validator usage
 
 ```text
-(-8.89, -11.43) -> (-6.35, -11.43)
+./check_vox.py up-side.vox
+./check_vox.py pico-side.vox
 ```
 
-GP5 to AHT20 SCL:
+Fails on: missing layers, wrong row count, invalid chars in checked window,
+mismatched dimensions between layers.
 
-```text
-(-8.89, -8.89) -> (-3.81, -8.89) -> (-3.81, -11.43)
-```
+## Next steps
 
-GP14 to IR transmitter DAT:
+1. Audit `up-side.vox` trace layer one net at a time (visual continuity from
+   pin pad to leg pad, no accidental `-`/`|` bridges between nets)
+2. Lock net list and GPIO assignments in scratch comments
+3. Copy accepted topology to `pico-side.vox` (mirror pads/holes, not blindly
+   mirror every trace glyph)
+4. Build predefined STL tile library and voxel-to-STL exporter
+5. Re-enable three-height STL output (base / unconnected / trace) in generator
 
-```text
-(-8.89, 21.59) -> (-7.11, 21.59) -> (-7.11, 8.89) -> (-3.81, 8.89)
-```
 
-GP15 to IR receiver OUT:
 
-```text
-(-8.89, 24.13) -> (-5.08, 24.13) -> (-5.08, 16.51) -> (-3.81, 16.51)
-```
+---  
 
-The GP14 and GP15 lanes are separated enough for the current 1.35 mm trace
-width. The generator validates that no highest-layer boxes from different nets
-overlap.
+The filesystem bridge is still down on my side, so I could not confirm a write to PLAN-MK2.md. Append this block yourself (or run cat >> 
+  thermo/onboard/hardware/pico2w/hat/PLAN-MK2.md with it):
 
-## Orientation Marks And Dummy Trace
+  ## Agent state recovery (2026-06-07)
+  Resume from this section after agent reset.
+  ### up-side.vox trace progress
+  | Iteration | Status | Notes |
+  | --- | --- | --- |
+  | -1 pads | done | Module legs shifted one column east (crowding fix) |
+  | 0 power | done | c5=GND rail, c6=3V3 rail; taps on south GND row and GP3 |
+  | 1 AHT20 | broken | GP5 `o-++` shorts SDA and SCL; needs reroute |
+  ### up-side column map (shifted)
+  - c2 buffer; IR legs c4-c6; AHT20 GP4 row c3-c6; rails c5=GND c6=3V3
+  - GPIO: GP4/SDA, GP5/SCL, GP15/OUT, GP14/DAT
+  ### Iteration 0 (good)
+  - Rows mostly `.o...||.o.`
+  - GP3: `.o...|+-o.` `cols c5=| c6=+ c8=-o`
+  - South GND: `.o---+|.o.` `cols c1=o- c5=+ c6=|`
+  ### Iteration 1 (broken)
+  ```text
+  GP5   .o-++||.o. GP28  SCL cols c1=o- c4=+
+  GP4   .o-OOOO.o. ADCV  AHT20 ...; SDA cols c1=o- c3=O
+  ```
+  - `++` on GP5 bridges c3-c4; GP4 has O at both -> SDA/SCL short
+  - `ADCV` is Pico east pin (GP35), not AHT20
+  - Fix: SCL via c4 vertical trunk; c3=`.` on GP5; no horizontal bridge c3-c4
+  ### check_vox.py
+  Done: pin columns, trace/base pad match, crowding warn, `cols cN=TOKEN`
+  TODO: `# trace intents` + flood-fill; `net` / `disjoint`; module-leg short pre-check
+  ### pico-side / STL
+  - pico-side separate layout; iteration -1 only; P6 `Oo` warn unchanged
+  - Do NOT regen STL until trace design done
+  ### Next after reset
+  1. Implement trace intents in `check_vox.py` + SKILL.md
+  2. Fix GP4/GP5 iteration 1; GP35 label
+  3. User go-ahead -> iteration 2 (IR RX GP15 -> GP13.c4)
 
-Both variants have a mid-height `USB` label between the south mounting holes,
-near the USB connector pocket. This helps identify the south edge.
+  After reset, tell the new agent: resume from PLAN-MK2.md "Agent state recovery".
 
-The trace side also has one mid-height variant label between the north
-mounting holes:
 
-- `UP` above `SIDE` on the component-on-trace-side variant.
-- `PICO` above `SIDE` on the flipped, component-on-flat-side variant.
-
-Near the northeast corner, by the Pico GND hole adjacent to GP17, the board has
-a short do-nothing highest-layer raised trace. It is intentionally unconnected
-and only acts as a local physical marker/test feature.
-
-## Fabrication Notes
-
-Print the STL with the flat base on the bed and the raised conductors facing up.
-After printing:
-
-1. Choose the correct variant for the side where the modules will mount.
-2. Insert pins through the board so they pass completely through every layer.
-3. Apply copper tape only to the highest pads and traces.
-4. Leave mid-height collars bare.
-
-The current design assumes modules are wired for 3.3 V power. Confirm IR module
-signal voltage behavior before using any 5 V-powered IR board with Pico GPIO.
-
-## Regeneration
-
-From `thermo/onboard/hardware/pico2w`:
-
-```bash
-make hat-stl
-```
-
-Expected variant outputs:
-
-- `hat/thermo-pico2w-sensor-hat-v1-up-side.stl`
-- `hat/thermo-pico2w-sensor-hat-v1-pico-side.stl`
-
-The legacy `hat/thermo-pico2w-sensor-hat-v1.stl` may be kept as an alias of the
-`up-side` variant for compatibility with earlier notes.
-
-The generator writes ASCII STL. The file is large because the dependency-free
-mesh generator emits explicit triangles for the gridded plate, hole walls,
-mid-height collars, and raised traces.
