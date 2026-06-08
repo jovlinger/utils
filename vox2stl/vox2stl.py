@@ -15,19 +15,28 @@ Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
 
 DEFAULT_UNIT_MM = 2.54
-DEFAULT_TRACE_WIDTH_MM = 1.35
-DEFAULT_PAD_GAP_MM = 0.25
-DEFAULT_PAD_WIDTH_MM = DEFAULT_UNIT_MM - DEFAULT_PAD_GAP_MM
-DEFAULT_DEVICE_PAD_WIDTH_MM = DEFAULT_PAD_WIDTH_MM
-DEFAULT_PIN_HOLE_DIAMETER_MM = 1.10
-DEFAULT_DEVICE_HOLE_DIAMETER_MM = DEFAULT_PIN_HOLE_DIAMETER_MM * 1.25
-DEFAULT_OVERLAP_MM = 0.50
-DEFAULT_TRACE_HOLE_CLEARANCE_MM = 0.10
+DEFAULT_TRACE_WIDTH_FRAC = 0.72
+DEFAULT_ADJACENT_ISOLATION_GAP_FRAC = 0.12
+DEFAULT_PIN_HOLE_DIAMETER_FRAC = 1.10 / DEFAULT_UNIT_MM
+DEFAULT_LEG_HOLE_DIAMETER_FRAC = DEFAULT_PIN_HOLE_DIAMETER_FRAC * 1.25
+DEFAULT_PIN_OUTSIDE_FRAC = 0.88
+DEFAULT_LEG_OUTSIDE_FRAC = 0.88
+DEFAULT_TILE_OVERLAP_FRAC = 0.08
+DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = 0.04
+DEFAULT_GRID_FRAC = 0.20
+DEFAULT_TRACE_WIDTH_MM = DEFAULT_TRACE_WIDTH_FRAC * DEFAULT_UNIT_MM
+DEFAULT_ADJACENT_ISOLATION_GAP_MM = DEFAULT_ADJACENT_ISOLATION_GAP_FRAC * DEFAULT_UNIT_MM
+DEFAULT_PAD_WIDTH_MM = DEFAULT_PIN_OUTSIDE_FRAC * DEFAULT_UNIT_MM
+DEFAULT_DEVICE_PAD_WIDTH_MM = DEFAULT_LEG_OUTSIDE_FRAC * DEFAULT_UNIT_MM
+DEFAULT_PIN_HOLE_DIAMETER_MM = DEFAULT_PIN_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
+DEFAULT_DEVICE_HOLE_DIAMETER_MM = DEFAULT_LEG_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
+DEFAULT_OVERLAP_MM = DEFAULT_TILE_OVERLAP_FRAC * DEFAULT_UNIT_MM
+DEFAULT_TRACE_HOLE_CLEARANCE_MM = DEFAULT_TRACE_HOLE_CLEARANCE_FRAC * DEFAULT_UNIT_MM
 DEFAULT_BASE_Z0_MM = 0.0
 DEFAULT_BASE_Z1_MM = 3.175
 DEFAULT_TRACE_Z0_MM = DEFAULT_BASE_Z1_MM
 DEFAULT_TRACE_Z1_MM = 6.350
-DEFAULT_GRID_MM = 0.50
+DEFAULT_GRID_MM = DEFAULT_GRID_FRAC * DEFAULT_UNIT_MM
 
 LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(\d+)\)$")
 UNIT_RE = re.compile(r"UNIT_MM\s*=\s*([0-9]+(?:\.[0-9]+)?)")
@@ -60,6 +69,7 @@ ARMS_BY_CHAR: Dict[str, FrozenSet[str]] = {
     BOX_H: frozenset({"E", "W"}),
     BOX_V: frozenset({"N", "S"}),
 }
+OPPOSITE_DIRECTION: Dict[str, str] = {"N": "S", "E": "W", "S": "N", "W": "E"}
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,7 @@ class RenderConfig:
     device_pad_width_mm: float = DEFAULT_DEVICE_PAD_WIDTH_MM
     pin_hole_diameter_mm: float = DEFAULT_PIN_HOLE_DIAMETER_MM
     device_hole_diameter_mm: float = DEFAULT_DEVICE_HOLE_DIAMETER_MM
+    adjacent_isolation_gap_mm: float = DEFAULT_ADJACENT_ISOLATION_GAP_MM
     overlap_mm: float = DEFAULT_OVERLAP_MM
     trace_hole_clearance_mm: float = DEFAULT_TRACE_HOLE_CLEARANCE_MM
     base_z0_mm: float = DEFAULT_BASE_Z0_MM
@@ -371,13 +382,27 @@ def cell_center(layer: Layer, row_index: int, col_index: int, config: RenderConf
     return x, y
 
 
+def isolated_width(width: float, config: RenderConfig) -> float:
+    return min(width, config.unit_mm - config.adjacent_isolation_gap_mm)
+
+
+def trace_width(config: RenderConfig) -> float:
+    return isolated_width(config.trace_width_mm, config)
+
+
+def pad_width(char: str, config: RenderConfig) -> float:
+    raw_width = config.pad_width_mm if char == "o" else config.device_pad_width_mm
+    return isolated_width(raw_width, config)
+
+
 def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxSolid:
     half = width * 0.5
     return BoxSolid(cx - half, cy - half, cx + half, cy + half, z0, z1)
 
 
 def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSolid:
-    half = config.trace_width_mm * 0.5
+    width = trace_width(config)
+    half = width * 0.5
     max_hole_radius = max(config.pin_hole_diameter_mm, config.device_hole_diameter_mm) * 0.5
     reach = min(
         config.unit_mm * 0.5 + config.overlap_mm,
@@ -394,19 +419,61 @@ def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSo
     raise ValueError(f"unknown arm direction {direction!r}")
 
 
-def glyph_boxes(char: str, cx: float, cy: float, config: RenderConfig) -> List[BoxSolid]:
+def accepts_connection(char: str, direction: str) -> bool:
+    if char in {"o", "O"}:
+        return True
+    return direction in ARMS_BY_CHAR.get(char, frozenset())
+
+
+def connects_to_neighbor(char: str, neighbor: str, direction: str) -> bool:
+    if char in {"o", "O"} and neighbor in {"o", "O"}:
+        return False
+    return accepts_connection(char, direction) and accepts_connection(
+        neighbor, OPPOSITE_DIRECTION[direction]
+    )
+
+
+def neighbor_char(layer: Layer, row_index: int, col_index: int, direction: str) -> str:
+    next_row = row_index
+    next_col = col_index
+    if direction == "N":
+        next_row -= 1
+    elif direction == "S":
+        next_row += 1
+    elif direction == "E":
+        next_col += 1
+    elif direction == "W":
+        next_col -= 1
+    else:
+        raise ValueError(f"unknown direction {direction!r}")
+    if next_row < 0 or next_row >= layer.height or next_col < 0 or next_col >= layer.width:
+        return "."
+    return layer_window(layer, layer.rows[next_row])[next_col]
+
+
+def glyph_boxes(
+    layer: Layer,
+    row_index: int,
+    col_index: int,
+    char: str,
+    cx: float,
+    cy: float,
+    config: RenderConfig,
+) -> List[BoxSolid]:
     if char == "o" and config.include_pads:
-        return [square_box(cx, cy, config.pad_width_mm, config.trace_z0_mm, config.trace_z1_mm)]
+        return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
     if char == "O" and config.include_pads:
-        return [square_box(cx, cy, config.device_pad_width_mm, config.trace_z0_mm, config.trace_z1_mm)]
+        return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
 
     arms = ARMS_BY_CHAR.get(char)
     if arms is None:
         return []
 
-    boxes: List[BoxSolid] = [square_box(cx, cy, config.trace_width_mm, config.trace_z0_mm, config.trace_z1_mm)]
+    boxes: List[BoxSolid] = [square_box(cx, cy, trace_width(config), config.trace_z0_mm, config.trace_z1_mm)]
     for direction in sorted(arms):
-        boxes.append(arm_box(cx, cy, direction, config))
+        neighbor = neighbor_char(layer, row_index, col_index, direction)
+        if connects_to_neighbor(char, neighbor, direction):
+            boxes.append(arm_box(cx, cy, direction, config))
     return boxes
 
 
@@ -416,7 +483,7 @@ def build_boxes(layer: Layer, config: RenderConfig) -> List[BoxSolid]:
         window = layer_window(layer, row)
         for col_index, char in enumerate(window):
             cx, cy = cell_center(layer, row_index, col_index, config)
-            boxes.extend(glyph_boxes(char, cx, cy, config))
+            boxes.extend(glyph_boxes(layer, row_index, col_index, char, cx, cy, config))
     return boxes
 
 
@@ -493,6 +560,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--device-pad-width-mm", type=float, default=DEFAULT_DEVICE_PAD_WIDTH_MM)
     parser.add_argument("--pin-hole-diameter-mm", type=float, default=DEFAULT_PIN_HOLE_DIAMETER_MM)
     parser.add_argument("--device-hole-diameter-mm", type=float, default=DEFAULT_DEVICE_HOLE_DIAMETER_MM)
+    parser.add_argument("--adjacent-isolation-gap-mm", type=float, default=DEFAULT_ADJACENT_ISOLATION_GAP_MM)
     parser.add_argument("--overlap-mm", type=float, default=DEFAULT_OVERLAP_MM)
     parser.add_argument("--trace-hole-clearance-mm", type=float, default=DEFAULT_TRACE_HOLE_CLEARANCE_MM)
     parser.add_argument("--base-z0-mm", type=float, default=DEFAULT_BASE_Z0_MM)
@@ -518,6 +586,7 @@ def run(argv: Sequence[str]) -> int:
         device_pad_width_mm=args.device_pad_width_mm,
         pin_hole_diameter_mm=args.pin_hole_diameter_mm,
         device_hole_diameter_mm=args.device_hole_diameter_mm,
+        adjacent_isolation_gap_mm=args.adjacent_isolation_gap_mm,
         overlap_mm=args.overlap_mm,
         trace_hole_clearance_mm=args.trace_hole_clearance_mm,
         base_z0_mm=args.base_z0_mm,

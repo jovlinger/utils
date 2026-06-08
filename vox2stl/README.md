@@ -28,12 +28,26 @@ cells become through-holes.
 - `+` is treated as a four-way cross.
 - `o` and `O` create raised pad boxes.
 
+## Geometry Constants
+
+Default dimensions are expressed as fractions of `UNIT_MM` in `vox2stl.py`:
+
+- `TRACE_WIDTH_FRAC = 0.72`
+- `ADJACENT_ISOLATION_GAP_FRAC = 0.12`
+- `PIN_HOLE_DIAMETER_FRAC = 1.10 / 2.54`
+- `LEG_HOLE_DIAMETER_FRAC = PIN_HOLE_DIAMETER_FRAC * 1.25`
+- `PIN_OUTSIDE_FRAC = 0.88`
+- `LEG_OUTSIDE_FRAC = 0.88`
+- `TILE_OVERLAP_FRAC = 0.08`
+- `TRACE_HOLE_CLEARANCE_FRAC = 0.04`
+
 Geometry is parametric: the converter builds rectangular STL boxes for each
 glyph rather than loading binary STL fragments. In full mode, `o` and `O` pads
 are near-unit rectangular prisms with cylindrical through-holes subtracted.
-Trace arm protrusions are clamped so they reach pad material without entering
+Trace arms are emitted only when the neighboring cell connects by the `.vox`
+rules, and protrusions are clamped so they reach pad material without entering
 the through-hole void.
 
 Default `O` hole diameter is 125 percent of the `o` hole default. `o` and `O`
-pad outer prisms use the same `unit - pad_gap` size so adjacent `OO` pads keep an
-air gap.
+pad outer prisms use the same outside fraction and are clamped by
+`ADJACENT_ISOLATION_GAP_FRAC` so adjacent `OO` pads keep an air gap.

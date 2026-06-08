@@ -179,8 +179,9 @@ mismatched dimensions between layers.
 
 The reusable converter lives at top-level `vox2stl/vox2stl.py`.
 `O` hole size is 125 percent of the `o` default in voxel output. `o` and `O`
-pad outer prisms are both `unit - pad_gap` rectangles with cylindrical
-through-holes subtracted. Trace protrusions are clamped to reach pad material
+pad outer prisms use UNIT-fraction outside constants, clamped by the adjacent
+isolation gap, with cylindrical through-holes subtracted. Trace arms are emitted
+only across intended `.vox` connections and are clamped to reach pad material
 without entering the through-hole void.
 
 ```text

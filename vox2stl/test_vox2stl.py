@@ -29,8 +29,8 @@ def layer_boxes(fixture_name: str) -> Sequence[vox2stl.BoxSolid]:
 def test_straight_fixture() -> None:
     boxes = layer_boxes("straight.vox")
     mesh = vox2stl.mesh_from_boxes(boxes)
-    require(len(boxes) == 5, f"straight boxes: got {len(boxes)}")
-    require(len(mesh.triangles) == 60, f"straight triangles: got {len(mesh.triangles)}")
+    require(len(boxes) == 4, f"straight boxes: got {len(boxes)}")
+    require(len(mesh.triangles) == 48, f"straight triangles: got {len(mesh.triangles)}")
 
 
 def test_box_glyph_fixture() -> None:
@@ -42,9 +42,22 @@ def test_box_glyph_fixture() -> None:
 
 def test_pad_and_hole_defaults() -> None:
     require(
-        abs(vox2stl.DEFAULT_PAD_WIDTH_MM - (vox2stl.DEFAULT_UNIT_MM - vox2stl.DEFAULT_PAD_GAP_MM))
+        abs(vox2stl.DEFAULT_TRACE_WIDTH_MM - vox2stl.DEFAULT_TRACE_WIDTH_FRAC * vox2stl.DEFAULT_UNIT_MM)
         < 1e-9,
-        "pad width should be unit minus pad gap",
+        "trace width default should derive from UNIT fraction",
+    )
+    require(
+        abs(
+            vox2stl.DEFAULT_ADJACENT_ISOLATION_GAP_MM
+            - vox2stl.DEFAULT_ADJACENT_ISOLATION_GAP_FRAC * vox2stl.DEFAULT_UNIT_MM
+        )
+        < 1e-9,
+        "adjacent isolation gap should derive from UNIT fraction",
+    )
+    require(
+        abs(vox2stl.DEFAULT_PAD_WIDTH_MM - vox2stl.DEFAULT_PIN_OUTSIDE_FRAC * vox2stl.DEFAULT_UNIT_MM)
+        < 1e-9,
+        "pin outside default should derive from UNIT fraction",
     )
     require(
         abs(vox2stl.DEFAULT_DEVICE_PAD_WIDTH_MM - vox2stl.DEFAULT_PAD_WIDTH_MM) < 1e-9,
@@ -67,6 +80,14 @@ def test_adjacent_pad_prisms_do_not_touch() -> None:
         config.trace_z1_mm,
     )
     require(left.x1 < right.x0, "adjacent device pad prisms should have an air gap")
+
+
+def test_effective_widths_respect_isolation_gap() -> None:
+    config = vox2stl.RenderConfig()
+    max_width = config.unit_mm - config.adjacent_isolation_gap_mm
+    require(vox2stl.trace_width(config) <= max_width, "trace width should preserve no-connect gap")
+    require(vox2stl.pad_width("o", config) <= max_width, "pin pad width should preserve no-connect gap")
+    require(vox2stl.pad_width("O", config) <= max_width, "leg pad width should preserve no-connect gap")
 
 
 def test_trace_arm_stops_before_hole_keepout() -> None:
@@ -94,7 +115,7 @@ def test_cli_writes_ascii_stl() -> None:
         text = out_path.read_text(encoding="ascii")
     require(exit_code == 0, f"CLI exit: got {exit_code}")
     require(text.startswith("solid straight_test\n"), "STL solid header missing")
-    require(text.count("facet normal") == 60, "STL facet count mismatch")
+    require(text.count("facet normal") == 48, "STL facet count mismatch")
 
 
 def test_cli_writes_full_stl_with_holes() -> None:
@@ -122,6 +143,7 @@ def main() -> int:
     test_box_glyph_fixture()
     test_pad_and_hole_defaults()
     test_adjacent_pad_prisms_do_not_touch()
+    test_effective_widths_respect_isolation_gap()
     test_trace_arm_stops_before_hole_keepout()
     test_cli_writes_ascii_stl()
     test_cli_writes_full_stl_with_holes()

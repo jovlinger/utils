@@ -29,8 +29,9 @@ make -C thermo/onboard/hardware/pico2w hat-vox-stl
 - Base plate 3.175 mm (1/8 in).
 - Pico pin holes are 1.1 mm; sensor/module leg holes are 1.375 mm in voxel STL
   output (125 percent of Pico pin holes).
-- Pico and sensor/module raised pad outer prisms are `unit - pad_gap` squares
-  with cylindrical through-holes subtracted.
+- Pico and sensor/module raised pad outer prisms use `PIN_OUTSIDE_FRAC` /
+  `LEG_OUTSIDE_FRAC`, clamped by `ADJACENT_ISOLATION_GAP_FRAC`, with
+  cylindrical through-holes subtracted.
 - Sensor/module leg holes stay inside the Pico header rows.
 - `pico-side` mirrors the trace-side pin map across X=0 for flat-side mounting.
 - Top-side module pin order:
@@ -47,5 +48,5 @@ make -C thermo/onboard/hardware/pico2w hat-vox-stl
 - First layer: slow, clean brim around outer edge if corners lift.
 - After print: choose `up-side` for modules on the raised trace side, or `pico-side` for modules on the flat side with pins passing through all layers.
 - Generate voxel geometry with `hat-vox-stl` after `up-side.vox` passes `check_vox.py`.
-  Trace protrusions are clamped to reach pad material without entering the
-  through-hole void.
+  Trace arms are emitted only across intended `.vox` connections and are
+  clamped to reach pad material without entering the through-hole void.
