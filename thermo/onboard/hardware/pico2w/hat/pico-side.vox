@@ -3,17 +3,21 @@
 # Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
 # Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
 # Rows north to south.
-# Legend: X=solid substrate, *=Pico pin hole, O=device leg hole, .=empty/air on non-base layers, a-z=embossed labels.
+# Legend: X=solid substrate, *=Pico pin pad, O=device leg pad, .=empty/air, a-z=embossed labels.
+# Trace tiles: |=vertical, -=horizontal, +=intersection.
+# Flat-side mount: same net topology as up-side.vox with traces/pads mirrored across X=0.
+# Print flat-side down; modules attach from the top (mounted upside down vs up-side).
+# Pico header: c1 = west (-8.89), c8 = east (8.89).
 
 layer base (6, 10, 22)
       XXXXXXXXXX
 P20   X*XXXXXX*X P21
 P19   X*XXXXXX*X P22
 P18   X*XXXXXX*X P23
-P17   X*XXOOOX*X P24
+P17   X*XOOOXX*X P24
 P16   X*XXXXXX*X P25
 P15   X*XXXXXX*X P26
-P14   X*XXOOOX*X P27
+P14   X*XOOOXX*X P27
 P13   X*XXXXXX*X P28
 P12   X*XXXXXX*X P29
 P11   X*XXXXXX*X P30
@@ -21,7 +25,7 @@ P10   X*XXXXXX*X P31
 P9    X*XXXXXX*X P32
 P8    X*XXXXXX*X P33
 P7    X*XXXXXX*X P34
-P6    X*XXOOOO*X P35
+P6    X*XOOOOX*X P35
 P5    X*XXXXXX*X P36
 P4    X*XXXXXX*X P37
 P3    X*XXXXXX*X P38
@@ -31,24 +35,51 @@ P1    X*XXXXXX*X P40
 
 layer trace (6, 10, 22)
       ..........
-P20   .*......*. P21
-P19   .*......*. P22
+P20   .*.pico.*. P21
+P19   .*.side.*. P22
 P18   .*......*. P23
-P17   .*..OOO.*. P24  IR RX mirrored: c4=OUT c5=GND c6=VCC
-P16   .*......*. P25
-P15   .*......*. P26
-P14   .*..OOO.*. P27  IR TX mirrored: c4=DAT c5=GND c6=VCC
-P13   .*......*. P28
-P12   .*......*. P29
-P11   .*......*. P30
-P10   .*......*. P31
-P9    .*......*. P32
-P8    .*......*. P33
-P7    .*......*. P34
-P6    .*..OOOO*. P35  AHT20 mirrored: c4=SDA c5=SCL c6=GND c7=3V3
-P5    .*......*. P36
-P4    .*......*. P37
-P3    .*......*. P38
+P17   .*.OOO--*. P24  IR RX: OUT GND VCC; cols c8=-* c6=- c4=O
+P16   .*.||...*. P25
+P15   .*.||...*. P26
+P14   .*.OOO--*. P27  IR TX: DAT GND VCC; cols c8=-* c6=- c4=O
+P13   .*.||...*. P28
+P12   .*.||...*. P29
+P11   .*.||...*. P30
+P10   .*.||...*. P31
+P9    .*.||...*. P32
+P8    .*.||...*. P33
+P7    .*.||┌--*. P34  SCL; cols c8=-* c6=- c5=┌
+P6    .*.OOOO-*. P35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7; cols c8=-* c3=O c4=O
+P5    .*-┤|...*. P36  3V3 tap; cols c4=| c3=┤ c1=*-
+P4    .*.||...*. P37
+P3    .*.|├---*. P38  cols c8=-* c4=├ c3=|
 P2    .*......*. P39
 P1    .*......*. P40
       ..........
+# scratch
+# Mirrored from up-side.vox.
+# labels: P20 pico, P19 side.
+
+# trace intents
+# net GND P3.c8 P17.c4 P14.c4 P6.c4
+# net 3V3 P5.c1 P17.c3 P14.c3 P6.c3
+# disjoint GND 3V3
+# net SDA P6.c8 P6.c6
+# disjoint SDA GND
+# disjoint SDA 3V3
+# net SCL P7.c8 P6.c5
+# disjoint SDA SCL
+# disjoint SCL GND
+# disjoint SCL 3V3
+# net OUT P17.c8 P17.c5
+# disjoint OUT SDA
+# disjoint OUT SCL
+# disjoint OUT GND
+# disjoint OUT 3V3
+# net DAT P14.c8 P14.c5
+# disjoint OUT DAT
+# disjoint DAT SDA
+# disjoint DAT SCL
+# disjoint DAT GND
+# disjoint DAT 3V3
+# all planned signal nets routed

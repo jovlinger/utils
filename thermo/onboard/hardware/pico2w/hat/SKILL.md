@@ -375,9 +375,9 @@ cell for cell.
 
 | Row | Leg columns |
 | --- | --- |
-| P17 IR RX | c4=OUT, c5=GND, c6=VCC |
-| P14 IR TX | c4=DAT, c5=GND, c6=VCC |
-| P6 AHT20 | c4=SDA, c5=SCL, c6=GND, c7=3V3 |
+| P17 IR RX | c3=OUT, c4=GND, c5=VCC |
+| P14 IR TX | c3=DAT, c4=GND, c5=VCC |
+| P6 AHT20 | c3=SDA, c4=SCL, c5=GND, c6=3V3 |
 
 If validation reports `O columns [3] != expected [2, 3, 4, 5]`, a leg is on the
 wrong column (common mistake: shifting the whole module west by one cell).

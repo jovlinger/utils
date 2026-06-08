@@ -160,10 +160,10 @@ PICO_SIDE_PIN_LAYOUT: Tuple[RowExpectation, ...] = (
     _row("P20", _HEADER_PINS, frozenset()),
     _row("P19", _HEADER_PINS, frozenset()),
     _row("P18", _HEADER_PINS, frozenset()),
-    _row("P17", _HEADER_PINS, frozenset({4, 5, 6})),  # IR RX mirrored
+    _row("P17", _HEADER_PINS, frozenset({3, 4, 5})),  # IR RX mirrored
     _row("P16", _HEADER_PINS, frozenset()),
     _row("P15", _HEADER_PINS, frozenset()),
-    _row("P14", _HEADER_PINS, frozenset({4, 5, 6})),  # IR TX mirrored
+    _row("P14", _HEADER_PINS, frozenset({3, 4, 5})),  # IR TX mirrored
     _row("P13", _HEADER_PINS, frozenset()),
     _row("P12", _HEADER_PINS, frozenset()),
     _row("P11", _HEADER_PINS, frozenset()),
@@ -171,7 +171,7 @@ PICO_SIDE_PIN_LAYOUT: Tuple[RowExpectation, ...] = (
     _row("P9", _HEADER_PINS, frozenset()),
     _row("P8", _HEADER_PINS, frozenset()),
     _row("P7", _HEADER_PINS, frozenset()),
-    _row("P6", _HEADER_PINS, frozenset({4, 5, 6, 7})),  # AHT20 mirrored
+    _row("P6", _HEADER_PINS, frozenset({3, 4, 5, 6})),  # AHT20 mirrored
     _row("P5", _HEADER_PINS, frozenset()),
     _row("P4", _HEADER_PINS, frozenset()),
     _row("P3", _HEADER_PINS, frozenset()),

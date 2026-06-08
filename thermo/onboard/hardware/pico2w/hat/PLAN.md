@@ -66,7 +66,7 @@ Design iteration moved from direct STL mesh edits to text voxel files in this
 directory:
 
 * `up-side.vox` -- active design file (components on trace side)
-* `pico-side.vox` -- mirrored hole map; trace layer still empty
+* `pico-side.vox` -- mirrored trace topology from `up-side.vox` (flat-side mount)
 * `check_vox.py` -- local validator (run often during edits)
 
 Each file defines two layers: `base` (substrate + holes) and `trace` (raised
@@ -155,8 +155,8 @@ GPIO rather than forcing awkward routes. Current target nets:
 * IR TX: DAT `GP10.c1 -> GP10.c4`.
 * `check_vox.py up-side.vox` passes with trace intents enabled.
 
-`pico-side.vox` trace layer remains blank until this topology is mirrored or
-redrawn for flat-side mounting.
+`pico-side.vox` mirrors `up-side.vox` across X=0 via `mirror_from_up_side.py`.
+Modules attach from the top; the board still prints flat-side down.
 
 ### Validator usage
 

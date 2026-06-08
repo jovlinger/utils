@@ -12,7 +12,8 @@ use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, DhcpConfig, Stack, StackResources};
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
+use embassy_rp::i2c::{self, I2c};
+use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbInterruptHandler};
 use embassy_rp::{bind_interrupts, dma};
@@ -28,10 +29,10 @@ use static_cell::StaticCell;
 use thermo_pico2w::{
     build_sensor_post_body, command_is_new, extract_command_created_dt, extract_command_json,
     for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frames, parse_heatpump_command,
-    parse_server_time_utc_epoch, pattern_for_event, wifi_password, wifi_ssid, zone_private_key_b64,
-    DeviceConfig, MideaClassicFrames, RollingLog, SensorReading, SensorSource, StatusEvent,
-    ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US, MIDEA_SPACE_ONE_US, MIDEA_SPACE_ZERO_US,
-    MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
+    parse_server_time_utc_epoch, pattern_for_event, read_sensors_or_fallback, wifi_password,
+    wifi_ssid, zone_private_key_b64, Aht20, DeviceConfig, MideaClassicFrames, RollingLog,
+    SensorSource, StatusEvent, ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US, MIDEA_SPACE_ONE_US,
+    MIDEA_SPACE_ZERO_US, MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
 };
 
 type HealthMutex = Mutex<CriticalSectionRawMutex, RefCell<HealthState>>;
@@ -66,7 +67,7 @@ impl HealthState {
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_name!(c"Thermo Pico2W Poller"),
     embassy_rp::binary_info::rp_program_description!(
-        c"Thermo Pico2W real DMZ long-poll with fake sensor and Midea IR TX"
+        c"Thermo Pico2W DMZ long-poll with AHT20 sensor and Midea IR TX"
     ),
     embassy_rp::binary_info::rp_cargo_version!(),
     embassy_rp::binary_info::rp_program_build_attribute!(),
@@ -288,6 +289,18 @@ async fn main(spawner: Spawner) {
 
     status(&mut control, StatusEvent::ReadingEnv).await;
     let config = DeviceConfig::from_compile_env();
+    let mut i2c_config = i2c::Config::default();
+    i2c_config.frequency = 100_000;
+    i2c_config.sda_pullup = true;
+    i2c_config.scl_pullup = true;
+    let i2c = I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, i2c_config);
+    let mut aht20 = Aht20::new(i2c, config.aht20_addr);
+    if config.sensor_required_at_boot {
+        match read_sensors_or_fallback(&mut aht20, true) {
+            Ok(_) => health_log(health, "sensor boot ok"),
+            Err(_) => error_forever(&mut control, health, "required sensor did not respond").await,
+        }
+    }
     let mut ir_tx = Output::new(p.PIN_14, Level::Low);
     health_log(health, "cyw43 init complete");
     health_log(health, "config loaded");
@@ -353,6 +366,7 @@ async fn main(spawner: Spawner) {
             &auth,
             stack,
             &clock,
+            &mut aht20,
             &mut ir_tx,
             &mut last_command_json,
             &mut last_applied_created_dt,
@@ -467,14 +481,25 @@ async fn poll_once(
     auth: &ZoneAuth,
     stack: Stack<'static>,
     clock: &DmzClock,
+    aht20: &mut Aht20<'_, I2C0, i2c::Blocking>,
     ir_tx: &mut Output<'static>,
     last_command_json: &mut String<1024>,
     last_applied_created_dt: &mut String<64>,
 ) -> Result<(), PollError> {
     status(control, StatusEvent::PollStarted).await;
     health_log(health, "poll start");
-    let reading = fake_sensor_reading();
-    health_log(health, "sensor fake ok");
+    let reading = match read_sensors_or_fallback(aht20, config.sensor_required_at_boot) {
+        Ok(reading) => reading,
+        Err(_) => {
+            health_log(health, "sensor required missing");
+            return Err(PollError::SensorRequired);
+        }
+    };
+    if reading.source == SensorSource::Aht20 {
+        health_log(health, "sensor aht20 ok");
+    } else {
+        health_log(health, "sensor fallback ok");
+    }
     let command_for_body = if last_command_json.is_empty() {
         None
     } else {
@@ -555,14 +580,6 @@ async fn poll_once(
 
     health_success(health, "poll succeeded");
     Ok(())
-}
-
-fn fake_sensor_reading() -> SensorReading {
-    SensorReading {
-        temp_centigrade: 21.0,
-        humid_percent: 50.0,
-        source: SensorSource::Fallback,
-    }
 }
 
 fn transmit_ir_command(
@@ -661,6 +678,7 @@ enum PollError {
     IrProtocol,
     Parse,
     Read,
+    SensorRequired,
     Sign,
     Write,
 }
@@ -676,6 +694,7 @@ impl PollError {
             PollError::IrProtocol => "poll failed: ir protocol",
             PollError::Parse => "poll failed: parse",
             PollError::Read => "poll failed: read",
+            PollError::SensorRequired => "poll failed: sensor required",
             PollError::Sign => "poll failed: sign",
             PollError::Write => "poll failed: write",
         }

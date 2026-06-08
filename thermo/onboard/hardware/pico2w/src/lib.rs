@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+pub mod aht20;
 pub mod auth;
 pub mod config;
 pub mod health;
@@ -7,6 +8,9 @@ pub mod ir;
 pub mod led;
 pub mod protocol;
 pub mod sensors;
+
+#[cfg(feature = "firmware")]
+pub use aht20::Aht20;
 
 pub use auth::{SignedHeaders, ZoneAuth, ZoneAuthError};
 pub use config::{wifi_password, wifi_ssid, zone_private_key_b64, DeviceConfig};

@@ -99,6 +99,7 @@ impl DeviceConfig {
             option_env!("SENSOR_BOOT_REQUIRED"),
             config.sensor_required_at_boot,
         );
+        config.aht20_addr = u8_from_env(option_env!("PICO2W_AHT20_ADDR"), config.aht20_addr);
         config
     }
 
@@ -145,6 +146,17 @@ fn u16_from_env(raw: Option<&'static str>, default: u16) -> u16 {
     u16::try_from(value).unwrap_or(default)
 }
 
+fn u8_from_env(raw: Option<&'static str>, default: u8) -> u8 {
+    let Some(raw) = raw else {
+        return default;
+    };
+    if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        return u8::from_str_radix(hex, 16).unwrap_or(default);
+    }
+    let value = u64_from_env(Some(raw), u64::from(default));
+    u8::try_from(value).unwrap_or(default)
+}
+
 fn u64_from_env(raw: Option<&'static str>, default: u64) -> u64 {
     let Some(raw) = raw else {
         return default;
@@ -167,7 +179,7 @@ fn u64_from_env(raw: Option<&'static str>, default: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{bool_from_env, u16_from_env, u64_from_env, DeviceConfig};
+    use super::{bool_from_env, u16_from_env, u64_from_env, u8_from_env, DeviceConfig};
 
     #[test]
     fn default_config_matches_kitchen_pico2w_env() {
@@ -202,6 +214,14 @@ mod tests {
         assert_eq!(u16_from_env(Some("bad"), 80), 80);
         assert_eq!(u16_from_env(Some("70000"), 80), 80);
         assert_eq!(u16_from_env(None, 80), 80);
+    }
+
+    #[test]
+    fn parses_u8_env_values() {
+        assert_eq!(u8_from_env(Some("0x38"), 0x40), 0x38);
+        assert_eq!(u8_from_env(Some("38"), 0x40), 38);
+        assert_eq!(u8_from_env(Some("bad"), 0x40), 0x40);
+        assert_eq!(u8_from_env(None, 0x40), 0x40);
     }
 
     #[test]

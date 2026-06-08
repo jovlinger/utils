@@ -38,7 +38,7 @@ push push_images pull:
 print-config:
 	@echo "ONBOARD_ROOT=$(ONBOARD_ROOT)"
 
-.PHONY: hat-stl hat-vox-stl hat-trace-stl
+.PHONY: hat-stl hat-vox-stl hat-pico-vox-stl hat-trace-stl
 hat-stl:
 	hat/generate_sensor_hat_stl.py
 	@echo "CARGO=$(CARGO)"
@@ -49,6 +49,12 @@ hat-vox-stl:
 	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
 	hat/check_vox.py "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_vox
+
+hat-pico-vox-stl:
+	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
+	python3 "hat/mirror_from_up_side.py"
+	hat/check_vox.py "hat/pico-side.vox"
+	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/pico-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-pico-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_pico_side_vox
 
 hat-trace-stl:
 	hat/check_vox.py "hat/up-side.vox"
