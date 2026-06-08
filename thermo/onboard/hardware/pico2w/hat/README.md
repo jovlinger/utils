@@ -5,24 +5,32 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 ## Files
 
 - `generate_sensor_hat_stl.py` -- parametric generator (no extra deps)
+- `../../../../../vox2stl/vox2stl.py` -- top-level `.vox` trace-to-STL converter
 - `PLAN.md` -- board orientation, coordinates, routes, and fabrication notes
 - `thermo-pico2w-sensor-hat-v1-up-side.stl` -- solid base plate, trace-side component holes
 - `thermo-pico2w-sensor-hat-v1-pico-side.stl` -- solid base plate, flat-side component holes
+- `thermo-pico2w-sensor-hat-v1-up-side-vox.stl` -- full base, holes, and raised trace mesh from `up-side.vox`
+- `thermo-pico2w-sensor-hat-v1-up-side-trace.stl` -- debug trace-only mesh from `up-side.vox`
 - `thermo-pico2w-sensor-hat-v1.stl` -- legacy comparison mesh, not regenerated
 
 ## Regenerate
 
 ```bash
-python3 hat/generate_sensor_hat_stl.py
+hat/generate_sensor_hat_stl.py
+make -C thermo/onboard/hardware/pico2w hat-vox-stl
 ```
 
 ## Layout (v1)
 
 - All 40 Pico header through-holes (1.1 mm) from the official KiCad footprint.
 - Pico mounting holes are omitted to keep routing clear.
-- Current variants are solid base plates only: no raised traces, pads, collars, labels, or dummy marks.
+- Legacy base variants are solid plates only; the voxel STL includes base,
+  holes, and raised traces from `up-side.vox`.
 - Base plate 3.175 mm (1/8 in).
-- Pico pin holes are 1.1 mm; sensor/module leg holes are 1.55 mm.
+- Pico pin holes are 1.1 mm; sensor/module leg holes are 1.375 mm in voxel STL
+  output (125 percent of Pico pin holes).
+- Pico and sensor/module raised pad outer prisms are `unit - pad_gap` squares
+  with cylindrical through-holes subtracted.
 - Sensor/module leg holes stay inside the Pico header rows.
 - `pico-side` mirrors the trace-side pin map across X=0 for flat-side mounting.
 - Top-side module pin order:
@@ -38,4 +46,6 @@ python3 hat/generate_sensor_hat_stl.py
 - Layer height: 0.16--0.20 mm; perimeters 3+; infill 25--35 % gyroid.
 - First layer: slow, clean brim around outer edge if corners lift.
 - After print: choose `up-side` for modules on the raised trace side, or `pico-side` for modules on the flat side with pins passing through all layers.
-- Add traces only after the hole/base geometry slices and prints correctly.
+- Generate voxel geometry with `hat-vox-stl` after `up-side.vox` passes `check_vox.py`.
+  Trace protrusions are clamped to reach pad material without entering the
+  through-hole void.

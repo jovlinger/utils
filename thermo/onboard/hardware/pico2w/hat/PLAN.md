@@ -14,7 +14,7 @@ The exact spacing determined by our pico STL research You map your ASCII charact
 exactly UNIT X UNIT
 
 * o = Pin Hole througo Pad:  (below), with a narrow center subtracted.  The negative shape hole should also be somewhat proud in both verticals so as to not create phantom faces. 
-* O = Same as pin hole, but 150% diameter of pin. (The exact multipliier TBD)
+* O = Same pad outer prism as `o`, but 125% hole diameter.
 * | = Vertical Trace: A solid rectangular bar running North-South.
 * - = Horizontal Trace: A solid rectangular bar running East-West.
 * + = Intersection: A cross-shaped block.
@@ -113,16 +113,18 @@ Rows run north to south (GP15 / IR-RX north, GP0 / AHT20 south).
 * `.` = empty / air (no raised copper)
 * `o` = Pico pin pad (trace connects here)
 * `O` = device leg pad (trace connects here)
-* `|` / `-` / `+` = vertical / horizontal / intersection trace tiles
+* `|` / `-` = vertical / horizontal trace tiles
 * Unicode box glyphs also allowed in `.vox` files (treated as human-readable
-  binary): vertical/horizontal/corner/junction variants (U+2500 block)
+  binary): corners, T junctions, and four-way intersections (U+2500 block)
 
 **Connection semantics (adjacent cells, never a digraph in one cell)**
 
 * `-O` = horizontal trace meeting a leg pad (want connection)
 * `--` = horizontal trace segment (continue same net)
 * `OO` = adjacent leg pads with no trace between (want no connection)
-* Trace paths use `-`, `|`, `+` only on `.` cells between pads; pads use `o`/`O`
+* Trace paths use `-` for horizontal, `|` for vertical, corners for turns,
+  T glyphs for tees, and `+` / box cross only for four-way intersections.
+  Pads use `o`/`O`.
 
 ### Sequential trace design process
 
@@ -135,31 +137,25 @@ iterations:
 3. Lay device leg pads (`O` at AHT20 and IR module holes)
 4. Connect leg pads to chosen Pico pins with explicit paths
 
-GPIO reassignment is cheap: pick convenient pins rather than forcing awkward
-routes. Early target nets:
+GPIO reassignment is cheap for non-power signals: pick the nearest convenient
+GPIO rather than forcing awkward routes. Current target nets:
 
-* AHT20: SDA, SCL, GND, 3V3 (originally GP4/GP5)
-* IR TX: DAT, GND, 3V3 (originally GP14)
-* IR RX: OUT, GND, 3V3 (originally GP15)
+* AHT20: SDA to GP4, SCL to GP5, GND, 3V3
+* IR TX: DAT to nearest clean GPIO, currently GP10, GND, 3V3
+* IR RX: OUT to nearest clean GPIO, currently GP13, GND, 3V3
 
 ### `up-side.vox` trace status
 
-First trace attempts used Unicode box-drawing paths row-by-row. Review showed
-connectivity bugs in the top rows: GP15/GP14 stubs not reaching IR pads, GND
-rails not clearly tied to GP13/GP10 module GND legs, ambiguous junctions.
+`up-side.vox` now has all planned nets routed and checked:
 
-A second pass switched to explicit `+`, `-`, `|` tiles with `o`/`O` on pads
-only. Current routing intent (see scratch comments at file end):
+* Power rails: c5 = GND, c6 = 3V3.
+* AHT20: SDA `GP4.c1 -> GP4.c3`; SCL `GP5.c1 -> GP4.c4`.
+* IR RX: OUT `GP13.c1 -> GP13.c4`.
+* IR TX: DAT `GP10.c1 -> GP10.c4`.
+* `check_vox.py up-side.vox` passes with trace intents enabled.
 
-* GP15/GP14 vertical bus at c1, branching at row GP13/GP10 into IR module
-  OUT/DAT pads at c3
-* GP5/GP4 routes south into AHT20 SCL/SDA at c3/c2
-* GND taps at rows GP13 and GP18 into center rail c4; 3V3 tap at GP3 into
-  rail c5
-* Adjacent `OO` between SCL/SDA and between module GND/VCC legs (no short)
-
-This layout still needs human review before STL tile export. `pico-side.vox`
-trace layer remains blank until `up-side.vox` is accepted.
+`pico-side.vox` trace layer remains blank until this topology is mirrored or
+redrawn for flat-side mounting.
 
 ### Validator usage
 
@@ -173,55 +169,29 @@ mismatched dimensions between layers.
 
 ## Next steps
 
-1. Audit `up-side.vox` trace layer one net at a time (visual continuity from
-   pin pad to leg pad, no accidental `-`/`|` bridges between nets)
-2. Lock net list and GPIO assignments in scratch comments
-3. Copy accepted topology to `pico-side.vox` (mirror pads/holes, not blindly
-   mirror every trace glyph)
-4. Build predefined STL tile library and voxel-to-STL exporter
-5. Re-enable three-height STL output (base / unconnected / trace) in generator
+1. Inspect `thermo-pico2w-sensor-hat-v1-up-side-vox.stl` in the slicer.
+2. Copy accepted topology to `pico-side.vox` if flat-side mounting is still
+   needed (mirror pads/holes, not blindly mirror every trace glyph).
+3. Integrate trace boxes into `generate_sensor_hat_stl.py` only after separate
+   trace STL inspection looks right.
 
+### Voxel-to-STL export
 
+The reusable converter lives at top-level `vox2stl/vox2stl.py`.
+`O` hole size is 125 percent of the `o` default in voxel output. `o` and `O`
+pad outer prisms are both `unit - pad_gap` rectangles with cylindrical
+through-holes subtracted. Trace protrusions are clamped to reach pad material
+without entering the through-hole void.
 
----  
+```text
+make -C thermo/onboard/hardware/pico2w hat-vox-stl
+```
 
-The filesystem bridge is still down on my side, so I could not confirm a write to PLAN-MK2.md. Append this block yourself (or run cat >> 
-  thermo/onboard/hardware/pico2w/hat/PLAN-MK2.md with it):
+That target validates `up-side.vox` and writes a complete base, holes, and
+trace STL:
 
-  ## Agent state recovery (2026-06-07)
-  Resume from this section after agent reset.
-  ### up-side.vox trace progress
-  | Iteration | Status | Notes |
-  | --- | --- | --- |
-  | -1 pads | done | Module legs shifted one column east (crowding fix) |
-  | 0 power | done | c5=GND rail, c6=3V3 rail; taps on south GND row and GP3 |
-  | 1 AHT20 | broken | GP5 `o-++` shorts SDA and SCL; needs reroute |
-  ### up-side column map (shifted)
-  - c2 buffer; IR legs c4-c6; AHT20 GP4 row c3-c6; rails c5=GND c6=3V3
-  - GPIO: GP4/SDA, GP5/SCL, GP15/OUT, GP14/DAT
-  ### Iteration 0 (good)
-  - Rows mostly `.o...||.o.`
-  - GP3: `.o...|+-o.` `cols c5=| c6=+ c8=-o`
-  - South GND: `.o---+|.o.` `cols c1=o- c5=+ c6=|`
-  ### Iteration 1 (broken)
-  ```text
-  GP5   .o-++||.o. GP28  SCL cols c1=o- c4=+
-  GP4   .o-OOOO.o. ADCV  AHT20 ...; SDA cols c1=o- c3=O
-  ```
-  - `++` on GP5 bridges c3-c4; GP4 has O at both -> SDA/SCL short
-  - `ADCV` is Pico east pin (GP35), not AHT20
-  - Fix: SCL via c4 vertical trunk; c3=`.` on GP5; no horizontal bridge c3-c4
-  ### check_vox.py
-  Done: pin columns, trace/base pad match, crowding warn, `cols cN=TOKEN`
-  TODO: `# trace intents` + flood-fill; `net` / `disjoint`; module-leg short pre-check
-  ### pico-side / STL
-  - pico-side separate layout; iteration -1 only; P6 `Oo` warn unchanged
-  - Do NOT regen STL until trace design done
-  ### Next after reset
-  1. Implement trace intents in `check_vox.py` + SKILL.md
-  2. Fix GP4/GP5 iteration 1; GP35 label
-  3. User go-ahead -> iteration 2 (IR RX GP15 -> GP13.c4)
+```text
+thermo/onboard/hardware/pico2w/hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl
+```
 
-  After reset, tell the new agent: resume from PLAN-MK2.md "Agent state recovery".
-
-
+`hat-trace-stl` remains available for debug trace-only output.

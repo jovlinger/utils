@@ -38,12 +38,20 @@ push push_images pull:
 print-config:
 	@echo "ONBOARD_ROOT=$(ONBOARD_ROOT)"
 
-.PHONY: hat-stl
+.PHONY: hat-stl hat-vox-stl hat-trace-stl
 hat-stl:
-	python3 hat/generate_sensor_hat_stl.py
+	hat/generate_sensor_hat_stl.py
 	@echo "CARGO=$(CARGO)"
 	@echo "PICO2W_TARGET=$(PICO2W_TARGET)"
 	@echo "PICO2W_LEGACY_TARGET=$(PICO2W_LEGACY_TARGET)"
+
+hat-vox-stl:
+	hat/check_vox.py "hat/up-side.vox"
+	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_vox
+
+hat-trace-stl:
+	hat/check_vox.py "hat/up-side.vox"
+	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --layer trace --output "hat/thermo-pico2w-sensor-hat-v1-up-side-trace.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_trace
 
 deploy:
 	/bin/sh "$(CURDIR)/install/deploy.sh"
