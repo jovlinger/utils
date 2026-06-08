@@ -43,8 +43,8 @@ Default dimensions are expressed as fractions of `UNIT_MM` in `vox2stl.py`:
 - `LEG_OUTSIDE_FRAC = 0.88`
 - `TILE_OVERLAP_FRAC = 0.08`
 - `TRACE_HOLE_CLEARANCE_FRAC = 0.04`
-- `LABEL_RECESS_FRAC = 0.16`
-- `LABEL_HEIGHT_FRAC = 0.10`
+- `LABEL_RECESS_FRAC = 0.04`
+- `LABEL_HEIGHT_FRAC = 0.40`
 
 Geometry is parametric: the converter builds rectangular STL boxes for each
 glyph rather than loading binary STL fragments. In full mode, `*` and `O` pads
