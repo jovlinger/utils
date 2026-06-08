@@ -18,20 +18,20 @@ steps. Re-read the file after each step.
 
 - Straight traces (`-`, `|`) **protrude** slightly past their cell edge along
   their axis so they can meet the next tile.
-- Pads (`o`, `O`) and empty (`.`) are **recessed** relative to traces.
+- Pads (`*`, `O`) and empty (`.`) are **recessed** relative to traces.
 - `|` and `-` are **very recessed** perpendicular to their axis.
 
 Connection is decided by protrusion vs recess at the shared edge, not by net name.
 
-## User rules (verbatim)
+## User rules (current glyphs)
 
 -- connect
 
 | connect. henceforth all rotations will connect. - and | are rotations, and
 similarly for corners.
 
--o connect. -+ connect, ++ connect. || do not connect. The general idea is that
-straight line "protrude" somewhat out of their boxes, but pads like o and O are
+`-*` / `*-` connect. -+ connect, ++ connect. || do not connect. The general idea is that
+straight line "protrude" somewhat out of their boxes, but pads like `*` and `O` are
 recessed so that OO does not connect, but -O does. lines | and - are VERY
 recessed, and -| and +| DO NOT connect.
 
@@ -41,16 +41,17 @@ recessed, and -| and +| DO NOT connect.
 | --- | --- |
 | `.` | Empty / air (no copper) |
 | `X` | Solid substrate (base layer only) |
-| `o` | Pico pin through-pad |
+| `*` | Pico pin through-pad |
 | `O` | Device leg through-pad |
+| `a`..`z` | Embossed uppercase labels, not copper |
 | `-` | Horizontal trace (E-W) |
 | `|` | Vertical trace (N-S) |
 | `┌` / `┐` / `└` / `┘` | Corner traces |
 | `├` / `┤` / `┬` / `┴` | T junctions |
 | `┼` / `+` | Four-way intersection (N/E/S/W) |
 
-Base layer uses `X`, `o`, `O`. Trace layer uses `.`, `o`, `O`, `-`, `|`,
-corners, T junctions, and four-way intersections.
+Base layer uses `X`, `*`, `O`. Trace layer uses `.`, `*`, `O`, lowercase
+labels, `-`, `|`, corners, T junctions, and four-way intersections.
 
 ## Connect pairs (yes)
 
@@ -60,14 +61,14 @@ Treat rotated forms the same way (`-` and `|` are rotations of each other).
 | --- | --- |
 | `--` | Horizontal trace continues E-W |
 | two stacked `|` (same column) | Vertical trace continues N-S |
-| `-o` | Horizontal trace into Pico pad |
+| `-*` | Horizontal trace into Pico pad |
 | `-O` | Horizontal trace into device leg pad |
 | `-┐`, `-┘`, `-┬`, `-┤`, `-┼` | Horizontal into a tile with a west arm |
 | `|` stacked with `┐`, `┌`, `├`, `┤`, or `┼` | Vertical into a tile with a north/south arm |
 | corner rotations | Corner tiles connect only on their two drawn arms |
 | T rotations | T tiles connect only on their three drawn arms |
 
-Pads accept a trace from the recessed side: `-O`, `-o`, and the vertical
+Pads accept a trace from the recessed side: `-O`, `-*` / `*-`, and the vertical
 equivalents (trace north or south of pad, same column).
 
 ## `+` vs `|` (different behavior)
@@ -84,9 +85,9 @@ equivalents (trace north or south of pad, same column).
 | Pair | Why |
 | --- | --- |
 | `OO` | Adjacent recessed leg pads |
-| `oo` | Adjacent recessed pin pads |
-| `oO` / `Oo` | Pad-to-pad without a trace between |
-| `o\|` / `\|o` | Pad beside vertical bar; not `-o` |
+| `**` | Adjacent recessed pin pads |
+| `*O` / `O*` | Pad-to-pad without a trace between |
+| `*|` / `|*` | Pad beside vertical bar; not `-*` / `*-` |
 | `||` | Adjacent vertical traces in adjacent columns (parallel, side by side) |
 | `-|` | Perpendicular recess: horizontal meets vertical without `+` |
 | `+\|` / `\|+` | Horizontal neighbors: `+` E-W arm does not meet `|` N-S arm |
@@ -102,14 +103,14 @@ net unless they are the same net.
 From a west pin pad, route east then south:
 
 ```text
-GP15  .o.-┐......   row N:   -o into -, then -┐ into turn cell at c3
-GP14  .o..|......   row N+1: | continues GP15 at c3 (GP14 pad at c1 only)
+GP15  .*.-┐......   row N:   *- into -, then -┐ into turn cell at c3
+GP14  .*..|......   row N+1: | continues GP15 at c3 (GP14 pad at c1 only)
 GND   ...||||...   row N+2: | continues south; separate column for GP14
 ```
 
 Rules for that pattern:
 
-- Row N uses `.o.-┐` at c1-c3: `-o`, then `-┐`. The `┐` owns the southbound arm.
+- Row N uses `.*.-┐` at c1-c3: `*-`, then `-┐`. The `┐` owns the southbound arm.
 - Row N+1 continues the **same net** with `|` at the same column; vertical runs use `|`.
 - Row N+2 keeps using `|` for the straight vertical run.
 - A different net on the same row must leave a **buffer column** (`.`) between
@@ -119,13 +120,13 @@ Rules for that pattern:
 Wrong (same row as GP14 pin):
 
 ```text
-GP14  .o.|+......   o| does not connect; |+ does not connect; pin isolated
+GP14  .*.|+......   *| does not connect; |+ does not connect; pin isolated
 ```
 
 Wrong (horizontal neighbor `|` used as a corner):
 
 ```text
-GP14  .o.|+......   c2 `|` does not connect horizontally into c3 `+`
+GP14  .*.|+......   c2 `|` does not connect horizontally into c3 `+`
 ```
 
 Wrong (straight vertical):
@@ -137,7 +138,7 @@ GP12  ..+|.|....    + at c2 is not a vertical trunk; use | at c2
 Correct GP14 on c6 with GP15 on c3 (buffer at c4):
 
 ```text
-GP14  .o..|.-┐..   c1=o pad; c3=| GP15 trunk; c5-c6 GP14 -┐ into c6
+GP14  .*..|.-┐..   c1=* pad; c3=| GP15 trunk; c5-c6 GP14 -┐ into c6
 ```
 
 ## Iterative trace layer workflow
@@ -177,7 +178,7 @@ Design window columns (west to east):
 
 Before iteration 0, lay out **only** anchors on the trace layer:
 
-1. Copy every base-layer `o` you will use onto the trace layer (same cells).
+1. Copy every base-layer `*` you will use onto the trace layer (same cells).
 2. Copy every base-layer `O` onto the trace layer (same cells).
 3. Fill all other trace cells with `.`.
 4. Add comments on the **row where the module legs are**, west-to-east leg
@@ -194,8 +195,8 @@ GP4   ... ADCV  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin
 
 5. Write initial `# todo` at file bottom: GPIO plan, rail column picks, module
    order for later iterations, known risks.
-6. Run `check_vox.py` (asserts exact `o`/`O` columns per row). On trace rows with
-   routing notes, use parseable `cols cN=TOKEN` assertions (`o-`, `-o`, `|`,
+6. Run `check_vox.py` (asserts exact `*`/`O` columns per row). On trace rows with
+   routing notes, use parseable `cols cN=TOKEN` assertions (`*-`, `-*`, `|`,
    `-`, corners, T junctions, and intersections); the checker verifies each
    against the diagram. Show the user.
    **Wait for go ahead.**
@@ -218,9 +219,9 @@ to the Pico header.
 - Run `|` north-south in those columns through every module row that has an `O`
   on that net. Leg `O` cells sit on the rail column and replace `|` at that row.
 - Leave `OO` gaps between unrelated signal leg pads; only GND/V legs touch rails.
-- Tap **one** east or west `3V3` header `o` into the c6 rail with the right T
+- Tap **one** east or west `3V3` header `*` into the c6 rail with the right T
   glyph on the rail.
-- Tap **one** convenient `GND` header `o` into the c5 rail (often a far-corner
+- Tap **one** convenient `GND` header `*` into the c5 rail (often a far-corner
   GND pin to keep signal columns clear) with the right T glyph on the rail.
 - Run anchor analysis. Run `check_vox.py`.
 - Update bottom `# todo` with rail choices, taps used, and what blocks iteration 1.
@@ -248,7 +249,7 @@ Per iteration:
 
 1. Re-read file and bottom notes.
 2. Add trace glyphs only for this module's signal(s).
-3. Connect header `o` to signal `O` using `-` for horizontal, `|` for vertical,
+3. Connect header `*` to signal `O` using `-` for horizontal, `|` for vertical,
    corners for turns, T glyphs for tees, and `+`/`┼` only for four-way crossings.
    Leave a buffer column between unrelated nets on the same row.
 4. GPIO reassignment is cheap if the column fight is too tight.
@@ -263,21 +264,21 @@ ask the user before retrying.
 
 ### When the trace layer is complete
 
-All signal anchors must survive anchor analysis connected to their header `o`.
+All signal anchors must survive anchor analysis connected to their header `*`.
 Power rails must join at least one `3V3` and one `GND` header pad. No unrelated
 shorts. Final `check_vox.py` pass.
 
 ## Anchor analysis (find broken routes)
 
 Pads anchor copper. A trace run is **live** only when it joins **two or more
-anchors** (`o`, `O`, or a pad on a power rail you intentionally tied) through
+anchors** (`*`, `O`, or a pad on a power rail you intentionally tied) through
 legal connect pairs. Use this peel pass after every routing edit.
 
 ### Anchors
 
-- `o` = Pico pin anchor for that net.
+- `*` = Pico pin anchor for that net.
 - `O` = device leg anchor for that net.
-- A rail tap counts as an anchor only after an `o`/`O` or another live trace
+- A rail tap counts as an anchor only after an `*`/`O` or another live trace
   reaches it by legal rules.
 
 Trace tiles (`-`, `|`, corners, T junctions, and intersections) are not anchors.
@@ -289,7 +290,7 @@ Repeat until a full pass removes nothing:
 
 1. Scan every trace glyph cell.
 2. For each **open arm** (N, E, S, or W), ask: does the neighbor connect by the
-   connect-pair rules? Treat `.` and illegal pairs (`o|`, `|+`, `OO`, etc.) as
+   connect-pair rules? Treat `.` and illegal pairs (`*|`, `|+`, `OO`, etc.) as
    open.
 3. If **all** open arms are open (isolated tile), delete it: set the cell to `.`.
 4. If **some** arms are open and **some** are live, this cell is a dead end.
@@ -302,13 +303,13 @@ When stable, re-run from step 1 on the updated grid until no trace cell is remov
 
 | After peel | Meaning |
 | --- | --- |
-| Pin `o` beside only `.` | Pad never joined a net (`o|` mistake). |
+| Pin `*` beside only `.` | Pad never joined a net (`*|` mistake). |
 | Leg `O` beside only `.` | Module pad floating; missing `-O` approach. |
 | Two anchors, no path | Net broken (wrong corner/T orientation or bad neighbor pair). |
 | Trace tile left | Orphan copper; should have been pruned -- recheck connects. |
 | Two pins on one component | Short; unrelated anchors share a live path. |
 
-A live GP15 run, for example, must survive peel with a path from row-1 `o` to
+A live GP15 run, for example, must survive peel with a path from row-1 `*` to
 row-4 `O` (OUT). If peel eats the column above OUT back to `.`, the turn failed
 (wrong corner orientation or `|+` on the same row).
 
@@ -322,7 +323,7 @@ Work by net: finish one signal, run anchor analysis, then start the next.
 - Bottom `# todo` updated with state for the next pass.
 - No `||` short between unrelated nets in adjacent columns.
 - No `-|`, `+|`, or `|+` as horizontal corner pairs; use the correct corner glyph.
-- No `o|` beside a pin expecting a join without `-` west of the pad.
+- No `*|` beside a pin expecting a join without `-` west of the pad.
 - Vertical runs use stacked `|`; corners use `┌┐└┘`; tees use `├┤┬┴`;
   `+`/`┼` only for four-way crossings.
 - Anchor analysis (peel pass) on the trace layer.
@@ -358,11 +359,11 @@ Row-level `cols cN=TOKEN` checks glyphs only; intents check connectivity.
 
 ### Pin column self-check (`check_vox.py`)
 
-For each labeled row, every `o` and `O` must be at the exact design-window
+For each labeled row, every `*` and `O` must be at the exact design-window
 column expected for that variant. Trace-layer pads must match base-layer pads
 cell for cell.
 
-**up-side** module legs (header `o` always at c1 and c8):
+**up-side** module legs (header `*` always at c1 and c8):
 
 | Row | Leg columns |
 | --- | --- |
@@ -381,15 +382,15 @@ cell for cell.
 If validation reports `O columns [3] != expected [2, 3, 4, 5]`, a leg is on the
 wrong column (common mistake: shifting the whole module west by one cell).
 
-`check_vox.py` also prints **warnings** (not failures) for horizontal `oO` / `Oo`
+`check_vox.py` also prints **warnings** (not failures) for horizontal `*O` / `O*`
 adjacency on the base layer.
 
-**up-side:** header `o` at c1 beside a module `O` at c2 (e.g. GP4 `oO`) is fixed by
+**up-side:** header `*` at c1 beside a module `O` at c2 (e.g. GP4 `*O`) is fixed by
 shifting module legs and center rails **one column east** (AHT20 to c3-c6, IR to
 c4-c6, GND rail c5, 3V3 rail c6). That opens c2 as routing buffer west of the
 first leg.
 
-**pico-side:** separate mirrored geometry; east-edge `Oo` (e.g. P6 c7-c8) is not
+**pico-side:** separate mirrored geometry; east-edge `O*` (e.g. P6 c7-c8) is not
 the same problem and may need a different remedy. Do not assume the up-side shift
 applies.
 
@@ -398,14 +399,14 @@ applies.
 Wrong (shorts GP14 and GP15 on one `+`):
 
 ```text
-GP15  .o++......   both pins hit same c2 +
-GP14  .o++......
+GP15  .*++......   both pins hit same c2 +
+GP14  .*++......
 ```
 
 Wrong (broken corner on GP14 row):
 
 ```text
-GP14  .o.|+......   pin not on net; |+ does not connect
+GP14  .*.|+......   pin not on net; |+ does not connect
 ```
 
 Wrong (`+` where `|` trunk belongs):

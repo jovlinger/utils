@@ -3,52 +3,52 @@
 # Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
 # Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
 # Rows north to south.
-# Legend: X=solid substrate, o=Pico pin hole, O=device leg hole, .=empty/air on non-base layers.
+# Legend: X=solid substrate, *=Pico pin hole, O=device leg hole, .=empty/air on non-base layers, a-z=embossed labels.
 
 layer base (6, 10, 22)
       XXXXXXXXXX
-P20   XoXXXXXXoX P21
-P19   XoXXXXXXoX P22
-P18   XoXXXXXXoX P23
-P17   XoXXOOOXoX P24
-P16   XoXXXXXXoX P25
-P15   XoXXXXXXoX P26
-P14   XoXXOOOXoX P27
-P13   XoXXXXXXoX P28
-P12   XoXXXXXXoX P29
-P11   XoXXXXXXoX P30
-P10   XoXXXXXXoX P31
-P9    XoXXXXXXoX P32
-P8    XoXXXXXXoX P33
-P7    XoXXXXXXoX P34
-P6    XoXXOOOOoX P35
-P5    XoXXXXXXoX P36
-P4    XoXXXXXXoX P37
-P3    XoXXXXXXoX P38
-P2    XoXXXXXXoX P39
-P1    XoXXXXXXoX P40
+P20   X*XXXXXX*X P21
+P19   X*XXXXXX*X P22
+P18   X*XXXXXX*X P23
+P17   X*XXOOOX*X P24
+P16   X*XXXXXX*X P25
+P15   X*XXXXXX*X P26
+P14   X*XXOOOX*X P27
+P13   X*XXXXXX*X P28
+P12   X*XXXXXX*X P29
+P11   X*XXXXXX*X P30
+P10   X*XXXXXX*X P31
+P9    X*XXXXXX*X P32
+P8    X*XXXXXX*X P33
+P7    X*XXXXXX*X P34
+P6    X*XXOOOO*X P35
+P5    X*XXXXXX*X P36
+P4    X*XXXXXX*X P37
+P3    X*XXXXXX*X P38
+P2    X*XXXXXX*X P39
+P1    X*XXXXXX*X P40
       XXXXXXXXXX
 
 layer trace (6, 10, 22)
       ..........
-P20   .o......o. P21
-P19   .o......o. P22
-P18   .o......o. P23
-P17   .o..OOO.o. P24  IR RX mirrored: c4=OUT c5=GND c6=VCC
-P16   .o......o. P25
-P15   .o......o. P26
-P14   .o..OOO.o. P27  IR TX mirrored: c4=DAT c5=GND c6=VCC
-P13   .o......o. P28
-P12   .o......o. P29
-P11   .o......o. P30
-P10   .o......o. P31
-P9    .o......o. P32
-P8    .o......o. P33
-P7    .o......o. P34
-P6    .o..OOOOo. P35  AHT20 mirrored: c4=SDA c5=SCL c6=GND c7=3V3
-P5    .o......o. P36
-P4    .o......o. P37
-P3    .o......o. P38
-P2    .o......o. P39
-P1    .o......o. P40
+P20   .*......*. P21
+P19   .*......*. P22
+P18   .*......*. P23
+P17   .*..OOO.*. P24  IR RX mirrored: c4=OUT c5=GND c6=VCC
+P16   .*......*. P25
+P15   .*......*. P26
+P14   .*..OOO.*. P27  IR TX mirrored: c4=DAT c5=GND c6=VCC
+P13   .*......*. P28
+P12   .*......*. P29
+P11   .*......*. P30
+P10   .*......*. P31
+P9    .*......*. P32
+P8    .*......*. P33
+P7    .*......*. P34
+P6    .*..OOOO*. P35  AHT20 mirrored: c4=SDA c5=SCL c6=GND c7=3V3
+P5    .*......*. P36
+P4    .*......*. P37
+P3    .*......*. P38
+P2    .*......*. P39
+P1    .*......*. P40
       ..........

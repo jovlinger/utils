@@ -17,7 +17,7 @@ layer trace (offset, width, height)
 
 Rows are sliced from `offset` for `width` characters. Cell coordinates are
 centered around `(0, 0)` by default, with `UNIT_MM` read from a file comment
-when present. In `--mode full`, the `base` layer becomes a plate and `o` / `O`
+when present. In `--mode full`, the `base` layer becomes a plate and `*` / `O`
 cells become through-holes.
 
 ## Trace Glyphs
@@ -26,7 +26,10 @@ cells become through-holes.
 - `|` creates a vertical trace.
 - Box-drawing corners, T junctions, and crosses connect only on their drawn arms.
 - `+` is treated as a four-way cross.
-- `o` and `O` create raised pad boxes.
+- `*` and `O` create raised pad boxes.
+- Lowercase `a` through `z` render embossed uppercase letters, one monospace
+  letter per cell. They do not connect electrically. Letter shapes come from
+  pre-rendered smoothed Hershey vector tiles in `vox2stl/tiles/letters/`.
 
 ## Geometry Constants
 
@@ -40,14 +43,26 @@ Default dimensions are expressed as fractions of `UNIT_MM` in `vox2stl.py`:
 - `LEG_OUTSIDE_FRAC = 0.88`
 - `TILE_OVERLAP_FRAC = 0.08`
 - `TRACE_HOLE_CLEARANCE_FRAC = 0.04`
+- `LABEL_RECESS_FRAC = 0.16`
+- `LABEL_HEIGHT_FRAC = 0.10`
 
 Geometry is parametric: the converter builds rectangular STL boxes for each
-glyph rather than loading binary STL fragments. In full mode, `o` and `O` pads
+glyph rather than loading binary STL fragments. In full mode, `*` and `O` pads
 are near-unit rectangular prisms with cylindrical through-holes subtracted.
 Trace arms are emitted only when the neighboring cell connects by the `.vox`
 rules, and protrusions are clamped so they reach pad material without entering
 the through-hole void.
 
-Default `O` hole diameter is 125 percent of the `o` hole default. `o` and `O`
+Default `O` hole diameter is 125 percent of the `*` hole default. `*` and `O`
 pad outer prisms use the same outside fraction and are clamped by
 `ADJACENT_ISOLATION_GAP_FRAC` so adjacent `OO` pads keep an air gap.
+
+Label letters are inset from cell edges by `LABEL_RECESS_FRAC` to avoid
+overhang. Their embossed height is `LABEL_HEIGHT_FRAC * UNIT_MM`, starting at
+the trace layer base height.
+
+Rebuild the persistent letter tile library after changing label geometry:
+
+```bash
+vox2stl/build_letter_tiles.py
+```

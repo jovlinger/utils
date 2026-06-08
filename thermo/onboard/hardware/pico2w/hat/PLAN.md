@@ -13,8 +13,8 @@ Your agent defines a 3D array (X, Y, Z layers). A standard prototyping grid uses
 The exact spacing determined by our pico STL research You map your ASCII characters to distinct STL "tiles" that are
 exactly UNIT X UNIT
 
-* o = Pin Hole througo Pad:  (below), with a narrow center subtracted.  The negative shape hole should also be somewhat proud in both verticals so as to not create phantom faces. 
-* O = Same pad outer prism as `o`, but 125% hole diameter.
+* `*` = Pin Hole througo Pad:  (below), with a narrow center subtracted.  The negative shape hole should also be somewhat proud in both verticals so as to not create phantom faces.
+* O = Same pad outer prism as `*`, but 125% hole diameter.
 * | = Vertical Trace: A solid rectangular bar running North-South.
 * - = Horizontal Trace: A solid rectangular bar running East-West.
 * + = Intersection: A cross-shaped block.
@@ -105,15 +105,16 @@ Rows run north to south (GP15 / IR-RX north, GP0 / AHT20 south).
 **Base layer**
 
 * `X` = solid substrate tile (including border)
-* `o` = Pico pin through-hole
+* `*` = Pico pin through-hole
 * `O` = device leg through-hole
 
 **Trace layer**
 
 * `.` = empty / air (no raised copper)
-* `o` = Pico pin pad (trace connects here)
+* `*` = Pico pin pad (trace connects here)
 * `O` = device leg pad (trace connects here)
 * `|` / `-` = vertical / horizontal trace tiles
+* `a`..`z` = embossed uppercase labels (not copper)
 * Unicode box glyphs also allowed in `.vox` files (treated as human-readable
   binary): corners, T junctions, and four-way intersections (U+2500 block)
 
@@ -124,7 +125,7 @@ Rows run north to south (GP15 / IR-RX north, GP0 / AHT20 south).
 * `OO` = adjacent leg pads with no trace between (want no connection)
 * Trace paths use `-` for horizontal, `|` for vertical, corners for turns,
   T glyphs for tees, and `+` / box cross only for four-way intersections.
-  Pads use `o`/`O`.
+  Pads use `*`/`O`.
 
 ### Sequential trace design process
 
@@ -132,7 +133,7 @@ Regenerate the trace layer in order, re-reading the file between steps. Use
 comment lines at the end of the file as scratch / state memory between
 iterations:
 
-1. Lay Pico pin pads (`o` at every used GPIO / power pin)
+1. Lay Pico pin pads (`*` at every used GPIO / power pin)
 2. Lay center 3V3 and GND rails (parallel, between Pico pin rows)
 3. Lay device leg pads (`O` at AHT20 and IR module holes)
 4. Connect leg pads to chosen Pico pins with explicit paths
@@ -178,7 +179,7 @@ mismatched dimensions between layers.
 ### Voxel-to-STL export
 
 The reusable converter lives at top-level `vox2stl/vox2stl.py`.
-`O` hole size is 125 percent of the `o` default in voxel output. `o` and `O`
+`O` hole size is 125 percent of the `*` default in voxel output. `*` and `O`
 pad outer prisms use UNIT-fraction outside constants, clamped by the adjacent
 isolation gap, with cylindrical through-holes subtracted. Trace arms are emitted
 only across intended `.vox` connections and are clamped to reach pad material

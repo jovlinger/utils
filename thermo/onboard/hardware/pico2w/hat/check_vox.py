@@ -14,22 +14,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
-ALLOWED_CHARS = set("XoO.-|+/\\?T^v<> +-")
+ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyzX*O.-|+/\\?T^v<> +-")
 ALLOWED_CHARS.update("┌┐└┘├┤┬┴┼─│")
 REQUIRED_LAYERS = ("base", "trace")
 LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(\d+)\)$")
 ROW_LABEL_RE = re.compile(r"^\s*(\S+)")
-TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-o|o-|\||\+|-|[┌┐└┘├┤┬┴┼─│])")
+TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-\*|\*-|\||\+|-|[┌┐└┘├┤┬┴┼─│])")
 INTENT_NET_RE = re.compile(r"^#\s*net\s+(\S+)\s+(.+)$")
 INTENT_DISJOINT_RE = re.compile(r"^#\s*disjoint\s+(.+)$")
 INTENT_ENDPOINT_RE = re.compile(r"^([A-Za-z0-9_:-]+)\.c(\d+)$")
 
+PIN_PAD_CHAR = "*"
+LEG_PAD_CHAR = "O"
 BOX_CHARS: FrozenSet[str] = frozenset({"┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "─", "│"})
-COPPER_CHARS: FrozenSet[str] = frozenset({"o", "O", "-", "|", "+"}) | BOX_CHARS
-PAD_CHARS: FrozenSet[str] = frozenset({"o", "O"})
+COPPER_CHARS: FrozenSet[str] = frozenset({PIN_PAD_CHAR, LEG_PAD_CHAR, "-", "|", "+"}) | BOX_CHARS
+PAD_CHARS: FrozenSet[str] = frozenset({PIN_PAD_CHAR, LEG_PAD_CHAR})
 ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
-    "o": frozenset({"N", "E", "S", "W"}),
-    "O": frozenset({"N", "E", "S", "W"}),
+    PIN_PAD_CHAR: frozenset({"N", "E", "S", "W"}),
+    LEG_PAD_CHAR: frozenset({"N", "E", "S", "W"}),
     "-": frozenset({"E", "W"}),
     "|": frozenset({"N", "S"}),
     "+": frozenset({"N", "E", "S", "W"}),
@@ -49,14 +51,14 @@ ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
 # Horizontal no-connect pairs (SKILL.md).
 H_NO_CONNECT: FrozenSet[Tuple[str, str]] = frozenset(
     {
-        ("o", "o"),
-        ("O", "O"),
-        ("o", "O"),
-        ("O", "o"),
-        ("o", "|"),
-        ("|", "o"),
-        ("O", "|"),
-        ("|", "O"),
+        (PIN_PAD_CHAR, PIN_PAD_CHAR),
+        (LEG_PAD_CHAR, LEG_PAD_CHAR),
+        (PIN_PAD_CHAR, LEG_PAD_CHAR),
+        (LEG_PAD_CHAR, PIN_PAD_CHAR),
+        (PIN_PAD_CHAR, "|"),
+        ("|", PIN_PAD_CHAR),
+        (LEG_PAD_CHAR, "|"),
+        ("|", LEG_PAD_CHAR),
         ("|", "|"),
         ("-", "|"),
         ("|", "-"),
@@ -68,19 +70,19 @@ H_NO_CONNECT: FrozenSet[Tuple[str, str]] = frozenset(
 # Vertical no-connect pairs (SKILL.md).
 V_NO_CONNECT: FrozenSet[Tuple[str, str]] = frozenset(
     {
-        ("o", "o"),
-        ("O", "O"),
-        ("o", "O"),
-        ("O", "o"),
+        (PIN_PAD_CHAR, PIN_PAD_CHAR),
+        (LEG_PAD_CHAR, LEG_PAD_CHAR),
+        (PIN_PAD_CHAR, LEG_PAD_CHAR),
+        (LEG_PAD_CHAR, PIN_PAD_CHAR),
         ("-", "-"),
         ("-", "|"),
         ("|", "-"),
         ("-", "+"),
         ("+", "-"),
-        ("-", "o"),
-        ("o", "-"),
-        ("-", "O"),
-        ("O", "-"),
+        ("-", PIN_PAD_CHAR),
+        (PIN_PAD_CHAR, "-"),
+        ("-", LEG_PAD_CHAR),
+        (LEG_PAD_CHAR, "-"),
     }
 )
 
@@ -119,62 +121,62 @@ class Layer:
 
 @dataclass(frozen=True)
 class RowExpectation:
-    """Expected o/O pad columns for one labeled row (design-window indices 1..8)."""
+    """Expected */O pad columns for one labeled row (design-window indices 1..8)."""
 
     label: str
-    o_cols: FrozenSet[int]
+    pin_cols: FrozenSet[int]
     O_cols: FrozenSet[int]
 
 
-# West Pico o@c1 and east Pico o@c8 on every labeled header row.
-_HEADER_O: FrozenSet[int] = frozenset({1, 8})
+# West Pico *@c1 and east Pico *@c8 on every labeled header row.
+_HEADER_PINS: FrozenSet[int] = frozenset({1, 8})
 
 
-def _row(label: str, o_cols: FrozenSet[int], O_cols: FrozenSet[int]) -> RowExpectation:
-    return RowExpectation(label=label, o_cols=o_cols, O_cols=O_cols)
+def _row(label: str, pin_cols: FrozenSet[int], O_cols: FrozenSet[int]) -> RowExpectation:
+    return RowExpectation(label=label, pin_cols=pin_cols, O_cols=O_cols)
 
 
 UP_SIDE_PIN_LAYOUT: Tuple[RowExpectation, ...] = (
-    _row("GP15", _HEADER_O, frozenset()),
-    _row("GP14", _HEADER_O, frozenset()),
-    _row("GND", _HEADER_O, frozenset()),
-    _row("GP13", _HEADER_O, frozenset({4, 5, 6})),  # IR RX OUT GND VCC
-    _row("GP12", _HEADER_O, frozenset()),
-    _row("GP11", _HEADER_O, frozenset()),
-    _row("GP10", _HEADER_O, frozenset({4, 5, 6})),  # IR TX DAT GND VCC
-    _row("GP9", _HEADER_O, frozenset()),
-    _row("GP8", _HEADER_O, frozenset()),
-    _row("GP7", _HEADER_O, frozenset()),
-    _row("GP6", _HEADER_O, frozenset()),
-    _row("GP5", _HEADER_O, frozenset()),
-    _row("GP4", _HEADER_O, frozenset({3, 4, 5, 6})),  # AHT20 SDA SCL GND 3V3
-    _row("GP3", _HEADER_O, frozenset()),
-    _row("GP2", _HEADER_O, frozenset()),
-    _row("GP1", _HEADER_O, frozenset()),
-    _row("GP0", _HEADER_O, frozenset()),
+    _row("GP15", _HEADER_PINS, frozenset()),
+    _row("GP14", _HEADER_PINS, frozenset()),
+    _row("GND", _HEADER_PINS, frozenset()),
+    _row("GP13", _HEADER_PINS, frozenset({4, 5, 6})),  # IR RX OUT GND VCC
+    _row("GP12", _HEADER_PINS, frozenset()),
+    _row("GP11", _HEADER_PINS, frozenset()),
+    _row("GP10", _HEADER_PINS, frozenset({4, 5, 6})),  # IR TX DAT GND VCC
+    _row("GP9", _HEADER_PINS, frozenset()),
+    _row("GP8", _HEADER_PINS, frozenset()),
+    _row("GP7", _HEADER_PINS, frozenset()),
+    _row("GP6", _HEADER_PINS, frozenset()),
+    _row("GP5", _HEADER_PINS, frozenset()),
+    _row("GP4", _HEADER_PINS, frozenset({3, 4, 5, 6})),  # AHT20 SDA SCL GND 3V3
+    _row("GP3", _HEADER_PINS, frozenset()),
+    _row("GP2", _HEADER_PINS, frozenset()),
+    _row("GP1", _HEADER_PINS, frozenset()),
+    _row("GP0", _HEADER_PINS, frozenset()),
 )
 
 PICO_SIDE_PIN_LAYOUT: Tuple[RowExpectation, ...] = (
-    _row("P20", _HEADER_O, frozenset()),
-    _row("P19", _HEADER_O, frozenset()),
-    _row("P18", _HEADER_O, frozenset()),
-    _row("P17", _HEADER_O, frozenset({4, 5, 6})),  # IR RX mirrored
-    _row("P16", _HEADER_O, frozenset()),
-    _row("P15", _HEADER_O, frozenset()),
-    _row("P14", _HEADER_O, frozenset({4, 5, 6})),  # IR TX mirrored
-    _row("P13", _HEADER_O, frozenset()),
-    _row("P12", _HEADER_O, frozenset()),
-    _row("P11", _HEADER_O, frozenset()),
-    _row("P10", _HEADER_O, frozenset()),
-    _row("P9", _HEADER_O, frozenset()),
-    _row("P8", _HEADER_O, frozenset()),
-    _row("P7", _HEADER_O, frozenset()),
-    _row("P6", _HEADER_O, frozenset({4, 5, 6, 7})),  # AHT20 mirrored
-    _row("P5", _HEADER_O, frozenset()),
-    _row("P4", _HEADER_O, frozenset()),
-    _row("P3", _HEADER_O, frozenset()),
-    _row("P2", _HEADER_O, frozenset()),
-    _row("P1", _HEADER_O, frozenset()),
+    _row("P20", _HEADER_PINS, frozenset()),
+    _row("P19", _HEADER_PINS, frozenset()),
+    _row("P18", _HEADER_PINS, frozenset()),
+    _row("P17", _HEADER_PINS, frozenset({4, 5, 6})),  # IR RX mirrored
+    _row("P16", _HEADER_PINS, frozenset()),
+    _row("P15", _HEADER_PINS, frozenset()),
+    _row("P14", _HEADER_PINS, frozenset({4, 5, 6})),  # IR TX mirrored
+    _row("P13", _HEADER_PINS, frozenset()),
+    _row("P12", _HEADER_PINS, frozenset()),
+    _row("P11", _HEADER_PINS, frozenset()),
+    _row("P10", _HEADER_PINS, frozenset()),
+    _row("P9", _HEADER_PINS, frozenset()),
+    _row("P8", _HEADER_PINS, frozenset()),
+    _row("P7", _HEADER_PINS, frozenset()),
+    _row("P6", _HEADER_PINS, frozenset({4, 5, 6, 7})),  # AHT20 mirrored
+    _row("P5", _HEADER_PINS, frozenset()),
+    _row("P4", _HEADER_PINS, frozenset()),
+    _row("P3", _HEADER_PINS, frozenset()),
+    _row("P2", _HEADER_PINS, frozenset()),
+    _row("P1", _HEADER_PINS, frozenset()),
 )
 
 VARIANT_PIN_LAYOUTS: Dict[str, Tuple[RowExpectation, ...]] = {
@@ -263,14 +265,14 @@ def col_label(col_index: int) -> str:
 
 
 def find_pad_columns(window: str) -> Tuple[FrozenSet[int], FrozenSet[int]]:
-    o_cols: set[int] = set()
+    pin_cols: set[int] = set()
     O_cols: set[int] = set()
     for index, char in enumerate(window):
-        if char == "o":
-            o_cols.add(index)
-        elif char == "O":
+        if char == PIN_PAD_CHAR:
+            pin_cols.add(index)
+        elif char == LEG_PAD_CHAR:
             O_cols.add(index)
-    return frozenset(o_cols), frozenset(O_cols)
+    return frozenset(pin_cols), frozenset(O_cols)
 
 
 def validate_pin_layout(
@@ -290,14 +292,14 @@ def validate_pin_layout(
         seen.add(label)
         expect = by_label[label]
         window = design_window(layer, row)
-        o_cols, O_cols = find_pad_columns(window)
-        expected_o = expect.o_cols
+        pin_cols, O_cols = find_pad_columns(window)
+        expected_pin = expect.pin_cols
         expected_O = expect.O_cols
-        if o_cols != expected_o:
+        if pin_cols != expected_pin:
             raise ValueError(
                 f"{path}: layer {layer_name!r} row {row_index} ({label}): "
-                f"o columns {sorted(o_cols)} != expected {sorted(expected_o)} "
-                f"({', '.join(col_label(c) for c in sorted(expected_o))})"
+                f"{PIN_PAD_CHAR} columns {sorted(pin_cols)} != expected {sorted(expected_pin)} "
+                f"({', '.join(col_label(c) for c in sorted(expected_pin))})"
             )
         if O_cols != expected_O:
             raise ValueError(
@@ -305,8 +307,8 @@ def validate_pin_layout(
                 f"O columns {sorted(O_cols)} != expected {sorted(expected_O)} "
                 f"({', '.join(col_label(c) for c in sorted(expected_O))})"
             )
-        allowed_pad_cols = expected_o | expected_O
-        extras = (o_cols | O_cols) - allowed_pad_cols
+        allowed_pad_cols = expected_pin | expected_O
+        extras = (pin_cols | O_cols) - allowed_pad_cols
         if extras:
             raise ValueError(
                 f"{path}: layer {layer_name!r} row {row_index} ({label}): "
@@ -329,17 +331,17 @@ def validate_col_assertion(window: str, col: int, token: str) -> Optional[str]:
         if actual != token:
             return f"expected {token!r}, got {actual!r}"
         return None
-    if token == "o-":
+    if token == "*-":
         if col >= 8:
-            return "o- needs a column east of the pad"
-        if window[col] != "o" or window[col + 1] != "-":
-            return f"expected o-, got {window[col : col + 2]!r}"
+            return "*- needs a column east of the pad"
+        if window[col] != PIN_PAD_CHAR or window[col + 1] != "-":
+            return f"expected *-, got {window[col : col + 2]!r}"
         return None
-    if token == "-o":
+    if token == "-*":
         if col <= 1:
-            return "-o needs a column west of the pad"
-        if window[col - 1] != "-" or window[col] != "o":
-            return f"expected -o, got {window[col - 1 : col + 1]!r}"
+            return "-* needs a column west of the pad"
+        if window[col - 1] != "-" or window[col] != PIN_PAD_CHAR:
+            return f"expected -*, got {window[col - 1 : col + 1]!r}"
         return None
     return f"unknown assertion token {token!r}"
 
@@ -582,14 +584,14 @@ def collect_pad_crowding_warnings(
     layer_name: str,
     layer: Layer,
 ) -> List[str]:
-    """Warn when adjacent o/O pads may crowd routing (oO or Oo on one row)."""
+    """Warn when adjacent */O pads may crowd routing (*O or O* on one row)."""
     warnings: List[str] = []
     for row_index, row in enumerate(layer.rows, 1):
         label = row_label(row) or f"row {row_index}"
         window = design_window(layer, row)
         for col in range(len(window) - 1):
             pair = window[col : col + 2]
-            if pair not in {"oO", "Oo"}:
+            if pair not in {"*O", "O*"}:
                 continue
             hint = (
                 "on up-side: shift module legs and center rails one column east"
@@ -615,13 +617,13 @@ def validate_trace_pads_match_base(
         if label is None or label not in by_label:
             continue
         expect = by_label[label]
-        pad_cols = expect.o_cols | expect.O_cols
+        pad_cols = expect.pin_cols | expect.O_cols
         base_window = design_window(base, base_row)
         trace_window = design_window(trace, trace_row)
         for col in pad_cols:
             base_char = base_window[col]
             trace_char = trace_window[col]
-            if base_char not in {"o", "O"}:
+            if base_char not in PAD_CHARS:
                 raise ValueError(
                     f"{path}: internal error: base row {label} col {col_label(col)} "
                     f"is {base_char!r}, not a pad"

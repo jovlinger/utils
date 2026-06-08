@@ -1,0 +1,32 @@
+# vox2stl letter tile manifest
+source=hershey_simplex_smoothed
+recess_frac=0.16
+height_frac=0.1
+letter triangles
+A 21692
+B 26378
+C 24542
+D 25318
+E 25256
+F 20806
+G 24728
+H 26708
+I 13942
+J 18348
+K 25406
+L 18510
+M 28796
+N 26718
+O 25160
+P 22346
+Q 23988
+R 26134
+S 24914
+T 19134
+U 25490
+V 21700
+W 28532
+X 24392
+Y 19898
+Z 24908
+total 613744

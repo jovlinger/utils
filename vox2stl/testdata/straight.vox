@@ -2,10 +2,10 @@
 # ASCII fixture for straight traces and pads.
 layer base (0, 5, 3)
 XXXXX
-XXoOX
+XX*OX
 XXXXX
 
 layer trace (0, 5, 3)
 .....
-.-oO.
+.-*O.
 .....

@@ -46,6 +46,7 @@ hat-stl:
 	@echo "PICO2W_LEGACY_TARGET=$(PICO2W_LEGACY_TARGET)"
 
 hat-vox-stl:
+	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
 	hat/check_vox.py "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_vox
 

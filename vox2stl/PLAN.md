@@ -23,6 +23,8 @@ to millimeters at runtime:
 - `TRACE_HOLE_CLEARANCE_FRAC`: minimum trace clearance from a through-hole void.
 - `TILE_OVERLAP_FRAC`: small overlap across connected cell boundaries to help
   slicers fuse intended connections.
+- `LABEL_RECESS_FRAC`: inset from cell edges for embossed letter glyphs.
+- `LABEL_HEIGHT_FRAC`: embossed letter height above the trace-layer base.
 
 Current intent:
 
@@ -33,6 +35,8 @@ Current intent:
   paths.
 - Isolation: no-connect pairs get an explicit gap even if chunky features would
   otherwise touch.
+- Labels: lowercase `.vox` letters render as uppercase block-letter shapes,
+  one monospace letter per cell, and do not connect electrically.
 
 ## Chunky Then Subtract
 
@@ -46,8 +50,10 @@ For each trace-layer cell:
    by `ADJACENT_ISOLATION_GAP_FRAC / 2`.
 5. Clamp any arm approaching a through-hole so it reaches pad material but never
    enters the cylindrical hole void.
-6. For `o` and `O`, create pad outside bodies and subtract the corresponding
+6. For `*` and `O`, create pad outside bodies and subtract the corresponding
    through-hole cylinder.
+7. For lowercase `a` through `z`, create inset embossed uppercase letter strokes
+   with no electrical arms.
 
 ## Connectivity Source Of Truth
 
@@ -64,9 +70,18 @@ Examples:
 - `||` side-by-side does not connect: parallel vertical traces keep an isolation
   gap between cells.
 
+## Letter Tile Library
+
+Lowercase `.vox` letters load pre-rendered uppercase tiles from
+`vox2stl/tiles/letters/`. `build_letter_tiles.py` thickens Hershey Roman Simplex
+stroke fonts, blurs the raster field for smooth edges, meshes the solid with
+marching squares, simplifies to a triangle budget, and writes binary STL
+fragments using the default label recess and height fractions. Runtime
+placement scales and translates those triangles per cell.
+
 ## Future Tile Library
 
-While dimensions are still changing, `vox2stl.py` may generate geometry
-parametrically. Once these constants settle, precompute STL fragments for each
-glyph and constant set. The runtime placer should then load tile resources,
-translate them per cell, and append triangles.
+Trace and pad glyphs may eventually move to the same pre-rendered tile model.
+Once dimensions settle, precompute STL fragments for each glyph and constant
+set. The runtime placer should then load tile resources, translate them per
+cell, and append triangles.

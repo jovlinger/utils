@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import math
 import re
+import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
+
+from letter_mesh import generate_letter_tile_triangles
 
 Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
@@ -24,6 +27,9 @@ DEFAULT_LEG_OUTSIDE_FRAC = 0.88
 DEFAULT_TILE_OVERLAP_FRAC = 0.08
 DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = 0.04
 DEFAULT_GRID_FRAC = 0.20
+DEFAULT_LABEL_RECESS_FRAC = 0.16
+DEFAULT_LABEL_HEIGHT_FRAC = 0.10
+LETTER_TILES_DIR = Path(__file__).resolve().parent / "tiles" / "letters"
 DEFAULT_TRACE_WIDTH_MM = DEFAULT_TRACE_WIDTH_FRAC * DEFAULT_UNIT_MM
 DEFAULT_ADJACENT_ISOLATION_GAP_MM = DEFAULT_ADJACENT_ISOLATION_GAP_FRAC * DEFAULT_UNIT_MM
 DEFAULT_PAD_WIDTH_MM = DEFAULT_PIN_OUTSIDE_FRAC * DEFAULT_UNIT_MM
@@ -32,6 +38,8 @@ DEFAULT_PIN_HOLE_DIAMETER_MM = DEFAULT_PIN_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
 DEFAULT_DEVICE_HOLE_DIAMETER_MM = DEFAULT_LEG_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
 DEFAULT_OVERLAP_MM = DEFAULT_TILE_OVERLAP_FRAC * DEFAULT_UNIT_MM
 DEFAULT_TRACE_HOLE_CLEARANCE_MM = DEFAULT_TRACE_HOLE_CLEARANCE_FRAC * DEFAULT_UNIT_MM
+DEFAULT_LABEL_RECESS_MM = DEFAULT_LABEL_RECESS_FRAC * DEFAULT_UNIT_MM
+DEFAULT_LABEL_HEIGHT_MM = DEFAULT_LABEL_HEIGHT_FRAC * DEFAULT_UNIT_MM
 DEFAULT_BASE_Z0_MM = 0.0
 DEFAULT_BASE_Z1_MM = 3.175
 DEFAULT_TRACE_Z0_MM = DEFAULT_BASE_Z1_MM
@@ -52,6 +60,9 @@ BOX_T_UP = "\u2534"
 BOX_CROSS = "\u253c"
 BOX_H = "\u2500"
 BOX_V = "\u2502"
+PIN_PAD_CHAR = "*"
+LEG_PAD_CHAR = "O"
+PAD_CHARS: FrozenSet[str] = frozenset({PIN_PAD_CHAR, LEG_PAD_CHAR})
 
 ARMS_BY_CHAR: Dict[str, FrozenSet[str]] = {
     "-": frozenset({"E", "W"}),
@@ -109,6 +120,8 @@ class RenderConfig:
     adjacent_isolation_gap_mm: float = DEFAULT_ADJACENT_ISOLATION_GAP_MM
     overlap_mm: float = DEFAULT_OVERLAP_MM
     trace_hole_clearance_mm: float = DEFAULT_TRACE_HOLE_CLEARANCE_MM
+    label_recess_mm: float = DEFAULT_LABEL_RECESS_MM
+    label_height_mm: float = DEFAULT_LABEL_HEIGHT_MM
     base_z0_mm: float = DEFAULT_BASE_Z0_MM
     base_z1_mm: float = DEFAULT_BASE_Z1_MM
     trace_z0_mm: float = DEFAULT_TRACE_Z0_MM
@@ -391,13 +404,138 @@ def trace_width(config: RenderConfig) -> float:
 
 
 def pad_width(char: str, config: RenderConfig) -> float:
-    raw_width = config.pad_width_mm if char == "o" else config.device_pad_width_mm
+    raw_width = config.pad_width_mm if char == PIN_PAD_CHAR else config.device_pad_width_mm
     return isolated_width(raw_width, config)
 
 
 def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxSolid:
     half = width * 0.5
     return BoxSolid(cx - half, cy - half, cx + half, cy + half, z0, z1)
+
+
+def is_label_char(char: str) -> bool:
+    return "a" <= char <= "z"
+
+
+def write_binary_stl(path: Path, triangles: Sequence[Tri], name: str = "tile") -> None:
+    header = f"vox2stl letter tile {name}".encode("ascii", errors="ignore")[:80]
+    header = header.ljust(80, b" ")
+    payload = bytearray(header)
+    payload.extend(struct.pack("<I", len(triangles)))
+    for a, b, c in triangles:
+        normal = normal_for_tri(a, b, c)
+        payload.extend(struct.pack("<3f", normal[0], normal[1], normal[2]))
+        payload.extend(struct.pack("<3f", a[0], a[1], a[2]))
+        payload.extend(struct.pack("<3f", b[0], b[1], b[2]))
+        payload.extend(struct.pack("<3f", c[0], c[1], c[2]))
+        payload.extend(struct.pack("<H", 0))
+    path.write_bytes(payload)
+
+
+def read_binary_stl_bytes(data: bytes, source: str = "binary STL") -> List[Tri]:
+    if len(data) < 84:
+        raise ValueError(f"{source}: binary STL too short")
+    triangle_count = struct.unpack_from("<I", data, 80)[0]
+    tris: List[Tri] = []
+    offset = 84
+    for _ in range(triangle_count):
+        if offset + 50 > len(data):
+            raise ValueError(f"{source}: binary STL truncated")
+        a = struct.unpack_from("<3f", data, offset + 12)
+        b = struct.unpack_from("<3f", data, offset + 24)
+        c = struct.unpack_from("<3f", data, offset + 36)
+        tris.append((a, b, c))
+        offset += 50
+    return tris
+
+
+def read_binary_stl(path: Path) -> List[Tri]:
+    return read_binary_stl_bytes(path.read_bytes(), str(path))
+
+
+def read_ascii_stl_text(text: str, source: str = "ASCII STL") -> List[Tri]:
+    tris: List[Tri] = []
+    vertices: List[Vec3] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("vertex "):
+            continue
+        parts = line.split()
+        if len(parts) != 4:
+            raise ValueError(f"{source}: malformed vertex line {raw_line!r}")
+        vertex = (float(parts[1]), float(parts[2]), float(parts[3]))
+        vertices.append(vertex)
+        if len(vertices) == 3:
+            tris.append((vertices[0], vertices[1], vertices[2]))
+            vertices = []
+    if vertices:
+        raise ValueError(f"{source}: incomplete ASCII STL triangle")
+    return tris
+
+
+def read_ascii_stl(path: Path) -> List[Tri]:
+    return read_ascii_stl_text(path.read_text(encoding="ascii"), str(path))
+
+
+def read_letter_tile_stl(path: Path) -> List[Tri]:
+    data = path.read_bytes()
+    if data.lstrip().startswith(b"solid"):
+        return read_ascii_stl_text(data.decode("ascii"), str(path))
+    return read_binary_stl_bytes(data, str(path))
+
+
+_LETTER_TILE_CACHE: Dict[str, List[Tri]] = {}
+
+
+def letter_tile_path(letter: str) -> Path:
+    return LETTER_TILES_DIR / f"{letter.upper()}.stl"
+
+
+def load_letter_tile(letter: str) -> List[Tri]:
+    key = letter.upper()
+    cached = _LETTER_TILE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    path = letter_tile_path(key)
+    if not path.is_file():
+        raise ValueError(
+            f"missing letter tile {path}; run vox2stl/build_letter_tiles.py to pre-render A-Z"
+        )
+    tris = read_letter_tile_stl(path)
+    _LETTER_TILE_CACHE[key] = tris
+    return tris
+
+
+def place_letter_tris(
+    template: Sequence[Tri],
+    cx: float,
+    cy: float,
+    config: RenderConfig,
+) -> List[Tri]:
+    tile_span = 1.0 - 2.0 * DEFAULT_LABEL_RECESS_FRAC
+    runtime_span = config.unit_mm - 2.0 * config.label_recess_mm
+    xy_scale = runtime_span / tile_span if tile_span > 0.0 else config.unit_mm
+    z_scale = (
+        config.label_height_mm / DEFAULT_LABEL_HEIGHT_FRAC
+        if DEFAULT_LABEL_HEIGHT_FRAC > 0.0
+        else config.label_height_mm
+    )
+
+    def map_vertex(vertex: Vec3) -> Vec3:
+        return (
+            cx + vertex[0] * xy_scale,
+            cy + vertex[1] * xy_scale,
+            config.trace_z0_mm + vertex[2] * z_scale,
+        )
+
+    return [(map_vertex(a), map_vertex(b), map_vertex(c)) for a, b, c in template]
+
+
+def letter_tris(cx: float, cy: float, char: str, config: RenderConfig) -> List[Tri]:
+    if config.label_height_mm <= 0.0:
+        return []
+    template = load_letter_tile(char)
+    return place_letter_tris(template, cx, cy, config)
 
 
 def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSolid:
@@ -420,13 +558,13 @@ def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSo
 
 
 def accepts_connection(char: str, direction: str) -> bool:
-    if char in {"o", "O"}:
+    if char in PAD_CHARS:
         return True
     return direction in ARMS_BY_CHAR.get(char, frozenset())
 
 
 def connects_to_neighbor(char: str, neighbor: str, direction: str) -> bool:
-    if char in {"o", "O"} and neighbor in {"o", "O"}:
+    if char in PAD_CHARS and neighbor in PAD_CHARS:
         return False
     return accepts_connection(char, direction) and accepts_connection(
         neighbor, OPPOSITE_DIRECTION[direction]
@@ -460,10 +598,12 @@ def glyph_boxes(
     cy: float,
     config: RenderConfig,
 ) -> List[BoxSolid]:
-    if char == "o" and config.include_pads:
+    if char == PIN_PAD_CHAR and config.include_pads:
         return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
-    if char == "O" and config.include_pads:
+    if char == LEG_PAD_CHAR and config.include_pads:
         return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+    if is_label_char(char):
+        return []
 
     arms = ARMS_BY_CHAR.get(char)
     if arms is None:
@@ -492,10 +632,10 @@ def build_holes(base_layer: Layer, config: RenderConfig) -> List[Hole]:
     for row_index, row in enumerate(base_layer.rows):
         window = layer_window(base_layer, row)
         for col_index, char in enumerate(window):
-            if char not in {"o", "O"}:
+            if char not in PAD_CHARS:
                 continue
             cx, cy = cell_center(base_layer, row_index, col_index, config)
-            diameter = config.pin_hole_diameter_mm if char == "o" else config.device_hole_diameter_mm
+            diameter = config.pin_hole_diameter_mm if char == PIN_PAD_CHAR else config.device_hole_diameter_mm
             holes.append(Hole(cx, cy, diameter * 0.5))
     return holes
 
@@ -518,6 +658,32 @@ def mesh_from_boxes(boxes: Sequence[BoxSolid]) -> Mesh:
     return mesh
 
 
+def build_layer_mesh(
+    layer: Layer,
+    config: RenderConfig,
+    holes: Optional[Sequence[Hole]] = None,
+) -> Tuple[Mesh, int, int]:
+    mesh = Mesh()
+    box_count = 0
+    letter_count = 0
+    for row_index, row in enumerate(layer.rows):
+        window = layer_window(layer, row)
+        for col_index, char in enumerate(window):
+            cx, cy = cell_center(layer, row_index, col_index, config)
+            if is_label_char(char):
+                mesh.extend(letter_tris(cx, cy, char, config))
+                letter_count += 1
+                continue
+            boxes = glyph_boxes(layer, row_index, col_index, char, cx, cy, config)
+            box_count += len(boxes)
+            for box in boxes:
+                if holes is not None:
+                    add_box_with_holes(mesh, box, holes, config.grid_mm)
+                else:
+                    mesh.extend(box_tris(box))
+    return mesh, box_count, letter_count
+
+
 def add_box_with_holes(mesh: Mesh, box: BoxSolid, holes: Sequence[Hole], grid_mm: float) -> None:
     box_holes = holes_for_box(box, holes)
     if box_holes:
@@ -526,15 +692,18 @@ def add_box_with_holes(mesh: Mesh, box: BoxSolid, holes: Sequence[Hole], grid_mm
         mesh.extend(box_tris(box))
 
 
-def full_mesh_from_layers(base_layer: Layer, trace_layer: Layer, config: RenderConfig) -> Tuple[Mesh, int, int]:
+def full_mesh_from_layers(
+    base_layer: Layer,
+    trace_layer: Layer,
+    config: RenderConfig,
+) -> Tuple[Mesh, int, int, int]:
     mesh = Mesh()
     holes = build_holes(base_layer, config)
     base_box = layer_bounds(base_layer, config, config.base_z0_mm, config.base_z1_mm)
     mesh.extend(plate_with_holes_tris(base_box, holes, config.grid_mm))
-    trace_boxes = build_boxes(trace_layer, config)
-    for box in trace_boxes:
-        add_box_with_holes(mesh, box, holes, config.grid_mm)
-    return mesh, len(holes), len(trace_boxes)
+    trace_mesh, box_count, letter_count = build_layer_mesh(trace_layer, config, holes)
+    mesh.extend(trace_mesh.triangles)
+    return mesh, len(holes), box_count, letter_count
 
 
 def default_output_path(input_path: Path, layer_name: str) -> Path:
@@ -563,6 +732,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--adjacent-isolation-gap-mm", type=float, default=DEFAULT_ADJACENT_ISOLATION_GAP_MM)
     parser.add_argument("--overlap-mm", type=float, default=DEFAULT_OVERLAP_MM)
     parser.add_argument("--trace-hole-clearance-mm", type=float, default=DEFAULT_TRACE_HOLE_CLEARANCE_MM)
+    parser.add_argument("--label-recess-mm", type=float, default=DEFAULT_LABEL_RECESS_MM)
+    parser.add_argument("--label-height-mm", type=float, default=DEFAULT_LABEL_HEIGHT_MM)
     parser.add_argument("--base-z0-mm", type=float, default=DEFAULT_BASE_Z0_MM)
     parser.add_argument("--base-z1-mm", type=float, default=DEFAULT_BASE_Z1_MM)
     parser.add_argument("--trace-z0-mm", type=float)
@@ -589,6 +760,8 @@ def run(argv: Sequence[str]) -> int:
         adjacent_isolation_gap_mm=args.adjacent_isolation_gap_mm,
         overlap_mm=args.overlap_mm,
         trace_hole_clearance_mm=args.trace_hole_clearance_mm,
+        label_recess_mm=args.label_recess_mm,
+        label_height_mm=args.label_height_mm,
         base_z0_mm=args.base_z0_mm,
         base_z1_mm=args.base_z1_mm,
         trace_z0_mm=trace_z0_mm,
@@ -612,7 +785,11 @@ def run(argv: Sequence[str]) -> int:
                 f"{args.vox_path}: base and trace geometry differ: "
                 f"{base_layer.width}x{base_layer.height} vs {trace_layer.width}x{trace_layer.height}"
             )
-        mesh, hole_count, box_count = full_mesh_from_layers(base_layer, trace_layer, config)
+        mesh, hole_count, box_count, letter_count = full_mesh_from_layers(
+            base_layer,
+            trace_layer,
+            config,
+        )
         output_path = args.output or default_output_path(args.vox_path, "full")
         solid_name = args.solid_name or solid_name_for(args.vox_path, "full")
         layer_label = f"{args.base_layer}+{args.layer}"
@@ -620,10 +797,8 @@ def run(argv: Sequence[str]) -> int:
         layer = layers.get(args.layer)
         if layer is None:
             raise ValueError(f"{args.vox_path}: missing layer {args.layer!r}; found {names}")
-        boxes = build_boxes(layer, config)
-        mesh = mesh_from_boxes(boxes)
+        mesh, box_count, letter_count = build_layer_mesh(layer, config)
         hole_count = 0
-        box_count = len(boxes)
         output_path = args.output or default_output_path(args.vox_path, args.layer)
         solid_name = args.solid_name or solid_name_for(args.vox_path, args.layer)
         layer_label = args.layer
@@ -634,6 +809,8 @@ def run(argv: Sequence[str]) -> int:
     if args.mode == "full":
         print(f"Holes: {hole_count}")
     print(f"Boxes: {box_count}")
+    if letter_count:
+        print(f"Letters: {letter_count}")
     print(f"Triangles: {len(mesh.triangles)}")
     return 0
 

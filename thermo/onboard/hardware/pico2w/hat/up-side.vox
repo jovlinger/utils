@@ -3,36 +3,36 @@
 # Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
 # Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
 # Rows north to south.
-# Legend: X=solid substrate, o=Pico pin pad, O=device leg pad, .=empty/air.
+# Legend: X=solid substrate, *=Pico pin pad, O=device leg pad, .=empty/air, a-z=embossed labels.
 # Trace tiles: |=vertical, -=horizontal, +=intersection.
 # Routing intent (adjacent cells, never a digraph in one cell):
 #   -O = horizontal trace into a leg pad O
 #   -- = horizontal trace segment (continue net)
 #   OO = adjacent leg pads with no trace between (isolated)
-# Layer trace uses o/O on pads; traces use - | + only on empty cells between pads.
+# Layer trace uses */O on pads; traces use - | + only on empty cells between pads.
 
 layer base (6, 10, 22)
       XXXXXXXXXX
-GP15  XoXXXXXXoX GP16
-GP14  XoXXXXXXoX GP17
-GND   XoXXXXXXoX GND
-GP13  XoXXOOOXoX GP18  IR RX: OUT GND VCC
-GP12  XoXXXXXXoX GP19
-GP11  XoXXXXXXoX GP20
-GP10  XoXXOOOXoX GP21  IR TX: DAT GND VCC
-GND   XoXXXXXXoX GND
-GP9   XoXXXXXXoX GP22
-GP8   XoXXXXXXoX RUN
-GP7   XoXXXXXXoX GP26
-GP6   XoXXXXXXoX GP27
-GND   XoXXXXXXoX GND
-GP5   XoXXXXXXoX GP28
-GP4   XoXOOOOXoX ADCV  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7
-GP3   XoXXXXXXoX 3V3
-GP2   XoXXXXXXoX 3EN
-GND   XoXXXXXXoX GND
-GP1   XoXXXXXXoX VSYS
-GP0   XoXXXXXXoX VBUS
+GP15  X*XXXXXX*X GP16
+GP14  X*XXXXXX*X GP17
+GND   X*XXXXXX*X GND
+GP13  X*XXOOOX*X GP18  IR RX: OUT GND VCC
+GP12  X*XXXXXX*X GP19
+GP11  X*XXXXXX*X GP20
+GP10  X*XXOOOX*X GP21  IR TX: DAT GND VCC
+GND   X*XXXXXX*X GND
+GP9   X*XXXXXX*X GP22
+GP8   X*XXXXXX*X RUN
+GP7   X*XXXXXX*X GP26
+GP6   X*XXXXXX*X GP27
+GND   X*XXXXXX*X GND
+GP5   X*XXXXXX*X GP28
+GP4   X*XOOOOX*X ADCV  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7
+GP3   X*XXXXXX*X 3V3
+GP2   X*XXXXXX*X 3EN
+GND   X*XXXXXX*X GND
+GP1   X*XXXXXX*X VSYS
+GP0   X*XXXXXX*X VBUS
       XXXXXXXXXX
 
 # Trace layer iteration 0: c5 GND rail, c6 3V3 rail, header taps.
@@ -45,43 +45,43 @@ GP0   XoXXXXXXoX VBUS
 
 layer trace (6, 10, 22)
       ..........
-GP15  .o...||.o. GP16
-GP14  .o...||.o. GP17
-GND   .o...||.o. GND
-GP13  .o--OOO.o. GP18  IR RX: OUT GND VCC; cols c1=o- c3=- c4=O
-GP12  .o...||.o. GP19
-GP11  .o...||.o. GP20
-GP10  .o--OOO.o. GP21  IR TX: DAT GND VCC; cols c1=o- c3=- c4=O
-GND   .o...||.o. GND
-GP9   .o...||.o. GP22
-GP8   .o...||.o. RUN
-GP7   .o...||.o. GP26
-GP6   .o...||.o. GP27
-GND   .o...||.o. GND
-GP5   .o--┐||.o. GP28  SCL cols c1=o- c3=- c4=┐
-GP4   .o-OOOO.o. GP35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; cols c1=o- c3=O c4=O
-GP3   .o...|├-o. 3V3  cols c5=| c6=├ c8=-o
-GP2   .o...||.o. 3EN
-GND   .o---┤|.o. GND  cols c1=o- c5=┤ c6=|
-GP1   .o...||.o. VSYS
-GP0   .o...||.o. VBUS
+GP15  .*..up..*. GP16
+GP14  .*.side.*. GP17
+GND   .*......*. GND
+GP13  .*--OOO.*. GP18  IR RX: OUT GND VCC; cols c1=*- c3=- c4=O
+GP12  .*...||.*. GP19
+GP11  .*...||.*. GP20
+GP10  .*--OOO.*. GP21  IR TX: DAT GND VCC; cols c1=*- c3=- c4=O
+GND   .*...||.*. GND
+GP9   .*...||.*. GP22
+GP8   .*...||.*. RUN
+GP7   .*...||.*. GP26
+GP6   .*...||.*. GP27
+GND   .*...||.*. GND
+GP5   .*--┐||.*. GP28  SCL cols c1=*- c3=- c4=┐
+GP4   .*-OOOO.*. GP35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; cols c1=*- c3=O c4=O
+GP3   .*...|├-*. 3V3  cols c5=| c6=├ c8=-*
+GP2   .*...||.*. 3EN
+GND   .*---┤|.*. GND  cols c1=*- c5=┤ c6=|
+GP1   .*......*. VSYS
+GP0   .*..usb.*. VBUS
       ..........
 
 # scratch
-# iteration 3 IR TX done: GP10 .o--OOO.o. connects GP10.c1 to DAT at GP10.c4.
-# iteration 2 IR RX reassigned to nearest GPIO: GP13 .o--OOO.o. connects GP13.c1 to OUT at GP13.c4.
+# iteration 3 IR TX done: GP10 .*--OOO.*. connects GP10.c1 to DAT at GP10.c4.
+# iteration 2 IR RX reassigned to nearest GPIO: GP13 .*--OOO.*. connects GP13.c1 to OUT at GP13.c4.
 # Non-power GPIO pins are interchangeable; prefer shortest clean route unless user pins a GPIO.
-# iteration 1.5 SCL redrawn: GP5 .o--┐||.o.; '-' bridges over SDA, corner lands on SCL.
+# iteration 1.5 SCL redrawn: GP5 .*--┐||.*.; '-' bridges over SDA, corner lands on SCL.
 # Do not use GP6 as a bridge unless GP6 is intentionally part of that net.
-# iteration 1 SDA done: GP4 .o-OOOO.o. cols c1=o- c3=O (-O into SDA leg).
+# iteration 1 SDA done: GP4 .*-OOOO.*. cols c1=*- c3=O (-O into SDA leg).
 # iteration 0 complete. Rails c5=GND c6=3V3. Taps: GND:4.c1 west (pin 3), GP3.c8 east (pin 36).
 # duplicate row labels: GND:1..GND:4 north to south; GND:4 is south tap row.
 # column map: c2 buffer; IR legs c4-c6; AHT20 GP4 row c3-c6; rails c5 GND c6 3V3.
 
 # todo
 # --- iteration 0 DONE (power only; no signal traces) ---
-# rails: c5 GND, c6 3V3 (|.o...||.o.| pattern on non-module rows)
-# header taps: GND:4.c1 .o---┤|.o.; GP3 .o...|├-o. cols c5=| c6=├ c8=-o
+# rails: c5 GND, c6 3V3 (|.*...||.*.| pattern on non-module rows)
+# header taps: GND:4.c1 .*---┤|.*.; GP3 .*...|├-*. cols c5=| c6=├ c8=-*
 # power connections (leg -> pin via rail):
 #   GP4.c5  AHT20 GND leg  -> GND:4.c1
 #   GP10.c5 IR TX GND leg  -> GND:4.c1
