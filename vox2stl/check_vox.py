@@ -784,7 +784,8 @@ def validate(path: Path) -> List[str]:
 
 
 def default_vox_paths() -> List[Path]:
-    hardware_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[1]
+    hardware_root = repo_root / "thermo" / "onboard" / "hardware"
     return sorted(hardware_root.glob("*/hat/*.vox"))
 
 

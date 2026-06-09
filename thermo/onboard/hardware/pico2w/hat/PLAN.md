@@ -71,7 +71,7 @@ leaf `hat/` directory:
 Reusable HAT layout rules and validation live one level up:
 
 * `thermo/onboard/hardware/SKILL.md` -- shared ASCII HAT layout workflow
-* `thermo/onboard/hardware/check_vox.py` -- shared validator with Pico profile
+* `vox2stl/check_vox.py` -- shared validator with Pico profile
 
 Each file defines two layers: `base` (substrate + holes) and `trace` (raised
 copper-tape routing). The grid is one 2.54 mm cell per column/row.
@@ -151,14 +151,15 @@ GPIO rather than forcing awkward routes. Current target nets:
 
 ### `up-side.vox` trace status
 
-`up-side.vox` now has all planned nets routed and checked:
+`up-side.vox` now has the old routed nets plus the new target leg annotations.
+The validator intentionally reports mismatches until the trace geometry is
+reworked:
 
 * Power rails: c5 = GND, c6 = 3V3.
 * AHT20: SDA `GP4.c1 -> GP4.c3`; SCL `GP5.c1 -> GP4.c4`.
 * IR RX: OUT `GP13.c1 -> GP13.c4`.
 * IR TX: DAT `GP10.c1 -> GP10.c4`.
-* `thermo/onboard/hardware/check_vox.py up-side.vox` passes with trace intents
-  enabled.
+* `vox2stl/check_vox.py up-side.vox` reports current target/route mismatches.
 
 `pico-side.vox` mirrors `up-side.vox` across X=0 via `mirror_from_up_side.py`.
 Modules attach from the top; the board still prints flat-side down.
@@ -166,8 +167,8 @@ Modules attach from the top; the board still prints flat-side down.
 ### Validator usage
 
 ```text
-../../check_vox.py up-side.vox
-../../check_vox.py pico-side.vox
+../../../../../vox2stl/check_vox.py up-side.vox
+../../../../../vox2stl/check_vox.py pico-side.vox
 ```
 
 Fails on: missing layers, wrong row count, invalid chars in checked window,

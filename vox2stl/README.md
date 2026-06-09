@@ -9,6 +9,12 @@ vox2stl/vox2stl.py path/to/file.vox --layer trace --output trace.stl
 vox2stl/vox2stl.py path/to/file.vox --mode full --output board.stl
 ```
 
+Validate a board `.vox` file before generating geometry:
+
+```bash
+vox2stl/check_vox.py thermo/onboard/hardware/pico2w/hat/pico-side.vox
+```
+
 The input file must contain one or more layer headers:
 
 ```text
