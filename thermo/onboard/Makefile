@@ -1,5 +1,5 @@
 # Thermo onboard: shared build/test and per-zone deploy under zones/.
-.PHONY: all build clean test deploy deploy-preflight deploy-zone ci
+.PHONY: all build clean test test-local test-docker images deploy deploy-preflight deploy-zone ci
 
 ONBOARD_ROOT := $(abspath $(CURDIR))
 THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
@@ -22,6 +22,16 @@ clean:
 
 test:
 	./test/run.sh
+
+test-local: test
+
+images:
+	@for backend in $(HARDWARE_BACKENDS); do \
+		echo "[onboard] images hardware/$$backend"; \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" images || exit $$?; \
+	done
+
+test-docker: images
 
 # Called from zones/<zone>/Makefile (see mk/zone.mk).
 DEPLOY_REPO ?=

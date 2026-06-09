@@ -16,10 +16,10 @@ layer base (6, 10, 22)
 GP15  X*XXXXXX*X GP16
 GP14  X*XXXXXX*X GP17
 GND   X*XXXXXX*X GND
-GP13  X*XXOOOX*X GP18  IR RX: OUT GND VCC
+GP13  X*XXOOOX*X GP18  IR RX target: .c4 = GND, .c5 = VCC, .c6 = GP13; reversible
 GP12  X*XXXXXX*X GP19
 GP11  X*XXXXXX*X GP20
-GP10  X*XXOOOX*X GP21  IR TX: DAT GND VCC
+GP10  X*XXOOOX*X GP21  IR TX target: .c4 = GND, .c5 = VCC, .c6 = GP10; reversible
 GND   X*XXXXXX*X GND
 GP9   X*XXXXXX*X GP22
 GP8   X*XXXXXX*X RUN
@@ -27,7 +27,7 @@ GP7   X*XXXXXX*X GP26
 GP6   X*XXXXXX*X GP27
 GND   X*XXXXXX*X GND
 GP5   X*XXXXXX*X GP28
-GP4   X*XOOOOX*X ADCV  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7
+GP4   X*XOOOOX*X ADCV  AHT20 target: .c3 = VCC, .c4 = GND, .c5 = GP5/SCL, .c6 = GP4/SDA; big 7-pin keepout
 GP3   X*XXXXXX*X 3V3
 GP2   X*XXXXXX*X 3EN
 GND   X*XXXXXX*X GND
@@ -37,9 +37,10 @@ GP0   X*XXXXXX*X VBUS
 
 # Trace layer iteration 0: c5 GND rail, c6 3V3 rail, header taps.
 # Pico header: c1 = west (-8.89), c8 = east (8.89).
-# Module IR RX row GP13 (y=16.51): c4=OUT, c5=GND, c6=VCC
-# Module IR TX row GP10 (y=8.89):  c4=DAT, c5=GND, c6=VCC
-# AHT20 on GP4 row only (y=-11.43); GPIO taps GP4 pin6 SDA, GP5 pin7 SCL (row above).
+# Module IR RX target on GP13 row (y=16.51): .c4 = GND, .c5 = VCC, .c6 = GP13; reversed is also OK.
+# Module IR TX target on GP10 row (y=8.89):  .c4 = GND, .c5 = VCC, .c6 = GP10; reversed is also OK.
+# AHT20 target: .c3 = VCC, .c4 = GND, .c5 = GP5/SCL, .c6 = GP4/SDA.
+# AHT20 is big and obscures 7 pins vertically, so place carefully.
 # Planned signals: use nearest suitable GPIO; only GND/V and other special pins are fixed.
 # Planned power taps: 3V3 pin36 row GP3 c8; GND pin3 row GP18 c1, pin8 row GP13 c1.
 
@@ -48,10 +49,10 @@ layer trace (6, 10, 22)
 GP15  .*..up..*. GP16
 GP14  .*.side.*. GP17
 GND   .*......*. GND
-GP13  .*--OOO.*. GP18  IR RX: OUT GND VCC; cols c1=*- c3=- c4=O
+GP13  .*--OOO.*. GP18  IR RX target .c4 = GND, .c5 = VCC, .c6 = GP13; reversible; cols c1=*- c3=- c4=O
 GP12  .*...||.*. GP19
 GP11  .*...||.*. GP20
-GP10  .*--OOO.*. GP21  IR TX: DAT GND VCC; cols c1=*- c3=- c4=O
+GP10  .*--OOO.*. GP21  IR TX target .c4 = GND, .c5 = VCC, .c6 = GP10; reversible; cols c1=*- c3=- c4=O
 GND   .*...||.*. GND
 GP9   .*...||.*. GP22
 GP8   .*...||.*. RUN
@@ -59,7 +60,7 @@ GP7   .*...||.*. GP26
 GP6   .*...||.*. GP27
 GND   .*...||.*. GND
 GP5   .*--┐||.*. GP28  SCL cols c1=*- c3=- c4=┐
-GP4   .*-OOOO.*. GP35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; cols c1=*- c3=O c4=O
+GP4   .*-OOOO.*. GP35  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP5, .c6 = GP4; big 7-pin keepout; cols c1=*- c3=O c4=O
 GP3   .*...|├-*. 3V3  cols c5=| c6=├ c8=-*
 GP2   .*...||.*. 3EN
 GND   .*---┤|.*. GND  cols c1=*- c5=┤ c6=|
@@ -68,8 +69,8 @@ GP0   .*..usb.*. VBUS
       ..........
 
 # scratch
-# iteration 3 IR TX done: GP10 .*--OOO.*. connects GP10.c1 to DAT at GP10.c4.
-# iteration 2 IR RX reassigned to nearest GPIO: GP13 .*--OOO.*. connects GP13.c1 to OUT at GP13.c4.
+# iteration 3 IR TX target order: .c4 = GND, .c5 = VCC, .c6 = GP10, or reversed.
+# iteration 2 IR RX target order: .c4 = GND, .c5 = VCC, .c6 = GP13, or reversed.
 # Non-power GPIO pins are interchangeable; prefer shortest clean route unless user pins a GPIO.
 # iteration 1.5 SCL redrawn: GP5 .*--┐||.*.; '-' bridges over SDA, corner lands on SCL.
 # Do not use GP6 as a bridge unless GP6 is intentionally part of that net.
@@ -77,12 +78,17 @@ GP0   .*..usb.*. VBUS
 # iteration 0 complete. Rails c5=GND c6=3V3. Taps: GND:4.c1 west (pin 3), GP3.c8 east (pin 36).
 # duplicate row labels: GND:1..GND:4 north to south; GND:4 is south tap row.
 # column map: c2 buffer; IR legs c4-c6; AHT20 GP4 row c3-c6; rails c5 GND c6 3V3.
+# AHT20 is big and obscures 7 pins vertically; placement can be tweaked manually.
 
 # todo
 # --- iteration 0 DONE (power only; no signal traces) ---
 # rails: c5 GND, c6 3V3 (|.*...||.*.| pattern on non-module rows)
 # header taps: GND:4.c1 .*---┤|.*.; GP3 .*...|├-*. cols c5=| c6=├ c8=-*
-# power connections (leg -> pin via rail):
+# target module leg orders:
+#   IR RX: .c4 = GND, .c5 = VCC, .c6 = GP13, or reversed
+#   IR TX: .c4 = GND, .c5 = VCC, .c6 = GP10, or reversed
+#   AHT20: .c3 = VCC, .c4 = GND, .c5 = GP5, .c6 = GP4; big 7-pin keepout
+# current routed connections (leg -> pin via rail):
 #   GP4.c5  AHT20 GND leg  -> GND:4.c1
 #   GP10.c5 IR TX GND leg  -> GND:4.c1
 #   GP13.c5 IR RX GND leg  -> GND:4.c1
@@ -98,29 +104,29 @@ GP0   .*..usb.*. VBUS
 # --- iteration 3 DONE: IR TX ---
 #   GP10.c4 DAT leg  -> GP10.c1 Pico GP10 (nearest interchangeable GPIO)
 # module order: AHT20, IR RX, IR TX
-# disjoint required: SDA SCL OUT DAT GND 3V3 (no shared copper between nets)
+# disjoint required: GP4 GP5 GP13 GP10 GND VCC (no shared copper between nets)
 # risks: a bridge over OO is allowed only when its tiles do not vertically contact both legs.
 
 # trace intents
 # net GND GND:4.c1 GP13.c5 GP10.c5 GP4.c5
-# net 3V3 GP3.c8 GP13.c6 GP10.c6 GP4.c6
-# disjoint GND 3V3
-# net SDA GP4.c1 GP4.c3
-# disjoint SDA GND
-# disjoint SDA 3V3
-# net SCL GP5.c1 GP4.c4
-# disjoint SDA SCL
-# disjoint SCL GND
-# disjoint SCL 3V3
-# net OUT GP13.c1 GP13.c4
-# disjoint OUT SDA
-# disjoint OUT SCL
-# disjoint OUT GND
-# disjoint OUT 3V3
-# net DAT GP10.c1 GP10.c4
-# disjoint OUT DAT
-# disjoint DAT SDA
-# disjoint DAT SCL
-# disjoint DAT GND
-# disjoint DAT 3V3
+# net VCC GP3.c8 GP13.c6 GP10.c6 GP4.c6
+# disjoint GND VCC
+# net GP4 GP4.c1 GP4.c3
+# disjoint GP4 GND
+# disjoint GP4 VCC
+# net GP5 GP5.c1 GP4.c4
+# disjoint GP4 GP5
+# disjoint GP5 GND
+# disjoint GP5 VCC
+# net GP13 GP13.c1 GP13.c4
+# disjoint GP13 GP4
+# disjoint GP13 GP5
+# disjoint GP13 GND
+# disjoint GP13 VCC
+# net GP10 GP10.c1 GP10.c4
+# disjoint GP13 GP10
+# disjoint GP10 GP4
+# disjoint GP10 GP5
+# disjoint GP10 GND
+# disjoint GP10 VCC
 # all planned signal nets routed

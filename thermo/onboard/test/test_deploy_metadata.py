@@ -58,3 +58,20 @@ def test_metadata_resolves_git_from_repo(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert meta["git_sha"] == "deadbeef"
     assert meta["git_sha_short"] == "deadbee"
     assert meta["hardware_profile"] == "pico2w_aht20_ir"
+
+
+def test_metadata_omits_git_when_repo_root_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        return type("R", (), {"returncode": 128, "stdout": ""})()
+
+    monkeypatch.setattr("common.deploy_metadata.subprocess.run", fake_run)
+    meta = deployment_post_metadata(
+        {
+            "ONBOARD_HARDWARE_PROFILE": "pi_zero_2w_htu21d_ir",
+            "ZONE_NAME": "kitchen",
+        }
+    )
+    assert meta["hardware_profile"] == "pi_zero_2w_htu21d_ir"
+    assert meta["zone_name"] == "kitchen"
+    assert "git_sha" not in meta
+    assert "git_sha_short" not in meta

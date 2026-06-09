@@ -72,6 +72,7 @@ LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(
 ROW_LABEL_RE = re.compile(r"^\s*(\S+)")
 BOX_ASSERT_CHARS = "".join(re.escape(char) for char in sorted(BOX_CHARS))
 TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-\*|\*-|\||\+|-|[" + BOX_ASSERT_CHARS + r"])")
+TRACE_NET_ASSERT_RE = re.compile(r"\.c(\d+)\s*=\s*([A-Za-z0-9_:-]+)")
 INTENT_NET_RE = re.compile(r"^#\s*net\s+(\S+)\s+(.+)$")
 INTENT_DISJOINT_RE = re.compile(r"^#\s*disjoint\s+(.+)$")
 INTENT_ENDPOINT_RE = re.compile(r"^([A-Za-z0-9_:-]+)\.c(\d+)$")
@@ -120,6 +121,16 @@ class CellRef:
 class TraceIntents:
     nets: Dict[str, List[CellRef]] = field(default_factory=dict)
     disjoint: List[Tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TraceNetAssertion:
+    """Expected net for one trace-row cell, parsed from a row comment."""
+
+    row_index: int
+    row_label: str
+    col: int
+    net_name: str
 
 
 def _row(label: str, pin_cols: FrozenSet[int], o_cols: FrozenSet[int]) -> RowExpectation:
@@ -325,6 +336,28 @@ def extract_col_assertions(row: str) -> List[Tuple[int, str]]:
     return [(int(match.group(1)), match.group(2)) for match in TRACE_COL_ASSERT_RE.finditer(row)]
 
 
+def extract_trace_net_assertions(trace: Layer, max_col: int) -> List[TraceNetAssertion]:
+    assertions: List[TraceNetAssertion] = []
+    for row_i, row in enumerate(trace.rows):
+        label = row_label(row) or f"row {row_i + 1}"
+        for match in TRACE_NET_ASSERT_RE.finditer(row):
+            col = int(match.group(1))
+            if col < 1 or col > max_col:
+                raise ValueError(
+                    f"trace row {row_i + 1} ({label}) .c{col}: "
+                    f"column must be 1..{max_col}"
+                )
+            assertions.append(
+                TraceNetAssertion(
+                    row_index=row_i,
+                    row_label=label,
+                    col=col,
+                    net_name=match.group(2),
+                )
+            )
+    return assertions
+
+
 def validate_col_assertion(window: str, max_col: int, col: int, token: str) -> Optional[str]:
     if col < 1 or col > max_col:
         return f"column {col} out of design range 1..{max_col}"
@@ -523,8 +556,58 @@ def validate_module_leg_short_risk(path: Path, trace: Layer, max_col: int) -> No
                 )
 
 
+def validate_trace_net_assertions(
+    path: Path,
+    trace: Layer,
+    assertions: Sequence[TraceNetAssertion],
+    components: Mapping[Tuple[int, int], int],
+    endpoint_components: Mapping[str, Sequence[Tuple[CellRef, int]]],
+) -> None:
+    if not assertions:
+        return
+    errors: List[str] = []
+    component_nets: Dict[int, List[str]] = {}
+    for net_name, refs in endpoint_components.items():
+        for _, comp in refs:
+            component_nets.setdefault(comp, []).append(net_name)
+    for assertion in assertions:
+        if assertion.net_name not in endpoint_components:
+            errors.append(
+                f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
+                f".c{assertion.col}={assertion.net_name}: unknown net"
+            )
+            continue
+        cell = (assertion.row_index, assertion.col)
+        char = trace_char_at(trace, assertion.row_index, assertion.col)
+        if char not in COPPER_CHARS:
+            errors.append(
+                f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
+                f".c{assertion.col}={assertion.net_name}: cell is {char!r}, not copper"
+            )
+            continue
+        if cell not in components:
+            errors.append(
+                f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
+                f".c{assertion.col}={assertion.net_name}: cell is isolated copper"
+            )
+            continue
+        actual_comp = components[cell]
+        expected_comps = {comp for _, comp in endpoint_components[assertion.net_name]}
+        if actual_comp in expected_comps:
+            continue
+        actual_names = sorted(set(component_nets.get(actual_comp, [])))
+        actual = ", ".join(actual_names) if actual_names else f"unclaimed component {actual_comp}"
+        errors.append(
+            f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
+            f".c{assertion.col} expected {assertion.net_name}, reaches {actual}"
+        )
+    if errors:
+        raise ValueError("\n".join(errors))
+
+
 def validate_trace_intents(path: Path, trace: Layer, intents: TraceIntents, max_col: int) -> None:
-    if not intents.nets and not intents.disjoint:
+    assertions = extract_trace_net_assertions(trace, max_col)
+    if not intents.nets and not intents.disjoint and not assertions:
         return
     validate_module_leg_short_risk(path, trace, max_col)
     row_index = build_row_label_index(trace)
@@ -562,6 +645,7 @@ def validate_trace_intents(path: Path, trace: Layer, intents: TraceIntents, max_
                 f"{path}: disjoint violation: nets {net_a!r} and {net_b!r} share "
                 f"copper (components {sorted(comps_a & comps_b)})"
             )
+    validate_trace_net_assertions(path, trace, assertions, components, endpoint_components)
 
 
 def validate_trace_col_assertions(path: Path, trace: Layer, profile: Optional[BoardVoxProfile]) -> None:
@@ -708,12 +792,16 @@ def main(argv: Sequence[str]) -> int:
     paths = [Path(arg) for arg in argv[1:]]
     if not paths:
         paths = default_vox_paths()
-    try:
-        for path in paths:
+    errors: List[str] = []
+    for path in paths:
+        try:
             for message in validate(path):
                 print(message, file=sys.stderr)
-    except (OSError, UnicodeError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        except (OSError, UnicodeError, ValueError) as exc:
+            errors.append(str(exc))
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
         return 1
     return 0
 

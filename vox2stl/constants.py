@@ -11,22 +11,22 @@ from typing import Dict, FrozenSet
 DEFAULT_UNIT_MM = 2.54
 
 # Trace width as a fraction of one grid cell.
-DEFAULT_TRACE_WIDTH_FRAC = 0.72
+DEFAULT_TRACE_WIDTH_FRAC = 0.72 * (0.72 / 0.88)
 
 # Minimum no-copper gap between adjacent isolated features, in cell fractions.
 DEFAULT_ADJACENT_ISOLATION_GAP_FRAC = 0.12
 
 # Pico pin through-hole diameter as a fraction of one grid cell.
-DEFAULT_PIN_HOLE_DIAMETER_FRAC = 1.10 / DEFAULT_UNIT_MM
+DEFAULT_PIN_HOLE_DIAMETER_FRAC = (1.10 * 0.66) / DEFAULT_UNIT_MM
 
 # Device-leg through-hole diameter as a fraction of one grid cell.
-DEFAULT_LEG_HOLE_DIAMETER_FRAC = DEFAULT_PIN_HOLE_DIAMETER_FRAC * 1.25
+DEFAULT_LEG_HOLE_DIAMETER_FRAC = 1.10 / DEFAULT_UNIT_MM
 
 # Pico pin raised pad outside width as a fraction of one grid cell.
-DEFAULT_PIN_OUTSIDE_FRAC = 0.88
+DEFAULT_PIN_OUTSIDE_FRAC = 0.72
 
 # Device-leg raised pad outside width as a fraction of one grid cell.
-DEFAULT_LEG_OUTSIDE_FRAC = 0.88
+DEFAULT_LEG_OUTSIDE_FRAC = 0.72
 
 # Extra trace reach past tile centers to help slicers fuse neighboring tiles.
 DEFAULT_TILE_OVERLAP_FRAC = 0.08

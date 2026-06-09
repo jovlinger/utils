@@ -42,6 +42,10 @@ def test_box_glyph_fixture() -> None:
 
 def test_pad_and_hole_defaults() -> None:
     require(
+        abs(vox2stl.DEFAULT_TRACE_WIDTH_FRAC - 0.72 * (0.72 / 0.88)) < 1e-9,
+        "trace width default should shrink by the pad exterior ratio",
+    )
+    require(
         abs(vox2stl.DEFAULT_TRACE_WIDTH_MM - vox2stl.DEFAULT_TRACE_WIDTH_FRAC * vox2stl.DEFAULT_UNIT_MM)
         < 1e-9,
         "trace width default should derive from UNIT fraction",
@@ -60,12 +64,24 @@ def test_pad_and_hole_defaults() -> None:
         "pin outside default should derive from UNIT fraction",
     )
     require(
+        abs(vox2stl.DEFAULT_PIN_OUTSIDE_FRAC - 0.72) < 1e-9,
+        "pin outside default should match old trace width",
+    )
+    require(
+        abs(vox2stl.DEFAULT_LEG_OUTSIDE_FRAC - 0.72) < 1e-9,
+        "device outside default should match old trace width",
+    )
+    require(
         abs(vox2stl.DEFAULT_DEVICE_PAD_WIDTH_MM - vox2stl.DEFAULT_PAD_WIDTH_MM) < 1e-9,
         "device pad outer prism should match Pico pad outer prism",
     )
     require(
-        abs(vox2stl.DEFAULT_DEVICE_HOLE_DIAMETER_MM - vox2stl.DEFAULT_PIN_HOLE_DIAMETER_MM * 1.25) < 1e-9,
-        "device hole default should be 125 percent of Pico hole default",
+        abs(vox2stl.DEFAULT_PIN_HOLE_DIAMETER_MM - 1.10 * 0.66) < 1e-9,
+        "pin hole default should be 66 percent of the previous Pico hole default",
+    )
+    require(
+        abs(vox2stl.DEFAULT_DEVICE_HOLE_DIAMETER_MM - 1.10) < 1e-9,
+        "device hole default should match the previous Pico hole default",
     )
     require(
         abs(vox2stl.DEFAULT_LABEL_RECESS_MM - vox2stl.DEFAULT_LABEL_RECESS_FRAC * vox2stl.DEFAULT_UNIT_MM)

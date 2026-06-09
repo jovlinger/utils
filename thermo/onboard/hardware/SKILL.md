@@ -109,6 +109,10 @@ copper and validates declared nets and disjoint nets:
 Use `LABEL.cN` for endpoints. Use `LABEL:N.cN` when a row label appears more
 than once, where `N` is the 1-based occurrence.
 
+Trace-row comments may also assert expected nets for module legs with
+`.cN = NET`. The checker flood-fills the cell and fails if it does not reach
+the declared `# net NET` component.
+
 ## Layout Checks
 
 - The checker passes for the board leaf `.vox` file.

@@ -130,10 +130,18 @@ def _gen_keys(tmpdir: Path) -> tuple[Path, Path]:
     return priv_path, pub_path
 
 
+def _component_python(component_dir: Path) -> str:
+    """Use the component venv for subprocess services when thermo-envs created it."""
+    venv_python = component_dir / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    return sys.executable
+
+
 def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5001", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
-        [sys.executable, "app.py"],
+        [_component_python(DMZ_DIR), "app.py"],
         cwd=DMZ_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -144,7 +152,7 @@ def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
 def _start_onboard(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5002", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
-        [sys.executable, "-m", "hardware.pizero2w.app"],
+        [_component_python(ONBOARD_DIR), "-m", "hardware.pizero2w.app"],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -167,7 +175,7 @@ def _start_twoway(env: dict, stderr: Any) -> subprocess.Popen:
         **env,
     }
     return subprocess.Popen(
-        [sys.executable, "-m", "common.twoway", readfrom, dmz_sensors, writeto],
+        [_component_python(ONBOARD_DIR), "-m", "common.twoway", readfrom, dmz_sensors, writeto],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,

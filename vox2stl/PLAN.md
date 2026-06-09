@@ -28,9 +28,10 @@ to millimeters at runtime:
 
 Current intent:
 
-- Holes: leg holes are 125 percent of pin holes.
-- Pads: pin and leg pads are chunky, near one full unit, with through-hole
-  cylinders subtracted.
+- Holes: leg holes match the previous pin-hole diameter, while pin holes are
+  66 percent of that diameter.
+- Pads: pin and leg pads use the previous trace width as their exterior, with
+  through-hole cylinders subtracted.
 - Traces: traces are chunky enough for slicers to create visible top-surface
   paths.
 - Isolation: no-connect pairs get an explicit gap even if chunky features would

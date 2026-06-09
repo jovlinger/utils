@@ -9,7 +9,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 THERMO="$(cd "$SCRIPT_DIR/.." && pwd)"
-UTILS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+UTILS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOG="$SCRIPT_DIR/.dockertest-last.log"
 
 # When invoked via `make dockertest`, PLATFORM is set in the Makefile. For direct

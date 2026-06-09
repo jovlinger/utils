@@ -30,9 +30,9 @@ def _utils_repo_root(environ: Mapping[str, str]) -> Optional[Path]:
     override = environ.get("THERMO_DEPLOY_ROOT", "").strip()
     if override:
         return Path(override)
-    candidate = Path(__file__).resolve().parents[3]
-    if _git_inside_work_tree(candidate):
-        return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if _git_inside_work_tree(candidate):
+            return candidate
     return None
 
 
