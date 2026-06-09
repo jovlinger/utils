@@ -75,7 +75,7 @@ def mirror_col_comment(comment: str) -> str:
 TRACE_CUSTOM: Dict[int, str] = {
     1: ".*.pico.*.",
     2: ".*.side.*.",
-    20: ".*......*.",
+    20: ".*.usb..*.",
 }
 
 

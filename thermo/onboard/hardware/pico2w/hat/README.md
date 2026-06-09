@@ -5,6 +5,8 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 ## Files
 
 - `generate_sensor_hat_stl.py` -- parametric generator (no extra deps)
+- `../../SKILL.md` -- shared ASCII HAT layout rules
+- `../../check_vox.py` -- shared `.vox` validator
 - `../../../../../vox2stl/vox2stl.py` -- top-level `.vox` trace-to-STL converter
 - `PLAN.md` -- board orientation, coordinates, routes, and fabrication notes
 - `thermo-pico2w-sensor-hat-v1-up-side.stl` -- solid base plate, trace-side component holes
@@ -19,6 +21,10 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 hat/generate_sensor_hat_stl.py
 make -C thermo/onboard/hardware/pico2w hat-vox-stl
 ```
+
+The `.vox` files and generated STL artifacts stay in this leaf `hat/` directory.
+Reusable layout rules and validation live one hardware level up so future board
+leaf dirs, such as ESP32-S3, can share them.
 
 ## Layout (v1)
 
@@ -47,6 +53,7 @@ make -C thermo/onboard/hardware/pico2w hat-vox-stl
 - Layer height: 0.16--0.20 mm; perimeters 3+; infill 25--35 % gyroid.
 - First layer: slow, clean brim around outer edge if corners lift.
 - After print: choose `up-side` for modules on the raised trace side, or `pico-side` for modules on the flat side with pins passing through all layers.
-- Generate voxel geometry with `hat-vox-stl` after `up-side.vox` passes `check_vox.py`.
+- Generate voxel geometry with `hat-vox-stl` after `up-side.vox` passes
+  `thermo/onboard/hardware/check_vox.py`.
   Trace arms are emitted only across intended `.vox` connections and are
   clamped to reach pad material without entering the through-hole void.

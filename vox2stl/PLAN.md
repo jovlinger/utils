@@ -38,6 +38,55 @@ Current intent:
 - Labels: lowercase `.vox` letters render as uppercase block-letter shapes,
   one monospace letter per cell, and do not connect electrically.
 
+## Hardware Profiles
+
+Split geometry constants into hardware facts and print-profile tuning. Hardware
+profiles describe the board or carrier that the `.vox` layout targets; print
+profiles describe the A1 mini slicer choices used to make the STL printable.
+
+The first non-Pico profile should target the official Espressif
+ESP32-S3-DevKitC-1 carrier with an ESP32-S3-WROOM-1 module. Espressif's
+published header block lists two 22-pin headers, J1 and J3. The mechanical
+drawing reports 2.54 mm pin pitch, 25.40 mm header row spacing, and about
+63.50 mm by 27.94 mm board outline. Source:
+`https://documentation.espressif.com/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html`
+
+Keep the layout-relevant differences small and explicit:
+
+| Fact | Pico HAT profile | ESP32-S3-DevKitC-1 profile |
+| --- | --- | --- |
+| Header pitch | 2.54 mm | 2.54 mm |
+| Header rows | 2 | 2 |
+| Pins per header | 20 | 22 |
+| Header row spacing | 17.78 mm | 25.40 mm |
+| Grid intervals between headers | 7 | 10 |
+| Board outline | Pico-derived HAT outline | 63.50 mm x 27.94 mm |
+| Pin naming | `P1` through `P40` | J1/J3 header names from Espressif |
+
+The `.vox` cell unit can stay 2.54 mm for both boards. The ESP32-S3 layout
+skill should use the wider 10-interval header spacing and two extra rows per
+side, while `vox2stl` should load the hardware profile so hole diameters,
+header metadata, and default `UNIT_MM` come from the selected board instead of
+Pico-specific constants.
+
+Planned implementation:
+
+1. Start a new hardware directory at
+   `thermo/onboard/hardware/esp32s3_devkitc1/`.
+2. Store a machine-readable ESP32-S3 hardware profile there, plus source notes
+   for the Espressif dimensions and header table.
+3. Add a matching Pico profile under `thermo/onboard/hardware/pico2w/`.
+4. Add `--hardware-profile` to `vox2stl.py`; CLI overrides and `.vox`
+   `UNIT_MM` metadata should still work.
+5. Keep A1 mini slicer constants, such as trace width, isolation gap, overlap,
+   and label dimensions, separate from hardware facts.
+
+Shared HAT layout tooling belongs in `thermo/onboard/hardware/`: the ASCII
+layout skill and `.vox` checker are reusable across board families. Generated
+and hand-edited board artifacts stay in leaf directories such as
+`thermo/onboard/hardware/pico2w/hat/` and the future
+`thermo/onboard/hardware/esp32s3_devkitc1/hat/`.
+
 ## Chunky Then Subtract
 
 For each trace-layer cell:

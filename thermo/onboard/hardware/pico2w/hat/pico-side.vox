@@ -54,7 +54,7 @@ P5    .*-┤|...*. P36  3V3 tap; cols c4=| c3=┤ c1=*-
 P4    .*.||...*. P37
 P3    .*.|├---*. P38  cols c8=-* c4=├ c3=|
 P2    .*......*. P39
-P1    .*......*. P40
+P1    .*.usb..*. P40
       ..........
 # scratch
 # Mirrored from up-side.vox.

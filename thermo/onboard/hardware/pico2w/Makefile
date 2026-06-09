@@ -2,6 +2,7 @@
 .PHONY: all build test check host-check firmware-check firmware-build images push push_images pull clean deploy print-config
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
+HARDWARE_ROOT ?= $(ONBOARD_ROOT)/hardware
 REPO_ROOT ?= $(abspath $(CURDIR)/../../../..)
 CARGO ?= $(if $(wildcard $(HOME)/.cargo/bin/cargo),$(HOME)/.cargo/bin/cargo,cargo)
 THERMO_DEPLOY_GIT_SHA ?= $(shell git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null)
@@ -47,17 +48,17 @@ hat-stl:
 
 hat-vox-stl:
 	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
-	hat/check_vox.py "hat/up-side.vox"
+	"$(HARDWARE_ROOT)/check_vox.py" "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_vox
 
 hat-pico-vox-stl:
 	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
 	python3 "hat/mirror_from_up_side.py"
-	hat/check_vox.py "hat/pico-side.vox"
+	"$(HARDWARE_ROOT)/check_vox.py" "hat/pico-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/pico-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-pico-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_pico_side_vox
 
 hat-trace-stl:
-	hat/check_vox.py "hat/up-side.vox"
+	"$(HARDWARE_ROOT)/check_vox.py" "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --layer trace --output "hat/thermo-pico2w-sensor-hat-v1-up-side-trace.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_trace
 
 deploy:

@@ -6,20 +6,21 @@ from __future__ import annotations
 import math
 from typing import List, Sequence, Tuple
 
+from constants import (
+    DEFAULT_LABEL_BLUR_PASSES,
+    DEFAULT_LABEL_BLUR_RADIUS,
+    DEFAULT_LABEL_HEIGHT_FRAC,
+    DEFAULT_LABEL_RASTER_SIZE,
+    DEFAULT_LABEL_RECESS_FRAC,
+    DEFAULT_LABEL_STROKE_FRAC,
+    DEFAULT_LABEL_TILE_MAX_TRIANGLES,
+    DEFAULT_MAX_VERTEX_VALENCE,
+)
 from hershey_simplex import Stroke, hershey_strokes
 
 Vec2 = Tuple[float, float]
 Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
-
-DEFAULT_LABEL_RECESS_FRAC = 0.04
-DEFAULT_LABEL_HEIGHT_FRAC = 0.40
-DEFAULT_LABEL_TILE_MAX_TRIANGLES = 30000
-DEFAULT_LABEL_RASTER_SIZE = 512
-DEFAULT_LABEL_STROKE_FRAC = 0.20
-DEFAULT_LABEL_BLUR_PASSES = 4
-DEFAULT_LABEL_BLUR_RADIUS = 5
-DEFAULT_MAX_VERTEX_VALENCE = 20
 
 
 def distance_point_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:

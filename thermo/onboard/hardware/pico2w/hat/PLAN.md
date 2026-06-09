@@ -63,11 +63,15 @@ Routing will return only after the base geometry slices and prints cleanly.
 ## Voxel design files
 
 Design iteration moved from direct STL mesh edits to text voxel files in this
-directory:
+leaf `hat/` directory:
 
 * `up-side.vox` -- active design file (components on trace side)
 * `pico-side.vox` -- mirrored trace topology from `up-side.vox` (flat-side mount)
-* `check_vox.py` -- local validator (run often during edits)
+
+Reusable HAT layout rules and validation live one level up:
+
+* `thermo/onboard/hardware/SKILL.md` -- shared ASCII HAT layout workflow
+* `thermo/onboard/hardware/check_vox.py` -- shared validator with Pico profile
 
 Each file defines two layers: `base` (substrate + holes) and `trace` (raised
 copper-tape routing). The grid is one 2.54 mm cell per column/row.
@@ -153,7 +157,8 @@ GPIO rather than forcing awkward routes. Current target nets:
 * AHT20: SDA `GP4.c1 -> GP4.c3`; SCL `GP5.c1 -> GP4.c4`.
 * IR RX: OUT `GP13.c1 -> GP13.c4`.
 * IR TX: DAT `GP10.c1 -> GP10.c4`.
-* `check_vox.py up-side.vox` passes with trace intents enabled.
+* `thermo/onboard/hardware/check_vox.py up-side.vox` passes with trace intents
+  enabled.
 
 `pico-side.vox` mirrors `up-side.vox` across X=0 via `mirror_from_up_side.py`.
 Modules attach from the top; the board still prints flat-side down.
@@ -161,8 +166,8 @@ Modules attach from the top; the board still prints flat-side down.
 ### Validator usage
 
 ```text
-./check_vox.py up-side.vox
-./check_vox.py pico-side.vox
+../../check_vox.py up-side.vox
+../../check_vox.py pico-side.vox
 ```
 
 Fails on: missing layers, wrong row count, invalid chars in checked window,
