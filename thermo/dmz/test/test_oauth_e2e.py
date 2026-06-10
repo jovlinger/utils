@@ -52,9 +52,7 @@ def _make_oauth_mock() -> MagicMock:
     return m
 
 
-def test_oauth_e2e_full_flow(
-    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_oauth_e2e_full_flow(dmz_ctx: object, monkeypatch: pytest.MonkeyPatch) -> None:
     """Steps 1–5: unauthenticated access triggers the IdP redirect chain;
     after the faked callback the session grants access to /ui/context."""
     monkeypatch.setenv("ALLOWED_EMAIL_PATTERN", _OAUTH_E2E_PATTERN)
@@ -82,9 +80,9 @@ def test_oauth_e2e_full_flow(
             # Step 4: session + single 302 from /authorize to public HTML UI root
             with c.session_transaction() as sess:
                 user: Dict[str, Any] = sess.get("user") or {}
-                assert user.get("email") == _OAUTH_E2E_EMAIL.lower(), (
-                    f"Session user email mismatch: {user}"
-                )
+                assert (
+                    user.get("email") == _OAUTH_E2E_EMAIL.lower()
+                ), f"Session user email mismatch: {user}"
             loc3 = (r3.headers.get("Location") or "").strip()
             assert "/ui/context" not in loc3, loc3
             assert loc3.endswith("/"), loc3
@@ -94,7 +92,9 @@ def test_oauth_e2e_full_flow(
             r5 = c.get("/ui/context")
             assert r5.status_code == 200, r5.get_data(as_text=True)
             body: Dict[str, Any] = r5.get_json() or {}
-            assert "zones" in body, f"Expected 'zones' key in /ui/context response: {body}"
+            assert (
+                "zones" in body
+            ), f"Expected 'zones' key in /ui/context response: {body}"
 
 
 def test_oauth_authorize_permanent_session_when_lifetime_configured(
@@ -163,6 +163,6 @@ def test_oauth_e2e_forged_session_rejected(dmz_ctx: object) -> None:
             )
             r = c.get("/ui/context", headers={"Accept": "text/html,*/*"})
             assert r.status_code == 302, r.get_data(as_text=True)
-            assert "/login" in r.headers["Location"], (
-                f"Forged session should redirect to /login, got: {r.headers['Location']}"
-            )
+            assert (
+                "/login" in r.headers["Location"]
+            ), f"Forged session should redirect to /login, got: {r.headers['Location']}"

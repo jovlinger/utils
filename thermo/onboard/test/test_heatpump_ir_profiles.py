@@ -53,13 +53,7 @@ def test_profile_registry_loads_known_dialects() -> None:
 
 
 def test_midea_classic_state_packet_uses_byte_complements() -> None:
-    state = (
-        State()
-        .set_power(True)
-        .set_mode(Mode.COOL)
-        .set_temp(22)
-        .set_fan(Fan.F1)
-    )
+    state = State().set_power(True).set_mode(Mode.COOL).set_temp(22).set_fan(Fan.F1)
 
     frame = MideaClassic._with_complements(MideaClassic._state_data_bytes(state))
 
@@ -68,13 +62,7 @@ def test_midea_classic_state_packet_uses_byte_complements() -> None:
 
 
 def test_midea_classic_powered_on_sequence_includes_office_secondary_frame() -> None:
-    state = (
-        State()
-        .set_power(True)
-        .set_mode(Mode.COOL)
-        .set_temp(22)
-        .set_fan(Fan.F1)
-    )
+    state = State().set_power(True).set_mode(Mode.COOL).set_temp(22).set_fan(Fan.F1)
 
     assert _mode2_frames(MideaClassic.dumps(state)) == [
         [0xB2, 0x4D, 0x9F, 0x60, 0x70, 0x8F],
@@ -84,13 +72,7 @@ def test_midea_classic_powered_on_sequence_includes_office_secondary_frame() -> 
 
 
 def test_midea_classic_power_off_keeps_two_state_packets() -> None:
-    state = (
-        State()
-        .set_power(False)
-        .set_mode(Mode.COOL)
-        .set_temp(22)
-        .set_fan(Fan.F1)
-    )
+    state = State().set_power(False).set_mode(Mode.COOL).set_temp(22).set_fan(Fan.F1)
 
     assert _mode2_frames(MideaClassic.dumps(state)) == [
         [0xB2, 0x4D, 0x7B, 0x84, 0xE0, 0x1F],
@@ -99,13 +81,7 @@ def test_midea_classic_power_off_keeps_two_state_packets() -> None:
 
 
 def test_haier_yrw02_state_packet_uses_sum_checksum() -> None:
-    state = (
-        State()
-        .set_power(True)
-        .set_mode(Mode.COOL)
-        .set_temp(22)
-        .set_fan(Fan.F1)
-    )
+    state = State().set_power(True).set_mode(Mode.COOL).set_temp(22).set_fan(Fan.F1)
 
     frame = HaierYRW02._state_bytes(state)
 

@@ -155,7 +155,9 @@ class Mesh:
         lines: List[str] = [f"solid {name}"]
         for a, b, c in self.triangles:
             normal = _normal(a, b, c)
-            lines.append(f"  facet normal {normal[0]:.6f} {normal[1]:.6f} {normal[2]:.6f}")
+            lines.append(
+                f"  facet normal {normal[0]:.6f} {normal[1]:.6f} {normal[2]:.6f}"
+            )
             lines.append("    outer loop")
             for v in (a, b, c):
                 lines.append(f"      vertex {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
@@ -177,7 +179,9 @@ def _normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3:
     return (nx / length, ny / length, nz / length)
 
 
-def box_tris(x0: float, y0: float, x1: float, y1: float, z0: float, z1: float) -> List[Tri]:
+def box_tris(
+    x0: float, y0: float, x1: float, y1: float, z0: float, z1: float
+) -> List[Tri]:
     pts = [
         (x0, y0, z0),
         (x1, y0, z0),
@@ -297,30 +301,62 @@ def plate_with_holes_tris(
                 if outward == "neg":
                     tris.extend(
                         [
-                            ((fixed_coord, var, z0), (fixed_coord, vnext, z0), (fixed_coord, vnext, z1)),
-                            ((fixed_coord, var, z0), (fixed_coord, vnext, z1), (fixed_coord, var, z1)),
+                            (
+                                (fixed_coord, var, z0),
+                                (fixed_coord, vnext, z0),
+                                (fixed_coord, vnext, z1),
+                            ),
+                            (
+                                (fixed_coord, var, z0),
+                                (fixed_coord, vnext, z1),
+                                (fixed_coord, var, z1),
+                            ),
                         ]
                     )
                 else:
                     tris.extend(
                         [
-                            ((fixed_coord, var, z1), (fixed_coord, vnext, z1), (fixed_coord, vnext, z0)),
-                            ((fixed_coord, var, z1), (fixed_coord, vnext, z0), (fixed_coord, var, z0)),
+                            (
+                                (fixed_coord, var, z1),
+                                (fixed_coord, vnext, z1),
+                                (fixed_coord, vnext, z0),
+                            ),
+                            (
+                                (fixed_coord, var, z1),
+                                (fixed_coord, vnext, z0),
+                                (fixed_coord, var, z0),
+                            ),
                         ]
                     )
             else:
                 if outward == "neg":
                     tris.extend(
                         [
-                            ((var, fixed_coord, z0), (vnext, fixed_coord, z0), (vnext, fixed_coord, z1)),
-                            ((var, fixed_coord, z0), (vnext, fixed_coord, z1), (var, fixed_coord, z1)),
+                            (
+                                (var, fixed_coord, z0),
+                                (vnext, fixed_coord, z0),
+                                (vnext, fixed_coord, z1),
+                            ),
+                            (
+                                (var, fixed_coord, z0),
+                                (vnext, fixed_coord, z1),
+                                (var, fixed_coord, z1),
+                            ),
                         ]
                     )
                 else:
                     tris.extend(
                         [
-                            ((var, fixed_coord, z1), (vnext, fixed_coord, z1), (vnext, fixed_coord, z0)),
-                            ((var, fixed_coord, z1), (vnext, fixed_coord, z0), (var, fixed_coord, z0)),
+                            (
+                                (var, fixed_coord, z1),
+                                (vnext, fixed_coord, z1),
+                                (vnext, fixed_coord, z0),
+                            ),
+                            (
+                                (var, fixed_coord, z1),
+                                (vnext, fixed_coord, z0),
+                                (var, fixed_coord, z0),
+                            ),
                         ]
                     )
             var = vnext
@@ -344,10 +380,14 @@ def trace_boxes_from_path(
     for (xa, ya), (xb, yb) in zip(points, points[1:]):
         if abs(xa - xb) < 1e-6:
             y_lo, y_hi = (ya, yb) if ya <= yb else (yb, ya)
-            boxes.append(BoxSolid(xa - half, y_lo - half, xa + half, y_hi + half, z0, z1, label))
+            boxes.append(
+                BoxSolid(xa - half, y_lo - half, xa + half, y_hi + half, z0, z1, label)
+            )
         else:
             x_lo, x_hi = (xa, xb) if xa <= xb else (xb, xa)
-            boxes.append(BoxSolid(x_lo - half, ya - half, x_hi + half, ya + half, z0, z1, label))
+            boxes.append(
+                BoxSolid(x_lo - half, ya - half, x_hi + half, ya + half, z0, z1, label)
+            )
     return boxes
 
 
@@ -472,7 +512,9 @@ def sensor_module_holes(
     return sites, pads
 
 
-def intended_trace_points(pads: dict[str, Tuple[float, float]]) -> List[Tuple[float, float]]:
+def intended_trace_points(
+    pads: dict[str, Tuple[float, float]],
+) -> List[Tuple[float, float]]:
     points: List[Tuple[float, float]] = [
         PICO_PADS_MM[PIN_GP4],
         PICO_PADS_MM[PIN_GP5],
@@ -503,7 +545,9 @@ def build_unconnected_boxes(pads: dict[str, Tuple[float, float]]) -> List[BoxSol
     return boxes
 
 
-def build_trace_boxes(variant: Variant, pads: dict[str, Tuple[float, float]]) -> List[BoxSolid]:
+def build_trace_boxes(
+    variant: Variant, pads: dict[str, Tuple[float, float]]
+) -> List[BoxSolid]:
     z0 = BASE_THICKNESS_MM
     z1 = BASE_THICKNESS_MM + TRACE_RAISE_MM
 
@@ -516,8 +560,24 @@ def build_trace_boxes(variant: Variant, pads: dict[str, Tuple[float, float]]) ->
     rail_y1 = 18.0
     rail_half = RAIL_WIDTH_MM * 0.5
     rails: List[BoxSolid] = [
-        BoxSolid(rail_gnd_x - rail_half, rail_y0, rail_gnd_x + rail_half, rail_y1, z0, z1, "GND"),
-        BoxSolid(rail_3v3_x - rail_half, -13.97, rail_3v3_x + rail_half, rail_y1, z0, z1, "3V3"),
+        BoxSolid(
+            rail_gnd_x - rail_half,
+            rail_y0,
+            rail_gnd_x + rail_half,
+            rail_y1,
+            z0,
+            z1,
+            "GND",
+        ),
+        BoxSolid(
+            rail_3v3_x - rail_half,
+            -13.97,
+            rail_3v3_x + rail_half,
+            rail_y1,
+            z0,
+            z1,
+            "3V3",
+        ),
     ]
 
     def trace(points: Sequence[Tuple[float, float]], label: str) -> List[BoxSolid]:
@@ -641,9 +701,15 @@ def build_emboss_boxes(variant: Variant) -> List[BoxSolid]:
     trace_z1 = BASE_THICKNESS_MM + TRACE_RAISE_MM
     boxes: List[BoxSolid] = []
     boxes.extend(text_boxes("USB", (0.0, -23.45), 0.34, z0, text_z1))
-    boxes.extend(multiline_text_boxes(variant.trace_text_lines, (0.0, 23.50), 0.34, 0.34, z0, text_z1))
     boxes.extend(
-        trace_boxes_from_path([(5.20, 19.05), (7.20, 19.05)], TRACE_WIDTH_MM, z0, trace_z1)
+        multiline_text_boxes(
+            variant.trace_text_lines, (0.0, 23.50), 0.34, 0.34, z0, text_z1
+        )
+    )
+    boxes.extend(
+        trace_boxes_from_path(
+            [(5.20, 19.05), (7.20, 19.05)], TRACE_WIDTH_MM, z0, trace_z1
+        )
     )
     return boxes
 
@@ -705,7 +771,9 @@ def main() -> None:
     for variant in VARIANTS:
         out_path = out_dir / f"thermo-pico2w-sensor-hat-v1-{variant.name}.stl"
         mesh = build_mesh(variant)
-        mesh.write_ascii_stl(out_path, f"thermo_pico2w_sensor_hat_v1_{variant.name.replace('-', '_')}")
+        mesh.write_ascii_stl(
+            out_path, f"thermo_pico2w_sensor_hat_v1_{variant.name.replace('-', '_')}"
+        )
         if variant.legacy_alias:
             legacy_path = out_dir / "thermo-pico2w-sensor-hat-v1.stl"
             mesh.write_ascii_stl(legacy_path, "thermo_pico2w_sensor_hat_v1")

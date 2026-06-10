@@ -6,7 +6,7 @@ from pathlib import Path
 _UI = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_UI))
 
-import ui_server
+import ui_server  # noqa: E402
 
 
 def test_zone_logs_html_renders_selected_zone_tail() -> None:

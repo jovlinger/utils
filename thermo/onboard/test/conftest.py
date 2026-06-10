@@ -12,11 +12,11 @@ _ONBOARD = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ONBOARD not in sys.path:
     sys.path.insert(0, _ONBOARD)
 
-from hardware.pizero2w import smbus_fake
+from hardware.pizero2w import smbus_fake  # noqa: E402
 
 sys.modules["smbus"] = smbus_fake
 
-from hardware.pizero2w import app as app_module
+from hardware.pizero2w import app as app_module  # noqa: E402
 
 
 class DaikinSendSpy:

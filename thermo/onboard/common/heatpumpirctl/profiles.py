@@ -86,7 +86,9 @@ def normalize_protocol_name(value: Optional[str]) -> str:
     name = aliases.get(raw, raw)
     if name not in SUPPORTED_IR_PROTOCOLS:
         supported = ", ".join(sorted(SUPPORTED_IR_PROTOCOLS))
-        raise ValueError(f"unsupported ONBOARD_IR_PROTOCOL={value!r}; supported: {supported}")
+        raise ValueError(
+            f"unsupported ONBOARD_IR_PROTOCOL={value!r}; supported: {supported}"
+        )
     return name
 
 

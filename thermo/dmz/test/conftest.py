@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Iterator
+
+import pytest
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from typing import Iterator
-
-import pytest
-
-import app as dmz_module
-from app import app as dmz_application
+import app as dmz_module  # noqa: E402
+from app import app as dmz_application  # noqa: E402
 
 
 def pytest_runtest_teardown(item: pytest.Item) -> None:

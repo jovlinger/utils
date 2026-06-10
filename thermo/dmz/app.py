@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple, TypedDict, Union
 from urllib.parse import urlparse
 
-from flask import Flask, g, redirect, request, session, url_for
+from flask import Flask, redirect, request, session, url_for
 from pydantic import BaseModel, validator
 
 from logging_config import configure_logging, set_log_level
@@ -227,7 +227,7 @@ def _full_zone_state_snapshot() -> Dict[str, Dict[str, Any]]:
     for z in sorted(
         set(commands.keys())
         | set(sensors.keys())
-        |         set(zone_logs.keys())
+        | set(zone_logs.keys())
         | set(zone_networks.keys())
         | set(zone_deployments.keys())
     ):
@@ -422,10 +422,14 @@ def build_dmz_config_from_environ() -> DmzConfig:
     env_raw: Optional[str] = os.environ.get("ENV")
     thermo_ui = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
     base_raw = (
-        os.environ.get("DMZ_PUBLIC_BASE_URL")
-        or os.environ.get("DMZ_PUBLIC_URL")
-        or ""
-    ).strip().rstrip("/")
+        (
+            os.environ.get("DMZ_PUBLIC_BASE_URL")
+            or os.environ.get("DMZ_PUBLIC_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
     dmz_public_base_url: Optional[str] = base_raw or None
     port_s = os.environ.get("PORT", "5000")
     try:
@@ -442,7 +446,9 @@ def build_dmz_config_from_environ() -> DmzConfig:
         "google_client_id": google_client_id,
         "google_client_secret": google_client_secret,
         "oauth_enabled": bool(google_client_id),
-        "allowed_email_pattern": (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip(),
+        "allowed_email_pattern": (
+            os.environ.get("ALLOWED_EMAIL_PATTERN") or ""
+        ).strip(),
         "allowed_email": (os.environ.get("ALLOWED_EMAIL") or "").strip(),
         "zone_public_key": os.environ.get("ZONE_PUBLIC_KEY"),
         "zone_public_key_path": os.environ.get("ZONE_PUBLIC_KEY_PATH"),
@@ -619,7 +625,11 @@ def _auth_config_detail() -> Dict[str, Any]:
     if pem_bytes:
         zone_key_last4 = hashlib.sha256(pem_bytes).hexdigest()[-4:]
     google_id = str(CONFIG["google_client_id"] or "")
-    google_last4 = google_id[-4:] if len(google_id) >= 4 else ("n/a" if not google_id else google_id)
+    google_last4 = (
+        google_id[-4:]
+        if len(google_id) >= 4
+        else ("n/a" if not google_id else google_id)
+    )
     allow_pat = CONFIG["allowed_email_pattern"]
     allowlist_mode = (
         "regex"
@@ -777,7 +787,9 @@ def _diagnostics_payload() -> Dict[str, Any]:
     """Shared JSON for ``/ui/diagnostics`` and augmented ``GET /debug/logs``."""
     cfg = _auth_config_detail()
     return {
-        "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "server_time_utc": datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "process_start_utc": _START_UTC_ISO,
         "uptime_seconds": round(time.time() - _START_WALL, 3),
         "version": _build_version_payload(),
@@ -973,8 +985,8 @@ def _update_zone_network(zonename: str, payload: Any) -> None:
         if isinstance(value, (str, int, float, bool)) or value is None:
             network[key[:80]] = value
     if network:
-        network["received_dt"] = datetime.now(timezone.utc).isoformat().replace(
-            "+00:00", "Z"
+        network["received_dt"] = (
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
         zone_networks[zonename] = network
 
@@ -1006,8 +1018,8 @@ def _update_zone_deployment(zonename: str, payload: Any) -> None:
         return
     if _json_strings_only_ascii(deployment) is not None:
         return
-    deployment["received_dt"] = datetime.now(timezone.utc).isoformat().replace(
-        "+00:00", "Z"
+    deployment["received_dt"] = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
     zone_deployments[zonename] = deployment
 
@@ -1054,14 +1066,18 @@ def _redirect_public_ui_home_or_503() -> Any:
     origin = CONFIG["thermo_ui_public_origin"]
     if origin:
         return redirect(f"{origin}/")
-    login_origin = (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
+    login_origin = (
+        (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
+    )
     if login_origin:
         return redirect(f"{login_origin}/")
     fallback = _public_ui_root_url()
     if fallback:
         return redirect(f"{fallback}/")
     return (
-        {"error": "cannot derive public UI URL (set THERMO_UI_PUBLIC_ORIGIN or open /login on this host)"},
+        {
+            "error": "cannot derive public UI URL (set THERMO_UI_PUBLIC_ORIGIN or open /login on this host)"
+        },
         503,
     )
 
@@ -1104,7 +1120,9 @@ def logout() -> Any:
     """Clear session."""
     session.pop("user", None)
     session.pop(_SESSION_OAUTH_PUBLIC_UI_HOME, None)
-    return redirect(url_for("login") if CONFIG["oauth_enabled"] else url_for("get_zones"))
+    return redirect(
+        url_for("login") if CONFIG["oauth_enabled"] else url_for("get_zones")
+    )
 
 
 def _zone_public_key_configured() -> Optional[str]:
@@ -1198,7 +1216,7 @@ def _authorize_ui() -> Optional[Any]:
 
 
     RETURNS NONE WHEN ACCESS IS GRANTED.
-    When OAuth is enabled and no session exists, browser requests 
+    When OAuth is enabled and no session exists, browser requests
     (``Accept: text/html``) receive a **302** to ``/login``; programmatic clients receive **401** JSON.
     ``/ui/diagnostics`` is intentionally left open for operator debugging.
     """
@@ -1345,7 +1363,7 @@ def update_command(zonename: str) -> Any:
     Store the JSON body as the zone’s latest command and return the zone snapshot.
     Body checks: valid UTF-8, parse as JSON, all JSON strings 7-bit ASCII only.
     """
-    if (denied := _authorize_zone_command_post(zonename)):
+    if denied := _authorize_zone_command_post(zonename):
         return denied
     assertAuthAzZone(request)
     raw = request.get_data(cache=True)
@@ -1397,7 +1415,7 @@ def ui_context() -> Any:
     Authenticated browser requests are **302**'d to the public HTML UI root (same rules as after **`GET /authorize`**), not JSON.
     API clients (no ``text/html`` in ``Accept``) receive JSON or **401** JSON when unauthenticated.
     """
-    if (denied := _authorize_ui()):
+    if denied := _authorize_ui():
         return denied
     if (
         CONFIG["oauth_enabled"]
@@ -1408,7 +1426,7 @@ def ui_context() -> Any:
     all_zones = sorted(
         set(commands.keys())
         | set(sensors.keys())
-        |         set(zone_logs.keys())
+        | set(zone_logs.keys())
         | set(zone_networks.keys())
         | set(zone_deployments.keys())
     )
@@ -1428,7 +1446,7 @@ def ui_command() -> Any:
 
     Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
     """
-    if (denied := _authorize_ui()):
+    if denied := _authorize_ui():
         return denied
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -1469,13 +1487,13 @@ def get_zones() -> Any:
     """
     Stateless query.  Read ALL zone states, including pending commands.
     """
-    if (denied := _authorize_global_read()):
+    if denied := _authorize_global_read():
         return denied
     assertAuthAzZone(request)
     all_zones = sorted(
         set(commands.keys())
         | set(sensors.keys())
-        |         set(zone_logs.keys())
+        | set(zone_logs.keys())
         | set(zone_networks.keys())
         | set(zone_deployments.keys())
     )
@@ -1486,7 +1504,7 @@ def get_zones() -> Any:
 @app.route("/debug/logs", methods=["GET"])
 def debug_logs() -> Any:
     """Return bounded in-memory access log plus diagnostics (same data as ``/ui/diagnostics``)."""
-    if (denied := _authorize_global_read()):
+    if denied := _authorize_global_read():
         return denied
     assertAuthAzZone(request)
     bundle = _diagnostics_payload()

@@ -128,9 +128,7 @@ def _fetch_logs() -> str:
                             f'->{entry.get("status_code", "")}'
                         )
                 parts.append("<b>Zone POST /sensors (twoway)</b><br>")
-                parts.append(
-                    "<br>".join(_format_log_line(ln) for ln in zlines)
-                )
+                parts.append("<br>".join(_format_log_line(ln) for ln in zlines))
             logs = d.get("access_log") or []
             if logs:
                 lines: List[str] = []
@@ -170,12 +168,12 @@ def _dmz_diagnostics_export_block() -> str:
         return (
             "<details><summary><b>Diagnostics JSON</b> "
             "(full export for support — in-memory only on DMZ)</summary>"
-            "<p><textarea id=\"thermo-diag-export\" readonly rows=\"14\" cols=\"92\" "
+            '<p><textarea id="thermo-diag-export" readonly rows="14" cols="92" '
             'style="font-family: monospace; width: 100%; max-width: 52rem;">'
             f"{esc}"
             "</textarea></p>"
             '<p><button type="button" '
-            'onclick="var e=document.getElementById(\'thermo-diag-export\');'
+            "onclick=\"var e=document.getElementById('thermo-diag-export');"
             "if(e){e.focus();e.select();document.execCommand('copy');}\">"
             "Copy to clipboard</button></p>"
             "</details>"
@@ -390,9 +388,7 @@ def _zone_deployment_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) 
     received = deployment.get("received_dt")
     heading = ""
     if received:
-        heading = (
-            f"<span>reported {html.escape(str(received))}</span><br>"
-        )
+        heading = f"<span>reported {html.escape(str(received))}</span><br>"
     lines: List[str] = []
     for key in sorted(deployment):
         if key == "received_dt":
@@ -401,8 +397,7 @@ def _zone_deployment_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) 
         if value is None or value == "":
             continue
         lines.append(
-            f"<code>{html.escape(str(key))}</code>: "
-            f"{html.escape(str(value))}"
+            f"<code>{html.escape(str(key))}</code>: " f"{html.escape(str(value))}"
         )
     if not lines:
         return ""
@@ -478,7 +473,7 @@ def render_template(
     selected_zone: str,
     msg: str = "",
 ) -> str:
-    from common.heatpumpirctl import Fan, Mode, State
+    from common.heatpumpirctl import Fan, Mode
 
     def opt(val: str, sel: str) -> str:
         c = " selected" if val == sel else ""

@@ -43,7 +43,9 @@ def test_help() -> None:
     assert help_msg == msg
 
 
-def test_healthz_returns_basic_health_and_recent_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_healthz_returns_basic_health_and_recent_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("LOG_PATH", "/run/thermo-onboard-log/onboard-app.log")
     client = app.app.test_client()
     app.logger.info("test healthz rolling log marker")
@@ -56,7 +58,10 @@ def test_healthz_returns_basic_health_and_recent_logs(monkeypatch: pytest.Monkey
     assert body["service"] == "onboard-app"
     assert body["hardware_backend"] == "pizero2w"
     assert body["log_buffer"]["returned"] == 5
-    assert any("test healthz rolling log marker" in line for line in body["log_buffer"]["lines"])
+    assert any(
+        "test healthz rolling log marker" in line
+        for line in body["log_buffer"]["lines"]
+    )
     assert body["log_storage"]["path"] == "/run/thermo-onboard-log/onboard-app.log"
 
 
@@ -69,10 +74,15 @@ def test_environment_includes_recent_logs_for_dmz_post() -> None:
     assert r.status_code == 200
     body = r.json
     assert "log_buffer" in body
-    assert any("test environment rolling log marker" in line for line in body["log_buffer"]["lines"])
+    assert any(
+        "test environment rolling log marker" in line
+        for line in body["log_buffer"]["lines"]
+    )
 
 
-def test_environment_includes_best_effort_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_includes_best_effort_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ONBOARD_LOCAL_IP", "192.168.1.44")
     client = app.app.test_client()
 
@@ -251,7 +261,9 @@ def test_daikin_metadata_only_no_ir(monkeypatch: pytest.MonkeyPatch) -> None:
     """DMZ-only keys must not build a default State or call IR."""
 
     def must_not_send(state: object) -> bool:
-        raise AssertionError("send_heatpump_state must not run for metadata-only command")
+        raise AssertionError(
+            "send_heatpump_state must not run for metadata-only command"
+        )
 
     monkeypatch.setattr(app, "send_heatpump_state", must_not_send)
     app.daikin_cmds.clear()

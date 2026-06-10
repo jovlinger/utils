@@ -51,7 +51,9 @@ def _image_exists(name: str) -> bool:
 
 
 @pytest.mark.skipif(not _docker_running(), reason="docker daemon not reachable")
-@pytest.mark.skipif(not _image_exists(DOCKER_IMAGE), reason=f"{DOCKER_IMAGE} not built locally")
+@pytest.mark.skipif(
+    not _image_exists(DOCKER_IMAGE), reason=f"{DOCKER_IMAGE} not built locally"
+)
 def test_armv6_image_default_entrypoint_reaches_diagnostics() -> None:
     """The image must survive ``tini -- /app/start.sh`` and serve diagnostics."""
     env = os.environ.copy()

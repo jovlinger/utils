@@ -102,8 +102,7 @@ def _load_private_key(path_or_pem: str) -> "Ed25519PrivateKey":
         except Exception as exc:
             raise ValueError(
                 "could not load OpenSSH-format private key "
-                "(passphrase-protected keys are not supported). "
-                + _ZONE_KEY_HINT
+                "(passphrase-protected keys are not supported). " + _ZONE_KEY_HINT
             ) from exc
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError(

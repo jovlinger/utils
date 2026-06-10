@@ -72,6 +72,7 @@ def mirror_col_comment(comment: str) -> str:
 
     return COL_ASSERT_RE.sub(repl, comment)
 
+
 TRACE_CUSTOM: Dict[int, str] = {
     1: ".*.pico.*.",
     2: ".*.side.*.",
@@ -184,7 +185,9 @@ def build_pico_side(up_path: Path, out_path: Path) -> None:
     trace = layer_bodies(up_text, "trace")
     trace_source_rows = layer_rows(up_text, "trace")
     if len(base) != 22 or len(trace) != 22:
-        raise ValueError(f"expected 22 rows per layer, got base={len(base)} trace={len(trace)}")
+        raise ValueError(
+            f"expected 22 rows per layer, got base={len(base)} trace={len(trace)}"
+        )
 
     lines = [
         "# Text voxel design for thermo Pico2W sensor HAT, pico-side variant.",
@@ -220,7 +223,9 @@ def build_pico_side(up_path: Path, out_path: Path) -> None:
         source_comment = extract_row_comment(trace_source_rows[index])
         if source_comment:
             comment_parts.append(mirror_col_comment(source_comment))
-        lines.append(row_line(pico_west, trace_body, pico_east, "; ".join(comment_parts)))
+        lines.append(
+            row_line(pico_west, trace_body, pico_east, "; ".join(comment_parts))
+        )
 
     lines.extend(mirror_intents(up_text))
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -29,7 +29,9 @@ _configured = False
 _LOG_BUFFER_DEFAULT_LINES = 200
 _log_buffer_lock = RLock()
 _log_buffer: deque[str] = deque(
-    maxlen=int(os.environ.get("ONBOARD_HEALTH_LOG_LINES", str(_LOG_BUFFER_DEFAULT_LINES)))
+    maxlen=int(
+        os.environ.get("ONBOARD_HEALTH_LOG_LINES", str(_LOG_BUFFER_DEFAULT_LINES))
+    )
 )
 
 

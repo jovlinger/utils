@@ -125,8 +125,9 @@ def test_sign_request_accepts_inline_base64_der_private_key() -> None:
 def test_makefile_zone_keys_target_invariants() -> None:
     """The Makefile wrapper must keep its contract: target name + script + env var."""
     text = MAKEFILE.read_text(encoding="utf-8")
-    assert re.search(r"^zone-keys:\s*$", text, flags=re.MULTILINE), \
-        "Makefile target `zone-keys:` is missing"
+    assert re.search(
+        r"^zone-keys:\s*$", text, flags=re.MULTILINE
+    ), "Makefile target `zone-keys:` is missing"
 
     target_block = re.search(
         r"^zone-keys:\s*\n((?:\t.*\n?)+)", text, flags=re.MULTILINE
@@ -134,19 +135,25 @@ def test_makefile_zone_keys_target_invariants() -> None:
     assert target_block, "could not parse zone-keys recipe block"
     recipe = target_block.group(1)
 
-    assert "gen_keys.py" in recipe, \
-        "zone-keys recipe must invoke ../test/gen_keys.py (single source of truth)"
-    assert "THERMO_ZONE_PRIVATE_KEYS_DIR=" in recipe, \
-        "zone-keys recipe must set THERMO_ZONE_PRIVATE_KEYS_DIR"
-    assert "THERMO_ZONE_PUBLIC_KEYS_DIR=" in recipe, \
-        "zone-keys recipe must set THERMO_ZONE_PUBLIC_KEYS_DIR"
-    assert "../priv/zone" in recipe, \
-        "zone-keys recipe must write private material into thermo/priv/zone"
-    assert "../config/zone" in recipe, \
-        "zone-keys recipe must write public material into thermo/config/zone"
+    assert (
+        "gen_keys.py" in recipe
+    ), "zone-keys recipe must invoke ../test/gen_keys.py (single source of truth)"
+    assert (
+        "THERMO_ZONE_PRIVATE_KEYS_DIR=" in recipe
+    ), "zone-keys recipe must set THERMO_ZONE_PRIVATE_KEYS_DIR"
+    assert (
+        "THERMO_ZONE_PUBLIC_KEYS_DIR=" in recipe
+    ), "zone-keys recipe must set THERMO_ZONE_PUBLIC_KEYS_DIR"
+    assert (
+        "../priv/zone" in recipe
+    ), "zone-keys recipe must write private material into thermo/priv/zone"
+    assert (
+        "../config/zone" in recipe
+    ), "zone-keys recipe must write public material into thermo/config/zone"
 
-    assert "zone-keys" in re.search(r"^\.PHONY:\s*(.+)$", text, flags=re.MULTILINE).group(1), \
-        "`zone-keys` must be declared .PHONY"
+    assert "zone-keys" in re.search(
+        r"^\.PHONY:\s*(.+)$", text, flags=re.MULTILINE
+    ).group(1), "`zone-keys` must be declared .PHONY"
 
 
 def test_load_private_key_rejects_ssh_login_key_path() -> None:

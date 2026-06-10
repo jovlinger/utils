@@ -81,7 +81,7 @@ from urllib.parse import urljoin, urlparse
 # macOS system/LibreSSL Pythons trigger urllib3 v2 noise on import; harmless for this CLI.
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
-import requests
+import requests  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
@@ -271,11 +271,11 @@ def _cryptography_install_hint() -> str:
         lines.extend(
             [
                 "thermo/dmz/.venv is chained to bin/.venv — recreate it:",
-                f"  deactivate",
+                "  deactivate",
                 f"  rm -rf {os.path.join(SCRIPT_DIR, '.venv')}",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  manage ...",
+                "  manage ...",
             ]
         )
         return "\n".join(lines)
@@ -283,10 +283,10 @@ def _cryptography_install_hint() -> str:
         lines.extend(
             [
                 "Use the project venv (recommended):",
-                f"  deactivate                    # drop bin/.venv if active",
+                "  deactivate                    # drop bin/.venv if active",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  manage ...",
+                "  manage ...",
                 "",
             ]
         )
@@ -303,7 +303,7 @@ def _cryptography_install_hint() -> str:
                 "Create the project venv first:",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  manage ...",
+                "  manage ...",
             ]
         )
     return "\n".join(lines)
@@ -377,9 +377,7 @@ def _validate_raw_ir_sequence(raw: Any) -> List[int]:
         if value == 0:
             _die(f"raw IR sequence entry {index} must not be zero")
         if abs(value) > RAW_IR_MAX_DURATION_US:
-            _die(
-                f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us"
-            )
+            _die(f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us")
         out.append(value)
     return out
 
@@ -492,11 +490,7 @@ def _redirect_error_message(url: str, response: requests.Response) -> str:
 
 def _html_instead_of_json_message(url: str, body: str = "") -> str:
     lower = body[:4096].lower()
-    if (
-        "accounts.google.com" in lower
-        or "signin" in lower
-        or _is_oauth_redirect(url)
-    ):
+    if "accounts.google.com" in lower or "signin" in lower or _is_oauth_redirect(url):
         return (
             f"DMZ OAuth redirect: received HTML login page instead of JSON ({url}). "
             "Set ZONE_PRIVATE_KEY or ZONE_PRIVATE_KEY_PATH for machine auth."

@@ -370,7 +370,7 @@ def _explain_dmz_failure(status: int, signed: bool) -> str:
             "(see the selected hardware backend compose file and thermo/KEYS-AND-CERTS.md)."
         )
     if status == 403:
-        return f"DMZ accepted the signature but forbade the action (403). Check zone allowlist."
+        return "DMZ accepted the signature but forbade the action (403). Check zone allowlist."
     if status >= 500:
         return f"DMZ server error ({status}); not our config — see DMZ logs."
     return f"DMZ returned HTTP {status}."
@@ -383,7 +383,9 @@ def poll_once() -> bool:
         # 1/3: pull onboard's current sensors AND last-applied command (with created_dt).
         env, ok_get = get_json(readfrom)
         if not ok_get:
-            logger.error("get from onboard failed: aborting poll%s", format_kv(error=env))
+            logger.error(
+                "get from onboard failed: aborting poll%s", format_kv(error=env)
+            )
             return False
         logger.debug(
             "poll_once 1/3 ONBOARD -> twoway env+command%s", format_kv(env=env)

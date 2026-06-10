@@ -33,7 +33,9 @@ def test_metadata_falls_back_to_onboard_hardware_profile() -> None:
     assert meta["zone_name"] == "office"
 
 
-def test_metadata_resolves_git_from_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_metadata_resolves_git_from_repo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     repo = tmp_path / "utils"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -60,7 +62,9 @@ def test_metadata_resolves_git_from_repo(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert meta["hardware_profile"] == "pico2w_aht20_ir"
 
 
-def test_metadata_omits_git_when_repo_root_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_metadata_omits_git_when_repo_root_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         return type("R", (), {"returncode": 128, "stdout": ""})()
 

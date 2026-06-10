@@ -97,7 +97,11 @@ def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     confirm both sides hold the same keypair without having to copy the key around.
     """
     sys.path.insert(0, str(_ONBOARD))
-    from common.zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
+    from common.zone_auth import (
+        generate_keypair,
+        public_key_fingerprint,
+        _load_private_key,
+    )
 
     priv_pem, _pub_pem = generate_keypair()
     priv_path = tmp_path / "priv.pem"
@@ -120,7 +124,11 @@ def test_inline_base64_private_key_env_emits_enabled() -> None:
     """ZONE_PRIVATE_KEY accepts one-line base64 DER, matching operator env files."""
     sys.path.insert(0, str(_ONBOARD))
     from cryptography.hazmat.primitives import serialization
-    from common.zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
+    from common.zone_auth import (
+        generate_keypair,
+        public_key_fingerprint,
+        _load_private_key,
+    )
 
     priv_pem, _pub_pem = generate_keypair()
     priv = _load_private_key(priv_pem.decode())
@@ -201,12 +209,14 @@ def test_config_summary_reflects_signing_state(
         priv_path.write_bytes(priv_pem)
         overrides["ZONE_PRIVATE_KEY_PATH"] = str(priv_path)
     out, errlog, rc = _run_twoway(overrides)
-    assert rc == 0, f"[{case_label}] twoway boot failed:\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
+    assert (
+        rc == 0
+    ), f"[{case_label}] twoway boot failed:\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
     log = out + errlog
     assert "twoway config" in log
-    assert expected_signing_enabled_field in log, (
-        f"[{case_label}] expected '{expected_signing_enabled_field}' in config line; got:\n{log}"
-    )
+    assert (
+        expected_signing_enabled_field in log
+    ), f"[{case_label}] expected '{expected_signing_enabled_field}' in config line; got:\n{log}"
 
 
 def test_dmz_body_includes_deployment_metadata() -> None:
@@ -245,7 +255,9 @@ def test_dmz_body_includes_deployment_metadata() -> None:
         timeout=30,
     )
     assert p.returncode == 0, f"twoway body subprocess failed:\n{p.stdout}\n{p.stderr}"
-    result_lines = [line for line in p.stdout.splitlines() if line.startswith("RESULT:")]
+    result_lines = [
+        line for line in p.stdout.splitlines() if line.startswith("RESULT:")
+    ]
     assert result_lines, f"missing RESULT line:\n{p.stdout}\n{p.stderr}"
     body = json.loads(result_lines[-1].removeprefix("RESULT:"))
     assert body["sensors"] == {"humid_percent": 41.9, "temp_centigrade": 19.3}

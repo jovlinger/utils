@@ -312,7 +312,9 @@ def test_debug_logs_returns_access_entries(dmz_ctx: object) -> None:
             assert "ts" in e
 
 
-def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(dmz_ctx: object) -> None:
+def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(
+    dmz_ctx: object,
+) -> None:
     """GET /ui/diagnostics is open (operators) and exposes memory-only diagnostics."""
     with app.test_client() as c:
         c.post("/test_reset", json={"commands": {}, "sensors": {}})
@@ -629,13 +631,8 @@ def test_sensors_with_deployment_metadata_are_stored(dmz_ctx: object) -> None:
         assert "received_dt" in js["deployment"]
 
         ctx = _get_200(c, "/ui/context")
-        assert (
-            ctx["zone_states"]["zdep"]["deployment"]["git_sha"]
-            == "abcdef1234567890"
-        )
-        dep_row = next(
-            r for r in ctx["environments"] if r.get("zone") == "zdep"
-        )
+        assert ctx["zone_states"]["zdep"]["deployment"]["git_sha"] == "abcdef1234567890"
+        dep_row = next(r for r in ctx["environments"] if r.get("zone") == "zdep")
         assert dep_row["deployment"]["backend"] == "pizero2w"
 
 
@@ -737,7 +734,10 @@ def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -
         with app.test_client() as c:
             ui = c.post(
                 "/ui/command",
-                json={"zone": "zo", "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"}},
+                json={
+                    "zone": "zo",
+                    "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"},
+                },
             )
             assert ui.status_code == 200, ui.get_data(as_text=True)
         t1.join(timeout=1.0)
@@ -844,13 +844,17 @@ def test_zone_state_fingerprint_ignores_sensors_and_dt() -> None:
             "sensors": {"temp_centigrade": 99.0, "humid_percent": 1.0},
         }
     }
-    assert app_module._zone_state_fingerprint(a) == app_module._zone_state_fingerprint(b)
+    assert app_module._zone_state_fingerprint(a) == app_module._zone_state_fingerprint(
+        b
+    )
 
 
 def test_zone_state_fingerprint_changes_when_command_changes() -> None:
     a = {"z1": {"command": {"mode": "HEAT"}, "sensors": {}}}
     b = {"z1": {"command": {"mode": "COOL"}, "sensors": {}}}
-    assert app_module._zone_state_fingerprint(a) != app_module._zone_state_fingerprint(b)
+    assert app_module._zone_state_fingerprint(a) != app_module._zone_state_fingerprint(
+        b
+    )
 
 
 def test_log_full_zone_state_suppresses_repeat_fingerprint(

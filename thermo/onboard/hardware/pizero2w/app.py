@@ -131,7 +131,9 @@ def _mount_info_for_path(path: Optional[str]) -> Dict[str, Any]:
                 sep = parts.index("-")
                 mount_point = parts[4].replace("\\040", " ")
                 fs_type = parts[sep + 1]
-                if probe_path == mount_point or probe_path.startswith(mount_point.rstrip("/") + "/"):
+                if probe_path == mount_point or probe_path.startswith(
+                    mount_point.rstrip("/") + "/"
+                ):
                     if len(mount_point) > len(best.get("mount_point", "")):
                         best = {
                             "mount_point": mount_point,
@@ -550,7 +552,9 @@ def _handle_raw_ir_command(
     command = dict(cmd_obj)
     command["created_dt"] = new_created_dt
     _last_command_created_dt = new_created_dt
-    logger.info("SET_RAW_IR: entries=%s sent=%s", len(command.get("sequence", [])), success)
+    logger.info(
+        "SET_RAW_IR: entries=%s sent=%s", len(command.get("sequence", [])), success
+    )
     return {
         "time": ts_iso,
         "command": command,
@@ -648,9 +652,7 @@ def handle_set_daikin_body(js: Dict[str, Any]) -> Tuple[Any, int]:
             )
             state = State.from_json(merged_for_state)
         else:
-            logger.debug(
-                "set_daikin state preconvert%s", format_kv(merged=merged)
-            )
+            logger.debug("set_daikin state preconvert%s", format_kv(merged=merged))
             state = State.from_json(merged)
         logger.debug("set_daikin state%s", format_kv(state=state))
     except (KeyError, ValueError, TypeError) as e:

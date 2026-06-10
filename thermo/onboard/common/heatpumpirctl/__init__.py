@@ -176,11 +176,19 @@ class State:
         if obj.get("comfort") is not None:
             s.comfort = bool(obj["comfort"])
         if "timer_on_minutes" in obj:
-            s.timer_on_minutes = int(obj["timer_on_minutes"]) if obj["timer_on_minutes"] is not None else None
+            s.timer_on_minutes = (
+                int(obj["timer_on_minutes"])
+                if obj["timer_on_minutes"] is not None
+                else None
+            )
         if obj.get("timer_on_active") is not None:
             s.timer_on_active = bool(obj["timer_on_active"])
         if "timer_off_minutes" in obj:
-            s.timer_off_minutes = int(obj["timer_off_minutes"]) if obj["timer_off_minutes"] is not None else None
+            s.timer_off_minutes = (
+                int(obj["timer_off_minutes"])
+                if obj["timer_off_minutes"] is not None
+                else None
+            )
         if obj.get("timer_off_active") is not None:
             s.timer_off_active = bool(obj["timer_off_active"])
 
@@ -206,9 +214,15 @@ class State:
         if self.comfort:
             parts.append("comfort")
         if self.timer_on_minutes is not None:
-            parts.append("timer_on=%s %dm" % ("ON" if self.timer_on_active else "OFF", self.timer_on_minutes))
+            parts.append(
+                "timer_on=%s %dm"
+                % ("ON" if self.timer_on_active else "OFF", self.timer_on_minutes)
+            )
         if self.timer_off_minutes is not None:
-            parts.append("timer_off=%s %dm" % ("ON" if self.timer_off_active else "OFF", self.timer_off_minutes))
+            parts.append(
+                "timer_off=%s %dm"
+                % ("ON" if self.timer_off_active else "OFF", self.timer_off_minutes)
+            )
         if self.truncated:
             parts.append("(truncated)")
         return " ".join(parts)

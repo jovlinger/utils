@@ -43,9 +43,15 @@ def resolve_dmz_base_url() -> str:
     raw = os.environ.get("DMZ_URL", "").strip()
     if raw:
         return raw.rstrip("/")
-    scheme = (os.environ.get("DMZ_SCHEME") or _DEFAULT_DMZ_SCHEME).strip() or _DEFAULT_DMZ_SCHEME
-    host = (os.environ.get("DMZ_HOST") or _DEFAULT_DMZ_HOST).strip() or _DEFAULT_DMZ_HOST
-    port = (os.environ.get("DMZ_PORT") or _DEFAULT_DMZ_PORT).strip() or _DEFAULT_DMZ_PORT
+    scheme = (
+        os.environ.get("DMZ_SCHEME") or _DEFAULT_DMZ_SCHEME
+    ).strip() or _DEFAULT_DMZ_SCHEME
+    host = (
+        os.environ.get("DMZ_HOST") or _DEFAULT_DMZ_HOST
+    ).strip() or _DEFAULT_DMZ_HOST
+    port = (
+        os.environ.get("DMZ_PORT") or _DEFAULT_DMZ_PORT
+    ).strip() or _DEFAULT_DMZ_PORT
     return f"{scheme}://{host}:{port}"
 
 
@@ -72,9 +78,7 @@ def check_http_reachable(url: str, timeout: float) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def run_cmd(
-    args: List[str], timeout: float = 8.0
-) -> str:
+def run_cmd(args: List[str], timeout: float = 8.0) -> str:
     """Run a command; return stdout+stderr for the snapshot bundle."""
     try:
         p = subprocess.run(
@@ -84,11 +88,7 @@ def run_cmd(
             timeout=timeout,
         )
         out = (p.stdout or "") + (p.stderr or "")
-        return (
-            f"$ {' '.join(args)}\n"
-            f"exit={p.returncode}\n"
-            f"{out}\n"
-        )
+        return f"$ {' '.join(args)}\n" f"exit={p.returncode}\n" f"{out}\n"
     except Exception as e:  # noqa: BLE001 — snapshot must not raise
         return f"$ {' '.join(args)}\nfailed: {e!s}\n"
 
@@ -186,11 +186,7 @@ def collect_thermal_sysfs() -> str:
             continue
         try:
             t_raw = (z / "temp").read_text().strip()
-            typ = (
-                (z / "type").read_text().strip()
-                if (z / "type").is_file()
-                else "?"
-            )
+            typ = (z / "type").read_text().strip() if (z / "type").is_file() else "?"
             mc = int(t_raw)
             lines.append(
                 f"{z.name} type={typ} temp_millic={t_raw} ({mc / 1000.0:.3f} °C)\n"
@@ -315,7 +311,9 @@ def collect_network_snapshot(
 ) -> str:
     """Shell + file fragments for post-mortem (no secrets)."""
     blocks: List[str] = []
-    blocks.append(f"timestamp_utc={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+    blocks.append(
+        f"timestamp_utc={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
+    )
     blocks.append(run_cmd(["uname", "-a"]))
     blocks.append(run_cmd(["cat", "/proc/uptime"]))
     blocks.append("--- hw health (thermal / load / Pi throttle) ---\n")
@@ -390,7 +388,9 @@ def detail_summary(ok: bool, detail: str) -> str:
 
 def main() -> None:
     dmz_url = resolve_dmz_base_url().rstrip("/") + "/"
-    onboard_url = os.environ.get("ONBOARD_URL", "http://127.0.0.1:5000").rstrip("/") + "/"
+    onboard_url = (
+        os.environ.get("ONBOARD_URL", "http://127.0.0.1:5000").rstrip("/") + "/"
+    )
     log_dir = os.environ.get("LOG_DIR", "/var/log/thermo-onboard")
     twoway_log = os.environ.get("TWOWAY_LOG_PATH", os.path.join(log_dir, "twoway.log"))
     dump_dir = Path(
@@ -454,7 +454,9 @@ def main() -> None:
                 }
                 header = json.dumps(meta, indent=2) + "\n\n--- snapshot ---\n"
                 try:
-                    path = write_incident_bundle(header + snap, dump_dir, keep_incidents)
+                    path = write_incident_bundle(
+                        header + snap, dump_dir, keep_incidents
+                    )
                     logger.info(
                         "incident_written%s",
                         format_kv(run_id=run_id, path=str(path)),

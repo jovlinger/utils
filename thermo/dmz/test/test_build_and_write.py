@@ -30,9 +30,7 @@ def _have(cmd: str) -> bool:
 def _docker_running() -> bool:
     if not _have("docker"):
         return False
-    res = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, timeout=15
-    )
+    res = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15)
     return res.returncode == 0
 
 
@@ -51,7 +49,9 @@ def _write_min_oauth_private_dir(path: Path) -> None:
     (path / "flask-secret-key").write_text(
         "ci0123456789abcdef0123456789abcd\n", encoding="utf-8"
     )
-    (path / "allowed-email").write_text(r"^allowed-ci@example\.com$" + "\n", encoding="utf-8")
+    (path / "allowed-email").write_text(
+        r"^allowed-ci@example\.com$" + "\n", encoding="utf-8"
+    )
 
 
 @contextlib.contextmanager
@@ -106,7 +106,11 @@ def test_missing_zone_pub_file_fails_fast(tmp_path: Path) -> None:
             timeout=10,
         )
     assert res.returncode == 1, res.stdout + res.stderr
-    assert "Not found" in res.stderr or "not found" in res.stderr.lower() or "required" in res.stderr.lower()
+    assert (
+        "Not found" in res.stderr
+        or "not found" in res.stderr.lower()
+        or "required" in res.stderr.lower()
+    )
 
 
 def test_non_pem_zone_pub_file_fails_fast(tmp_path: Path) -> None:
@@ -210,9 +214,9 @@ def test_build_always_bakes_zone_pub_and_oauth_into_fat_image(tmp_path: Path) ->
             check=True,
             timeout=15,
         )
-        assert extracted.read_bytes() == pub_pem.read_bytes(), (
-            "FAT-image pub key bytes differ from source"
-        )
+        assert (
+            extracted.read_bytes() == pub_pem.read_bytes()
+        ), "FAT-image pub key bytes differ from source"
 
         extracted_oauth = tmp_path / "extracted-google-client-id"
         subprocess.run(

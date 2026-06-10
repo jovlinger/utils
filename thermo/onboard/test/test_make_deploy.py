@@ -62,7 +62,9 @@ def thermo_extdeps_first_on_path() -> Iterator[None]:
             os.environ["PATH"] = old
 
 
-def _mock_subprocess_env(mock_file: Path, home: Path, mock_bins: Path) -> Dict[str, str]:
+def _mock_subprocess_env(
+    mock_file: Path, home: Path, mock_bins: Path
+) -> Dict[str, str]:
     env = os.environ.copy()
     real_home = Path(env.get("HOME", os.path.expanduser("~")))
     real_cargo = real_home / ".cargo/bin/cargo"
@@ -103,9 +105,19 @@ def _configure_mock_expectations(
         argv = list(spec[1:])
         mod.set_mock(cmd, argv, 0, "", "")
     if repo is not None:
-        mod.set_mock("git", ["-C", str(repo), "rev-parse", "HEAD"], 0, "abcdef1234567890\n", "")
-        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--short", "HEAD"], 0, "abcdef1\n", "")
-        mod.set_mock("git", ["-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"], 0, "rooms\n", "")
+        mod.set_mock(
+            "git", ["-C", str(repo), "rev-parse", "HEAD"], 0, "abcdef1234567890\n", ""
+        )
+        mod.set_mock(
+            "git", ["-C", str(repo), "rev-parse", "--short", "HEAD"], 0, "abcdef1\n", ""
+        )
+        mod.set_mock(
+            "git",
+            ["-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+            0,
+            "rooms\n",
+            "",
+        )
         mod.set_mock(
             "git",
             ["-C", str(repo), "status", "--porcelain", "--untracked-files=no"],
@@ -202,7 +214,9 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
         )
         _copy_pizero2w_backend(fixture, onboard)
 
-        subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "init"], cwd=str(fixture), check=True, capture_output=True
+        )
         assert (fixture / ".git").exists()
 
         _symlink_mock_bins(mock_bins, mpy)
@@ -229,9 +243,9 @@ def test_make_deploy_runs_install_deploy_with_repo_path() -> None:
             text=True,
         )
 
-        assert result.returncode == 0, (
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         assert "Deploy complete." in result.stdout
         assert "Deploy backend=pizero2w" in result.stdout
         assert "pizero2w-deploy" in result.stdout
@@ -309,7 +323,9 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
         )
         _copy_pizero2w_backend(fixture, onboard)
 
-        subprocess.run(["git", "init"], cwd=str(fixture), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "init"], cwd=str(fixture), check=True, capture_output=True
+        )
         assert (fixture / ".git").exists()
 
         _symlink_mock_bins(mock_bins, mpy)
@@ -319,7 +335,7 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
         mod.reset_mocks()
         remote_cmd = (
             "cd /home/johan/github.com/jovlinger/utils && git fetch origin master && git checkout master "
-            '&& git pull --ff-only origin master && ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 '
+            "&& git pull --ff-only origin master && ONBOARD_DEPLOY_LOCAL=1 ONBOARD_DEPLOY_SKIP_GIT_PULL=1 "
             'make -C thermo/onboard deploy-zone THERMO_ENV_FILE="onboard/zones/kitchen/zone.env" '
             'EXPECTED_ONBOARD_DEPLOY_BACKEND=pizero2w DEPLOY_REPO="$(pwd)"'
         )
@@ -343,9 +359,9 @@ def test_make_deploy_dispatches_to_remote_pizero2w_host() -> None:
             text=True,
         )
 
-        assert result.returncode == 0, (
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         assert "Deploy backend=pizero2w" in result.stdout
         assert "Remote deploy to johan@pizerokitchen.local" in result.stdout
         assert "ERROR: No mock configured" not in result.stderr
