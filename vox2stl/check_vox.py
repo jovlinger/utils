@@ -31,8 +31,8 @@ BOX_UL = "\u250c"
 BOX_UR = "\u2510"
 BOX_LL = "\u2514"
 BOX_LR = "\u2518"
-BOX_T_LEFT = "\u251c"
-BOX_T_RIGHT = "\u2524"
+BOX_T_RIGHT = "\u251c"
+BOX_T_LEFT = "\u2524"
 BOX_T_DOWN = "\u252c"
 BOX_T_UP = "\u2534"
 BOX_CROSS = "\u253c"
@@ -66,8 +66,8 @@ ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
     BOX_UR: frozenset({"S", "W"}),
     BOX_LL: frozenset({"N", "E"}),
     BOX_LR: frozenset({"N", "W"}),
-    BOX_T_LEFT: frozenset({"N", "E", "S"}),
-    BOX_T_RIGHT: frozenset({"N", "S", "W"}),
+    BOX_T_RIGHT: frozenset({"N", "E", "S"}),
+    BOX_T_LEFT: frozenset({"N", "S", "W"}),
     BOX_T_DOWN: frozenset({"E", "S", "W"}),
     BOX_T_UP: frozenset({"N", "E", "W"}),
     BOX_CROSS: frozenset({"N", "E", "S", "W"}),
@@ -77,15 +77,17 @@ ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
 
 ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyzX*O.-|+/\\?T^v<> +-")
 ALLOWED_CHARS.update(BOX_CHARS)
-REQUIRED_LAYERS = ("base", "trace")
+TRACE_LAYER_NAME = "trace"
 LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(\d+)\)$")
 ROW_LABEL_RE = re.compile(r"^\s*(\S+)")
 BOX_ASSERT_CHARS = "".join(re.escape(char) for char in sorted(BOX_CHARS))
 TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-\*|\*-|\||\+|-|[" + BOX_ASSERT_CHARS + r"])")
 TRACE_NET_ASSERT_RE = re.compile(r"\.c(\d+)\s*=\s*([A-Za-z0-9_:-]+)")
+NET_ALIAS_RE = re.compile(r"^net\s+alias\s+([A-Za-z0-9_:-]+)\s*=\s*([A-Za-z0-9_:-]+)$")
 INTENT_NET_RE = re.compile(r"^#\s*net\s+(\S+)\s+(.+)$")
 INTENT_DISJOINT_RE = re.compile(r"^#\s*disjoint\s+(.+)$")
 INTENT_ENDPOINT_RE = re.compile(r"^([A-Za-z0-9_:-]+)\.c(\d+)$")
+DEFAULT_NET_ALIASES: Dict[str, str] = {"VCC": "3V3"}
 
 
 def is_copper_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
@@ -94,6 +96,35 @@ def is_copper_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
 
 def is_pad_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
     return effective_trace_char(char, aliases) in PAD_CHARS
+
+
+def parse_net_alias_line(line: str) -> Optional[Tuple[str, str]]:
+    match = NET_ALIAS_RE.match(line)
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
+
+
+def parse_net_aliases_text(text: str) -> Dict[str, str]:
+    net_aliases: Dict[str, str] = dict(DEFAULT_NET_ALIASES)
+    for raw_line in text.splitlines():
+        alias = parse_net_alias_line(raw_line.strip())
+        if alias is not None:
+            source, target = alias
+            net_aliases[source] = target
+    return net_aliases
+
+
+def canonical_net_name(net_name: str, net_aliases: Mapping[str, str]) -> str:
+    seen = {net_name}
+    current = net_name
+    while current in net_aliases:
+        next_name = net_aliases[current]
+        if next_name in seen:
+            return current
+        seen.add(next_name)
+        current = next_name
+    return current
 
 
 @dataclass(frozen=True)
@@ -190,7 +221,8 @@ def read_layers(path: Path) -> Dict[str, Layer]:
         line = raw_line.rstrip("\n")
         if not line or line.startswith("#"):
             continue
-        if parse_alias_line(line.strip()) is not None:
+        stripped = line.strip()
+        if parse_alias_line(stripped) is not None or parse_net_alias_line(stripped) is not None:
             continue
         match = LAYER_HEADER_RE.match(line)
         if match:
@@ -237,6 +269,7 @@ def extract_trace_net_assertions(
     trace: Layer,
     max_col: int,
     aliases: Mapping[str, VoxAlias],
+    net_aliases: Mapping[str, str],
 ) -> Tuple[List[TraceNetAssertion], List[str]]:
     assertions: List[TraceNetAssertion] = []
     errors: List[str] = []
@@ -255,7 +288,7 @@ def extract_trace_net_assertions(
                     row_index=row_i,
                     row_label=label,
                     col=col,
-                    net_name=match.group(2),
+                    net_name=canonical_net_name(match.group(2), net_aliases),
                 )
             )
         window = design_window(trace, row)
@@ -267,7 +300,7 @@ def extract_trace_net_assertions(
                         row_index=row_i,
                         row_label=label,
                         col=col,
-                        net_name=alias.net_name,
+                        net_name=canonical_net_name(alias.net_name, net_aliases),
                     )
                 )
     return assertions, errors
@@ -321,7 +354,11 @@ def parse_intent_endpoint(token: str, max_col: int) -> CellRef:
     return CellRef(row_label=row_name, occurrence=occurrence, col=col)
 
 
-def read_trace_intents(path: Path, max_col: int) -> TraceIntents:
+def read_trace_intents(
+    path: Path,
+    max_col: int,
+    net_aliases: Mapping[str, str],
+) -> TraceIntents:
     intents = TraceIntents()
     in_block = False
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -338,7 +375,7 @@ def read_trace_intents(path: Path, max_col: int) -> TraceIntents:
             continue
         net_match = INTENT_NET_RE.match(line)
         if net_match:
-            name = net_match.group(1)
+            name = canonical_net_name(net_match.group(1), net_aliases)
             tokens = net_match.group(2).split()
             try:
                 endpoints = [parse_intent_endpoint(token, max_col) for token in tokens]
@@ -348,7 +385,10 @@ def read_trace_intents(path: Path, max_col: int) -> TraceIntents:
             continue
         disjoint_match = INTENT_DISJOINT_RE.match(line)
         if disjoint_match:
-            names = disjoint_match.group(1).split()
+            names = [
+                canonical_net_name(name, net_aliases)
+                for name in disjoint_match.group(1).split()
+            ]
             if len(names) != 2:
                 raise ValueError(f"disjoint expects two net names, got {names!r}")
             intents.disjoint.append((names[0], names[1]))
@@ -394,6 +434,18 @@ def resolve_cell_ref(
 
 def horizontal_connects(left: str, right: str, aliases: Mapping[str, VoxAlias]) -> bool:
     if is_pad_char(left, aliases) and is_pad_char(right, aliases):
+        return False
+    effective_left = effective_trace_char(left, aliases)
+    effective_right = effective_trace_char(right, aliases)
+    if (effective_left, effective_right) in {
+        (BOX_T_RIGHT, "-"),
+        ("-", BOX_T_LEFT),
+    }:
+        return True
+    if (effective_left, effective_right) in {
+        ("-", BOX_T_RIGHT),
+        (BOX_T_LEFT, "-"),
+    }:
         return False
     return "E" in trace_arms(left, aliases) and "W" in trace_arms(right, aliases)
 
@@ -556,6 +608,7 @@ def collect_pin_anchor_components(
     components: Mapping[Tuple[int, int], int],
     assertions: Sequence[TraceNetAssertion],
     aliases: Mapping[str, VoxAlias],
+    net_aliases: Mapping[str, str],
 ) -> Dict[str, List[Tuple[CellRef, int]]]:
     anchors: Dict[str, List[Tuple[CellRef, int]]] = {}
     occurrences: Dict[str, int] = {}
@@ -565,10 +618,11 @@ def collect_pin_anchor_components(
         window = design_window(trace, row)
         left_label = row_label(row, trace)
         if left_label is not None and window[1] == PIN_PAD_CHAR:
+            net_name = canonical_net_name(left_label, net_aliases)
             cell = (row_i, 1)
             if cell in components:
                 occurrences[left_label] = occurrences.get(left_label, 0) + 1
-                anchors.setdefault(left_label, []).append(
+                anchors.setdefault(net_name, []).append(
                     (
                         CellRef(left_label, occurrences[left_label], 1),
                         components[cell],
@@ -576,26 +630,16 @@ def collect_pin_anchor_components(
                 )
         right_label = right_row_label(row, trace)
         if right_label is not None and window[max_col] == PIN_PAD_CHAR:
+            net_name = canonical_net_name(right_label, net_aliases)
             cell = (row_i, max_col)
             if cell in components:
                 occurrences[right_label] = occurrences.get(right_label, 0) + 1
-                anchors.setdefault(right_label, []).append(
+                anchors.setdefault(net_name, []).append(
                     (
                         CellRef(right_label, occurrences[right_label], max_col),
                         components[cell],
                     )
                 )
-    for assertion in assertions:
-        cell = (assertion.row_index, assertion.col)
-        char = trace_char_at(trace, assertion.row_index, assertion.col)
-        if not is_pad_char(char, aliases) or cell not in components:
-            continue
-        anchors.setdefault(assertion.net_name, []).append(
-            (
-                CellRef(assertion.row_label, 0, assertion.col),
-                components[cell],
-            )
-        )
     return anchors
 
 
@@ -624,8 +668,6 @@ def validate_component_net_labels(
         cell = (assertion.row_index, assertion.col)
         char = trace_char_at(trace, assertion.row_index, assertion.col)
         if not is_copper_char(char, aliases) or cell not in components:
-            continue
-        if is_pad_char(char, aliases):
             continue
         actual_comp = components[cell]
         source = f"{assertion.row_label}.c{assertion.col}"
@@ -700,9 +742,15 @@ def validate_trace_intents(
     intents: TraceIntents,
     max_col: int,
     aliases: Mapping[str, VoxAlias],
+    net_aliases: Mapping[str, str],
 ) -> List[str]:
     errors: List[str] = []
-    assertions, assertion_errors = extract_trace_net_assertions(trace, max_col, aliases)
+    assertions, assertion_errors = extract_trace_net_assertions(
+        trace,
+        max_col,
+        aliases,
+        net_aliases,
+    )
     errors.extend(assertion_errors)
     if not intents.nets and not intents.disjoint and not assertions:
         return errors
@@ -715,6 +763,7 @@ def validate_trace_intents(
         components,
         assertions,
         aliases,
+        net_aliases,
     )
     endpoint_components: Dict[str, List[Tuple[CellRef, int]]] = {}
     for net_name, endpoints in intents.nets.items():
@@ -869,55 +918,68 @@ def validate_row_labels_match(path: Path, base: Layer, trace: Layer) -> List[str
     return errors
 
 
-def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[Layer, Layer]:
-    missing = [layer for layer in REQUIRED_LAYERS if layer not in layers]
-    if missing:
-        raise ValueError(f"{path}: missing required layers: {', '.join(missing)}")
+def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[Optional[Layer], Layer]:
+    if TRACE_LAYER_NAME not in layers:
+        raise ValueError(f"{path}: missing required layers: {TRACE_LAYER_NAME}")
 
-    base = layers[REQUIRED_LAYERS[0]]
-    trace = layers[REQUIRED_LAYERS[1]]
-    if base.height == 0 or base.width == 0:
-        raise ValueError(f"{path}: base layer is empty")
+    trace = layers[TRACE_LAYER_NAME]
+    base = layers.get("base")
+    if trace.height == 0 or trace.width == 0:
+        raise ValueError(f"{path}: trace layer is empty")
 
     for layer_name, layer in layers.items():
-        if layer.offset != base.offset or layer.width != base.width:
+        if layer.offset != trace.offset or layer.width != trace.width:
             raise ValueError(
                 f"{path}: layer {layer_name!r} has geometry "
-                f"({layer.offset}, {layer.width}); expected ({base.offset}, {base.width})"
+                f"({layer.offset}, {layer.width}); expected ({trace.offset}, {trace.width})"
             )
-        if layer.height != base.height:
+        if layer.height != trace.height:
             raise ValueError(
                 f"{path}: layer {layer_name!r} declares {layer.height} rows; "
-                f"expected {base.height}"
+                f"expected {trace.height}"
             )
-        if len(layer.rows) != base.height:
+        if len(layer.rows) != trace.height:
             raise ValueError(
                 f"{path}: layer {layer_name!r} has {len(layer.rows)} rows; "
-                f"expected {base.height}"
+                f"expected {trace.height}"
             )
         for row_index, row in enumerate(layer.rows, 1):
-            if len(design_window(layer, row)) != base.width:
+            if len(design_window(layer, row)) != trace.width:
                 raise ValueError(f"{path}: layer {layer_name!r} row {row_index} has bad width")
     return base, trace
 
 
 def validate(path: Path) -> List[str]:
     errors: List[str] = []
-    aliases = parse_vox_aliases_text(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    aliases = parse_vox_aliases_text(text)
+    net_aliases = parse_net_aliases_text(text)
     layers = read_layers(path)
     base, trace = validate_layer_geometry(path, layers)
-    max_col = inner_column_count(base)
+    max_col = inner_column_count(trace)
 
-    errors.extend(validate_row_labels_match(path, base, trace))
-    errors.extend(validate_trace_pads_match_base(path, base, trace))
+    if base is not None:
+        errors.extend(validate_row_labels_match(path, base, trace))
+        errors.extend(validate_trace_pads_match_base(path, base, trace))
     errors.extend(validate_trace_col_assertions(path, trace, aliases))
-    intents = read_trace_intents(path, max_col)
-    errors.extend(validate_trace_intents(path, trace, intents, max_col, aliases))
+    intents = read_trace_intents(path, max_col, net_aliases)
+    errors.extend(
+        validate_trace_intents(
+            path,
+            trace,
+            intents,
+            max_col,
+            aliases,
+            net_aliases,
+        )
+    )
     if errors:
         raise ValueError("\n".join(errors))
 
-    warnings = collect_pad_crowding_warnings(path, "base", base)
-    print(f"ok {path.name}: {len(layers)} layers, {base.width} x {base.height}")
+    warning_layer = base if base is not None else trace
+    warning_layer_name = "base" if base is not None else TRACE_LAYER_NAME
+    warnings = collect_pad_crowding_warnings(path, warning_layer_name, warning_layer)
+    print(f"ok {path.name}: {len(layers)} layers, {trace.width} x {trace.height}")
     return warnings
 
 

@@ -131,11 +131,11 @@ BOX_LL = "\u2514"
 # Lower-right box drawing corner glyph.
 BOX_LR = "\u2518"
 
-# Box drawing T junction open to the left side.
-BOX_T_LEFT = "\u251c"
+# Box drawing T junction with a right arm.
+BOX_T_RIGHT = "\u251c"
 
-# Box drawing T junction open to the right side.
-BOX_T_RIGHT = "\u2524"
+# Box drawing T junction with a left arm.
+BOX_T_LEFT = "\u2524"
 
 # Box drawing T junction open downward.
 BOX_T_DOWN = "\u252c"
@@ -170,8 +170,8 @@ ARMS_BY_CHAR: Dict[str, FrozenSet[str]] = {
     BOX_UR: frozenset({"S", "W"}),
     BOX_LL: frozenset({"N", "E"}),
     BOX_LR: frozenset({"N", "W"}),
-    BOX_T_LEFT: frozenset({"N", "E", "S"}),
-    BOX_T_RIGHT: frozenset({"N", "S", "W"}),
+    BOX_T_RIGHT: frozenset({"N", "E", "S"}),
+    BOX_T_LEFT: frozenset({"N", "S", "W"}),
     BOX_T_DOWN: frozenset({"E", "S", "W"}),
     BOX_T_UP: frozenset({"N", "E", "W"}),
     BOX_CROSS: frozenset({"N", "E", "S", "W"}),
@@ -193,6 +193,7 @@ SHORTHAND_DIRECT_CHARS: Dict[str, str] = {
     "<": BOX_T_LEFT,
     ">": BOX_T_RIGHT,
     "^": BOX_T_UP,
+    "T": BOX_T_DOWN,
 }
 
 SHORTHAND_CORNER_CANDIDATES: Dict[str, Tuple[Tuple[str, FrozenSet[str]], ...]] = {

@@ -47,20 +47,22 @@ GP15  .*..up..*. GP16
 GP14  .*.side.*. GP17
 GND   .*......*. GND
 GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND
-GP12  .*..||..*. GP19
-GP11  .*..||..*. GP20
+GP12  .*..|G..*. GP19
+GP11  .*..V|..*. GP20
 GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND
-GND   .*..|>--*. GND
-GP9   .*..V|..*. GP22
-GP8   .*..|G..*. RUN
-GP7   .*..||..*. GP26
-GP6   .*.┌┘|..*. GP27
-GND   .*.|┌┘..*. GND
-GP5   .*.||┌--*. GP28  SCL
-GP4   .*.OOOO-*. GP38  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout
-GP3   .*......*. 3V3
+GND   .*..|┤--*. GND
+GP9   .*..||..*. GP22
+GP8   .*.┌┘|..*. RUN
+GP7   .*.|┌┘..*. GP26
+GP6   .*.||┌--*. GP27  SCL
+GND   .*.|||..*. GND
+GP5   .*.|||┌-*. GP28  SDA
+GP4   .*.OOOO.*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP27 (SCL) .c6 = GP28 (SDA); big 7-pin keepout
+GP3   .*.└----*. 3V3  
 GP2   .*......*. 3EN
 GND   .*......*. GND
 GP1   .*......*. VSYS
 GP0   .*..usb.*. VBUS
       ..........
+
+# FIXME: how best to make VCC == 3V3?  ERROR in > -> ┤.  default better move SDA=0/26, SCL=1/27 

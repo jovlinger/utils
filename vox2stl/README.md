@@ -45,7 +45,7 @@ trace shorthand in place before validating:
 
 - `/` and `\` are inferred as corners from neighboring trace arms, so a square
   can be written as `/\` over `\/`.
-- `<` and `>` become the left- and right-facing T junctions.
+- `<` becomes `BOX_T_LEFT` (arms N/W/S); `>` becomes `BOX_T_RIGHT` (arms N/E/S).
 - `^` becomes the upside-down T junction.
 - Spaces inside the layer design window become `.`.
 
