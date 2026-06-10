@@ -13,6 +13,8 @@ Validate a board `.vox` file before generating geometry:
 
 ```bash
 vox2stl/check_vox.py thermo/onboard/hardware/pico2w/hat/pico-side.vox
+vox2stl/check_vox.py --all
+vox2stl/check_vox.py --correct thermo/onboard/hardware/pico2w/hat/up-side.vox
 ```
 
 The input file must contain one or more layer headers:
@@ -32,10 +34,37 @@ cells become through-holes.
 - `|` creates a vertical trace.
 - Box-drawing corners, T junctions, and crosses connect only on their drawn arms.
 - `+` is treated as a four-way cross.
-- `*` and `O` create raised pad boxes.
+- `*` and `O` create raised pad boxes. Pads accept traces from any side, but
+  adjacent pad cells such as `OO` do not connect directly to each other.
 - Lowercase `a` through `z` render embossed uppercase letters, one monospace
   letter per cell. They do not connect electrically. Letter shapes come from
   pre-rendered smoothed Hershey vector tiles in `vox2stl/tiles/letters/`.
+
+For hand editing, `check_vox.py -c` / `check_vox.py --correct` rewrites ASCII
+trace shorthand in place before validating:
+
+- `/` and `\` are inferred as corners from neighboring trace arms, so a square
+  can be written as `/\` over `\/`.
+- `<` and `>` become the left- and right-facing T junctions.
+- `^` becomes the upside-down T junction.
+- Spaces inside the layer design window become `.`.
+
+The direct shorthand characters `<`, `>`, and `^` are also treated as their
+box-drawing equivalents during validation and STL generation.
+
+Alias declarations let one-character glyphs carry net intent while still
+rendering and connecting as an existing trace glyph:
+
+```text
+alias V -> | = VCC
+alias G -> | = GND
+```
+
+Aliases are left in place by `--correct`. During validation and STL generation,
+the alias glyph behaves like the target glyph. During validation, each alias cell
+also asserts the declared net, so disconnected power markers report net errors
+instead of invalid-character or non-copper errors. Inline `.cN=NET` notes declare
+expected net membership too, and cells with the same net name must be connected.
 
 ## Geometry Constants
 

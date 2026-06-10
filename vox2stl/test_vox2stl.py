@@ -3,11 +3,24 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 from pathlib import Path
 from typing import Sequence
 
+import check_vox
 import vox2stl
+from constants import (
+    BOX_LL,
+    BOX_LR,
+    BOX_T_LEFT,
+    BOX_T_RIGHT,
+    BOX_T_UP,
+    BOX_UL,
+    BOX_UR,
+    correct_vox_shorthand_text,
+)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -180,6 +193,748 @@ def test_uppercase_letters_remain_unassigned() -> None:
     require(len(mesh.triangles) == 0, f"uppercase label source triangles: got {len(mesh.triangles)}")
 
 
+def test_correct_vox_shorthand_direct_t_junctions() -> None:
+    text = "# <^> remains ASCII in comments\nlayer trace (0, 3, 1)\n<^>\n"
+    corrected = correct_vox_shorthand_text(text)
+    require("# <^> remains ASCII in comments\n" in corrected, "comments should not be corrected")
+    require(
+        f"{BOX_T_LEFT}{BOX_T_UP}{BOX_T_RIGHT}" in corrected,
+        "direct T shorthand should become box drawing glyphs",
+    )
+
+
+def test_correct_vox_shorthand_infers_square_corners() -> None:
+    text = "layer trace (0, 2, 2)\n/\\\n\\/\n"
+    corrected = correct_vox_shorthand_text(text)
+    require(
+        f"{BOX_UL}{BOX_UR}\n{BOX_LL}{BOX_LR}\n" in corrected,
+        "corner shorthand should infer square corners",
+    )
+
+
+def test_check_vox_corrects_file_in_place() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "shorthand.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (0, 2, 2)",
+                    "..",
+                    "..",
+                    "",
+                    "layer trace (0, 2, 2)",
+                    "/\\",
+                    "\\/",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", "--correct", str(path)])
+        corrected = path.read_text(encoding="utf-8")
+    require(exit_code == 0, f"check_vox --correct exit: got {exit_code}")
+    require(
+        f"{BOX_UL}{BOX_UR}\n{BOX_LL}{BOX_LR}" in corrected,
+        "check_vox --correct should rewrite shorthand corners in place",
+    )
+
+
+def test_correct_vox_shorthand_preserves_aliases_and_fills_spaces() -> None:
+    text = "alias V -> | = VCC\nlayer trace (0, 3, 1)\n V \n"
+    corrected = correct_vox_shorthand_text(text)
+    require("alias V -> | = VCC\n" in corrected, "alias declaration should be preserved")
+    require(".V.\n" in corrected, "correction should fill design-window spaces with dots")
+
+
+def test_vox2stl_reader_renders_alias_targets() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "alias.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer trace (0, 1, 2)",
+                    "V",
+                    "|",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        layer = vox2stl.read_layers(path)["trace"]
+    require(layer.rows == ("|", "|"), "vox2stl reader should render aliases as target glyphs")
+
+
+def test_check_vox_alias_net_assertion_passes_when_connected() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "alias-connected.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 4)",
+                    "A  .....",
+                    "B  .....",
+                    "C  .....",
+                    "D  ..*..",
+                    "",
+                    "layer trace (3, 5, 4)",
+                    "A  ..V..",
+                    "B  ..|..",
+                    "C  ..|..",
+                    "D  ..*..",
+                    "",
+                    "# trace intents",
+                    "# net VCC D.c2",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"connected alias net exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_alias_net_assertion_fails_when_disconnected() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "alias-disconnected.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 3)",
+                    "A  .....",
+                    "B  ..O..",
+                    "C  ..*..",
+                    "",
+                    "layer trace (3, 5, 3)",
+                    "A  ..V..",
+                    "B  ..O..",
+                    "C  ..*..",
+                    "",
+                    "# trace intents",
+                    "# net VCC C.c2",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"disconnected alias net exit: got {exit_code}")
+    expected = (
+        f"error: {path}: net 'VCC' component labeled by A.c2 "
+        "does not reach any 'VCC' pin\n"
+    )
+    require(error == expected, f"unexpected disconnected alias net error: {error!r}")
+
+
+def test_check_vox_reports_col_and_alias_net_errors_together() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "multi-error.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 3)",
+                    "A  .....",
+                    "B  ..O..",
+                    "C  ..*..",
+                    "",
+                    "layer trace (3, 5, 3)",
+                    "A  ..V..",
+                    "B  ..O..",
+                    "C  ..*.. note cols c0=|",
+                    "",
+                    "# trace intents",
+                    "# net VCC C.c2",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"multi-error alias net exit: got {exit_code}")
+    expected = (
+        f"error: {path}: trace row 3 (C) c0 (x=-5.08)=|: "
+        "column 0 out of design range 1..3\n"
+        f"error: {path}: net 'VCC' component labeled by A.c2 "
+        "does not reach any 'VCC' pin\n"
+    )
+    require(error == expected, f"unexpected multi-error alias net error: {error!r}")
+
+
+def test_check_vox_accepts_self_consistent_pad_layout_by_file_contents() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "pico2w" / "hat" / "up-side.vox"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (6, 10, 3)",
+                    "      XXXXXXXXXX",
+                    "GP13  X*XOOOXX*X GP18",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 3)",
+                    "      ..........",
+                    "GP13  .*-OOO..*. GP18",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"self-consistent pad layout exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_rejects_trace_pad_mismatch_with_base() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "pad-mismatch.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (3, 5, 1)",
+                    "A  .*O..",
+                    "",
+                    "layer trace (3, 5, 1)",
+                    "A  .*...",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"pad mismatch exit: got {exit_code}")
+    require("expected 'O' from base, got 'no pad'" in error, "checker should compare pads to base")
+
+
+def test_check_vox_uses_net_notes_without_trace_intents() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "net-note.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 3)",
+                    "A  ..*..",
+                    "B  .....",
+                    "C  .....",
+                    "",
+                    "layer trace (3, 5, 3)",
+                    "A  ..*.. note .c2=VCC",
+                    "B  ..|..",
+                    "C  ..V..",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"net note without intents exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_reports_split_net_notes_without_trace_intents() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "split-net-note.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 3)",
+                    "A  ..O..",
+                    "B  .....",
+                    "C  .....",
+                    "",
+                    "layer trace (3, 5, 3)",
+                    "A  ..O.. note .c2=VCC",
+                    "B  .....",
+                    "C  ..V..",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"split net note exit: got {exit_code}")
+    expected = (
+        f"error: {path}: net 'VCC' component labeled by C.c2 "
+        "does not reach any 'VCC' pin\n"
+    )
+    require(error == expected, f"unexpected split net note error: {error!r}")
+
+
+def test_check_vox_accepts_vertical_trace_through_leg_pad() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "leg-pad-vertical.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "layer base (3, 5, 3)",
+                    "A  ..O..",
+                    "B  .....",
+                    "C  .....",
+                    "",
+                    "layer trace (3, 5, 3)",
+                    "A  ..O.. note .c2=VCC",
+                    "B  ..|..",
+                    "C  ..V..",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"vertical leg pad exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_accepts_horizontal_trace_through_leg_pad() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "leg-pad-horizontal.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> - = VCC",
+                    "layer base (3, 5, 1)",
+                    "A  ..O..",
+                    "",
+                    "layer trace (3, 5, 1)",
+                    "A  .VO-. note .c2=VCC",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"horizontal leg pad exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_accepts_adjacent_same_net_leg_pads_as_separate_pins() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "adjacent-leg-pads.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (3, 5, 1)",
+                    "A  .OO..",
+                    "",
+                    "layer trace (3, 5, 1)",
+                    "A  .OO.. note .c1=VCC .c2=VCC",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"adjacent same-net leg pads exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_current_up_side_trace_fixture_fails_only_on_right_label() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side-current-trace.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "alias G -> | = GND",
+                    "",
+                    "layer base (6, 10, 22)",
+                    "      XXXXXXXXXX",
+                    "GP15  X*XXXXXX*X GP16",
+                    "GP14  X*XXXXXX*X GP17",
+                    "GND   X*XXXXXX*X GND",
+                    "GP13  X*XOOOXX*X GP18",
+                    "GP12  X*XXXXXX*X GP19",
+                    "GP11  X*XXXXXX*X GP20",
+                    "GP10  X*XOOOXX*X GP21",
+                    "GND   X*XXXXXX*X GND",
+                    "GP9   X*XXXXXX*X GP22",
+                    "GP8   X*XXXXXX*X RUN",
+                    "GP7   X*XXXXXX*X GP26",
+                    "GP6   X*XXXXXX*X GP27",
+                    "GND   X*XXXXXX*X GND",
+                    "GP5   X*XXXXXX*X GP28",
+                    "GP4   X*XOOOOX*X ADCV",
+                    "GP3   X*XXXXXX*X 3V3",
+                    "GP2   X*XXXXXX*X 3EN",
+                    "GND   X*XXXXXX*X GND",
+                    "GP1   X*XXXXXX*X VSYS",
+                    "GP0   X*XXXXXX*X VBUS",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 22)",
+                    "      ..........",
+                    "GP15  .*..up..*. GP16",
+                    "GP14  .*.side.*. GP17",
+                    "GND   .*......*. GND",
+                    "GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND",
+                    "GP12  .*..||..*. GP19",
+                    "GP11  .*..||..*. GP20",
+                    "GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND",
+                    "GND   .*..|<--*. GND",
+                    "GP9   .*..V|..*. GP22",
+                    "GP8   .*..|G..*. RUN",
+                    "GP7   .*..||..*. GP26",
+                    "GP6   .*.┌┘|..*. GP27",
+                    "GND   .*.|┌┘..*. GND",
+                    "GP5   .*.||┌--*. GP28  SCL",
+                    "GP4   .*.OOOO.*. GP38  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout",
+                    "GP3   .*.\\----*. 3V3",
+                    "GP2   .*......*. 3EN",
+                    "GND   .*......*. GND",
+                    "GP1   .*......*. VSYS",
+                    "GP0   .*..usb.*. VBUS",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 1, f"current up-side trace fixture should fail, got {exit_code}")
+    expected = (
+        f"error: {path}: trace row 16: right label 'GP38' "
+        "does not match base 'ADCV'\n"
+    )
+    require(stderr.getvalue() == expected, f"unexpected up-side error: {stderr.getvalue()!r}")
+
+
+
+def test_check_vox_current_up_side_trace_fixture_fails_on_right_label_with_sda_trace() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side-current-trace.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "alias G -> | = GND",
+                    "",
+                    "layer base (6, 10, 22)",
+                    "      XXXXXXXXXX",
+                    "GP15  X*XXXXXX*X GP16",
+                    "GP14  X*XXXXXX*X GP17",
+                    "GND   X*XXXXXX*X GND",
+                    "GP13  X*XOOOXX*X GP18",
+                    "GP12  X*XXXXXX*X GP19",
+                    "GP11  X*XXXXXX*X GP20",
+                    "GP10  X*XOOOXX*X GP21",
+                    "GND   X*XXXXXX*X GND",
+                    "GP9   X*XXXXXX*X GP22",
+                    "GP8   X*XXXXXX*X RUN",
+                    "GP7   X*XXXXXX*X GP26",
+                    "GP6   X*XXXXXX*X GP27",
+                    "GND   X*XXXXXX*X GND",
+                    "GP5   X*XXXXXX*X GP28",
+                    "GP4   X*XOOOOX*X ADCV",
+                    "GP3   X*XXXXXX*X 3V3",
+                    "GP2   X*XXXXXX*X 3EN",
+                    "GND   X*XXXXXX*X GND",
+                    "GP1   X*XXXXXX*X VSYS",
+                    "GP0   X*XXXXXX*X VBUS",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 22)",
+                    "      ..........",
+                    "GP15  .*..up..*. GP16",
+                    "GP14  .*.side.*. GP17",
+                    "GND   .*......*. GND",
+                    "GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND",
+                    "GP12  .*..||..*. GP19",
+                    "GP11  .*..||..*. GP20",
+                    "GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND",
+                    "GND   .*..|<--*. GND",
+                    "GP9   .*..V|..*. GP22",
+                    "GP8   .*..|G..*. RUN",
+                    "GP7   .*..||..*. GP26",
+                    "GP6   .*.┌┘|..*. GP27",
+                    "GND   .*.|┌┘..*. GND",
+                    "GP5   .*.||┌--*. GP28  SCL",
+                    "GP4   .*.OOOO-*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout",
+                    "GP3   .*.\\----*. 3V3",
+                    "GP2   .*......*. 3EN",
+                    "GND   .*......*. GND",
+                    "GP1   .*......*. VSYS",
+                    "GP0   .*..usb.*. VBUS",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 1, f"current up-side trace fixture should fail, got {exit_code}")
+    expected = (
+        f"error: {path}: copper component has conflicting net labels: "
+        "ADCV from ADCV:1.c8, GP35 from GP4.c6\n"
+    )
+    require(stderr.getvalue() == expected, f"unexpected up-side error: {stderr.getvalue()!r}")
+
+
+
+def test_check_vox_current_up_side_trace_after_right_label_fails_unconnected() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side-after-right-label-fix.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "alias G -> | = GND",
+                    "",
+                    "layer base (6, 10, 22)",
+                    "      XXXXXXXXXX",
+                    "GP15  X*XXXXXX*X GP16",
+                    "GP14  X*XXXXXX*X GP17",
+                    "GND   X*XXXXXX*X GND",
+                    "GP13  X*XOOOXX*X GP18",
+                    "GP12  X*XXXXXX*X GP19",
+                    "GP11  X*XXXXXX*X GP20",
+                    "GP10  X*XOOOXX*X GP21",
+                    "GND   X*XXXXXX*X GND",
+                    "GP9   X*XXXXXX*X GP22",
+                    "GP8   X*XXXXXX*X RUN",
+                    "GP7   X*XXXXXX*X GP26",
+                    "GP6   X*XXXXXX*X GP27",
+                    "GND   X*XXXXXX*X GND",
+                    "GP5   X*XXXXXX*X GP28",
+                    "GP4   X*XOOOOX*X ADCV",
+                    "GP3   X*XXXXXX*X 3V3",
+                    "GP2   X*XXXXXX*X 3EN",
+                    "GND   X*XXXXXX*X GND",
+                    "GP1   X*XXXXXX*X VSYS",
+                    "GP0   X*XXXXXX*X VBUS",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 22)",
+                    "      ..........",
+                    "GP15  .*..up..*. GP16",
+                    "GP14  .*.side.*. GP17",
+                    "GND   .*......*. GND",
+                    "GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND",
+                    "GP12  .*..||..*. GP19",
+                    "GP11  .*..||..*. GP20",
+                    "GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND",
+                    "GND   .*..|>--*. GND",
+                    "GP9   .*..V|..*. GP22",
+                    "GP8   .*..|G..*. RUN",
+                    "GP7   .*..||..*. GP26",
+                    "GP6   .*.┌┘|..*. GP27",
+                    "GND   .*.|┌┘..*. GND",
+                    "GP5   .*.||┌--*. GP28  SCL",
+                    "GP4   .*.OOOO-*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout",
+                    "GP3   .*......*. 3V3",
+                    "GP2   .*......*. 3EN",
+                    "GND   .*......*. GND",
+                    "GP1   .*......*. VSYS",
+                    "GP0   .*..usb.*. VBUS",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"up-side trace after right label fix should fail, got {exit_code}")
+    expected = (
+        f"error: {path}: copper component has conflicting net labels: "
+        "ADCV from ADCV:1.c8, GP35 from GP4.c6\n"
+    )
+    require(error == expected, f"unexpected up-side unconnected error: {error!r}")
+
+
+def test_check_vox_current_up_side_trace_fixture_fails_on_label_mismatch() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side-current-trace.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "alias G -> | = GND",
+                    "",
+                    "layer base (6, 10, 22)",
+                    "      XXXXXXXXXX",
+                    "GP15  X*XXXXXX*X GP16",
+                    "GP14  X*XXXXXX*X GP17",
+                    "GND   X*XXXXXX*X GND",
+                    "GP13  X*XOOOXX*X GP18",
+                    "GP12  X*XXXXXX*X GP19",
+                    "GP11  X*XXXXXX*X GP20",
+                    "GP10  X*XOOOXX*X GP21",
+                    "GND   X*XXXXXX*X GND",
+                    "GP9   X*XXXXXX*X GP22",
+                    "GP8   X*XXXXXX*X RUN",
+                    "GP7   X*XXXXXX*X GP26",
+                    "GP6   X*XXXXXX*X GP27",
+                    "GND   X*XXXXXX*X GND",
+                    "GP5   X*XXXXXX*X GP28",
+                    "GP4   X*XOOOOX*X ADCV",
+                    "GP3   X*XXXXXX*X 3V3",
+                    "GP2   X*XXXXXX*X 3EN",
+                    "GND   X*XXXXXX*X GND",
+                    "GP1   X*XXXXXX*X VSYS",
+                    "GP0   X*XXXXXX*X VBUS",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 22)",
+                    "      ..........",
+                    "GP15  .*..up..*. GP16",
+                    "GP14  .*.side.*. GP17",
+                    "GND   .*......*. GND",
+                    "GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND",
+                    "GP12  .*..||..*. GP19",
+                    "GP11  .*..||..*. GP20",
+                    "GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND",
+                    "GND   .*..|<--*. GND",
+                    "GP9   .*..G|..*. GP22",
+                    "GP8   .*..|V..*. RUN",
+                    "GP7   .*..||..*. GP26",
+                    "GP6   .*.┌┘|..*. GP27",
+                    "GND   .*.|┌┘..*. GND",
+                    "GP5   .*.||┌--*. GP28  SCL",
+                    "GP4   .*.OOOO.*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout",
+                    "GP3   .*.\\----*. 3V3",
+                    "GP2   .*......*. 3EN",
+                    "GND   .*......*. GND",
+                    "GP1   .*......*. VSYS",
+                    "GP0   .*..usb.*. VBUS",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"current up-side trace fixture should fail, got {exit_code}")
+    expected = (
+        f"error: {path}: copper component has conflicting net labels: "
+        "GND from GND:4.c8, GP13.c5, GP10.c5, GP4.c4, VCC from GP8.c5\n"
+        f"error: {path}: copper component has conflicting net labels: "
+        "GND from GP9.c4, VCC from GP13.c4, GP10.c4, GP4.c3\n"
+    )
+    require(error == expected, f"unexpected up-side label mismatch error: {error!r}")
+
+
+def test_check_vox_current_up_side_trace_fixture_passes_on_label() -> None:
+    # CURSOR SHOULD PASS
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side-current-trace.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "alias V -> | = VCC",
+                    "alias G -> | = GND",
+                    "",
+                    "layer base (6, 10, 22)",
+                    "      XXXXXXXXXX",
+                    "GP15  X*XXXXXX*X GP16",
+                    "GP14  X*XXXXXX*X GP17",
+                    "GND   X*XXXXXX*X GND",
+                    "GP13  X*XOOOXX*X GP18",
+                    "GP12  X*XXXXXX*X GP19",
+                    "GP11  X*XXXXXX*X GP20",
+                    "GP10  X*XOOOXX*X GP21",
+                    "GND   X*XXXXXX*X GND",
+                    "GP9   X*XXXXXX*X GP22",
+                    "GP8   X*XXXXXX*X RUN",
+                    "GP7   X*XXXXXX*X GP26",
+                    "GP6   X*XXXXXX*X GP27",
+                    "GND   X*XXXXXX*X GND",
+                    "GP5   X*XXXXXX*X GP28",
+                    "GP4   X*XOOOOX*X ADCV",
+                    "GP3   X*XXXXXX*X 3V3",
+                    "GP2   X*XXXXXX*X 3EN",
+                    "GND   X*XXXXXX*X GND",
+                    "GP1   X*XXXXXX*X VSYS",
+                    "GP0   X*XXXXXX*X VBUS",
+                    "      XXXXXXXXXX",
+                    "",
+                    "layer trace (6, 10, 22)",
+                    "      ..........",
+                    "GP15  .*..up..*. GP16",
+                    "GP14  .*.side.*. GP17",
+                    "GND   .*......*. GND",
+                    "GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND",
+                    "GP12  .*..||..*. GP19",
+                    "GP11  .*..||..*. GP20",
+                    "GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND",
+                    "GND   .*..|<--*. GND",
+                    "GP9   .*..V|..*. GP22",
+                    "GP8   .*..|G..*. RUN",
+                    "GP7   .*..||..*. GP26",
+                    "GP6   .*.┌┘|..*. GP27",
+                    "GND   .*.|┌┘..*. GND",
+                    "GP5   .*.||┌--*. GP28  SCL",
+                    "GP4   .*.OOOO.*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL) .c6 = GP35 (SDA); big 7-pin keepout",
+                    "GP3   .*.\\----*. 3V3",
+                    "GP2   .*......*. 3EN",
+                    "GND   .*......*. GND",
+                    "GP1   .*......*. VSYS",
+                    "GP0   .*..usb.*. VBUS",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = check_vox.main(["check_vox.py", str(path)])
+    require(exit_code == 0, f"current up-side trace fixture should pass, got {exit_code}")
+    require(stderr.getvalue() == "", f"unexpected up-side error: {stderr.getvalue()!r}")
+
+
+
+def test_check_vox_requires_input_or_all() -> None:
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            check_vox.main(["check_vox.py"])
+    except SystemExit as exc:
+        exit_code = exc.code
+    else:
+        exit_code = 0
+    require(exit_code == 2, f"check_vox empty CLI exit: got {exit_code}")
+    require("vox_path" in stderr.getvalue(), "check_vox empty CLI should request a vox_path")
+    require("--all" in stderr.getvalue(), "check_vox empty CLI should mention --all")
+
+
 def test_cli_writes_ascii_stl() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         out_path = Path(tmp_dir) / "straight.stl"
@@ -228,6 +983,27 @@ def main() -> int:
     test_letter_tile_manifest()
     test_lowercase_letters_render_uppercase_label_shapes()
     test_uppercase_letters_remain_unassigned()
+    test_correct_vox_shorthand_direct_t_junctions()
+    test_correct_vox_shorthand_infers_square_corners()
+    test_check_vox_corrects_file_in_place()
+    test_correct_vox_shorthand_preserves_aliases_and_fills_spaces()
+    test_vox2stl_reader_renders_alias_targets()
+    test_check_vox_alias_net_assertion_passes_when_connected()
+    test_check_vox_alias_net_assertion_fails_when_disconnected()
+    test_check_vox_reports_col_and_alias_net_errors_together()
+    test_check_vox_accepts_self_consistent_pad_layout_by_file_contents()
+    test_check_vox_rejects_trace_pad_mismatch_with_base()
+    test_check_vox_uses_net_notes_without_trace_intents()
+    test_check_vox_reports_split_net_notes_without_trace_intents()
+    test_check_vox_accepts_vertical_trace_through_leg_pad()
+    test_check_vox_accepts_horizontal_trace_through_leg_pad()
+    test_check_vox_accepts_adjacent_same_net_leg_pads_as_separate_pins()
+    test_check_vox_current_up_side_trace_fixture_fails_only_on_right_label()
+    test_check_vox_current_up_side_trace_fixture_fails_on_right_label_with_sda_trace()
+    test_check_vox_current_up_side_trace_fixture_passes_on_label()
+    test_check_vox_current_up_side_trace_fixture_fails_on_label_mismatch()
+    test_check_vox_current_up_side_trace_after_right_label_fails_unconnected()
+    test_check_vox_requires_input_or_all()
     test_cli_writes_ascii_stl()
     test_cli_writes_full_stl_with_holes()
     print("ok vox2stl tests")

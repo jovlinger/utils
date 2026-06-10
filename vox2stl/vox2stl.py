@@ -64,6 +64,8 @@ from constants import (
     OPPOSITE_DIRECTION,
     PAD_CHARS,
     PIN_PAD_CHAR,
+    SHORTHAND_DIRECT_CHARS,
+    parse_alias_line,
     UNIT_RE,
 )
 from letter_mesh import generate_letter_tile_triangles
@@ -307,6 +309,7 @@ def plate_with_holes_tris(box: BoxSolid, holes: Sequence[Hole], grid_mm: float) 
 
 def read_layers(path: Path) -> Dict[str, Layer]:
     layers: Dict[str, Layer] = {}
+    aliases: Dict[str, str] = {}
     current_name: Optional[str] = None
     current_offset = 0
     current_width = 0
@@ -336,6 +339,10 @@ def read_layers(path: Path) -> Dict[str, Layer]:
         line = raw_line.rstrip("\n")
         if not line or line.startswith("#"):
             continue
+        alias = parse_alias_line(line.strip())
+        if alias is not None:
+            aliases[alias.source] = alias.target
+            continue
         match = LAYER_HEADER_RE.match(line)
         if match:
             finish_layer()
@@ -351,7 +358,12 @@ def read_layers(path: Path) -> Dict[str, Layer]:
             raise ValueError(f"{path}:{line_no}: invalid layer header")
         if current_name is None:
             raise ValueError(f"{path}:{line_no}: content before first layer")
-        current_rows.append(line)
+        end = current_offset + current_width
+        chars = list(line.ljust(end))
+        for absolute_col in range(current_offset, end):
+            char = aliases.get(chars[absolute_col], chars[absolute_col])
+            chars[absolute_col] = SHORTHAND_DIRECT_CHARS.get(char, char)
+        current_rows.append("".join(chars))
 
     finish_layer()
     return layers

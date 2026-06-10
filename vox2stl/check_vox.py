@@ -7,12 +7,22 @@ UTF-8 box-drawing glyphs in the checked diagram window.
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+
+from constants import (
+    VoxAlias,
+    correct_vox_shorthand_text,
+    effective_trace_char,
+    parse_alias_line,
+    parse_vox_aliases_text,
+    trace_arms,
+)
 
 PIN_PAD_CHAR = "*"
 LEG_PAD_CHAR = "O"
@@ -78,6 +88,14 @@ INTENT_DISJOINT_RE = re.compile(r"^#\s*disjoint\s+(.+)$")
 INTENT_ENDPOINT_RE = re.compile(r"^([A-Za-z0-9_:-]+)\.c(\d+)$")
 
 
+def is_copper_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
+    return effective_trace_char(char, aliases) in COPPER_CHARS
+
+
+def is_pad_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
+    return effective_trace_char(char, aliases) in PAD_CHARS
+
+
 @dataclass(frozen=True)
 class Layer:
     name: str
@@ -85,27 +103,6 @@ class Layer:
     width: int
     height: int
     rows: List[str]
-
-
-@dataclass(frozen=True)
-class RowExpectation:
-    """Expected */O pad columns for one labeled row."""
-
-    label: str
-    pin_cols: FrozenSet[int]
-    o_cols: FrozenSet[int]
-
-
-@dataclass(frozen=True)
-class BoardVoxProfile:
-    """Board-specific validation details layered on the generic checker."""
-
-    name: str
-    path_part: str
-    unit_mm: float
-    expected_inner_cols: int
-    row_layouts: Mapping[str, Tuple[RowExpectation, ...]]
-    crowding_hints: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -133,94 +130,17 @@ class TraceNetAssertion:
     net_name: str
 
 
-def _row(label: str, pin_cols: FrozenSet[int], o_cols: FrozenSet[int]) -> RowExpectation:
-    return RowExpectation(label=label, pin_cols=pin_cols, o_cols=o_cols)
-
-
-_PICO_HEADER_PINS: FrozenSet[int] = frozenset({1, 8})
-
-PICO_UP_SIDE_LAYOUT: Tuple[RowExpectation, ...] = (
-    _row("GP15", _PICO_HEADER_PINS, frozenset()),
-    _row("GP14", _PICO_HEADER_PINS, frozenset()),
-    _row("GND", _PICO_HEADER_PINS, frozenset()),
-    _row("GP13", _PICO_HEADER_PINS, frozenset({4, 5, 6})),
-    _row("GP12", _PICO_HEADER_PINS, frozenset()),
-    _row("GP11", _PICO_HEADER_PINS, frozenset()),
-    _row("GP10", _PICO_HEADER_PINS, frozenset({4, 5, 6})),
-    _row("GP9", _PICO_HEADER_PINS, frozenset()),
-    _row("GP8", _PICO_HEADER_PINS, frozenset()),
-    _row("GP7", _PICO_HEADER_PINS, frozenset()),
-    _row("GP6", _PICO_HEADER_PINS, frozenset()),
-    _row("GP5", _PICO_HEADER_PINS, frozenset()),
-    _row("GP4", _PICO_HEADER_PINS, frozenset({3, 4, 5, 6})),
-    _row("GP3", _PICO_HEADER_PINS, frozenset()),
-    _row("GP2", _PICO_HEADER_PINS, frozenset()),
-    _row("GP1", _PICO_HEADER_PINS, frozenset()),
-    _row("GP0", _PICO_HEADER_PINS, frozenset()),
-)
-
-PICO_SIDE_LAYOUT: Tuple[RowExpectation, ...] = (
-    _row("P20", _PICO_HEADER_PINS, frozenset()),
-    _row("P19", _PICO_HEADER_PINS, frozenset()),
-    _row("P18", _PICO_HEADER_PINS, frozenset()),
-    _row("P17", _PICO_HEADER_PINS, frozenset({3, 4, 5})),
-    _row("P16", _PICO_HEADER_PINS, frozenset()),
-    _row("P15", _PICO_HEADER_PINS, frozenset()),
-    _row("P14", _PICO_HEADER_PINS, frozenset({3, 4, 5})),
-    _row("P13", _PICO_HEADER_PINS, frozenset()),
-    _row("P12", _PICO_HEADER_PINS, frozenset()),
-    _row("P11", _PICO_HEADER_PINS, frozenset()),
-    _row("P10", _PICO_HEADER_PINS, frozenset()),
-    _row("P9", _PICO_HEADER_PINS, frozenset()),
-    _row("P8", _PICO_HEADER_PINS, frozenset()),
-    _row("P7", _PICO_HEADER_PINS, frozenset()),
-    _row("P6", _PICO_HEADER_PINS, frozenset({3, 4, 5, 6})),
-    _row("P5", _PICO_HEADER_PINS, frozenset()),
-    _row("P4", _PICO_HEADER_PINS, frozenset()),
-    _row("P3", _PICO_HEADER_PINS, frozenset()),
-    _row("P2", _PICO_HEADER_PINS, frozenset()),
-    _row("P1", _PICO_HEADER_PINS, frozenset()),
-)
-
-PICO2W_PROFILE = BoardVoxProfile(
-    name="pico2w",
-    path_part="pico2w",
-    unit_mm=2.54,
-    expected_inner_cols=8,
-    row_layouts={
-        "up-side": PICO_UP_SIDE_LAYOUT,
-        "pico-side": PICO_SIDE_LAYOUT,
-    },
-    crowding_hints={
-        "up-side": "on up-side: shift module legs and center rails one column east",
-        "pico-side": "pico-side layout is separate; review crowding on its own terms",
-    },
-)
-
-BOARD_PROFILES: Tuple[BoardVoxProfile, ...] = (PICO2W_PROFILE,)
-
-
-def board_profile_for_path(path: Path) -> Optional[BoardVoxProfile]:
-    parts = set(path.parts)
-    for profile in BOARD_PROFILES:
-        if profile.path_part in parts:
-            return profile
-    return None
-
-
 def inner_column_count(layer: Layer) -> int:
     return max(0, layer.width - 2)
 
 
-def col_label(col_index: int, profile: Optional[BoardVoxProfile], layer: Optional[Layer] = None) -> str:
+def col_label(col_index: int, layer: Optional[Layer] = None) -> str:
     name = f"c{col_index}"
-    if profile is None:
+    if layer is None:
         return name
-    inner_cols = profile.expected_inner_cols
-    if layer is not None:
-        inner_cols = inner_column_count(layer)
+    inner_cols = inner_column_count(layer)
     center = (inner_cols + 1) * 0.5
-    x_mm = (col_index - center) * profile.unit_mm
+    x_mm = (col_index - center) * 2.54
     return f"{name} (x={x_mm:.2f})"
 
 
@@ -235,8 +155,23 @@ def design_window(layer: Layer, row: str) -> str:
     return row.ljust(end)[layer.offset:end]
 
 
-def row_label(row: str) -> Optional[str]:
-    match = ROW_LABEL_RE.match(row)
+def row_label(row: str, layer: Optional[Layer] = None) -> Optional[str]:
+    text = row if layer is None else row[: layer.offset]
+    match = ROW_LABEL_RE.match(text)
+    if match is None:
+        return None
+    token = match.group(1)
+    if token.startswith("X") or token == ".":
+        return None
+    return token
+
+
+def right_row_label(row: str, layer: Layer) -> Optional[str]:
+    window = design_window(layer, row)
+    if len(window) < 2 or window[-2] != PIN_PAD_CHAR:
+        return None
+    text = row[layer.offset + layer.width :]
+    match = ROW_LABEL_RE.match(text)
     if match is None:
         return None
     token = match.group(1)
@@ -246,11 +181,16 @@ def row_label(row: str) -> Optional[str]:
 
 
 def read_layers(path: Path) -> Dict[str, Layer]:
+    text = path.read_text(encoding="utf-8")
+    aliases = parse_vox_aliases_text(text)
+    allowed_chars = ALLOWED_CHARS | set(aliases)
     layers: Dict[str, Layer] = {}
     current: Optional[Layer] = None
-    for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_no, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.rstrip("\n")
         if not line or line.startswith("#"):
+            continue
+        if parse_alias_line(line.strip()) is not None:
             continue
         match = LAYER_HEADER_RE.match(line)
         if match:
@@ -271,7 +211,7 @@ def read_layers(path: Path) -> Dict[str, Layer]:
         if current is None:
             raise ValueError(f"{path}:{line_no}: content before first layer")
         window = checked_window(current, line)
-        bad_chars = sorted(set(window) - ALLOWED_CHARS)
+        bad_chars = sorted(set(window) - allowed_chars)
         if bad_chars:
             raise ValueError(
                 f"{path}:{line_no}: invalid chars in checked window {''.join(bad_chars)!r}"
@@ -280,73 +220,36 @@ def read_layers(path: Path) -> Dict[str, Layer]:
     return layers
 
 
-def find_pad_columns(window: str) -> Tuple[FrozenSet[int], FrozenSet[int]]:
-    pin_cols: set[int] = set()
-    o_cols: set[int] = set()
-    for index, char in enumerate(window):
-        if char == PIN_PAD_CHAR:
-            pin_cols.add(index)
-        elif char == LEG_PAD_CHAR:
-            o_cols.add(index)
-    return frozenset(pin_cols), frozenset(o_cols)
-
-
-def validate_pin_layout(
-    path: Path,
-    layer_name: str,
-    layer: Layer,
-    expectations: Sequence[RowExpectation],
-    profile: Optional[BoardVoxProfile],
-) -> None:
-    by_label: Dict[str, RowExpectation] = {item.label: item for item in expectations}
-    seen: set[str] = set()
-    for row_index, row in enumerate(layer.rows, 1):
-        label = row_label(row)
-        if label is None or label not in by_label:
-            continue
-        seen.add(label)
-        expect = by_label[label]
-        window = design_window(layer, row)
-        pin_cols, o_cols = find_pad_columns(window)
-        if pin_cols != expect.pin_cols:
-            expected = ", ".join(col_label(c, profile, layer) for c in sorted(expect.pin_cols))
-            raise ValueError(
-                f"{path}: layer {layer_name!r} row {row_index} ({label}): "
-                f"{PIN_PAD_CHAR} columns {sorted(pin_cols)} != expected "
-                f"{sorted(expect.pin_cols)} ({expected})"
-            )
-        if o_cols != expect.o_cols:
-            expected = ", ".join(col_label(c, profile, layer) for c in sorted(expect.o_cols))
-            raise ValueError(
-                f"{path}: layer {layer_name!r} row {row_index} ({label}): "
-                f"O columns {sorted(o_cols)} != expected {sorted(expect.o_cols)} ({expected})"
-            )
-        extras = (pin_cols | o_cols) - (expect.pin_cols | expect.o_cols)
-        if extras:
-            raise ValueError(
-                f"{path}: layer {layer_name!r} row {row_index} ({label}): "
-                f"unexpected pads at {sorted(extras)}"
-            )
-    missing = set(by_label) - seen
-    if missing:
-        raise ValueError(f"{path}: layer {layer_name!r} missing rows: {sorted(missing)}")
+def correct_vox_file(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8")
+    corrected = correct_vox_shorthand_text(text)
+    if corrected == text:
+        return False
+    path.write_text(corrected, encoding="utf-8")
+    return True
 
 
 def extract_col_assertions(row: str) -> List[Tuple[int, str]]:
     return [(int(match.group(1)), match.group(2)) for match in TRACE_COL_ASSERT_RE.finditer(row)]
 
 
-def extract_trace_net_assertions(trace: Layer, max_col: int) -> List[TraceNetAssertion]:
+def extract_trace_net_assertions(
+    trace: Layer,
+    max_col: int,
+    aliases: Mapping[str, VoxAlias],
+) -> Tuple[List[TraceNetAssertion], List[str]]:
     assertions: List[TraceNetAssertion] = []
+    errors: List[str] = []
     for row_i, row in enumerate(trace.rows):
-        label = row_label(row) or f"row {row_i + 1}"
+        label = row_label(row, trace) or f"row {row_i + 1}"
         for match in TRACE_NET_ASSERT_RE.finditer(row):
             col = int(match.group(1))
             if col < 1 or col > max_col:
-                raise ValueError(
+                errors.append(
                     f"trace row {row_i + 1} ({label}) .c{col}: "
                     f"column must be 1..{max_col}"
                 )
+                continue
             assertions.append(
                 TraceNetAssertion(
                     row_index=row_i,
@@ -355,15 +258,33 @@ def extract_trace_net_assertions(trace: Layer, max_col: int) -> List[TraceNetAss
                     net_name=match.group(2),
                 )
             )
-    return assertions
+        window = design_window(trace, row)
+        for col in range(1, max_col + 1):
+            alias = aliases.get(window[col])
+            if alias is not None:
+                assertions.append(
+                    TraceNetAssertion(
+                        row_index=row_i,
+                        row_label=label,
+                        col=col,
+                        net_name=alias.net_name,
+                    )
+                )
+    return assertions, errors
 
 
-def validate_col_assertion(window: str, max_col: int, col: int, token: str) -> Optional[str]:
+def validate_col_assertion(
+    window: str,
+    max_col: int,
+    col: int,
+    token: str,
+    aliases: Mapping[str, VoxAlias],
+) -> Optional[str]:
     if col < 1 or col > max_col:
         return f"column {col} out of design range 1..{max_col}"
     if token in {"|", "+", "-"} | BOX_CHARS:
         actual = window[col]
-        if actual != token:
+        if effective_trace_char(actual, aliases) != token:
             return f"expected {token!r}, got {actual!r}"
         return None
     if token == "*-":
@@ -439,7 +360,7 @@ def build_row_label_index(trace: Layer) -> Dict[Tuple[str, int], int]:
     seen: Dict[str, int] = {}
     index: Dict[Tuple[str, int], int] = {}
     for row_index, row in enumerate(trace.rows):
-        label = row_label(row)
+        label = row_label(row, trace)
         if label is None:
             continue
         seen[label] = seen.get(label, 0) + 1
@@ -452,6 +373,7 @@ def resolve_cell_ref(
     trace: Layer,
     ref: CellRef,
     row_index: Mapping[Tuple[str, int], int],
+    aliases: Mapping[str, VoxAlias],
 ) -> Tuple[int, int]:
     key = (ref.row_label, ref.occurrence)
     if key not in row_index:
@@ -462,7 +384,7 @@ def resolve_cell_ref(
     row_i = row_index[key]
     window = design_window(trace, trace.rows[row_i])
     char = window[ref.col]
-    if char not in COPPER_CHARS:
+    if not is_copper_char(char, aliases):
         raise ValueError(
             f"{path}: intent endpoint {ref.row_label}:{ref.occurrence}.c{ref.col} "
             f"is {char!r}, not copper"
@@ -470,27 +392,27 @@ def resolve_cell_ref(
     return row_i, ref.col
 
 
-def horizontal_connects(left: str, right: str) -> bool:
-    if left in PAD_CHARS and right in PAD_CHARS:
+def horizontal_connects(left: str, right: str, aliases: Mapping[str, VoxAlias]) -> bool:
+    if is_pad_char(left, aliases) and is_pad_char(right, aliases):
         return False
-    return "E" in ARMS_BY_CHAR.get(left, frozenset()) and "W" in ARMS_BY_CHAR.get(
-        right, frozenset()
-    )
+    return "E" in trace_arms(left, aliases) and "W" in trace_arms(right, aliases)
 
 
-def vertical_connects(top: str, bottom: str) -> bool:
-    if top in PAD_CHARS and bottom in PAD_CHARS:
+def vertical_connects(top: str, bottom: str, aliases: Mapping[str, VoxAlias]) -> bool:
+    if is_pad_char(top, aliases) and is_pad_char(bottom, aliases):
         return False
-    return "S" in ARMS_BY_CHAR.get(top, frozenset()) and "N" in ARMS_BY_CHAR.get(
-        bottom, frozenset()
-    )
+    return "S" in trace_arms(top, aliases) and "N" in trace_arms(bottom, aliases)
 
 
 def trace_char_at(trace: Layer, row_i: int, col: int) -> str:
     return design_window(trace, trace.rows[row_i])[col]
 
 
-def flood_fill_components(trace: Layer, max_col: int) -> Dict[Tuple[int, int], int]:
+def flood_fill_components(
+    trace: Layer,
+    max_col: int,
+    aliases: Mapping[str, VoxAlias],
+) -> Dict[Tuple[int, int], int]:
     """Return (row_index, col) to component id for all copper cells."""
     components: Dict[Tuple[int, int], int] = {}
     next_id = 0
@@ -500,7 +422,7 @@ def flood_fill_components(trace: Layer, max_col: int) -> Dict[Tuple[int, int], i
             if (row_i, col) in components:
                 continue
             char = trace_char_at(trace, row_i, col)
-            if char not in COPPER_CHARS:
+            if not is_copper_char(char, aliases):
                 continue
             queue: deque[Tuple[int, int]] = deque([(row_i, col)])
             components[(row_i, col)] = next_id
@@ -509,51 +431,74 @@ def flood_fill_components(trace: Layer, max_col: int) -> Dict[Tuple[int, int], i
                 here = trace_char_at(trace, row, current_col)
                 if current_col > 1:
                     left = trace_char_at(trace, row, current_col - 1)
-                    if (row, current_col - 1) not in components and horizontal_connects(left, here):
+                    if (row, current_col - 1) not in components and horizontal_connects(
+                        left,
+                        here,
+                        aliases,
+                    ):
                         components[(row, current_col - 1)] = next_id
                         queue.append((row, current_col - 1))
                 if current_col < max_col:
                     right = trace_char_at(trace, row, current_col + 1)
-                    if (row, current_col + 1) not in components and horizontal_connects(here, right):
+                    if (row, current_col + 1) not in components and horizontal_connects(
+                        here,
+                        right,
+                        aliases,
+                    ):
                         components[(row, current_col + 1)] = next_id
                         queue.append((row, current_col + 1))
                 if row > 0:
                     up = trace_char_at(trace, row - 1, current_col)
-                    if (row - 1, current_col) not in components and vertical_connects(up, here):
+                    if (row - 1, current_col) not in components and vertical_connects(
+                        up,
+                        here,
+                        aliases,
+                    ):
                         components[(row - 1, current_col)] = next_id
                         queue.append((row - 1, current_col))
                 if row + 1 < height:
                     down = trace_char_at(trace, row + 1, current_col)
-                    if (row + 1, current_col) not in components and vertical_connects(here, down):
+                    if (row + 1, current_col) not in components and vertical_connects(
+                        here,
+                        down,
+                        aliases,
+                    ):
                         components[(row + 1, current_col)] = next_id
                         queue.append((row + 1, current_col))
             next_id += 1
     return components
 
 
-def validate_module_leg_short_risk(path: Path, trace: Layer, max_col: int) -> None:
+def validate_module_leg_short_risk(
+    path: Path,
+    trace: Layer,
+    max_col: int,
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
     """Fail when a bridge actually contacts both module O legs below it."""
+    errors: List[str] = []
     for row_i in range(len(trace.rows) - 1):
-        upper_label = row_label(trace.rows[row_i]) or f"row {row_i + 1}"
+        upper_label = row_label(trace.rows[row_i], trace) or f"row {row_i + 1}"
         upper = design_window(trace, trace.rows[row_i])
         lower = design_window(trace, trace.rows[row_i + 1])
         for col in range(1, max_col):
             left = upper[col]
             right = upper[col + 1]
-            if left not in COPPER_CHARS or right not in COPPER_CHARS:
+            if not is_copper_char(left, aliases) or not is_copper_char(right, aliases):
                 continue
-            if not horizontal_connects(left, right):
+            if not horizontal_connects(left, right, aliases):
                 continue
             if (
                 lower[col] == LEG_PAD_CHAR
                 and lower[col + 1] == LEG_PAD_CHAR
-                and vertical_connects(left, lower[col])
-                and vertical_connects(right, lower[col + 1])
+                and vertical_connects(left, lower[col], aliases)
+                and vertical_connects(right, lower[col + 1], aliases)
             ):
-                raise ValueError(
+                errors.append(
                     f"{path}: trace row {row_i + 1} ({upper_label}) "
                     f"c{col}-c{col + 1} bridge contacts both module O legs on row below"
                 )
+    return errors
 
 
 def validate_trace_net_assertions(
@@ -562,24 +507,19 @@ def validate_trace_net_assertions(
     assertions: Sequence[TraceNetAssertion],
     components: Mapping[Tuple[int, int], int],
     endpoint_components: Mapping[str, Sequence[Tuple[CellRef, int]]],
-) -> None:
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
     if not assertions:
-        return
+        return []
     errors: List[str] = []
     component_nets: Dict[int, List[str]] = {}
     for net_name, refs in endpoint_components.items():
         for _, comp in refs:
             component_nets.setdefault(comp, []).append(net_name)
     for assertion in assertions:
-        if assertion.net_name not in endpoint_components:
-            errors.append(
-                f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
-                f".c{assertion.col}={assertion.net_name}: unknown net"
-            )
-            continue
         cell = (assertion.row_index, assertion.col)
         char = trace_char_at(trace, assertion.row_index, assertion.col)
-        if char not in COPPER_CHARS:
+        if not is_copper_char(char, aliases):
             errors.append(
                 f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
                 f".c{assertion.col}={assertion.net_name}: cell is {char!r}, not copper"
@@ -589,6 +529,12 @@ def validate_trace_net_assertions(
             errors.append(
                 f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
                 f".c{assertion.col}={assertion.net_name}: cell is isolated copper"
+            )
+            continue
+        if assertion.net_name not in endpoint_components:
+            errors.append(
+                f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
+                f".c{assertion.col}={assertion.net_name}: unknown net"
             )
             continue
         actual_comp = components[cell]
@@ -601,83 +547,269 @@ def validate_trace_net_assertions(
             f"{path}: trace row {assertion.row_index + 1} ({assertion.row_label}) "
             f".c{assertion.col} expected {assertion.net_name}, reaches {actual}"
         )
-    if errors:
-        raise ValueError("\n".join(errors))
+    return errors
 
 
-def validate_trace_intents(path: Path, trace: Layer, intents: TraceIntents, max_col: int) -> None:
-    assertions = extract_trace_net_assertions(trace, max_col)
+def collect_pin_anchor_components(
+    trace: Layer,
+    max_col: int,
+    components: Mapping[Tuple[int, int], int],
+    assertions: Sequence[TraceNetAssertion],
+    aliases: Mapping[str, VoxAlias],
+) -> Dict[str, List[Tuple[CellRef, int]]]:
+    anchors: Dict[str, List[Tuple[CellRef, int]]] = {}
+    occurrences: Dict[str, int] = {}
+    if max_col < 1:
+        return anchors
+    for row_i, row in enumerate(trace.rows):
+        window = design_window(trace, row)
+        left_label = row_label(row, trace)
+        if left_label is not None and window[1] == PIN_PAD_CHAR:
+            cell = (row_i, 1)
+            if cell in components:
+                occurrences[left_label] = occurrences.get(left_label, 0) + 1
+                anchors.setdefault(left_label, []).append(
+                    (
+                        CellRef(left_label, occurrences[left_label], 1),
+                        components[cell],
+                    )
+                )
+        right_label = right_row_label(row, trace)
+        if right_label is not None and window[max_col] == PIN_PAD_CHAR:
+            cell = (row_i, max_col)
+            if cell in components:
+                occurrences[right_label] = occurrences.get(right_label, 0) + 1
+                anchors.setdefault(right_label, []).append(
+                    (
+                        CellRef(right_label, occurrences[right_label], max_col),
+                        components[cell],
+                    )
+                )
+    for assertion in assertions:
+        cell = (assertion.row_index, assertion.col)
+        char = trace_char_at(trace, assertion.row_index, assertion.col)
+        if not is_pad_char(char, aliases) or cell not in components:
+            continue
+        anchors.setdefault(assertion.net_name, []).append(
+            (
+                CellRef(assertion.row_label, 0, assertion.col),
+                components[cell],
+            )
+        )
+    return anchors
+
+
+def validate_component_net_labels(
+    path: Path,
+    trace: Layer,
+    assertions: Sequence[TraceNetAssertion],
+    components: Mapping[Tuple[int, int], int],
+    pin_components: Mapping[str, Sequence[Tuple[CellRef, int]]],
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
+    errors: List[str] = []
+    component_labels: Dict[int, Dict[str, List[str]]] = {}
+    component_pin_labels: Dict[int, Dict[str, List[str]]] = {}
+    def format_ref(ref: CellRef) -> str:
+        if ref.occurrence <= 0:
+            return f"{ref.row_label}.c{ref.col}"
+        return f"{ref.row_label}:{ref.occurrence}.c{ref.col}"
+
+    for net_name, refs in pin_components.items():
+        for ref, comp in refs:
+            source = format_ref(ref)
+            component_labels.setdefault(comp, {}).setdefault(net_name, []).append(source)
+            component_pin_labels.setdefault(comp, {}).setdefault(net_name, []).append(source)
+    for assertion in assertions:
+        cell = (assertion.row_index, assertion.col)
+        char = trace_char_at(trace, assertion.row_index, assertion.col)
+        if not is_copper_char(char, aliases) or cell not in components:
+            continue
+        if is_pad_char(char, aliases):
+            continue
+        actual_comp = components[cell]
+        source = f"{assertion.row_label}.c{assertion.col}"
+        component_labels.setdefault(actual_comp, {}).setdefault(assertion.net_name, []).append(source)
+    for label_sources in component_labels.values():
+        if len(label_sources) <= 1:
+            continue
+        detail = ", ".join(
+            f"{label} from {', '.join(sources)}" for label, sources in sorted(label_sources.items())
+        )
+        errors.append(
+            f"{path}: copper component has conflicting net labels: {detail}"
+        )
+    for comp, label_sources in component_labels.items():
+        if len(label_sources) != 1:
+            continue
+        net_name, sources = next(iter(label_sources.items()))
+        pin_sources = component_pin_labels.get(comp, {}).get(net_name)
+        if pin_sources:
+            continue
+        errors.append(
+            f"{path}: net {net_name!r} component labeled by {', '.join(sources)} "
+            f"does not reach any {net_name!r} pin"
+        )
+    return errors
+
+
+def add_trace_net_assertion_components(
+    trace: Layer,
+    assertions: Sequence[TraceNetAssertion],
+    components: Mapping[Tuple[int, int], int],
+    aliases: Mapping[str, VoxAlias],
+    endpoint_components: Dict[str, List[Tuple[CellRef, int]]],
+) -> None:
+    for assertion in assertions:
+        cell = (assertion.row_index, assertion.col)
+        char = trace_char_at(trace, assertion.row_index, assertion.col)
+        if not is_copper_char(char, aliases) or cell not in components:
+            continue
+        endpoint_components.setdefault(assertion.net_name, []).append(
+            (
+                CellRef(
+                    row_label=assertion.row_label,
+                    occurrence=1,
+                    col=assertion.col,
+                ),
+                components[cell],
+            )
+        )
+
+
+def validate_net_component_splits(
+    path: Path,
+    endpoint_components: Mapping[str, Sequence[Tuple[CellRef, int]]],
+) -> List[str]:
+    errors: List[str] = []
+    for net_name, comps in endpoint_components.items():
+        comp_ids = {comp for _, comp in comps}
+        if len(comp_ids) <= 1:
+            continue
+        detail = ", ".join(
+            f"{ref.row_label}:{ref.occurrence}.c{ref.col}->comp{comp}"
+            for ref, comp in comps
+        )
+        errors.append(f"{path}: net {net_name!r} split across components: {detail}")
+    return errors
+
+
+def validate_trace_intents(
+    path: Path,
+    trace: Layer,
+    intents: TraceIntents,
+    max_col: int,
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
+    errors: List[str] = []
+    assertions, assertion_errors = extract_trace_net_assertions(trace, max_col, aliases)
+    errors.extend(assertion_errors)
     if not intents.nets and not intents.disjoint and not assertions:
-        return
-    validate_module_leg_short_risk(path, trace, max_col)
+        return errors
+    errors.extend(validate_module_leg_short_risk(path, trace, max_col, aliases))
     row_index = build_row_label_index(trace)
-    components = flood_fill_components(trace, max_col)
+    components = flood_fill_components(trace, max_col, aliases)
+    pin_components = collect_pin_anchor_components(
+        trace,
+        max_col,
+        components,
+        assertions,
+        aliases,
+    )
     endpoint_components: Dict[str, List[Tuple[CellRef, int]]] = {}
     for net_name, endpoints in intents.nets.items():
         comps: List[Tuple[CellRef, int]] = []
         for ref in endpoints:
-            cell = resolve_cell_ref(path, trace, ref, row_index)
+            try:
+                cell = resolve_cell_ref(path, trace, ref, row_index, aliases)
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
             if cell not in components:
-                raise ValueError(
+                errors.append(
                     f"{path}: intent net {net_name!r} endpoint "
                     f"{ref.row_label}:{ref.occurrence}.c{ref.col} is isolated copper"
                 )
-            comps.append((ref, components[cell]))
+                continue
+            comp = components[cell]
+            comps.append((ref, comp))
+            char = trace_char_at(trace, cell[0], cell[1])
+            if is_pad_char(char, aliases):
+                pin_components.setdefault(net_name, []).append((ref, comp))
         endpoint_components[net_name] = comps
-        comp_ids = {comp for _, comp in comps}
-        if len(comp_ids) > 1:
-            detail = ", ".join(
-                f"{ref.row_label}:{ref.occurrence}.c{ref.col}->comp{comp}"
-                for ref, comp in comps
-            )
-            raise ValueError(
-                f"{path}: intent net {net_name!r} split across components: {detail}"
-            )
+    add_trace_net_assertion_components(
+        trace,
+        assertions,
+        components,
+        aliases,
+        endpoint_components,
+    )
+    errors.extend(
+        validate_component_net_labels(
+            path,
+            trace,
+            assertions,
+            components,
+            pin_components,
+            aliases,
+        )
+    )
     for net_a, net_b in intents.disjoint:
         if net_a not in endpoint_components:
-            raise ValueError(f"{path}: disjoint references unknown net {net_a!r}")
+            errors.append(f"{path}: disjoint references unknown net {net_a!r}")
+            continue
         if net_b not in endpoint_components:
-            raise ValueError(f"{path}: disjoint references unknown net {net_b!r}")
+            errors.append(f"{path}: disjoint references unknown net {net_b!r}")
+            continue
         comps_a = {comp for _, comp in endpoint_components[net_a]}
         comps_b = {comp for _, comp in endpoint_components[net_b]}
         if comps_a & comps_b:
-            raise ValueError(
+            errors.append(
                 f"{path}: disjoint violation: nets {net_a!r} and {net_b!r} share "
                 f"copper (components {sorted(comps_a & comps_b)})"
             )
-    validate_trace_net_assertions(path, trace, assertions, components, endpoint_components)
+    errors.extend(
+        validate_trace_net_assertions(
+            path,
+            trace,
+            assertions,
+            components,
+            endpoint_components,
+            aliases,
+        )
+    )
+    return errors
 
 
-def validate_trace_col_assertions(path: Path, trace: Layer, profile: Optional[BoardVoxProfile]) -> None:
+def validate_trace_col_assertions(
+    path: Path,
+    trace: Layer,
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
+    errors: List[str] = []
     max_col = inner_column_count(trace)
     for row_index, row in enumerate(trace.rows, 1):
-        label = row_label(row) or f"row {row_index}"
+        label = row_label(row, trace) or f"row {row_index}"
         assertions = extract_col_assertions(row)
         if not assertions:
             continue
         window = design_window(trace, row)
         for col, token in assertions:
-            problem = validate_col_assertion(window, max_col, col, token)
+            problem = validate_col_assertion(window, max_col, col, token, aliases)
             if problem is not None:
-                raise ValueError(
+                errors.append(
                     f"{path}: trace row {row_index} ({label}) "
-                    f"{col_label(col, profile, trace)}={token}: {problem}"
+                    f"{col_label(col, trace)}={token}: {problem}"
                 )
+    return errors
 
 
-def collect_pad_crowding_warnings(
-    path: Path,
-    layer_name: str,
-    layer: Layer,
-    profile: Optional[BoardVoxProfile],
-) -> List[str]:
+def collect_pad_crowding_warnings(path: Path, layer_name: str, layer: Layer) -> List[str]:
     """Warn when adjacent */O pads may crowd routing on one row."""
     warnings: List[str] = []
-    hint = "review crowding for this board profile"
-    if profile is not None:
-        hint = profile.crowding_hints.get(path.stem, hint)
+    hint = "review crowding on this row"
     for row_index, row in enumerate(layer.rows, 1):
-        label = row_label(row) or f"row {row_index}"
+        label = row_label(row, layer) or f"row {row_index}"
         window = design_window(layer, row)
         for col in range(len(window) - 1):
             pair = window[col : col + 2]
@@ -685,7 +817,7 @@ def collect_pad_crowding_warnings(
                 continue
             warnings.append(
                 f"warn {path.name}: layer {layer_name!r} {label} "
-                f"{col_label(col, profile, layer)}-{col_label(col + 1, profile, layer)}: "
+                f"{col_label(col, layer)}-{col_label(col + 1, layer)}: "
                 f"{pair} adjacency ({hint})"
             )
     return warnings
@@ -695,31 +827,46 @@ def validate_trace_pads_match_base(
     path: Path,
     base: Layer,
     trace: Layer,
-    expectations: Sequence[RowExpectation],
-    profile: Optional[BoardVoxProfile],
-) -> None:
-    by_label: Mapping[str, RowExpectation] = {item.label: item for item in expectations}
+) -> List[str]:
+    errors: List[str] = []
     for row_index, (base_row, trace_row) in enumerate(zip(base.rows, trace.rows), 1):
-        label = row_label(base_row)
-        if label is None or label not in by_label:
-            continue
-        expect = by_label[label]
+        label = row_label(base_row, base) or row_label(trace_row, trace) or f"row {row_index}"
         base_window = design_window(base, base_row)
         trace_window = design_window(trace, trace_row)
-        for col in expect.pin_cols | expect.o_cols:
-            base_char = base_window[col]
-            trace_char = trace_window[col]
-            if base_char not in PAD_CHARS:
-                raise ValueError(
-                    f"{path}: internal error: base row {label} "
-                    f"{col_label(col, profile, base)} is {base_char!r}, not a pad"
-                )
-            if trace_char != base_char:
-                raise ValueError(
-                    f"{path}: trace row {row_index} ({label}) "
-                    f"{col_label(col, profile, trace)}: expected {base_char!r}, "
-                    f"got {trace_char!r}"
-                )
+        for col, (base_char, trace_char) in enumerate(zip(base_window, trace_window)):
+            if base_char not in PAD_CHARS and trace_char not in PAD_CHARS:
+                continue
+            if base_char == trace_char:
+                continue
+            expected = base_char if base_char in PAD_CHARS else "no pad"
+            actual = trace_char if trace_char in PAD_CHARS else "no pad"
+            errors.append(
+                f"{path}: trace row {row_index} ({label}) "
+                f"{col_label(col, trace)}: expected {expected!r} from base, got {actual!r}"
+            )
+    return errors
+
+
+def validate_row_labels_match(path: Path, base: Layer, trace: Layer) -> List[str]:
+    errors: List[str] = []
+    for row_index, (base_row, trace_row) in enumerate(zip(base.rows, trace.rows), 1):
+        base_label = row_label(base_row, base)
+        trace_label = row_label(trace_row, trace)
+        if base_label != trace_label and (base_label is not None or trace_label is not None):
+            errors.append(
+                f"{path}: trace row {row_index}: left label {trace_label!r} "
+                f"does not match base {base_label!r}"
+            )
+        base_right_label = right_row_label(base_row, base)
+        trace_right_label = right_row_label(trace_row, trace)
+        if base_right_label != trace_right_label and (
+            base_right_label is not None or trace_right_label is not None
+        ):
+            errors.append(
+                f"{path}: trace row {row_index}: right label {trace_right_label!r} "
+                f"does not match base {base_right_label!r}"
+            )
+    return errors
 
 
 def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[Layer, Layer]:
@@ -755,30 +902,21 @@ def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[La
 
 
 def validate(path: Path) -> List[str]:
+    errors: List[str] = []
+    aliases = parse_vox_aliases_text(path.read_text(encoding="utf-8"))
     layers = read_layers(path)
     base, trace = validate_layer_geometry(path, layers)
-    profile = board_profile_for_path(path.resolve())
     max_col = inner_column_count(base)
 
-    if profile is not None and max_col != profile.expected_inner_cols:
-        raise ValueError(
-            f"{path}: profile {profile.name!r} expects {profile.expected_inner_cols} "
-            f"inner columns, got {max_col}"
-        )
-
-    pin_layout: Optional[Tuple[RowExpectation, ...]] = None
-    if profile is not None:
-        pin_layout = profile.row_layouts.get(path.stem)
-    if pin_layout is not None:
-        validate_pin_layout(path, "base", base, pin_layout, profile)
-        validate_pin_layout(path, "trace", trace, pin_layout, profile)
-        validate_trace_pads_match_base(path, base, trace, pin_layout, profile)
-
-    validate_trace_col_assertions(path, trace, profile)
+    errors.extend(validate_row_labels_match(path, base, trace))
+    errors.extend(validate_trace_pads_match_base(path, base, trace))
+    errors.extend(validate_trace_col_assertions(path, trace, aliases))
     intents = read_trace_intents(path, max_col)
-    validate_trace_intents(path, trace, intents, max_col)
+    errors.extend(validate_trace_intents(path, trace, intents, max_col, aliases))
+    if errors:
+        raise ValueError("\n".join(errors))
 
-    warnings = collect_pad_crowding_warnings(path, "base", base, profile)
+    warnings = collect_pad_crowding_warnings(path, "base", base)
     print(f"ok {path.name}: {len(layers)} layers, {base.width} x {base.height}")
     return warnings
 
@@ -789,20 +927,44 @@ def default_vox_paths() -> List[Path]:
     return sorted(hardware_root.glob("*/hat/*.vox"))
 
 
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("vox_paths", metavar="vox_path", nargs="*", type=Path)
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="validate every hardware .vox file under thermo/onboard/hardware",
+    )
+    parser.add_argument(
+        "-c",
+        "--correct",
+        action="store_true",
+        help="rewrite ASCII trace shorthand as UTF-8 box drawing glyphs before validation",
+    )
+    args = parser.parse_args(argv[1:])
+    if args.all and args.vox_paths:
+        parser.error("--all cannot be combined with explicit vox_path arguments")
+    if not args.all and not args.vox_paths:
+        parser.error("the following arguments are required: vox_path (or use --all)")
+    return args
+
+
 def main(argv: Sequence[str]) -> int:
-    paths = [Path(arg) for arg in argv[1:]]
-    if not paths:
-        paths = default_vox_paths()
+    args = parse_args(argv)
+    paths = default_vox_paths() if args.all else args.vox_paths
     errors: List[str] = []
     for path in paths:
         try:
+            if args.correct:
+                correct_vox_file(path)
             for message in validate(path):
                 print(message, file=sys.stderr)
         except (OSError, UnicodeError, ValueError) as exc:
             errors.append(str(exc))
     if errors:
         for error in errors:
-            print(f"error: {error}", file=sys.stderr)
+            for line in error.splitlines():
+                print(f"error: {line}", file=sys.stderr)
         return 1
     return 0
 

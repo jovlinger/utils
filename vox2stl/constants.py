@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, FrozenSet
+from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 # Physical pitch of one text-grid cell.
 DEFAULT_UNIT_MM = 2.54
@@ -115,6 +116,9 @@ LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(
 # UNIT_MM metadata parser for .vox files.
 UNIT_RE = re.compile(r"UNIT_MM\s*=\s*([0-9]+(?:\.[0-9]+)?)")
 
+# Trace glyph alias parser for .vox files.
+ALIAS_RE = re.compile(r"^alias\s+(\S)\s*->\s*(\S)\s*=\s*([A-Za-z0-9_:-]+)\s*$")
+
 # Upper-left box drawing corner glyph.
 BOX_UL = "\u250c"
 
@@ -177,3 +181,217 @@ ARMS_BY_CHAR: Dict[str, FrozenSet[str]] = {
 
 # Opposite cardinal direction for neighbor connection checks.
 OPPOSITE_DIRECTION: Dict[str, str] = {"N": "S", "E": "W", "S": "N", "W": "E"}
+
+
+@dataclass(frozen=True)
+class VoxAlias:
+    source: str
+    target: str
+    net_name: str
+
+SHORTHAND_DIRECT_CHARS: Dict[str, str] = {
+    "<": BOX_T_LEFT,
+    ">": BOX_T_RIGHT,
+    "^": BOX_T_UP,
+}
+
+SHORTHAND_CORNER_CANDIDATES: Dict[str, Tuple[Tuple[str, FrozenSet[str]], ...]] = {
+    "/": (
+        (BOX_UL, ARMS_BY_CHAR[BOX_UL]),
+        (BOX_LR, ARMS_BY_CHAR[BOX_LR]),
+    ),
+    "\\": (
+        (BOX_UR, ARMS_BY_CHAR[BOX_UR]),
+        (BOX_LL, ARMS_BY_CHAR[BOX_LL]),
+    ),
+}
+
+ALL_DIRECTIONS: Tuple[str, ...] = ("N", "E", "S", "W")
+
+
+def _split_line_ending(raw_line: str) -> Tuple[str, str]:
+    if raw_line.endswith("\r\n"):
+        return raw_line[:-2], "\r\n"
+    if raw_line.endswith("\n"):
+        return raw_line[:-1], "\n"
+    if raw_line.endswith("\r"):
+        return raw_line[:-1], "\r"
+    return raw_line, ""
+
+
+def parse_alias_line(line: str) -> Optional[VoxAlias]:
+    match = ALIAS_RE.match(line)
+    if match is None:
+        return None
+    return VoxAlias(source=match.group(1), target=match.group(2), net_name=match.group(3))
+
+
+def parse_vox_aliases_text(text: str) -> Dict[str, VoxAlias]:
+    aliases: Dict[str, VoxAlias] = {}
+    for raw_line in text.splitlines():
+        alias = parse_alias_line(raw_line.strip())
+        if alias is not None:
+            aliases[alias.source] = alias
+    return aliases
+
+
+def effective_trace_char(char: str, aliases: Mapping[str, VoxAlias]) -> str:
+    alias = aliases.get(char)
+    if alias is None:
+        return SHORTHAND_DIRECT_CHARS.get(char, char)
+    return alias.target
+
+
+def trace_arms(char: str, aliases: Mapping[str, VoxAlias]) -> FrozenSet[str]:
+    effective = effective_trace_char(char, aliases)
+    if effective in PAD_CHARS:
+        return frozenset(ALL_DIRECTIONS)
+    return ARMS_BY_CHAR.get(effective, frozenset())
+
+
+def _possible_arms(char: str, aliases: Mapping[str, VoxAlias]) -> FrozenSet[str]:
+    effective = effective_trace_char(char, aliases)
+    direct = SHORTHAND_DIRECT_CHARS.get(char)
+    if direct is not None:
+        return ARMS_BY_CHAR[direct]
+    if effective in PAD_CHARS:
+        return frozenset(ALL_DIRECTIONS)
+    arms = ARMS_BY_CHAR.get(effective)
+    if arms is not None:
+        return arms
+    candidates = SHORTHAND_CORNER_CANDIDATES.get(char)
+    if candidates is None:
+        return frozenset()
+    possible: set[str] = set()
+    for _, candidate_arms in candidates:
+        possible.update(candidate_arms)
+    return frozenset(possible)
+
+
+def _neighbor_char(grid: Sequence[str], row_index: int, col_index: int, direction: str) -> str:
+    next_row = row_index
+    next_col = col_index
+    if direction == "N":
+        next_row -= 1
+    elif direction == "S":
+        next_row += 1
+    elif direction == "E":
+        next_col += 1
+    elif direction == "W":
+        next_col -= 1
+    else:
+        raise ValueError(f"unknown direction {direction!r}")
+    if next_row < 0 or next_row >= len(grid):
+        return "."
+    if next_col < 0 or next_col >= len(grid[next_row]):
+        return "."
+    return grid[next_row][next_col]
+
+
+def _best_corner_replacement(
+    grid: Sequence[str],
+    row_index: int,
+    col_index: int,
+    char: str,
+    aliases: Mapping[str, VoxAlias],
+) -> Optional[str]:
+    candidates = SHORTHAND_CORNER_CANDIDATES.get(char)
+    if candidates is None:
+        return None
+
+    best_char: Optional[str] = None
+    best_score = 0
+    tied = False
+    for candidate_char, arms in candidates:
+        score = 0
+        for direction in ALL_DIRECTIONS:
+            neighbor = _neighbor_char(grid, row_index, col_index, direction)
+            neighbor_arms = _possible_arms(neighbor, aliases)
+            if direction in arms and OPPOSITE_DIRECTION[direction] in neighbor_arms:
+                score += 1
+        if score > best_score:
+            best_char = candidate_char
+            best_score = score
+            tied = False
+        elif score == best_score and score > 0:
+            tied = True
+    if best_score == 0 or tied:
+        return None
+    return best_char
+
+
+def _correct_layer_rows(
+    rows: Sequence[str],
+    offset: int,
+    width: int,
+    aliases: Mapping[str, VoxAlias],
+) -> List[str]:
+    end = offset + width
+    grid = [row.ljust(end)[offset:end] for row in rows]
+    corrected: List[str] = []
+    for row_index, row in enumerate(rows):
+        chars = list(row.ljust(end))
+        for absolute_col in range(offset, end):
+            col_index = absolute_col - offset
+            char = chars[absolute_col]
+            replacement = SHORTHAND_DIRECT_CHARS.get(char)
+            if replacement is None:
+                replacement = _best_corner_replacement(grid, row_index, col_index, char, aliases)
+            if replacement is None and char == " ":
+                replacement = "."
+            if replacement is not None:
+                chars[absolute_col] = replacement
+        corrected.append("".join(chars))
+    return corrected
+
+
+def correct_vox_shorthand_text(text: str) -> str:
+    """Return .vox text with ASCII trace shorthand normalized in layer rows."""
+
+    split_lines = [_split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    aliases = parse_vox_aliases_text(text)
+    layers: List[Tuple[int, int, List[int]]] = []
+    current_offset: Optional[int] = None
+    current_width: Optional[int] = None
+    current_rows: List[int] = []
+
+    def finish_layer() -> None:
+        nonlocal current_offset, current_width, current_rows
+        if current_offset is not None and current_width is not None and current_rows:
+            layers.append((current_offset, current_width, current_rows))
+        current_offset = None
+        current_width = None
+        current_rows = []
+
+    for line_index, line in enumerate(lines):
+        if not line or line.startswith("#"):
+            continue
+        if parse_alias_line(line.strip()) is not None:
+            continue
+        match = LAYER_HEADER_RE.match(line)
+        if match:
+            finish_layer()
+            current_offset = int(match.group(2))
+            current_width = int(match.group(3))
+            continue
+        if line.startswith("layer "):
+            finish_layer()
+            continue
+        if current_offset is not None and current_width is not None:
+            current_rows.append(line_index)
+
+    finish_layer()
+
+    for offset, width, row_indexes in layers:
+        corrected_rows = _correct_layer_rows(
+            [lines[index] for index in row_indexes],
+            offset,
+            width,
+            aliases,
+        )
+        for line_index, corrected_row in zip(row_indexes, corrected_rows):
+            lines[line_index] = corrected_row
+
+    return "".join(line + ending for line, ending in zip(lines, endings))
