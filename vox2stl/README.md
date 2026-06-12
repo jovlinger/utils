@@ -5,16 +5,17 @@ Dependency-free `.vox` layer to ASCII STL converter.
 ## Usage
 
 ```bash
-vox2stl/vox2stl.py path/to/file.vox --layer trace --output trace.stl
-vox2stl/vox2stl.py path/to/file.vox --mode full --output board.stl
+vox2stl/voxtool.py stl path/to/file.vox --layer trace --output trace.stl
+vox2stl/voxtool.py stl path/to/file.vox --mode full --output board.stl
 ```
 
 Validate a board `.vox` file before generating geometry:
 
 ```bash
-vox2stl/check_vox.py thermo/onboard/hardware/pico2w/hat/pico-side.vox
-vox2stl/check_vox.py --all
-vox2stl/check_vox.py --correct thermo/onboard/hardware/pico2w/hat/up-side.vox
+vox2stl/voxtool.py check thermo/onboard/hardware/pico2w/hat/pico-side.vox
+vox2stl/voxtool.py check --all
+vox2stl/voxtool.py correct thermo/onboard/hardware/pico2w/hat/up-side.vox
+vox2stl/voxtool.py mirror thermo/onboard/hardware/pico2w/hat/up-side.vox -out thermo/onboard/hardware/pico2w/hat/pico-side.vox
 ```
 
 The input file must contain one or more layer headers:
@@ -40,8 +41,7 @@ cells become through-holes.
   letter per cell. They do not connect electrically. Letter shapes come from
   pre-rendered smoothed Hershey vector tiles in `vox2stl/tiles/letters/`.
 
-For hand editing, `check_vox.py -c` / `check_vox.py --correct` rewrites ASCII
-trace shorthand in place before validating:
+For hand editing, `voxtool.py correct` rewrites ASCII trace shorthand in place:
 
 - `/` and `\` are inferred as corners from neighboring trace arms, so a square
   can be written as `/\` over `\/`.
@@ -60,11 +60,14 @@ alias V -> | = VCC
 alias G -> | = GND
 ```
 
-Aliases are left in place by `--correct`. During validation and STL generation,
+Aliases are left in place by `correct`. During validation and STL generation,
 the alias glyph behaves like the target glyph. During validation, each alias cell
 also asserts the declared net, so disconnected power markers report net errors
 instead of invalid-character or non-copper errors. Inline `.cN=NET` notes declare
 expected net membership too, and cells with the same net name must be connected.
+
+`voxtool.py mirror` mirrors each layer left to right, swaps row labels between
+the left and right sides, and mirrors `.cN` notes and trace intent endpoints.
 
 ## Geometry Constants
 

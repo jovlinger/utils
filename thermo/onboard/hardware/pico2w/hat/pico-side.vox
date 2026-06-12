@@ -1,85 +1,67 @@
 # Text voxel design for thermo Pico2W sensor HAT, pico-side variant.
 # UNIT_MM=2.54
+
 # Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
 # Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
 # Rows north to south.
 # Legend: X=solid substrate, *=Pico pin pad, O=device leg pad, .=empty/air, a-z=embossed labels.
 # Trace tiles: |=vertical, -=horizontal, +=intersection.
-# Flat-side mount: same net topology as up-side.vox with traces/pads mirrored across X=0.
-# Print flat-side down; modules attach from the top (mounted upside down vs up-side).
-# Pico header: c1 = west (-8.89), c8 = east (8.89).
+# Routing intent (adjacent cells, never a digraph in one cell):
+#   -O = horizontal trace into a leg pad O
+#   -- = horizontal trace segment (continue net)
+#   OO = adjacent leg pads with no trace between (isolated)
+# Layer trace uses */O on pads; traces use - | + only on empty cells between pads.
 
 layer base (6, 10, 22)
       XXXXXXXXXX
-P20   X*XXXXXX*X P21
-P19   X*XXXXXX*X P22
-P18   X*XXXXXX*X P23
-P17   X*XOOOXX*X P24
-P16   X*XXXXXX*X P25
-P15   X*XXXXXX*X P26
-P14   X*XOOOXX*X P27
-P13   X*XXXXXX*X P28
-P12   X*XXXXXX*X P29
-P11   X*XXXXXX*X P30
-P10   X*XXXXXX*X P31
-P9    X*XXXXXX*X P32
-P8    X*XXXXXX*X P33
-P7    X*XXXXXX*X P34
-P6    X*XOOOOX*X P35
-P5    X*XXXXXX*X P36
-P4    X*XXXXXX*X P37
-P3    X*XXXXXX*X P38
-P2    X*XXXXXX*X P39
-P1    X*XXXXXX*X P40
+GP16  X*XXXXXX*X GP15
+GP17  X*XXXXXX*X GP14
+GND   X*XXXXXX*X GND
+GP18  X*XXOOOX*X GP13   IR RX target .c6= GP13,.c5 = VCC, .c4 = GND
+GP19  X*XXXXXX*X GP12
+GP20  X*XXXXXX*X GP11
+GP21  X*XXOOOX*X GP10   IR RX target .c6= GP10,.c5 = VCC, .c4 = GND
+GND   X*XXXXXX*X GND
+GP22  X*XXXXXX*X GP9
+RUN   X*XXXXXX*X GP8
+GP26  X*XXXXXX*X GP7
+GP27  X*XXXXXX*X GP6
+GND   X*XXXXXX*X GND
+GP28  X*XXXXXX*X GP5
+ADCV  X*XOOOOX*X GP4  AHT20 target: .c6 = VCC, .c5 = GND, .c4 = GP5/SCL, .c3 = GP4/SDA; big 7-pin keepout
+3V3   X*XXXXXX*X GP3
+3EN   X*XXXXXX*X GP2
+GND   X*XXXXXX*X GND
+VSYS  X*XXXXXX*X GP1
+VBUS  X*XXXXXX*X GP0
       XXXXXXXXXX
+
+
+alias V -> | = VCC
+alias G -> | = GND
+
 
 layer trace (6, 10, 22)
       ..........
-P20   .*.pico.*. P21
-P19   .*.side.*. P22
-P18   .*......*. P23
-P17   .*.OOO--*. P24  IR RX: OUT GND VCC; cols c8=-* c6=- c4=O
-P16   .*.||...*. P25
-P15   .*.||...*. P26
-P14   .*.OOO--*. P27  IR TX: DAT GND VCC; cols c8=-* c6=- c4=O
-P13   .*.||...*. P28
-P12   .*.||...*. P29
-P11   .*.||...*. P30
-P10   .*.||...*. P31
-P9    .*.||...*. P32
-P8    .*.||...*. P33
-P7    .*.||┌--*. P34  SCL; cols c8=-* c6=- c5=┌
-P6    .*.OOOO-*. P35  AHT20 c3=SDA c4=SCL c5=GND c6=3V3; I2C0 GP4/SDA pin6 GP5/SCL pin7; cols c8=-* c3=O c4=O
-P5    .*-┤|...*. P36  3V3 tap; cols c4=| c3=┤ c1=*-
-P4    .*.||...*. P37
-P3    .*.|├---*. P38  cols c8=-* c4=├ c3=|
-P2    .*......*. P39
-P1    .*.usb..*. P40
+GP16  .*.pico.*. GP15
+GP17  ...side... GP14
+GND   .......... GND
+GP18  ....OOO-*. GP13  IR RX target .c6= GP13,.c5 = VCC, .c4 = GND
+GP19  ....G|.... GP12
+GP20  ....|V.... GP11
+GP21  ....OOO-*. GP10  IR TX target .c6= GP10,.c5 = VCC, .c4 = GND
+GND   .*--┤|.... GND
+GP22  ....||.... GP9
+RUN   ....|└┐... GP8
+GP26  ....└┐|... GP7
+GP27  .*--┐||... GP6  SCL
+GND   ....|||... GND
+GP28  .*-┐|||... GP5  SDA
+ADCV  ...OOOO... GP4  AHT20 target .c6 = VCC, .c5 = GND, .c4 = GP27 (SCL) .c3 = GP28 (SDA); big 7-pin keepout
+3V3   .*----┘... GP3  
+3EN   .......... GP2
+GND   .......... GND
+VSYS  .......... GP1
+VBUS  .*.usb..*. GP0
       ..........
-# scratch
-# Mirrored from up-side.vox.
-# labels: P20 pico, P19 side.
-
-# trace intents
-# net GND P3.c8 P17.c4 P14.c4 P6.c4
-# net 3V3 P5.c1 P17.c3 P14.c3 P6.c3
-# disjoint GND 3V3
-# net SDA P6.c8 P6.c6
-# disjoint SDA GND
-# disjoint SDA 3V3
-# net SCL P7.c8 P6.c5
-# disjoint SDA SCL
-# disjoint SCL GND
-# disjoint SCL 3V3
-# net OUT P17.c8 P17.c5
-# disjoint OUT SDA
-# disjoint OUT SCL
-# disjoint OUT GND
-# disjoint OUT 3V3
-# net DAT P14.c8 P14.c5
-# disjoint OUT DAT
-# disjoint DAT SDA
-# disjoint DAT SCL
-# disjoint DAT GND
-# disjoint DAT 3V3
-# all planned signal nets routed
+	  

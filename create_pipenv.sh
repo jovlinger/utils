@@ -82,6 +82,9 @@ for PROJECT_REL in "$@"; do
   }
 
   ensure_venv_marker_readme() {
+    if [ -f "$ENV_DIR/.gitignore" ] && grep -q "Created by venv" "$ENV_DIR/.gitignore"; then
+      rm -f "$ENV_DIR/.gitignore"
+    fi
     if [ ! -f "$ENV_DIR/README.md" ]; then
       cat >"$ENV_DIR/README.md" <<EOF
 # Project virtualenv marker
@@ -118,15 +121,20 @@ EOF
   run_pip_install() {
     (
       . "$ENV_DIR/bin/activate"
+      if [ -x "$ENV_DIR/bin/python3" ]; then
+        VENV_PY="$ENV_DIR/bin/python3"
+      else
+        VENV_PY="$ENV_DIR/bin/python"
+      fi
       if [ -f "$REQ_FILE" ]; then
-        python -m pip install --upgrade pip -q
-        python -m pip install -r "$REQ_FILE" -q
+        "$VENV_PY" -m pip install --upgrade pip -q
+        "$VENV_PY" -m pip install -r "$REQ_FILE" -q
         echo "  Installed from $REQ_FILE"
       else
         echo "  No requirements.txt at $REQ_FILE"
       fi
       if [ -f "$DEV_REQ" ]; then
-        python -m pip install -r "$DEV_REQ" -q
+        "$VENV_PY" -m pip install -r "$DEV_REQ" -q
         echo "  Installed from $DEV_REQ"
       fi
     )

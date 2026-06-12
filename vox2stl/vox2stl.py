@@ -716,8 +716,7 @@ def solid_name_for(path: Path, layer_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", raw)
 
 
-def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("vox_path", type=Path)
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--mode", choices=("layer", "full"), default="layer")
@@ -743,11 +742,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--origin-x-mm", type=float, default=0.0)
     parser.add_argument("--origin-y-mm", type=float, default=0.0)
     parser.add_argument("--no-pads", action="store_true")
+
+
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_cli_arguments(parser)
     return parser.parse_args(argv)
 
 
-def run(argv: Sequence[str]) -> int:
-    args = parse_args(argv)
+def run_from_args(args: argparse.Namespace) -> int:
     layers = read_layers(args.vox_path)
     file_unit = unit_from_file(args.vox_path)
     trace_z0_mm = args.trace_z0_mm if args.trace_z0_mm is not None else args.base_z1_mm
@@ -814,6 +817,10 @@ def run(argv: Sequence[str]) -> int:
         print(f"Letters: {letter_count}")
     print(f"Triangles: {len(mesh.triangles)}")
     return 0
+
+
+def run(argv: Sequence[str]) -> int:
+    return run_from_args(parse_args(argv))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete up-side fixture tests for check_vox."""
+"""Complete up-side fixture tests for voxtool."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import io
 import tempfile
 from pathlib import Path
 
-import check_vox
+import voxtool
 
 
 def require(condition: bool, message: str) -> None:
@@ -22,12 +22,13 @@ def run_check(vox_text: str, *, correct: bool = False) -> tuple[int, str, str, s
         path.write_text(vox_text, encoding="utf-8")
         stdout = io.StringIO()
         stderr = io.StringIO()
-        argv = ["check_vox.py"]
         if correct:
-            argv.append("--correct")
-        argv.append(str(path))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                correct_exit = voxtool.main(["voxtool.py", "correct", str(path)])
+            require(correct_exit == 0, f"correction failed: {correct_exit}")
+        argv = ["voxtool.py", "check", str(path)]
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(argv)
+            exit_code = voxtool.main(argv)
         corrected = path.read_text(encoding="utf-8")
         return exit_code, stdout.getvalue(), stderr.getvalue(), corrected
 
@@ -93,7 +94,7 @@ def test_check_vox_current_up_side_trace_fixture_passes_right_label() -> None:
             "GP6   .*.┌┘|..*. GP27",
             "GND   .*.|┌┘..*. GND",
             "GP5   .*.||┌--*. GP28  SCL",
-            "GP4   .*.OOOO.*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL); big 7-pin keepout",
+            "GP4   .*.OOO..*. ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP28 (SCL); big 7-pin keepout",
             "GP3   .*.└----*. 3V3",
             "GP2   .*......*. 3EN",
             "GND   .*......*. GND",
@@ -330,19 +331,3 @@ def test_check_vox_current_up_side_trace_fixture_fails_on_floating_power_and_gro
     require("net '3V3' component labeled by" in stderr and "GP9.c4" in stderr, "3V3 floating error missing")
     require("net 'GND' component labeled by" in stderr and "GP8.c5" in stderr, "GND floating error missing")
     require("net 'GP35' component labeled by GP4.c6" in stderr, "GP35 floating error missing")
-
-
-def main() -> int:
-    test_check_vox_current_up_side_trace_fixture_reports_floating_nets()
-    test_check_vox_current_up_side_trace_fixture_passes_right_label()
-    test_check_vox_corrects_current_up_side_trace_fixture_before_validation()
-    test_check_vox_current_up_side_trace_fixture_fails_on_right_label_with_sda_trace()
-    test_check_vox_current_up_side_trace_after_right_label_fails_unconnected()
-    test_check_vox_current_up_side_trace_fixture_fails_on_label_mismatch()
-    test_check_vox_current_up_side_trace_fixture_fails_on_floating_power_and_ground()
-    print("ok check_vox up-side examples")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

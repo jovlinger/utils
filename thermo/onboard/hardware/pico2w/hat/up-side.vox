@@ -50,7 +50,7 @@ GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND
 GP12  .*..|G..*. GP19
 GP11  .*..V|..*. GP20
 GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND
-GND   .*..|┤--*. GND
+GND   .*..|├--*. GND
 GP9   .*..||..*. GP22
 GP8   .*.┌┘|..*. RUN
 GP7   .*.|┌┘..*. GP26

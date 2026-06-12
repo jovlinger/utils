@@ -6,7 +6,7 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 
 - `generate_sensor_hat_stl.py` -- parametric generator (no extra deps)
 - `../../SKILL.md` -- shared ASCII HAT layout rules
-- `../../../../../vox2stl/check_vox.py` -- shared `.vox` validator
+- `../../../../../vox2stl/voxtool.py` -- shared `.vox` validator and transformer
 - `../../../../../vox2stl/vox2stl.py` -- top-level `.vox` trace-to-STL converter
 - `PLAN.md` -- board orientation, coordinates, routes, and fabrication notes
 - `thermo-pico2w-sensor-hat-v1-up-side.stl` -- solid base plate, trace-side component holes
@@ -54,6 +54,6 @@ leaf dirs, such as ESP32-S3, can share them.
 - First layer: slow, clean brim around outer edge if corners lift.
 - After print: choose `up-side` for modules on the raised trace side, or `pico-side` for modules on the flat side with pins passing through all layers.
 - Generate voxel geometry with `hat-vox-stl` after `up-side.vox` passes
-  `vox2stl/check_vox.py`.
+  `vox2stl/voxtool.py check`.
   Trace arms are emitted only across intended `.vox` connections and are
   clamped to reach pad material without entering the through-hole void.

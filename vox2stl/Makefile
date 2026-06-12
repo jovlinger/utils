@@ -1,5 +1,11 @@
-.PHONY: test
+.PHONY: test testall
 
-test:
-	./test_vox2stl.py
-	./check_vox.py ../thermo/onboard/hardware/pico2w/hat/pico-side.vox
+PYTEST := .venv/bin/pytest
+
+$(PYTEST): requirements-dev.txt
+	../create_pipenv.sh --sync vox2stl
+
+test: $(PYTEST)
+	$(PYTEST)
+
+testall: test

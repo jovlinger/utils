@@ -82,7 +82,7 @@ Before routing, prime anchors:
 4. Add row comments documenting module leg order, column choices, and intended
    GPIO or power connections.
 5. Add `# scratch` or `# todo` comments at the bottom with the route plan.
-6. Run `vox2stl/check_vox.py` for the target `.vox`.
+6. Run `vox2stl/voxtool.py check` for the target `.vox`.
 
 Route one functional group per pass. Power rails usually come first, then one
 module signal group per pass. After every pass:
@@ -90,7 +90,7 @@ module signal group per pass. After every pass:
 - Re-read the `.vox` file and bottom notes.
 - Add only the glyphs for the current group.
 - Run anchor analysis mentally: live copper must join two or more anchors.
-- Run `vox2stl/check_vox.py`.
+- Run `vox2stl/voxtool.py check`.
 - Update `# scratch` or `# todo`.
 - Stop for user approval before the next iteration.
 

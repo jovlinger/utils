@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small circuit-validation examples for check_vox."""
+"""Small circuit-validation examples for voxtool."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
-import check_vox
+import voxtool
 
 
 def require(condition: bool, message: str) -> None:
@@ -24,7 +24,7 @@ def run_check(text: str, name: str = "small-example.vox") -> tuple[int, str, str
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         return exit_code, stdout.getvalue(), stderr.getvalue()
 
 
@@ -41,7 +41,9 @@ def assert_corrected_passes(text: str) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", "--correct", str(path)])
+            correct_exit = voxtool.main(["voxtool.py", "correct", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
+    require(correct_exit == 0, f"expected correction to pass, got {correct_exit}")
     require(exit_code == 0, f"expected corrected pass, got {exit_code}; {stderr.getvalue()}")
     require(stderr.getvalue() == "", f"unexpected stderr: {stderr.getvalue()!r}")
 
@@ -191,6 +193,20 @@ def test_check_vox_reports_wrong_vertical_t_for_gnd_and_vcc() -> None:
         ["net 'GP19' component labeled by A.c3"],
     )
 
+
+    assert_fails_with(
+        "\n".join(
+            [
+                "alias Q -> | = GP19",
+                "",
+                "layer trace (6, 8, 2)",
+                "GP19  .*-OO...    XXX123 target .c3 = GP19, .c4 = GP12 (SCA)",
+                "A     .*.....*. GP12",
+                "",
+            ]
+        ),
+        ["net 'GP12' component labeled by GP19.c4"],
+    )
 
 
 def test_check_vox_accepts_correct_alias_t_junctions() -> None:
@@ -451,20 +467,3 @@ def test_check_vox_aht20_right_feed_connects_all_vertical_mount_legs() -> None:
         sda_routed_to_wrong_pin,
         ["conflicting net labels", "GP35 from A4.c4", "GP36 from GP36:1.c6"],
     )
-
-
-def main() -> int:
-    test_check_vox_accepts_matching_pin_labels_with_base()
-    test_check_vox_reports_right_label_mismatch_with_base()
-    test_check_vox_reports_wrong_horizontal_t_for_gnd_left_and_right()
-    test_check_vox_reports_wrong_horizontal_t_for_vcc_left_and_right()
-    test_check_vox_reports_wrong_vertical_t_for_gnd_and_vcc()
-    test_check_vox_accepts_correct_alias_t_junctions()
-    test_check_vox_aht20_left_feed_connects_vcc_then_gnd_then_scl_then_sda()
-    test_check_vox_aht20_right_feed_connects_all_vertical_mount_legs()
-    print("ok check_vox small examples")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

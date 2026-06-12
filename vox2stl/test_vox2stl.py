@@ -9,9 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Sequence
 
-import check_vox
-import test_check_vox_small_examples
-import test_check_vox_up_side_examples
+import voxtool
 import vox2stl
 from constants import (
     BOX_LL,
@@ -214,7 +212,7 @@ def test_correct_vox_shorthand_infers_square_corners() -> None:
     )
 
 
-def test_check_vox_corrects_file_in_place() -> None:
+def test_voxtool_corrects_file_in_place() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "shorthand.vox"
         path.write_text(
@@ -231,13 +229,58 @@ def test_check_vox_corrects_file_in_place() -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", "--correct", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "correct", str(path)])
         corrected = path.read_text(encoding="utf-8")
-    require(exit_code == 0, f"check_vox --correct exit: got {exit_code}")
+    require(exit_code == 0, f"voxtool correct exit: got {exit_code}")
     require(
         f"{BOX_UL}{BOX_UR}\n{BOX_LL}{BOX_LR}" in corrected,
-        "check_vox --correct should rewrite shorthand corners in place",
+        "voxtool correct should rewrite shorthand corners in place",
     )
+
+
+def test_voxtool_mirrors_layers_labels_and_trace_notes_to_outfile() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "up-side.vox"
+        out_path = Path(tmp_dir) / "pico-side.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (6, 8, 1)",
+                    "LEFT  X*OOXX*X RIGHT",
+                    "",
+                    "layer trace (6, 8, 1)",
+                    "LEFT  .*-...*. RIGHT note .c2=*- .c5 = NET",
+                    "",
+                    "# trace intents",
+                    "# net NET LEFT.c2 RIGHT.c5",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(["voxtool.py", "mirror", str(path), "-out", str(out_path)])
+        mirrored = out_path.read_text(encoding="utf-8")
+        original = path.read_text(encoding="utf-8")
+
+    expected = "\n".join(
+        [
+            "layer base (6, 8, 1)",
+            "RIGHT X*XXOO*X LEFT",
+            "",
+            "layer trace (6, 8, 1)",
+            "RIGHT .*...-*. LEFT note .c5=-* .c2 = NET",
+            "",
+            "# trace intents",
+            "# net NET RIGHT.c5 LEFT.c2",
+            "",
+        ]
+    )
+    require(exit_code == 0, f"voxtool mirror exit: got {exit_code}; {stderr.getvalue()}")
+    require(mirrored == expected, f"unexpected mirrored text: {mirrored!r}")
+    require("LEFT  .*-...*. RIGHT" in original, "mirror -out should not rewrite the input")
 
 
 def test_correct_vox_shorthand_preserves_aliases_and_fills_spaces() -> None:
@@ -288,7 +331,7 @@ def test_check_vox_alias_net_assertion_passes_when_connected() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"connected alias net exit: got {exit_code}; {stderr.getvalue()}")
 
 
@@ -313,7 +356,7 @@ def test_check_vox_alias_net_assertion_fails_when_disconnected() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         error = stderr.getvalue()
     require(exit_code == 1, f"disconnected alias net exit: got {exit_code}")
     expected = (
@@ -344,7 +387,7 @@ def test_check_vox_reports_col_and_alias_net_errors_together() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         error = stderr.getvalue()
     require(exit_code == 1, f"multi-error alias net exit: got {exit_code}")
     expected = (
@@ -379,7 +422,7 @@ def test_check_vox_accepts_self_consistent_pad_layout_by_file_contents() -> None
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"self-consistent pad layout exit: got {exit_code}; {stderr.getvalue()}")
 
 
@@ -401,7 +444,7 @@ def test_check_vox_rejects_trace_pad_mismatch_with_base() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         error = stderr.getvalue()
     require(exit_code == 1, f"pad mismatch exit: got {exit_code}")
     require("expected 'O' from base, got 'no pad'" in error, "checker should compare pads to base")
@@ -425,7 +468,7 @@ def test_check_vox_uses_net_notes_without_trace_intents() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"net note without intents exit: got {exit_code}; {stderr.getvalue()}")
 
 
@@ -447,7 +490,7 @@ def test_check_vox_reports_split_net_notes_without_trace_intents() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         error = stderr.getvalue()
     require(exit_code == 1, f"split net note exit: got {exit_code}")
     expected = (
@@ -478,7 +521,7 @@ def test_check_vox_accepts_vertical_trace_through_leg_pad() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"vertical leg pad exit: got {exit_code}; {stderr.getvalue()}")
 
 
@@ -498,15 +541,15 @@ def test_check_vox_accepts_horizontal_trace_through_leg_pad() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"horizontal leg pad exit: got {exit_code}; {stderr.getvalue()}")
 
 
 def test_check_vox_horizontal_t_junction_truth_table() -> None:
-    require(check_vox.horizontal_connects(BOX_T_RIGHT, "-", {}), "BOX_T_RIGHT should connect east")
-    require(not check_vox.horizontal_connects("-", BOX_T_RIGHT, {}), "BOX_T_RIGHT should not connect west")
-    require(check_vox.horizontal_connects("-", BOX_T_LEFT, {}), "BOX_T_LEFT should connect west")
-    require(not check_vox.horizontal_connects(BOX_T_LEFT, "-", {}), "BOX_T_LEFT should not connect east")
+    require(voxtool.horizontal_connects(BOX_T_RIGHT, "-", {}), "BOX_T_RIGHT should connect east")
+    require(not voxtool.horizontal_connects("-", BOX_T_RIGHT, {}), "BOX_T_RIGHT should not connect west")
+    require(voxtool.horizontal_connects("-", BOX_T_LEFT, {}), "BOX_T_LEFT should connect west")
+    require(not voxtool.horizontal_connects(BOX_T_LEFT, "-", {}), "BOX_T_LEFT should not connect east")
 
 
 def test_check_vox_reports_unanchored_adjacent_same_net_leg_pads() -> None:
@@ -524,7 +567,7 @@ def test_check_vox_reports_unanchored_adjacent_same_net_leg_pads() -> None:
         )
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = check_vox.main(["check_vox.py", str(path)])
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 1, f"adjacent same-net leg pads exit: got {exit_code}")
     expected = (
         f"error: {path}: net '3V3' component labeled by A.c1 "
@@ -536,18 +579,66 @@ def test_check_vox_reports_unanchored_adjacent_same_net_leg_pads() -> None:
 
 
 
-def test_check_vox_requires_input_or_all() -> None:
+def test_voxtool_check_requires_input_or_all() -> None:
     stderr = io.StringIO()
     try:
         with contextlib.redirect_stderr(stderr):
-            check_vox.main(["check_vox.py"])
+            voxtool.main(["voxtool.py", "check"])
     except SystemExit as exc:
         exit_code = exc.code
     else:
         exit_code = 0
-    require(exit_code == 2, f"check_vox empty CLI exit: got {exit_code}")
-    require("vox_path" in stderr.getvalue(), "check_vox empty CLI should request a vox_path")
-    require("--all" in stderr.getvalue(), "check_vox empty CLI should mention --all")
+    require(exit_code == 2, f"voxtool check empty CLI exit: got {exit_code}")
+    require("filepath" in stderr.getvalue(), "voxtool check empty CLI should request a filepath")
+    require("--all" in stderr.getvalue(), "voxtool check empty CLI should mention --all")
+
+
+def test_voxtool_stl_writes_ascii_stl() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_path = Path(tmp_dir) / "straight.stl"
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(
+                [
+                    "voxtool.py",
+                    "stl",
+                    str(ROOT / "testdata" / "straight.vox"),
+                    "--output",
+                    str(out_path),
+                    "--solid-name",
+                    "straight_test",
+                ]
+            )
+        text = out_path.read_text(encoding="ascii")
+    require(exit_code == 0, f"voxtool stl exit: got {exit_code}; {stderr.getvalue()}")
+    require(text.startswith("solid straight_test\n"), "voxtool STL solid header missing")
+    require(text.count("facet normal") == 48, "voxtool STL facet count mismatch")
+
+
+def test_voxtool_stl_writes_full_stl_with_holes() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_path = Path(tmp_dir) / "straight-full.stl"
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(
+                [
+                    "voxtool.py",
+                    "stl",
+                    str(ROOT / "testdata" / "straight.vox"),
+                    "--mode",
+                    "full",
+                    "--output",
+                    str(out_path),
+                    "--solid-name",
+                    "straight_full_test",
+                ]
+            )
+        text = out_path.read_text(encoding="ascii")
+    require(exit_code == 0, f"voxtool full stl exit: got {exit_code}; {stderr.getvalue()}")
+    require(text.startswith("solid straight_full_test\n"), "voxtool full STL solid header missing")
+    require(text.count("facet normal") > 60, "voxtool full STL should include base and holes")
 
 
 def test_cli_writes_ascii_stl() -> None:
@@ -586,42 +677,3 @@ def test_cli_writes_full_stl_with_holes() -> None:
     require(exit_code == 0, f"full CLI exit: got {exit_code}")
     require(text.startswith("solid straight_full_test\n"), "full STL solid header missing")
     require(text.count("facet normal") > 60, "full STL should include base and holes")
-
-
-def main() -> int:
-    test_straight_fixture()
-    test_box_glyph_fixture()
-    test_pad_and_hole_defaults()
-    test_adjacent_pad_prisms_do_not_touch()
-    test_effective_widths_respect_isolation_gap()
-    test_trace_arm_stops_before_hole_keepout()
-    test_letter_tile_manifest()
-    test_lowercase_letters_render_uppercase_label_shapes()
-    test_uppercase_letters_remain_unassigned()
-    test_correct_vox_shorthand_direct_t_junctions()
-    test_correct_vox_shorthand_infers_square_corners()
-    test_check_vox_corrects_file_in_place()
-    test_correct_vox_shorthand_preserves_aliases_and_fills_spaces()
-    test_vox2stl_reader_renders_alias_targets()
-    test_check_vox_alias_net_assertion_passes_when_connected()
-    test_check_vox_alias_net_assertion_fails_when_disconnected()
-    test_check_vox_reports_col_and_alias_net_errors_together()
-    test_check_vox_accepts_self_consistent_pad_layout_by_file_contents()
-    test_check_vox_rejects_trace_pad_mismatch_with_base()
-    test_check_vox_uses_net_notes_without_trace_intents()
-    test_check_vox_reports_split_net_notes_without_trace_intents()
-    test_check_vox_accepts_vertical_trace_through_leg_pad()
-    test_check_vox_accepts_horizontal_trace_through_leg_pad()
-    test_check_vox_horizontal_t_junction_truth_table()
-    test_check_vox_reports_unanchored_adjacent_same_net_leg_pads()
-    test_check_vox_small_examples.main()
-    test_check_vox_up_side_examples.main()
-    test_check_vox_requires_input_or_all()
-    test_cli_writes_ascii_stl()
-    test_cli_writes_full_stl_with_holes()
-    print("ok vox2stl tests")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

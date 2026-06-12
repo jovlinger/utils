@@ -48,17 +48,17 @@ hat-stl:
 
 hat-vox-stl:
 	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
-	"$(REPO_ROOT)/vox2stl/check_vox.py" "hat/up-side.vox"
+	"$(REPO_ROOT)/vox2stl/voxtool.py" check "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-up-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_vox
 
 hat-pico-vox-stl:
 	python3 "$(REPO_ROOT)/vox2stl/build_letter_tiles.py"
-	python3 "hat/mirror_from_up_side.py"
-	"$(REPO_ROOT)/vox2stl/check_vox.py" "hat/pico-side.vox"
+	"$(REPO_ROOT)/vox2stl/voxtool.py" mirror "hat/up-side.vox" -out "hat/pico-side.vox"
+	"$(REPO_ROOT)/vox2stl/voxtool.py" check "hat/pico-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/pico-side.vox" --mode full --layer trace --base-layer base --output "hat/thermo-pico2w-sensor-hat-v1-pico-side-vox.stl" --solid-name thermo_pico2w_sensor_hat_v1_pico_side_vox
 
 hat-trace-stl:
-	"$(REPO_ROOT)/vox2stl/check_vox.py" "hat/up-side.vox"
+	"$(REPO_ROOT)/vox2stl/voxtool.py" check "hat/up-side.vox"
 	"$(REPO_ROOT)/vox2stl/vox2stl.py" "hat/up-side.vox" --layer trace --output "hat/thermo-pico2w-sensor-hat-v1-up-side-trace.stl" --solid-name thermo_pico2w_sensor_hat_v1_up_side_trace
 
 deploy:
