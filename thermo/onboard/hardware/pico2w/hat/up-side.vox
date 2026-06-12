@@ -17,7 +17,7 @@ layer base (6, 10, 22)
 GP15  X*XXXXXX*X GP16
 GP14  X*XXXXXX*X GP17
 GND   X*XXXXXX*X GND
-GP13  X*XOOOXX*X GP18   IR RX target .c3= GP13,.c4 = VCC, .c5 = GND
+GP13  X*XOOOXX*X GP18   IR TX target .c3= GP13,.c4 = VCC, .c5 = GND
 GP12  X*XXXXXX*X GP19
 GP11  X*XXXXXX*X GP20
 GP10  X*XOOOXX*X GP21   IR RX target .c3= GP10,.c4 = VCC, .c5 = GND
@@ -46,10 +46,10 @@ layer trace (6, 10, 22)
 GP15  .*..up..*. GP16
 GP14  .*.side.*. GP17
 GND   .*......*. GND
-GP13  .*-OOO..*. GP18  IR RX target .c3= GP13,.c4 = VCC, .c5 = GND
+GP13  .*-OOO..*. GP18  IR TX target .c3= GP13,.c4 = VCC, .c5 = GND
 GP12  .*..|G..*. GP19
 GP11  .*..V|..*. GP20
-GP10  .*-OOO..*. GP21  IR TX target .c3= GP10,.c4 = VCC, .c5 = GND
+GP10  .*-OOO..*. GP21  IR RX target .c3= GP10,.c4 = VCC, .c5 = GND
 GND   .*..|├--*. GND
 GP9   .*..||..*. GP22
 GP8   .*.┌┘|..*. RUN
