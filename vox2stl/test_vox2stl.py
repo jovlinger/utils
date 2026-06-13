@@ -643,7 +643,7 @@ def test_voxtool_stl_writes_ascii_stl() -> None:
         text = out_path.read_text(encoding="ascii")
     require(exit_code == 0, f"voxtool stl exit: got {exit_code}; {stderr.getvalue()}")
     require(text.startswith("solid straight_test\n"), "voxtool STL solid header missing")
-    require(text.count("facet normal") == 48, "voxtool STL facet count mismatch")
+    require(text.count("facet normal") > 60, "voxtool STL should include base and holes")
 
 
 def test_voxtool_stl_writes_full_stl_with_holes() -> None:
@@ -657,8 +657,6 @@ def test_voxtool_stl_writes_full_stl_with_holes() -> None:
                     "voxtool.py",
                     "stl",
                     str(ROOT / "testdata" / "straight.vox"),
-                    "--mode",
-                    "full",
                     "--output",
                     str(out_path),
                     "--solid-name",
@@ -686,7 +684,7 @@ def test_cli_writes_ascii_stl() -> None:
         text = out_path.read_text(encoding="ascii")
     require(exit_code == 0, f"CLI exit: got {exit_code}")
     require(text.startswith("solid straight_test\n"), "STL solid header missing")
-    require(text.count("facet normal") == 48, "STL facet count mismatch")
+    require(text.count("facet normal") > 60, "STL should include base and holes")
 
 
 def test_cli_writes_full_stl_with_holes() -> None:
@@ -695,8 +693,6 @@ def test_cli_writes_full_stl_with_holes() -> None:
         exit_code = vox2stl.run(
             [
                 str(ROOT / "testdata" / "straight.vox"),
-                "--mode",
-                "full",
                 "--output",
                 str(out_path),
                 "--solid-name",

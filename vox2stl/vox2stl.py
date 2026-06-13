@@ -719,7 +719,6 @@ def solid_name_for(path: Path, layer_name: str) -> str:
 def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("vox_path", type=Path)
     parser.add_argument("-o", "--output", type=Path)
-    parser.add_argument("--mode", choices=("layer", "full"), default="layer")
     parser.add_argument("--layer", default="trace")
     parser.add_argument("--base-layer", default="base")
     parser.add_argument("--solid-name")
@@ -777,41 +776,30 @@ def run_from_args(args: argparse.Namespace) -> int:
     )
 
     names = ", ".join(sorted(layers))
-    if args.mode == "full":
-        base_layer = layers.get(args.base_layer)
-        if base_layer is None:
-            raise ValueError(f"{args.vox_path}: missing base layer {args.base_layer!r}; found {names}")
-        trace_layer = layers.get(args.layer)
-        if trace_layer is None:
-            raise ValueError(f"{args.vox_path}: missing layer {args.layer!r}; found {names}")
-        if (base_layer.width, base_layer.height) != (trace_layer.width, trace_layer.height):
-            raise ValueError(
-                f"{args.vox_path}: base and trace geometry differ: "
-                f"{base_layer.width}x{base_layer.height} vs {trace_layer.width}x{trace_layer.height}"
-            )
-        mesh, hole_count, box_count, letter_count = full_mesh_from_layers(
-            base_layer,
-            trace_layer,
-            config,
+    base_layer = layers.get(args.base_layer)
+    if base_layer is None:
+        raise ValueError(f"{args.vox_path}: missing base layer {args.base_layer!r}; found {names}")
+    trace_layer = layers.get(args.layer)
+    if trace_layer is None:
+        raise ValueError(f"{args.vox_path}: missing layer {args.layer!r}; found {names}")
+    if (base_layer.width, base_layer.height) != (trace_layer.width, trace_layer.height):
+        raise ValueError(
+            f"{args.vox_path}: base and trace geometry differ: "
+            f"{base_layer.width}x{base_layer.height} vs {trace_layer.width}x{trace_layer.height}"
         )
-        output_path = args.output or default_output_path(args.vox_path, "full")
-        solid_name = args.solid_name or solid_name_for(args.vox_path, "full")
-        layer_label = f"{args.base_layer}+{args.layer}"
-    else:
-        layer = layers.get(args.layer)
-        if layer is None:
-            raise ValueError(f"{args.vox_path}: missing layer {args.layer!r}; found {names}")
-        mesh, box_count, letter_count = build_layer_mesh(layer, config)
-        hole_count = 0
-        output_path = args.output or default_output_path(args.vox_path, args.layer)
-        solid_name = args.solid_name or solid_name_for(args.vox_path, args.layer)
-        layer_label = args.layer
+    mesh, hole_count, box_count, letter_count = full_mesh_from_layers(
+        base_layer,
+        trace_layer,
+        config,
+    )
+    output_path = args.output or default_output_path(args.vox_path, "full")
+    solid_name = args.solid_name or solid_name_for(args.vox_path, "full")
+    layer_label = f"{args.base_layer}+{args.layer}"
 
     mesh.write_ascii_stl(output_path, solid_name)
     print(f"Wrote {output_path}")
-    print(f"Layer: {layer_label}")
-    if args.mode == "full":
-        print(f"Holes: {hole_count}")
+    print(f"Layers: {layer_label}")
+    print(f"Holes: {hole_count}")
     print(f"Boxes: {box_count}")
     if letter_count:
         print(f"Letters: {letter_count}")

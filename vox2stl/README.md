@@ -5,8 +5,7 @@ Dependency-free `.vox` layer to ASCII STL converter.
 ## Usage
 
 ```bash
-vox2stl/voxtool.py stl path/to/file.vox --layer trace --output trace.stl
-vox2stl/voxtool.py stl path/to/file.vox --mode full --output board.stl
+vox2stl/voxtool.py stl path/to/file.vox --output board.stl
 ```
 
 Validate a board `.vox` file before generating geometry:
@@ -26,8 +25,8 @@ layer trace (offset, width, height)
 
 Rows are sliced from `offset` for `width` characters. Cell coordinates are
 centered around `(0, 0)` by default, with `UNIT_MM` read from a file comment
-when present. In `--mode full`, the `base` layer becomes a plate and `*` / `O`
-cells become through-holes.
+when present. During STL generation, the `base` layer becomes a plate and
+`*` / `O` cells become through-holes.
 
 ## Trace Glyphs
 
