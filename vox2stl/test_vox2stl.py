@@ -23,6 +23,8 @@ from constants import (
 )
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent
+PICO_UP_SIDE_FIXTURE = REPO_ROOT / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox"
 
 
 def require(condition: bool, message: str) -> None:
@@ -39,6 +41,10 @@ def layer_boxes(fixture_name: str) -> Sequence[vox2stl.BoxSolid]:
     return vox2stl.build_boxes(layer, config)
 
 
+def z_values(triangles: Sequence[vox2stl.Tri]) -> set[float]:
+    return {round(vertex[2], 6) for triangle in triangles for vertex in triangle}
+
+
 def test_straight_fixture() -> None:
     boxes = layer_boxes("straight.vox")
     mesh = vox2stl.mesh_from_boxes(boxes)
@@ -51,6 +57,30 @@ def test_box_glyph_fixture() -> None:
     mesh = vox2stl.mesh_from_boxes(boxes)
     require(len(boxes) == 33, f"box glyph boxes: got {len(boxes)}")
     require(len(mesh.triangles) == 396, f"box glyph triangles: got {len(mesh.triangles)}")
+
+
+def test_voxtool_stl_base_trace_fixture_outputs_two_layer_mesh_by_default() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_path = Path(tmp_dir) / "up-side.stl"
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(
+                [
+                    "voxtool.py",
+                    "stl",
+                    str(PICO_UP_SIDE_FIXTURE),
+                    "--output",
+                    str(output_path),
+                ]
+            )
+        triangles = vox2stl.read_ascii_stl(output_path)
+
+    z_levels = z_values(triangles)
+    require(exit_code == 0, f"voxtool stl exit: got {exit_code}; {stderr.getvalue()}")
+    require(round(vox2stl.DEFAULT_BASE_Z0_MM, 6) in z_levels, "STL should include substrate bottom")
+    require(round(vox2stl.DEFAULT_BASE_Z1_MM, 6) in z_levels, "STL should include substrate top")
+    require(round(vox2stl.DEFAULT_TRACE_Z1_MM, 6) in z_levels, "STL should include raised trace top")
 
 
 def test_pad_and_hole_defaults() -> None:
