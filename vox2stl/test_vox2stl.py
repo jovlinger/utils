@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import contextlib
+import gzip
 import io
+import pickle
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Tuple
 
 import voxtool
 import vox2stl
@@ -45,11 +47,29 @@ def z_values(triangles: Sequence[vox2stl.Tri]) -> set[float]:
     return {round(vertex[2], 6) for triangle in triangles for vertex in triangle}
 
 
+def point_in_triangle_xy(point: Tuple[float, float], triangle: vox2stl.Tri) -> bool:
+    px, py = point
+    (ax, ay, _), (bx, by, _), (cx, cy, _) = triangle
+    denominator = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if abs(denominator) < 1e-12:
+        return False
+    alpha = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / denominator
+    beta = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / denominator
+    gamma = 1.0 - alpha - beta
+    return alpha >= -1e-9 and beta >= -1e-9 and gamma >= -1e-9
+
+
+def horizontal_triangle_covers_xy(triangle: vox2stl.Tri, z: float, point: Tuple[float, float]) -> bool:
+    if any(abs(vertex[2] - z) > 1e-6 for vertex in triangle):
+        return False
+    return point_in_triangle_xy(point, triangle)
+
+
 def test_straight_fixture() -> None:
     boxes = layer_boxes("straight.vox")
     mesh = vox2stl.mesh_from_boxes(boxes)
-    require(len(boxes) == 4, f"straight boxes: got {len(boxes)}")
-    require(len(mesh.triangles) == 48, f"straight triangles: got {len(mesh.triangles)}")
+    require(len(boxes) == 5, f"straight boxes: got {len(boxes)}")
+    require(len(mesh.triangles) == 60, f"straight triangles: got {len(mesh.triangles)}")
 
 
 def test_box_glyph_fixture() -> None:
@@ -107,24 +127,24 @@ def test_pad_and_hole_defaults() -> None:
         "pin outside default should derive from UNIT fraction",
     )
     require(
-        abs(vox2stl.DEFAULT_PIN_OUTSIDE_FRAC - 0.72) < 1e-9,
-        "pin outside default should match old trace width",
+        abs(vox2stl.DEFAULT_PIN_OUTSIDE_FRAC - 0.88) < 1e-9,
+        "pin outside default should reduce pad setback from the unit edge",
     )
     require(
-        abs(vox2stl.DEFAULT_LEG_OUTSIDE_FRAC - 0.72) < 1e-9,
-        "device outside default should match old trace width",
+        abs(vox2stl.DEFAULT_LEG_OUTSIDE_FRAC - 0.88) < 1e-9,
+        "device outside default should reduce pad setback from the unit edge",
     )
     require(
         abs(vox2stl.DEFAULT_DEVICE_PAD_WIDTH_MM - vox2stl.DEFAULT_PAD_WIDTH_MM) < 1e-9,
         "device pad outer prism should match Pico pad outer prism",
     )
     require(
-        abs(vox2stl.DEFAULT_PIN_HOLE_DIAMETER_MM - 1.10 * 0.66) < 1e-9,
-        "pin hole default should be 66 percent of the previous Pico hole default",
+        abs(vox2stl.DEFAULT_PIN_HOLE_DIAMETER_MM - 1.10 * 0.66 * 1.50) < 1e-9,
+        "pin hole default should be an absolute physical diameter",
     )
     require(
         abs(vox2stl.DEFAULT_DEVICE_HOLE_DIAMETER_MM - 1.10) < 1e-9,
-        "device hole default should match the previous Pico hole default",
+        "device hole default should be an absolute physical diameter",
     )
     require(
         abs(vox2stl.DEFAULT_LABEL_RECESS_MM - vox2stl.DEFAULT_LABEL_RECESS_FRAC * vox2stl.DEFAULT_UNIT_MM)
@@ -135,6 +155,20 @@ def test_pad_and_hole_defaults() -> None:
         abs(vox2stl.DEFAULT_LABEL_HEIGHT_MM - vox2stl.DEFAULT_LABEL_HEIGHT_FRAC * vox2stl.DEFAULT_UNIT_MM)
         < 1e-9,
         "label height default should derive from UNIT fraction",
+    )
+    require(
+        abs(vox2stl.DEFAULT_COND_LIG_MM - vox2stl.DEFAULT_COND_LIG_FRAC * vox2stl.DEFAULT_UNIT_MM)
+        < 1e-9,
+        "same-copper ligature length should derive from UNIT fraction",
+    )
+    require(
+        abs(vox2stl.DEFAULT_ISOL_LIG_MM - vox2stl.DEFAULT_ISOL_LIG_FRAC * vox2stl.DEFAULT_UNIT_MM)
+        < 1e-9,
+        "different-copper ligature cut should derive from UNIT fraction",
+    )
+    require(
+        abs(vox2stl.DEFAULT_GRID_MM - 0.04 * vox2stl.DEFAULT_UNIT_MM) < 1e-9,
+        "subtractive grid pitch should keep hole cuts high resolution",
     )
 
 
@@ -167,6 +201,137 @@ def test_trace_arm_stops_before_hole_keepout() -> None:
         not vox2stl.box_intersects_hole(arm, next_hole),
         "trace arm protrusion should not encroach on next-cell through-hole void",
     )
+
+
+def test_trace_arm_overlaps_connected_pad() -> None:
+    config = vox2stl.RenderConfig()
+    layer = vox2stl.Layer("trace", 0, 2, 1, ("-*",))
+    trace_cx, trace_cy = vox2stl.cell_center(layer, 0, 0, config)
+    pad_cx, _ = vox2stl.cell_center(layer, 0, 1, config)
+    trace_boxes = vox2stl.glyph_boxes(layer, 0, 0, "-", trace_cx, trace_cy, config)
+    pad_x0 = pad_cx - vox2stl.pad_width("*", config) * 0.5
+    require(
+        max(box.x1 for box in trace_boxes) > pad_x0,
+        "connected trace arm should overlap the neighboring pad footprint",
+    )
+
+
+def test_full_mesh_subtracts_pad_hole_after_connected_trace_addition() -> None:
+    config = vox2stl.RenderConfig()
+    base_layer = vox2stl.Layer("base", 0, 2, 1, (".*",))
+    trace_layer = vox2stl.Layer("trace", 0, 2, 1, ("-*",))
+    pad_center = vox2stl.cell_center(trace_layer, 0, 1, config)
+    mesh, hole_count, box_count, _ = vox2stl.full_mesh_from_layers(base_layer, trace_layer, config)
+    filled_top = any(
+        horizontal_triangle_covers_xy(triangle, config.trace_z1_mm, pad_center)
+        for triangle in mesh.triangles
+    )
+    require(hole_count == 1, f"pad hole count: got {hole_count}")
+    require(box_count > 0, "trace layout should add copper before subtracting the hole")
+    require(not filled_top, "final trace top should keep the connected pad hole open")
+
+
+def test_trace_air_gap_voids_mark_disconnected_neighboring_copper() -> None:
+    config = vox2stl.RenderConfig()
+    disconnected_layer = vox2stl.Layer("trace", 0, 2, 1, ("-|",))
+    connected_layer = vox2stl.Layer("trace", 0, 2, 1, ("--",))
+    require(
+        len(vox2stl.trace_air_gap_voids(disconnected_layer, config)) == 1,
+        "disconnected neighboring copper should collect one isolation void",
+    )
+    require(
+        len(vox2stl.trace_air_gap_voids(connected_layer, config)) == 0,
+        "connected neighboring copper should not collect an isolation void",
+    )
+
+
+def test_ligature_keys_encode_same_different_and_empty_neighbors() -> None:
+    config = vox2stl.RenderConfig()
+    connected_layer = vox2stl.Layer("trace", 0, 2, 1, ("--",))
+    isolated_layer = vox2stl.Layer("trace", 0, 2, 1, ("-|",))
+    pad_layer = vox2stl.Layer("trace", 0, 2, 1, ("OO",))
+    require(
+        vox2stl.ligature_key_for_cell(connected_layer, 0, 0, "-", config) == ("-", 0, 1, 0, 0),
+        "connected east neighbor should become same-copper state",
+    )
+    require(
+        vox2stl.ligature_key_for_cell(isolated_layer, 0, 0, "-", config) == ("-", 0, -1, 0, 0),
+        "mismatched east neighbor should become different-copper state",
+    )
+    require(
+        vox2stl.ligature_key_for_cell(pad_layer, 0, 0, "O", config) == ("O", 0, -1, 0, 0),
+        "adjacent pads should isolate from each other",
+    )
+
+
+def test_isolation_ligature_width_uses_pad_width() -> None:
+    config = vox2stl.RenderConfig()
+    require(
+        vox2stl.isolation_ligature_width(config) == max(vox2stl.pad_width("*", config), vox2stl.pad_width("O", config)),
+        "different-copper isolation cuts should use pad width",
+    )
+    require(
+        vox2stl.isolation_ligature_width(config) > vox2stl.trace_width(config),
+        "different-copper isolation cuts should be wider than trace ligatures",
+    )
+
+
+def test_tile_cache_persists_naive_letters_and_ligatures() -> None:
+    ensure_letter_tiles()
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            config = vox2stl.RenderConfig()
+            key = ("-", 0, 1, 0, 0)
+            letter_tris = vox2stl.cached_tile_tris("u", config)
+            ligature_tris = vox2stl.cached_tile_tris(key, config)
+            require(cache_path.read_bytes().startswith(b"\x1f\x8b"), "tile cache should be gzip-compressed")
+            with gzip.open(cache_path, "rb") as file_obj:
+                cache = pickle.load(file_obj)
+        require(len(letter_tris) > 0, "cached naive letter should have triangles")
+        require(len(ligature_tris) > 0, "cached ligature should have triangles")
+        require("u" in cache, "tile cache should persist single-character letter keys")
+        require("-" in cache, "tile cache should seed single-character copper keys before ligatures")
+        require(key in cache, "tile cache should persist five-part ligature keys")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+
+
+def test_missing_letter_stl_generates_cache_tile_automatically() -> None:
+    old_dir = vox2stl.LETTER_TILES_DIR
+    old_cache = vox2stl._LETTER_TILE_CACHE.copy()
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vox2stl.LETTER_TILES_DIR = Path(tmp_dir)
+            vox2stl._LETTER_TILE_CACHE.clear()
+            tris = vox2stl.render_naive_tile("u", vox2stl.RenderConfig())
+        require(len(tris) > 0, "missing pre-rendered letter STL should regenerate a letter tile")
+    finally:
+        vox2stl.LETTER_TILES_DIR = old_dir
+        vox2stl._LETTER_TILE_CACHE.clear()
+        vox2stl._LETTER_TILE_CACHE.update(old_cache)
+
+
+def test_pad_tail_overlaps_connected_trace_without_joining_adjacent_pads() -> None:
+    config = vox2stl.RenderConfig()
+    connected_layer = vox2stl.Layer("trace", 0, 2, 1, ("O-",))
+    pad_cx, pad_cy = vox2stl.cell_center(connected_layer, 0, 0, config)
+    trace_cx, _ = vox2stl.cell_center(connected_layer, 0, 1, config)
+    pad_boxes = vox2stl.glyph_boxes(connected_layer, 0, 0, "O", pad_cx, pad_cy, config)
+    boundary_x = (pad_cx + trace_cx) * 0.5
+    require(
+        max(box.x1 for box in pad_boxes) > boundary_x,
+        "connected pad should grow into the neighboring trace tile",
+    )
+
+    isolated_layer = vox2stl.Layer("trace", 0, 2, 1, ("OO",))
+    isolated_boxes = vox2stl.build_boxes(isolated_layer, config)
+    require(len(isolated_boxes) == 2, f"adjacent isolated pads should not grow tails: got {len(isolated_boxes)}")
 
 
 def ensure_letter_tiles() -> None:
@@ -456,17 +621,39 @@ def test_check_vox_accepts_self_consistent_pad_layout_by_file_contents() -> None
     require(exit_code == 0, f"self-consistent pad layout exit: got {exit_code}; {stderr.getvalue()}")
 
 
-def test_check_vox_rejects_trace_pad_mismatch_with_base() -> None:
+def test_check_vox_accepts_optional_trace_right_pad_with_matching_right_label() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "optional-right-pad.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (3, 5, 1)",
+                    "A  X*X*X RIGHT",
+                    "",
+                    "layer trace (3, 5, 1)",
+                    "A  .*... RIGHT",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
+    require(exit_code == 0, f"optional right pad exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_warns_trace_pad_mismatch_with_base() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "pad-mismatch.vox"
         path.write_text(
             "\n".join(
                 [
                     "layer base (3, 5, 1)",
-                    "A  .*O..",
+                    "A  .O*..",
                     "",
                     "layer trace (3, 5, 1)",
-                    "A  .*...",
+                    "A  .*.O.",
                     "",
                 ]
             ),
@@ -476,8 +663,35 @@ def test_check_vox_rejects_trace_pad_mismatch_with_base() -> None:
         with contextlib.redirect_stderr(stderr):
             exit_code = voxtool.main(["voxtool.py", "check", str(path)])
         error = stderr.getvalue()
-    require(exit_code == 1, f"pad mismatch exit: got {exit_code}")
-    require("expected 'O' from base, got 'no pad'" in error, "checker should compare pads to base")
+    require(exit_code == 0, f"pad mismatch warning exit: got {exit_code}; {error}")
+    require("expected 'O' from base, got '*'" in error, "checker should warn for mismatched O")
+    require("expected 'no pad' from base, got 'O'" in error, "checker should warn for unexpected O")
+
+
+def test_check_vox_prints_pad_mismatch_warning_with_other_errors() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "pad-warning-with-error.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (3, 5, 1)",
+                    "A  .*...",
+                    "",
+                    "layer trace (3, 5, 1)",
+                    "B  .O...",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"expected label error exit, got {exit_code}")
+    require("warn pad-warning-with-error.vox" in error, "pad mismatch should remain a warning")
+    require("expected '*' from base, got 'O'" in error, "mismatched pad warning should be printed")
+    require("error:" in error and "left label 'B' does not match base 'A'" in error, "label error missing")
 
 
 def test_check_vox_uses_net_notes_without_trace_intents() -> None:

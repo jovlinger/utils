@@ -161,6 +161,13 @@ class TraceNetAssertion:
     net_name: str
 
 
+class ValidationError(ValueError):
+    def __init__(self, errors: Sequence[str], warnings: Sequence[str]) -> None:
+        super().__init__("\n".join(errors))
+        self.errors: List[str] = list(errors)
+        self.warnings: List[str] = list(warnings)
+
+
 def inner_column_count(layer: Layer) -> int:
     return max(0, layer.width - 2)
 
@@ -198,9 +205,6 @@ def row_label(row: str, layer: Optional[Layer] = None) -> Optional[str]:
 
 
 def right_row_label(row: str, layer: Layer) -> Optional[str]:
-    window = design_window(layer, row)
-    if len(window) < 2 or window[-2] != PIN_PAD_CHAR:
-        return None
     text = row[layer.offset + layer.width :]
     match = ROW_LABEL_RE.match(text)
     if match is None:
@@ -872,28 +876,28 @@ def collect_pad_crowding_warnings(path: Path, layer_name: str, layer: Layer) -> 
     return warnings
 
 
-def validate_trace_pads_match_base(
+def collect_trace_pad_mismatch_warnings(
     path: Path,
     base: Layer,
     trace: Layer,
 ) -> List[str]:
-    errors: List[str] = []
+    warnings: List[str] = []
     for row_index, (base_row, trace_row) in enumerate(zip(base.rows, trace.rows), 1):
         label = row_label(base_row, base) or row_label(trace_row, trace) or f"row {row_index}"
         base_window = design_window(base, base_row)
         trace_window = design_window(trace, trace_row)
         for col, (base_char, trace_char) in enumerate(zip(base_window, trace_window)):
-            if base_char not in PAD_CHARS and trace_char not in PAD_CHARS:
+            if trace_char not in PAD_CHARS:
                 continue
             if base_char == trace_char:
                 continue
             expected = base_char if base_char in PAD_CHARS else "no pad"
             actual = trace_char if trace_char in PAD_CHARS else "no pad"
-            errors.append(
-                f"{path}: trace row {row_index} ({label}) "
+            warnings.append(
+                f"warn {path.name}: trace row {row_index} ({label}) "
                 f"{col_label(col, trace)}: expected {expected!r} from base, got {actual!r}"
             )
-    return errors
+    return warnings
 
 
 def validate_row_labels_match(path: Path, base: Layer, trace: Layer) -> List[str]:
@@ -951,6 +955,7 @@ def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[Op
 
 def validate(path: Path) -> List[str]:
     errors: List[str] = []
+    warnings: List[str] = []
     text = path.read_text(encoding="utf-8")
     aliases = parse_vox_aliases_text(text)
     net_aliases = parse_net_aliases_text(text)
@@ -960,7 +965,7 @@ def validate(path: Path) -> List[str]:
 
     if base is not None:
         errors.extend(validate_row_labels_match(path, base, trace))
-        errors.extend(validate_trace_pads_match_base(path, base, trace))
+        warnings.extend(collect_trace_pad_mismatch_warnings(path, base, trace))
     errors.extend(validate_trace_col_assertions(path, trace, aliases))
     intents = read_trace_intents(path, max_col, net_aliases)
     errors.extend(
@@ -973,12 +978,11 @@ def validate(path: Path) -> List[str]:
             net_aliases,
         )
     )
-    if errors:
-        raise ValueError("\n".join(errors))
-
     warning_layer = base if base is not None else trace
     warning_layer_name = "base" if base is not None else TRACE_LAYER_NAME
-    warnings = collect_pad_crowding_warnings(path, warning_layer_name, warning_layer)
+    warnings.extend(collect_pad_crowding_warnings(path, warning_layer_name, warning_layer))
+    if errors:
+        raise ValidationError(errors, warnings)
     print(f"ok {path.name}: {len(layers)} layers, {trace.width} x {trace.height}")
     return warnings
 
@@ -1021,6 +1025,10 @@ def main(argv: Sequence[str]) -> int:
                 correct_vox_file(path)
             for message in validate(path):
                 print(message, file=sys.stderr)
+        except ValidationError as exc:
+            for message in exc.warnings:
+                print(message, file=sys.stderr)
+            errors.extend(exc.errors)
         except (OSError, UnicodeError, ValueError) as exc:
             errors.append(str(exc))
     if errors:

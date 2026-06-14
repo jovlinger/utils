@@ -8,14 +8,15 @@ leaving explicit isolation gaps anywhere adjacent cells should not connect.
 The `.vox` file is the electrical contract. The STL generator must not infer a
 short just because two bulky pieces of geometry are adjacent.
 
-## UNIT-Fraction Constants
+## Geometry Constants
 
-All board geometry should be defined as fractions of `UNIT_MM`, then converted
-to millimeters at runtime:
+Board geometry that scales with the `.vox` grid should be defined as fractions
+of `UNIT_MM`, then converted to millimeters at runtime. Pin and leg holes are
+physical diameters, so they stay absolute in millimeters:
 
 - `TRACE_WIDTH_FRAC`: trace body width.
-- `PIN_HOLE_DIAMETER_FRAC`: Pico pin through-hole diameter.
-- `LEG_HOLE_DIAMETER_FRAC`: module leg through-hole diameter.
+- `PIN_HOLE_DIAMETER_MM`: Pico pin through-hole diameter.
+- `DEVICE_HOLE_DIAMETER_MM`: module leg through-hole diameter.
 - `PIN_OUTSIDE_FRAC`: Pico pin pad outside width.
 - `LEG_OUTSIDE_FRAC`: module leg pad outside width.
 - `ADJACENT_ISOLATION_GAP_FRAC`: minimum air gap between adjacent cells that do
@@ -28,8 +29,8 @@ to millimeters at runtime:
 
 Current intent:
 
-- Holes: leg holes match the previous pin-hole diameter, while pin holes are
-  66 percent of that diameter.
+- Holes: pin and leg holes use fixed physical diameters independent of
+  `UNIT_MM`; only pin holes are enlarged from their previous value.
 - Pads: pin and leg pads use the previous trace width as their exterior, with
   through-hole cylinders subtracted.
 - Traces: traces are chunky enough for slicers to create visible top-surface

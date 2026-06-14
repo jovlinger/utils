@@ -17,26 +17,26 @@ DEFAULT_TRACE_WIDTH_FRAC = 0.72 * (0.72 / 0.88)
 # Minimum no-copper gap between adjacent isolated features, in cell fractions.
 DEFAULT_ADJACENT_ISOLATION_GAP_FRAC = 0.12
 
-# Pico pin through-hole diameter as a fraction of one grid cell.
-DEFAULT_PIN_HOLE_DIAMETER_FRAC = (1.10 * 0.66) / DEFAULT_UNIT_MM
-
-# Device-leg through-hole diameter as a fraction of one grid cell.
-DEFAULT_LEG_HOLE_DIAMETER_FRAC = 1.10 / DEFAULT_UNIT_MM
-
 # Pico pin raised pad outside width as a fraction of one grid cell.
-DEFAULT_PIN_OUTSIDE_FRAC = 0.72
+DEFAULT_PIN_OUTSIDE_FRAC = 0.88
 
 # Device-leg raised pad outside width as a fraction of one grid cell.
-DEFAULT_LEG_OUTSIDE_FRAC = 0.72
+DEFAULT_LEG_OUTSIDE_FRAC = 0.88
 
 # Extra trace reach past tile centers to help slicers fuse neighboring tiles.
 DEFAULT_TILE_OVERLAP_FRAC = 0.08
 
+# Same-copper ligature length centered on a shared tile edge.
+DEFAULT_COND_LIG_FRAC = 0.46
+
+# Different-copper ligature cut length centered on a shared tile edge.
+DEFAULT_ISOL_LIG_FRAC = 0.18
+
 # Clearance from trace arms to through-hole voids, in cell fractions.
 DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = 0.04
 
-# Debug grid-line width as a fraction of one grid cell.
-DEFAULT_GRID_FRAC = 0.20
+# Subtractive mesh sampling pitch as a fraction of one grid cell.
+DEFAULT_GRID_FRAC = 0.04
 
 # Embossed label inset from tile edges, in cell fractions.
 DEFAULT_LABEL_RECESS_FRAC = 0.04
@@ -65,6 +65,9 @@ DEFAULT_MAX_VERTEX_VALENCE = 20
 # Directory containing persistent binary STL letter tile fragments.
 LETTER_TILES_DIR = Path(__file__).resolve().parent / "tiles" / "letters"
 
+# Pickled dictionary of lazily rendered naive and ligature tile meshes.
+TILE_CACHE_PATH = Path(__file__).resolve().parent / "tiles" / "tile_cache.pickle"
+
 # Trace width in millimeters.
 DEFAULT_TRACE_WIDTH_MM = DEFAULT_TRACE_WIDTH_FRAC * DEFAULT_UNIT_MM
 
@@ -78,13 +81,19 @@ DEFAULT_PAD_WIDTH_MM = DEFAULT_PIN_OUTSIDE_FRAC * DEFAULT_UNIT_MM
 DEFAULT_DEVICE_PAD_WIDTH_MM = DEFAULT_LEG_OUTSIDE_FRAC * DEFAULT_UNIT_MM
 
 # Pico pin through-hole diameter in millimeters.
-DEFAULT_PIN_HOLE_DIAMETER_MM = DEFAULT_PIN_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
+DEFAULT_PIN_HOLE_DIAMETER_MM = 1.10 * 0.66 * 1.50
 
 # Device-leg through-hole diameter in millimeters.
-DEFAULT_DEVICE_HOLE_DIAMETER_MM = DEFAULT_LEG_HOLE_DIAMETER_FRAC * DEFAULT_UNIT_MM
+DEFAULT_DEVICE_HOLE_DIAMETER_MM = 1.10
 
 # Trace overlap distance in millimeters.
 DEFAULT_OVERLAP_MM = DEFAULT_TILE_OVERLAP_FRAC * DEFAULT_UNIT_MM
+
+# Same-copper ligature length in millimeters.
+DEFAULT_COND_LIG_MM = DEFAULT_COND_LIG_FRAC * DEFAULT_UNIT_MM
+
+# Different-copper ligature cut length in millimeters.
+DEFAULT_ISOL_LIG_MM = DEFAULT_ISOL_LIG_FRAC * DEFAULT_UNIT_MM
 
 # Trace-to-through-hole clearance in millimeters.
 DEFAULT_TRACE_HOLE_CLEARANCE_MM = DEFAULT_TRACE_HOLE_CLEARANCE_FRAC * DEFAULT_UNIT_MM
@@ -107,7 +116,7 @@ DEFAULT_TRACE_Z0_MM = DEFAULT_BASE_Z1_MM
 # Top Z coordinate for raised traces and pads.
 DEFAULT_TRACE_Z1_MM = 6.350
 
-# Debug grid-line width in millimeters.
+# Subtractive mesh sampling pitch in millimeters.
 DEFAULT_GRID_MM = DEFAULT_GRID_FRAC * DEFAULT_UNIT_MM
 
 # Layer header parser for .vox files.

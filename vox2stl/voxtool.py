@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and transform HAT text voxel design files."""
+"""Validate and transform HAT text voxel design files. Newest version"""
 
 from __future__ import annotations
 
@@ -290,6 +290,10 @@ def run_check(args: argparse.Namespace) -> int:
         try:
             for message in _check_vox.validate(path):
                 print(message, file=sys.stderr)
+        except _check_vox.ValidationError as exc:
+            for message in exc.warnings:
+                print(message, file=sys.stderr)
+            errors.extend(exc.errors)
         except (OSError, UnicodeError, ValueError) as exc:
             errors.append(str(exc))
     if errors:

@@ -22,8 +22,8 @@ GPIO5  X*XXXXXXXXX*X GPIO2
 GPIO6  X*XXOOOXXXX*X GPIO42
 GPIO7  X*XXXXXXXXX*X GPIO41
 GPIO15 X*XXXXXXXXX*X GPIO40
-GPIO16 X*XXOOOXXXX*X GPIO39
-GPIO17 X*XXXXXXXXX*X GPIO38
+GPIO16 X*XXXXXXXXX*X GPIO39
+GPIO17 X*XXOOOXXXX*X GPIO38
 GPIO18 X*XXXXXXXXX*X GPIO37
 GPIO8  X*XXXXXXXXX*X GPIO36
 GPIO3  X*XXXOOOOXX*X GPIO35
@@ -45,28 +45,28 @@ alias G -> | = GND
 
 layer trace (7, 13, 24)
        .............
-3V3    .*...up.┌--*. GND
-3V3    .*-┐side|..*. GPIO43
-RST    .*.|....|..*. GPIO44
-GPIO4  .*.└-┐┌-┘..*. GPIO1
-GPIO5  .*...||....*. GPIO2
-GPIO6  .*--OOO....*. GPIO42  IR RX target .c4= GPIO6, .c5 = 3V3  .c6 = GND
-GPIO7  .*...||....*. GPIO41
-GPIO15 .*...||....*. GPIO40
-GPIO16 .*--OOO....*. GPIO39  IR TX target .c4= GPIO16, .c5 = 3V3, .c6 = GND
-GPIO17 .*...||....*. GPIO38
-GPIO18 .*...VG....*. GPIO37
-GPIO8  .*...||┌---*. GPIO36
-GPIO3  .*...OOOO--*. GPIO35 AHT20 target .c5 = 3V3, .c6 = GND, .c7 = GPIO36 (SCL) .c8 = GPIO35 (SDA)
-GPIO46 .*...||....*. GPIO0
-GPIO9  .*...||....*. GPIO45
-GPIO10 .*...||....*. GPIO48
-GPIO11 .*...||....*. GPIO47
-GPIO12 .*...||....*. GPIO21
-GPIO13 .*...||....*. GPIO20
-GPIO14 .*...||....*. GPIO19
-5V     .*.........*. GND
-GND    .*....usb..*. GND
+3V3    .....up.┌--*. GND
+3V3    .*-┐side|.... GPIO43
+RST    ...|....|.... GPIO44
+GPIO4  ...└-┐┌-┘.... GPIO1
+GPIO5  .....||...... GPIO2
+GPIO6  .*--OOO...... GPIO42  IR RX target .c4= GPIO6, .c5 = 3V3  .c6 = GND
+GPIO7  .....||...... GPIO41
+GPIO15 .....VG...... GPIO40
+GPIO16 .....||...... GPIO39  
+GPIO17 .*--OOO...... GPIO38  IR TX target .c4= GPIO17  .c5 = 3V3, .c6 = GND
+GPIO18 .....||...... GPIO37                                               
+GPIO8  .....||┌---*. GPIO36
+GPIO3  .....OOOO--*. GPIO35 AHT20 target .c5 = 3V3, .c6 = GND, .c7 = GPIO36 (SCL) .c8 = GPIO35 (SDA)
+GPIO46 ............. GPIO0
+GPIO9  .....t....... GPIO45
+GPIO10 .....h....... GPIO48
+GPIO11 .....e ...... GPIO47
+GPIO12 .....r....... GPIO21
+GPIO13 .....m....... GPIO20
+GPIO14 .....o....... GPIO19
+5V     ...........*. GND
+GND    .*..usb....*. GND
        .............
 
 # scratch

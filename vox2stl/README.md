@@ -70,30 +70,46 @@ the left and right sides, and mirrors `.cN` notes and trace intent endpoints.
 
 ## Geometry Constants
 
-Default dimensions are expressed as fractions of `UNIT_MM` in `constants.py`:
+Most default dimensions are expressed as fractions of `UNIT_MM` in `constants.py`.
+Pin and device-leg hole diameters are absolute millimeter values:
 
 - `TRACE_WIDTH_FRAC = 0.72 * (0.72 / 0.88)`
 - `ADJACENT_ISOLATION_GAP_FRAC = 0.12`
-- `PIN_HOLE_DIAMETER_FRAC = (1.10 * 0.66) / 2.54`
-- `LEG_HOLE_DIAMETER_FRAC = 1.10 / 2.54`
-- `PIN_OUTSIDE_FRAC = 0.72`
-- `LEG_OUTSIDE_FRAC = 0.72`
+- `PIN_HOLE_DIAMETER_MM = 1.10 * 0.66 * 1.50`
+- `DEVICE_HOLE_DIAMETER_MM = 1.10`
+- `PIN_OUTSIDE_FRAC = 0.88`
+- `LEG_OUTSIDE_FRAC = 0.88`
 - `TILE_OVERLAP_FRAC = 0.08`
+- `COND_LIG_FRAC = 0.46`
+- `ISOL_LIG_FRAC = 0.18`
+- `GRID_FRAC = 0.04`
 - `TRACE_HOLE_CLEARANCE_FRAC = 0.04`
 - `LABEL_RECESS_FRAC = 0.04`
 - `LABEL_HEIGHT_FRAC = 0.40`
 
 Geometry is parametric: the converter builds rectangular STL boxes for each
-glyph rather than loading binary STL fragments. In full mode, `*` and `O` pads
-are near-unit rectangular prisms with cylindrical through-holes subtracted.
-Trace arms are emitted only when the neighboring cell connects by the `.vox`
-rules, and protrusions are clamped so they reach pad material without entering
-the through-hole void.
+glyph rather than loading binary STL fragments. During STL generation, trace
+cells are rendered as cached ligature tiles keyed by `(tile, n, e, s, w)`, where
+each direction is `1` for same-copper conduction, `0` for no copper, and `-1`
+for different-copper isolation. A ligature tile first adds its local solids and
+same-copper protrusions, then subtracts isolation slots and any `*` or `O`
+through-hole. Cached tiles may extend past one `UNIT_MM` cell; overlaps are
+intentional so neighboring same-copper tiles fuse robustly in slicers.
 
-Default `O` hole diameter is the previous `*` hole default, while the current
-`*` hole default is 66 percent of that size. `*` and `O` pad outer prisms use
-the same outside fraction and are clamped by
-`ADJACENT_ISOLATION_GAP_FRAC` so adjacent `OO` pads keep an air gap.
+The persistent tile cache is a pickled dictionary at
+`vox2stl/tiles/tile_cache.pickle`, written as a gzip-compressed pickle stream.
+Lowercase letter tiles are stored under their single-character keys, and copper
+ligatures are stored under their five-part keys. If the pickle is deleted, the
+cache is rebuilt lazily; lowercase letters are loaded from pre-rendered letter
+STL fragments when present, otherwise they are regenerated from the built-in
+letter renderer. Cache format or geometry upgrades are handled by deleting the
+cache file and letting it regenerate. Non-default CLI geometry uses an in-memory
+cache so stale persisted dimensions are not reused.
+
+Default `*` and `O` hole diameters are fixed physical dimensions, independent
+of `UNIT_MM`; only the `*` pin hole is enlarged from its previous value. `*` and `O` pad outer prisms use the same outside fraction and are enlarged close to
+the isolation-limited maximum so pin and leg pads keep more copper around their
+holes.
 
 Label letters are inset from cell edges by `LABEL_RECESS_FRAC` to avoid
 overhang. Their embossed height is `LABEL_HEIGHT_FRAC * UNIT_MM`, starting at

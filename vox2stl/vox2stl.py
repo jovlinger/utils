@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import math
+import pickle
 import re
 import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from constants import (
     ARMS_BY_CHAR,
@@ -29,10 +31,14 @@ from constants import (
     DEFAULT_ADJACENT_ISOLATION_GAP_MM,
     DEFAULT_BASE_Z0_MM,
     DEFAULT_BASE_Z1_MM,
+    DEFAULT_COND_LIG_FRAC,
+    DEFAULT_COND_LIG_MM,
     DEFAULT_DEVICE_HOLE_DIAMETER_MM,
     DEFAULT_DEVICE_PAD_WIDTH_MM,
     DEFAULT_GRID_MM,
     DEFAULT_GRID_FRAC,
+    DEFAULT_ISOL_LIG_FRAC,
+    DEFAULT_ISOL_LIG_MM,
     DEFAULT_LABEL_BLUR_PASSES,
     DEFAULT_LABEL_BLUR_RADIUS,
     DEFAULT_LABEL_HEIGHT_FRAC,
@@ -42,11 +48,9 @@ from constants import (
     DEFAULT_LABEL_RECESS_MM,
     DEFAULT_LABEL_STROKE_FRAC,
     DEFAULT_LABEL_TILE_MAX_TRIANGLES,
-    DEFAULT_LEG_HOLE_DIAMETER_FRAC,
     DEFAULT_LEG_OUTSIDE_FRAC,
     DEFAULT_MAX_VERTEX_VALENCE,
     DEFAULT_OVERLAP_MM,
-    DEFAULT_PIN_HOLE_DIAMETER_FRAC,
     DEFAULT_PAD_WIDTH_MM,
     DEFAULT_PIN_HOLE_DIAMETER_MM,
     DEFAULT_PIN_OUTSIDE_FRAC,
@@ -65,6 +69,7 @@ from constants import (
     PAD_CHARS,
     PIN_PAD_CHAR,
     SHORTHAND_DIRECT_CHARS,
+    TILE_CACHE_PATH,
     parse_alias_line,
     UNIT_RE,
 )
@@ -72,6 +77,9 @@ from letter_mesh import generate_letter_tile_triangles
 
 Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
+LigatureKey = Tuple[str, int, int, int, int]
+TileCacheKey = Union[str, LigatureKey]
+TileCache = Dict[TileCacheKey, List[Tri]]
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,15 @@ class Hole:
 
 
 @dataclass(frozen=True)
+class CylindricalVoid:
+    x: float
+    y: float
+    radius: float
+    z0: float
+    z1: float
+
+
+@dataclass(frozen=True)
 class RenderConfig:
     unit_mm: float = DEFAULT_UNIT_MM
     trace_width_mm: float = DEFAULT_TRACE_WIDTH_MM
@@ -110,6 +127,8 @@ class RenderConfig:
     device_hole_diameter_mm: float = DEFAULT_DEVICE_HOLE_DIAMETER_MM
     adjacent_isolation_gap_mm: float = DEFAULT_ADJACENT_ISOLATION_GAP_MM
     overlap_mm: float = DEFAULT_OVERLAP_MM
+    cond_lig_mm: float = DEFAULT_COND_LIG_MM
+    isol_lig_mm: float = DEFAULT_ISOL_LIG_MM
     trace_hole_clearance_mm: float = DEFAULT_TRACE_HOLE_CLEARANCE_MM
     label_recess_mm: float = DEFAULT_LABEL_RECESS_MM
     label_height_mm: float = DEFAULT_LABEL_HEIGHT_MM
@@ -226,85 +245,8 @@ def box_intersects_any_hole(box: BoxSolid, holes: Sequence[Hole]) -> bool:
 
 
 def plate_with_holes_tris(box: BoxSolid, holes: Sequence[Hole], grid_mm: float) -> List[Tri]:
-    tris: List[Tri] = []
-    x = box.x0
-    while x < box.x1 - 1e-6:
-        xn = min(x + grid_mm, box.x1)
-        y = box.y0
-        while y < box.y1 - 1e-6:
-            yn = min(y + grid_mm, box.y1)
-            cx = (x + xn) * 0.5
-            cy = (y + yn) * 0.5
-            if not inside_hole(cx, cy, holes):
-                tris.extend(
-                    [
-                        ((x, y, box.z0), (xn, y, box.z0), (xn, yn, box.z0)),
-                        ((x, y, box.z0), (xn, yn, box.z0), (x, yn, box.z0)),
-                        ((x, y, box.z1), (xn, yn, box.z1), (xn, y, box.z1)),
-                        ((x, y, box.z1), (x, yn, box.z1), (xn, yn, box.z1)),
-                    ]
-                )
-            y = yn
-        x = xn
-
-    for hole in holes:
-        if box_contains_hole(box, hole):
-            tris.extend(cylinder_wall_tris(hole.x, hole.y, hole.radius, box.z0, box.z1))
-
-    def edge_strip(
-        fixed_coord: float,
-        var_start: float,
-        var_end: float,
-        axis: str,
-        outward: str,
-    ) -> None:
-        var = var_start
-        while var < var_end - 1e-6:
-            vnext = min(var + grid_mm, var_end)
-            mid = (var + vnext) * 0.5
-            if axis == "x":
-                cx, cy = fixed_coord, mid
-            else:
-                cx, cy = mid, fixed_coord
-            if inside_hole(cx, cy, holes):
-                var = vnext
-                continue
-            if axis == "x":
-                if outward == "neg":
-                    tris.extend(
-                        [
-                            ((fixed_coord, var, box.z0), (fixed_coord, vnext, box.z0), (fixed_coord, vnext, box.z1)),
-                            ((fixed_coord, var, box.z0), (fixed_coord, vnext, box.z1), (fixed_coord, var, box.z1)),
-                        ]
-                    )
-                else:
-                    tris.extend(
-                        [
-                            ((fixed_coord, var, box.z1), (fixed_coord, vnext, box.z1), (fixed_coord, vnext, box.z0)),
-                            ((fixed_coord, var, box.z1), (fixed_coord, vnext, box.z0), (fixed_coord, var, box.z0)),
-                        ]
-                    )
-            elif outward == "neg":
-                tris.extend(
-                    [
-                        ((var, fixed_coord, box.z0), (vnext, fixed_coord, box.z0), (vnext, fixed_coord, box.z1)),
-                        ((var, fixed_coord, box.z0), (vnext, fixed_coord, box.z1), (var, fixed_coord, box.z1)),
-                    ]
-                )
-            else:
-                tris.extend(
-                    [
-                        ((var, fixed_coord, box.z1), (vnext, fixed_coord, box.z1), (vnext, fixed_coord, box.z0)),
-                        ((var, fixed_coord, box.z1), (vnext, fixed_coord, box.z0), (var, fixed_coord, box.z0)),
-                    ]
-                )
-            var = vnext
-
-    edge_strip(box.x0, box.y0, box.y1, "x", "neg")
-    edge_strip(box.x1, box.y0, box.y1, "x", "pos")
-    edge_strip(box.y0, box.x0, box.x1, "y", "neg")
-    edge_strip(box.y1, box.x0, box.x1, "y", "pos")
-    return tris
+    voids = [CylindricalVoid(hole.x, hole.y, hole.radius, box.z0, box.z1) for hole in holes]
+    return mesh_from_boxes_and_voids([box], [], voids, grid_mm).triangles
 
 
 def read_layers(path: Path) -> Dict[str, Layer]:
@@ -409,6 +351,11 @@ def pad_width(char: str, config: RenderConfig) -> float:
     return isolated_width(raw_width, config)
 
 
+def hole_radius_for_pad(char: str, config: RenderConfig) -> float:
+    diameter = config.pin_hole_diameter_mm if char == PIN_PAD_CHAR else config.device_hole_diameter_mm
+    return diameter * 0.5
+
+
 def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxSolid:
     half = width * 0.5
     return BoxSolid(cx - half, cy - half, cx + half, cy + half, z0, z1)
@@ -498,11 +445,10 @@ def load_letter_tile(letter: str) -> List[Tri]:
     if cached is not None:
         return cached
     path = letter_tile_path(key)
-    if not path.is_file():
-        raise ValueError(
-            f"missing letter tile {path}; run vox2stl/build_letter_tiles.py to pre-render A-Z"
-        )
-    tris = read_letter_tile_stl(path)
+    if path.is_file():
+        tris = read_letter_tile_stl(path)
+    else:
+        tris = generate_letter_tile_triangles(key)
     _LETTER_TILE_CACHE[key] = tris
     return tris
 
@@ -539,14 +485,232 @@ def letter_tris(cx: float, cy: float, char: str, config: RenderConfig) -> List[T
     return place_letter_tris(template, cx, cy, config)
 
 
-def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSolid:
-    width = trace_width(config)
-    half = width * 0.5
+_PERSISTENT_TILE_CACHE: Optional[TileCache] = None
+_RUNTIME_TILE_CACHES: Dict[Tuple[float, ...], TileCache] = {}
+
+
+def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
+    return (
+        round(config.unit_mm, 9),
+        round(config.trace_width_mm, 9),
+        round(config.pad_width_mm, 9),
+        round(config.device_pad_width_mm, 9),
+        round(config.pin_hole_diameter_mm, 9),
+        round(config.device_hole_diameter_mm, 9),
+        round(config.trace_z0_mm, 9),
+        round(config.trace_z1_mm, 9),
+        round(config.grid_mm, 9),
+        round(config.cond_lig_mm, 9),
+        round(config.isol_lig_mm, 9),
+        round(config.label_recess_mm, 9),
+        round(config.label_height_mm, 9),
+        float(config.include_pads),
+    )
+
+
+def persistent_tile_cache_enabled(config: RenderConfig) -> bool:
+    default = RenderConfig()
+    return tile_cache_signature(config) == tile_cache_signature(default)
+
+
+def load_persistent_tile_cache() -> TileCache:
+    global _PERSISTENT_TILE_CACHE
+    if _PERSISTENT_TILE_CACHE is not None:
+        return _PERSISTENT_TILE_CACHE
+    if TILE_CACHE_PATH.is_file():
+        with gzip.open(TILE_CACHE_PATH, "rb") as file_obj:
+            loaded = pickle.load(file_obj)
+        if not isinstance(loaded, dict):
+            raise ValueError(f"{TILE_CACHE_PATH}: tile cache is not a dictionary")
+        _PERSISTENT_TILE_CACHE = loaded
+    else:
+        _PERSISTENT_TILE_CACHE = {}
+    return _PERSISTENT_TILE_CACHE
+
+
+def save_persistent_tile_cache(cache: TileCache) -> None:
+    TILE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(TILE_CACHE_PATH, "wb") as file_obj:
+        pickle.dump(cache, file_obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def format_tile_cache_key(key: TileCacheKey) -> str:
+    if isinstance(key, str):
+        return repr(key)
+    return repr(key)
+
+
+def report_tile_cache_miss(key: TileCacheKey) -> None:
+    print(f"Rendering tile cache key {format_tile_cache_key(key)}", file=sys.stderr)
+
+
+def tile_cache_for_config(config: RenderConfig) -> Tuple[TileCache, bool]:
+    if persistent_tile_cache_enabled(config):
+        cache = load_persistent_tile_cache()
+        seed_pre_rendered_letters(cache, config)
+        return cache, True
+    signature = tile_cache_signature(config)
+    return _RUNTIME_TILE_CACHES.setdefault(signature, {}), False
+
+
+def seed_pre_rendered_letters(cache: TileCache, config: RenderConfig) -> None:
+    dirty = False
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        if letter in cache:
+            continue
+        report_tile_cache_miss(letter)
+        template = load_letter_tile(letter)
+        cache[letter] = place_letter_tris(template, 0.0, 0.0, config)
+        dirty = True
+    if dirty:
+        save_persistent_tile_cache(cache)
+
+
+def translate_tris(tris: Sequence[Tri], dx: float, dy: float) -> List[Tri]:
+    def translate_vertex(vertex: Vec3) -> Vec3:
+        return (vertex[0] + dx, vertex[1] + dy, vertex[2])
+
+    return [(translate_vertex(a), translate_vertex(b), translate_vertex(c)) for a, b, c in tris]
+
+
+def cached_tile_tris(key: TileCacheKey, config: RenderConfig) -> List[Tri]:
+    cache, persistent = tile_cache_for_config(config)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    if isinstance(key, str):
+        report_tile_cache_miss(key)
+        tris = render_naive_tile(key, config)
+    else:
+        cached_tile_tris(key[0], config)
+        report_tile_cache_miss(key)
+        tris = render_ligature_tile(key, config)
+    cache[key] = tris
+    if persistent:
+        save_persistent_tile_cache(cache)
+    return tris
+
+
+def local_ligature_box(direction: str, length: float, width: float, config: RenderConfig) -> BoxSolid:
+    half_width = width * 0.5
+    half_length = length * 0.5
+    edge = config.unit_mm * 0.5
+    if direction == "N":
+        return BoxSolid(
+            -half_width,
+            edge - half_length,
+            half_width,
+            edge + half_length,
+            config.trace_z0_mm,
+            config.trace_z1_mm,
+        )
+    if direction == "S":
+        return BoxSolid(
+            -half_width,
+            -edge - half_length,
+            half_width,
+            -edge + half_length,
+            config.trace_z0_mm,
+            config.trace_z1_mm,
+        )
+    if direction == "E":
+        return BoxSolid(
+            edge - half_length,
+            -half_width,
+            edge + half_length,
+            half_width,
+            config.trace_z0_mm,
+            config.trace_z1_mm,
+        )
+    if direction == "W":
+        return BoxSolid(
+            -edge - half_length,
+            -half_width,
+            -edge + half_length,
+            half_width,
+            config.trace_z0_mm,
+            config.trace_z1_mm,
+        )
+    raise ValueError(f"unknown ligature direction {direction!r}")
+
+
+def isolation_ligature_width(config: RenderConfig) -> float:
+    return max(pad_width(PIN_PAD_CHAR, config), pad_width(LEG_PAD_CHAR, config))
+
+
+def render_naive_tile(char: str, config: RenderConfig) -> List[Tri]:
+    if is_label_char(char):
+        template = load_letter_tile(char)
+        return place_letter_tris(template, 0.0, 0.0, config)
+    if char in PAD_CHARS:
+        if not config.include_pads:
+            return []
+        boxes = [square_box(0.0, 0.0, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+        voids = [CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+        return mesh_from_boxes_and_voids(boxes, [], voids, config.grid_mm).triangles
+    if char in ARMS_BY_CHAR:
+        boxes = [square_box(0.0, 0.0, trace_width(config), config.trace_z0_mm, config.trace_z1_mm)]
+        return mesh_from_boxes_and_voids(boxes, [], [], config.grid_mm).triangles
+    return []
+
+
+def render_ligature_tile(key: LigatureKey, config: RenderConfig) -> List[Tri]:
+    char, north, east, south, west = key
+    if char in PAD_CHARS:
+        if not config.include_pads:
+            return []
+        additive_boxes = [square_box(0.0, 0.0, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+    elif char in ARMS_BY_CHAR:
+        additive_boxes = [square_box(0.0, 0.0, trace_width(config), config.trace_z0_mm, config.trace_z1_mm)]
+    else:
+        return []
+
+    rect_voids: List[BoxSolid] = []
+    direction_states = (("N", north), ("E", east), ("S", south), ("W", west))
+    for direction, state in direction_states:
+        if state == 1:
+            additive_boxes.append(
+                local_ligature_box(direction, config.cond_lig_mm, trace_width(config), config)
+            )
+        elif state == -1:
+            rect_voids.append(
+                local_ligature_box(
+                    direction,
+                    config.isol_lig_mm,
+                    isolation_ligature_width(config),
+                    config,
+                )
+            )
+    cylinder_voids: List[CylindricalVoid] = []
+    if char in PAD_CHARS:
+        cylinder_voids.append(
+            CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.trace_z0_mm, config.trace_z1_mm)
+        )
+    return mesh_from_boxes_and_voids(additive_boxes, rect_voids, cylinder_voids, config.grid_mm).triangles
+
+
+def arm_reach(config: RenderConfig, neighbor: str = ".") -> float:
+    if neighbor in PAD_CHARS:
+        return min(
+            config.unit_mm - pad_width(neighbor, config) * 0.5 + config.overlap_mm,
+            config.unit_mm - hole_radius_for_pad(neighbor, config) - config.trace_hole_clearance_mm,
+        )
     max_hole_radius = max(config.pin_hole_diameter_mm, config.device_hole_diameter_mm) * 0.5
-    reach = min(
+    return min(
         config.unit_mm * 0.5 + config.overlap_mm,
         config.unit_mm - max_hole_radius - config.trace_hole_clearance_mm,
     )
+
+
+def directional_box(
+    cx: float,
+    cy: float,
+    direction: str,
+    width: float,
+    reach: float,
+    config: RenderConfig,
+) -> BoxSolid:
+    half = width * 0.5
     if direction == "N":
         return BoxSolid(cx - half, cy - half, cx + half, cy + reach, config.trace_z0_mm, config.trace_z1_mm)
     if direction == "S":
@@ -556,6 +720,22 @@ def arm_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSo
     if direction == "W":
         return BoxSolid(cx - reach, cy - half, cx + half, cy + half, config.trace_z0_mm, config.trace_z1_mm)
     raise ValueError(f"unknown arm direction {direction!r}")
+
+
+def arm_box(cx: float, cy: float, direction: str, config: RenderConfig, neighbor: str = ".") -> BoxSolid:
+    width = trace_width(config)
+    return directional_box(cx, cy, direction, width, arm_reach(config, neighbor), config)
+
+
+def pad_tail_box(cx: float, cy: float, direction: str, config: RenderConfig) -> BoxSolid:
+    return directional_box(
+        cx,
+        cy,
+        direction,
+        trace_width(config),
+        config.unit_mm * 0.5 + config.overlap_mm,
+        config,
+    )
 
 
 def accepts_connection(char: str, direction: str) -> bool:
@@ -599,10 +779,13 @@ def glyph_boxes(
     cy: float,
     config: RenderConfig,
 ) -> List[BoxSolid]:
-    if char == PIN_PAD_CHAR and config.include_pads:
-        return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
-    if char == LEG_PAD_CHAR and config.include_pads:
-        return [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+    if char in PAD_CHARS and config.include_pads:
+        boxes = [square_box(cx, cy, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
+        for direction in sorted(ARMS_BY_CHAR[BOX_CROSS]):
+            neighbor = neighbor_char(layer, row_index, col_index, direction)
+            if connects_to_neighbor(char, neighbor, direction):
+                boxes.append(pad_tail_box(cx, cy, direction, config))
+        return boxes
     if is_label_char(char):
         return []
 
@@ -614,7 +797,7 @@ def glyph_boxes(
     for direction in sorted(arms):
         neighbor = neighbor_char(layer, row_index, col_index, direction)
         if connects_to_neighbor(char, neighbor, direction):
-            boxes.append(arm_box(cx, cy, direction, config))
+            boxes.append(arm_box(cx, cy, direction, config, neighbor))
     return boxes
 
 
@@ -636,8 +819,7 @@ def build_holes(base_layer: Layer, config: RenderConfig) -> List[Hole]:
             if char not in PAD_CHARS:
                 continue
             cx, cy = cell_center(base_layer, row_index, col_index, config)
-            diameter = config.pin_hole_diameter_mm if char == PIN_PAD_CHAR else config.device_hole_diameter_mm
-            holes.append(Hole(cx, cy, diameter * 0.5))
+            holes.append(Hole(cx, cy, hole_radius_for_pad(char, config)))
     return holes
 
 
@@ -659,29 +841,360 @@ def mesh_from_boxes(boxes: Sequence[BoxSolid]) -> Mesh:
     return mesh
 
 
-def build_layer_mesh(
-    layer: Layer,
-    config: RenderConfig,
-    holes: Optional[Sequence[Hole]] = None,
-) -> Tuple[Mesh, int, int]:
+def add_stepped_coords(coords: List[float], start: float, end: float, grid_mm: float) -> None:
+    coords.append(start)
+    coords.append(end)
+    if end <= start:
+        return
+    steps = max(1, int(math.ceil((end - start) / grid_mm)))
+    for index in range(1, steps):
+        coords.append(start + (end - start) * index / steps)
+
+
+def sorted_unique_coords(coords: Iterable[float]) -> List[float]:
+    values = sorted(coords)
+    unique: List[float] = []
+    for value in values:
+        if not unique or abs(value - unique[-1]) > 1e-9:
+            unique.append(value)
+    return unique
+
+
+def grid_coords_for_solids(
+    boxes: Sequence[BoxSolid],
+    rect_voids: Sequence[BoxSolid],
+    cylinder_voids: Sequence[CylindricalVoid],
+    grid_mm: float,
+) -> Tuple[List[float], List[float]]:
+    if grid_mm <= 0.0:
+        raise ValueError("grid-mm must be positive")
+    min_x = min(box.x0 for box in boxes)
+    max_x = max(box.x1 for box in boxes)
+    min_y = min(box.y0 for box in boxes)
+    max_y = max(box.y1 for box in boxes)
+    x_coords: List[float] = []
+    y_coords: List[float] = []
+    add_stepped_coords(x_coords, min_x, max_x, grid_mm)
+    add_stepped_coords(y_coords, min_y, max_y, grid_mm)
+    for box in list(boxes) + list(rect_voids):
+        x_coords.extend([box.x0, box.x1])
+        y_coords.extend([box.y0, box.y1])
+    for void in cylinder_voids:
+        x_coords.extend([void.x - void.radius, void.x, void.x + void.radius])
+        y_coords.extend([void.y - void.radius, void.y, void.y + void.radius])
+    return sorted_unique_coords(x_coords), sorted_unique_coords(y_coords)
+
+
+def z_levels_for_solids(
+    boxes: Sequence[BoxSolid],
+    rect_voids: Sequence[BoxSolid],
+    cylinder_voids: Sequence[CylindricalVoid],
+) -> List[float]:
+    levels: List[float] = []
+    for box in list(boxes) + list(rect_voids):
+        levels.extend([box.z0, box.z1])
+    for void in cylinder_voids:
+        levels.extend([void.z0, void.z1])
+    return sorted_unique_coords(levels)
+
+
+def box_contains_point(box: BoxSolid, x: float, y: float, z: float) -> bool:
+    return box.x0 <= x <= box.x1 and box.y0 <= y <= box.y1 and box.z0 <= z <= box.z1
+
+
+def cylinder_void_contains_point(void: CylindricalVoid, x: float, y: float, z: float) -> bool:
+    if z < void.z0 or z > void.z1:
+        return False
+    dx = x - void.x
+    dy = y - void.y
+    return dx * dx + dy * dy <= void.radius * void.radius
+
+
+def point_is_solid(
+    x: float,
+    y: float,
+    z: float,
+    boxes: Sequence[BoxSolid],
+    rect_voids: Sequence[BoxSolid],
+    cylinder_voids: Sequence[CylindricalVoid],
+) -> bool:
+    if not any(box_contains_point(box, x, y, z) for box in boxes):
+        return False
+    if any(box_contains_point(void, x, y, z) for void in rect_voids):
+        return False
+    return not any(cylinder_void_contains_point(void, x, y, z) for void in cylinder_voids)
+
+
+def append_quad(mesh: Mesh, a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> None:
+    mesh.extend([(a, b, c), (a, c, d)])
+
+
+def append_cell_faces(
+    mesh: Mesh,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    z0: float,
+    z1: float,
+    west: bool,
+    east: bool,
+    south: bool,
+    north: bool,
+    bottom: bool,
+    top: bool,
+) -> None:
+    if bottom:
+        append_quad(mesh, (x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0))
+    if top:
+        append_quad(mesh, (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))
+    if west:
+        append_quad(mesh, (x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0))
+    if east:
+        append_quad(mesh, (x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1))
+    if south:
+        append_quad(mesh, (x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1))
+    if north:
+        append_quad(mesh, (x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0))
+
+
+def mesh_from_boxes_and_voids(
+    boxes: Sequence[BoxSolid],
+    rect_voids: Sequence[BoxSolid],
+    cylinder_voids: Sequence[CylindricalVoid],
+    grid_mm: float,
+) -> Mesh:
     mesh = Mesh()
-    box_count = 0
+    if not boxes:
+        return mesh
+    x_coords, y_coords = grid_coords_for_solids(boxes, rect_voids, cylinder_voids, grid_mm)
+    z_levels = z_levels_for_solids(boxes, rect_voids, cylinder_voids)
+    slab_cells: List[List[List[bool]]] = []
+    slab_ranges: List[Tuple[float, float]] = []
+    for z0, z1 in zip(z_levels, z_levels[1:]):
+        if z1 <= z0:
+            continue
+        z_mid = (z0 + z1) * 0.5
+        rows: List[List[bool]] = []
+        for y0, y1 in zip(y_coords, y_coords[1:]):
+            y_mid = (y0 + y1) * 0.5
+            row: List[bool] = []
+            for x0, x1 in zip(x_coords, x_coords[1:]):
+                x_mid = (x0 + x1) * 0.5
+                row.append(point_is_solid(x_mid, y_mid, z_mid, boxes, rect_voids, cylinder_voids))
+            rows.append(row)
+        slab_cells.append(rows)
+        slab_ranges.append((z0, z1))
+
+    for slab_index, rows in enumerate(slab_cells):
+        z0, z1 = slab_ranges[slab_index]
+        previous_rows = slab_cells[slab_index - 1] if slab_index > 0 else None
+        next_rows = slab_cells[slab_index + 1] if slab_index + 1 < len(slab_cells) else None
+        for y_index, row in enumerate(rows):
+            for x_index, occupied in enumerate(row):
+                if not occupied:
+                    continue
+                west = x_index == 0 or not row[x_index - 1]
+                east = x_index + 1 == len(row) or not row[x_index + 1]
+                south = y_index == 0 or not rows[y_index - 1][x_index]
+                north = y_index + 1 == len(rows) or not rows[y_index + 1][x_index]
+                bottom = previous_rows is None or not previous_rows[y_index][x_index]
+                top = next_rows is None or not next_rows[y_index][x_index]
+                append_cell_faces(
+                    mesh,
+                    x_coords[x_index],
+                    y_coords[y_index],
+                    x_coords[x_index + 1],
+                    y_coords[y_index + 1],
+                    z0,
+                    z1,
+                    west,
+                    east,
+                    south,
+                    north,
+                    bottom,
+                    top,
+                )
+    return mesh
+
+
+def collect_layer_additives(layer: Layer, config: RenderConfig) -> Tuple[List[BoxSolid], Mesh, int, int]:
+    boxes: List[BoxSolid] = []
+    letters = Mesh()
     letter_count = 0
     for row_index, row in enumerate(layer.rows):
         window = layer_window(layer, row)
         for col_index, char in enumerate(window):
             cx, cy = cell_center(layer, row_index, col_index, config)
             if is_label_char(char):
-                mesh.extend(letter_tris(cx, cy, char, config))
+                letters.extend(letter_tris(cx, cy, char, config))
                 letter_count += 1
                 continue
-            boxes = glyph_boxes(layer, row_index, col_index, char, cx, cy, config)
-            box_count += len(boxes)
-            for box in boxes:
-                if holes is not None:
-                    add_box_with_holes(mesh, box, holes, config.grid_mm)
+            boxes.extend(glyph_boxes(layer, row_index, col_index, char, cx, cy, config))
+    return boxes, letters, len(boxes), letter_count
+
+
+def has_rendered_copper(char: str, config: RenderConfig) -> bool:
+    if char in PAD_CHARS:
+        return config.include_pads
+    return char in ARMS_BY_CHAR
+
+
+def direction_state_for_cell(
+    layer: Layer,
+    row_index: int,
+    col_index: int,
+    char: str,
+    direction: str,
+    config: RenderConfig,
+) -> int:
+    neighbor = neighbor_char(layer, row_index, col_index, direction)
+    if connects_to_neighbor(char, neighbor, direction):
+        return 1
+    if has_rendered_copper(neighbor, config):
+        return -1
+    return 0
+
+
+def ligature_key_for_cell(
+    layer: Layer,
+    row_index: int,
+    col_index: int,
+    char: str,
+    config: RenderConfig,
+) -> LigatureKey:
+    return (
+        char,
+        direction_state_for_cell(layer, row_index, col_index, char, "N", config),
+        direction_state_for_cell(layer, row_index, col_index, char, "E", config),
+        direction_state_for_cell(layer, row_index, col_index, char, "S", config),
+        direction_state_for_cell(layer, row_index, col_index, char, "W", config),
+    )
+
+
+def render_base_tile(char: str, config: RenderConfig) -> List[Tri]:
+    if char == ".":
+        return []
+    box = BoxSolid(
+        -config.unit_mm * 0.5,
+        -config.unit_mm * 0.5,
+        config.unit_mm * 0.5,
+        config.unit_mm * 0.5,
+        config.base_z0_mm,
+        config.base_z1_mm,
+    )
+    cylinder_voids: List[CylindricalVoid] = []
+    if char in PAD_CHARS:
+        cylinder_voids.append(
+            CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.base_z0_mm, config.base_z1_mm)
+        )
+    return mesh_from_boxes_and_voids([box], [], cylinder_voids, config.grid_mm).triangles
+
+
+def build_base_mesh(base_layer: Layer, config: RenderConfig) -> Tuple[Mesh, int]:
+    mesh = Mesh()
+    hole_count = 0
+    base_tile_cache: Dict[str, List[Tri]] = {}
+    for row_index, row in enumerate(base_layer.rows):
+        window = layer_window(base_layer, row)
+        for col_index, char in enumerate(window):
+            if char == ".":
+                continue
+            if char in PAD_CHARS:
+                hole_count += 1
+            local_tris = base_tile_cache.get(char)
+            if local_tris is None:
+                local_tris = render_base_tile(char, config)
+                base_tile_cache[char] = local_tris
+            cx, cy = cell_center(base_layer, row_index, col_index, config)
+            mesh.extend(translate_tris(local_tris, cx, cy))
+    return mesh, hole_count
+
+
+def build_ligature_layer_mesh(layer: Layer, config: RenderConfig) -> Tuple[Mesh, int, int]:
+    mesh = Mesh()
+    tile_count = 0
+    letter_count = 0
+    for row_index, row in enumerate(layer.rows):
+        window = layer_window(layer, row)
+        for col_index, char in enumerate(window):
+            if is_label_char(char):
+                key: TileCacheKey = char
+                letter_count += 1
+            elif has_rendered_copper(char, config):
+                key = ligature_key_for_cell(layer, row_index, col_index, char, config)
+                tile_count += 1
+            else:
+                continue
+            cx, cy = cell_center(layer, row_index, col_index, config)
+            mesh.extend(translate_tris(cached_tile_tris(key, config), cx, cy))
+    return mesh, tile_count, letter_count
+
+
+def trace_air_gap_voids(layer: Layer, config: RenderConfig) -> List[BoxSolid]:
+    voids: List[BoxSolid] = []
+    half_gap = config.adjacent_isolation_gap_mm * 0.5
+    for row_index, row in enumerate(layer.rows):
+        window = layer_window(layer, row)
+        for col_index, char in enumerate(window):
+            if not has_rendered_copper(char, config):
+                continue
+            cx, cy = cell_center(layer, row_index, col_index, config)
+            for direction in ("E", "S"):
+                neighbor = neighbor_char(layer, row_index, col_index, direction)
+                if not has_rendered_copper(neighbor, config) or connects_to_neighbor(char, neighbor, direction):
+                    continue
+                if direction == "E":
+                    boundary_x = cx + config.unit_mm * 0.5
+                    voids.append(
+                        BoxSolid(
+                            boundary_x - half_gap,
+                            cy - config.unit_mm * 0.5,
+                            boundary_x + half_gap,
+                            cy + config.unit_mm * 0.5,
+                            config.trace_z0_mm,
+                            config.trace_z1_mm,
+                        )
+                    )
                 else:
-                    mesh.extend(box_tris(box))
+                    boundary_y = cy - config.unit_mm * 0.5
+                    voids.append(
+                        BoxSolid(
+                            cx - config.unit_mm * 0.5,
+                            boundary_y - half_gap,
+                            cx + config.unit_mm * 0.5,
+                            boundary_y + half_gap,
+                            config.trace_z0_mm,
+                            config.trace_z1_mm,
+                        )
+                    )
+    return voids
+
+
+def cylindrical_voids_for_holes(holes: Sequence[Hole], z0: float, z1: float, radius_extra: float = 0.0) -> List[CylindricalVoid]:
+    return [
+        CylindricalVoid(hole.x, hole.y, hole.radius + radius_extra, z0, z1)
+        for hole in holes
+        if hole.radius + radius_extra > 0.0 and z1 > z0
+    ]
+
+
+def build_layer_mesh(
+    layer: Layer,
+    config: RenderConfig,
+    holes: Optional[Sequence[Hole]] = None,
+) -> Tuple[Mesh, int, int]:
+    if holes is None:
+        return build_ligature_layer_mesh(layer, config)
+    boxes, letters, box_count, letter_count = collect_layer_additives(layer, config)
+    voids = cylindrical_voids_for_holes(
+        holes,
+        config.trace_z0_mm,
+        config.trace_z1_mm,
+        config.trace_hole_clearance_mm,
+    )
+    mesh = mesh_from_boxes_and_voids(boxes, [], voids, config.grid_mm)
+    mesh.extend(letters.triangles)
     return mesh, box_count, letter_count
 
 
@@ -698,13 +1211,10 @@ def full_mesh_from_layers(
     trace_layer: Layer,
     config: RenderConfig,
 ) -> Tuple[Mesh, int, int, int]:
-    mesh = Mesh()
-    holes = build_holes(base_layer, config)
-    base_box = layer_bounds(base_layer, config, config.base_z0_mm, config.base_z1_mm)
-    mesh.extend(plate_with_holes_tris(base_box, holes, config.grid_mm))
-    trace_mesh, box_count, letter_count = build_layer_mesh(trace_layer, config, holes)
+    mesh, hole_count = build_base_mesh(base_layer, config)
+    trace_mesh, tile_count, letter_count = build_ligature_layer_mesh(trace_layer, config)
     mesh.extend(trace_mesh.triangles)
-    return mesh, len(holes), box_count, letter_count
+    return mesh, hole_count, tile_count, letter_count
 
 
 def default_output_path(input_path: Path, layer_name: str) -> Path:
@@ -730,6 +1240,8 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--device-hole-diameter-mm", type=float, default=DEFAULT_DEVICE_HOLE_DIAMETER_MM)
     parser.add_argument("--adjacent-isolation-gap-mm", type=float, default=DEFAULT_ADJACENT_ISOLATION_GAP_MM)
     parser.add_argument("--overlap-mm", type=float, default=DEFAULT_OVERLAP_MM)
+    parser.add_argument("--cond-lig-mm", type=float, default=DEFAULT_COND_LIG_MM)
+    parser.add_argument("--isol-lig-mm", type=float, default=DEFAULT_ISOL_LIG_MM)
     parser.add_argument("--trace-hole-clearance-mm", type=float, default=DEFAULT_TRACE_HOLE_CLEARANCE_MM)
     parser.add_argument("--label-recess-mm", type=float, default=DEFAULT_LABEL_RECESS_MM)
     parser.add_argument("--label-height-mm", type=float, default=DEFAULT_LABEL_HEIGHT_MM)
@@ -762,6 +1274,8 @@ def run_from_args(args: argparse.Namespace) -> int:
         device_hole_diameter_mm=args.device_hole_diameter_mm,
         adjacent_isolation_gap_mm=args.adjacent_isolation_gap_mm,
         overlap_mm=args.overlap_mm,
+        cond_lig_mm=args.cond_lig_mm,
+        isol_lig_mm=args.isol_lig_mm,
         trace_hole_clearance_mm=args.trace_hole_clearance_mm,
         label_recess_mm=args.label_recess_mm,
         label_height_mm=args.label_height_mm,
