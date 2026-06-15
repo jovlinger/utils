@@ -100,12 +100,12 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
             or _check_vox.parse_net_alias_line(stripped) is not None
         ):
             continue
-        match = _check_vox.LAYER_HEADER_RE.match(line)
-        if match is not None:
+        header = _check_vox.parse_layer_header(line)
+        if header is not None:
             finish_layer()
-            current_name = match.group(1)
-            current_offset = int(match.group(2))
-            current_width = int(match.group(3))
+            current_name = header.name
+            current_offset = header.offset
+            current_width = header.width
             continue
         if line.startswith("layer "):
             finish_layer()

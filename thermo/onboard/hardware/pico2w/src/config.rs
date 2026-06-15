@@ -1,3 +1,8 @@
+pub const PICO2W_AHT20_SDA_GPIO: u8 = 28;
+pub const PICO2W_AHT20_SCL_GPIO: u8 = 27;
+pub const PICO2W_IR_TX_GPIO: u8 = 10;
+pub const PICO2W_IR_RX_GPIO: u8 = 13;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceConfig {
     pub zone_name: &'static str,
@@ -41,10 +46,10 @@ impl DeviceConfig {
             sensor_required_at_boot: false,
             ir_transport: "pico_gpio",
             ir_protocol: "daikin_arc452a9",
-            ir_tx_gpio: 14,
-            ir_rx_gpio: 15,
-            i2c_sda_gpio: 4,
-            i2c_scl_gpio: 5,
+            ir_tx_gpio: PICO2W_IR_TX_GPIO,
+            ir_rx_gpio: PICO2W_IR_RX_GPIO,
+            i2c_sda_gpio: PICO2W_AHT20_SDA_GPIO,
+            i2c_scl_gpio: PICO2W_AHT20_SCL_GPIO,
             aht20_addr: 0x38,
             status_led_driver: "cyw43_ledw",
         }
@@ -179,7 +184,10 @@ fn u64_from_env(raw: Option<&'static str>, default: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{bool_from_env, u16_from_env, u64_from_env, u8_from_env, DeviceConfig};
+    use super::{
+        bool_from_env, u16_from_env, u64_from_env, u8_from_env, DeviceConfig,
+        PICO2W_AHT20_SCL_GPIO, PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO, PICO2W_IR_TX_GPIO,
+    };
 
     #[test]
     fn default_config_matches_kitchen_pico2w_env() {
@@ -192,11 +200,11 @@ mod tests {
         assert_eq!(config.post_timeout_secs, 600);
         assert_eq!(config.sensor_driver, "aht20");
         assert!(!config.sensor_required_at_boot);
-        assert_eq!(config.ir_tx_gpio, 14);
-        assert_eq!(config.ir_rx_gpio, 15);
+        assert_eq!(config.ir_tx_gpio, PICO2W_IR_TX_GPIO);
+        assert_eq!(config.ir_rx_gpio, PICO2W_IR_RX_GPIO);
         assert_eq!(config.ir_protocol, "daikin_arc452a9");
-        assert_eq!(config.i2c_sda_gpio, 4);
-        assert_eq!(config.i2c_scl_gpio, 5);
+        assert_eq!(config.i2c_sda_gpio, PICO2W_AHT20_SDA_GPIO);
+        assert_eq!(config.i2c_scl_gpio, PICO2W_AHT20_SCL_GPIO);
         assert_eq!(config.status_led_driver, "cyw43_ledw");
     }
 

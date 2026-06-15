@@ -20,13 +20,14 @@ Initial hardware target:
   tying any 5 V-powered `DAT`/`OUT` line directly to a Pico input.
 - Temperature/humidity sensor: I2C AHT20/ATH20 module. Use Pico I2C `SDA`,
   `SCL`, `VCC`, and `GND`.
-- Initial pin assignment: AHT20 on I2C0 (`SDA` GP4, `SCL` GP5), IR TX module
-  signal on GP14, IR RX module signal on GP15. Power modules from `3V3_OUT`
-  unless the IR module is verified safe for 5 V with level shifting.
+- Reviewed 2026-06-15 from `hat/pico-side.vox`: AHT20 `SDA` routes to GP28
+  and AHT20 `SCL` routes to GP27, using firmware software I2C because that pair
+  is not a shared RP2350 hardware I2C controller pair. IR TX module `DAT`
+  routes to GP10, and IR RX module `OUT` routes to GP13. Power modules from
+  `3V3_OUT` unless the IR module is verified safe for 5 V with level shifting.
 - Verified 2026-05-31: MicroPython on the Pico2W scanned the AHT20 at `0x38`
-  on I2C0 (`SDA` GP4, `SCL` GP5). Breath test readings rose from about
-  23.7 C / 51% RH to about 24.5 C / 61% RH over 10 seconds, so this wiring is
-  the baseline Pico template unless a room needs specific tweaks.
+  on I2C0 (`SDA` GP4, `SCL` GP5). That breadboard wiring proved the sensor,
+  but the Pico-side HAT routing above is now the firmware default.
 - Status LED: onboard LED labeled `LEDW`, driven through the CYW43 WiFi chip
   rather than a normal RP2350 GPIO. LEDW is single-color, so the yellow, blue,
   green, and red status names are rendered as distinct blink patterns.
@@ -40,8 +41,8 @@ flowchart LR
 
   pico -- "3V3_OUT -> VCC" --> aht
   pico -- "GND -> GND" --> aht
-  pico -- "GP4 / I2C0 SDA -> SDA" --> aht
-  pico -- "GP5 / I2C0 SCL -> SCL" --> aht
+  pico -- "GP28 / software I2C SDA -> SDA" --> aht
+  pico -- "GP27 / software I2C SCL -> SCL" --> aht
 ```
 
 ---
@@ -53,7 +54,7 @@ flowchart LR
 
   pico -- "3V3_OUT -> VCC" --> irtx
   pico -- "GND -> GND" --> irtx
-  pico -- "GP14 -> DAT" --> irtx
+  pico -- "GP10 -> DAT" --> irtx
 ```
 
 ---
@@ -65,7 +66,7 @@ flowchart LR
 
   pico -- "3V3_OUT -> VCC" --> irrx
   pico -- "GND -> GND" --> irrx
-  pico -- "GP15 <- OUT" --> irrx
+  pico -- "GP13 <- OUT" --> irrx
 ```
 
 ---
@@ -152,7 +153,7 @@ uses fallback values for that poll:
 
 - `temp_centigrade`: 21.0 (fixed)
 - `humid_percent`: 50.0 (fixed)
-- IR transmit: drive the GP14 IR LED for accepted Midea commands and log
+- IR transmit: drive the GP10 IR LED for accepted Midea commands and log
   "IR sent command".
 
 Once the sensor and IR hardware are attached, set `SENSOR_BOOT_REQUIRED=1` to

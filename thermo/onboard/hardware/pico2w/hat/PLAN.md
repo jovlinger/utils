@@ -145,7 +145,7 @@ iterations:
 GPIO reassignment is cheap for non-power signals: pick the nearest convenient
 GPIO rather than forcing awkward routes. Current target nets:
 
-* AHT20: SDA to GP4, SCL to GP5, GND, 3V3
+* AHT20: SDA to GP28, SCL to GP27, GND, 3V3
 * IR TX: DAT to nearest clean GPIO, currently GP10, GND, 3V3
 * IR RX: OUT to nearest clean GPIO, currently GP13, GND, 3V3
 
@@ -156,7 +156,7 @@ The validator intentionally reports mismatches until the trace geometry is
 reworked:
 
 * Power rails: c5 = GND, c6 = 3V3.
-* AHT20: SDA `GP4.c1 -> GP4.c3`; SCL `GP5.c1 -> GP4.c4`.
+* AHT20: SDA `GP28 -> AHT20 SDA`; SCL `GP27 -> AHT20 SCL`.
 * IR RX: OUT `GP13.c1 -> GP13.c4`.
 * IR TX: DAT `GP10.c1 -> GP10.c4`.
 * `vox2stl/voxtool.py check up-side.vox` reports current target/route mismatches.

@@ -8,13 +8,13 @@
 # - 2.54 mm in-row pitch
 # - 25.40 mm header center spacing, 10 grid intervals
 # - 2 x 22 header pins
-# Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
+# Layer header: layer NAME (horizontal_offset=..., width_columns=..., height_rows=..., layer_thickness_mm=...)
 # Grid columns west to east: border, J1, 9 interior pitch cells, J3, border
 # Rows north to south.
 # Legend: X=solid substrate, *=ESP32-S3 header pad, .=empty/air, a-z=embossed labels.
 # This first file captures only host-board pads; no module pads or traces yet.
 
-layer base (7, 13, 24)
+layer base (horizontal_offset=7, width_columns=13, height_rows=24, layer_thickness_mm=2.5)
        XXXXXXXXXXXXX
 3V3    X*XXXXXXXXX*X GND
 3V3    X*XXXXXXXXX*X TX/ GPIO43
@@ -45,7 +45,7 @@ alias V -> | = 3V3
 alias G -> | = GND
 
 
-layer trace (7, 13, 24)
+layer trace (horizontal_offset=7, width_columns=13, height_rows=24, layer_thickness_mm=2.5)
        .............
 3V3    .....up.┌--*. GND
 3V3    .*-┐side|.... TX / GPIO43

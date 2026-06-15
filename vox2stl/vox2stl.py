@@ -10,7 +10,7 @@ import pickle
 import re
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -48,6 +48,7 @@ from constants import (
     DEFAULT_LABEL_RECESS_MM,
     DEFAULT_LABEL_STROKE_FRAC,
     DEFAULT_LABEL_TILE_MAX_TRIANGLES,
+    DEFAULT_LAYER_THICKNESS_MM,
     DEFAULT_LEG_OUTSIDE_FRAC,
     DEFAULT_MAX_VERTEX_VALENCE,
     DEFAULT_OVERLAP_MM,
@@ -62,7 +63,6 @@ from constants import (
     DEFAULT_TRACE_Z0_MM,
     DEFAULT_TRACE_Z1_MM,
     DEFAULT_UNIT_MM,
-    LAYER_HEADER_RE,
     LEG_PAD_CHAR,
     LETTER_TILES_DIR,
     OPPOSITE_DIRECTION,
@@ -71,6 +71,7 @@ from constants import (
     SHORTHAND_DIRECT_CHARS,
     TILE_CACHE_PATH,
     parse_alias_line,
+    parse_layer_header,
     UNIT_RE,
 )
 from letter_mesh import generate_letter_tile_triangles
@@ -89,6 +90,7 @@ class Layer:
     width: int
     height: int
     rows: Tuple[str, ...]
+    layer_thickness_mm: float = DEFAULT_LAYER_THICKNESS_MM
 
 
 @dataclass(frozen=True)
@@ -256,10 +258,11 @@ def read_layers(path: Path) -> Dict[str, Layer]:
     current_offset = 0
     current_width = 0
     current_height = 0
+    current_layer_thickness_mm = DEFAULT_LAYER_THICKNESS_MM
     current_rows: List[str] = []
 
     def finish_layer() -> None:
-        nonlocal current_name, current_offset, current_width, current_height, current_rows
+        nonlocal current_name, current_offset, current_width, current_height, current_layer_thickness_mm, current_rows
         if current_name is None:
             return
         if len(current_rows) != current_height:
@@ -273,6 +276,7 @@ def read_layers(path: Path) -> Dict[str, Layer]:
             width=current_width,
             height=current_height,
             rows=tuple(current_rows),
+            layer_thickness_mm=current_layer_thickness_mm,
         )
         current_name = None
         current_rows = []
@@ -286,15 +290,16 @@ def read_layers(path: Path) -> Dict[str, Layer]:
         if alias is not None:
             aliases[alias.source] = alias.target
             continue
-        match = LAYER_HEADER_RE.match(line)
-        if match:
+        header = parse_layer_header(line)
+        if header is not None:
             finish_layer()
-            current_name = match.group(1)
+            current_name = header.name
             if current_name in layers:
                 raise ValueError(f"{path}:{line_no}: duplicate layer {current_name!r}")
-            current_offset = int(match.group(2))
-            current_width = int(match.group(3))
-            current_height = int(match.group(4))
+            current_offset = header.offset
+            current_width = header.width
+            current_height = header.height
+            current_layer_thickness_mm = header.layer_thickness_mm
             current_rows = []
             continue
         if line.startswith("layer "):
@@ -488,6 +493,7 @@ def letter_tris(cx: float, cy: float, char: str, config: RenderConfig) -> List[T
 
 _PERSISTENT_TILE_CACHE: Optional[TileCache] = None
 _RUNTIME_TILE_CACHES: Dict[Tuple[float, ...], TileCache] = {}
+TILE_CACHE_SIGNATURE_KEY = "__tile_cache_signature__"
 
 
 def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
@@ -548,6 +554,10 @@ def report_tile_cache_miss(key: TileCacheKey) -> None:
 def tile_cache_for_config(config: RenderConfig) -> Tuple[TileCache, bool]:
     if persistent_tile_cache_enabled(config):
         cache = load_persistent_tile_cache()
+        signature = tile_cache_signature(config)
+        if cache.get(TILE_CACHE_SIGNATURE_KEY) != signature:
+            cache.clear()
+            cache[TILE_CACHE_SIGNATURE_KEY] = signature
         seed_pre_rendered_letters(cache, config)
         return cache, True
     signature = tile_cache_signature(config)
@@ -1207,13 +1217,28 @@ def add_box_with_holes(mesh: Mesh, box: BoxSolid, holes: Sequence[Hole], grid_mm
         mesh.extend(box_tris(box))
 
 
+def config_with_base_z(config: RenderConfig, z0_mm: float, z1_mm: float) -> RenderConfig:
+    return replace(config, base_z0_mm=z0_mm, base_z1_mm=z1_mm)
+
+
+def config_with_trace_z(config: RenderConfig, z0_mm: float, z1_mm: float) -> RenderConfig:
+    return replace(config, trace_z0_mm=z0_mm, trace_z1_mm=z1_mm)
+
+
 def full_mesh_from_layers(
     base_layer: Layer,
     trace_layer: Layer,
     config: RenderConfig,
 ) -> Tuple[Mesh, int, int, int]:
-    mesh, hole_count = build_base_mesh(base_layer, config)
-    trace_mesh, tile_count, letter_count = build_ligature_layer_mesh(trace_layer, config)
+    base_z0_mm = config.base_z0_mm
+    base_z1_mm = base_z0_mm + base_layer.layer_thickness_mm
+    trace_z0_mm = base_z1_mm
+    trace_z1_mm = trace_z0_mm + trace_layer.layer_thickness_mm
+    base_config = config_with_base_z(config, base_z0_mm, base_z1_mm)
+    trace_config = config_with_trace_z(config, trace_z0_mm, trace_z1_mm)
+
+    mesh, hole_count = build_base_mesh(base_layer, base_config)
+    trace_mesh, tile_count, letter_count = build_ligature_layer_mesh(trace_layer, trace_config)
     mesh.extend(trace_mesh.triangles)
     return mesh, hole_count, tile_count, letter_count
 

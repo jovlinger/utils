@@ -38,36 +38,32 @@ pub fn decode_measurement(data: [u8; 6]) -> Result<(f32, f32), Aht20Error> {
 mod driver {
     use super::{decode_measurement, Aht20Error, STATUS_BUSY};
     use crate::{AccurateSensor, SensorReading, SensorSource};
+    use embassy_rp::gpio::OutputOpenDrain;
     use embassy_rp::i2c::{Error as I2cError, I2c, Instance, Mode};
     use embassy_time::{block_for, Duration};
 
     const CMD_INIT: [u8; 3] = [0xBE, 0x08, 0x00];
     const CMD_TRIGGER: [u8; 3] = [0xAC, 0x33, 0x00];
     const STATUS_CALIBRATED: u8 = 0x08;
+    const SOFT_I2C_DELAY_US: u64 = 5;
 
-    pub struct Aht20<'d, T: Instance, M: Mode> {
-        i2c: I2c<'d, T, M>,
+    pub trait Aht20Bus {
+        fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Aht20Error>;
+        fn read(&mut self, addr: u8, bytes: &mut [u8]) -> Result<(), Aht20Error>;
+    }
+
+    pub struct Aht20<B> {
+        bus: B,
         addr: u8,
         initialized: bool,
     }
 
-    impl<'d, T: Instance, M: Mode> Aht20<'d, T, M> {
-        pub fn new(i2c: I2c<'d, T, M>, addr: u8) -> Self {
+    impl<B: Aht20Bus> Aht20<B> {
+        pub fn new(bus: B, addr: u8) -> Self {
             Self {
-                i2c,
+                bus,
                 addr,
                 initialized: false,
-            }
-        }
-
-        fn map_i2c_error(error: I2cError) -> Aht20Error {
-            match error {
-                I2cError::InvalidReadBufferLength | I2cError::InvalidWriteBufferLength => {
-                    Aht20Error::I2cRead
-                }
-                I2cError::AddressOutOfRange(_) => Aht20Error::I2cWrite,
-                I2cError::Abort(_) => Aht20Error::I2cWrite,
-                _ => Aht20Error::I2cWrite,
             }
         }
 
@@ -77,17 +73,11 @@ mod driver {
             }
             block_for(Duration::from_millis(40));
             let mut status = [0u8; 1];
-            self.i2c
-                .blocking_read(self.addr, &mut status)
-                .map_err(Self::map_i2c_error)?;
+            self.bus.read(self.addr, &mut status)?;
             if status[0] & STATUS_CALIBRATED == 0 {
-                self.i2c
-                    .blocking_write(self.addr, &CMD_INIT)
-                    .map_err(Self::map_i2c_error)?;
+                self.bus.write(self.addr, &CMD_INIT)?;
                 block_for(Duration::from_millis(10));
-                self.i2c
-                    .blocking_read(self.addr, &mut status)
-                    .map_err(Self::map_i2c_error)?;
+                self.bus.read(self.addr, &mut status)?;
                 if status[0] & STATUS_CALIBRATED == 0 {
                     return Err(Aht20Error::NotCalibrated);
                 }
@@ -100,9 +90,7 @@ mod driver {
             for _ in 0..20 {
                 block_for(Duration::from_millis(5));
                 let mut status = [0u8; 1];
-                self.i2c
-                    .blocking_read(self.addr, &mut status)
-                    .map_err(Self::map_i2c_error)?;
+                self.bus.read(self.addr, &mut status)?;
                 if status[0] & STATUS_BUSY == 0 {
                     return Ok(());
                 }
@@ -112,14 +100,10 @@ mod driver {
 
         pub fn read_raw(&mut self) -> Result<SensorReading, Aht20Error> {
             self.ensure_initialized()?;
-            self.i2c
-                .blocking_write(self.addr, &CMD_TRIGGER)
-                .map_err(Self::map_i2c_error)?;
+            self.bus.write(self.addr, &CMD_TRIGGER)?;
             self.wait_not_busy()?;
             let mut data = [0u8; 6];
-            self.i2c
-                .blocking_read(self.addr, &mut data)
-                .map_err(Self::map_i2c_error)?;
+            self.bus.read(self.addr, &mut data)?;
             let (humid_percent, temp_centigrade) = decode_measurement(data)?;
             Ok(SensorReading {
                 temp_centigrade,
@@ -129,17 +113,167 @@ mod driver {
         }
     }
 
-    impl<'d, T: Instance> AccurateSensor for Aht20<'d, T, embassy_rp::i2c::Blocking> {
+    impl<B: Aht20Bus> AccurateSensor for Aht20<B> {
         type Error = Aht20Error;
 
         fn read(&mut self) -> Result<SensorReading, Self::Error> {
             self.read_raw()
         }
     }
+
+    impl<'d, T: Instance, M: Mode> Aht20Bus for I2c<'d, T, M> {
+        fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Aht20Error> {
+            self.blocking_write(addr, bytes)
+                .map_err(map_i2c_write_error)
+        }
+
+        fn read(&mut self, addr: u8, bytes: &mut [u8]) -> Result<(), Aht20Error> {
+            self.blocking_read(addr, bytes).map_err(map_i2c_read_error)
+        }
+    }
+
+    fn map_i2c_write_error(error: I2cError) -> Aht20Error {
+        match error {
+            I2cError::InvalidReadBufferLength => Aht20Error::I2cRead,
+            I2cError::InvalidWriteBufferLength => Aht20Error::I2cWrite,
+            I2cError::AddressOutOfRange(_) | I2cError::Abort(_) => Aht20Error::I2cWrite,
+            _ => Aht20Error::I2cWrite,
+        }
+    }
+
+    fn map_i2c_read_error(error: I2cError) -> Aht20Error {
+        match error {
+            I2cError::InvalidReadBufferLength => Aht20Error::I2cRead,
+            I2cError::InvalidWriteBufferLength => Aht20Error::I2cWrite,
+            I2cError::AddressOutOfRange(_) | I2cError::Abort(_) => Aht20Error::I2cRead,
+            _ => Aht20Error::I2cRead,
+        }
+    }
+
+    pub struct SoftI2c<'d> {
+        sda: OutputOpenDrain<'d>,
+        scl: OutputOpenDrain<'d>,
+    }
+
+    impl<'d> SoftI2c<'d> {
+        pub fn new(mut sda: OutputOpenDrain<'d>, mut scl: OutputOpenDrain<'d>) -> Self {
+            sda.set_pullup(true);
+            scl.set_pullup(true);
+            sda.set_high();
+            scl.set_high();
+            Self { sda, scl }
+        }
+
+        fn delay(&self) {
+            block_for(Duration::from_micros(SOFT_I2C_DELAY_US));
+        }
+
+        fn start(&mut self) {
+            self.sda.set_high();
+            self.scl.set_high();
+            self.delay();
+            self.sda.set_low();
+            self.delay();
+            self.scl.set_low();
+            self.delay();
+        }
+
+        fn stop(&mut self) {
+            self.sda.set_low();
+            self.delay();
+            self.scl.set_high();
+            self.delay();
+            self.sda.set_high();
+            self.delay();
+        }
+
+        fn write_byte(&mut self, byte: u8) -> bool {
+            for bit in (0..8).rev() {
+                if byte & (1 << bit) == 0 {
+                    self.sda.set_low();
+                } else {
+                    self.sda.set_high();
+                }
+                self.delay();
+                self.scl.set_high();
+                self.delay();
+                self.scl.set_low();
+                self.delay();
+            }
+            self.sda.set_high();
+            self.delay();
+            self.scl.set_high();
+            self.delay();
+            let ack = self.sda.is_low();
+            self.scl.set_low();
+            self.delay();
+            ack
+        }
+
+        fn read_byte(&mut self, ack: bool) -> u8 {
+            let mut byte: u8 = 0;
+            self.sda.set_high();
+            for _ in 0..8 {
+                byte <<= 1;
+                self.delay();
+                self.scl.set_high();
+                self.delay();
+                if self.sda.is_high() {
+                    byte |= 1;
+                }
+                self.scl.set_low();
+                self.delay();
+            }
+            if ack {
+                self.sda.set_low();
+            } else {
+                self.sda.set_high();
+            }
+            self.delay();
+            self.scl.set_high();
+            self.delay();
+            self.scl.set_low();
+            self.sda.set_high();
+            self.delay();
+            byte
+        }
+    }
+
+    impl Aht20Bus for SoftI2c<'_> {
+        fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Aht20Error> {
+            self.start();
+            if !self.write_byte(addr << 1) {
+                self.stop();
+                return Err(Aht20Error::I2cWrite);
+            }
+            for byte in bytes {
+                if !self.write_byte(*byte) {
+                    self.stop();
+                    return Err(Aht20Error::I2cWrite);
+                }
+            }
+            self.stop();
+            Ok(())
+        }
+
+        fn read(&mut self, addr: u8, bytes: &mut [u8]) -> Result<(), Aht20Error> {
+            self.start();
+            if !self.write_byte((addr << 1) | 1) {
+                self.stop();
+                return Err(Aht20Error::I2cRead);
+            }
+            let last = bytes.len().saturating_sub(1);
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                *byte = self.read_byte(index != last);
+            }
+            self.stop();
+            Ok(())
+        }
+    }
 }
 
 #[cfg(feature = "firmware")]
-pub use driver::Aht20;
+pub use driver::{Aht20, SoftI2c};
 
 #[cfg(test)]
 mod tests {

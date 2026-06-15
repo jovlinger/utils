@@ -20,7 +20,7 @@ GND   X*XXXXXX*X GND
 GP18  X*XXOOOX*X GP13   IR RX target .c6= GP13,.c5 = VCC, .c4 = GND
 GP19  X*XXXXXX*X GP12
 GP20  X*XXXXXX*X GP11
-GP21  X*XXOOOX*X GP10   IR RX target .c6= GP10,.c5 = VCC, .c4 = GND
+GP21  X*XXOOOX*X GP10   IR TX target .c6= GP10,.c5 = VCC, .c4 = GND
 GND   X*XXXXXX*X GND
 GP22  X*XXXXXX*X GP9
 RUN   X*XXXXXX*X GP8
@@ -28,7 +28,7 @@ GP26  X*XXXXXX*X GP7
 GP27  X*XXXXXX*X GP6
 GND   X*XXXXXX*X GND
 GP28  X*XXXXXX*X GP5
-ADCV  X*XOOOOX*X GP4  AHT20 target: .c6 = VCC, .c5 = GND, .c4 = GP5/SCL, .c3 = GP4/SDA; big 7-pin keepout
+ADCV  X*XOOOOX*X GP4  AHT20 target: .c6 = VCC, .c5 = GND, .c4 = GP27/SCL, .c3 = GP28/SDA; big 7-pin keepout
 3V3   X*XXXXXX*X GP3
 3EN   X*XXXXXX*X GP2
 GND   X*XXXXXX*X GND
@@ -64,4 +64,3 @@ GND   .......... GND
 VSYS  .......... GP1
 VBUS  .*.usb..*. GP0
       ..........
-	  

@@ -11,9 +11,8 @@ use embassy_executor::Spawner;
 use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, DhcpConfig, Stack, StackResources};
-use embassy_rp::gpio::{Level, Output};
-use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, USB};
+use embassy_rp::gpio::{Level, Output, OutputOpenDrain};
+use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbInterruptHandler};
 use embassy_rp::{bind_interrupts, dma};
@@ -30,14 +29,22 @@ use thermo_pico2w::{
     build_sensor_post_body, command_is_new, extract_command_created_dt, extract_command_json,
     for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frames, parse_heatpump_command,
     parse_server_time_utc_epoch, pattern_for_event, read_sensors_or_fallback, wifi_password,
-    wifi_ssid, zone_private_key_b64, Aht20, DeviceConfig, MideaClassicFrames, RollingLog,
-    SensorSource, StatusEvent, ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US, MIDEA_SPACE_ONE_US,
-    MIDEA_SPACE_ZERO_US, MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
+    wifi_ssid, zone_private_key_b64, AccurateSensor, Aht20, DeviceConfig, MideaClassicFrames,
+    RollingLog, SensorSource, SoftI2c, StatusEvent, ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US,
+    MIDEA_SPACE_ONE_US, MIDEA_SPACE_ZERO_US, MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
+    PICO2W_AHT20_SCL_GPIO, PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO, PICO2W_IR_TX_GPIO,
 };
 
 type HealthMutex = Mutex<CriticalSectionRawMutex, RefCell<HealthState>>;
 const HEALTH_LOG_CAPACITY: usize = 64;
 const HEALTH_LOG_RETURNED: usize = 32;
+
+const _: () = {
+    assert!(PICO2W_AHT20_SCL_GPIO == 27);
+    assert!(PICO2W_AHT20_SDA_GPIO == 28);
+    assert!(PICO2W_IR_TX_GPIO == 10);
+    assert!(PICO2W_IR_RX_GPIO == 13);
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HealthState {
@@ -289,11 +296,10 @@ async fn main(spawner: Spawner) {
 
     status(&mut control, StatusEvent::ReadingEnv).await;
     let config = DeviceConfig::from_compile_env();
-    let mut i2c_config = i2c::Config::default();
-    i2c_config.frequency = 100_000;
-    i2c_config.sda_pullup = true;
-    i2c_config.scl_pullup = true;
-    let i2c = I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, i2c_config);
+    let i2c = SoftI2c::new(
+        OutputOpenDrain::new(p.PIN_28, Level::High),
+        OutputOpenDrain::new(p.PIN_27, Level::High),
+    );
     let mut aht20 = Aht20::new(i2c, config.aht20_addr);
     if config.sensor_required_at_boot {
         match read_sensors_or_fallback(&mut aht20, true) {
@@ -301,7 +307,7 @@ async fn main(spawner: Spawner) {
             Err(_) => error_forever(&mut control, health, "required sensor did not respond").await,
         }
     }
-    let mut ir_tx = Output::new(p.PIN_14, Level::Low);
+    let mut ir_tx = Output::new(p.PIN_10, Level::Low);
     health_log(health, "cyw43 init complete");
     health_log(health, "config loaded");
 
@@ -474,18 +480,21 @@ async fn fetch_dmz_clock(
     })
 }
 
-async fn poll_once(
+async fn poll_once<S>(
     control: &mut cyw43::Control<'_>,
     health: &'static HealthMutex,
     config: &DeviceConfig,
     auth: &ZoneAuth,
     stack: Stack<'static>,
     clock: &DmzClock,
-    aht20: &mut Aht20<'_, I2C0, i2c::Blocking>,
+    aht20: &mut S,
     ir_tx: &mut Output<'static>,
     last_command_json: &mut String<1024>,
     last_applied_created_dt: &mut String<64>,
-) -> Result<(), PollError> {
+) -> Result<(), PollError>
+where
+    S: AccurateSensor,
+{
     status(control, StatusEvent::PollStarted).await;
     health_log(health, "poll start");
     let reading = match read_sensors_or_fallback(aht20, config.sensor_required_at_boot) {

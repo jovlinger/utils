@@ -5,11 +5,11 @@ Rust target for the Pico2W thermostat controller.
 The firmware binary `ledw_status` runs the fused onboard controller loop:
 
 - `pico2w_aht20_ir` hardware profile.
-- AHT20 on I2C0 (GP4/GP5) with fallback to 21.0 C / 50.0 % when the sensor is
-  missing and `SENSOR_BOOT_REQUIRED=0`.
+- AHT20 on software I2C (SDA GP28, SCL GP27) with fallback to 21.0 C / 50.0 %
+  when the sensor is missing and `SENSOR_BOOT_REQUIRED=0`.
 - Signed HTTP `POST /zone/<zone>/sensors` to the DMZ long-poll endpoint.
 - Command freshness comparison matching the existing DMZ protocol.
-- Midea IR transmit on GP14 for strictly newer returned commands.
+- Midea IR transmit on GP10 for strictly newer returned commands.
 - Status LED events: one pulse when a DMZ poll starts, two pulses before
   IR send, three pulses during startup/config, and four pulses for error paths.
 

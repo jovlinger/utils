@@ -10,10 +10,13 @@ pub mod protocol;
 pub mod sensors;
 
 #[cfg(feature = "firmware")]
-pub use aht20::Aht20;
+pub use aht20::{Aht20, SoftI2c};
 
 pub use auth::{SignedHeaders, ZoneAuth, ZoneAuthError};
-pub use config::{wifi_password, wifi_ssid, zone_private_key_b64, DeviceConfig};
+pub use config::{
+    wifi_password, wifi_ssid, zone_private_key_b64, DeviceConfig, PICO2W_AHT20_SCL_GPIO,
+    PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO, PICO2W_IR_TX_GPIO,
+};
 pub use health::{PicoHealth, RollingLog};
 pub use ir::{
     for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frame, midea_classic_frames,

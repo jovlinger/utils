@@ -105,6 +105,18 @@ def test_voxtool_stl_base_trace_fixture_outputs_two_layer_mesh_by_default() -> N
 
 def test_pad_and_hole_defaults() -> None:
     require(
+        abs(vox2stl.DEFAULT_LAYER_THICKNESS_MM - 2.5) < 1e-9,
+        "default layer thickness should be 2.5 mm",
+    )
+    require(
+        abs(vox2stl.DEFAULT_BASE_Z1_MM - vox2stl.DEFAULT_LAYER_THICKNESS_MM) < 1e-9,
+        "base top should derive from default layer thickness",
+    )
+    require(
+        abs(vox2stl.DEFAULT_TRACE_Z1_MM - 2.0 * vox2stl.DEFAULT_LAYER_THICKNESS_MM) < 1e-9,
+        "trace top should derive from two default layers",
+    )
+    require(
         abs(vox2stl.DEFAULT_TRACE_WIDTH_FRAC - 0.72 * (0.72 / 0.88)) < 1e-9,
         "trace width default should shrink by the pad exterior ratio",
     )
@@ -229,6 +241,62 @@ def test_full_mesh_subtracts_pad_hole_after_connected_trace_addition() -> None:
     require(hole_count == 1, f"pad hole count: got {hole_count}")
     require(box_count > 0, "trace layout should add copper before subtracting the hole")
     require(not filled_top, "final trace top should keep the connected pad hole open")
+
+
+def test_keyword_layer_header_and_thickness_override() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "thickness.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (horizontal_offset=0, width_columns=1, height_rows=1, layer_thickness_mm=1.25)",
+                    "X",
+                    "",
+                    "layer trace (horizontal_offset=0, width_columns=1, height_rows=1, layer_thickness_mm=0.75)",
+                    "*",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        layers = vox2stl.read_layers(path)
+
+    require(layers["base"].offset == 0, "keyword layer header should parse offset")
+    require(layers["base"].width == 1, "keyword layer header should parse width")
+    require(layers["base"].height == 1, "keyword layer header should parse height")
+    require(
+        abs(layers["base"].layer_thickness_mm - 1.25) < 1e-9,
+        "base layer should carry header thickness",
+    )
+    require(
+        abs(layers["trace"].layer_thickness_mm - 0.75) < 1e-9,
+        "trace layer should carry header thickness",
+    )
+
+
+def test_full_mesh_uses_layer_thickness_overrides() -> None:
+    base_layer = vox2stl.Layer(
+        "base",
+        0,
+        1,
+        1,
+        ("X",),
+        layer_thickness_mm=1.25,
+    )
+    trace_layer = vox2stl.Layer(
+        "trace",
+        0,
+        1,
+        1,
+        ("*",),
+        layer_thickness_mm=0.75,
+    )
+    mesh, _, _, _ = vox2stl.full_mesh_from_layers(base_layer, trace_layer, vox2stl.RenderConfig())
+    levels = z_values(mesh.triangles)
+
+    require(0.0 in levels, "mesh should include base bottom")
+    require(1.25 in levels, "mesh should include base top from layer thickness")
+    require(2.0 in levels, "mesh should include trace top from layer thickness")
 
 
 def test_trace_air_gap_voids_mark_disconnected_neighboring_copper() -> None:
@@ -627,6 +695,34 @@ def test_check_vox_accepts_self_consistent_pad_layout_by_file_contents() -> None
         with contextlib.redirect_stderr(stderr):
             exit_code = voxtool.main(["voxtool.py", "check", str(path)])
     require(exit_code == 0, f"self-consistent pad layout exit: got {exit_code}; {stderr.getvalue()}")
+
+
+def test_check_vox_rejects_stale_pico2w_hat_pin_notes() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "hardware" / "pico2w" / "hat" / "pico-side.vox"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "layer trace (6, 10, 5)",
+                    "      ..........",
+                    "GP18  ....OOO-*. GP13  IR RX target .c6= GP13,.c5 = VCC, .c4 = GND",
+                    "GP21  ....OOO-*. GP10  IR TX target .c6= GP10,.c5 = VCC, .c4 = GND",
+                    "ADCV  ...OOOO... GP4  AHT20 target .c6 = VCC, .c5 = GND, .c4 = GP5/SCL .c3 = GP4/SDA",
+                    "      ..........",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = voxtool.main(["voxtool.py", "check", str(path)])
+        error = stderr.getvalue()
+    require(exit_code == 1, f"expected stale pin note error, got {exit_code}")
+    require("AHT20 target pin note must match pico2w" in error, "missing stale AHT20 pin error")
+    require("missing GP28, GP27" in error, "missing expected GP28/GP27 detail")
+    require("stale GP4/SDA, GP5/SCL" in error, "missing stale GP4/GP5 detail")
 
 
 def test_check_vox_accepts_optional_trace_right_pad_with_matching_right_label() -> None:

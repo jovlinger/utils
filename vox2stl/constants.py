@@ -68,6 +68,27 @@ LETTER_TILES_DIR = Path(__file__).resolve().parent / "tiles" / "letters"
 # Pickled dictionary of lazily rendered naive and ligature tile meshes.
 TILE_CACHE_PATH = Path(__file__).resolve().parent / "tiles" / "tile_cache.pickle"
 
+
+@dataclass(frozen=True)
+class LayerHeader:
+    name: str
+    offset: int
+    width: int
+    height: int
+    layer_thickness_mm: float
+
+
+LAYER_POSITIONAL_KEYS: Tuple[str, str, str] = (
+    "horizontal_offset",
+    "width_columns",
+    "height_rows",
+)
+LAYER_KEY_ALIASES: Mapping[str, str] = {
+    "offset": "horizontal_offset",
+    "width": "width_columns",
+    "height": "height_rows",
+}
+
 # Trace width in millimeters.
 DEFAULT_TRACE_WIDTH_MM = DEFAULT_TRACE_WIDTH_FRAC * DEFAULT_UNIT_MM
 
@@ -104,29 +125,100 @@ DEFAULT_LABEL_RECESS_MM = DEFAULT_LABEL_RECESS_FRAC * DEFAULT_UNIT_MM
 # Label height above the trace-layer base in millimeters.
 DEFAULT_LABEL_HEIGHT_MM = DEFAULT_LABEL_HEIGHT_FRAC * DEFAULT_UNIT_MM
 
+# Default vertical thickness for one rendered .vox layer.
+DEFAULT_LAYER_THICKNESS_MM = 2.5
+
 # Bottom Z coordinate of the substrate.
 DEFAULT_BASE_Z0_MM = 0.0
 
 # Top Z coordinate of the substrate.
-DEFAULT_BASE_Z1_MM = 3.175
+DEFAULT_BASE_Z1_MM = DEFAULT_BASE_Z0_MM + DEFAULT_LAYER_THICKNESS_MM
 
 # Bottom Z coordinate for raised traces, pads, and labels.
 DEFAULT_TRACE_Z0_MM = DEFAULT_BASE_Z1_MM
 
 # Top Z coordinate for raised traces and pads.
-DEFAULT_TRACE_Z1_MM = 6.350
+DEFAULT_TRACE_Z1_MM = DEFAULT_TRACE_Z0_MM + DEFAULT_LAYER_THICKNESS_MM
 
 # Subtractive mesh sampling pitch in millimeters.
 DEFAULT_GRID_MM = DEFAULT_GRID_FRAC * DEFAULT_UNIT_MM
 
 # Layer header parser for .vox files.
-LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(\d+)\)$")
+LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s*\((.*)\)$")
 
 # UNIT_MM metadata parser for .vox files.
 UNIT_RE = re.compile(r"UNIT_MM\s*=\s*([0-9]+(?:\.[0-9]+)?)")
 
 # Trace glyph alias parser for .vox files.
 ALIAS_RE = re.compile(r"^alias\s+(\S)\s*->\s*(\S)\s*=\s*([A-Za-z0-9_:-]+)\s*$")
+
+
+def _parse_positive_int(raw_value: str, key: str) -> int:
+    if not raw_value.isdigit():
+        raise ValueError(f"{key} must be a non-negative integer, got {raw_value!r}")
+    return int(raw_value)
+
+
+def _parse_positive_float(raw_value: str, key: str) -> float:
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{key} must be a number, got {raw_value!r}") from exc
+    if value <= 0.0:
+        raise ValueError(f"{key} must be positive, got {raw_value!r}")
+    return value
+
+
+def parse_layer_header(line: str) -> Optional[LayerHeader]:
+    match = LAYER_HEADER_RE.match(line)
+    if match is None:
+        return None
+
+    name = match.group(1)
+    body = match.group(2).strip()
+    if not body:
+        raise ValueError("layer header has no arguments")
+
+    values: Dict[str, str] = {}
+    positional_index = 0
+    saw_keyword = False
+    for raw_part in body.split(","):
+        part = raw_part.strip()
+        if not part:
+            raise ValueError("layer header contains an empty argument")
+        if "=" in part:
+            saw_keyword = True
+            raw_key, raw_value = part.split("=", 1)
+            key = LAYER_KEY_ALIASES.get(raw_key.strip(), raw_key.strip())
+            value = raw_value.strip()
+        else:
+            if saw_keyword:
+                raise ValueError("positional layer arguments must come before keyword arguments")
+            if positional_index >= len(LAYER_POSITIONAL_KEYS):
+                raise ValueError(f"unexpected positional layer argument {part!r}")
+            key = LAYER_POSITIONAL_KEYS[positional_index]
+            value = part
+            positional_index += 1
+        if key in values:
+            raise ValueError(f"duplicate layer argument {key!r}")
+        if key not in set(LAYER_POSITIONAL_KEYS) | {"layer_thickness_mm"}:
+            raise ValueError(f"unknown layer argument {key!r}")
+        values[key] = value
+
+    missing = [key for key in LAYER_POSITIONAL_KEYS if key not in values]
+    if missing:
+        raise ValueError(f"missing layer argument(s): {', '.join(missing)}")
+
+    return LayerHeader(
+        name=name,
+        offset=_parse_positive_int(values["horizontal_offset"], "horizontal_offset"),
+        width=_parse_positive_int(values["width_columns"], "width_columns"),
+        height=_parse_positive_int(values["height_rows"], "height_rows"),
+        layer_thickness_mm=_parse_positive_float(
+            values.get("layer_thickness_mm", str(DEFAULT_LAYER_THICKNESS_MM)),
+            "layer_thickness_mm",
+        ),
+    )
 
 # Upper-left box drawing corner glyph.
 BOX_UL = "\u250c"
@@ -380,11 +472,11 @@ def correct_vox_shorthand_text(text: str) -> str:
             continue
         if parse_alias_line(line.strip()) is not None:
             continue
-        match = LAYER_HEADER_RE.match(line)
-        if match:
+        header = parse_layer_header(line)
+        if header is not None:
             finish_layer()
-            current_offset = int(match.group(2))
-            current_width = int(match.group(3))
+            current_offset = header.offset
+            current_width = header.width
             continue
         if line.startswith("layer "):
             finish_layer()

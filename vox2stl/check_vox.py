@@ -20,6 +20,7 @@ from constants import (
     correct_vox_shorthand_text,
     effective_trace_char,
     parse_alias_line,
+    parse_layer_header,
     parse_vox_aliases_text,
     trace_arms,
 )
@@ -78,7 +79,6 @@ ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
 ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyzX*O.-|+/\\?T^v<> +-")
 ALLOWED_CHARS.update(BOX_CHARS)
 TRACE_LAYER_NAME = "trace"
-LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s+\((\d+),\s*(\d+),\s*(\d+)\)$")
 ROW_LABEL_RE = re.compile(r"^\s*(\S+)")
 BOX_ASSERT_CHARS = "".join(re.escape(char) for char in sorted(BOX_CHARS))
 TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-\*|\*-|\||\+|-|[" + BOX_ASSERT_CHARS + r"])")
@@ -133,6 +133,7 @@ class Layer:
     offset: int
     width: int
     height: int
+    layer_thickness_mm: float
     rows: List[str]
 
 
@@ -228,16 +229,17 @@ def read_layers(path: Path) -> Dict[str, Layer]:
         stripped = line.strip()
         if parse_alias_line(stripped) is not None or parse_net_alias_line(stripped) is not None:
             continue
-        match = LAYER_HEADER_RE.match(line)
-        if match:
-            name = match.group(1)
+        header = parse_layer_header(line)
+        if header is not None:
+            name = header.name
             if name in layers:
                 raise ValueError(f"{path}:{line_no}: duplicate layer {name!r}")
             current = Layer(
                 name=name,
-                offset=int(match.group(2)),
-                width=int(match.group(3)),
-                height=int(match.group(4)),
+                offset=header.offset,
+                width=header.width,
+                height=header.height,
+                layer_thickness_mm=header.layer_thickness_mm,
                 rows=[],
             )
             layers[name] = current
@@ -953,6 +955,55 @@ def validate_layer_geometry(path: Path, layers: Mapping[str, Layer]) -> Tuple[Op
     return base, trace
 
 
+def should_validate_pico2w_hat_pin_notes(path: Path) -> bool:
+    parts = path.parts
+    return (
+        path.name == "pico-side.vox"
+        and len(parts) >= 4
+        and parts[-4:] == ("hardware", "pico2w", "hat", path.name)
+    )
+
+
+def validate_pico2w_hat_pin_notes(path: Path, text: str) -> List[str]:
+    if not should_validate_pico2w_hat_pin_notes(path):
+        return []
+
+    expected_notes: Mapping[str, Tuple[str, ...]] = {
+        "AHT20 target": ("GP28", "SDA", "GP27", "SCL"),
+        "IR TX target": ("GP10",),
+        "IR RX target": ("GP13",),
+    }
+    stale_pairs: Mapping[str, Tuple[str, ...]] = {
+        "AHT20 target": ("GP4/SDA", "GP5/SCL", "GP4 (SDA)", "GP5 (SCL)"),
+        "IR TX target": ("GP14",),
+        "IR RX target": ("GP15",),
+    }
+    errors: List[str] = []
+    seen: Dict[str, int] = {note: 0 for note in expected_notes}
+    for line_index, line in enumerate(text.splitlines(), 1):
+        for note, tokens in expected_notes.items():
+            if note not in line:
+                continue
+            seen[note] += 1
+            missing = [token for token in tokens if token not in line]
+            stale = [token for token in stale_pairs[note] if token in line]
+            if missing or stale:
+                detail_parts: List[str] = []
+                if missing:
+                    detail_parts.append(f"missing {', '.join(missing)}")
+                if stale:
+                    detail_parts.append(f"stale {', '.join(stale)}")
+                errors.append(
+                    f"{path}: line {line_index}: {note} pin note must match "
+                    f"pico2w GP28 SDA, GP27 SCL, GP10 IR TX, GP13 IR RX "
+                    f"({'; '.join(detail_parts)})"
+                )
+    for note, count in seen.items():
+        if count == 0:
+            errors.append(f"{path}: missing required pico2w hat pin note {note!r}")
+    return errors
+
+
 def validate(path: Path) -> List[str]:
     errors: List[str] = []
     warnings: List[str] = []
@@ -978,6 +1029,7 @@ def validate(path: Path) -> List[str]:
             net_aliases,
         )
     )
+    errors.extend(validate_pico2w_hat_pin_notes(path, text))
     warning_layer = base if base is not None else trace
     warning_layer_name = "base" if base is not None else TRACE_LAYER_NAME
     warnings.extend(collect_pad_crowding_warnings(path, warning_layer_name, warning_layer))
