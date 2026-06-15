@@ -4,7 +4,7 @@
 ONBOARD_ROOT := $(abspath $(CURDIR))
 THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
 REPO_ROOT := $(abspath $(THERMO_ROOT)/..)
-HARDWARE_BACKENDS := pizero2w pico2w
+HARDWARE_BACKENDS := pizero2w pico2w esp32s3
 ZONES := kitchen office bedroom
 
 all: build

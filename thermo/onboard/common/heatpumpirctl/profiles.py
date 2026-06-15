@@ -21,6 +21,7 @@ LEGACY_DAIKIN_SEND_BEHAVIOR = "ir_daikin"
 
 DAIKIN_ARC452A9 = "daikin_arc452a9"
 MIDEA_CLASSIC = "midea_classic"
+MIDEA24_COOLIX = "midea24_coolix"
 HAIER_YRW02 = "haier_yrw02"
 DEFAULT_IR_PROTOCOL = DAIKIN_ARC452A9
 
@@ -56,6 +57,12 @@ SUPPORTED_IR_PROTOCOLS: Mapping[str, HeatpumpIrProtocol] = {
         module_name="MideaClassic",
         source="published Midea AC protocol plus office captures",
     ),
+    MIDEA24_COOLIX: HeatpumpIrProtocol(
+        name=MIDEA24_COOLIX,
+        display_name="Midea24/Coolix 48-bit",
+        module_name="MideaClassic",
+        source="Coolix/Midea24 byte-complement protocol plus office captures",
+    ),
     HAIER_YRW02: HeatpumpIrProtocol(
         name=HAIER_YRW02,
         display_name="Haier/YR-W02",
@@ -79,6 +86,8 @@ def normalize_protocol_name(value: Optional[str]) -> str:
         "arc452a9": DAIKIN_ARC452A9,
         "midea": MIDEA_CLASSIC,
         "midea_48": MIDEA_CLASSIC,
+        "midea24": MIDEA24_COOLIX,
+        "coolix": MIDEA24_COOLIX,
         "haier": HAIER_YRW02,
         "haier_yr_w02": HAIER_YRW02,
         "yrw02": HAIER_YRW02,

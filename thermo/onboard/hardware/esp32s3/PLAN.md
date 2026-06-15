@@ -243,6 +243,15 @@ details live under an `esp32s3` object:
 No inbound command mutation API is part of this port. Commands still come from
 the DMZ response to the signed sensor POST.
 
+### Protocol Name Compatibility
+
+The ESP32-S3 deployment profile reports `ir_protocol="midea24_coolix"` because
+the captured Office protocol is the Coolix/Midea24 byte-complement form. Shared
+Python deployment tooling may still expose the older `midea_classic` name for
+the same `MideaClassic` encoder; treat `midea24_coolix` as the ESP32-S3-facing
+name and keep it backed by that existing encoder until the protocol module is
+renamed.
+
 ## Application API Toward Hardware
 
 Keep hardware behind a narrow trait boundary so the same app core can run in

@@ -10,6 +10,7 @@ from common.heatpumpirctl.profiles import (
     GENERIC_SEND_BEHAVIOR,
     HAIER_YRW02,
     LEGACY_DAIKIN_SEND_BEHAVIOR,
+    MIDEA24_COOLIX,
     MIDEA_CLASSIC,
     SEND_BEHAVIOR_PROTOCOL_ALIASES,
     normalize_protocol_name,
@@ -28,6 +29,10 @@ PICO2W_HARDWARE_PROFILE = "pico2w_aht20_ir"
 PICO2W_SENSOR_DRIVER = "aht20"
 PICO2W_IR_TRANSPORT = "pico_gpio"
 PICO2W_IR_DEVICE = "gp14"
+ESP32S3_HARDWARE_PROFILE = "esp32s3_aht20_ir"
+ESP32S3_SENSOR_DRIVER = "aht20"
+ESP32S3_IR_TRANSPORT = "esp32s3_rmt"
+ESP32S3_IR_DEVICE = "gpio17"
 
 
 @dataclass(frozen=True)
@@ -74,7 +79,7 @@ SUPPORTED_SEND_BEHAVIORS: FrozenSet[str] = frozenset(
     | set(SEND_BEHAVIOR_PROTOCOL_ALIASES)
 )
 SUPPORTED_HEATPUMP_PROTOCOLS: FrozenSet[str] = frozenset(
-    {DEFAULT_IR_PROTOCOL, MIDEA_CLASSIC, HAIER_YRW02}
+    {DEFAULT_IR_PROTOCOL, MIDEA_CLASSIC, MIDEA24_COOLIX, HAIER_YRW02}
 )
 
 
@@ -93,6 +98,15 @@ SUPPORTED_HARDWARE_PROFILES: Mapping[str, HardwareProfile] = {
         sensor_driver=PICO2W_SENSOR_DRIVER,
         ir_transport=PICO2W_IR_TRANSPORT,
         ir_device=PICO2W_IR_DEVICE,
+        send_behaviors=SUPPORTED_SEND_BEHAVIORS,
+        ir_protocols=SUPPORTED_HEATPUMP_PROTOCOLS,
+        report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),
+    ),
+    ESP32S3_HARDWARE_PROFILE: HardwareProfile(
+        name=ESP32S3_HARDWARE_PROFILE,
+        sensor_driver=ESP32S3_SENSOR_DRIVER,
+        ir_transport=ESP32S3_IR_TRANSPORT,
+        ir_device=ESP32S3_IR_DEVICE,
         send_behaviors=SUPPORTED_SEND_BEHAVIORS,
         ir_protocols=SUPPORTED_HEATPUMP_PROTOCOLS,
         report_behaviors=frozenset({DEFAULT_REPORT_BEHAVIOR}),

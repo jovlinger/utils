@@ -79,6 +79,31 @@ def test_config_accepts_kitchen_pico2w_deployment() -> None:
     }
 
 
+def test_config_accepts_kitchen_esp32s3_deployment() -> None:
+    cfg = config_from_environ(
+        {
+            "ZONE_NAME": "kitchen",
+            "ONBOARD_HARDWARE_PROFILE": "esp32s3_aht20_ir",
+            "ONBOARD_SEND_BEHAVIOR": "ir_heatpump",
+            "ONBOARD_IR_PROTOCOL": "midea24_coolix",
+            "ONBOARD_REPORT_BEHAVIOR": "sensor_readings",
+            "SENSOR_DRIVER": "aht20",
+            "IR_TRANSPORT": "esp32s3_rmt",
+            "IR_DEVICE": "gpio17",
+        }
+    )
+    assert cfg.to_public_dict() == {
+        "zone_name": "kitchen",
+        "hardware_profile": "esp32s3_aht20_ir",
+        "send_behavior": "ir_heatpump",
+        "report_behavior": "sensor_readings",
+        "sensor_driver": "aht20",
+        "ir_transport": "esp32s3_rmt",
+        "ir_device": "gpio17",
+        "ir_protocol": "midea24_coolix",
+    }
+
+
 def test_config_rejects_unknown_behavior() -> None:
     with pytest.raises(ValueError, match="ONBOARD_SEND_BEHAVIOR"):
         config_from_environ({"ONBOARD_SEND_BEHAVIOR": "mqtt"})

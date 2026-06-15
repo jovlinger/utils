@@ -504,6 +504,14 @@ def test_vox2stl_reader_renders_alias_targets() -> None:
     require(layer.rows == ("|", "|"), "vox2stl reader should render aliases as target glyphs")
 
 
+def test_vox2stl_reader_ignores_whitespace_only_lines() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "whitespace.vox"
+        path.write_text("layer trace (0, 1, 1)\n|\n\t  \n", encoding="utf-8")
+        layer = vox2stl.read_layers(path)["trace"]
+    require(layer.rows == ("|",), "vox2stl reader should ignore whitespace-only lines")
+
+
 def test_check_vox_alias_net_assertion_passes_when_connected() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "alias-connected.vox"

@@ -279,7 +279,8 @@ def read_layers(path: Path) -> Dict[str, Layer]:
 
     for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw_line.rstrip("\n")
-        if not line or line.startswith("#"):
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
             continue
         alias = parse_alias_line(line.strip())
         if alias is not None:

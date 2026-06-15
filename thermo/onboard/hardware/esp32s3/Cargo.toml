@@ -1,0 +1,23 @@
+[package]
+name = "thermo-esp32s3"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "thermo-esp32s3-host-check"
+path = "src/main.rs"
+required-features = ["std"]
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+base64ct = { version = "1.7.3", default-features = false }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["fast"] }
+heapless = "0.9.3"
+sha2 = { version = "0.10", default-features = false }
