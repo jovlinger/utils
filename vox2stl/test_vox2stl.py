@@ -47,6 +47,10 @@ def z_values(triangles: Sequence[vox2stl.Tri]) -> set[float]:
     return {round(vertex[2], 6) for triangle in triangles for vertex in triangle}
 
 
+def box_x_bounds(boxes: Sequence[vox2stl.BoxSolid]) -> Tuple[float, float]:
+    return min(box.x0 for box in boxes), max(box.x1 for box in boxes)
+
+
 def point_in_triangle_xy(point: Tuple[float, float], triangle: vox2stl.Tri) -> bool:
     px, py = point
     (ax, ay, _), (bx, by, _), (cx, cy, _) = triangle
@@ -252,7 +256,7 @@ def test_keyword_layer_header_and_thickness_override() -> None:
                     "layer base (horizontal_offset=0, width_columns=1, height_rows=1, layer_thickness_mm=1.25)",
                     "X",
                     "",
-                    "layer trace (horizontal_offset=0, width_columns=1, height_rows=1, layer_thickness_mm=0.75)",
+                    "layer trace (horizontal_offset=0, width_columns=1, height_rows=1, layer_thickness_mm=0.75, letter_style=negative)",
                     "*",
                     "",
                 ]
@@ -272,6 +276,8 @@ def test_keyword_layer_header_and_thickness_override() -> None:
         abs(layers["trace"].layer_thickness_mm - 0.75) < 1e-9,
         "trace layer should carry header thickness",
     )
+    require(layers["base"].letter_style == "positive", "base layer should default to positive letters")
+    require(layers["trace"].letter_style == "negative", "trace layer should carry letter style")
 
 
 def test_full_mesh_uses_layer_thickness_overrides() -> None:
@@ -454,6 +460,53 @@ def test_uppercase_letters_remain_unassigned() -> None:
     require(box_count == 0, f"uppercase label source boxes: got {box_count}")
     require(letter_count == 0, f"uppercase label source cells: got {letter_count}")
     require(len(mesh.triangles) == 0, f"uppercase label source triangles: got {len(mesh.triangles)}")
+
+
+def test_negative_base_letters_create_recess_without_changing_positive_default() -> None:
+    config = vox2stl.RenderConfig()
+    positive_layer = vox2stl.Layer("base", 0, 1, 1, ("f",))
+    negative_layer = vox2stl.Layer("base", 0, 1, 1, ("f",), letter_style="negative")
+    positive_mesh, positive_holes = vox2stl.build_base_mesh(positive_layer, config)
+    negative_mesh, negative_holes = vox2stl.build_base_mesh(negative_layer, config)
+    recess_z0 = round(config.base_z1_mm - config.label_height_mm, 6)
+
+    require(positive_holes == 0, f"positive base letter holes: got {positive_holes}")
+    require(negative_holes == 0, f"negative base letter holes: got {negative_holes}")
+    require(
+        recess_z0 not in z_values(positive_mesh.triangles),
+        "positive base letter should remain a plain base tile",
+    )
+    require(
+        recess_z0 in z_values(negative_mesh.triangles),
+        "negative base letter should expose a recessed imprint floor",
+    )
+    require(
+        len(negative_mesh.triangles) > len(positive_mesh.triangles),
+        "negative base letter should add imprint wall and floor triangles",
+    )
+
+
+def test_negative_letter_voids_mirror_individual_shape_left_to_right() -> None:
+    config = vox2stl.RenderConfig()
+    normal_voids = vox2stl.letter_footprint_voids(
+        "f",
+        config,
+        z0=0.0,
+        z1=1.0,
+        mirror_x=False,
+    )
+    mirrored_voids = vox2stl.letter_footprint_voids(
+        "f",
+        config,
+        z0=0.0,
+        z1=1.0,
+        mirror_x=True,
+    )
+    normal_min_x, normal_max_x = box_x_bounds(normal_voids)
+    mirrored_min_x, mirrored_max_x = box_x_bounds(mirrored_voids)
+
+    require(abs(mirrored_min_x + normal_max_x) < 1e-6, "mirrored letter should flip west bound")
+    require(abs(mirrored_max_x + normal_min_x) < 1e-6, "mirrored letter should flip east bound")
 
 
 def test_correct_vox_shorthand_direct_t_junctions() -> None:

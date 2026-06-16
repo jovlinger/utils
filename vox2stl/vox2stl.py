@@ -43,6 +43,7 @@ from constants import (
     DEFAULT_LABEL_BLUR_RADIUS,
     DEFAULT_LABEL_HEIGHT_FRAC,
     DEFAULT_LABEL_HEIGHT_MM,
+    DEFAULT_LETTER_STYLE,
     DEFAULT_LABEL_RASTER_SIZE,
     DEFAULT_LABEL_RECESS_FRAC,
     DEFAULT_LABEL_RECESS_MM,
@@ -81,6 +82,7 @@ Tri = Tuple[Vec3, Vec3, Vec3]
 LigatureKey = Tuple[str, int, int, int, int]
 TileCacheKey = Union[str, LigatureKey]
 TileCache = Dict[TileCacheKey, List[Tri]]
+LetterFootprintBox = Tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,7 @@ class Layer:
     height: int
     rows: Tuple[str, ...]
     layer_thickness_mm: float = DEFAULT_LAYER_THICKNESS_MM
+    letter_style: str = DEFAULT_LETTER_STYLE
 
 
 @dataclass(frozen=True)
@@ -259,10 +262,11 @@ def read_layers(path: Path) -> Dict[str, Layer]:
     current_width = 0
     current_height = 0
     current_layer_thickness_mm = DEFAULT_LAYER_THICKNESS_MM
+    current_letter_style = DEFAULT_LETTER_STYLE
     current_rows: List[str] = []
 
     def finish_layer() -> None:
-        nonlocal current_name, current_offset, current_width, current_height, current_layer_thickness_mm, current_rows
+        nonlocal current_name, current_offset, current_width, current_height, current_layer_thickness_mm, current_letter_style, current_rows
         if current_name is None:
             return
         if len(current_rows) != current_height:
@@ -277,6 +281,7 @@ def read_layers(path: Path) -> Dict[str, Layer]:
             height=current_height,
             rows=tuple(current_rows),
             layer_thickness_mm=current_layer_thickness_mm,
+            letter_style=current_letter_style,
         )
         current_name = None
         current_rows = []
@@ -300,6 +305,7 @@ def read_layers(path: Path) -> Dict[str, Layer]:
             current_width = header.width
             current_height = header.height
             current_layer_thickness_mm = header.layer_thickness_mm
+            current_letter_style = header.letter_style
             current_rows = []
             continue
         if line.startswith("layer "):
@@ -439,6 +445,7 @@ def read_letter_tile_stl(path: Path) -> List[Tri]:
 
 
 _LETTER_TILE_CACHE: Dict[str, List[Tri]] = {}
+_LETTER_FOOTPRINT_CACHE: Dict[str, List[LetterFootprintBox]] = {}
 
 
 def letter_tile_path(letter: str) -> Path:
@@ -459,15 +466,76 @@ def load_letter_tile(letter: str) -> List[Tri]:
     return tris
 
 
+def letter_xy_scale(config: RenderConfig) -> float:
+    tile_span = 1.0 - 2.0 * DEFAULT_LABEL_RECESS_FRAC
+    runtime_span = config.unit_mm - 2.0 * config.label_recess_mm
+    return runtime_span / tile_span if tile_span > 0.0 else config.unit_mm
+
+
+def letter_tile_footprint_boxes(letter: str) -> List[LetterFootprintBox]:
+    key = letter.upper()
+    cached = _LETTER_FOOTPRINT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    boxes: Dict[Tuple[int, int, int, int], LetterFootprintBox] = {}
+    for triangle in load_letter_tile(key):
+        if any(abs(vertex[2] - DEFAULT_LABEL_HEIGHT_FRAC) > 1e-6 for vertex in triangle):
+            continue
+        xs = [vertex[0] for vertex in triangle]
+        ys = [vertex[1] for vertex in triangle]
+        x0 = min(xs)
+        x1 = max(xs)
+        y0 = min(ys)
+        y1 = max(ys)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        rounded_key = (
+            int(round(x0 * 1_000_000_000.0)),
+            int(round(y0 * 1_000_000_000.0)),
+            int(round(x1 * 1_000_000_000.0)),
+            int(round(y1 * 1_000_000_000.0)),
+        )
+        boxes[rounded_key] = (x0, y0, x1, y1)
+    cached = list(boxes.values())
+    _LETTER_FOOTPRINT_CACHE[key] = cached
+    return cached
+
+
+def letter_footprint_voids(
+    char: str,
+    config: RenderConfig,
+    *,
+    z0: float,
+    z1: float,
+    mirror_x: bool,
+) -> List[BoxSolid]:
+    if config.label_height_mm <= 0.0 or z1 <= z0:
+        return []
+    xy_scale = letter_xy_scale(config)
+    voids: List[BoxSolid] = []
+    for x0, y0, x1, y1 in letter_tile_footprint_boxes(char):
+        if mirror_x:
+            x0, x1 = -x1, -x0
+        voids.append(
+            BoxSolid(
+                x0 * xy_scale,
+                y0 * xy_scale,
+                x1 * xy_scale,
+                y1 * xy_scale,
+                z0,
+                z1,
+            )
+        )
+    return voids
+
+
 def place_letter_tris(
     template: Sequence[Tri],
     cx: float,
     cy: float,
     config: RenderConfig,
 ) -> List[Tri]:
-    tile_span = 1.0 - 2.0 * DEFAULT_LABEL_RECESS_FRAC
-    runtime_span = config.unit_mm - 2.0 * config.label_recess_mm
-    xy_scale = runtime_span / tile_span if tile_span > 0.0 else config.unit_mm
+    xy_scale = letter_xy_scale(config)
     z_scale = (
         config.label_height_mm / DEFAULT_LABEL_HEIGHT_FRAC
         if DEFAULT_LABEL_HEIGHT_FRAC > 0.0
@@ -1038,8 +1106,9 @@ def collect_layer_additives(layer: Layer, config: RenderConfig) -> Tuple[List[Bo
         for col_index, char in enumerate(window):
             cx, cy = cell_center(layer, row_index, col_index, config)
             if is_label_char(char):
-                letters.extend(letter_tris(cx, cy, char, config))
-                letter_count += 1
+                if layer.letter_style == "positive":
+                    letters.extend(letter_tris(cx, cy, char, config))
+                    letter_count += 1
                 continue
             boxes.extend(glyph_boxes(layer, row_index, col_index, char, cx, cy, config))
     return boxes, letters, len(boxes), letter_count
@@ -1083,7 +1152,12 @@ def ligature_key_for_cell(
     )
 
 
-def render_base_tile(char: str, config: RenderConfig) -> List[Tri]:
+def render_base_tile(
+    char: str,
+    config: RenderConfig,
+    *,
+    letter_style: str = DEFAULT_LETTER_STYLE,
+) -> List[Tri]:
     if char == ".":
         return []
     box = BoxSolid(
@@ -1094,12 +1168,24 @@ def render_base_tile(char: str, config: RenderConfig) -> List[Tri]:
         config.base_z0_mm,
         config.base_z1_mm,
     )
+    rect_voids: List[BoxSolid] = []
     cylinder_voids: List[CylindricalVoid] = []
     if char in PAD_CHARS:
         cylinder_voids.append(
             CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.base_z0_mm, config.base_z1_mm)
         )
-    return mesh_from_boxes_and_voids([box], [], cylinder_voids, config.grid_mm).triangles
+    if is_label_char(char) and letter_style == "negative":
+        recess_z0 = max(config.base_z0_mm, config.base_z1_mm - config.label_height_mm)
+        rect_voids.extend(
+            letter_footprint_voids(
+                char,
+                config,
+                z0=recess_z0,
+                z1=config.base_z1_mm,
+                mirror_x=True,
+            )
+        )
+    return mesh_from_boxes_and_voids([box], rect_voids, cylinder_voids, config.grid_mm).triangles
 
 
 def build_base_mesh(base_layer: Layer, config: RenderConfig) -> Tuple[Mesh, int]:
@@ -1115,7 +1201,7 @@ def build_base_mesh(base_layer: Layer, config: RenderConfig) -> Tuple[Mesh, int]
                 hole_count += 1
             local_tris = base_tile_cache.get(char)
             if local_tris is None:
-                local_tris = render_base_tile(char, config)
+                local_tris = render_base_tile(char, config, letter_style=base_layer.letter_style)
                 base_tile_cache[char] = local_tris
             cx, cy = cell_center(base_layer, row_index, col_index, config)
             mesh.extend(translate_tris(local_tris, cx, cy))
@@ -1130,6 +1216,8 @@ def build_ligature_layer_mesh(layer: Layer, config: RenderConfig) -> Tuple[Mesh,
         window = layer_window(layer, row)
         for col_index, char in enumerate(window):
             if is_label_char(char):
+                if layer.letter_style != "positive":
+                    continue
                 key: TileCacheKey = char
                 letter_count += 1
             elif has_rendered_copper(char, config):

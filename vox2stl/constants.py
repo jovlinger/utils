@@ -62,6 +62,10 @@ DEFAULT_LABEL_BLUR_RADIUS = 5
 # Comfortable upper bound for welded mesh edges sharing one vertex.
 DEFAULT_MAX_VERTEX_VALENCE = 20
 
+# Default per-layer rendering mode for lowercase letter cells.
+DEFAULT_LETTER_STYLE = "positive"
+LETTER_STYLES: FrozenSet[str] = frozenset({"positive", "negative"})
+
 # Directory containing persistent binary STL letter tile fragments.
 LETTER_TILES_DIR = Path(__file__).resolve().parent / "tiles" / "letters"
 
@@ -76,6 +80,7 @@ class LayerHeader:
     width: int
     height: int
     layer_thickness_mm: float
+    letter_style: str
 
 
 LAYER_POSITIONAL_KEYS: Tuple[str, str, str] = (
@@ -169,6 +174,14 @@ def _parse_positive_float(raw_value: str, key: str) -> float:
     return value
 
 
+def _parse_letter_style(raw_value: str) -> str:
+    value = raw_value.strip().lower()
+    if value not in LETTER_STYLES:
+        allowed = ", ".join(sorted(LETTER_STYLES))
+        raise ValueError(f"letter_style must be one of {allowed}, got {raw_value!r}")
+    return value
+
+
 def parse_layer_header(line: str) -> Optional[LayerHeader]:
     match = LAYER_HEADER_RE.match(line)
     if match is None:
@@ -201,7 +214,7 @@ def parse_layer_header(line: str) -> Optional[LayerHeader]:
             positional_index += 1
         if key in values:
             raise ValueError(f"duplicate layer argument {key!r}")
-        if key not in set(LAYER_POSITIONAL_KEYS) | {"layer_thickness_mm"}:
+        if key not in set(LAYER_POSITIONAL_KEYS) | {"layer_thickness_mm", "letter_style"}:
             raise ValueError(f"unknown layer argument {key!r}")
         values[key] = value
 
@@ -218,6 +231,7 @@ def parse_layer_header(line: str) -> Optional[LayerHeader]:
             values.get("layer_thickness_mm", str(DEFAULT_LAYER_THICKNESS_MM)),
             "layer_thickness_mm",
         ),
+        letter_style=_parse_letter_style(values.get("letter_style", DEFAULT_LETTER_STYLE)),
     )
 
 # Upper-left box drawing corner glyph.
