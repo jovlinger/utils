@@ -12,14 +12,14 @@
 #   OO = adjacent leg pads with no trace between (isolated)
 # Layer trace uses */O on pads; traces use - | + only on empty cells between pads.
 
-layer base (6, 10, 22)
+layer base (6, 10, 22, letter_style=negative)
       XXXXXXXXXX
 GP16  X*XXXXXX*X GP15
 GP17  X*XXXXXX*X GP14
-GND   X*XXXXXX*X GND
+GND   X*XXgvXX*X GND
 GP18  X*XXOOOX*X GP13   IR RX target .c6= GP13,.c5 = VCC, .c4 = GND
 GP19  X*XXXXXX*X GP12
-GP20  X*XXXXXX*X GP11
+GP20  X*XXgvXX*X GP11
 GP21  X*XXOOOX*X GP10   IR TX target .c6= GP10,.c5 = VCC, .c4 = GND
 GND   X*XXXXXX*X GND
 GP22  X*XXXXXX*X GP9
@@ -27,13 +27,13 @@ RUN   X*XXXXXX*X GP8
 GP26  X*XXXXXX*X GP7
 GP27  X*XXXXXX*X GP6
 GND   X*XXXXXX*X GND
-GP28  X*XXXXXX*X GP5
+GP28  X*XXXgvX*X GP5
 ADCV  X*XOOOOX*X GP4  AHT20 target: .c6 = VCC, .c5 = GND, .c4 = GP27/SCL, .c3 = GP28/SDA; big 7-pin keepout
 3V3   X*XXXXXX*X GP3
-3EN   X*XXXXXX*X GP2
-GND   X*XXXXXX*X GND
+3EN   X*XXehtX*X GP2
+GND   X*XXomrX*X GND
 VSYS  X*XXXXXX*X GP1
-VBUS  X*XXXXXX*X GP0
+VBUS  X*XbsuXX*X GP0
       XXXXXXXXXX
 
 
@@ -51,7 +51,7 @@ GP19  ....G|.... GP12
 GP20  ....|V.... GP11
 GP21  ....OOO-*. GP10  IR TX target .c6= GP10,.c5 = VCC, .c4 = GND
 GND   .*--┤|.... GND
-GP22  ....||.... GP9
+GP22  ...g||v... GP9
 RUN   ....|└┐... GP8
 GP26  ....└┐|... GP7
 GP27  .*--┐||... GP6  SCL

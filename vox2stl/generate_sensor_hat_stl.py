@@ -15,6 +15,7 @@ Output: thermo-pico2w-sensor-hat-v1.stl (millimeters, Z-up, Bambu A1 Mini).
 
 from __future__ import annotations
 
+import argparse
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -766,8 +767,21 @@ def build_mesh(variant: Variant) -> Mesh:
     return mesh
 
 
+DEFAULT_OUT_DIR = (
+    Path(__file__).resolve().parent.parent / "thermo/onboard/hardware/pico2w/hat"
+)
+
+
 def main() -> None:
-    out_dir = Path(__file__).resolve().parent
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=DEFAULT_OUT_DIR,
+        help="directory for output STL files",
+    )
+    args = parser.parse_args()
+    out_dir = args.out_dir.resolve()
     for variant in VARIANTS:
         out_path = out_dir / f"thermo-pico2w-sensor-hat-v1-{variant.name}.stl"
         mesh = build_mesh(variant)

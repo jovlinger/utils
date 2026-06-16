@@ -4,7 +4,7 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 
 ## Files
 
-- `generate_sensor_hat_stl.py` -- parametric generator (no extra deps)
+- `../../../../../vox2stl/generate_sensor_hat_stl.py` -- parametric generator (no extra deps)
 - `../../SKILL.md` -- shared ASCII HAT layout rules
 - `../../../../../vox2stl/voxtool.py` -- shared `.vox` validator and transformer
 - `../../../../../vox2stl/vox2stl.py` -- top-level `.vox` trace-to-STL converter
@@ -18,7 +18,7 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 ## Regenerate
 
 ```bash
-hat/generate_sensor_hat_stl.py
+../../../../../vox2stl/generate_sensor_hat_stl.py --out-dir thermo/onboard/hardware/pico2w/hat
 make -C thermo/onboard/hardware/pico2w hat-vox-stl
 ```
 

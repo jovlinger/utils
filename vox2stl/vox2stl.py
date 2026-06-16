@@ -80,9 +80,11 @@ from letter_mesh import generate_letter_tile_triangles
 Vec3 = Tuple[float, float, float]
 Tri = Tuple[Vec3, Vec3, Vec3]
 LigatureKey = Tuple[str, int, int, int, int]
-TileCacheKey = Union[str, LigatureKey]
+NegativeBaseLetterKey = Tuple[str, str]
+TileCacheKey = Union[str, LigatureKey, NegativeBaseLetterKey]
 TileCache = Dict[TileCacheKey, List[Tri]]
 LetterFootprintBox = Tuple[float, float, float, float]
+NEGATIVE_BASE_LETTER_CACHE_TAG = "base_neg"
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,19 @@ class RenderConfig:
     origin_x_mm: float = 0.0
     origin_y_mm: float = 0.0
     include_pads: bool = True
+
+
+_PROGRESS_ENABLED = True
+
+
+def set_progress_enabled(enabled: bool) -> None:
+    global _PROGRESS_ENABLED
+    _PROGRESS_ENABLED = enabled
+
+
+def report_progress(message: str) -> None:
+    if _PROGRESS_ENABLED:
+        print(message, file=sys.stderr, flush=True)
 
 
 class Mesh:
@@ -564,6 +579,10 @@ _RUNTIME_TILE_CACHES: Dict[Tuple[float, ...], TileCache] = {}
 TILE_CACHE_SIGNATURE_KEY = "__tile_cache_signature__"
 
 
+def negative_base_letter_cache_key(char: str) -> NegativeBaseLetterKey:
+    return (NEGATIVE_BASE_LETTER_CACHE_TAG, char)
+
+
 def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
     return (
         round(config.unit_mm, 9),
@@ -572,6 +591,8 @@ def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
         round(config.device_pad_width_mm, 9),
         round(config.pin_hole_diameter_mm, 9),
         round(config.device_hole_diameter_mm, 9),
+        round(config.base_z0_mm, 9),
+        round(config.base_z1_mm, 9),
         round(config.trace_z0_mm, 9),
         round(config.trace_z1_mm, 9),
         round(config.grid_mm, 9),
@@ -612,11 +633,13 @@ def save_persistent_tile_cache(cache: TileCache) -> None:
 def format_tile_cache_key(key: TileCacheKey) -> str:
     if isinstance(key, str):
         return repr(key)
+    if len(key) == 2 and key[0] == NEGATIVE_BASE_LETTER_CACHE_TAG:
+        return f"base_neg:{key[1]!r}"
     return repr(key)
 
 
 def report_tile_cache_miss(key: TileCacheKey) -> None:
-    print(f"Rendering tile cache key {format_tile_cache_key(key)}", file=sys.stderr)
+    report_progress(f"Rendering tile cache key {format_tile_cache_key(key)}")
 
 
 def tile_cache_for_config(config: RenderConfig) -> Tuple[TileCache, bool]:
@@ -664,6 +687,20 @@ def cached_tile_tris(key: TileCacheKey, config: RenderConfig) -> List[Tri]:
         cached_tile_tris(key[0], config)
         report_tile_cache_miss(key)
         tris = render_ligature_tile(key, config)
+    cache[key] = tris
+    if persistent:
+        save_persistent_tile_cache(cache)
+    return tris
+
+
+def cached_negative_base_letter_tris(char: str, config: RenderConfig) -> List[Tri]:
+    key = negative_base_letter_cache_key(char)
+    cache, persistent = tile_cache_for_config(config)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    report_tile_cache_miss(key)
+    tris = render_base_tile(char, config, letter_style="negative")
     cache[key] = tris
     if persistent:
         save_persistent_tile_cache(cache)
@@ -1042,20 +1079,36 @@ def mesh_from_boxes_and_voids(
     rect_voids: Sequence[BoxSolid],
     cylinder_voids: Sequence[CylindricalVoid],
     grid_mm: float,
+    *,
+    progress_label: Optional[str] = None,
 ) -> Mesh:
     mesh = Mesh()
     if not boxes:
         return mesh
     x_coords, y_coords = grid_coords_for_solids(boxes, rect_voids, cylinder_voids, grid_mm)
     z_levels = z_levels_for_solids(boxes, rect_voids, cylinder_voids)
+    x_cells = max(0, len(x_coords) - 1)
+    y_cells = max(0, len(y_coords) - 1)
+    z_cells = max(0, len(z_levels) - 1)
+    if progress_label and (rect_voids or x_cells * y_cells * z_cells > 5000):
+        report_progress(
+            f"{progress_label}: boolean mesh "
+            f"{len(boxes)} boxes, {len(rect_voids)} rect voids, "
+            f"{len(cylinder_voids)} cylinder voids, grid {x_cells}x{y_cells}x{z_cells} @ {grid_mm}mm"
+        )
     slab_cells: List[List[List[bool]]] = []
     slab_ranges: List[Tuple[float, float]] = []
-    for z0, z1 in zip(z_levels, z_levels[1:]):
+    for slab_index, (z0, z1) in enumerate(zip(z_levels, z_levels[1:])):
         if z1 <= z0:
             continue
         z_mid = (z0 + z1) * 0.5
         rows: List[List[bool]] = []
-        for y0, y1 in zip(y_coords, y_coords[1:]):
+        for y_index, (y0, y1) in enumerate(zip(y_coords, y_coords[1:])):
+            if progress_label and y_cells > 1 and y_index % max(1, y_cells // 10) == 0:
+                report_progress(
+                    f"{progress_label}: sampling z-slab {slab_index + 1}/{z_cells}, "
+                    f"row {y_index + 1}/{y_cells}"
+                )
             y_mid = (y0 + y1) * 0.5
             row: List[bool] = []
             for x0, x1 in zip(x_coords, x_coords[1:]):
@@ -1175,33 +1228,83 @@ def render_base_tile(
             CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.base_z0_mm, config.base_z1_mm)
         )
     if is_label_char(char) and letter_style == "negative":
-        recess_z0 = max(config.base_z0_mm, config.base_z1_mm - config.label_height_mm)
+        recess_z0 = config.base_z0_mm
+        recess_z1 = min(config.base_z1_mm, config.base_z0_mm + config.label_height_mm)
         rect_voids.extend(
             letter_footprint_voids(
                 char,
                 config,
                 z0=recess_z0,
-                z1=config.base_z1_mm,
+                z1=recess_z1,
                 mirror_x=True,
             )
         )
-    return mesh_from_boxes_and_voids([box], rect_voids, cylinder_voids, config.grid_mm).triangles
+    progress_label: Optional[str] = None
+    if is_label_char(char) and letter_style == "negative":
+        progress_label = f"base letter {char!r} (negative)"
+    return mesh_from_boxes_and_voids(
+        [box],
+        rect_voids,
+        cylinder_voids,
+        config.grid_mm,
+        progress_label=progress_label,
+    ).triangles
+
+
+def count_base_layer_cells(base_layer: Layer) -> int:
+    return sum(
+        1
+        for row in base_layer.rows
+        for char in layer_window(base_layer, row)
+        if char != "."
+    )
+
+
+def count_trace_layer_tiles(layer: Layer, config: RenderConfig) -> int:
+    count = 0
+    for row in layer.rows:
+        for char in layer_window(layer, row):
+            if is_label_char(char):
+                if layer.letter_style == "positive":
+                    count += 1
+            elif has_rendered_copper(char, config):
+                count += 1
+    return count
 
 
 def build_base_mesh(base_layer: Layer, config: RenderConfig) -> Tuple[Mesh, int]:
     mesh = Mesh()
     hole_count = 0
     base_tile_cache: Dict[str, List[Tri]] = {}
+    total_cells = count_base_layer_cells(base_layer)
+    processed_cells = 0
+    report_progress(
+        f"Building base layer {base_layer.name!r} "
+        f"({base_layer.height} rows, {base_layer.width} cols, "
+        f"letter_style={base_layer.letter_style}, {total_cells} solid cells)"
+    )
     for row_index, row in enumerate(base_layer.rows):
         window = layer_window(base_layer, row)
         for col_index, char in enumerate(window):
             if char == ".":
                 continue
+            processed_cells += 1
+            if processed_cells == 1 or processed_cells % 25 == 0 or processed_cells == total_cells:
+                report_progress(f"Base layer cells {processed_cells}/{total_cells}")
             if char in PAD_CHARS:
                 hole_count += 1
             local_tris = base_tile_cache.get(char)
             if local_tris is None:
-                local_tris = render_base_tile(char, config, letter_style=base_layer.letter_style)
+                if is_label_char(char) and base_layer.letter_style == "negative":
+                    report_progress(f"Rendering base negative imprint letter {char!r}...")
+                    local_tris = cached_negative_base_letter_tris(char, config)
+                else:
+                    if is_label_char(char):
+                        style = "embossed"
+                        report_progress(f"Rendering base {style} letter {char!r}...")
+                    elif char in PAD_CHARS:
+                        report_progress(f"Rendering base pad tile {char!r}...")
+                    local_tris = render_base_tile(char, config, letter_style=base_layer.letter_style)
                 base_tile_cache[char] = local_tris
             cx, cy = cell_center(base_layer, row_index, col_index, config)
             mesh.extend(translate_tris(local_tris, cx, cy))
@@ -1212,6 +1315,13 @@ def build_ligature_layer_mesh(layer: Layer, config: RenderConfig) -> Tuple[Mesh,
     mesh = Mesh()
     tile_count = 0
     letter_count = 0
+    total_tiles = count_trace_layer_tiles(layer, config)
+    processed_tiles = 0
+    report_progress(
+        f"Building trace layer {layer.name!r} "
+        f"({layer.height} rows, {layer.width} cols, "
+        f"letter_style={layer.letter_style}, {total_tiles} tiles)"
+    )
     for row_index, row in enumerate(layer.rows):
         window = layer_window(layer, row)
         for col_index, char in enumerate(window):
@@ -1225,6 +1335,9 @@ def build_ligature_layer_mesh(layer: Layer, config: RenderConfig) -> Tuple[Mesh,
                 tile_count += 1
             else:
                 continue
+            processed_tiles += 1
+            if processed_tiles == 1 or processed_tiles % 25 == 0 or processed_tiles == total_tiles:
+                report_progress(f"Trace layer tiles {processed_tiles}/{total_tiles}")
             cx, cy = cell_center(layer, row_index, col_index, config)
             mesh.extend(translate_tris(cached_tile_tris(key, config), cx, cy))
     return mesh, tile_count, letter_count
@@ -1367,6 +1480,7 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--origin-x-mm", type=float, default=0.0)
     parser.add_argument("--origin-y-mm", type=float, default=0.0)
     parser.add_argument("--no-pads", action="store_true")
+    parser.add_argument("--quiet", action="store_true", help="suppress progress messages on stderr")
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -1376,6 +1490,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def run_from_args(args: argparse.Namespace) -> int:
+    set_progress_enabled(not args.quiet)
+    report_progress(f"Reading {args.vox_path}...")
     layers = read_layers(args.vox_path)
     file_unit = unit_from_file(args.vox_path)
     trace_z0_mm = args.trace_z0_mm if args.trace_z0_mm is not None else args.base_z1_mm
@@ -1424,6 +1540,7 @@ def run_from_args(args: argparse.Namespace) -> int:
     solid_name = args.solid_name or solid_name_for(args.vox_path, "full")
     layer_label = f"{args.base_layer}+{args.layer}"
 
+    report_progress(f"Writing ASCII STL to {output_path}...")
     mesh.write_ascii_stl(output_path, solid_name)
     print(f"Wrote {output_path}")
     print(f"Layers: {layer_label}")

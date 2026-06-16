@@ -468,22 +468,61 @@ def test_negative_base_letters_create_recess_without_changing_positive_default()
     negative_layer = vox2stl.Layer("base", 0, 1, 1, ("f",), letter_style="negative")
     positive_mesh, positive_holes = vox2stl.build_base_mesh(positive_layer, config)
     negative_mesh, negative_holes = vox2stl.build_base_mesh(negative_layer, config)
-    recess_z0 = round(config.base_z1_mm - config.label_height_mm, 6)
+    recess_z0 = round(config.base_z0_mm, 6)
+    recess_z1 = round(config.base_z0_mm + config.label_height_mm, 6)
+    top_attached_recess_z0 = round(config.base_z1_mm - config.label_height_mm, 6)
 
     require(positive_holes == 0, f"positive base letter holes: got {positive_holes}")
     require(negative_holes == 0, f"negative base letter holes: got {negative_holes}")
     require(
-        recess_z0 not in z_values(positive_mesh.triangles),
-        "positive base letter should remain a plain base tile",
+        top_attached_recess_z0 not in z_values(positive_mesh.triangles),
+        "positive base letter should not carve a top-attached recess",
     )
     require(
         recess_z0 in z_values(negative_mesh.triangles),
-        "negative base letter should expose a recessed imprint floor",
+        "negative base letter should expose a recess floor at the base bottom",
+    )
+    require(
+        recess_z1 in z_values(negative_mesh.triangles),
+        "negative base letter should expose a recess top at label height above base bottom",
+    )
+    require(
+        top_attached_recess_z0 not in z_values(negative_mesh.triangles),
+        "negative base letter should not carve from the top of the base layer",
     )
     require(
         len(negative_mesh.triangles) > len(positive_mesh.triangles),
         "negative base letter should add imprint wall and floor triangles",
     )
+
+
+def test_negative_base_letter_tiles_persist_in_tile_cache() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            base_config = vox2stl.config_with_base_z(
+                vox2stl.RenderConfig(),
+                vox2stl.DEFAULT_BASE_Z0_MM,
+                vox2stl.DEFAULT_BASE_Z1_MM,
+            )
+            key = vox2stl.negative_base_letter_cache_key("f")
+            first = vox2stl.cached_negative_base_letter_tris("f", base_config)
+            second = vox2stl.cached_negative_base_letter_tris("f", base_config)
+            require(first is second, "negative base letter should reuse in-memory tile cache")
+            require(cache_path.is_file(), "negative base letter should persist tile cache")
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            reloaded = vox2stl.cached_negative_base_letter_tris("f", base_config)
+            require(len(reloaded) == len(first), "reloaded negative base letter should match cached triangles")
+            with gzip.open(cache_path, "rb") as file_obj:
+                cache = pickle.load(file_obj)
+            require(key in cache, "tile cache should persist base_neg letter keys")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
 
 
 def test_negative_letter_voids_mirror_individual_shape_left_to_right() -> None:

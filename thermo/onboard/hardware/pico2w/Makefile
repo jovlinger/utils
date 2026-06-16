@@ -41,7 +41,7 @@ print-config:
 
 .PHONY: hat-stl hat-vox-stl hat-pico-vox-stl hat-trace-stl
 hat-stl:
-	hat/generate_sensor_hat_stl.py
+	"$(REPO_ROOT)/vox2stl/generate_sensor_hat_stl.py" --out-dir hat
 	@echo "CARGO=$(CARGO)"
 	@echo "PICO2W_TARGET=$(PICO2W_TARGET)"
 	@echo "PICO2W_LEGACY_TARGET=$(PICO2W_LEGACY_TARGET)"

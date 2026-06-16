@@ -44,7 +44,7 @@ corner XAn
 
 ## STL baseline (PLAN.md)
 
-The parametric generator (`generate_sensor_hat_stl.py`) currently emits
+The parametric generator (`vox2stl/generate_sensor_hat_stl.py`) currently emits
 **hole-only** solid base plates for both variants:
 
 * `thermo-pico2w-sensor-hat-v1-up-side.stl`
@@ -161,7 +161,7 @@ reworked:
 * IR TX: DAT `GP10.c1 -> GP10.c4`.
 * `vox2stl/voxtool.py check up-side.vox` reports current target/route mismatches.
 
-`pico-side.vox` mirrors `up-side.vox` across X=0 via `mirror_from_up_side.py`.
+`pico-side.vox` mirrors `up-side.vox` across X=0 via `vox2stl/voxtool.py mirror`.
 Modules attach from the top; the board still prints flat-side down.
 
 ### Validator usage
@@ -179,7 +179,7 @@ mismatched dimensions between layers.
 1. Inspect `thermo-pico2w-sensor-hat-v1-up-side-vox.stl` in the slicer.
 2. Copy accepted topology to `pico-side.vox` if flat-side mounting is still
    needed (mirror pads/holes, not blindly mirror every trace glyph).
-3. Integrate trace boxes into `generate_sensor_hat_stl.py` only after separate
+3. Integrate trace boxes into `vox2stl/generate_sensor_hat_stl.py` only after separate
    trace STL inspection looks right.
 
 ### Voxel-to-STL export
