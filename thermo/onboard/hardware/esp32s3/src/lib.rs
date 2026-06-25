@@ -4,6 +4,8 @@ pub mod aht20;
 pub mod app_core;
 pub mod auth;
 pub mod config;
+#[path = "../../pico2w/src/debug.rs"]
+pub mod debug;
 pub mod hardware;
 pub mod health;
 pub mod ir;
@@ -20,6 +22,10 @@ pub use app_core::{
 };
 pub use auth::{SignedHeaders, ZoneAuth, ZoneAuthError};
 pub use config::{wifi_password, wifi_ssid, zone_private_key_b64, DeviceConfig};
+pub use debug::{
+    hat_named_pins, parse_debug_line, write_err, write_gpio_read, write_gpio_set, write_help,
+    write_ir_edge, write_ok, write_pins, DebugCommand, NamedPin,
+};
 pub use hardware::{Esp32s3Pins, HardwareError, IrEdge, ThermoHardware};
 pub use health::{build_healthz_body, Esp32s3RuntimeStatus, HealthQueues, LogStorage, RollingLog};
 pub use ir::{

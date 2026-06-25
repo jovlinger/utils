@@ -30,3 +30,4 @@ def test_zone_logs_html_renders_selected_zone_tail() -> None:
     assert "action taken" in rendered
     assert "command stale" in rendered
     assert "wrong zone" not in rendered
+    assert "<details" not in rendered

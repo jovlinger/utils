@@ -21,34 +21,37 @@
     font-size: 1.1rem; padding: 0.35rem 0.75rem; border: 2px outset #ccc;
     background: #eee; color: inherit; text-decoration: none; display: inline-block;
   }
+  details.log-more { margin: 0.35rem 0; }
+  details.log-more summary { cursor: pointer; }
 </style>
 </head>
 <body>
 <h1>Thermo</h1>
 $diagnostics_export_section
 <p><b>Current time:</b> <code>$now_iso</code></p>
-<p><b>Environment</b></p>
+<p><b>Environment</b> (all zones)</p>
 <table class="env">
-<tr><th>Zone</th><th>Temp °C</th><th>Humidity %</th><th>Time</th><th>Hardware</th><th>Git</th></tr>
+<tr><th>Zone</th><th>Temp &deg;C</th><th>Humidity %</th><th>Time</th><th>Hardware</th><th>Git</th></tr>
 $env_table_rows
 </table>
-<p><b>Zone deployment</b></p>
-<div class="loglines">$zone_deployment</div>
-<p><b>State (summary):</b> $state_summary</p>
-<p><b>State (full JSON):</b></p>
-<pre>$state_json_pretty</pre>
-<p><b>Zone logs</b></p>
-<div class="loglines">$zone_logs</div>
-<p>$msg</p>
-<hr>
-<p><b>Help</b></p>
-<p>$help_msg</p>
-<p><b>About</b></p>
-<p>$about_msg</p>
 <form method="post" action="/">
-  <div class="setting"><label>Zone <select name="ui_zone">$zone_options</select></label></div>
+  <div class="setting">
+    <label>View zone
+      <select name="ui_zone" onchange="if(this.value){window.location.href='/?zone='+encodeURIComponent(this.value);}">$zone_options</select>
+    </label>
+    <a class="refresh-link" href="$refresh_href">Refresh</a>
+  </div>
+  $zone_deployment_section
+  <p><b>State (summary)</b> -- zone <code>$selected_zone</code>: $state_summary</p>
+  <p><b>State (full JSON)</b> -- zone <code>$selected_zone</code>:</p>
+  <pre>$state_json_pretty</pre>
+  <p><b>Zone logs</b> -- onboard Pi, zone <code>$selected_zone</code></p>
+  <div class="loglines">$zone_logs</div>
+  <p>$msg</p>
+  <hr>
+  <p><b>Controls</b> -- zone <code>$selected_zone</code></p>
   <div class="setting"><label>Mode <select name="mode">$mode_options</select></label></div>
-  <div class="setting"><label>Temp °C <input type="text" name="temp_c" value="$temp_c" size="5" inputmode="decimal" pattern="[0-9.]*" title="18–32°C" autocomplete="off"></label></div>
+  <div class="setting"><label>Temp &deg;C <input type="text" name="temp_c" value="$temp_c" size="5" inputmode="decimal" pattern="[0-9.]*" title="18-32C" autocomplete="off"></label></div>
   <div class="setting"><label>Fan <select name="fan">$fan_options</select></label></div>
   <div class="setting">
     <label>Swing <input type="checkbox" name="swing" $swing_checked></label>
@@ -61,11 +64,15 @@ $env_table_rows
   <div class="thermo-actions">
     <button type="submit" name="thermo_action" value="power_on">Power on</button>
     <button type="submit" name="thermo_action" value="power_off">Power off</button>
-    <a class="refresh-link" href="$refresh_href">Refresh</a>
   </div>
 </form>
 <hr>
-<p><b>Logs</b></p>
+<p><b>Help</b></p>
+<p>$help_msg</p>
+<p><b>About</b></p>
+<p>$about_msg</p>
+<hr>
+<p><b>$server_logs_label</b></p>
 <div class="loglines">$logs</div>
 
 $manage_section

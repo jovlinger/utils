@@ -11,7 +11,7 @@ use embassy_executor::Spawner;
 use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, DhcpConfig, Stack, StackResources};
-use embassy_rp::gpio::{Level, Output, OutputOpenDrain};
+use embassy_rp::gpio::{AnyPin, Bank, Flex, Input, Level, Output, OutputOpenDrain, Pull};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbInterruptHandler};
@@ -27,12 +27,14 @@ use panic_halt as _;
 use static_cell::StaticCell;
 use thermo_pico2w::{
     build_sensor_post_body, command_is_new, extract_command_created_dt, extract_command_json,
-    for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frames, parse_heatpump_command,
-    parse_server_time_utc_epoch, pattern_for_event, read_sensors_or_fallback, wifi_password,
-    wifi_ssid, zone_private_key_b64, AccurateSensor, Aht20, DeviceConfig, MideaClassicFrames,
-    RollingLog, SensorSource, SoftI2c, StatusEvent, ZoneAuth, MIDEA_GAP_US, MIDEA_PULSE_US,
-    MIDEA_SPACE_ONE_US, MIDEA_SPACE_ZERO_US, MIDEA_START_PULSE_US, MIDEA_START_SPACE_US,
-    PICO2W_AHT20_SCL_GPIO, PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO, PICO2W_IR_TX_GPIO,
+    for_each_raw_ir_duration, is_raw_ir_command, midea_classic_frames, parse_debug_line,
+    parse_heatpump_command, parse_server_time_utc_epoch, pattern_for_event, read_sensors_or_fallback,
+    wifi_password, wifi_ssid, zone_private_key_b64, write_err, write_gpio_read, write_gpio_set,
+    write_help, write_ir_edge, write_ok, write_pins, AccurateSensor, Aht20, DebugCommand,
+    DeviceConfig, MideaClassicFrames, RollingLog, SensorSource, SoftI2c, StatusEvent, ZoneAuth,
+    MIDEA_GAP_US, MIDEA_PULSE_US, MIDEA_SPACE_ONE_US, MIDEA_SPACE_ZERO_US, MIDEA_START_PULSE_US,
+    MIDEA_START_SPACE_US, PICO2W_AHT20_SCL_GPIO, PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO,
+    PICO2W_IR_TX_GPIO,
 };
 
 type HealthMutex = Mutex<CriticalSectionRawMutex, RefCell<HealthState>>;
@@ -113,15 +115,31 @@ async fn usb_device_task(mut usb: UsbDevice<'static, UsbDriver<'static, USB>>) -
 }
 
 #[embassy_executor::task]
-async fn usb_log_task(
+async fn usb_debug_task(
     mut class: CdcAcmClass<'static, UsbDriver<'static, USB>>,
+    config: DeviceConfig,
     health: &'static HealthMutex,
 ) -> ! {
     loop {
         class.wait_connection().await;
-        let _ = cdc_write_line(&mut class, "Thermo Pico2W USB debug log connected").await;
+        let _ = cdc_write_line(
+            &mut class,
+            "Thermo Pico2W USB debug connected (type help)",
+        )
+        .await;
+        let mut help_line: String<512> = String::new();
+        let _ = write_help(&mut help_line);
+        for line in help_line.as_str().lines() {
+            if cdc_write_line(&mut class, line).await.is_err() {
+                break;
+            }
+        }
         let mut last_latest = "";
+        let mut line_buf: String<128> = String::new();
+        let mut ir_promisc: Option<IrPromiscState> = None;
         loop {
+            poll_ir_promisc_edges(&mut class, &mut ir_promisc).await;
+
             let latest = latest_health_log(health);
             if !latest.is_empty() && latest != last_latest {
                 if write_health_log_snapshot(&mut class, health).await.is_err() {
@@ -129,20 +147,157 @@ async fn usb_log_task(
                 }
                 last_latest = latest;
             }
-            Timer::after(Duration::from_millis(500)).await;
+
+            let mut packet = [0u8; 64];
+            match embassy_time::with_timeout(
+                Duration::from_millis(100),
+                class.read_packet(&mut packet),
+            )
+            .await
+            {
+                Ok(Ok(count)) => {
+                    for byte in &packet[..count] {
+                        if *byte == b'\n' || *byte == b'\r' {
+                            if !line_buf.is_empty() {
+                                if handle_debug_command(
+                                    &mut class,
+                                    config,
+                                    line_buf.as_str(),
+                                    &mut ir_promisc,
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                                line_buf.clear();
+                            }
+                        } else if byte.is_ascii() && line_buf.len() < line_buf.capacity() - 1 {
+                            let _ = line_buf.push(*byte as char);
+                        }
+                    }
+                }
+                Ok(Err(_)) | Err(_) => {}
+            }
         }
     }
+}
+
+struct IrPromiscState {
+    input: Input<'static>,
+    last_level: bool,
+}
+
+fn debug_pin_bank(gpio: u8) -> Result<u8, &'static str> {
+    if gpio > 29 {
+        return Err("gpio must be 0-29");
+    }
+    Ok((Bank::Bank0 as u8) * 128 + gpio)
+}
+
+fn debug_gpio_set(gpio: u8, high: bool) -> Result<(), &'static str> {
+    let bank = debug_pin_bank(gpio)?;
+    let any = unsafe { AnyPin::steal(bank) };
+    let mut flex = Flex::new(any);
+    flex.set_as_output();
+    if high {
+        flex.set_high();
+    } else {
+        flex.set_low();
+    }
+    Ok(())
+}
+
+fn debug_gpio_read(gpio: u8) -> Result<bool, &'static str> {
+    let bank = debug_pin_bank(gpio)?;
+    let any = unsafe { AnyPin::steal(bank) };
+    let mut flex = Flex::new(any);
+    flex.set_as_input();
+    flex.set_pull(Pull::None);
+    Ok(flex.is_high())
+}
+
+fn start_ir_promisc(
+    ir_rx_gpio: u8,
+    promisc: &mut Option<IrPromiscState>,
+) -> Result<(), &'static str> {
+    let bank = debug_pin_bank(ir_rx_gpio)?;
+    let any = unsafe { AnyPin::steal(bank) };
+    let input = Input::new(any, Pull::Down);
+    let last_level = input.is_high();
+    *promisc = Some(IrPromiscState { input, last_level });
+    Ok(())
+}
+
+async fn poll_ir_promisc_edges(
+    class: &mut CdcAcmClass<'static, UsbDriver<'static, USB>>,
+    promisc: &mut Option<IrPromiscState>,
+) {
+    let Some(state) = promisc.as_mut() else {
+        return;
+    };
+    let high = state.input.is_high();
+    if high == state.last_level {
+        return;
+    }
+    state.last_level = high;
+    let mut line: String<64> = String::new();
+    let _ = write_ir_edge(&mut line, Instant::now().as_micros(), high);
+    let _ = cdc_write_line(class, line.trim_end()).await;
+}
+
+async fn handle_debug_command(
+    class: &mut CdcAcmClass<'static, UsbDriver<'static, USB>>,
+    config: DeviceConfig,
+    line: &str,
+    ir_promisc: &mut Option<IrPromiscState>,
+) -> Result<(), EndpointError> {
+    let mut response: String<256> = String::new();
+    match parse_debug_line(line) {
+        DebugCommand::Empty => return Ok(()),
+        DebugCommand::Help => {
+            let _ = write_help(&mut response);
+        }
+        DebugCommand::Pins => {
+            write_pins(&config, &mut response);
+        }
+        DebugCommand::GpioSet { pin, high } => match debug_gpio_set(pin, high) {
+            Ok(()) => write_gpio_set(&mut response, pin, high),
+            Err(message) => write_err(&mut response, message),
+        },
+        DebugCommand::GpioRead { pin } => match debug_gpio_read(pin) {
+            Ok(high) => write_gpio_read(&mut response, pin, high),
+            Err(message) => write_err(&mut response, message),
+        },
+        DebugCommand::IrPromisc { enable: true } => {
+            if start_ir_promisc(config.ir_rx_gpio, ir_promisc).is_ok() {
+                write_ok(&mut response, "ir promisc on");
+            } else {
+                write_err(&mut response, "ir promisc start failed");
+            }
+        }
+        DebugCommand::IrPromisc { enable: false } => {
+            *ir_promisc = None;
+            write_ok(&mut response, "ir promisc off");
+        }
+        DebugCommand::Unknown => write_err(&mut response, "unknown command (try help)"),
+    }
+    for chunk in response.as_str().lines() {
+        cdc_write_line(class, chunk).await?;
+    }
+    Ok(())
 }
 
 fn start_usb_debug(
     spawner: &Spawner,
     driver: UsbDriver<'static, USB>,
+    device_config: DeviceConfig,
     health: &'static HealthMutex,
 ) {
-    let mut config = UsbConfig::new(0xc0de, 0x0202);
-    config.manufacturer = Some("jovlinger");
-    config.product = Some("Thermo Pico2W Debug");
-    config.serial_number = Some("thermo-pico2w");
+    let mut usb_config = UsbConfig::new(0xc0de, 0x0202);
+    usb_config.manufacturer = Some("jovlinger");
+    usb_config.product = Some("Thermo Pico2W Debug");
+    usb_config.serial_number = Some("thermo-pico2w");
 
     static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
@@ -152,7 +307,7 @@ fn start_usb_debug(
 
     let mut builder = UsbBuilder::new(
         driver,
-        config,
+        usb_config,
         CONFIG_DESCRIPTOR.init([0; 256]),
         BOS_DESCRIPTOR.init([0; 256]),
         MSOS_DESCRIPTOR.init([0; 256]),
@@ -166,9 +321,9 @@ fn start_usb_debug(
         Ok(task) => spawner.spawn(task),
         Err(_) => health_log(health, "usb device task spawn failed"),
     }
-    match usb_log_task(class, health) {
+    match usb_debug_task(class, device_config, health) {
         Ok(task) => spawner.spawn(task),
-        Err(_) => health_log(health, "usb log task spawn failed"),
+        Err(_) => health_log(health, "usb debug task spawn failed"),
     }
     health_log(health, "usb debug serial started");
 }
@@ -258,8 +413,9 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     static HEALTH: StaticCell<HealthMutex> = StaticCell::new();
     let health = HEALTH.init(Mutex::new(RefCell::new(HealthState::new())));
+    let config = DeviceConfig::from_compile_env();
     health_log(health, "boot start");
-    start_usb_debug(&spawner, UsbDriver::new(p.USB, Irqs), health);
+    start_usb_debug(&spawner, UsbDriver::new(p.USB, Irqs), config, health);
 
     let fw = aligned_bytes!("../../cyw43-firmware/43439A0.bin");
     let clm = aligned_bytes!("../../cyw43-firmware/43439A0_clm.bin");
@@ -295,7 +451,6 @@ async fn main(spawner: Spawner) {
         .await;
 
     status(&mut control, StatusEvent::ReadingEnv).await;
-    let config = DeviceConfig::from_compile_env();
     let i2c = SoftI2c::new(
         OutputOpenDrain::new(p.PIN_28, Level::High),
         OutputOpenDrain::new(p.PIN_27, Level::High),

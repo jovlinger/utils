@@ -96,6 +96,27 @@ def _format_time(iso: Optional[str]) -> str:
         return ""
 
 
+_LOG_COLLAPSE_VISIBLE = 20
+
+
+def _collapsible_log_block(
+    lines_html: List[str], *, visible: int = _LOG_COLLAPSE_VISIBLE
+) -> str:
+    """Render log lines; hide lines after ``visible`` behind a ``<details>`` toggle."""
+    if not lines_html:
+        return ""
+    if len(lines_html) <= visible:
+        return "<br>".join(lines_html)
+    head = "<br>".join(lines_html[:visible])
+    tail = "<br>".join(lines_html[visible:])
+    hidden = len(lines_html) - visible
+    return (
+        f"{head}<br>"
+        f'<details class="log-more"><summary>{hidden} more lines</summary>'
+        f"{tail}</details>"
+    )
+
+
 def _format_log_line(line: str) -> str:
     m = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z?)\s*(.*)$", line)
     if m:
@@ -118,17 +139,20 @@ def _fetch_logs() -> str:
             za = d.get("zone_attempts") or []
             if za:
                 zlines: List[str] = []
-                for entry in za[-40:]:
+                for entry in za[-80:]:
                     if isinstance(entry, dict):
                         zlines.append(
                             f'{entry.get("ts", "")} {entry.get("outcome", "")} '
                             f'zone={entry.get("zone", "")} '
-                            f'{entry.get("path", "")} — {entry.get("detail", "")} '
+                            f'{entry.get("path", "")} - {entry.get("detail", "")} '
                             f'ip={entry.get("client_ip", "")} '
                             f'->{entry.get("status_code", "")}'
                         )
-                parts.append("<b>Zone POST /sensors (twoway)</b><br>")
-                parts.append("<br>".join(_format_log_line(ln) for ln in zlines))
+                zhtml = _collapsible_log_block(
+                    [_format_log_line(ln) for ln in zlines]
+                )
+                parts.append("<b>Zone POST /sensors (twoway, all zones)</b><br>")
+                parts.append(zhtml)
             logs = d.get("access_log") or []
             if logs:
                 lines: List[str] = []
@@ -140,8 +164,11 @@ def _fetch_logs() -> str:
                         )
                     else:
                         lines.append(str(entry))
-                parts.append("<br><b>HTTP access (memory)</b><br>")
-                parts.append("<br>".join(_format_log_line(ln) for ln in lines))
+                ahtml = _collapsible_log_block(
+                    [_format_log_line(ln) for ln in lines]
+                )
+                parts.append("<br><b>HTTP access (memory, all zones)</b><br>")
+                parts.append(ahtml)
             body = "<br>".join([summary] + parts) if parts else summary
             return body
         except Exception:
@@ -152,7 +179,9 @@ def _fetch_logs() -> str:
         lines_raw = d.get("lines", [])
         if not lines_raw:
             return ""
-        return "<br>".join(_format_log_line(ln) for ln in lines_raw)
+        return _collapsible_log_block(
+            [_format_log_line(ln) for ln in lines_raw]
+        )
     except Exception:
         return ""
 
@@ -430,7 +459,7 @@ def _zone_logs_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str
     ]
     if not rendered:
         return ""
-    return heading + "<br>".join(rendered)
+    return heading + _collapsible_log_block(rendered)
 
 
 def _zone_options_html(zones: List[str], selected: str) -> str:
@@ -506,14 +535,30 @@ def render_template(
     env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="6">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
     zone_logs_html = _zone_logs_html(ctx, sel_zone)
+    if not zone_logs_html.strip():
+        zone_logs_html = (
+            "<span><i>No onboard logs reported for this zone yet.</i></span>"
+        )
     zone_deployment_html = _zone_deployment_html(ctx, sel_zone)
+    sel_zone_esc = html.escape(sel_zone)
+    zone_deployment_section = ""
+    if zone_deployment_html.strip():
+        zone_deployment_section = (
+            f'<p><b>Zone deployment</b> -- zone <code>{sel_zone_esc}</code></p>'
+            f'<div class="loglines">{zone_deployment_html}</div>'
+        )
 
     if _ui_backend() == "dmz":
         manage_fragment = ""
+        server_logs_label = (
+            "DMZ logs -- HTTP access and zone POST attempts "
+            "(all zones, in-memory on DMZ)"
+        )
     else:
         manage_fragment = _MANAGE_SECTION_ONBOARD.replace(
             "$manage_status", html.escape(manage_status)
         ).replace("$manage_ui_zone", html.escape(sel_zone))
+        server_logs_label = "Onboard logs -- local process log tail"
 
     tpl = TEMPLATE_PATH.read_text()
     return (
@@ -521,12 +566,13 @@ def render_template(
         .replace("$diagnostics_export_section", diag_export_html)
         .replace("$env_table_rows", env_rows)
         .replace("$zone_options", zone_opts)
-        .replace("$selected_zone_value", html.escape(sel_zone))
+        .replace("$selected_zone", sel_zone_esc)
+        .replace("$zone_deployment_section", zone_deployment_section)
         .replace("$state_summary", state_summary)
         .replace("$msg", html.escape(msg))
         .replace("$logs", logs_html)
+        .replace("$server_logs_label", server_logs_label)
         .replace("$zone_logs", zone_logs_html)
-        .replace("$zone_deployment", zone_deployment_html)
         .replace("$help_msg", help_msg_html)
         .replace("$about_msg", about_msg_html)
         .replace("$state_json", state_json)

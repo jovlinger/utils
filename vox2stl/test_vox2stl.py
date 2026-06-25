@@ -188,6 +188,83 @@ def test_pad_and_hole_defaults() -> None:
     )
 
 
+def test_copper_pad_hole_oval_defaults() -> None:
+    from constants import (
+        DEFAULT_HOLE_OVAL_BAND_MM,
+        DEFAULT_HOLE_OVAL_MINOR_FRAC,
+        DEFAULT_HOLE_OVAL_Z_FRACS,
+    )
+
+    require(
+        abs(DEFAULT_HOLE_OVAL_MINOR_FRAC - 0.65) < 1e-9,
+        "oval pinch minor axis should be 65% of the full hole radius",
+    )
+    require(
+        DEFAULT_HOLE_OVAL_Z_FRACS == (0.25, 0.50, 0.75),
+        "oval pinch bands should sit at quarter trace heights",
+    )
+    require(
+        abs(DEFAULT_HOLE_OVAL_BAND_MM - 0.40) < 1e-9,
+        "oval pinch band should span about two 0.2 mm layers",
+    )
+
+
+def test_copper_pad_hole_oval_constrictions() -> None:
+    config = vox2stl.RenderConfig()
+    radius = vox2stl.hole_radius_for_pad("*", config)
+    void = vox2stl.copper_pad_hole_void(radius, config)
+    trace_height = config.trace_z1_mm - config.trace_z0_mm
+    minor_radius = radius * 0.65
+
+    z_between = config.trace_z0_mm + 0.10 * trace_height
+    rx, ry = vox2stl.cylinder_void_effective_radii(void, z_between)
+    require(
+        abs(rx - radius) < 1e-9 and abs(ry - radius) < 1e-9,
+        "copper pad hole should stay circular between oval pinch bands",
+    )
+
+    for z_frac in (0.25, 0.50, 0.75):
+        z_center = config.trace_z0_mm + z_frac * trace_height
+        rx, ry = vox2stl.cylinder_void_effective_radii(void, z_center)
+        require(
+            abs(rx - radius) < 1e-9 and abs(ry - minor_radius) < 1e-9,
+            f"oval pinch at {z_frac:.2f} trace height should keep major radius and shrink minor radius",
+        )
+        require(
+            vox2stl.cylinder_void_contains_point(void, radius, 0.0, z_center),
+            "major-axis edge should remain open at an oval pinch",
+        )
+        require(
+            not vox2stl.cylinder_void_contains_point(void, 0.0, minor_radius + 0.01, z_center),
+            "minor-axis edge should pinch at an oval band",
+        )
+        require(
+            vox2stl.cylinder_void_contains_point(void, 0.0, minor_radius - 0.01, z_center),
+            "points inside the oval pinch should stay void",
+        )
+
+
+def test_base_pad_hole_stays_cylindrical() -> None:
+    config = vox2stl.RenderConfig()
+    tris = vox2stl.render_base_tile("*", config)
+    z_levels = z_values(tris)
+    radius = vox2stl.hole_radius_for_pad("*", config)
+    z_mid = (config.base_z0_mm + config.base_z1_mm) * 0.5
+    require(
+        vox2stl.cylinder_void_contains_point(
+            vox2stl.CylindricalVoid(0.0, 0.0, radius, config.base_z0_mm, config.base_z1_mm),
+            radius - 0.01,
+            0.0,
+            z_mid,
+        ),
+        "base substrate holes should stay plain cylinders",
+    )
+    require(
+        round(config.base_z0_mm, 6) in z_levels and round(config.base_z1_mm, 6) in z_levels,
+        "base pad tile should still span the substrate thickness",
+    )
+
+
 def test_adjacent_pad_prisms_do_not_touch() -> None:
     config = vox2stl.RenderConfig()
     left = vox2stl.square_box(0.0, 0.0, config.device_pad_width_mm, config.trace_z0_mm, config.trace_z1_mm)

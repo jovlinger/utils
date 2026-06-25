@@ -45,8 +45,8 @@ alias G -> | = GND
 
 layer trace (7, 13, 24)
        .............
-GND    .*--┐.pu..... 3V3
-GPIO43 ....|edis┌-*. 3V3
+GND    .*--┐.up..... 3V3
+GPIO43 ....|side┌-*. 3V3
 GPIO44 ....|....|... RST
 GPIO1  ....└-┐┌-┘... GPIO4
 GPIO2  ......||..... GPIO5
@@ -59,14 +59,14 @@ GPIO37 ......||..... GPIO18
 GPIO36 .*---┐||..... GPIO8
 GPIO35 .*--OOOO..... GPIO3 AHT20 target .c7 = 3V3, .c6 = GND, .c5 = GPIO36 (SCL) .c4 = GPIO35 (SDA)
 GPIO0  ............. GPIO46
-GPIO45 .......t..... GPIO9
-GPIO48 .......h..... GPIO10
-GPIO47 ...... e..... GPIO11
-GPIO21 .......r..... GPIO12
-GPIO20 .......m..... GPIO13
-GPIO19 .......o..... GPIO14
-GND    .*........... 5V
-GND    .*....bsu..*. GND
+GPIO45 ...e...t..... GPIO9
+GPIO48 ...s...h..... GPIO10
+GPIO47 ...p.. e..... GPIO11
+GPIO21 ...3...r..... GPIO12
+GPIO20 ...2...m..... GPIO13
+GPIO19 ...s...o..... GPIO14
+GND    .*.3......... 5V
+GND    .*....usb..*. GND
        .............
 
 # scratch

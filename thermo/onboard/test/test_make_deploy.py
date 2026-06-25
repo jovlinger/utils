@@ -137,6 +137,7 @@ def _symlink_mock_bins(target_dir: Path, mpy: Path) -> None:
 
 
 _DEPLOY_EXPECTED_INVOCATIONS: Tuple[Tuple[str, ...], ...] = (
+    ("docker", "info"),
     ("git", "pull"),
     ("docker", "compose", "pull"),
     ("docker", "compose", "up", "-d"),

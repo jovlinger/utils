@@ -38,6 +38,21 @@ DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = 0.04
 # Subtractive mesh sampling pitch as a fraction of one grid cell.
 DEFAULT_GRID_FRAC = 0.04
 
+# Copper pad hole oval pinch: minor axis as a fraction of the full hole radius.
+DEFAULT_HOLE_OVAL_MINOR_FRAC = 0.65
+
+# Total Z thickness of each oval pinch band, in millimeters (~two 0.2 mm layers).
+DEFAULT_HOLE_OVAL_BAND_MM = 0.40
+
+# Trace-height fractions where copper pad holes pinch to an oval cross-section.
+DEFAULT_HOLE_OVAL_Z_FRACS: Tuple[float, ...] = (0.25, 0.50, 0.75)
+
+# Finer subtractive grid divisor used inside copper pad hole voids.
+HOLE_VOID_GRID_DIVISOR = 3
+
+# Bump when cached naive/ligature tile geometry changes.
+TILE_CACHE_GEOMETRY_REVISION = 3
+
 # Embossed label inset from tile edges, in cell fractions.
 DEFAULT_LABEL_RECESS_FRAC = 0.04
 

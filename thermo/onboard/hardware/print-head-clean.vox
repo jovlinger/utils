@@ -1,0 +1,13 @@
+# Small 3x3 swatch for FDM print-head cleaning / purge lines.
+# UNIT_MM=2.54
+# Legend: X=solid substrate, *=pin pad, O=leg pad, .=empty trace cell.
+
+layer base (0, 3, 3)
+X*O
+*X*
+O*X
+
+layer trace (0, 3, 3)
+.*O
+*.*
+O*.

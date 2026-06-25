@@ -1,11 +1,21 @@
 # Thermo onboard: shared build/test and per-zone deploy under zones/.
-.PHONY: all build clean test test-local test-docker images deploy deploy-preflight deploy-zone ci
+.PHONY: all build clean test test-local test-docker images deploy deploy-preflight deploy-zone ci \
+	docker-testing-clean docker-old-clean docker-clean docker-all-clean
 
 ONBOARD_ROOT := $(abspath $(CURDIR))
 THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
 REPO_ROOT := $(abspath $(THERMO_ROOT)/..)
+UTILS_ROOT := $(REPO_ROOT)
 HARDWARE_BACKENDS := pizero2w pico2w esp32s3
 ZONES := kitchen office bedroom
+
+include $(ONBOARD_ROOT)/mk/deploy.mk
+
+# Images built under hardware/pizero2w/; stamps live at onboard root.
+DOCKER_CLEAN_REPOS := ghcr.io/jovlinger/thermo-onboard-app ghcr.io/jovlinger/thermo-onboard-twoway
+DOCKER_CLEAN_MARKERS := .image.app .image.twoway
+DOCKER_CLEAN_STAGING_DIRS := .docker-import
+include $(UTILS_ROOT)/lib/docker-clean.mk
 
 all: build
 
@@ -31,7 +41,7 @@ images:
 		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" images || exit $$?; \
 	done
 
-test-docker: images
+test-docker: assert_docker_up images
 
 # Called from zones/<zone>/Makefile (see mk/zone.mk).
 DEPLOY_REPO ?=
@@ -43,7 +53,7 @@ deploy-preflight:
 		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
 		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh" --preflight
 
-deploy-zone:
+deploy-zone: $(deploy_zone_docker_prereq)
 	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-zone: THERMO_ENV_FILE not set"; exit 1; }
 	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-zone: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
 	REPO_PATH="$(if $(DEPLOY_REPO),$(DEPLOY_REPO),$(REPO_ROOT))" \

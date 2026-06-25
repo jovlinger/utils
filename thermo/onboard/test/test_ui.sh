@@ -51,7 +51,7 @@ echo "$GET_OUT" | grep -q '<form method="post"' || { echo "FAIL: GET missing for
 echo "$GET_OUT" | grep -q 'Environment' || { echo "FAIL: GET missing Environment"; exit 1; }
 echo "$GET_OUT" | grep -q '<table class="env"' || { echo "FAIL: GET missing environment table"; exit 1; }
 echo "$GET_OUT" | grep -q 'Current time:' || { echo "FAIL: GET missing Current time"; exit 1; }
-echo "$GET_OUT" | grep -q 'State (full JSON):' || { echo "FAIL: GET missing State full JSON"; exit 1; }
+echo "$GET_OUT" | grep -q 'State (full JSON)</b>' || { echo "FAIL: GET missing State full JSON"; exit 1; }
 echo "$GET_OUT" | grep -q 'Power on' || { echo "FAIL: GET missing Power on button"; exit 1; }
 echo "$GET_OUT" | grep -q 'Power off' || { echo "FAIL: GET missing Power off button"; exit 1; }
 echo "$GET_OUT" | grep -q 'Refresh' || { echo "FAIL: GET missing Refresh link"; exit 1; }
@@ -69,7 +69,7 @@ echo "$POST2_OUT" | grep -q '18.5' || { echo "FAIL: POST response missing refres
 echo "$POST2_OUT" | grep -q '62' || { echo "FAIL: POST response missing refreshed humidity 62"; echo "$POST2_OUT" | head -5; exit 1; }
 
 # Logs section: must show entries (bold datetime, one per line). Verifies log feature works.
-echo "$POST2_OUT" | grep -q '<b>Logs</b>' || { echo "FAIL: Logs section missing"; exit 1; }
+echo "$POST2_OUT" | grep -q '<b>Onboard logs' || { echo "FAIL: Logs section missing"; exit 1; }
 echo "$POST2_OUT" | grep -qE '<b>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' || { echo "FAIL: Logs section empty or malformed (expected bold datetime)"; exit 1; }
 
 echo "PASS: UI GET and POST OK"

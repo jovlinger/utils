@@ -48,6 +48,21 @@ advertises as `Thermo Pico2W Debug` and prints the rolling health log, including
 early messages such as `wifi join start`, `wifi join failed`, `wifi wait dhcp`,
 and `wifi and dhcp ready`.
 
+Interactive hardware debug commands are available on the same serial port (type
+`help`):
+
+```text
+help
+pins
+gpio set <pin> hi|lo
+gpio read <pin>
+ir promisc on|off
+```
+
+For HAT continuity, short a net to 3V3 (for example AHT20 SCL), then
+`gpio read <pin>`. For IR receive testing, run `ir promisc on` and stream edge
+lines while triggering IR TX.
+
 Once serial shows `wifi and dhcp ready`, then verify the network path:
 
 ```bash

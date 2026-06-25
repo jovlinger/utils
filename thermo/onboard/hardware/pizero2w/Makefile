@@ -1,8 +1,10 @@
 # Build and push Pi Zero 2 W thermo-onboard images to GHCR.
 # Default target platform is 32-bit Raspberry Pi OS on Pi Zero 2 W.
-.PHONY: all build test images push push_images pull clean
+.PHONY: all build test images push push_images pull clean assert_docker_up
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
+
+include $(abspath $(ONBOARD_ROOT)/../../lib/assert-docker.mk)
 
 IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
 IMAGE_TWOWAY := ghcr.io/jovlinger/thermo-onboard-twoway
@@ -35,13 +37,13 @@ build: $(APP_MARKER) $(TWOWAY_MARKER)
 test:
 	@echo "[pizero2w] image build only; Python tests: make -C $(ONBOARD_ROOT) test"
 
-$(APP_MARKER): Dockerfile.onboard $(ONBOARD_ROOT)/requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(UI_SRC)
+$(APP_MARKER): assert_docker_up Dockerfile.onboard $(ONBOARD_ROOT)/requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(UI_SRC)
 	"$(CURDIR)/stage-docker-import.sh"
 	@echo "[build] $(IMAGE_APP):$(TAG) platform=$(PLATFORM) (this may take several minutes)..."
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f "$(CURDIR)/Dockerfile.onboard" -t $(IMAGE_APP):$(TAG) --load "$(ONBOARD_ROOT)"
 	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > "$@"
 
-$(TWOWAY_MARKER): Dockerfile.twoway $(ONBOARD_ROOT)/requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(ONBOARD_ROOT)/common/twoway.py $(ONBOARD_ROOT)/common/logging_config.py $(ONBOARD_ROOT)/common/zone_auth.py connectivity_watchdog.py $(PY_SRC)
+$(TWOWAY_MARKER): assert_docker_up Dockerfile.twoway $(ONBOARD_ROOT)/requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(ONBOARD_ROOT)/common/twoway.py $(ONBOARD_ROOT)/common/logging_config.py $(ONBOARD_ROOT)/common/zone_auth.py connectivity_watchdog.py $(PY_SRC)
 	"$(CURDIR)/stage-docker-import.sh"
 	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
 	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f "$(CURDIR)/Dockerfile.twoway" -t $(IMAGE_TWOWAY):$(TAG) --load "$(ONBOARD_ROOT)"

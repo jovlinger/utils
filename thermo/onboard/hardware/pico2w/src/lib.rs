@@ -3,6 +3,7 @@
 pub mod aht20;
 pub mod auth;
 pub mod config;
+pub mod debug;
 pub mod health;
 pub mod ir;
 pub mod led;
@@ -16,6 +17,10 @@ pub use auth::{SignedHeaders, ZoneAuth, ZoneAuthError};
 pub use config::{
     wifi_password, wifi_ssid, zone_private_key_b64, DeviceConfig, PICO2W_AHT20_SCL_GPIO,
     PICO2W_AHT20_SDA_GPIO, PICO2W_IR_RX_GPIO, PICO2W_IR_TX_GPIO,
+};
+pub use debug::{
+    hat_named_pins, parse_debug_line, write_err, write_gpio_read, write_gpio_set, write_help,
+    write_ir_edge, write_ok, write_pins, DebugCommand, NamedPin,
 };
 pub use health::{PicoHealth, RollingLog};
 pub use ir::{

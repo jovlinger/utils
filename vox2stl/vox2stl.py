@@ -37,6 +37,11 @@ from constants import (
     DEFAULT_DEVICE_PAD_WIDTH_MM,
     DEFAULT_GRID_MM,
     DEFAULT_GRID_FRAC,
+    DEFAULT_HOLE_OVAL_BAND_MM,
+    DEFAULT_HOLE_OVAL_MINOR_FRAC,
+    DEFAULT_HOLE_OVAL_Z_FRACS,
+    HOLE_VOID_GRID_DIVISOR,
+    TILE_CACHE_GEOMETRY_REVISION,
     DEFAULT_ISOL_LIG_FRAC,
     DEFAULT_ISOL_LIG_MM,
     DEFAULT_LABEL_BLUR_PASSES,
@@ -122,6 +127,9 @@ class CylindricalVoid:
     radius: float
     z0: float
     z1: float
+    oval_minor_frac: float = 1.0
+    oval_band_half_mm: float = 0.0
+    oval_z_fracs: Tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -383,6 +391,50 @@ def hole_radius_for_pad(char: str, config: RenderConfig) -> float:
     return diameter * 0.5
 
 
+def copper_pad_hole_void(
+    radius: float,
+    config: RenderConfig,
+    *,
+    x: float = 0.0,
+    y: float = 0.0,
+) -> CylindricalVoid:
+    return CylindricalVoid(
+        x,
+        y,
+        radius,
+        config.trace_z0_mm,
+        config.trace_z1_mm,
+        oval_minor_frac=DEFAULT_HOLE_OVAL_MINOR_FRAC,
+        oval_band_half_mm=DEFAULT_HOLE_OVAL_BAND_MM * 0.5,
+        oval_z_fracs=DEFAULT_HOLE_OVAL_Z_FRACS,
+    )
+
+
+def pad_hole_void_grid_mm(config: RenderConfig) -> float:
+    return config.grid_mm / HOLE_VOID_GRID_DIVISOR
+
+
+def void_has_oval_bands(void: CylindricalVoid) -> bool:
+    return (
+        void.oval_minor_frac < 1.0
+        and void.oval_band_half_mm > 0.0
+        and bool(void.oval_z_fracs)
+    )
+
+
+def cylinder_void_effective_radii(void: CylindricalVoid, z: float) -> Tuple[float, float]:
+    major_radius = void.radius
+    if not void_has_oval_bands(void):
+        return major_radius, major_radius
+    minor_radius = major_radius * void.oval_minor_frac
+    trace_height = void.z1 - void.z0
+    for z_frac in void.oval_z_fracs:
+        z_center = void.z0 + z_frac * trace_height
+        if abs(z - z_center) <= void.oval_band_half_mm:
+            return major_radius, minor_radius
+    return major_radius, major_radius
+
+
 def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxSolid:
     half = width * 0.5
     return BoxSolid(cx - half, cy - half, cx + half, cy + half, z0, z1)
@@ -601,6 +653,7 @@ def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
         round(config.label_recess_mm, 9),
         round(config.label_height_mm, 9),
         float(config.include_pads),
+        float(TILE_CACHE_GEOMETRY_REVISION),
     )
 
 
@@ -762,8 +815,8 @@ def render_naive_tile(char: str, config: RenderConfig) -> List[Tri]:
         if not config.include_pads:
             return []
         boxes = [square_box(0.0, 0.0, pad_width(char, config), config.trace_z0_mm, config.trace_z1_mm)]
-        voids = [CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.trace_z0_mm, config.trace_z1_mm)]
-        return mesh_from_boxes_and_voids(boxes, [], voids, config.grid_mm).triangles
+        voids = [copper_pad_hole_void(hole_radius_for_pad(char, config), config)]
+        return mesh_from_boxes_and_voids(boxes, [], voids, pad_hole_void_grid_mm(config)).triangles
     if char in ARMS_BY_CHAR:
         boxes = [square_box(0.0, 0.0, trace_width(config), config.trace_z0_mm, config.trace_z1_mm)]
         return mesh_from_boxes_and_voids(boxes, [], [], config.grid_mm).triangles
@@ -799,9 +852,13 @@ def render_ligature_tile(key: LigatureKey, config: RenderConfig) -> List[Tri]:
             )
     cylinder_voids: List[CylindricalVoid] = []
     if char in PAD_CHARS:
-        cylinder_voids.append(
-            CylindricalVoid(0.0, 0.0, hole_radius_for_pad(char, config), config.trace_z0_mm, config.trace_z1_mm)
-        )
+        cylinder_voids.append(copper_pad_hole_void(hole_radius_for_pad(char, config), config))
+        return mesh_from_boxes_and_voids(
+            additive_boxes,
+            rect_voids,
+            cylinder_voids,
+            pad_hole_void_grid_mm(config),
+        ).triangles
     return mesh_from_boxes_and_voids(additive_boxes, rect_voids, cylinder_voids, config.grid_mm).triangles
 
 
@@ -998,6 +1055,10 @@ def grid_coords_for_solids(
     for void in cylinder_voids:
         x_coords.extend([void.x - void.radius, void.x, void.x + void.radius])
         y_coords.extend([void.y - void.radius, void.y, void.y + void.radius])
+        if void_has_oval_bands(void):
+            minor_radius = void.radius * void.oval_minor_frac
+            x_coords.extend([void.x - minor_radius, void.x + minor_radius])
+            y_coords.extend([void.y - minor_radius, void.y + minor_radius])
     return sorted_unique_coords(x_coords), sorted_unique_coords(y_coords)
 
 
@@ -1011,6 +1072,17 @@ def z_levels_for_solids(
         levels.extend([box.z0, box.z1])
     for void in cylinder_voids:
         levels.extend([void.z0, void.z1])
+        if void_has_oval_bands(void):
+            trace_height = void.z1 - void.z0
+            for z_frac in void.oval_z_fracs:
+                z_center = void.z0 + z_frac * trace_height
+                levels.extend(
+                    [
+                        z_center - void.oval_band_half_mm,
+                        z_center,
+                        z_center + void.oval_band_half_mm,
+                    ]
+                )
     return sorted_unique_coords(levels)
 
 
@@ -1021,9 +1093,10 @@ def box_contains_point(box: BoxSolid, x: float, y: float, z: float) -> bool:
 def cylinder_void_contains_point(void: CylindricalVoid, x: float, y: float, z: float) -> bool:
     if z < void.z0 or z > void.z1:
         return False
-    dx = x - void.x
-    dy = y - void.y
-    return dx * dx + dy * dy <= void.radius * void.radius
+    radius_x, radius_y = cylinder_void_effective_radii(void, z)
+    dx = (x - void.x) / radius_x
+    dy = (y - void.y) / radius_y
+    return dx * dx + dy * dy <= 1.0
 
 
 def point_is_solid(
