@@ -2,24 +2,8 @@
 # Launcher for importtags (same venv / PYTHONPATH pattern as ./shadup).
 set -eu
 
-SELF="$0"
-case "$SELF" in
-  */*) ;;
-  *) SELF="$(command -v "$SELF")" ;;
-esac
-SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
-CMD_NAME="$(basename "$0")"
-VENV_DIR="$SCRIPT_DIR/.venv"
-
-if [ -f "$VENV_DIR/bin/activate" ]; then
-  . "$VENV_DIR/bin/activate"
-else
-  echo "No local venv found at $VENV_DIR." >&2
-  echo "Run: $SCRIPT_DIR/setup-venv.sh" >&2
-  exit 1
-fi
-
-PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-export PYTHONPATH
+SHADUP_LAUNCHER="$0"
+# shellcheck disable=SC1091
+. "$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$SHADUP_LAUNCHER")")" && pwd)/resolve-venv.sh"
 
 exec python3 -m importtags "$@"

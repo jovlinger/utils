@@ -24,7 +24,7 @@ DST_RUN := $(CURDIR)/run-with-stdout-logged.py
 DST_MOCK := $(CURDIR)/mock_cmd.py
 VERSION := $(CURDIR)/VERSION
 
-.PHONY: all
+.PHONY: all binlinks
 all:
 	@test -f "$(SRC_RUN)" || (echo "bin: missing $(SRC_RUN)" >&2; echo "  Clone bin next to utils or: make BIN_REPO=/path/to/bin all" >&2; exit 1)
 	@test -f "$(SRC_MOCK)" || (echo "bin: missing $(SRC_MOCK)" >&2; echo "  Clone bin next to utils or: make BIN_REPO=/path/to/bin all" >&2; exit 1)
@@ -34,3 +34,6 @@ all:
 	@echo "Updated $(DST_RUN) <- $(SRC_RUN)"
 	@echo "Updated $(DST_MOCK) <- $(SRC_MOCK)"
 	@echo "Recorded $(VERSION) $$(cat $(VERSION))"
+
+binlinks:
+	@:

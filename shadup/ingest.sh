@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Ingest files/dirs into hash-backed store with automatic rw/ro remount.
-# 
 #
-# Usage:
-#   ./ingest.sh public/albumdir1 public/albumdir2 ...
-#   ./ingest.sh public/albumdir*          # shell glob; one arg per album
+# Blessed entry point on PATH (utils/binlinks via initcommon):
+#   ingest public/albumdir1 public/albumdir2 ...
+#   ingest public/albumdir*               # shell glob; one arg per album
 #
-# Remounting the store filesystem uses sudo mount only when you are not root
-# (see bin/with-ro-remounted-rw.sh, on PATH as with-ro-remounted-rw). The ingest
-# Python process runs as your user.
+# Do not run ingest.py directly on /mnt/sdb2 — fstab mounts that filesystem ro;
+# this script wraps with-ro-remounted-rw so payloads can be written under data/.
+# Remounting uses sudo mount only when you are not root; ingest Python runs as
+# your user and preflights files/ + data/ writability before touching sources.
 #
 # Each directory arg's basename becomes the dest_prefix under files/,
 # so  public/MyAlbum  →  files/MyAlbum/<track>  (symlink to data/<shard>/<sha>).
@@ -29,7 +29,7 @@
 
 set -Eeuo pipefail
 
-# Real utils/shadup directory (resolves e.g. ~/ingest.sh → .../utils/shadup/ingest.sh).
+# Real utils/shadup directory (resolves via utils/binlinks/ingest → .../shadup/ingest.sh).
 SHADUP_DIR="$(CDPATH= cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 UTILS_ROOT="$(cd "$SHADUP_DIR/.." && pwd)"
 INGEST_PY="$SHADUP_DIR/ingest.py"
@@ -45,7 +45,7 @@ err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
 
 # ingest.py runs shadup.py with sys.executable, so we must exec the venv interpreter
 # by path — not `python` on PATH. The remount wrapper runs "$@" without sudo.
-# The ./shadup → pylauncher symlink is for CLI shadup.py only.
+# The ./shadup launcher is for CLI shadup.py only.
 SHADUP_VENV=""
 if [ -f "$SHADUP_DIR/env/bin/activate" ]; then
   SHADUP_VENV="$SHADUP_DIR/env"

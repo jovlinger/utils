@@ -27,27 +27,40 @@ NOTAGS_DIR_NAME = "NOTAGS"
 _TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
 
 
-def tag_mirror_dir_name(tag: str) -> str:
-    """Map a logical DB tag to one directory name under ``files/_tags/``.
+def _sanitize_tag_mirror_segment(part: str) -> str:
+    """Sanitize one path segment under ``files/_tags/`` (Windows-safe)."""
+    chars: list[str] = []
+    for ch in part:
+        if ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
+            chars.append("_")
+        else:
+            chars.append(ch)
+    s = "".join(chars).rstrip(" .")
+    if part and (part[-1] in _TAG_MIRROR_BAD_CHARS or ord(part[-1]) < 32):
+        s = s.rstrip("_")
+    return s if s else "_empty_tag"
 
-    Mirrors must work on Windows and typical POSIX layouts. A legacy synthetic
-    tag like ``artist:Depeche Mode`` becomes ``artist;Depeche Mode``, matching
-    ``importtags.build_tags_from_export``. Other Windows-forbidden segment
-    characters become ``_``; ASCII control characters become ``_``. Trailing
-    spaces and periods are stripped (Windows).
+
+def tag_mirror_relpath(tag: str) -> tuple[str, ...]:
+    """Map a logical DB tag to path segments under ``files/_tags/``.
+
+    Namespaced tags split on the first ``;`` or legacy ``:`` (e.g.
+    ``artist;beck`` → ``("artist", "beck")``). Unqualified tags are a single
+    segment (e.g. ``"x"`` → ``("x",)``). :data:`NOTAGS_DIR_NAME` is one segment.
     """
     if tag == NOTAGS_DIR_NAME:
-        return tag
-    parts: list[str] = []
-    for ch in tag:
-        if ch == ":":
-            parts.append(";")
-        elif ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
-            parts.append("_")
-        else:
-            parts.append(ch)
-    s = "".join(parts).rstrip(" .")
-    return s if s else "_empty_tag"
+        return (NOTAGS_DIR_NAME,)
+    sep = -1
+    for i, ch in enumerate(tag):
+        if ch in (";", ":"):
+            sep = i
+            break
+    if sep >= 0:
+        return (
+            _sanitize_tag_mirror_segment(tag[:sep]),
+            _sanitize_tag_mirror_segment(tag[sep + 1 :]),
+        )
+    return (_sanitize_tag_mirror_segment(tag),)
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
 
@@ -457,7 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-extracted-tags",
         help=(
             "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
-            "(per-tag folder names are sanitized for the filesystem; see tag_mirror_dir_name)"
+            "(namespaced tags become subdirs; see tag_mirror_relpath)"
         ),
     )
 
@@ -1200,7 +1213,7 @@ def handle_ls_alltags(
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_tags`` with flat per-tag symlinks.
+    """Rebuild ``files/_tags`` with namespaced per-tag symlinks.
 
     Two passes:
 
@@ -1208,8 +1221,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
        unioning each file's DB tags into its directory and propagating to
        ancestors.
     2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag_mirror_dir_name(tag)>/<basename[(n)]>`` →
-       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_dir_name`).
+       ``files/_tags/<tag_mirror_relpath(tag)>/<basename[(n)]>`` →
+       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_relpath`).
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1231,8 +1244,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
 
     for tag, name, dir_key in rows:
-        tag_dir = tag_mirror_dir_name(tag)
-        link = os.path.join(files_root, "_tags", tag_dir, name)
+        tag_parts = tag_mirror_relpath(tag)
+        link = os.path.join(files_root, "_tags", *tag_parts, name)
         target = os.path.join(files_root, *dir_key.split("/"))
         parent = os.path.dirname(link)
         os.makedirs(parent, exist_ok=True)
@@ -1240,6 +1253,7 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
             os.unlink(link)
         rel_target = os.path.relpath(target, parent)
         os.symlink(rel_target, link)
+        tag_dir = "/".join(tag_parts)
         out(
             "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
             2,

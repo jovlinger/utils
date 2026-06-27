@@ -12,7 +12,7 @@ DMZ_PIP_PREREQ := $(wildcard dmz/requirements*.txt)
 ONBOARD_PIP_PREREQ := $(wildcard onboard/requirements*.txt)
 TEST_PIP_PREREQ := $(wildcard test/requirements*.txt)
 
-.PHONY: test test-local test-docker thermo-envs test-local-only test-docker-only
+.PHONY: test test-local test-docker thermo-envs test-local-only test-docker-only binlinks
 
 thermo-envs: dmz/env/.thermo-pip-stamp onboard/env/.thermo-pip-stamp test/env/.thermo-pip-stamp
 
@@ -46,3 +46,6 @@ test-docker: thermo-envs test-docker-only
 test: thermo-envs
 	$(MAKE) test-local-only
 	$(MAKE) test-docker-only
+
+binlinks:
+	@:

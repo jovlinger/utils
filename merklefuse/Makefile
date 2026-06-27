@@ -1,4 +1,4 @@
-.PHONY: install test lint format clean help
+.PHONY: install test lint format clean help binlinks
 
 # Default target
 help:
@@ -50,3 +50,6 @@ mount:
 dev-setup: install
 	mkdir -p tests/unit tests/integration
 	mkdir -p merklefuse
+
+binlinks:
+	@:
