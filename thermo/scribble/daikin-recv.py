@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from typing import Any, Iterator, List, Optional, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "onboard"))
-from heatpumpirctl import State
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import State
+from common.heatpumpirctl import ARC452A9 as proto
 
 LIRC_RX: str = "/dev/lirc1"
 

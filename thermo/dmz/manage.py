@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env venv-run
 """
 CLI for the DMZ HTTP API (see app.py).
 
@@ -6,53 +6,66 @@ Uses DMZ_URL as the service base URL. Authenticates like onboard/twoway when
 ZONE_PRIVATE_KEY or ZONE_PRIVATE_KEY_PATH is set: Ed25519 request signing via
 zone_auth (same headers as POST /zone/<name>/sensors).
 
-For GET /zones and GET /debug/logs, signing uses ZONE_NAME in X-Zone-Name
-(see onboard run.sh / twoway).
+For GET /zones and GET /debug/logs, signing sends X-Zone-Name (defaults to
+``cli`` when ZONE_NAME is unset; the DMZ verifies one shared public key — the
+name is not used to pick a key). Zone-scoped commands use the zone from the
+CLI argument.
 
 Usage:
   DMZ_URL=http://host:5000   # or host:5000 (treated as http://…)
-  ZONE_NAME=myzone ZONE_PRIVATE_KEY_PATH=... \\
-    python manage.py <action> [args...]
+  ZONE_PRIVATE_KEY_PATH=... \\
+    manage <action> [args...]
+
+Optional: ZONE_NAME — only needed when it differs from the zone you pass on
+the command line (``command``/``sensors``/``updatezone``). Omit for ``zones``,
+``debug_logs``, and ``healthz``.
 
 Actions (first arg) map to app routes:
+  help                          — full documentation (this module docstring)
   login | authorize | logout     — GET OAuth helpers (browser-oriented)
   sensors <zone> [body...]       — POST /zone/<zone>/sensors
   command <zone> [body...]      — POST /zone/<zone>/command
+  rawir <zone> <file>           - POST raw IR sequence command from file
   zones                         — GET /zones
+  healthz                       — GET /ui/diagnostics (unsigned; uptime, config, access tail)
   debug_logs | logs             — GET /debug/logs
   test_reset [json]             — POST /test_reset (unsigned; testing only)
   updatezone <zone> key=val...  — GET /zones, merge key=val into command, POST command
-    (see onboard heatpumpirctl.State; run updatezone with no args for a full JSON example)
+    (see common.heatpumpirctl.State; run updatezone with no args for a full JSON example)
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. mode=HEAT temp_c=22 power=true).
 
-python manage.py zones
+manage zones
 One zone: dump current zone JSON (from GET /zones, then print that entry)
 
-python manage.py updatezone myzone
+manage updatezone myzone
 One zone: merge key=value into that zone’s command and POST
 
-python manage.py updatezone myzone power=true mode=HEAT half_c=45 fan=F4
+manage updatezone myzone power=true mode=HEAT half_c=45 fan=F4
 
 Direct POSTs (body is either key=value pairs or one JSON object string)
 
-python manage.py sensors myzone temp_centigrade=20.5
-python manage.py command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage sensors myzone temp_centigrade=20.5
+manage command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage rawir myzone capture-sequence.txt
 OAuth helpers (browser-oriented; no zone signing)
 
-python manage.py login
-python manage.py authorize
-python manage.py logout
+manage login
+manage authorize
+manage logout
 Debug logs
 
-python manage.py debug_logs
+manage healthz
+  DMZ_URL=http://your-host:5000 manage healthz
+manage debug_logs
 # same as:
-python manage.py logs
+manage logs
 Test reset (unsigned; testing)
 
-python manage.py test_reset
-For zones / debug_logs with a private key configured, manage.py requires ZONE_NAME for signing the GET; for updatezone, it uses ZONE_NAME if set, otherwise the zone name you pass.
+manage test_reset
+Machine auth: one Ed25519 keypair for the whole DMZ (``ZONE_PRIVATE_KEY`` or
+``ZONE_PRIVATE_KEY_PATH``). Zone-scoped actions take the zone name as a CLI arg.
 
 """
 
@@ -61,20 +74,24 @@ from __future__ import annotations
 import json
 import os
 import sys
+import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
-import requests
+# macOS system/LibreSSL Pythons trigger urllib3 v2 noise on import; harmless for this CLI.
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
+
+import requests  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-# Repo layout: thermo/dmz/manage.py → thermo/onboard/heatpumpirctl (State)
+# Repo layout: thermo/dmz/manage.py -> thermo/onboard/common/heatpumpirctl (State)
 _ONBOARD_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "onboard"))
 
-# When heatpumpirctl is not importable (e.g. DMZ Docker image has no onboard tree), help text
-# still matches State.to_json() for the same builder chain — keep in sync with onboard.
+# When common.heatpumpirctl is not importable, help text still matches
+# State.to_json() for the same builder chain. Keep in sync with onboard.
 _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "power": True,
     "mode": "HEAT",
@@ -90,10 +107,35 @@ _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "timer_off_minutes": 120,
 }
 
+RAW_IR_COMMAND_TYPE = "raw_ir_sequence"
+RAW_IR_DEFAULT_CARRIER_HZ = 38_000
+RAW_IR_MAX_SEQUENCE_LEN = 1024
+RAW_IR_MAX_DURATION_US = 1_250_000
+
 
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
     raise SystemExit(code)
+
+
+def _print_help() -> int:
+    print((__doc__ or "").strip())
+    return 0
+
+
+def _usage() -> int:
+    print(
+        "usage: manage "
+        "{help|login|authorize|logout|sensors|command|rawir|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
+        file=sys.stderr,
+    )
+    print(
+        "Set DMZ_URL to the DMZ base. Example:\n"
+        "  DMZ_URL=http://your-host:5000 manage healthz\n"
+        "Run manage help for full documentation.",
+        file=sys.stderr,
+    )
+    return 0
 
 
 def _dmz_base() -> str:
@@ -144,6 +186,129 @@ def _zone_name_default() -> str:
     return os.environ.get("ZONE_NAME", "").strip()
 
 
+def _sign_zone_name(explicit: str = "") -> str:
+    """Zone label for X-Zone-Name when signing (one DMZ pub key; name is not a key selector)."""
+    return explicit.strip() or _zone_name_default() or "cli"
+
+
+def _project_venv_python() -> Optional[str]:
+    """Preferred project venv interpreter (.venv, venv, then legacy env/)."""
+    for sub in (".venv", "venv", "env"):
+        py = os.path.join(SCRIPT_DIR, sub, "bin", "python")
+        if os.path.isfile(py):
+            return py
+    return None
+
+
+def _venv_chained_to_bin_venv(venv_python: str) -> bool:
+    """True when project .venv/bin/python resolves into jovlinger/bin/.venv."""
+    try:
+        resolved = os.path.realpath(venv_python)
+    except OSError:
+        return False
+    return f"{os.sep}bin{os.sep}.venv{os.sep}" in resolved
+
+
+def _warn_if_wrong_interpreter() -> None:
+    """Warn when manage.py runs under bin/.venv or a .venv chained to it."""
+    expected = _project_venv_python()
+    if not expected:
+        return
+    exe = os.path.realpath(sys.executable)
+    want = os.path.realpath(expected)
+    utils_root = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
+    create_pipenv = os.path.join(utils_root, "create_pipenv.sh")
+    activate = os.path.join(SCRIPT_DIR, ".venv", "bin", "activate")
+
+    if _venv_chained_to_bin_venv(expected):
+        print(
+            "warning: thermo/dmz/.venv is chained to bin/.venv "
+            f"({want}).\n"
+            "  It was likely created while bin/.venv was active.\n"
+            f"  deactivate\n"
+            f"  rm -rf {os.path.join(SCRIPT_DIR, '.venv')}\n"
+            f"  {create_pipenv} thermo/dmz\n"
+            f"  source {activate}",
+            file=sys.stderr,
+        )
+        return
+
+    if exe == want:
+        return
+    bin_marker = f"{os.sep}bin{os.sep}.venv{os.sep}"
+    if bin_marker in exe:
+        wrong = "bin/.venv is active — wrong tree for thermo/dmz"
+    else:
+        wrong = f"not {want}"
+    print(
+        f"warning: manage.py interpreter ({sys.executable}) is {wrong}.\n"
+        f"  deactivate   # if bin/.venv is active\n"
+        f"  source {activate}\n"
+        f"  # or create: {create_pipenv} thermo/dmz",
+        file=sys.stderr,
+    )
+
+
+def _cryptography_install_hint() -> str:
+    """How to install cryptography into thermo/dmz/.venv (not bin/.venv or system)."""
+    py = sys.executable
+    req = os.path.join(SCRIPT_DIR, "requirements.txt")
+    project_py = _project_venv_python()
+    venv_activate = (
+        os.path.join(os.path.dirname(project_py), "activate")
+        if project_py
+        else os.path.join(SCRIPT_DIR, ".venv", "bin", "activate")
+    )
+    utils_root = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
+    create_pipenv = os.path.join(utils_root, "create_pipenv.sh")
+    lines = [
+        "signing requires cryptography in thermo/dmz's project venv (.venv),",
+        "not bin/.venv and not a system-wide pip install.",
+        f"Current interpreter: {py}",
+        "",
+    ]
+    if project_py and _venv_chained_to_bin_venv(project_py):
+        lines.extend(
+            [
+                "thermo/dmz/.venv is chained to bin/.venv — recreate it:",
+                "  deactivate",
+                f"  rm -rf {os.path.join(SCRIPT_DIR, '.venv')}",
+                f"  {create_pipenv} thermo/dmz",
+                f"  source {venv_activate}",
+                "  manage ...",
+            ]
+        )
+        return "\n".join(lines)
+    if project_py and os.path.realpath(py) != os.path.realpath(project_py):
+        lines.extend(
+            [
+                "Use the project venv (recommended):",
+                "  deactivate                    # drop bin/.venv if active",
+                f"  {create_pipenv} thermo/dmz",
+                f"  source {venv_activate}",
+                "  manage ...",
+                "",
+            ]
+        )
+    if os.path.isfile(venv_activate):
+        lines.extend(
+            [
+                "Or install into the project venv explicitly:",
+                f"  {project_py or os.path.join(SCRIPT_DIR, '.venv', 'bin', 'python')} -m pip install -r {req}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Create the project venv first:",
+                f"  {create_pipenv} thermo/dmz",
+                f"  source {venv_activate}",
+                "  manage ...",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> Dict[str, str]:
     """Add Ed25519 signature headers if a private key is configured (onboard-style)."""
     key = _zone_private_key_material()
@@ -163,6 +328,12 @@ def _sign_headers(method: str, path: str, body: bytes, zonename: str) -> Dict[st
             HEADER_TIMESTAMP: ts,
             HEADER_ZONE: zonename,
         }
+    except RuntimeError as exc:
+        if "cryptography not installed" in str(exc):
+            _die(_cryptography_install_hint(), code=1)
+        _die(f"signing failed: {exc}", code=1)
+    except ValueError as exc:
+        _die(f"signing failed: {exc}", code=1)
     except Exception as exc:  # pragma: no cover - CLI surface
         _die(f"signing failed: {exc}", code=1)
 
@@ -191,9 +362,172 @@ def _parse_body_args(argv: List[str]) -> Dict[str, Any]:
     return out
 
 
+def _validate_raw_ir_sequence(raw: Any) -> List[int]:
+    if not isinstance(raw, list):
+        _die("raw IR sequence must be a JSON array or signed integer list")
+    if not raw:
+        _die("raw IR sequence must not be empty")
+    if len(raw) > RAW_IR_MAX_SEQUENCE_LEN:
+        _die(f"raw IR sequence too long: max {RAW_IR_MAX_SEQUENCE_LEN} entries")
+
+    out: List[int] = []
+    for index, value in enumerate(raw):
+        if isinstance(value, bool) or not isinstance(value, int):
+            _die(f"raw IR sequence entry {index} must be an integer")
+        if value == 0:
+            _die(f"raw IR sequence entry {index} must not be zero")
+        if abs(value) > RAW_IR_MAX_DURATION_US:
+            _die(f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us")
+        out.append(value)
+    return out
+
+
+def _parse_raw_ir_text(text: str) -> Dict[str, Any]:
+    clean = text.strip()
+    if not clean:
+        _die("raw IR file is empty")
+
+    carrier_hz = RAW_IR_DEFAULT_CARRIER_HZ
+    if clean.startswith("[") or clean.startswith("{"):
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            _die(f"invalid raw IR JSON: {exc}")
+        if isinstance(parsed, dict):
+            command_type = parsed.get("command_type", RAW_IR_COMMAND_TYPE)
+            if command_type != RAW_IR_COMMAND_TYPE:
+                _die(f"unsupported raw IR command_type: {command_type!r}")
+            sequence = _validate_raw_ir_sequence(parsed.get("sequence"))
+            raw_carrier = parsed.get("carrier_hz", carrier_hz)
+            if isinstance(raw_carrier, bool) or not isinstance(raw_carrier, int):
+                _die("raw IR carrier_hz must be an integer")
+            carrier_hz = raw_carrier
+        else:
+            sequence = _validate_raw_ir_sequence(parsed)
+    else:
+        tokens = clean.replace(",", " ").split()
+        try:
+            sequence = _validate_raw_ir_sequence([int(token) for token in tokens])
+        except ValueError as exc:
+            _die(f"raw IR text contains a non-integer token: {exc}")
+
+    if carrier_hz <= 0:
+        _die("raw IR carrier_hz must be positive")
+    return {
+        "command_type": RAW_IR_COMMAND_TYPE,
+        "sequence": sequence,
+        "carrier_hz": carrier_hz,
+    }
+
+
+def _read_raw_ir_command_file(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return _parse_raw_ir_text(f.read())
+    except OSError as exc:
+        _die(f"cannot read raw IR file {path!r}: {exc}", code=1)
+
+
 def _json_dumps_body(payload: Dict[str, Any]) -> bytes:
     # Must match the bytes sent on the wire (see twoway / zone_auth).
     return json.dumps(payload).encode("utf-8")
+
+
+def _connection_error_message(url: str, exc: BaseException) -> str:
+    """One-line hint when DMZ_URL does not resolve or accept a connection."""
+    parsed = urlparse(url)
+    host = parsed.netloc or parsed.hostname or url
+    msg = str(exc.__cause__ or exc).strip() or type(exc).__name__
+    lower = msg.lower()
+    if any(
+        needle in lower
+        for needle in (
+            "nodename nor servname",
+            "name or service not known",
+            "getaddrinfo failed",
+            "temporary failure in name resolution",
+            "failed to resolve",
+        )
+    ):
+        return f"DMZ unreachable: host not found ({host!r}; check DMZ_URL)"
+    if "connection refused" in lower:
+        return f"DMZ unreachable: connection refused ({url})"
+    if "network is unreachable" in lower:
+        return f"DMZ unreachable: network unreachable ({host})"
+    if "timed out" in lower or "timeout" in lower:
+        return f"DMZ unreachable: timed out ({url})"
+    first_line = msg.splitlines()[0]
+    return f"DMZ unreachable: {first_line} ({url})"
+
+
+def _is_oauth_redirect(location: str) -> bool:
+    """True when Location is DMZ /login or an external OAuth/Sign-In URL."""
+    if not location:
+        return False
+    parsed = urlparse(location if "://" in location else f"http://x{location}")
+    path = (parsed.path or location).lower()
+    if path.rstrip("/") in ("/login", "/authorize", "/logout"):
+        return True
+    host = (parsed.netloc or "").lower()
+    if "accounts.google.com" in host or host.endswith(".google.com"):
+        return True
+    return "oauth" in path or "signin" in path
+
+
+def _redirect_error_message(url: str, response: requests.Response) -> str:
+    loc = (response.headers.get("Location") or "").strip()
+    if loc and not loc.startswith(("http://", "https://")):
+        base = urlparse(url)
+        loc = urljoin(f"{base.scheme}://{base.netloc}/", loc.lstrip("/"))
+    target = f" → {loc}" if loc else ""
+    if _is_oauth_redirect(loc):
+        return (
+            f"DMZ OAuth redirect: {response.status_code}{target} "
+            f"(authentication required; set ZONE_PRIVATE_KEY or ZONE_PRIVATE_KEY_PATH for machine auth)"
+        )
+    return f"DMZ unexpected redirect: {response.status_code}{target} ({url})"
+
+
+def _html_instead_of_json_message(url: str, body: str = "") -> str:
+    lower = body[:4096].lower()
+    if "accounts.google.com" in lower or "signin" in lower or _is_oauth_redirect(url):
+        return (
+            f"DMZ OAuth redirect: received HTML login page instead of JSON ({url}). "
+            "Set ZONE_PRIVATE_KEY or ZONE_PRIVATE_KEY_PATH for machine auth."
+        )
+    return (
+        f"DMZ returned HTML instead of JSON ({url}). "
+        "Expected JSON; check DMZ_URL and authentication."
+    )
+
+
+def _http_request(
+    method: str,
+    url: str,
+    *,
+    headers: Dict[str, str],
+    data: Optional[bytes],
+    timeout: int,
+) -> requests.Response:
+    try:
+        if method.upper() == "GET":
+            return requests.get(
+                url, headers=headers, timeout=timeout, allow_redirects=False
+            )
+        if method.upper() == "POST":
+            return requests.post(
+                url, data=data, headers=headers, timeout=timeout, allow_redirects=False
+            )
+        _die(f"unsupported method: {method}")
+    except requests.exceptions.Timeout:
+        _die(f"DMZ unreachable: timed out after {timeout}s ({url})", code=1)
+    except requests.exceptions.SSLError as exc:
+        _die(f"DMZ TLS error: {exc} ({url})", code=1)
+    except requests.exceptions.ConnectionError as exc:
+        _die(_connection_error_message(url, exc), code=1)
+    except requests.exceptions.RequestException as exc:
+        _die(f"DMZ request failed: {exc} ({url})", code=1)
+    raise AssertionError("unreachable")
 
 
 def _request_json(
@@ -218,12 +552,9 @@ def _request_json(
         if parsed.query:
             req_path = f"{req_path}?{parsed.query}"
         headers.update(_sign_headers(method, req_path, body_bytes, zone_for_sign))
-    if method.upper() == "GET":
-        r = requests.get(url, headers=headers, timeout=60)
-    elif method.upper() == "POST":
-        r = requests.post(url, data=data, headers=headers, timeout=60)
-    else:
-        _die(f"unsupported method: {method}")
+    r = _http_request(method, url, headers=headers, data=data, timeout=60)
+    if 300 <= r.status_code < 400:
+        _die(_redirect_error_message(url, r), code=1)
     if not r.content:
         return r.status_code, None
     ctype = (r.headers.get("Content-Type") or "").lower()
@@ -232,7 +563,10 @@ def _request_json(
             return r.status_code, r.json()
         except ValueError:
             return r.status_code, r.text
-    return r.status_code, r.text
+    text = r.text
+    if "text/html" in ctype or text.lstrip().startswith("<"):
+        _die(_html_instead_of_json_message(url, text), code=1)
+    return r.status_code, text
 
 
 def _emit(status: int, body: Union[dict, list, str, None]) -> int:
@@ -249,11 +583,11 @@ def _emit(status: int, body: Union[dict, list, str, None]) -> int:
 
 
 def _onboard_state_example_dict() -> Dict[str, Any]:
-    """Fully-populated onboard heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
+    """Fully-populated common.heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
     if _ONBOARD_ROOT not in sys.path:
         sys.path.insert(0, _ONBOARD_ROOT)
     try:
-        from heatpumpirctl import Fan, Mode, State
+        from common.heatpumpirctl import Fan, Mode, State
     except ImportError:
         return dict(_FALLBACK_ONBOARD_STATE_EXAMPLE)
 
@@ -296,10 +630,10 @@ def _updatezone_help_message() -> str:
     pretty = json.dumps(example, indent=2, sort_keys=True)
     pretty_kv = _flat_dict_as_updatezone_kv_args(example)
     return (
-        "usage: manage.py updatezone <zone> key=value ...\n"
+        "usage: manage updatezone <zone> key=value ...\n"
         "\n"
         "Merges each key=value into the zone's command dict and POSTs it. Key names match "
-        "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
+        "common.heatpumpirctl.State.to_json() / from_json() - the same object you send as "
         '{"command": ...} to POST /daikin on the Pi. The DMZ stores the command object '
         "as JSON (7-bit ASCII strings only); onboard owns parsing and IR.\n"
         "\n"
@@ -307,7 +641,7 @@ def _updatezone_help_message() -> str:
         f"{pretty}\n"
         "\n"
         "Same payload as one line of flat key=value args:\n"
-        f"  manage.py updatezone <zone> {pretty_kv}\n"
+        f"  manage updatezone <zone> {pretty_kv}\n"
         "\n"
         "Note: from_json() also accepts temp_c (°C) instead of half_c. "
         "mode: AUTO, DRY, COOL, HEAT, FAN. fan: F1..F5, AUTO, SILENT."
@@ -316,7 +650,7 @@ def _updatezone_help_message() -> str:
 
 def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
     key_mat = _zone_private_key_material()
-    zn = _zone_name_default() or zone
+    zn = _sign_zone_name(zone)
 
     def _fetch_zone_entry() -> (
         Tuple[int, Union[dict, list, str, None], Optional[Dict[str, Any]]]
@@ -373,15 +707,28 @@ def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
     return _emit(st2, resp)
 
 
+def _cmd_rawir(zone: str, path: str) -> int:
+    payload = _read_raw_ir_command_file(path)
+    st, body = _request_json(
+        "POST",
+        f"/zone/{zone}/command",
+        zone_for_sign=zone,
+        body=payload,
+        sign=True,
+    )
+    return _emit(st, body)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    _warn_if_wrong_interpreter()
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        _die(
-            "usage: manage.py "
-            "{login|authorize|logout|sensors|command|zones|debug_logs|logs|test_reset|updatezone} ..."
-        )
+        return _usage()
     action = args[0]
     rest = args[1:]
+
+    if action == "help":
+        return _print_help()
 
     # OAuth helpers: no machine signing (browser flow).
     if action in ("login", "authorize", "logout"):
@@ -391,26 +738,29 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if action == "zones":
         key_mat = _zone_private_key_material()
-        zn = _zone_name_default()
-        if key_mat and not zn:
-            _die("zones: set ZONE_NAME when using ZONE_PRIVATE_KEY for signing")
         st, body = _request_json(
             "GET",
             "/zones",
-            zone_for_sign=zn,
+            zone_for_sign=_sign_zone_name(),
             sign=bool(key_mat),
+        )
+        return _emit(st, body)
+
+    if action == "healthz":
+        st, body = _request_json(
+            "GET",
+            "/ui/diagnostics",
+            zone_for_sign="",
+            sign=False,
         )
         return _emit(st, body)
 
     if action in ("debug_logs", "logs"):
         key_mat = _zone_private_key_material()
-        zn = _zone_name_default()
-        if key_mat and not zn:
-            _die("debug_logs: set ZONE_NAME when using ZONE_PRIVATE_KEY for signing")
         st, body = _request_json(
             "GET",
             "/debug/logs",
-            zone_for_sign=zn,
+            zone_for_sign=_sign_zone_name(),
             sign=bool(key_mat),
         )
         return _emit(st, body)
@@ -431,6 +781,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             _die(_updatezone_help_message())
         zone = rest[0]
         return _cmd_updatezone(zone, rest[1:])
+
+    if action in ("rawir", "raw-ir"):
+        if len(rest) != 2:
+            _die("rawir <zone> <file>")
+        return _cmd_rawir(rest[0], rest[1])
 
     if action == "sensors":
         if not rest:

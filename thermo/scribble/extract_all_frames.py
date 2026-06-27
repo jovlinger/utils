@@ -5,7 +5,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "onboard"))
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import ARC452A9 as proto
 
 
 def main() -> None:

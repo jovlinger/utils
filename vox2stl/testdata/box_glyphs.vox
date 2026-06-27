@@ -1,0 +1,8 @@
+# UNIT_MM=2.54
+# UTF-8 box drawing fixture: verifies corners, T rotations, and cross glyphs.
+layer trace (0, 5, 5)
+.....
+.┌┬┐.
+.├┼┤.
+.└┴┘.
+.....

@@ -45,21 +45,31 @@ err() { printf '[%s] ERROR: %s\n' "$(date -Is)" "$*" >&2; }
 
 # ingest.py runs shadup.py with sys.executable, so we must exec the venv interpreter
 # by path — not `python` on PATH. The remount wrapper runs "$@" without sudo.
-# The ./shadup launcher is for CLI shadup.py only.
+# The ./shadup launcher runs shadup.py via venv-run (see shadup.py shebang).
 SHADUP_VENV=""
-if [ -f "$SHADUP_DIR/env/bin/activate" ]; then
-  SHADUP_VENV="$SHADUP_DIR/env"
-elif [ -f "$SHADUP_DIR/.venv/bin/activate" ]; then
-  SHADUP_VENV="$SHADUP_DIR/.venv"
+VENV_RESOLVE="$UTILS_ROOT/lib/venv-resolve.sh"
+if [ -f "$VENV_RESOLVE" ]; then
+  # shellcheck source=/dev/null
+  . "$VENV_RESOLVE"
+  resolve_utils_venv "$SHADUP_DIR" "$UTILS_ROOT"
+  SHADUP_VENV="$VENV_DIR"
 else
-  err "No venv under $SHADUP_DIR (expected env/ or .venv/)."
-  err "Run: $UTILS_ROOT/create_pipenv.sh shadup   or   $SHADUP_DIR/setup-venv.sh"
-  exit 1
+  for name in .venv venv env; do
+    if [ -f "$SHADUP_DIR/$name/bin/activate" ]; then
+      SHADUP_VENV="$SHADUP_DIR/$name"
+      break
+    fi
+  done
+  if [ -z "$SHADUP_VENV" ]; then
+    err "No venv under $SHADUP_DIR (expected .venv, venv, or env)."
+    err "Run: $UTILS_ROOT/create_pipenv.sh shadup   or   $SHADUP_DIR/setup-venv.sh"
+    exit 1
+  fi
 fi
-if [ -x "$SHADUP_VENV/bin/python" ]; then
-  SHADUP_PYTHON="$SHADUP_VENV/bin/python"
-elif [ -x "$SHADUP_VENV/bin/python3" ]; then
+if [ -x "$SHADUP_VENV/bin/python3" ]; then
   SHADUP_PYTHON="$SHADUP_VENV/bin/python3"
+elif [ -x "$SHADUP_VENV/bin/python" ]; then
+  SHADUP_PYTHON="$SHADUP_VENV/bin/python"
 else
   err "No python or python3 in $SHADUP_VENV/bin"
   exit 1

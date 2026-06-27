@@ -1,9 +1,1 @@
-#!/bin/sh
-# Launcher for importtags (same venv / PYTHONPATH pattern as ./shadup).
-set -eu
-
-SHADUP_LAUNCHER="$0"
-# shellcheck disable=SC1091
-. "$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$SHADUP_LAUNCHER")")" && pwd)/resolve-venv.sh"
-
-exec python3 -m importtags "$@"
+importtags.py

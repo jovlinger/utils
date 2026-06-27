@@ -1,32 +1,54 @@
 #!/bin/sh
-# LAB/rescue SSH: attach eth0 to 192.168.88.x/24 (default .200), gw 192.168.88.1, public DNS (1.1.1.1 + Google),
-# install rescue pubkeys into /root/.ssh/authorized_keys from on-device paths, start sshd.
+# Rescue / manual SSH: install rescue pubkeys, configure eth0, start sshd.
 #
-# Run from console once eth0/carrier exists:
+# Production (SD install/network.conf or /root/network.conf from dmz-boot):
 #   sh /root/sshd.sh
-# Last octet only (still /24, gw unchanged):
-#   sh /root/sshd.sh 99
+# Uses ADDR/CIDR + gateway from network.conf (same as dmz-boot eth0).
+#
+# LAB on MikroTik LAN only (no network.conf, or force lab):
+#   sh /root/sshd.sh lab
+#   sh /root/sshd.sh lab 99          # last octet .99, gw 192.168.88.1
+#   sh /root/sshd.sh 192.168.88.200  # legacy: explicit LAB address
 #
 # Pubkey source (first match wins):
-#   FAT: /media/mmcblk0/install/rescue_authorized_keys (editable on SD; overwritten each image build),
-#   apkovl: /root/install/rescue_authorized_keys (baked at flash time from same content).
-# Build merges ~/.ssh/id_*.pub on the builder into those paths; sshd stays off until this script runs.
+#   FAT: /media/mmcblk0/install/rescue_authorized_keys
+#   apkovl: /root/install/rescue_authorized_keys
 
 set -e
 
-ROUTER_GATEWAY="${ROUTER_GATEWAY:-192.168.88.1}"
-ip_main="${1:-192.168.88.200}"
+. /root/install/dmz-sshd-common.sh
 
-if echo "$ip_main" | grep -q '^[0-9]\{1,3\}$'; then
-	prefix="$(echo "$ROUTER_GATEWAY" | sed 's/\.[0-9]*$//')"
-	ip_in="${prefix}.${ip_main}"
+_use_lab=0
+_ip_arg=""
+case "${1:-}" in
+lab | LAB)
+	_use_lab=1
+	_ip_arg="${2:-192.168.88.200}"
+	;;
+"")
+	;;
+*)
+	_use_lab=1
+	_ip_arg="$1"
+	;;
+esac
+
+if [ "$_use_lab" -eq 0 ] && dmz_read_network_conf; then
+	addr="$dmz_net_addr"
+	ROUTER_GATEWAY="$dmz_net_gw"
+	echo "==> /root/sshd.sh: production network.conf addr=$addr via=$ROUTER_GATEWAY"
 else
-	ip_in="$ip_main"
+	ROUTER_GATEWAY="${ROUTER_GATEWAY:-192.168.88.1}"
+	ip_main="${_ip_arg:-192.168.88.200}"
+	if echo "$ip_main" | grep -q '^[0-9]\{1,3\}$'; then
+		prefix="$(echo "$ROUTER_GATEWAY" | sed 's/\.[0-9]*$//')"
+		ip_in="${prefix}.${ip_main}"
+	else
+		ip_in="$ip_main"
+	fi
+	addr="${ip_in}/24"
+	echo "==> /root/sshd.sh: LAB addr=$addr default via=$ROUTER_GATEWAY (DNS from install/dns.conf or public)"
 fi
-
-addr="${ip_in}/24"
-
-echo "==> /root/sshd.sh: addr=$addr default via=$ROUTER_GATEWAY (DNS 1.1.1.1 8.8.8.8 8.8.4.4)"
 
 # Loopback: same rationale as dmz-boot.start.
 ip link set lo up
@@ -45,72 +67,14 @@ ip route flush dev eth0 2>/dev/null || true
 ip addr add "$addr" dev eth0
 ip route add default via "$ROUTER_GATEWAY" dev eth0
 
-printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' 'nameserver 8.8.4.4' >/etc/resolv.conf
+dmz_install_resolv_conf
 
-_SD="/media/mmcblk0"
-KEYSRC=""
-if [ -d "${_SD}/install" ] && [ -s "${_SD}/install/rescue_authorized_keys" ]; then
-	KEYSRC="${_SD}/install/rescue_authorized_keys"
-	echo "==> installing pubkeys from SD FAT install/rescue_authorized_keys"
-elif [ -s /root/install/rescue_authorized_keys ]; then
-	KEYSRC="/root/install/rescue_authorized_keys"
-	echo "==> installing pubkeys from baked /root/install/rescue_authorized_keys"
-else
-	echo "Error: no rescue_authorized_keys on device." >&2
-	echo "  Image build must populate install/rescue_authorized_keys (from builder ~/.ssh/*.pub)." >&2
-	echo "  Or mount FAT and place install/rescue_authorized_keys on the SD." >&2
-	exit 1
-fi
+dmz_install_rescue_authorized_keys
+dmz_start_sshd_daemon
 
-if ! grep -qE '^[[:space:]]*(ssh-|ecdsa-sha2-|ssh-ed25519|sk-ssh-|sk-ecdsa-sha2-|cert-authority)' "$KEYSRC"; then
-	echo "Error: $KEYSRC has no pubkey lines (expected OpenSSH authorized_keys entries)." >&2
-	exit 1
-fi
-
-mkdir -p /root/.ssh
-chmod 700 /root/.ssh
-
-cp "$KEYSRC" /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-
-SSHD_BIN=""
-for _c in /usr/sbin/sshd /sbin/sshd; do
-	if [ -x "$_c" ]; then
-		SSHD_BIN="$_c"
-		break
-	fi
-done
-if [ -z "$SSHD_BIN" ]; then
-	echo "Error: sshd binary missing — rebuild SD (apkovl bundles openssh)." >&2
-	exit 1
-fi
-
-mkdir -p /etc/ssh/sshd_config.d
-cat >/etc/ssh/sshd_config.d/50-dmz-rescue.conf <<'EOF'
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PubkeyAuthentication yes
-PermitRootLogin prohibit-password
-AuthenticationMethods publickey
-LogLevel VERBOSE
-EOF
-
-ssh-keygen -A >/dev/null 2>&1 || ssh-keygen -A
-
-rc-service sshd stop 2>/dev/null || true
-rc-update del sshd default 2>/dev/null || true
-killall sshd 2>/dev/null || true
-rm -f /run/sshd.pid 2>/dev/null || true
-
-SSHD_LOG=/var/log/sshd.log
-touch "$SSHD_LOG"
-chmod 644 "$SSHD_LOG"
-"$SSHD_BIN" -D -E "$SSHD_LOG" &
-echo "$!" >/run/dmz-sshd-raw.pid
-
-echo "sshd started (pubkey-only). ssh root@${ip_in}"
-echo "  log: tail -f $SSHD_LOG"
-echo "  stop: kill \$(cat /run/dmz-sshd-raw.pid) 2>/dev/null || killall sshd"
+_ip_show=$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{print $4}' | head -n1)
+echo "  ssh root@${_ip_show:-${addr%/*}}"
+echo "  stop: kill \$(cat /run/dmz-sshd-raw.pid 2>/dev/null) 2>/dev/null || killall sshd"
 
 ip addr show dev eth0 || true
 ip route show || true

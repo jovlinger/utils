@@ -6,6 +6,10 @@ Machine-auth header names and verification: **`zone_auth`** (`thermo/dmz/zone_au
 
 ---
 
+## `GET /version`
+
+Open JSON build provenance endpoint for deployment checks. On SD images, `build-and-write.sh` writes `install/buildinfo.txt` and `dmz-boot.start` copies it into the chroot as `/etc/dmz/buildinfo.txt`, so this endpoint can report `build_id`, `build_date_utc`, `git_sha`, `git_branch`, `git_dirty`, and `source_sha256`. Local dev runs without buildinfo return `{ "available": false }`.
+
 ## `GET /login`
 
 Starts the Google OAuth redirect flow when OAuth credentials are configured. Before redirecting to Google, stores **scheme + hostname** (no port) from this request in the signed session for the post-callback HTML redirect. Returns `400` with a JSON error if OAuth is not configured.
@@ -25,6 +29,18 @@ Accepts JSON sensor readings for the named zone, appends them to in-memory state
 ## `POST /zone/<zonename>/command`
 
 Accepts the JSON body and passes it through to zone command storage, returning that zone’s snapshot. Aside from auth, the server only checks that the body is well-formed JSON (UTF-8) and that every JSON string (object keys and string values) is 7-bit ASCII; otherwise it returns `400`. With a configured zone public key, either valid machine-signed requests or an authenticated browser session (when Google OAuth is enabled) may be used; otherwise OAuth may be required for human operators.
+
+Raw IR replay uses the same command store. Capable onboards recognize:
+
+```json
+{
+  "command_type": "raw_ir_sequence",
+  "sequence": [4500, -4500, 560, -1600, 560, -520],
+  "carrier_hz": 38000
+}
+```
+
+Positive `sequence` values are marks/pulses in microseconds; negative values are spaces in microseconds. `carrier_hz` is optional and currently expected to be `38000` when present.
 
 ## `GET /zones`
 

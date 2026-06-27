@@ -30,41 +30,53 @@ def _have(cmd: str) -> bool:
 def _docker_running() -> bool:
     if not _have("docker"):
         return False
-    res = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, timeout=15
-    )
+    res = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15)
     return res.returncode == 0
 
 
-def _write_min_oauth_dir(path: Path) -> None:
+def _write_min_oauth_public_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "google-client-id").write_text(
         "ci-test-google-client-id-0001\n", encoding="utf-8"
     )
+
+
+def _write_min_oauth_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
     (path / "google-client-secret").write_text(
         "ci-test-google-client-secret-zz\n", encoding="utf-8"
     )
     (path / "flask-secret-key").write_text(
         "ci0123456789abcdef0123456789abcd\n", encoding="utf-8"
     )
-    (path / "allowed-email").write_text(r"^allowed-ci@example\.com$" + "\n", encoding="utf-8")
+    (path / "allowed-email").write_text(
+        r"^allowed-ci@example\.com$" + "\n", encoding="utf-8"
+    )
 
 
 @contextlib.contextmanager
-def _staged_dmz_secrets(tmp_path: Path) -> Iterator[Path]:
-    """Temporarily replace ``thermo/dmz/.secrets`` so tests can populate fixed paths."""
-    sec = DMZ_DIR / ".secrets"
-    backup = tmp_path / "_secrets_tree_backup"
-    had = sec.exists()
-    if had:
-        shutil.move(str(sec), str(backup))
+def _staged_thermo_material(tmp_path: Path) -> Iterator[tuple[Path, Path, Path]]:
+    """Temporarily replace fixed secret/public config paths for tests."""
+    priv = THERMO_DIR / "priv"
+    config_zone = THERMO_DIR / "config" / "zone"
+    config_oauth = THERMO_DIR / "config" / "oauth"
+    config_ssh_host = THERMO_DIR / "config" / "ssh-host"
+    paths = (priv, config_zone, config_oauth, config_ssh_host)
+    backups: list[tuple[Path, Path]] = []
+    for idx, path in enumerate(paths):
+        if path.exists():
+            backup = tmp_path / f"_backup_{idx}"
+            shutil.move(str(path), str(backup))
+            backups.append((path, backup))
     try:
-        yield sec
+        yield priv, config_zone, config_oauth
     finally:
-        if sec.exists():
-            shutil.rmtree(sec)
-        if had and backup.exists():
-            shutil.move(str(backup), str(sec))
+        for path in paths:
+            if path.exists():
+                shutil.rmtree(path)
+        for path, backup in backups:
+            if backup.exists():
+                shutil.move(str(backup), str(path))
 
 
 def test_help_mentions_required_secrets() -> None:
@@ -76,16 +88,14 @@ def test_help_mentions_required_secrets() -> None:
         check=False,
     )
     assert res.returncode == 2, res.stderr
-    assert ".secrets/zone/pub.pem" in res.stderr
+    assert "config/zone/pub.pem" in res.stderr
     assert "allowed-email" in res.stderr or "OAuth" in res.stderr
     assert "No overrides" in res.stderr or "no overrides" in res.stderr.lower()
 
 
 def test_missing_zone_pub_file_fails_fast(tmp_path: Path) -> None:
     """Missing zone pub PEM must fail before Docker work starts."""
-    with _staged_dmz_secrets(tmp_path) as sec:
-        (sec / "zone").mkdir(parents=True, exist_ok=True)
-        _write_min_oauth_dir(sec / "oauth")
+    with _staged_thermo_material(tmp_path):
         res = subprocess.run(
             ["/bin/sh", str(BUILD)],
             cwd=str(DMZ_DIR),
@@ -96,16 +106,19 @@ def test_missing_zone_pub_file_fails_fast(tmp_path: Path) -> None:
             timeout=10,
         )
     assert res.returncode == 1, res.stdout + res.stderr
-    assert "Not found" in res.stderr or "not found" in res.stderr.lower() or "required" in res.stderr.lower()
+    assert (
+        "Not found" in res.stderr
+        or "not found" in res.stderr.lower()
+        or "required" in res.stderr.lower()
+    )
 
 
 def test_non_pem_zone_pub_file_fails_fast(tmp_path: Path) -> None:
     """A file that is not a PEM PUBLIC KEY must be rejected up front."""
-    with _staged_dmz_secrets(tmp_path) as sec:
-        (sec / "zone").mkdir(parents=True, exist_ok=True)
-        junk = sec / "zone" / "pub.pem"
+    with _staged_thermo_material(tmp_path) as (_priv, config_zone, _config_oauth):
+        config_zone.mkdir(parents=True, exist_ok=True)
+        junk = config_zone / "pub.pem"
         junk.write_text("not a pem at all\n", encoding="utf-8")
-        _write_min_oauth_dir(sec / "oauth")
         res = subprocess.run(
             ["/bin/sh", str(BUILD)],
             cwd=str(DMZ_DIR),
@@ -141,25 +154,27 @@ def test_unknown_flag_rejected() -> None:
     reason="docker daemon not reachable; skip end-to-end build verification",
 )
 def test_build_always_bakes_zone_pub_and_oauth_into_fat_image(tmp_path: Path) -> None:
-    """Every image includes install/zone-pub.pem and OAuth client files under fixed .secrets paths."""
-    with _staged_dmz_secrets(tmp_path) as sec:
-        keys_dir = sec / "zone"
+    """Every image includes install/zone-pub.pem and OAuth client files under fixed paths."""
+    with _staged_thermo_material(tmp_path) as (priv, config_zone, config_oauth):
+        keys_dir = priv / "zone"
         subprocess.run(
             [sys.executable, str(GEN_KEYS)],
             env={
-                "THERMO_ZONE_KEYS_DIR": str(keys_dir),
+                "THERMO_ZONE_PRIVATE_KEYS_DIR": str(keys_dir),
+                "THERMO_ZONE_PUBLIC_KEYS_DIR": str(config_zone),
                 "PATH": os.environ.get("PATH", ""),
             },
             check=True,
             timeout=30,
         )
-        pub_pem = keys_dir / "pub.pem"
+        pub_pem = config_zone / "pub.pem"
         assert pub_pem.is_file()
 
-        oauth_dir = sec / "oauth"
-        _write_min_oauth_dir(oauth_dir)
+        oauth_private_dir = priv / "oauth"
+        _write_min_oauth_private_dir(oauth_private_dir)
+        _write_min_oauth_public_dir(config_oauth)
         oauth_id_line = "e2e-oauth-client-id-abcdef.apps.googleusercontent.com\n"
-        (oauth_dir / "google-client-id").write_text(oauth_id_line, encoding="utf-8")
+        (config_oauth / "google-client-id").write_text(oauth_id_line, encoding="utf-8")
 
         out_img = tmp_path / "dmz-test.img"
         env = os.environ.copy()
@@ -199,9 +214,9 @@ def test_build_always_bakes_zone_pub_and_oauth_into_fat_image(tmp_path: Path) ->
             check=True,
             timeout=15,
         )
-        assert extracted.read_bytes() == pub_pem.read_bytes(), (
-            "FAT-image pub key bytes differ from source"
-        )
+        assert (
+            extracted.read_bytes() == pub_pem.read_bytes()
+        ), "FAT-image pub key bytes differ from source"
 
         extracted_oauth = tmp_path / "extracted-google-client-id"
         subprocess.run(
@@ -232,4 +247,10 @@ def test_build_always_bakes_zone_pub_and_oauth_into_fat_image(tmp_path: Path) ->
         )
         assert "oauth_client_files=baked" in info, (
             "buildinfo.txt must declare oauth_client_files=baked:\n" + info
+        )
+        assert "git_branch=" in info and "git_dirty=" in info, (
+            "buildinfo.txt must record git branch and dirty status:\n" + info
+        )
+        assert "source_sha256=" in info, (
+            "buildinfo.txt must record the source hash used for BUILD_ID:\n" + info
         )

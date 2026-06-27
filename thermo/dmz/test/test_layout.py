@@ -43,14 +43,14 @@ def test_dmz_boot_brings_loopback_up(dmz_dir: Path) -> None:
         pytest.skip("install/ not shipped in slim runtime image")
     text = p.read_text(encoding="utf-8")
     assert "ip link set lo up" in text, "dmz-boot.start no longer brings lo up"
-    assert "ip addr add 127.0.0.1/8 dev lo" in text, (
-        "dmz-boot.start no longer assigns 127.0.0.1/8 to lo"
-    )
+    assert (
+        "ip addr add 127.0.0.1/8 dev lo" in text
+    ), "dmz-boot.start no longer assigns 127.0.0.1/8 to lo"
     lo_idx = text.index("ip link set lo up")
     eth0_idx = text.index("ip link set eth0 up")
-    assert lo_idx < eth0_idx, (
-        "lo bringup must precede eth0 bringup so localhost works during eth0 wait"
-    )
+    assert (
+        lo_idx < eth0_idx
+    ), "lo bringup must precede eth0 bringup so localhost works during eth0 wait"
 
 
 def test_rescue_script_brings_loopback_up(dmz_dir: Path) -> None:
@@ -62,6 +62,9 @@ def test_rescue_script_brings_loopback_up(dmz_dir: Path) -> None:
         pytest.skip("install/ not shipped in slim runtime image")
     text = p.read_text(encoding="utf-8")
     assert "ip link set lo up" in text, "rescue script no longer brings lo up"
-    assert "ip addr add 127.0.0.1/8 dev lo" in text, (
-        "rescue script no longer assigns 127.0.0.1/8 to lo"
-    )
+    assert (
+        "ip addr add 127.0.0.1/8 dev lo" in text
+    ), "rescue script no longer assigns 127.0.0.1/8 to lo"
+    assert (
+        "dmz_read_network_conf" in text
+    ), "sshd.sh should use production network.conf when present"

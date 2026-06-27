@@ -1,10 +1,21 @@
-env
+env/*
+!env/
+!env/README.md
+venv/*
+!venv/
+!venv/README.md
+.venv/*
+!.venv/
+!.venv/README.md
 .docker-import/
 install/.env
+hardware/*/install/.env
+hardware/*/install/.deploy-metadata.env
 
 # Make/docker image stamp files (see Makefile .image.app / .image.twoway)
 .image
 .image.app
 .image.twoway
 .pytest_cache/
+hardware/*/target/
 

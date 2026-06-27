@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -161,6 +162,29 @@ def test_command_accepts_arbitrary_object_keys(dmz_ctx: object) -> None:
         assert js["command"]["temp_c"] == 21
 
 
+def test_command_accepts_raw_ir_sequence_contract(dmz_ctx: object) -> None:
+    """Raw IR commands are regular command objects delivered unchanged."""
+    with app.test_client() as c:
+        _reset(c)
+        body = {
+            "command_type": "raw_ir_sequence",
+            "sequence": [4500, -4500, 560, -1600, 560, -520],
+            "carrier_hz": 38000,
+        }
+
+        js = _post_200(c, "/zone/zir/command", body)
+        stamped = js["command"].get("created_dt")
+        assert js["command"]["command_type"] == "raw_ir_sequence"
+        assert js["command"]["sequence"] == [4500, -4500, 560, -1600, 560, -520]
+        assert js["command"]["carrier_hz"] == 38000
+        assert isinstance(stamped, str) and stamped
+
+        poll = _onboard_post_sensors(c, "zir", 20.0)
+        assert poll["command"]["command_type"] == "raw_ir_sequence"
+        assert poll["command"]["sequence"] == body["sequence"]
+        assert poll["command"]["created_dt"] == stamped
+
+
 def _onboard_post_sensors(
     c, zone: str, temp: float, humid: float | None = None
 ) -> dict:
@@ -288,7 +312,9 @@ def test_debug_logs_returns_access_entries(dmz_ctx: object) -> None:
             assert "ts" in e
 
 
-def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(dmz_ctx: object) -> None:
+def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(
+    dmz_ctx: object,
+) -> None:
     """GET /ui/diagnostics is open (operators) and exposes memory-only diagnostics."""
     with app.test_client() as c:
         c.post("/test_reset", json={"commands": {}, "sensors": {}})
@@ -302,6 +328,53 @@ def test_ui_diagnostics_unauthenticated_contains_access_and_attempts(dmz_ctx: ob
         zlast = d["zone_attempts"][-1]
         assert zlast["outcome"] == "accepted"
         assert zlast["zone"] == "a"
+
+
+def test_version_endpoint_reads_buildinfo(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GET /version exposes build provenance copied into the running image."""
+    del dmz_ctx
+    buildinfo = tmp_path / "buildinfo.txt"
+    buildinfo.write_text(
+        "ABCDEF12 2026-05-22T13:00:00Z\n"
+        "repo=utils\n"
+        "git_sha=123456789abc\n"
+        "git_branch=supply-chainbreak\n"
+        "git_dirty=false\n"
+        "source_sha256=" + "a" * 64 + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DMZ_BUILDINFO_PATH", str(buildinfo))
+
+    with app.test_client() as c:
+        r = c.get("/version")
+        assert r.status_code == 200
+        js = r.get_json() or {}
+        assert js["available"] is True
+        assert js["build_id"] == "ABCDEF12"
+        assert js["build_date_utc"] == "2026-05-22T13:00:00Z"
+        assert js["git_sha"] == "123456789abc"
+        assert js["git_branch"] == "supply-chainbreak"
+        assert js["source_sha256"] == "a" * 64
+
+        diag = c.get("/ui/diagnostics").get_json() or {}
+        assert diag["version"]["git_sha"] == "123456789abc"
+
+
+def test_version_endpoint_reports_missing_buildinfo(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Local dev runs can lack image buildinfo; report that explicitly."""
+    del dmz_ctx
+    monkeypatch.setenv("DMZ_BUILDINFO_PATH", str(tmp_path / "missing-buildinfo.txt"))
+    monkeypatch.setattr(app_module, "DEFAULT_BUILDINFO_PATHS", tuple())
+
+    with app.test_client() as c:
+        js = c.get("/version").get_json() or {}
+        assert js["available"] is False
+        assert js["source"] == "none"
+        assert str(tmp_path / "missing-buildinfo.txt") in js["paths_tried"]
 
 
 def test_unsigned_request_rejected_when_auth_required(
@@ -505,6 +578,88 @@ def test_sensors_with_piggybacked_command_nested_body(dmz_ctx: object) -> None:
         assert js2["command"]["mode"] == "HEAT"
 
 
+def test_sensors_with_onboard_logs_are_deduped_and_exposed(dmz_ctx: object) -> None:
+    """Zone POSTs can carry newest-first onboard logs for UI visibility."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zlog/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "logs": {
+                    "lines": [
+                        "2026-05-27T01:00:00.000Z INFO onboard action taken",
+                        "2026-05-27T01:00:00.000Z INFO onboard action taken",
+                        "2026-05-27T01:00:01.000Z DEBUG onboard command stale",
+                    ]
+                },
+            },
+        )
+
+        assert js["logs"]["count"] == 2
+        assert js["logs"]["lines"] == [
+            "2026-05-27T01:00:00.000Z INFO onboard action taken",
+            "2026-05-27T01:00:01.000Z DEBUG onboard command stale",
+        ]
+
+        ctx = _get_200(c, "/ui/context")
+        assert ctx["zone_states"]["zlog"]["logs"]["lines"] == js["logs"]["lines"]
+
+
+def test_sensors_with_deployment_metadata_are_stored(dmz_ctx: object) -> None:
+    """Zone POSTs can carry onboard deployment metadata for UI visibility."""
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/zdep/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "deployment": {
+                    "hardware_profile": "pi_zero_2w_htu21d_ir",
+                    "git_sha": "abcdef1234567890",
+                    "git_sha_short": "abcdef1",
+                    "backend": "pizero2w",
+                    "zone_name": "zdep",
+                },
+            },
+        )
+
+        assert js["deployment"]["hardware_profile"] == "pi_zero_2w_htu21d_ir"
+        assert js["deployment"]["git_sha_short"] == "abcdef1"
+        assert "received_dt" in js["deployment"]
+
+        ctx = _get_200(c, "/ui/context")
+        assert ctx["zone_states"]["zdep"]["deployment"]["git_sha"] == "abcdef1234567890"
+        dep_row = next(r for r in ctx["environments"] if r.get("zone") == "zdep")
+        assert dep_row["deployment"]["backend"] == "pizero2w"
+
+
+def test_sensors_with_network_metadata_are_exposed(dmz_ctx: object) -> None:
+    with app.test_client() as c:
+        _reset(c)
+        js = _post_200(
+            c,
+            "/zone/znet/sensors",
+            {
+                "sensors": {"temp_centigrade": 20.0, "humid_percent": 50.0},
+                "network": {
+                    "local_ip": "192.168.1.44",
+                    "onboard_url": "http://192.168.1.44:5000",
+                },
+            },
+        )
+
+        assert js["network"]["local_ip"] == "192.168.1.44"
+        ctx = _get_200(c, "/ui/context")
+        assert (
+            ctx["zone_states"]["znet"]["network"]["onboard_url"]
+            == "http://192.168.1.44:5000"
+        )
+        assert ctx["environments"][0]["network"]["local_ip"] == "192.168.1.44"
+
+
 def test_sensors_flat_body_still_works(dmz_ctx: object) -> None:
     """Backward-compat: a flat sensors dict (no ``sensors``/``command`` keys) is accepted."""
     with app.test_client() as c:
@@ -524,8 +679,8 @@ def test_zone_sensors_long_poll_immediate_when_ui_newer(dmz_ctx: object) -> None
     with app.test_client() as c:
         _reset(c)
         with app_module._zone_command_clock_lock:
-            app_module._last_zone_command_reply_mono["zlp"] = 100.0
-            app_module._ui_command_received_mono["zlp"] = 101.0
+            app_module._last_zone_command_reply_at["zlp"] = 100.0
+            app_module._ui_command_received_at["zlp"] = 101.0
         with patch("app.time.sleep", side_effect=AssertionError("unexpected sleep")):
             r = c.post("/zone/zlp/sensors", json={"temp_centigrade": 20.0})
             assert r.status_code == 200, r.get_data(as_text=True)
@@ -541,12 +696,12 @@ def test_zone_sensors_long_poll_timeout_updates_last_sent(dmz_ctx: object) -> No
             clear=False,
         ):
             with app_module._zone_command_clock_lock:
-                app_module._last_zone_command_reply_mono["zto"] = 200.0
-                app_module._ui_command_received_mono["zto"] = 200.0
+                app_module._last_zone_command_reply_at["zto"] = 200.0
+                app_module._ui_command_received_at["zto"] = 200.0
             r = c.post("/zone/zto/sensors", json={"temp_centigrade": 18.0})
             assert r.status_code == 200, r.get_data(as_text=True)
             with app_module._zone_command_clock_lock:
-                assert app_module._last_zone_command_reply_mono["zto"] > 200.0
+                assert app_module._last_zone_command_reply_at["zto"] > 200.0
 
 
 def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -> None:
@@ -579,7 +734,10 @@ def test_zone_sensors_overlapping_posts_release_on_ui_command(dmz_ctx: object) -
         with app.test_client() as c:
             ui = c.post(
                 "/ui/command",
-                json={"zone": "zo", "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"}},
+                json={
+                    "zone": "zo",
+                    "command": {"mode": "COOL", "created_dt": "2099-01-01T00:00:00"},
+                },
             )
             assert ui.status_code == 200, ui.get_data(as_text=True)
         t1.join(timeout=1.0)
@@ -671,3 +829,124 @@ def test_ui_command_stores_command(dmz_ctx: object) -> None:
         zones = _get_200(c, "/zones")
         assert "z9" in zones
         assert zones["z9"]["command"]["mode"] == "AUTO"
+
+
+def test_zone_state_fingerprint_ignores_sensors_and_dt() -> None:
+    a = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t1"},
+            "sensors": {"temp_centigrade": 20.0, "created_dt": "s1"},
+        }
+    }
+    b = {
+        "z1": {
+            "command": {"mode": "HEAT", "created_dt": "t2"},
+            "sensors": {"temp_centigrade": 99.0, "humid_percent": 1.0},
+        }
+    }
+    assert app_module._zone_state_fingerprint(a) == app_module._zone_state_fingerprint(
+        b
+    )
+
+
+def test_zone_state_fingerprint_changes_when_command_changes() -> None:
+    a = {"z1": {"command": {"mode": "HEAT"}, "sensors": {}}}
+    b = {"z1": {"command": {"mode": "COOL"}, "sensors": {}}}
+    assert app_module._zone_state_fingerprint(a) != app_module._zone_state_fingerprint(
+        b
+    )
+
+
+def test_log_full_zone_state_suppresses_repeat_fingerprint(
+    dmz_ctx: object, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("ZONE_STATE_LOG_SUPPRESS_REPEAT", "3")
+    app_module._reset_repeat_log_suppression()
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="a", zonename="z1")
+        app_module._log_full_zone_state(reason="b", zonename="z1")
+        app_module._log_full_zone_state(reason="c", zonename="z1")
+        app_module._log_full_zone_state(reason="d", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=a" in lines[0]
+    assert "reason=d" in lines[1]
+
+
+def test_log_full_zone_state_logs_on_fingerprint_change(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.sensors.clear()
+    app_module.commands["z1"] = [{"mode": "HEAT"}]
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        app_module._log_full_zone_state(reason="first", zonename="z1")
+        app_module.commands["z1"] = [{"mode": "COOL"}]
+        app_module._log_full_zone_state(reason="second", zonename="z1")
+    lines = [r.message for r in caplog.records if "zone state changed" in r.message]
+    assert len(lines) == 2
+    assert "reason=first" in lines[0]
+    assert "reason=second" in lines[1]
+
+
+def test_obsolete_log_suppresses_repeat_fingerprint(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 3}):
+        _run_obsolete_suppress_repeat_test(caplog)
+
+
+def _run_obsolete_suppress_repeat_test(caplog: pytest.LogCaptureFixture) -> None:
+    app_module._reset_repeat_log_suppression()
+    app_module.commands.clear()
+    app_module.commands["z1"] = [{"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}]
+    stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+    with caplog.at_level("DEBUG", logger=app_module.logger.name):
+        for _ in range(4):
+            assert (
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+                == "obsolete"
+            )
+    lines = [r.message for r in caplog.records if "zone command obsolete" in r.message]
+    assert len(lines) == 2
+
+
+def test_obsolete_log_not_suppressed_when_repeat_count_le_one(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 1}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]
+
+
+def test_obsolete_log_not_suppressed_when_repeat_zero(
+    dmz_ctx: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(app_module.CONFIG, {"obsolete_log_suppress_repeat": 0}):
+        app_module._reset_repeat_log_suppression()
+        app_module.commands.clear()
+        app_module.commands["z1"] = [
+            {"created_dt": "2026-05-18T12:00:00", "mode": "HEAT"}
+        ]
+        stale = {"created_dt": "2026-05-17T12:00:00", "mode": "HEAT"}
+        with caplog.at_level("DEBUG", logger=app_module.logger.name):
+            for _ in range(3):
+                app_module._replace_command_if_newer("z1", dict(stale), "twoway")
+        lines = [
+            r.message for r in caplog.records if "zone command obsolete" in r.message
+        ]
+        assert len(lines) == 3
+        assert "fingerprint=" not in lines[0]

@@ -10,12 +10,11 @@ UTILS_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIBBLE="$THERMO_DIR/scribble"
 export PATH="${TEST_DIR}:${PATH}"
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-. "$ONBOARD/env/bin/activate"
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$UTILS_ROOT"
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
 
 cd "$SCRIBBLE"
 
@@ -63,8 +62,8 @@ echo "DEBUG: running 2-frame ARC452A9 round-trip test..."
 rt_out="$(_timeout 10 python3 -c "
 import sys, os
 sys.path.insert(0, os.path.join('..', 'onboard'))
-from heatpumpirctl import State, Mode, Fan
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import State, Mode, Fan
+from common.heatpumpirctl import ARC452A9 as proto
 
 s = State().set_power(True).set_mode(Mode.HEAT).set_temp(22).set_fan(Fan.AUTO)
 f1, f3 = proto.dump(s)

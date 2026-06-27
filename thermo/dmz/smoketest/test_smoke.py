@@ -65,7 +65,11 @@ def http() -> requests.Session:
 
 def _post_json(session: requests.Session, path: str, body: Dict[str, Any]) -> Any:
     url = f"{BASE}{path}"
-    logger.info("POST %s body_keys=%s", url, list(body.keys()) if isinstance(body, dict) else "?")
+    logger.info(
+        "POST %s body_keys=%s",
+        url,
+        list(body.keys()) if isinstance(body, dict) else "?",
+    )
     r = session.post(url, json=body, timeout=30)
     logger.info("POST %s -> %s len=%s", path, r.status_code, len(r.content))
     assert r.status_code == 200, (r.status_code, r.text)
@@ -122,7 +126,9 @@ def test_smoke_multi_zone_sensor_updates(http: requests.Session) -> None:
     logger.info("case: several zones post sensors, /zones shows each latest")
     _post_json(http, "/test_reset", {"commands": {}, "sensors": {}})
     _post_json(http, "/zone/kitchen/sensors", {"temp_centigrade": 19.0})
-    _post_json(http, "/zone/bedroom/sensors", {"temp_centigrade": 17.5, "humid_percent": 42.0})
+    _post_json(
+        http, "/zone/bedroom/sensors", {"temp_centigrade": 17.5, "humid_percent": 42.0}
+    )
     _post_json(http, "/zone/kitchen/sensors", {"temp_centigrade": 19.5})
     js = _get_json(http, "/zones")
     assert set(js.keys()) == {"bedroom", "kitchen"}
@@ -203,5 +209,7 @@ def test_smoke_access_log_history(http: requests.Session) -> None:
         "/zones",
     }
     missing = required - paths
-    assert not missing, f"access log missing paths: {missing}; have sample {list(paths)[:15]}"
+    assert (
+        not missing
+    ), f"access log missing paths: {missing}; have sample {list(paths)[:15]}"
     logger.info("ok: access log contains expected paths")

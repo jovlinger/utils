@@ -17,10 +17,10 @@
 #   ./build-and-write.sh /run/media/you/PIBOOT                          # Linux: mount point -> parent disk (needs lsblk)
 #
 # Every image MUST bake zone machine auth (Ed25519 pub) and Google OAuth client files.
-# Paths are fixed (no flags, no env overrides for secrets):
-#   Zone pub:  thermo/dmz/.secrets/zone/pub.pem
-#   OAuth dir: thermo/dmz/.secrets/oauth/  (google-client-id, google-client-secret,
-#              flask-secret-key, allowed-email — see ./SECRETS.md)
+# Paths are fixed (no flags, no env overrides):
+#   Zone pub:        thermo/config/zone/pub.pem
+#   OAuth public:    thermo/config/oauth/google-client-id
+#   OAuth private:   thermo/priv/oauth/google-client-secret, flask-secret-key, allowed-email
 #
 # Prerequisites: docker (buildx), curl or wget, tar, gzip, mkfs.vfat, mcopy/mmd (mtools).
 #   With a device: dd + sudo (unmount + write). macOS: brew install dosfstools mtools
@@ -28,6 +28,9 @@
 #
 # Env (non-secret operational only):
 #   DMZ_OUTPUT_IMG              Output .img path (default: dist/dmz.img). Used by tests.
+#
+# Tweakable runtime settings: edit dmz.conf in this directory (network, sshd-on-boot,
+# long-poll, log level). build-and-write.sh applies them to install/ on the FAT image.
 #
 # ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub — at least one required: merged into
 # install/rescue_authorized_keys on FAT and apkovl /root/install/ (installed by console sh /root/sshd.sh).
@@ -50,7 +53,8 @@ fi
 usage() {
 	echo "Usage: $0 [BLOCK_DEVICE_OR_MOUNT]" >&2
 	echo "  Builds dist/dmz.img (or DMZ_OUTPUT_IMG) with zone machine auth + OAuth files ALWAYS baked." >&2
-	echo "  Secrets are ONLY read from .secrets/zone/pub.pem and .secrets/oauth/ under thermo/dmz/ (see ./SECRETS.md)." >&2
+	echo "  Public material is read from thermo/config/{zone,oauth}; private material from thermo/priv/oauth (see ./SECRETS.md)." >&2
+	echo "  Required: thermo/config/zone/pub.pem, thermo/config/oauth/google-client-id, and thermo/priv/oauth/{google-client-secret,flask-secret-key,allowed-email}." >&2
 	echo "  No overrides: missing or invalid material aborts the build." >&2
 	echo "  With device or mount: background unmount during build, then sudo dd." >&2
 	echo "  Examples: $0    $0 /dev/disk4    $0 /Volumes/PIBOOT" >&2
@@ -104,14 +108,20 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DMZ_DIR="$SCRIPT_DIR"
+THERMO_DIR="$(cd "$DMZ_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$DMZ_DIR/../.." && pwd)"
-RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../bin/run-with-stdout-logged.py}"
+RUN_WITH_BIN="${DMZ_RUN_WITH_SRC:-$DMZ_DIR/../../extdeps/run-with-stdout-logged.py}"
 OUTPUT_IMG="${DMZ_OUTPUT_IMG:-$DMZ_DIR/dist/dmz.img}"
+DMZ_CONF="$DMZ_DIR/dmz.conf"
+if [ ! -f "$DMZ_CONF" ]; then
+	echo "Error: missing tweakable settings file: $DMZ_CONF" >&2
+	exit 1
+fi
 
 # Zone public key: fixed path only (required).
-ZONE_PUB_KEY_SRC="$DMZ_DIR/.secrets/zone/pub.pem"
+ZONE_PUB_KEY_SRC="$THERMO_DIR/config/zone/pub.pem"
 if [ ! -f "$ZONE_PUB_KEY_SRC" ]; then
-	echo "Error: zone public key PEM is required (twoway → DMZ machine auth is always baked into this image)." >&2
+	echo "Error: zone public key PEM is required (twoway -> DMZ machine auth is always baked into this image)." >&2
 	echo "       Required path: $ZONE_PUB_KEY_SRC" >&2
 	echo "       Generate:       make -C thermo/dmz zone-keys" >&2
 	exit 1
@@ -122,17 +132,30 @@ if ! head -n1 "$ZONE_PUB_KEY_SRC" | grep -q -- "-----BEGIN PUBLIC KEY-----"; the
 	exit 1
 fi
 
-# OAuth directory: fixed path only (required).
-OAUTH_DIR_SRC="$DMZ_DIR/.secrets/oauth"
-if [ ! -d "$OAUTH_DIR_SRC" ]; then
-	echo "Error: OAuth client directory is required (human Google login for DMZ UI is always baked into this image)." >&2
-	echo "       Required path: $OAUTH_DIR_SRC/" >&2
+# OAuth files: fixed paths only (required).
+OAUTH_PUBLIC_DIR_SRC="$THERMO_DIR/config/oauth"
+OAUTH_PRIVATE_DIR_SRC="$THERMO_DIR/priv/oauth"
+if [ ! -d "$OAUTH_PUBLIC_DIR_SRC" ]; then
+	echo "Error: OAuth public config directory is required (human Google login for DMZ UI is always baked into this image)." >&2
+	echo "       Required path: $OAUTH_PUBLIC_DIR_SRC/" >&2
 	echo "       See: ./SECRETS.md" >&2
 	exit 1
 fi
-for _need in google-client-id google-client-secret flask-secret-key allowed-email; do
-	if [ ! -f "$OAUTH_DIR_SRC/$_need" ]; then
-		echo "Error: OAuth directory missing required file $_need in $OAUTH_DIR_SRC (see ./SECRETS.md)" >&2
+if [ ! -d "$OAUTH_PRIVATE_DIR_SRC" ]; then
+	echo "Error: OAuth private directory is required (human Google login for DMZ UI is always baked into this image)." >&2
+	echo "       Required path: $OAUTH_PRIVATE_DIR_SRC/" >&2
+	echo "       See: ./SECRETS.md" >&2
+	exit 1
+fi
+for _need in google-client-id; do
+	if [ ! -f "$OAUTH_PUBLIC_DIR_SRC/$_need" ]; then
+		echo "Error: OAuth public directory missing required file $_need in $OAUTH_PUBLIC_DIR_SRC (see ./SECRETS.md)" >&2
+		exit 1
+	fi
+done
+for _need in google-client-secret flask-secret-key allowed-email; do
+	if [ ! -f "$OAUTH_PRIVATE_DIR_SRC/$_need" ]; then
+		echo "Error: OAuth private directory missing required file $_need in $OAUTH_PRIVATE_DIR_SRC (see ./SECRETS.md)" >&2
 		exit 1
 	fi
 done
@@ -274,6 +297,11 @@ if [ -n "$WRITE_DEV" ]; then
 fi
 
 WORKDIR="$(mktemp -d)"
+GEN_INSTALL="$WORKDIR/install-gen"
+mkdir -p "$GEN_INSTALL"
+chmod +x "$DMZ_DIR/install/parse-dmz-conf.sh"
+"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_CONF" "$GEN_INSTALL"
+ts "[build] dmz.conf -> network.conf, dns.conf, dmz-app.env, sshd-on-boot ($(head -n1 "$GEN_INSTALL/network.conf" | tr -d '\n'))"
 cleanup() {
 	[ -n "$UMOUNT_LOG" ] && rm -f "$UMOUNT_LOG" 2>/dev/null || true
 	rm -rf "$WORKDIR" 2>/dev/null || true
@@ -305,8 +333,9 @@ else
 fi
 echo "    out: $OUTPUT_IMG"
 echo "    size: ${IMAGE_SIZE_MB}MB  platform: linux/arm/v6"
-echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway → DMZ auth, always)"
-echo "    OAuth files: $OAUTH_DIR_SRC -> install/{google-client-id,google-client-secret,flask-secret-key,allowed-email}"
+echo "    zone pub key: $ZONE_PUB_KEY_SRC -> install/zone-pub.pem (twoway -> DMZ auth, always)"
+echo "    OAuth public files: $OAUTH_PUBLIC_DIR_SRC -> install/{google-client-id}"
+echo "    OAuth private files: $OAUTH_PRIVATE_DIR_SRC -> install/{google-client-secret,flask-secret-key,allowed-email}"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -314,7 +343,7 @@ if ! command -v docker >/dev/null 2>&1; then
 	exit 1
 fi
 
-ts "[0/7] stage .docker-import (bin/run-with-stdout-logged.py)"
+ts "[0/7] stage .docker-import (extdeps/run-with-stdout-logged.py)"
 "$DMZ_DIR/stage-docker-import.sh"
 
 ts "[1/7] docker buildx (linux/arm/v6)..."
@@ -325,6 +354,17 @@ docker buildx build \
 	-f "$DMZ_DIR/Dockerfile" \
 	"$DMZ_DIR"
 ts "[1/7] done."
+
+ts "[1a/7] image test suite (pytest + default startup)..."
+docker run --rm --platform linux/arm/v6 \
+	--workdir /app \
+	--entrypoint python \
+	"$DOCKER_IMAGE" \
+	-m pytest -q test
+DMZ_DOCKER_IMAGE="$DOCKER_IMAGE" \
+	DMZ_DOCKER_PLATFORM="linux/arm/v6" \
+	/bin/sh "$DMZ_DIR/test/docker-startup-viability.sh"
+ts "[1a/7] done."
 
 ROOTFS_TAR="$WORKDIR/dmz_rootfs.tar"
 ts "[2/7] docker export -> dmz_rootfs.tar"
@@ -403,8 +443,9 @@ ln -sf ../../init.d/local "$APKOVL_DIR/etc/runlevels/default/local"
 : >"$APKOVL_DIR/etc/apk/world"
 echo "dmz" >"$APKOVL_DIR/etc/hostname"
 
-# Stable rescue sshd host keys (gitignored .secrets/); avoids known_hosts churn each flash.
-SECRETS_SSH="$DMZ_DIR/.secrets/ssh-host"
+# Stable rescue sshd host keys; avoids known_hosts churn each flash.
+SECRETS_SSH="$THERMO_DIR/priv/ssh-host"
+PUBLIC_SSH="$THERMO_DIR/config/ssh-host"
 if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ]; then
 	ts "[6/7] first-time: generating rescue SSH host keys -> $SECRETS_SSH"
 	"$DMZ_DIR/install/gen-dmz-rescue-host-keys.sh"
@@ -413,9 +454,13 @@ if [ ! -f "$SECRETS_SSH/ssh_host_ed25519_key" ] || [ ! -f "$SECRETS_SSH/ssh_host
 	echo "Error: missing host keys under $SECRETS_SSH (run install/gen-dmz-rescue-host-keys.sh)." >&2
 	exit 1
 fi
+if [ ! -f "$PUBLIC_SSH/ssh_host_ed25519_key.pub" ] || [ ! -f "$PUBLIC_SSH/ssh_host_rsa_key.pub" ]; then
+	echo "Error: missing public host keys under $PUBLIC_SSH (run install/gen-dmz-rescue-host-keys.sh)." >&2
+	exit 1
+fi
 mkdir -p "$APKOVL_DIR/etc/ssh"
-cp "$SECRETS_SSH/ssh_host_ed25519_key" "$SECRETS_SSH/ssh_host_ed25519_key.pub" \
-	"$SECRETS_SSH/ssh_host_rsa_key" "$SECRETS_SSH/ssh_host_rsa_key.pub" \
+cp "$SECRETS_SSH/ssh_host_ed25519_key" "$PUBLIC_SSH/ssh_host_ed25519_key.pub" \
+	"$SECRETS_SSH/ssh_host_rsa_key" "$PUBLIC_SSH/ssh_host_rsa_key.pub" \
 	"$APKOVL_DIR/etc/ssh/"
 chmod 600 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key"
 chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ssh_host_rsa_key.pub"
@@ -423,8 +468,15 @@ chmod 644 "$APKOVL_DIR/etc/ssh/ssh_host_ed25519_key.pub" "$APKOVL_DIR/etc/ssh/ss
 mkdir -p "$APKOVL_DIR/root/.ssh" "$APKOVL_DIR/root/install"
 cp "$DMZ_DIR/install/sshd.sh" "$APKOVL_DIR/root/sshd.sh"
 chmod +x "$APKOVL_DIR/root/sshd.sh"
+cp "$DMZ_DIR/install/dmz-sshd-common.sh" "$APKOVL_DIR/root/install/dmz-sshd-common.sh"
+chmod +x "$APKOVL_DIR/root/install/dmz-sshd-common.sh"
 cp "$RESCUE_AUTH_KEYS" "$APKOVL_DIR/root/install/rescue_authorized_keys"
 chmod 644 "$APKOVL_DIR/root/install/rescue_authorized_keys"
+# dns.conf is copied onto FAT at [7/7]; mirror defaults into apkovl for pre-mount boot.
+if [ -f "$GEN_INSTALL/dns.conf" ]; then
+	cp "$GEN_INSTALL/dns.conf" "$APKOVL_DIR/root/install/dns.conf"
+	chmod 644 "$APKOVL_DIR/root/install/dns.conf"
+fi
 : >"$APKOVL_DIR/root/.ssh/authorized_keys"
 chmod 600 "$APKOVL_DIR/root/.ssh/authorized_keys"
 
@@ -433,8 +485,15 @@ if command -v sha256sum >/dev/null 2>&1; then
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/sshd.sh" \
+			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
+				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
+				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/test/docker-startup-viability.sh" \
+				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
+				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
+				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -445,8 +504,15 @@ else
 		{
 			cat "$DMZ_DIR/build-and-write.sh" "$DMZ_DIR/Dockerfile" "$DMZ_DIR/requirements.txt" \
 				"$DMZ_DIR/start.sh" "$DMZ_DIR/run.sh" "$RUN_WITH_BIN"
-			for f in "$DMZ_DIR/install/dmz-boot.start" "$DMZ_DIR/install/network.conf" \
-				"$DMZ_DIR/install/sshd.sh" \
+			for f in "$DMZ_DIR/app.py" "$DMZ_DIR/zone_auth.py" \
+				"$DMZ_DIR/logging_config.py" "$DMZ_DIR/manage.py" \
+				"$DMZ_DIR/strip_charset_normalizer_so.py" \
+				"$DMZ_DIR/test/docker-startup-viability.sh" \
+				"$DMZ_DIR/.docker-import/ui/ui_server.py" \
+				"$DMZ_DIR/.docker-import/ui/ui_template.html" \
+				"$DMZ_DIR/dmz.conf" "$DMZ_DIR/install/dmz-boot.start" \
+				"$DMZ_DIR/install/parse-dmz-conf.sh" "$DMZ_DIR/install/sshd.sh" \
+				"$DMZ_DIR/install/dmz-sshd-common.sh" \
 				"$DMZ_DIR/install/CARD-README.txt" "$DMZ_DIR/install/README.md"; do
 				[ -f "$f" ] && cat "$f"
 			done
@@ -457,11 +523,25 @@ BUILD_ID=$(echo "$BUILD_HASH" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILDINFO_LINE="${BUILD_ID} ${BUILD_DATE}"
 GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+GIT_BRANCH=$(git -C "$REPO_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "unknown")
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	if git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- \
+		&& git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules --; then
+		GIT_DIRTY=false
+	else
+		GIT_DIRTY=true
+	fi
+else
+	GIT_DIRTY=unknown
+fi
 REPO_NAME=$(basename "$REPO_ROOT")
 {
 	echo "$BUILDINFO_LINE"
 	echo "repo=$REPO_NAME"
 	echo "git_sha=$GIT_SHA"
+	echo "git_branch=$GIT_BRANCH"
+	echo "git_dirty=$GIT_DIRTY"
+	echo "source_sha256=$BUILD_HASH"
 	_zone_pub_sha=$(
 		(sha256sum "$ZONE_PUB_KEY_SRC" 2>/dev/null \
 			|| shasum -a 256 "$ZONE_PUB_KEY_SRC") | awk '{print $1}'
@@ -527,7 +607,14 @@ mmd -i "$IMG_FILE" ::install
 mmd -i "$IMG_FILE" ::debug
 for f in "$DMZ_DIR/install"/*; do
 	[ -e "$f" ] || continue
-	mcopy -i "$IMG_FILE" "$f" "::install/$(basename "$f")"
+	_base=$(basename "$f")
+	case "$_base" in
+	network.conf | dns.conf | dmz-app.env | sshd-on-boot) continue ;;
+	esac
+	mcopy -i "$IMG_FILE" "$f" "::install/$_base"
+done
+for _gen in network.conf dns.conf dmz-app.env sshd-on-boot; do
+	mcopy -i "$IMG_FILE" "$GEN_INSTALL/$_gen" "::install/$_gen"
 done
 cp "$RESCUE_AUTH_KEYS" "$WORKDIR/device-rescue_authorized_keys"
 mcopy -i "$IMG_FILE" "$WORKDIR/device-rescue_authorized_keys" ::install/rescue_authorized_keys
@@ -536,8 +623,11 @@ mcopy -i "$IMG_FILE" "$WORKDIR/buildinfo.txt" ::BUILD.txt
 mcopy -i "$IMG_FILE" "$DMZ_DIR/install/CARD-README.txt" ::README.txt
 # Zone pub + OAuth: always baked (paths resolved and validated at start of script).
 mcopy -i "$IMG_FILE" "$ZONE_PUB_KEY_SRC" ::install/zone-pub.pem
-for _o in google-client-id google-client-secret flask-secret-key allowed-email; do
-	mcopy -i "$IMG_FILE" "$OAUTH_DIR_SRC/$_o" "::install/$_o"
+for _o in google-client-id; do
+	mcopy -i "$IMG_FILE" "$OAUTH_PUBLIC_DIR_SRC/$_o" "::install/$_o"
+done
+for _o in google-client-secret flask-secret-key allowed-email; do
+	mcopy -i "$IMG_FILE" "$OAUTH_PRIVATE_DIR_SRC/$_o" "::install/$_o"
 done
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::dmz.apkovl.tar.gz
 mcopy -i "$IMG_FILE" "$WORKDIR/dmz.apkovl.tar.gz" ::alpine.apkovl.tar.gz

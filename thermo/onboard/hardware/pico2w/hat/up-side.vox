@@ -1,0 +1,68 @@
+# Text voxel design for thermo Pico2W sensor HAT, up-side variant.
+# UNIT_MM=2.54
+
+# Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
+# Grid columns west to east: border, -8.89, -6.35, -3.81, -1.27, 1.27, 3.81, 6.35, 8.89, border
+# Rows north to south.
+# Legend: X=solid substrate, *=Pico pin pad, O=device leg pad, .=empty/air, a-z=embossed labels.
+# Trace tiles: |=vertical, -=horizontal, +=intersection.
+# Routing intent (adjacent cells, never a digraph in one cell):
+#   -O = horizontal trace into a leg pad O
+#   -- = horizontal trace segment (continue net)
+#   OO = adjacent leg pads with no trace between (isolated)
+# Layer trace uses */O on pads; traces use - | + only on empty cells between pads.
+
+layer base (6, 10, 22, letter_style=negative)
+      XXXXXXXXXX
+GP15  X*XXXXXX*X GP16
+GP14  X*XXXXXX*X GP17
+GND   X*XXXXXX*X GND
+GP13  X*XOOOXX*X GP18   IR TX target .c3= GP13,.c4 = VCC, .c5 = GND
+GP12  X*XXXXXX*X GP19
+GP11  X*XXXXXX*X GP20
+GP10  X*XOOOXX*X GP21   IR RX target .c3= GP10,.c4 = VCC, .c5 = GND
+GND   X*XXXXXX*X GND
+GP9   X*XXXXXX*X GP22
+GP8   X*XocipX*X RUN
+GP7   X*XedisX*X GP26
+GP6   X*XXXXXX*X GP27
+GND   X*XXXXXX*X GND
+GP5   X*XXXXXX*X GP28
+GP4   X*XOOOOX*X ADCV  AHT20 target: .c3 = VCC, .c4 = GND, .c5 = GP5/SCL, .c6 = GP4/SDA; big 7-pin keepout
+GP3   X*XXXXXX*X 3V3
+GP2   X*XXXXXX*X 3EN
+GND   X*XXXXXX*X GND
+GP1   X*XXXXXX*X VSYS
+GP0   X*XXXXXX*X VBUS
+      XXXXXXXXXX
+               
+               
+alias V -> | = VCC
+alias G -> | = GND
+               
+               
+layer trace (6, 10, 22)
+      ..........
+GP15  .O..up..O. GP16
+GP14  ...side... GP17
+GND   .......... GND
+GP13  .*-OOO.... GP18  IR TX target .c3= GP13,.c4 = VCC, .c5 = GND
+GP12  ....|G.... GP19
+GP11  ....V|.... GP20
+GP10  .*-OOO.g.. GP21  IR RX target .c3= GP10,.c4 = VCC, .c5 = GND
+GND   ....|├--*. GND
+GP9   ...v||.... GP22
+GP8   ...┌┘|.... RUN
+GP7   ...|┌┘.... GP26
+GP6   ...||┌--*. GP27  SCL
+GND   ...|||.... GND
+GP5   ...|||┌-*. GP28  SDA
+GP4   ...OOOO... ADCV  AHT20 target .c3 = VCC, .c4 = GND, .c5 = GP27 (SCL) .c6 = GP28 (SDA); big 7-pin keepout
+GP3   ..v└----*. 3V3  
+GP2   .......... 3EN
+GND   ..thermo.. GND
+GP1   .......... VSYS
+GP0   .O..usb.O. VBUS
+      ..........
+
+# FIXME: how best to make VCC == 3V3?  ERROR in > -> ┤.  default better move SDA=0/26, SCL=1/27 

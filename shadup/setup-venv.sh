@@ -13,9 +13,28 @@ SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 
+ensure_venv_marker_readme() {
+  if [ ! -f "$VENV_DIR/README.md" ]; then
+    cat >"$VENV_DIR/README.md" <<EOF
+# Project virtualenv marker
+
+This directory marks where the project-local Python virtualenv belongs.
+The launcher searches upward for the nearest .venv, venv, or env directory.
+
+Only this README is meant to be committed; the generated virtualenv contents
+stay local to the machine.
+EOF
+  fi
+}
+
 if [ -f "$VENV_DIR/bin/activate" ]; then
-  echo "Venv already exists at $VENV_DIR."
-  exit 0
+  if [ -x "$VENV_DIR/bin/python3" ] || [ -x "$VENV_DIR/bin/python" ]; then
+    ensure_venv_marker_readme
+    echo "Venv already exists at $VENV_DIR."
+    exit 0
+  fi
+  echo "Removing stale venv at $VENV_DIR (missing python executable)."
+  rm -rf "$VENV_DIR"
 fi
 
 # Need Python >= 3.10 (shadup.py uses PEP 604 "X | None" syntax).
@@ -59,6 +78,7 @@ fi
 
 echo "Using $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1)) to create venv."
 "$PYTHON_BIN" -m venv "$VENV_DIR"
+ensure_venv_marker_readme
 . "$VENV_DIR/bin/activate"
 
 if [ -f "$REQ_FILE" ]; then

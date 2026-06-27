@@ -31,7 +31,11 @@ def _install_google_dns_fail_patch() -> None:
         proto: int = 0,
         flags: int = 0,
     ) -> Any:
-        h = host.decode("utf-8", errors="replace") if isinstance(host, bytes) else str(host)
+        h = (
+            host.decode("utf-8", errors="replace")
+            if isinstance(host, bytes)
+            else str(host)
+        )
         if "accounts.google.com" in h:
             raise socket.gaierror(-3, "Try again")
         return _real(host, port, family, type, proto, flags)
@@ -154,11 +158,7 @@ def main() -> None:
         if loc.startswith("/"):
             login_url = f"http://127.0.0.1:{fp}{loc}"
         r_login = requests.get(login_url, allow_redirects=False, timeout=15)
-        ok = (
-            r_ui.status_code == 302
-            and "/login" in loc
-            and r_login.status_code == 500
-        )
+        ok = r_ui.status_code == 302 and "/login" in loc and r_login.status_code == 500
         body_snip = (r_login.text or "")[:400]
         print(
             json.dumps(

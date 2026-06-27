@@ -10,12 +10,11 @@ SCRIBBLE="$THERMO_DIR/scribble"
 SEND_LOG="/tmp/fake-ir-ctl-send.log"
 rm -f "$SEND_LOG"
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $UTILS_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-. "$ONBOARD/env/bin/activate"
+# shellcheck source=/dev/null
+. "$UTILS_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$UTILS_ROOT"
+# shellcheck source=/dev/null
+. "$VENV_DIR/bin/activate"
 
 _timeout() { local s=$1; shift; perl -e 'alarm(shift @ARGV); exec @ARGV' "$s" "$@"; }
 

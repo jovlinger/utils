@@ -7,8 +7,8 @@ to read sensors and send commands, then verifies commands appear in onboard.
 
 Docker images (must match ``thermo/test/docker-compose.yml`` and ``thermo/onboard/Makefile``):
 
-- ``THERMO_ONBOARD_IMAGE`` — Flask + UI (``Dockerfile.onboard``).
-- ``THERMO_ONBOARD_TWOWAY_IMAGE`` — twoway sync (``Dockerfile.twoway``).
+- ``THERMO_ONBOARD_IMAGE`` - Flask + UI (``hardware/pizero2w/Dockerfile.onboard``).
+- ``THERMO_ONBOARD_TWOWAY_IMAGE`` - twoway sync (``hardware/pizero2w/Dockerfile.twoway``).
 
 Build locally before compose: from ``thermo/onboard`` run ``make images`` (or ``make test_e2e``
 from ``thermo/test``, which invokes that). Push to GHCR: ``make push_images`` (needs ``CR_PAT``).
@@ -25,7 +25,6 @@ Runs in two modes:
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -130,10 +129,18 @@ def _gen_keys(tmpdir: Path) -> tuple[Path, Path]:
     return priv_path, pub_path
 
 
+def _component_python(component_dir: Path) -> str:
+    """Use the component venv for subprocess services when thermo-envs created it."""
+    venv_python = component_dir / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    return sys.executable
+
+
 def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5001", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
-        [sys.executable, "app.py"],
+        [_component_python(DMZ_DIR), "app.py"],
         cwd=DMZ_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -144,7 +151,7 @@ def _start_dmz(env: dict, stderr: Any) -> subprocess.Popen:
 def _start_onboard(env: dict, stderr: Any) -> subprocess.Popen:
     env = {**os.environ, "PORT": "5002", "ENV": "DOCKERTEST", **env}
     return subprocess.Popen(
-        [sys.executable, "app.py"],
+        [_component_python(ONBOARD_DIR), "-m", "hardware.pizero2w.app"],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -167,7 +174,14 @@ def _start_twoway(env: dict, stderr: Any) -> subprocess.Popen:
         **env,
     }
     return subprocess.Popen(
-        [sys.executable, "twoway.py", readfrom, dmz_sensors, writeto],
+        [
+            _component_python(ONBOARD_DIR),
+            "-m",
+            "common.twoway",
+            readfrom,
+            dmz_sensors,
+            writeto,
+        ],
         cwd=ONBOARD_DIR,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -263,7 +277,9 @@ def e2e_services():
             _e2e_trace("fixture: onboard /help reachable")
 
             rf, dmz_post, wt = _twoway_endpoints()
-            _e2e_trace(f"fixture: starting twoway poll={rf!r} post={dmz_post!r} writeto={wt!r}")
+            _e2e_trace(
+                f"fixture: starting twoway poll={rf!r} post={dmz_post!r} writeto={wt!r}"
+            )
 
             twoway_proc = _start_twoway(onboard_env, stderr=twoway_err)
             time.sleep(0.5)  # let twoway start
@@ -313,13 +329,17 @@ def test_e2e_sensors_and_commands(e2e_services):
             f"{ONBOARD_URL}/test/inject_readings",
             json={"temp_centigrade": 19.5, "humid_percent": 55.0},
         )
-        _e2e_trace(f"test: inject_readings -> {r.status_code} body[:200]={r.text[:200]!r}")
+        _e2e_trace(
+            f"test: inject_readings -> {r.status_code} body[:200]={r.text[:200]!r}"
+        )
         assert r.status_code == 200
 
         # Wait for twoway to poll and push to dmz (DOCKERTEST uses 0.1s interval)
         for i in range(10):
             time.sleep(0.1)
-            _e2e_zones_trace(f"test: wait_{i + 1}/10 (+{(i + 1) * 0.1:.1f}s after inject)")
+            _e2e_zones_trace(
+                f"test: wait_{i + 1}/10 (+{(i + 1) * 0.1:.1f}s after inject)"
+            )
 
         # Read zones from dmz - should see our sensor data
         _e2e_trace("test: final GET /zones before assert")

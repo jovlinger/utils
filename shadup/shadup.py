@@ -1,3 +1,4 @@
+#!/usr/bin/env venv-run
 """Deduplicate files by sha256 into a shared store with symlinks."""
 
 import argparse
@@ -263,8 +264,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files and directories starting with '.' (default: true)",
     )
 
+    extract_description = (
+        "Extract files back to their original paths.\n\n"
+        "Materialization: by default, extract writes a hardlink when the target "
+        "is on the same filesystem as shadir and a copy when it is on a "
+        "different filesystem. With -s / --symlink, extract writes symlinks to "
+        "the stored blobs."
+    )
     p_extract = sub.add_parser(
-        "extract", help="Extract files back to their original paths"
+        "extract",
+        help="Extract files back to their original paths",
+        description=extract_description,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_extract.add_argument(
         "prefixes",
@@ -274,6 +285,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_extract.add_argument(
         "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_extract.add_argument(
+        "-s",
+        "--symlink",
+        action="store_true",
+        help=(
+            "Extract as symlinks to stored blobs instead of the default "
+            "same-filesystem hardlinks or cross-filesystem copies"
+        ),
     )
 
     p_ls = sub.add_parser(
@@ -1338,39 +1358,44 @@ def _matches_prefix(target_rel: str, normalized_prefixes: list[str]) -> bool:
     )
 
 
-def _prepare_extract_target(dest_path: str, store_path: str) -> bool:
+def _prepare_extract_target(dest_path: str, store_path: str, symlink: bool) -> bool:
     if os.path.isdir(dest_path):
         raise RuntimeError(f"extract target is a directory: {dest_path}")
     if os.path.exists(dest_path):
         if os.path.islink(dest_path):
             os.unlink(dest_path)
-        elif os.path.samefile(dest_path, store_path):
+        elif not symlink and os.path.samefile(dest_path, store_path):
             return False
         elif os.path.isfile(dest_path):
             os.unlink(dest_path)
     return True
 
 
-def _link_or_copy(store_path: str, dest_path: str, dest_dir: str) -> int:
+def _same_filesystem(store_path: str, dest_dir: str) -> bool:
+    return os.stat(store_path).st_dev == os.stat(dest_dir).st_dev
+
+
+def _link_copy_or_symlink(
+    store_path: str, dest_path: str, dest_dir: str, symlink: bool
+) -> int:
     store_stat = os.stat(store_path)
     size = store_stat.st_size
-    if store_stat.st_dev == os.stat(dest_dir).st_dev:
-        try:
-            os.link(store_path, dest_path)
-            out(
-                "hardlink {dest_path} <- {store_path}",
-                2,
-                dest_path=dest_path,
-                store_path=store_path,
-            )
-        except OSError:
-            shutil.copy2(store_path, dest_path)
-            out(
-                "copy {dest_path} <- {store_path}",
-                2,
-                dest_path=dest_path,
-                store_path=store_path,
-            )
+    if symlink:
+        os.symlink(os.path.abspath(store_path), dest_path)
+        out(
+            "symlink {dest_path} <- {store_path}",
+            2,
+            dest_path=dest_path,
+            store_path=store_path,
+        )
+    elif _same_filesystem(store_path, dest_dir):
+        os.link(store_path, dest_path)
+        out(
+            "hardlink {dest_path} <- {store_path}",
+            2,
+            dest_path=dest_path,
+            store_path=store_path,
+        )
     else:
         shutil.copy2(store_path, dest_path)
         out(
@@ -1382,7 +1407,7 @@ def _link_or_copy(store_path: str, dest_path: str, dest_dir: str) -> int:
     return size
 
 
-def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
+def _restore_orphan_symlink(abs_prefix: str, shadir_real: str, symlink: bool) -> int:
     if not os.path.islink(abs_prefix):
         return 0
     resolved = os.path.realpath(abs_prefix)
@@ -1390,14 +1415,10 @@ def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
         return 0
     store_stat = os.stat(resolved)
     size = store_stat.st_size
+    if symlink:
+        return 0
     os.unlink(abs_prefix)
-    if store_stat.st_dev == os.stat(os.path.dirname(abs_prefix)).st_dev:
-        try:
-            os.link(resolved, abs_prefix)
-        except OSError:
-            shutil.copy2(resolved, abs_prefix)
-    else:
-        shutil.copy2(resolved, abs_prefix)
+    _link_copy_or_symlink(resolved, abs_prefix, os.path.dirname(abs_prefix), symlink)
     out(
         "extracted {dest_path} <- {store_path}",
         1,
@@ -1408,7 +1429,11 @@ def _restore_orphan_symlink(abs_prefix: str, shadir_real: str) -> int:
 
 
 def extract_from_db(
-    conn: sqlite3.Connection, shadir: str, prefixes: list[str], show_deleted: bool
+    conn: sqlite3.Connection,
+    shadir: str,
+    prefixes: list[str],
+    show_deleted: bool,
+    symlink: bool,
 ) -> int:
     """Extract files listed in db that match any path prefix."""
     normalized_prefixes, abs_prefixes = _normalize_extract_prefixes(prefixes)
@@ -1436,10 +1461,10 @@ def extract_from_db(
             )
             continue
         ensure_directory(dest_dir)
-        if not _prepare_extract_target(dest_path, store_path):
+        if not _prepare_extract_target(dest_path, store_path, symlink):
             seen_paths.add(dest_path)
             continue
-        size = _link_or_copy(store_path, dest_path, dest_dir)
+        size = _link_copy_or_symlink(store_path, dest_path, dest_dir, symlink)
         extracted_bytes += size
         seen_paths.add(dest_path)
         out(
@@ -1451,7 +1476,7 @@ def extract_from_db(
     for abs_prefix in abs_prefixes:
         if abs_prefix in seen_paths:
             continue
-        restored = _restore_orphan_symlink(abs_prefix, shadir_real)
+        restored = _restore_orphan_symlink(abs_prefix, shadir_real, symlink)
         if restored:
             extracted_bytes += restored
             seen_paths.add(abs_prefix)
@@ -1967,10 +1992,16 @@ def handle_dedup(
 
 
 def handle_extract(
-    conn: sqlite3.Connection, prefixes: list[str], shadir: str, show_deleted: bool
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    shadir: str,
+    show_deleted: bool,
+    symlink: bool,
 ) -> None:
     """Extract files from the db that match prefix paths."""
-    extracted_bytes = extract_from_db(conn, shadir, prefixes, show_deleted=show_deleted)
+    extracted_bytes = extract_from_db(
+        conn, shadir, prefixes, show_deleted=show_deleted, symlink=symlink
+    )
     out("extracted bytes: {extracted_bytes}", 0, extracted_bytes=extracted_bytes)
 
 
@@ -2424,7 +2455,13 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     if action == "extract":
         for prefix in args.prefixes:
             out("extract {prefix}", 1, prefix=prefix)
-        handle_extract(conn, args.prefixes, shadir, show_deleted=args.show_deleted)
+        handle_extract(
+            conn,
+            args.prefixes,
+            shadir,
+            show_deleted=args.show_deleted,
+            symlink=args.symlink,
+        )
         return 0
     if action in ("ls", "lspath"):
         for prefix in args.prefixes:

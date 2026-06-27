@@ -1,0 +1,158 @@
+# Thermo onboard stack: app + twoway (host network; bind-mounted logs under /var/log/thermo-onboard).
+# Deploy: ./deploy-compose.sh from this directory (see README.md).
+# DMZ_* defaults should match the file pointed to by THERMO_ENV_FILE (see thermo/config/README.md).
+#
+# CPU limits via deploy.resources (memory limits omitted: cgroup memory is often unavailable on Pi OS).
+# Optional /dev/lirc1: duplicate the lirc0 device line if your hardware exposes a second device.
+
+name: thermo-onboard
+
+services:
+  onboard:
+    image: ghcr.io/jovlinger/thermo-onboard-app:latest
+    container_name: thermo-onboard-app
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - .deploy-metadata.env
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+      - /dev/lirc0:/dev/lirc0
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      LOG_PATH_APP: /var/log/thermo-onboard/onboard-app.log
+      LOG_PATH_UI: /var/log/thermo-onboard/onboard-ui.log
+      LOG_FILELIMIT: "1048576"
+      LOG_TOTALLIMIT: "2097152"
+      PORT: "5000"
+      UI_PORT: "8080"
+      UI_EXTRA_PORTS: "80"
+      ZONE_NAME: ${ZONE_NAME:-kitchen}
+      ONBOARD_HARDWARE_PROFILE: ${ONBOARD_HARDWARE_PROFILE:-pi_zero_2w_htu21d_ir}
+      ONBOARD_SEND_BEHAVIOR: ${ONBOARD_SEND_BEHAVIOR:-ir_heatpump}
+      ONBOARD_IR_PROTOCOL: ${ONBOARD_IR_PROTOCOL:-daikin_arc452a9}
+      ONBOARD_REPORT_BEHAVIOR: ${ONBOARD_REPORT_BEHAVIOR:-sensor_readings}
+      SENSOR_DRIVER: ${SENSOR_DRIVER:-htu21d}
+      IR_TRANSPORT: ${IR_TRANSPORT:-lirc}
+      IR_DEVICE: ${IR_DEVICE:-/dev/lirc0}
+      # Set to 1 to skip onboard HTML UI (DMZ still serves its own ui_server on UI_PORT, default 8090 in image).
+      THERMO_UI_DISABLE: ${THERMO_UI_DISABLE:-0}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+
+  twoway:
+    image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
+    container_name: thermo-onboard-twoway
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - .deploy-metadata.env
+    depends_on:
+      - onboard
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+      # Zone Ed25519 private key for twoway -> DMZ machine auth (see ../../../../../KEYS-AND-CERTS.md).
+      # We bind-mount the **directory** (not the file) so the container can start even before
+      # the priv key has been installed: twoway will then log a loud `WARNING zone auth
+      # DISABLED` instead of failing at OCI mount time with the cryptic
+      #   "not a directory: Are you trying to mount a directory onto a file (or vice-versa)?"
+      # which Docker emits when the source file is missing (Docker auto-creates the missing
+      # source as a directory, which then collides with the file-shaped target).
+      #
+      # Install the key on the Pi (one-time):
+      #   mkdir -p thermo/priv/zone
+      #   install -m 0400 /path/to/priv.pem thermo/priv/zone/priv.pem
+      # Override the host directory via ZONE_KEYS_DIR if you keep keys elsewhere; the
+      # in-container path stays /etc/thermo regardless.
+      - ${ZONE_KEYS_DIR:-../../../../priv/zone}:/etc/thermo:ro
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      LOG_PATH: /var/log/thermo-onboard/twoway.log
+      LOG_FILELIMIT: "1048576"
+      LOG_TOTALLIMIT: "2097152"
+      ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
+      DMZ_SCHEME: ${DMZ_SCHEME:-http}
+      DMZ_HOST: ${DMZ_HOST:-jovlinger.duckdns.org}
+      DMZ_PORT: ${DMZ_PORT:-5000}
+      DMZ_URL: ${DMZ_URL:-}
+      # Must be >= DMZ LONG_POLL_TIMEOUT_SECS (+ margin baked into DMZ_HTTP_TIMEOUT_SECS).
+      LONG_POLL_TIMEOUT_SECS: ${LONG_POLL_TIMEOUT_SECS:-60}
+      ZONE_NAME: ${ZONE_NAME:-kitchen}
+      # Twoway reads ZONE_PRIVATE_KEY_PATH (or ZONE_PRIVATE_KEY for inline PEM). The in-container
+      # path is fixed at /etc/thermo/priv.pem; if that file is absent (because the host
+      # dir is empty), twoway logs `WARNING zone auth DISABLED on client; ...` and DMZ POSTs
+      # will 401 - by design. Install the key per the instructions above to enable auth.
+      ZONE_PRIVATE_KEY_PATH: /etc/thermo/priv.pem
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+    ulimits:
+      nofile:
+        soft: 512
+        hard: 1024
+
+  # Same image as twoway: HTTP checks to DMZ + onboard; on sustained failure writes
+  # incidents under LOG_DIR/incidents (set CONNECTIVITY_DUMP_DIR to a persistent host
+  # path if THERMO_LOG_DIR is tmpfs and you need bundles after hard reboot).
+  #
+  # Profile `thermo-watchdog`: GHCR `thermo-onboard-twoway:latest` must include
+  # docker-entrypoint-watchdog.sh (rebuild/push after that file landed in the repo).
+  # Without the profile, deploy works with older images. Enable in .env or ~/.local.sh:
+  #   COMPOSE_PROFILES=thermo-watchdog
+  connectivity-watchdog:
+    profiles:
+      - thermo-watchdog
+    image: ghcr.io/jovlinger/thermo-onboard-twoway:latest
+    container_name: thermo-onboard-connectivity-watchdog
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - onboard
+    entrypoint: ["/app/hardware/pizero2w/docker-entrypoint-watchdog.sh"]
+    logging:
+      driver: "none"
+    volumes:
+      - ${THERMO_LOG_DIR:-/var/log/thermo-onboard}:/var/log/thermo-onboard
+      # Pi SoC temp + throttle flags for `vcgencmd` (remove this bind if `compose up` fails on non-Pi).
+      - /usr/bin/vcgencmd:/usr/bin/vcgencmd:ro
+    devices:
+      - /dev/vchiq:/dev/vchiq
+    environment:
+      LOG_DIR: /var/log/thermo-onboard
+      CONNECTIVITY_LOG_PATH: /var/log/thermo-onboard/connectivity-watchdog.log
+      CONNECTIVITY_LOG_FILELIMIT: "524288"
+      CONNECTIVITY_LOG_TOTALLIMIT: "1048576"
+      CONNECTIVITY_CHECK_INTERVAL_SECS: ${CONNECTIVITY_CHECK_INTERVAL_SECS:-30}
+      CONNECTIVITY_FAIL_THRESHOLD: ${CONNECTIVITY_FAIL_THRESHOLD:-3}
+      CONNECTIVITY_HTTP_TIMEOUT_SECS: ${CONNECTIVITY_HTTP_TIMEOUT_SECS:-5}
+      CONNECTIVITY_INCIDENT_KEEP: ${CONNECTIVITY_INCIDENT_KEEP:-15}
+      ONBOARD_URL: ${ONBOARD_URL:-http://127.0.0.1:5000}
+      DMZ_SCHEME: ${DMZ_SCHEME:-http}
+      DMZ_HOST: ${DMZ_HOST:-jovlinger.duckdns.org}
+      DMZ_PORT: ${DMZ_PORT:-5000}
+      DMZ_URL: ${DMZ_URL:-}
+      TWOWAY_LOG_PATH: /var/log/thermo-onboard/twoway.log
+      CONNECTIVITY_DUMP_DIR: ${CONNECTIVITY_DUMP_DIR:-/var/log/thermo-onboard/incidents}
+      # 0 = only log hw at connectivity incidents; >0 = periodic INFO lines (e.g. thermal trend).
+      HW_HEALTH_LOG_INTERVAL_SECS: ${HW_HEALTH_LOG_INTERVAL_SECS:-300}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+    ulimits:
+      nofile:
+        soft: 256
+        hard: 512

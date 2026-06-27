@@ -1,0 +1,4 @@
+.PHONY: binlinks
+
+binlinks:
+	@:

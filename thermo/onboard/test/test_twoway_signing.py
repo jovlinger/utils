@@ -1,17 +1,19 @@
 """Loud-on-misconfig smoke tests for twoway zone auth.
 
-Why subprocess and not import: ``twoway.py`` runs configuration + key probing at module
+Why subprocess and not import: ``common.twoway`` runs configuration + key probing at module
 import time (so the loud WARN/ERROR/INFO fires before any polling). Re-importing inside a
 single pytest process would leak state across tests, and we want to assert the *startup*
 log line — exactly what an operator sees when they `docker logs thermo-onboard-twoway`.
 
 These tests catch the regression from 2026-04-19, where twoway silently shipped with
 ``signing_enabled=False`` and every DMZ POST 401'd with no client-side hint as to why
-(see the thermo/onboard/twoway.py `_probe_signing` docstring).
+(see the `common.twoway` `_probe_signing` docstring).
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import subprocess
 import sys
@@ -23,18 +25,18 @@ import pytest
 _HERE = Path(__file__).resolve().parent
 _ONBOARD = _HERE.parent
 
-# Args twoway.py asserts on (URL1 URL2 URL3). Hosts/ports are intentionally unreachable so
+# Args common.twoway asserts on (URL1 URL2 URL3). Hosts/ports are intentionally unreachable so
 # the polling loop never starts a real request — we exit before `poll_forever()` runs by
 # raising in a sys.settrace hook (see _RUN_TWOWAY_BOOT below). The DMZ URL contains a
 # /zone/<name>/ segment so ZONE_NAME is auto-extracted (mirrors prod URL shape).
 _ARGV: List[str] = [
-    "twoway.py",
+    "common.twoway",
     "http://127.0.0.1:1/environment",
     "http://127.0.0.1:1/zone/testzone/sensors",
     "http://127.0.0.1:1/daikin",
 ]
 
-# Boot twoway, then exit before poll_forever() can run. ``info("enter")`` is the last log
+# Boot twoway, then exit before poll_forever() can run. ``logger.info("enter")`` is the last log
 # line emitted at module top-level before the `if __name__ == "__main__":` guard, so we
 # install an audit hook that abort()s right after the module import completes. We avoid
 # `if __name__ == "__main__"` by importing twoway as a module (not running it).
@@ -42,7 +44,7 @@ _RUN_TWOWAY_BOOT = (
     "import sys, os\n"
     "sys.argv = {argv!r}\n"
     "sys.path.insert(0, {onboard!r})\n"
-    "import twoway  # noqa: F401  -- module-import side effects ARE the test\n"
+    "import common.twoway  # noqa: F401  -- module-import side effects ARE the test\n"
     "sys.exit(0)\n"
 )
 
@@ -91,11 +93,15 @@ def test_no_key_emits_loud_warn_at_startup() -> None:
 def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     """Generated keypair => INFO line with stable 16-hex-char key_sha256 fingerprint.
 
-    Operator can compare this to DMZ's `cat /etc/dmz/zone-pub.pem | … fingerprint` to
+    Operator can compare this to DMZ's `cat /etc/dmz/zone-pub.pem | ... fingerprint` to
     confirm both sides hold the same keypair without having to copy the key around.
     """
     sys.path.insert(0, str(_ONBOARD))
-    from zone_auth import generate_keypair, public_key_fingerprint, _load_private_key
+    from common.zone_auth import (
+        generate_keypair,
+        public_key_fingerprint,
+        _load_private_key,
+    )
 
     priv_pem, _pub_pem = generate_keypair()
     priv_path = tmp_path / "priv.pem"
@@ -111,6 +117,36 @@ def test_valid_key_emits_enabled_with_fingerprint(tmp_path: Path) -> None:
     ), f"expected key_sha256={expected_fp}; got:\n{log}"
     assert "zone='testzone'" in log or "zone=testzone" in log
     assert "DISABLED" not in log
+    assert "MISCONFIGURED" not in log
+
+
+def test_inline_base64_private_key_env_emits_enabled() -> None:
+    """ZONE_PRIVATE_KEY accepts one-line base64 DER, matching operator env files."""
+    sys.path.insert(0, str(_ONBOARD))
+    from cryptography.hazmat.primitives import serialization
+    from common.zone_auth import (
+        generate_keypair,
+        public_key_fingerprint,
+        _load_private_key,
+    )
+
+    priv_pem, _pub_pem = generate_keypair()
+    priv = _load_private_key(priv_pem.decode())
+    priv_der = priv.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    inline_key = base64.b64encode(priv_der).decode()
+    expected_fp = public_key_fingerprint(_load_private_key(inline_key))
+
+    out, errlog, rc = _run_twoway({"ZONE_PRIVATE_KEY": inline_key})
+    assert rc == 0, f"twoway boot failed: rc={rc}\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
+    log = out + errlog
+    assert "zone auth ENABLED" in log, f"expected ENABLED line; got:\n{log}"
+    assert (
+        f"key_sha256='{expected_fp}'" in log or f"key_sha256={expected_fp}" in log
+    ), f"expected key_sha256={expected_fp}; got:\n{log}"
     assert "MISCONFIGURED" not in log
 
 
@@ -166,16 +202,77 @@ def test_config_summary_reflects_signing_state(
     overrides: Dict[str, str] = {}
     if key_present:
         sys.path.insert(0, str(_ONBOARD))
-        from zone_auth import generate_keypair
+        from common.zone_auth import generate_keypair
 
         priv_pem, _ = generate_keypair()
         priv_path = tmp_path / "priv.pem"
         priv_path.write_bytes(priv_pem)
         overrides["ZONE_PRIVATE_KEY_PATH"] = str(priv_path)
     out, errlog, rc = _run_twoway(overrides)
-    assert rc == 0, f"[{case_label}] twoway boot failed:\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
+    assert (
+        rc == 0
+    ), f"[{case_label}] twoway boot failed:\nSTDOUT:\n{out}\nSTDERR:\n{errlog}"
     log = out + errlog
     assert "twoway config" in log
-    assert expected_signing_enabled_field in log, (
-        f"[{case_label}] expected '{expected_signing_enabled_field}' in config line; got:\n{log}"
+    assert (
+        expected_signing_enabled_field in log
+    ), f"[{case_label}] expected '{expected_signing_enabled_field}' in config line; got:\n{log}"
+
+
+def test_dmz_body_includes_deployment_metadata() -> None:
+    """Twoway piggybacks public deploy metadata beside sensors and command."""
+    env_overrides = {
+        "THERMO_DEPLOY_GIT_SHA": "abcdef1234567890",
+        "THERMO_DEPLOY_GIT_SHA_SHORT": "abcdef1",
+        "THERMO_DEPLOY_GIT_BRANCH": "rooms",
+        "THERMO_DEPLOY_GIT_DIRTY": "0",
+        "THERMO_DEPLOY_ENV_FILE": "config/kitchen.env",
+        "THERMO_DEPLOY_BACKEND": "pizero2w",
+        "THERMO_DEPLOY_HARDWARE_PROFILE": "pi_zero_2w_htu21d_ir",
+        "THERMO_DEPLOY_ZONE_NAME": "kitchen",
+    }
+    code = (
+        "import json, os, sys\n"
+        f"sys.argv = {_ARGV!r}\n"
+        f"sys.path.insert(0, {str(_ONBOARD)!r})\n"
+        "import common.twoway as twoway\n"
+        "body = twoway._env_to_dmz_body({\n"
+        "    'temperature_centigrade': 19.3,\n"
+        "    'humidity_percent': 41.9,\n"
+        "    'command': {'mode': 'FAN', 'created_dt': '2026-05-25T12:47:36'},\n"
+        "    'network': {'local_ip': '192.168.1.44', 'onboard_url': 'http://192.168.1.44:5000'},\n"
+        "})\n"
+        "print('RESULT:' + json.dumps(body, sort_keys=True))\n"
     )
+    env = os.environ.copy()
+    env.update(env_overrides)
+    env["LOG_LEVEL"] = "DEBUG"
+    p = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert p.returncode == 0, f"twoway body subprocess failed:\n{p.stdout}\n{p.stderr}"
+    result_lines = [
+        line for line in p.stdout.splitlines() if line.startswith("RESULT:")
+    ]
+    assert result_lines, f"missing RESULT line:\n{p.stdout}\n{p.stderr}"
+    body = json.loads(result_lines[-1].removeprefix("RESULT:"))
+    assert body["sensors"] == {"humid_percent": 41.9, "temp_centigrade": 19.3}
+    assert body["command"]["mode"] == "FAN"
+    assert body["network"] == {
+        "local_ip": "192.168.1.44",
+        "onboard_url": "http://192.168.1.44:5000",
+    }
+    assert body["deployment"] == {
+        "backend": "pizero2w",
+        "env_file": "config/kitchen.env",
+        "git_branch": "rooms",
+        "git_dirty": "0",
+        "git_sha": "abcdef1234567890",
+        "git_sha_short": "abcdef1",
+        "hardware_profile": "pi_zero_2w_htu21d_ir",
+        "zone_name": "kitchen",
+    }
