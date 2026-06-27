@@ -150,6 +150,19 @@ def _dmz_base() -> str:
     if not raw:
         _die("DMZ_URL is not set")
 
+    # Scheme-less host or host:port (including IPs). urlparse("192.168.1.1:5000")
+    # mis-parses the dotted quad as scheme, so handle "://" absence first.
+    if "://" not in raw:
+        candidate = "http://" + raw.lstrip("/")
+        trial = urlparse(candidate)
+        if trial.scheme == "http" and trial.netloc:
+            return candidate.rstrip("/")
+        _die(
+            "DMZ_URL is not a valid base URL. Use http:// or https:// with a host "
+            "(e.g. http://192.168.88.200:5000), or host:port alone for plain HTTP.\n"
+            f"  (got {raw!r})"
+        )
+
     parsed = urlparse(raw)
     if parsed.scheme in ("http", "https"):
         if not parsed.netloc:
@@ -159,20 +172,7 @@ def _dmz_base() -> str:
             )
         return raw.rstrip("/")
 
-    if parsed.scheme:
-        _die(f"DMZ_URL must use http or https (got scheme {parsed.scheme!r})")
-
-    # No scheme: urlparse puts "host:port" in .path, not .netloc — try http:// + raw
-    candidate = "http://" + raw.lstrip("/")
-    trial = urlparse(candidate)
-    if trial.scheme == "http" and trial.netloc:
-        return candidate.rstrip("/")
-
-    _die(
-        "DMZ_URL is not a valid base URL. Use http:// or https:// with a host "
-        "(e.g. http://192.168.88.200:5000), or host:port alone for plain HTTP.\n"
-        f"  (got {raw!r})"
-    )
+    _die(f"DMZ_URL must use http or https (got scheme {parsed.scheme!r})")
 
 
 def _zone_private_key_material() -> str:

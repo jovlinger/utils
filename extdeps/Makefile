@@ -33,6 +33,11 @@ VERSION := $(CURDIR)/VERSION
 
 .PHONY: all test all-tests
 
+PYTEST := .venv/bin/python
+
+$(PYTEST): requirements-dev.txt
+	../create_pipenv.sh --sync extdeps
+
 all:
 	@test -f "$(SRC_RUN)" || (echo "extdeps: missing $(SRC_RUN)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
 	@test -f "$(SRC_MOCK)" || (echo "extdeps: missing $(SRC_MOCK)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
@@ -52,7 +57,7 @@ all:
 	@echo "Linked $(DST_VENV_RUN_LINK) -> venv-run.py"
 	@echo "Recorded $(VERSION) $$(cat $(VERSION))"
 
-test:
-	python3 -m pytest -q test_run_with_stdout_logged.py
+test: $(PYTEST)
+	$(PYTEST) -m pytest -q test_run_with_stdout_logged.py
 
 all-tests: test

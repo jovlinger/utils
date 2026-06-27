@@ -3,9 +3,9 @@ BINLINKS := ../binlinks
 
 .PHONY: binlinks test all-tests
 
-PYTEST := .venv/bin/pytest
+VENV_PYTHON := .venv/bin/python
 
-$(PYTEST): requirements.txt
+$(VENV_PYTHON): requirements.txt
 	../create_pipenv.sh --sync shadup
 
 binlinks:
@@ -14,7 +14,7 @@ binlinks:
 	ln -sf ../shadup/shadup $(BINLINKS)/shadup
 	ln -sf ../shadup/importtags $(BINLINKS)/importtags
 
-test: $(PYTEST)
-	$(PYTEST)
+test: $(VENV_PYTHON)
+	$(VENV_PYTHON) -m pytest
 
 all-tests: test

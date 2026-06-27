@@ -111,6 +111,7 @@ EOF
     echo "Migrating legacy env/ -> .venv/ for $PROJECT_REL..."
     mv "$LEGACY_ENV" "$ENV_DIR"
     ensure_venv_marker_readme
+    SYNC=1
   fi
 
   venv_has_python() {
