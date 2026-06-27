@@ -31,7 +31,8 @@ DST_VENV_RUN_LAUNCH := $(CURDIR)/venv-run-launch.py
 DST_VENV_RUN_LINK := $(CURDIR)/venv-run
 VERSION := $(CURDIR)/VERSION
 
-.PHONY: all
+.PHONY: all test all-tests
+
 all:
 	@test -f "$(SRC_RUN)" || (echo "extdeps: missing $(SRC_RUN)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
 	@test -f "$(SRC_MOCK)" || (echo "extdeps: missing $(SRC_MOCK)" >&2; echo "  Clone bin next to utils or: make -C extdeps BIN_REPO=/path/to/bin all" >&2; exit 1)
@@ -50,3 +51,8 @@ all:
 	@echo "Updated $(DST_VENV_RUN_LAUNCH) <- $(SRC_VENV_RUN_LAUNCH)"
 	@echo "Linked $(DST_VENV_RUN_LINK) -> venv-run.py"
 	@echo "Recorded $(VERSION) $$(cat $(VERSION))"
+
+test:
+	python3 -m pytest -q test_run_with_stdout_logged.py
+
+all-tests: test

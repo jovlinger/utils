@@ -1,4 +1,4 @@
-.PHONY: all clean test test-local test-docker runlocal zone-keys assert_docker_up image-armv6 \
+.PHONY: all clean test all-tests test-local test-docker runlocal zone-keys assert_docker_up image-armv6 \
 	docker-testing-clean docker-old-clean docker-clean docker-all-clean
 
 # Log wrapper: ../../extdeps/run-with-stdout-logged.py. Refresh: make -C ../../extdeps all
@@ -53,7 +53,9 @@ test-docker: .image
 	docker run --rm --workdir /app --entrypoint python jovlinger/thermo/dmz -m pytest -q test
 	$(MAKE) -C smoketest test-docker
 
-test: test-local test-docker
+test: test-local
+
+all-tests: test-local test-docker
 
 # runlocal: foreground container; API at http://localhost:8080; logs in container
 # /var/log/dmz.log (writable layer). Ctrl+C stops the container.

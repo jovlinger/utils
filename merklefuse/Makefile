@@ -1,23 +1,25 @@
-.PHONY: install test lint format clean help binlinks
+.PHONY: install test all-tests lint format clean help binlinks
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  install     - Install requirements"
-	@echo "  test        - Run all tests"
-	@echo "  test-unit   - Run unit tests only"
+	@echo "  install          - Install requirements"
+	@echo "  test             - Run unit tests (fast)"
+	@echo "  all-tests        - Unit + integration tests"
+	@echo "  test-unit        - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
-	@echo "  lint        - Run pylint"
-	@echo "  format      - Run black formatter"
-	@echo "  clean       - Clean up temporary files"
-	@echo "  mount       - Mount filesystem (requires sudo)"
+	@echo "  lint             - Run pylint"
+	@echo "  format           - Run black formatter"
+	@echo "  clean            - Clean up temporary files"
+	@echo "  mount            - Mount filesystem (requires sudo)"
 
 # Install dependencies
 install:
 	pip install -r requirements.txt
 
-# Run all tests
-test: test-unit test-integration
+test: test-unit
+
+all-tests: test-unit test-integration
 
 # Run unit tests (mocked filesystem operations)
 test-unit:

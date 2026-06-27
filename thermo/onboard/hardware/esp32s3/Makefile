@@ -1,5 +1,5 @@
 # Build/check ESP32-S3 Rust firmware scaffold.
-.PHONY: all build test testall check host-check images push push_images pull clean print-config
+.PHONY: all build test all-tests testall check host-check images push push_images pull clean print-config
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
 REPO_ROOT ?= $(abspath $(CURDIR)/../../../..)
@@ -16,7 +16,9 @@ build: host-check
 
 test: host-check
 
-testall: test
+all-tests: test
+
+testall: all-tests
 
 check: build
 

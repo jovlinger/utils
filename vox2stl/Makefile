@@ -1,4 +1,4 @@
-.PHONY: test testall
+.PHONY: test all-tests
 
 PYTEST := .venv/bin/pytest
 
@@ -8,4 +8,7 @@ $(PYTEST): requirements-dev.txt
 test: $(PYTEST)
 	$(PYTEST)
 
-testall: test
+all-tests: test
+
+# Legacy alias.
+testall: all-tests
