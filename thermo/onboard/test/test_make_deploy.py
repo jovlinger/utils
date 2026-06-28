@@ -392,3 +392,27 @@ def test_deploy_repo_override_reaches_deploy_sh() -> None:
         check=True,
     )
     assert f'REPO_PATH="{fake_repo}"' in out.stdout
+
+
+def test_zone_build_scopes_to_deploy_backend() -> None:
+    onboard = onboard_dir()
+    kitchen = onboard / "zones" / "kitchen"
+    office = onboard / "zones" / "office"
+    kitchen_out = subprocess.run(
+        ["make", "-n", "-C", str(kitchen), "build"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    office_out = subprocess.run(
+        ["make", "-n", "-C", str(office), "build"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "ONBOARD_BUILD_BACKEND=pizero2w" in kitchen_out.stdout
+    assert "hardware/pizero2w" in kitchen_out.stdout
+    assert "hardware/pico2w" not in kitchen_out.stdout
+    assert "ONBOARD_BUILD_BACKEND=pico2w" in office_out.stdout
+    assert "hardware/pico2w" in office_out.stdout
+    assert "hardware/pizero2w" not in office_out.stdout

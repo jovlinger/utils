@@ -12,6 +12,7 @@ Layout:
 
 ```bash
 make -C thermo/onboard build    # all hardware backends
+make -C thermo/onboard ONBOARD_BUILD_BACKEND=pico2w build   # one backend
 make -C thermo/onboard test     # host pytest (test/run.sh)
 make -C thermo/onboard clean
 ```
@@ -19,8 +20,9 @@ make -C thermo/onboard clean
 ## Per-zone deploy
 
 Each zone directory has `build`, `clean`, `test`, and `deploy`. Chain is
-**deploy -> test -> build**. Zone `build` builds **all** hardware backends;
-`deploy` uses `zone.env` in that directory (backend, IR protocol, DMZ, etc.).
+**deploy -> test -> build**. Zone `build` builds only that zone's
+`ONBOARD_DEPLOY_BACKEND` (via `ONBOARD_BUILD_BACKEND`); `deploy` uses
+`zone.env` in that directory (backend, IR protocol, DMZ, etc.).
 
 ```bash
 # Kitchen (Pi Zero 2 W)

@@ -9,6 +9,17 @@ UTILS_ROOT := $(REPO_ROOT)
 HARDWARE_BACKENDS := pizero2w pico2w esp32s3
 ZONES := kitchen office bedroom
 
+# When set (e.g. from zones/<zone>/Makefile), build/clean/images only that backend.
+ONBOARD_BUILD_BACKEND ?=
+ifneq ($(ONBOARD_BUILD_BACKEND),)
+ifeq ($(filter $(ONBOARD_BUILD_BACKEND),$(HARDWARE_BACKENDS)),)
+$(error ONBOARD_BUILD_BACKEND=$(ONBOARD_BUILD_BACKEND) must be one of: $(HARDWARE_BACKENDS))
+endif
+onboard_build_backends := $(ONBOARD_BUILD_BACKEND)
+else
+onboard_build_backends := $(HARDWARE_BACKENDS)
+endif
+
 include $(ONBOARD_ROOT)/mk/deploy.mk
 
 # Images built under hardware/pizero2w/; stamps live at onboard root.
@@ -20,13 +31,13 @@ include $(UTILS_ROOT)/lib/docker-clean.mk
 all: build
 
 build:
-	@for backend in $(HARDWARE_BACKENDS); do \
+	@for backend in $(onboard_build_backends); do \
 		echo "[onboard] build hardware/$$backend"; \
 		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" build || exit $$?; \
 	done
 
 clean:
-	@for backend in $(HARDWARE_BACKENDS); do \
+	@for backend in $(onboard_build_backends); do \
 		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" clean || exit $$?; \
 	done
 
@@ -36,7 +47,7 @@ test:
 test-local: test
 
 images:
-	@for backend in $(HARDWARE_BACKENDS); do \
+	@for backend in $(onboard_build_backends); do \
 		echo "[onboard] images hardware/$$backend"; \
 		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" images || exit $$?; \
 	done
