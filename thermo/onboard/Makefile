@@ -1,5 +1,5 @@
 # Thermo onboard: shared build/test and per-zone deploy under zones/.
-.PHONY: all build clean test test-local test-docker images deploy deploy-preflight deploy-zone ci \
+.PHONY: all build clean test all-tests test-local test-docker images deploy deploy-preflight deploy-zone ci \
 	docker-testing-clean docker-old-clean docker-clean docker-all-clean
 
 ONBOARD_ROOT := $(abspath $(CURDIR))
@@ -43,6 +43,8 @@ clean:
 
 test:
 	./test/run.sh
+
+all-tests: test test-docker
 
 test-local: test
 

@@ -1,31 +1,38 @@
-.PHONY: install test lint format clean help
+.PHONY: install test all-tests lint format clean help binlinks
+
+PYTEST := .venv/bin/python
+
+$(PYTEST): requirements.txt
+	../create_pipenv.sh --sync merklefuse
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  install     - Install requirements"
-	@echo "  test        - Run all tests"
-	@echo "  test-unit   - Run unit tests only"
+	@echo "  install          - Install requirements"
+	@echo "  test             - Run unit tests (fast)"
+	@echo "  all-tests        - Unit + integration tests"
+	@echo "  test-unit        - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
-	@echo "  lint        - Run pylint"
-	@echo "  format      - Run black formatter"
-	@echo "  clean       - Clean up temporary files"
-	@echo "  mount       - Mount filesystem (requires sudo)"
+	@echo "  lint             - Run pylint"
+	@echo "  format           - Run black formatter"
+	@echo "  clean            - Clean up temporary files"
+	@echo "  mount            - Mount filesystem (requires sudo)"
 
 # Install dependencies
-install:
-	pip install -r requirements.txt
+install: $(PYTEST)
 
-# Run all tests
-test: test-unit test-integration
+test: test-unit
+
+all-tests: test-unit test-integration
 
 # Run unit tests (mocked filesystem operations)
-test-unit:
-	pytest tests/unit/ -v
+test-unit: $(PYTEST)
+	@mkdir -p data
+	$(PYTEST) -m pytest tests/unit/ -v
 
 # Run integration tests (real filesystem operations in /tmp)
-test-integration:
-	pytest tests/integration/ -v
+test-integration: $(PYTEST)
+	$(PYTEST) -m pytest tests/integration/ -v
 
 # Run linting
 lint:
@@ -50,3 +57,6 @@ mount:
 dev-setup: install
 	mkdir -p tests/unit tests/integration
 	mkdir -p merklefuse
+
+binlinks:
+	@:

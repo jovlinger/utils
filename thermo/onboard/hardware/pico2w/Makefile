@@ -1,5 +1,5 @@
 # Build/check/deploy Pico2W Rust firmware.
-.PHONY: all build test check host-check firmware-check firmware-build images push push_images pull clean deploy print-config
+.PHONY: all build test all-tests check host-check firmware-check firmware-build images push push_images pull clean deploy print-config
 
 ONBOARD_ROOT ?= $(abspath $(CURDIR)/../..)
 HARDWARE_ROOT ?= $(ONBOARD_ROOT)/hardware
@@ -18,6 +18,8 @@ all: build
 build: host-check firmware-check
 
 test: host-check
+
+all-tests: test
 
 check: build
 

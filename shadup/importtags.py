@@ -182,20 +182,20 @@ _ART_ALB_SEP = ";"
 
 
 def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
-    """Union of ``tag`` and ``genre`` entries plus ``artist;…`` / ``album;…`` prefixes."""
+    """Union of namespaced ``tag;…``, ``genre;…``, ``artist;…``, ``album;…`` tags."""
     out: list[str] = []
     seen: set[str] = set()
-    for key in ("tag", "genre"):
+    for key, prefix in (("tag", "tag"), ("genre", "genre")):
         vals = obj.get(key)
         if not isinstance(vals, list):
             continue
         for v in vals:
             if not isinstance(v, str) or not v.strip():
                 continue
-            s = v.strip()
-            if s not in seen:
-                seen.add(s)
-                out.append(s)
+            bare = v.strip()
+            if bare not in seen:
+                seen.add(bare)
+                out.append(f"{prefix}{_ART_ALB_SEP}{bare}")
     artist = obj.get("artist")
     if isinstance(artist, str) and artist.strip():
         t = f"artist{_ART_ALB_SEP}{artist.strip()}"

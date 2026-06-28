@@ -38,6 +38,7 @@ mk_harness() {
     cat > "$HARNESS/with-ro-remounted-rw.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+export SHASRV_RW=1
 exec "$@"
 EOF
     chmod +x "$HARNESS/with-ro-remounted-rw.sh"

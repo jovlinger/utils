@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""Post-ingest metadata scan, tag import, and shadup tag mirror refresh."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+HOME = Path.home()
+STORE_ROOT = Path(os.environ.get("POSTINGEST_STORE_ROOT", "/mnt/sdb2/music/flac"))
+FILES_ROOT = Path(os.environ.get("POSTINGEST_FILES_ROOT", str(STORE_ROOT / "files")))
+SHADUP_DB = Path(
+    os.environ.get("POSTINGEST_DB", str(HOME / "Music" / "shasrv" / "shadup.db"))
+)
+
+JOVLINGER_BIN = HOME / "github.com" / "jovlinger" / "bin"
+JOVLINGER_UTILS = HOME / "github.com" / "jovlinger" / "utils"
+MUSICSCAN = JOVLINGER_BIN / "binlinks" / "musicscan"
+METATOOL = JOVLINGER_BIN / "binlinks" / "metatool"
+IMPORTTAGS = JOVLINGER_UTILS / "shadup" / "importtags"
+SHADUP = JOVLINGER_UTILS / "shadup" / "shadup"
+REMOUNT = JOVLINGER_BIN / "with-ro-remounted-rw.sh"
+
+KNOWN_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
+AUDIO_EXTS = {
+    ".mp3",
+    ".flac",
+    ".m4a",
+    ".mp4",
+    ".aac",
+    ".ogg",
+    ".oga",
+    ".opus",
+    ".wav",
+    ".aiff",
+    ".aif",
+    ".wv",
+    ".ape",
+    ".dsf",
+    ".dff",
+}
+
+
+def log(message: str) -> None:
+    print(f"postingest: {message}", file=sys.stderr)
+
+
+def command_env() -> dict[str, str]:
+    env = os.environ.copy()
+    path_parts = [
+        str(JOVLINGER_BIN / "binlinks"),
+        str(JOVLINGER_BIN),
+        str(JOVLINGER_UTILS / "binlinks"),
+    ]
+    env["PATH"] = os.pathsep.join(path_parts + [env.get("PATH", "")])
+    return env
+
+
+def parse_provider_csv(values: Sequence[str] | None) -> list[str]:
+    providers: list[str] = []
+    for value in values or []:
+        for provider in value.split(","):
+            provider = provider.strip()
+            if provider:
+                providers.append(provider)
+    return providers
+
+
+def configured_default_providers() -> list[str]:
+    env_spec = os.environ.get("POSTINGEST_PROVIDERS")
+    if env_spec:
+        return parse_provider_csv([env_spec])
+
+    providers = ["musicbrainz"]
+    discogs_token = os.environ.get("DISCOGS_USER_TOKEN") or os.environ.get("DISCOGS_TOKEN")
+    discogs_pair = os.environ.get("DISCOGS_CONSUMER_KEY") and os.environ.get(
+        "DISCOGS_CONSUMER_SECRET"
+    )
+    if discogs_token or discogs_pair:
+        providers.append("discogs")
+    if os.environ.get("LASTFM_API_KEY"):
+        providers.append("lastfm")
+    return providers
+
+
+def validate_providers(providers: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for provider in providers:
+        if provider not in KNOWN_PROVIDERS:
+            raise SystemExit(
+                f"unknown provider {provider!r}; expected one of {', '.join(KNOWN_PROVIDERS)}"
+            )
+        if provider not in seen:
+            seen.add(provider)
+            out.append(provider)
+    if not out:
+        raise SystemExit("no providers selected")
+    return out
+
+
+def looks_like_album_dir(path: Path) -> bool:
+    try:
+        for child in path.iterdir():
+            if child.is_file() and child.suffix.lower() in AUDIO_EXTS:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def iter_album_dirs(root: Path) -> Iterable[Path]:
+    for dirpath, dirnames, _filenames in os.walk(root):
+        dirnames.sort()
+        if Path(dirpath).name == "_tags":
+            dirnames[:] = []
+            continue
+        if looks_like_album_dir(Path(dirpath)):
+            dirnames[:] = []
+            yield Path(dirpath)
+
+
+def has_non_johan_meta(path: Path) -> bool:
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+
+    for child in children:
+        if not child.is_file():
+            continue
+        name = child.name
+        if name == ".meta.json":
+            return True
+        if not (name.startswith(".meta.") and name.endswith(".json")):
+            continue
+        provider = name[len(".meta.") : -len(".json")]
+        if provider != "johan":
+            return True
+    return False
+
+
+def find_new_album_dirs(roots: Sequence[Path]) -> list[Path]:
+    albums: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.expanduser().resolve()
+        if not root.is_dir():
+            raise SystemExit(f"not a directory: {root}")
+        for album in iter_album_dirs(root):
+            resolved = album.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if not has_non_johan_meta(resolved):
+                albums.append(resolved)
+    return sorted(albums, key=lambda p: str(p))
+
+
+def run(cmd: Sequence[str], *, cwd: Path | None = None) -> None:
+    log(f"run: {' '.join(cmd)}")
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=command_env(), check=True)
+
+
+def ensure_commands() -> None:
+    missing = [p for p in (MUSICSCAN, METATOOL, IMPORTTAGS, SHADUP) if not p.exists()]
+    if missing:
+        raise SystemExit("missing command(s): " + ", ".join(str(p) for p in missing))
+
+
+def maybe_reexec_under_remount(argv: Sequence[str], *, dry_run: bool) -> None:
+    if (
+        dry_run
+        or os.environ.get("SHASRV_RW") == "1"
+        or os.environ.get("POSTINGEST_IN_REMOUNT") == "1"
+        or os.environ.get("POSTINGEST_NO_REMOUNT")
+    ):
+        return
+    if not REMOUNT.exists():
+        raise SystemExit(f"missing remount wrapper: {REMOUNT}")
+    env = command_env()
+    env["POSTINGEST_IN_REMOUNT"] = "1"
+    log(f"remounting {os.environ.get('SHASRV_MNT', '/mnt/sdb2')} read-write for metadata updates")
+    os.execvpe(str(REMOUNT), [str(REMOUNT), sys.executable, str(Path(__file__).resolve()), *argv], env)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Find post-ingest album dirs with no non-johan .meta sidecar, run "
+            "musicology, import all sidecar tags into shadup, and refresh files/_tags."
+        )
+    )
+    parser.add_argument(
+        "roots",
+        nargs="*",
+        type=Path,
+        default=[FILES_ROOT],
+        help=f"Stored music roots to scan for album dirs (default: {FILES_ROOT})",
+    )
+    parser.add_argument(
+        "--provider",
+        action="append",
+        metavar="NAME[,NAME...]",
+        help=(
+            "Provider(s) for musicscan. May be repeated or comma-separated. "
+            "Default: $POSTINGEST_PROVIDERS, else musicbrainz plus credentialed providers."
+        ),
+    )
+    parser.add_argument(
+        "--all-known-providers",
+        action="store_true",
+        help="Use every known musicscan provider: musicbrainz, discogs, lastfm.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show selected albums and commands without writing sidecars, DB tags, or _tags.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase musicscan/importtags verbosity.",
+    )
+    parser.add_argument(
+        "--import-debug",
+        action="store_true",
+        help="Ask importtags to print one result line per album instead of dots.",
+    )
+    parser.add_argument(
+        "--include-raw",
+        action="store_true",
+        help="Pass --include-raw to musicscan.",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Pass --reset to importtags before tag-add.",
+    )
+    parser.add_argument(
+        "--skip-refresh",
+        action="store_true",
+        help="Do not run shadup refresh-extracted-tags after importing tags.",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    selected = (
+        list(KNOWN_PROVIDERS)
+        if args.all_known_providers
+        else parse_provider_csv(args.provider) or configured_default_providers()
+    )
+    providers = validate_providers(selected)
+
+    maybe_reexec_under_remount(sys.argv[1:], dry_run=args.dry_run)
+    ensure_commands()
+
+    albums = find_new_album_dirs(args.roots)
+    if not albums:
+        log("no new album directories found")
+        return 0
+
+    log(f"selected providers: {', '.join(providers)}")
+    log(f"new album directories: {len(albums)}")
+    if args.dry_run:
+        for album in albums:
+            print(album)
+
+    scan_cmd = [str(MUSICSCAN)]
+    for provider in providers:
+        scan_cmd.extend(["--provider", provider])
+    if args.include_raw:
+        scan_cmd.append("--include-raw")
+    if args.verbose:
+        scan_cmd.append("-" + ("v" * args.verbose))
+    if args.dry_run:
+        scan_cmd.append("--dry-run")
+    scan_cmd.extend(str(album) for album in albums)
+    run(scan_cmd)
+
+    import_cmd = [
+        str(IMPORTTAGS),
+        "--db",
+        str(SHADUP_DB),
+        "--shadir",
+        str(STORE_ROOT),
+        "--provider",
+        "ALL",
+        "--metatool",
+        str(METATOOL),
+    ]
+    if args.reset:
+        import_cmd.append("--reset")
+    if args.import_debug:
+        import_cmd.append("--debug")
+    elif args.verbose:
+        import_cmd.append("--verbose")
+    if args.dry_run:
+        import_cmd.append("--dryrun")
+    import_cmd.extend(str(album) for album in albums)
+    run(import_cmd, cwd=FILES_ROOT)
+
+    if args.skip_refresh or args.dry_run:
+        log("skipping shadup refresh-extracted-tags")
+        return 0
+
+    refresh_cmd = [
+        str(SHADUP),
+        "--shadir",
+        str(STORE_ROOT),
+        "--db",
+        str(SHADUP_DB),
+        "refresh-extracted-tags",
+    ]
+    run(refresh_cmd, cwd=FILES_ROOT)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,6 +1,6 @@
 # DMZ smoketest: Dockerized DMZ + host venv pytest against live HTTP (see README.md).
 #
-.PHONY: test test-local test-docker
+.PHONY: test all-tests test-local test-docker
 
 # No in-repo pytest without the running container; host-only checks live under ../test/.
 test-local:
@@ -10,4 +10,6 @@ test-local:
 test-docker:
 	./run.sh
 
-test: test-local test-docker
+test: test-local
+
+all-tests: test-docker

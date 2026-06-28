@@ -11,11 +11,16 @@
 
 ## Test execution
 
-- For each subdirectory touched, move toward uniform handling: keep pytest and related test tools in `utils/xxx/.venv/`, and run the normal comprehensive suite with `(cd xxx; make test)`.
-- The top-level `make test` target inside a subdirectory must invoke all normal tests for that directory.
+- **`test`** — default, fast: host/unit pytest, `cargo test --lib`, no Docker or e2e.
+- **`all-tests`** — full suite: `test` plus Docker builds, compose stacks, integration/e2e where defined.
+- Legacy names **`testall`** and **`test_e2e`** alias **`all-tests`** where they still exist.
+- **`test-local`** / **`test-docker`** — thermo building blocks; not invoked from the repo root.
+
+- From `utils/`: `make test` runs `make test` in every immediate subdir with a Makefile; `make all-tests` does the same for slow suites.
+- For each subdirectory touched, keep pytest and related test tools in `utils/xxx/.venv/`, and run the normal fast suite with `(cd xxx; make test)`.
+- The top-level `make test` target inside a subdirectory must invoke fast tests only.
 - Subdirectories may also have more targeted internal test commands for debugging, but those do not replace `make test` as the normal verification path.
-- Every subdirectory should have a `make testall` target. In many directories `testall` can simply delegate to `make test`.
-- Use `make testall` for truly all tests in a directory when some tests need Docker, special hardware, network services, credentials, or other infrastructure and are intentionally excluded from `make test`.
+- Use `make all-tests` when tests need Docker, special hardware, network services, credentials, or other infrastructure intentionally excluded from `make test`.
 - Use direct tool binaries such as `.venv/bin/pytest` only for targeted/debug runs when a Makefile target is missing or too broad.
 - Run tests in the foreground with the tool's `block_until_ms` sized for the expected runtime.
 - Do not wrap tests in a background `sleep N; kill -0 $PID; wait $PID` timeout. That pattern can miss completed tests because unreaped exited children still answer `kill -0`.

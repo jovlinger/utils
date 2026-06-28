@@ -1,4 +1,4 @@
-.PHONY: dockertest test test-local test-docker test_e2e clean assert_docker_up \
+.PHONY: dockertest test all-tests test-local test-docker test_e2e clean assert_docker_up \
 	docker-testing-clean docker-old-clean docker-clean docker-all-clean
 
 include $(abspath $(CURDIR)/../../lib/assert-docker.mk)
@@ -32,10 +32,13 @@ test-local:
 # Builds dmz + onboard images + testdriver, then docker compose (full stack).
 test-docker: dockertest
 
-test: test-local test-docker
+test: test-local
 
-# Alias: same stack as historical `make test_e2e` name in docs.
-test_e2e: test-docker
+all-tests: test-local test-docker
+
+# Legacy aliases.
+test_e2e: all-tests
+testall: all-tests
 
 # Builds thermo/dmz + onboard GHCR-tagged images (../onboard make images) + testdriver, then docker compose up.
 # IMPORTANT: this is the *test* path on a developer host. We override PLATFORM to host-native here so the

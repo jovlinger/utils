@@ -1,10 +1,14 @@
-"""Tests for ``--refresh-extracted-tags`` mirror layout (flat per-tag symlinks).
+"""Tests for ``--refresh-extracted-tags`` mirror layout (namespaced tag symlinks).
 
 Layout under ``<parent-of-shadir>/files``::
 
-  ``_tags/<tag_mirror_dir_name(tag)>/<basename-or-basename(n)>`` → symlink
-  to ``<root>/<dir-key>`` (logical ``tag`` is unchanged in the DB; mirror
-  directory names sanitize ``:`` and other reserved characters).
+  ``_tags/<tag_mirror_relpath(tag)>/<basename-or-basename(n)>`` → symlink
+  to ``<root>/<dir-key>`` (logical DB tag strings are unchanged; each path
+  segment is sanitized for the filesystem).
+
+  Examples: ``artist;beck`` → ``_tags/artist/beck/<name>``,
+  ``genre;rock`` → ``_tags/genre/rock/<name>``, ``tag;live`` →
+  ``_tags/tag/live/<name>``. Legacy ``artist:…`` maps like ``artist;…``.
 
 * ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
 * **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
@@ -41,7 +45,11 @@ def _load_shadup() -> object:
 _sh = _load_shadup()
 plan_refresh_extracted_tag_mirrors = _sh.plan_refresh_extracted_tag_mirrors
 NOTAGS_DIR_NAME = _sh.NOTAGS_DIR_NAME
-tag_mirror_dir_name = _sh.tag_mirror_dir_name
+tag_mirror_relpath = _sh.tag_mirror_relpath
+
+
+def _mirror_link_rel(tag: str, name: str) -> Path:
+    return Path("_tags").joinpath(*tag_mirror_relpath(tag), name)
 
 
 def _run_shadup(
@@ -154,7 +162,7 @@ def _expected_find_lines_from_plan(
 
     add_chain(fr / "_tags")
     for tag, name, _dk in rows:
-        add_chain(fr / "_tags" / tag_mirror_dir_name(tag) / name)
+        add_chain(fr / _mirror_link_rel(tag, name))
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
@@ -164,7 +172,7 @@ def _symlink_checks_from_plan(
     """(path relative to ``files_root``, expected readlink text)."""
     out: list[tuple[Path, str]] = []
     for tag, name, dk in rows:
-        rel = Path("_tags") / tag_mirror_dir_name(tag) / name
+        rel = _mirror_link_rel(tag, name)
         target = files_root / dk
         link_parent = (files_root / rel).parent
         txt = os.path.relpath(target, link_parent)
@@ -173,20 +181,25 @@ def _symlink_checks_from_plan(
 
 
 def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
-    """Map ``_tags/<tag_dir>/<name>`` back to dir_key using the plan."""
+    """Map ``_tags/…/<name>`` back to dir_key using the plan."""
     assert rel.parts[0] == "_tags"
-    tag_fs, name = rel.parts[1], rel.parts[2]
+    name = rel.parts[-1]
+    tag_fs = rel.parts[1:-1]
     for t, n, dk in rows:
-        if tag_mirror_dir_name(t) == tag_fs and n == name:
+        if n == name and tag_mirror_relpath(t) == tag_fs:
             return dk
     raise AssertionError(f"no plan row for {rel}")
 
 
-def test_tag_mirror_dir_name_legacy_artist_colon() -> None:
-    assert tag_mirror_dir_name("artist:depechemode") == "artist;depechemode"
-    assert tag_mirror_dir_name("rock") == "rock"
-    assert tag_mirror_dir_name(NOTAGS_DIR_NAME) == NOTAGS_DIR_NAME
-    assert tag_mirror_dir_name('a<b>c') == "a_b_c"
+def test_tag_mirror_relpath_namespaced_and_legacy() -> None:
+    assert tag_mirror_relpath("artist;beck") == ("artist", "beck")
+    assert tag_mirror_relpath("artist:Depeche Mode") == ("artist", "Depeche Mode")
+    assert tag_mirror_relpath("album;The Information") == ("album", "The Information")
+    assert tag_mirror_relpath("genre;rock") == ("genre", "rock")
+    assert tag_mirror_relpath("tag;live") == ("tag", "live")
+    assert tag_mirror_relpath("x") == ("x",)
+    assert tag_mirror_relpath(NOTAGS_DIR_NAME) == (NOTAGS_DIR_NAME,)
+    assert tag_mirror_relpath("artist;foo<bar>") == ("artist", "foo_bar")
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
