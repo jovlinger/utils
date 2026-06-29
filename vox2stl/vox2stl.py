@@ -741,6 +741,80 @@ def flush_persistent_tile_cache() -> None:
 
 atexit.register(flush_persistent_tile_cache)
 
+VOX2STL_PACKAGE_DIR = Path(__file__).resolve().parent
+
+DEFAULT_TILE_CACHE_WARMUP_SOURCES: Tuple[Path, ...] = (
+    VOX2STL_PACKAGE_DIR / "testdata" / "straight.vox",
+    VOX2STL_PACKAGE_DIR / "testdata" / "box_glyphs.vox",
+    VOX2STL_PACKAGE_DIR.parent / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox",
+)
+
+
+def warm_tile_cache_from_vox(path: Path, config: RenderConfig) -> None:
+    report_progress(f"Warming tile cache from {path}...")
+    layers = read_layers(path)
+    base_layer = layers.get("base")
+    trace_layer = layers.get("trace")
+    if base_layer is not None and trace_layer is not None:
+        full_mesh_from_layers(base_layer, trace_layer, config)
+        return
+    if trace_layer is not None:
+        build_layer_mesh(trace_layer, config)
+        return
+    raise ValueError(f"{path}: missing trace layer")
+
+
+def verify_persistent_tile_cache(path: Path = TILE_CACHE_PATH) -> int:
+    with gzip.open(path, "rb") as file_obj:
+        cache = pickle.load(file_obj)
+    if not isinstance(cache, dict):
+        raise ValueError(f"{path}: tile cache is not a dictionary")
+    if TILE_CACHE_SIGNATURE_KEY not in cache:
+        raise ValueError(f"{path}: tile cache is missing signature key")
+    return len(cache)
+
+
+def warm_persistent_tile_cache(
+    sources: Optional[Sequence[Path]] = None,
+    *,
+    profile_name: str = "default",
+) -> Tuple[Path, int, Tuple[float, ...]]:
+    """Rebuild the on-disk ligature tile cache for one geometry profile."""
+
+    profile = load_config(profile_name)
+    config = render_config_from_profile(profile)
+    warmup_sources = tuple(sources) if sources is not None else DEFAULT_TILE_CACHE_WARMUP_SOURCES
+    missing = [path for path in warmup_sources if not path.is_file()]
+    if missing:
+        missing_list = ", ".join(str(path) for path in missing)
+        raise ValueError(f"missing warmup source(s): {missing_list}")
+
+    global _PERSISTENT_TILE_CACHE, _PERSISTENT_TILE_CACHE_DIRTY
+    if TILE_CACHE_PATH.is_file():
+        TILE_CACHE_PATH.unlink()
+    signature = tile_cache_signature(config)
+    warm_cache: TileCache = {TILE_CACHE_SIGNATURE_KEY: signature}
+    _PERSISTENT_TILE_CACHE = warm_cache
+    _PERSISTENT_TILE_CACHE_DIRTY = False
+
+    def warming_tile_cache_for_config(cfg: RenderConfig) -> Tuple[TileCache, bool]:
+        if tile_cache_signature(cfg) != signature:
+            raise ValueError("warmup geometry does not match the selected profile")
+        seed_pre_rendered_letters(warm_cache, cfg)
+        return warm_cache, True
+
+    original_tile_cache_for_config = tile_cache_for_config
+    try:
+        globals()["tile_cache_for_config"] = warming_tile_cache_for_config
+        for path in warmup_sources:
+            warm_tile_cache_from_vox(path, config)
+    finally:
+        globals()["tile_cache_for_config"] = original_tile_cache_for_config
+
+    flush_persistent_tile_cache()
+    key_count = verify_persistent_tile_cache(TILE_CACHE_PATH)
+    return TILE_CACHE_PATH, key_count, signature
+
 
 def format_tile_cache_key(key: TileCacheKey) -> str:
     if isinstance(key, str):

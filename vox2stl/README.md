@@ -103,7 +103,14 @@ ligatures are stored under their five-part keys. If the pickle is deleted, the
 cache is rebuilt lazily; lowercase letters are loaded from pre-rendered letter
 STL fragments when present, otherwise they are regenerated from the built-in
 letter renderer. Cache format or geometry upgrades are handled by deleting the
-cache file and letting it regenerate. Non-default CLI geometry uses an in-memory
+cache file and letting it regenerate, or by running:
+
+```bash
+vox2stl/voxtool.py warm-tile-cache
+vox2stl/voxtool.py warm-tile-cache --conf coppertape
+```
+
+Non-default CLI geometry uses an in-memory
 cache so stale persisted dimensions are not reused.
 
 Default `*` and `O` hole diameters are fixed physical dimensions, independent

@@ -1237,3 +1237,69 @@ def test_cli_writes_full_stl_with_holes() -> None:
     require(exit_code == 0, f"full CLI exit: got {exit_code}")
     require(text.startswith("solid straight_full_test\n"), "full STL solid header missing")
     require(text.count("facet normal") > 60, "full STL should include base and holes")
+
+
+@pytest.mark.real_tile_cache
+def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = voxtool.main(
+                    [
+                        "voxtool.py",
+                        "warm-tile-cache",
+                        str(ROOT / "testdata" / "straight.vox"),
+                        "--quiet",
+                    ]
+                )
+            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
+            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
+            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
+            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
+            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
+
+
+@pytest.mark.real_tile_cache
+def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = voxtool.main(
+                    [
+                        "voxtool.py",
+                        "warm-tile-cache",
+                        str(ROOT / "testdata" / "straight.vox"),
+                        "--quiet",
+                    ]
+                )
+            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
+            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
+            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
+            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
+            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
