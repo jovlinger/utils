@@ -10,9 +10,6 @@ from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from voxconf import VoxProfile, load_config
 
-# Bump when cached naive/ligature tile geometry changes.
-TILE_CACHE_GEOMETRY_REVISION = 3
-
 # Default per-layer rendering mode for lowercase letter cells.
 DEFAULT_LETTER_STYLE = "positive"
 LETTER_STYLES: FrozenSet[str] = frozenset({"positive", "negative"})

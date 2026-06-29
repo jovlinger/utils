@@ -111,8 +111,6 @@ def mock_tile_cache_access(request: pytest.FixtureRequest, monkeypatch: pytest.M
     real_cached_tile_tris = vox2stl.cached_tile_tris
     real_cached_negative_base_letter_tris = vox2stl.cached_negative_base_letter_tris
 
-    monkeypatch.setattr(vox2stl, "persistent_tile_cache_enabled", lambda config: False)
-    monkeypatch.setattr(vox2stl, "seed_pre_rendered_letters", lambda cache, config: None)
     monkeypatch.setattr(vox2stl, "load_letter_tile", _mock_load_letter_tile)
     monkeypatch.setattr(
         vox2stl,
