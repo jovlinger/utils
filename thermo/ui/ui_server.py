@@ -96,6 +96,27 @@ def _format_time(iso: Optional[str]) -> str:
         return ""
 
 
+_LOG_COLLAPSE_VISIBLE = 20
+
+
+def _collapsible_log_block(
+    lines_html: List[str], *, visible: int = _LOG_COLLAPSE_VISIBLE
+) -> str:
+    """Render log lines; hide lines after ``visible`` behind a ``<details>`` toggle."""
+    if not lines_html:
+        return ""
+    if len(lines_html) <= visible:
+        return "<br>".join(lines_html)
+    head = "<br>".join(lines_html[:visible])
+    tail = "<br>".join(lines_html[visible:])
+    hidden = len(lines_html) - visible
+    return (
+        f"{head}<br>"
+        f'<details class="log-more"><summary>{hidden} more lines</summary>'
+        f"{tail}</details>"
+    )
+
+
 def _format_log_line(line: str) -> str:
     m = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z?)\s*(.*)$", line)
     if m:
@@ -118,19 +139,20 @@ def _fetch_logs() -> str:
             za = d.get("zone_attempts") or []
             if za:
                 zlines: List[str] = []
-                for entry in za[-40:]:
+                for entry in za[-80:]:
                     if isinstance(entry, dict):
                         zlines.append(
                             f'{entry.get("ts", "")} {entry.get("outcome", "")} '
                             f'zone={entry.get("zone", "")} '
-                            f'{entry.get("path", "")} — {entry.get("detail", "")} '
+                            f'{entry.get("path", "")} - {entry.get("detail", "")} '
                             f'ip={entry.get("client_ip", "")} '
                             f'->{entry.get("status_code", "")}'
                         )
-                parts.append("<b>Zone POST /sensors (twoway)</b><br>")
-                parts.append(
-                    "<br>".join(_format_log_line(ln) for ln in zlines)
+                zhtml = _collapsible_log_block(
+                    [_format_log_line(ln) for ln in zlines]
                 )
+                parts.append("<b>Zone POST /sensors (twoway, all zones)</b><br>")
+                parts.append(zhtml)
             logs = d.get("access_log") or []
             if logs:
                 lines: List[str] = []
@@ -142,8 +164,11 @@ def _fetch_logs() -> str:
                         )
                     else:
                         lines.append(str(entry))
-                parts.append("<br><b>HTTP access (memory)</b><br>")
-                parts.append("<br>".join(_format_log_line(ln) for ln in lines))
+                ahtml = _collapsible_log_block(
+                    [_format_log_line(ln) for ln in lines]
+                )
+                parts.append("<br><b>HTTP access (memory, all zones)</b><br>")
+                parts.append(ahtml)
             body = "<br>".join([summary] + parts) if parts else summary
             return body
         except Exception:
@@ -154,7 +179,9 @@ def _fetch_logs() -> str:
         lines_raw = d.get("lines", [])
         if not lines_raw:
             return ""
-        return "<br>".join(_format_log_line(ln) for ln in lines_raw)
+        return _collapsible_log_block(
+            [_format_log_line(ln) for ln in lines_raw]
+        )
     except Exception:
         return ""
 
@@ -170,12 +197,12 @@ def _dmz_diagnostics_export_block() -> str:
         return (
             "<details><summary><b>Diagnostics JSON</b> "
             "(full export for support — in-memory only on DMZ)</summary>"
-            "<p><textarea id=\"thermo-diag-export\" readonly rows=\"14\" cols=\"92\" "
+            '<p><textarea id="thermo-diag-export" readonly rows="14" cols="92" '
             'style="font-family: monospace; width: 100%; max-width: 52rem;">'
             f"{esc}"
             "</textarea></p>"
             '<p><button type="button" '
-            'onclick="var e=document.getElementById(\'thermo-diag-export\');'
+            "onclick=\"var e=document.getElementById('thermo-diag-export');"
             "if(e){e.focus();e.select();document.execCommand('copy');}\">"
             "Copy to clipboard</button></p>"
             "</details>"
@@ -343,6 +370,17 @@ def _form_to_command(form: Dict[bytes, List[bytes]]) -> Dict[str, Any]:
     return cmd
 
 
+def _deployment_brief(deployment: Any) -> tuple[str, str]:
+    """Return (hardware, git) one-line labels for the environment table."""
+    if not isinstance(deployment, dict):
+        return "—", "—"
+    hardware = deployment.get("hardware_profile") or deployment.get("backend") or ""
+    git = deployment.get("git_sha_short") or deployment.get("git_sha") or ""
+    hw_s = html.escape(str(hardware)) if hardware else "—"
+    git_s = html.escape(str(git)) if git else "—"
+    return hw_s, git_s
+
+
 def _env_table_rows(ctx: Mapping[str, Any]) -> str:
     rows: List[str] = []
     for row in ctx.get("environments") or []:
@@ -354,10 +392,74 @@ def _env_table_rows(ctx: Mapping[str, Any]) -> str:
         ts = html.escape(_format_time(str(row.get("time", "") or "")))
         tc_s = "—" if tc is None else html.escape(str(tc))
         hm_s = "—" if hm is None else html.escape(str(hm))
-        rows.append(f"<tr><td>{z}</td><td>{tc_s}</td><td>{hm_s}</td><td>{ts}</td></tr>")
+        hw_s, git_s = _deployment_brief(row.get("deployment"))
+        rows.append(
+            f"<tr><td>{z}</td><td>{tc_s}</td><td>{hm_s}</td><td>{ts}</td>"
+            f"<td>{hw_s}</td><td>{git_s}</td></tr>"
+        )
     if not rows:
-        rows.append('<tr><td colspan="4">No environment data</td></tr>')
+        rows.append('<tr><td colspan="6">No environment data</td></tr>')
     return "\n".join(rows)
+
+
+def _zone_deployment_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str:
+    if not ctx:
+        return ""
+    states = ctx.get("zone_states")
+    if not isinstance(states, dict):
+        return ""
+    zone_state = states.get(selected_zone)
+    if not isinstance(zone_state, dict):
+        return ""
+    deployment = zone_state.get("deployment")
+    if not isinstance(deployment, dict) or not deployment:
+        return ""
+    received = deployment.get("received_dt")
+    heading = ""
+    if received:
+        heading = f"<span>reported {html.escape(str(received))}</span><br>"
+    lines: List[str] = []
+    for key in sorted(deployment):
+        if key == "received_dt":
+            continue
+        value = deployment.get(key)
+        if value is None or value == "":
+            continue
+        lines.append(
+            f"<code>{html.escape(str(key))}</code>: " f"{html.escape(str(value))}"
+        )
+    if not lines:
+        return ""
+    return heading + "<br>".join(lines)
+
+
+def _zone_logs_html(ctx: Optional[Mapping[str, Any]], selected_zone: str) -> str:
+    if not ctx:
+        return ""
+    states = ctx.get("zone_states")
+    if not isinstance(states, dict):
+        return ""
+    zone_state = states.get(selected_zone)
+    if not isinstance(zone_state, dict):
+        return ""
+    logs = zone_state.get("logs")
+    if not isinstance(logs, dict):
+        return ""
+    lines = logs.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return ""
+    received = logs.get("received_dt")
+    heading = ""
+    if received:
+        heading = f"<span>last reported {html.escape(str(received))}</span><br>"
+    rendered = [
+        _format_log_line(str(line))
+        for line in lines
+        if isinstance(line, str) and line.strip()
+    ]
+    if not rendered:
+        return ""
+    return heading + _collapsible_log_block(rendered)
 
 
 def _zone_options_html(zones: List[str], selected: str) -> str:
@@ -400,7 +502,7 @@ def render_template(
     selected_zone: str,
     msg: str = "",
 ) -> str:
-    from heatpumpirctl import Fan, Mode, State
+    from common.heatpumpirctl import Fan, Mode
 
     def opt(val: str, sel: str) -> str:
         c = " selected" if val == sel else ""
@@ -430,15 +532,33 @@ def render_template(
     sel_zone = selected_zone if selected_zone in zones else zones[0]
     refresh_href = "/?zone=" + urllib.parse.quote(sel_zone, safe="")
 
-    env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="4">—</td></tr>'
+    env_rows = _env_table_rows(ctx) if ctx else '<tr><td colspan="6">—</td></tr>'
     zone_opts = _zone_options_html(zones, sel_zone)
+    zone_logs_html = _zone_logs_html(ctx, sel_zone)
+    if not zone_logs_html.strip():
+        zone_logs_html = (
+            "<span><i>No onboard logs reported for this zone yet.</i></span>"
+        )
+    zone_deployment_html = _zone_deployment_html(ctx, sel_zone)
+    sel_zone_esc = html.escape(sel_zone)
+    zone_deployment_section = ""
+    if zone_deployment_html.strip():
+        zone_deployment_section = (
+            f'<p><b>Zone deployment</b> -- zone <code>{sel_zone_esc}</code></p>'
+            f'<div class="loglines">{zone_deployment_html}</div>'
+        )
 
     if _ui_backend() == "dmz":
         manage_fragment = ""
+        server_logs_label = (
+            "DMZ logs -- HTTP access and zone POST attempts "
+            "(all zones, in-memory on DMZ)"
+        )
     else:
         manage_fragment = _MANAGE_SECTION_ONBOARD.replace(
             "$manage_status", html.escape(manage_status)
         ).replace("$manage_ui_zone", html.escape(sel_zone))
+        server_logs_label = "Onboard logs -- local process log tail"
 
     tpl = TEMPLATE_PATH.read_text()
     return (
@@ -446,10 +566,13 @@ def render_template(
         .replace("$diagnostics_export_section", diag_export_html)
         .replace("$env_table_rows", env_rows)
         .replace("$zone_options", zone_opts)
-        .replace("$selected_zone_value", html.escape(sel_zone))
+        .replace("$selected_zone", sel_zone_esc)
+        .replace("$zone_deployment_section", zone_deployment_section)
         .replace("$state_summary", state_summary)
         .replace("$msg", html.escape(msg))
         .replace("$logs", logs_html)
+        .replace("$server_logs_label", server_logs_label)
+        .replace("$zone_logs", zone_logs_html)
         .replace("$help_msg", help_msg_html)
         .replace("$about_msg", about_msg_html)
         .replace("$state_json", state_json)
@@ -492,7 +615,7 @@ def render_template(
 
 
 def _state_for_zone(ctx: Optional[Dict[str, Any]], zone: str) -> Any:
-    from heatpumpirctl import State
+    from common.heatpumpirctl import State
 
     default = State()
     if not ctx or not isinstance(ctx.get("zone_states"), dict):
@@ -551,7 +674,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
-            from heatpumpirctl import State
+            from common.heatpumpirctl import State
 
             cookie_header = (self.headers.get("Cookie") or "").strip() or None
             ctx, code = _fetch_ui_context_json(cookie_header)
@@ -616,7 +739,7 @@ class Handler(BaseHTTPRequestHandler):
                     ui_zone = zones[0] if zones else "default"
                 cmd = _form_to_command(form)
                 msg = self._post_ui_command(ui_zone, cmd, cookie_header=cookie_header)
-                from heatpumpirctl import State
+                from common.heatpumpirctl import State
 
                 state = State.from_json(cmd)
                 ctx2, _ = _fetch_ui_context_json(cookie_header)

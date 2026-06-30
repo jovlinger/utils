@@ -45,6 +45,7 @@ def _wait_for(url: str, *, timeout_s: float = 10.0) -> None:
         time.sleep(0.1)
     raise AssertionError(f"timeout waiting for {url}")
 
+
 name_supply = ["bob", "jill", "jack", "annie", "mark", "mary", "paul", "stella"]
 
 JSON = "JSON data type"

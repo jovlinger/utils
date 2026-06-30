@@ -1,3 +1,4 @@
+#!/usr/bin/env venv-run
 """Deduplicate files by sha256 into a shared store with symlinks."""
 
 import argparse
@@ -27,27 +28,40 @@ NOTAGS_DIR_NAME = "NOTAGS"
 _TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
 
 
-def tag_mirror_dir_name(tag: str) -> str:
-    """Map a logical DB tag to one directory name under ``files/_tags/``.
+def _sanitize_tag_mirror_segment(part: str) -> str:
+    """Sanitize one path segment under ``files/_tags/`` (Windows-safe)."""
+    chars: list[str] = []
+    for ch in part:
+        if ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
+            chars.append("_")
+        else:
+            chars.append(ch)
+    s = "".join(chars).rstrip(" .")
+    if part and (part[-1] in _TAG_MIRROR_BAD_CHARS or ord(part[-1]) < 32):
+        s = s.rstrip("_")
+    return s if s else "_empty_tag"
 
-    Mirrors must work on Windows and typical POSIX layouts. A legacy synthetic
-    tag like ``artist:Depeche Mode`` becomes ``artist;Depeche Mode``, matching
-    ``importtags.build_tags_from_export``. Other Windows-forbidden segment
-    characters become ``_``; ASCII control characters become ``_``. Trailing
-    spaces and periods are stripped (Windows).
+
+def tag_mirror_relpath(tag: str) -> tuple[str, ...]:
+    """Map a logical DB tag to path segments under ``files/_tags/``.
+
+    Namespaced tags split on the first ``;`` or legacy ``:`` (e.g.
+    ``artist;beck`` → ``("artist", "beck")``). Unqualified tags are a single
+    segment (e.g. ``"x"`` → ``("x",)``). :data:`NOTAGS_DIR_NAME` is one segment.
     """
     if tag == NOTAGS_DIR_NAME:
-        return tag
-    parts: list[str] = []
-    for ch in tag:
-        if ch == ":":
-            parts.append(";")
-        elif ch in _TAG_MIRROR_BAD_CHARS or ord(ch) < 32:
-            parts.append("_")
-        else:
-            parts.append(ch)
-    s = "".join(parts).rstrip(" .")
-    return s if s else "_empty_tag"
+        return (NOTAGS_DIR_NAME,)
+    sep = -1
+    for i, ch in enumerate(tag):
+        if ch in (";", ":"):
+            sep = i
+            break
+    if sep >= 0:
+        return (
+            _sanitize_tag_mirror_segment(tag[:sep]),
+            _sanitize_tag_mirror_segment(tag[sep + 1 :]),
+        )
+    return (_sanitize_tag_mirror_segment(tag),)
 VERBOSITY = 0
 OUTPUT_MODE = "pretty"
 
@@ -195,41 +209,6 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-_GLOBAL_OPTS_WITH_VALUE = frozenset({"--shadir", "--db"})
-
-
-def _normalize_help_argv(argv: list[str]) -> list[str]:
-    """Rewrite a top-level ``--help`` action to the ``help`` subcommand."""
-    if not argv:
-        return argv
-    out: list[str] = []
-    i = 0
-    action_seen = False
-    while i < len(argv):
-        arg = argv[i]
-        if not action_seen and arg in _GLOBAL_OPTS_WITH_VALUE:
-            out.append(arg)
-            i += 1
-            if i < len(argv):
-                out.append(argv[i])
-                i += 1
-            continue
-        if not action_seen and arg == "-v":
-            out.append(arg)
-            i += 1
-            continue
-        if not action_seen and arg == "--help":
-            out.append("help")
-            action_seen = True
-            i += 1
-            continue
-        out.append(arg)
-        if not action_seen and not arg.startswith("-"):
-            action_seen = True
-        i += 1
-    return out
-
-
 def build_parser() -> argparse.ArgumentParser:
     """Build the AWS-style ``shadup [global] <action> [action-opts]`` parser."""
     parser = argparse.ArgumentParser(
@@ -258,11 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--shadir",
-        help=(
-            "Argumend DIR should contain data and file subdirectores, and .shadup.db."
-            "Persisted in DB meta from command line; new command line will overwrite db value."
- 	    "Required unless data in DB is set."
-        ),
+        help="Store directory (persisted in DB meta; overrides stored value when set)",
     )
     parser.add_argument(
         "--db",
@@ -276,17 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub = parser.add_subparsers(dest="action", required=True, metavar="ACTION")
-
-    p_help = sub.add_parser(
-        "help",
-        help="Show help for shadup or an action (--help is an alias)",
-    )
-    p_help.add_argument(
-        "topic",
-        nargs="?",
-        metavar="ACTION",
-        help="Action to show help for (default: top-level help)",
-    )
 
     p_store = sub.add_parser("store", help="Store files by sha256 under directories")
     p_store.add_argument(
@@ -526,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-extracted-tags",
         help=(
             "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
-            "(per-tag folder names are sanitized for the filesystem; see tag_mirror_dir_name)"
+            "(namespaced tags become subdirs; see tag_mirror_relpath)"
         ),
     )
 
@@ -535,25 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the AWS-style ``shadup <action>`` interface."""
-    if argv is None:
-        argv = sys.argv[1:]
-    return build_parser().parse_args(_normalize_help_argv(list(argv)))
-
-
-def handle_help(topic: str | None) -> int:
-    """Print top-level or action-specific help."""
-    parser = build_parser()
-    if topic is None:
-        parser.print_help()
-        return 0
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            choices = action.choices
-            if topic in choices:
-                choices[topic].print_help()
-                return 0
-            break
-    parser.error(f"unknown action for help: {topic!r}")
+    return build_parser().parse_args(argv)
 
 
 def sha256_file(path: str) -> str:
@@ -586,10 +532,10 @@ def _is_two_hex_dir(name: str) -> bool:
 
 
 def is_under_sha_store_tree(path: str, shadir: str) -> bool:
-    """True under metadata dirs, flat ``.../xx/...``, or ``.../data/xx/...`` under shadir.
+    """True under metadata dirs, flat ``…/xx/…``, or ``…/data/xx/…`` under shadir.
 
     Common layout: shadir contains sibling ``files/`` (library) and ``data/``
-    (hash buckets ``data/b2/...``). Only those buckets count as object store, not
+    (hash buckets ``data/b2/…``). Only those buckets count as object store, not
     all of shadir (so ``files/`` is still walked).
     """
     path_abs = os.path.abspath(path)
@@ -638,7 +584,7 @@ def first_existing_blob_path(shadir: str, digest: str) -> str | None:
 
 
 def ensure_store_path(shadir: str, digest: str) -> str:
-    """Create ``.../data/xx`` if needed and return the canonical blob path."""
+    """Create ``…/data/xx`` if needed and return the canonical blob path."""
     path = blob_object_path(shadir, digest)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     return path
@@ -998,7 +944,7 @@ def _parent_dir_key(dir_key: str) -> str:
 
 
 def _allocate_flat_link_basename(taken: set[str], logical_base: str) -> str:
-    """First free name among ``base``, ``base(2)``, ``base(3)``, ... and mark it taken."""
+    """First free name among ``base``, ``base(2)``, ``base(3)``, … and mark it taken."""
     if logical_base not in taken:
         taken.add(logical_base)
         return logical_base
@@ -1047,7 +993,7 @@ def plan_refresh_extracted_tag_mirrors(
       component. Siblings are emitted **descending by dir_key** (so ``a/b``
       appears before ``a/a``).
     * Within a tag folder, duplicate basenames are disambiguated with
-      ``(2)``, ``(3)``, ... (shared across top-level components under the tag).
+      ``(2)``, ``(3)``, … (shared across top-level components under the tag).
     * Directories whose computed set is empty go under
       :data:`NOTAGS_DIR_NAME` with the same BFS + disambiguation rules.
     * The root directory (``dir_key = ""``) is **never** mirrored.
@@ -1070,9 +1016,9 @@ def library_root_candidates(shadir: str) -> list[str]:
     """Possible absolute paths to the ``files/`` library root for common layouts.
 
     * Broad tree: ``shadir`` contains ``files/`` and ``data/`` (blobs) as siblings
-      -> ``join(shadir, \"files\")``.
-    * Classic: ``.../store/.shadir`` beside ``.../store/files`` -> ``dirname(shadir)/files``.
-    * Nested: ``.../flac/files/.shadir`` -> library is ``.../flac/files``.
+      → ``join(shadir, \"files\")``.
+    * Classic: ``…/store/.shadir`` beside ``…/store/files`` → ``dirname(shadir)/files``.
+    * Nested: ``…/flac/files/.shadir`` → library is ``…/flac/files``.
     """
     s = os.path.abspath(shadir)
     base = os.path.basename(s)
@@ -1188,7 +1134,7 @@ def resolve_existing_blob_path(
 def _stored_relpath_to_shasum(
     conn: sqlite3.Connection, files_root_abs: str
 ) -> dict[str, str]:
-    """Map ``dirpath/filename`` POSIX relpath under ``files_root`` -> shasum."""
+    """Map ``dirpath/filename`` POSIX relpath under ``files_root`` → shasum."""
     out_map: dict[str, str] = {}
     for shasum, root, dirpath, filename in conn.execute(
         "SELECT shasum, root, dirpath, filename FROM stored_files WHERE deleted = 0"
@@ -1208,7 +1154,7 @@ def _stored_relpath_to_shasum(
 def _compute_tags_by_dir(
     conn: sqlite3.Connection, files_root_abs: str
 ) -> dict[str, frozenset[str]]:
-    """Recursive dir_key -> tag set under *files_root_abs* (includes ``""`` for root)."""
+    """Recursive dir_key → tag set under *files_root_abs* (includes ``""`` for root)."""
     file_shasum = _stored_relpath_to_shasum(conn, files_root_abs)
     shasum_tags: dict[str, frozenset[str]] = {}
 
@@ -1287,16 +1233,16 @@ def handle_ls_alltags(
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_tags`` with flat per-tag symlinks.
+    """Rebuild ``files/_tags`` with namespaced per-tag symlinks.
 
     Two passes:
 
-    1. **Bottom-up** walk of ``files/``: build ``dir_key -> frozenset(tags)`` by
+    1. **Bottom-up** walk of ``files/``: build ``dir_key → frozenset(tags)`` by
        unioning each file's DB tags into its directory and propagating to
        ancestors.
     2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag_mirror_dir_name(tag)>/<basename[(n)]>`` ->
-       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_dir_name`).
+       ``files/_tags/<tag_mirror_relpath(tag)>/<basename[(n)]>`` →
+       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_relpath`).
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1318,8 +1264,8 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
 
     for tag, name, dir_key in rows:
-        tag_dir = tag_mirror_dir_name(tag)
-        link = os.path.join(files_root, "_tags", tag_dir, name)
+        tag_parts = tag_mirror_relpath(tag)
+        link = os.path.join(files_root, "_tags", *tag_parts, name)
         target = os.path.join(files_root, *dir_key.split("/"))
         parent = os.path.dirname(link)
         os.makedirs(parent, exist_ok=True)
@@ -1327,6 +1273,7 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
             os.unlink(link)
         rel_target = os.path.relpath(target, parent)
         os.symlink(rel_target, link)
+        tag_dir = "/".join(tag_parts)
         out(
             "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
             2,
@@ -2465,9 +2412,6 @@ def main(argv: list[str] | None = None) -> int:
     VERBOSITY = args.v
     global OUTPUT_MODE
     OUTPUT_MODE = "pretty" if sys.stdout.isatty() else "machine"
-
-    if args.action == "help":
-        return handle_help(args.topic)
 
     if args.action == "check":
         return handle_check(args)

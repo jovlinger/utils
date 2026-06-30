@@ -1,19 +1,23 @@
-"""Tests for ``--refresh-extracted-tags`` mirror layout (flat per-tag symlinks).
+"""Tests for ``--refresh-extracted-tags`` mirror layout (namespaced tag symlinks).
 
 Layout under ``<parent-of-shadir>/files``::
 
-  ``_tags/<tag_mirror_dir_name(tag)>/<basename-or-basename(n)>`` -> symlink
-  to ``<root>/<dir-key>`` (logical ``tag`` is unchanged in the DB; mirror
-  directory names sanitize ``:`` and other reserved characters).
+  ``_tags/<tag_mirror_relpath(tag)>/<basename-or-basename(n)>`` → symlink
+  to ``<root>/<dir-key>`` (logical DB tag strings are unchanged; each path
+  segment is sanitized for the filesystem).
+
+  Examples: ``artist;beck`` → ``_tags/artist/beck/<name>``,
+  ``genre;rock`` → ``_tags/genre/rock/<name>``, ``tag;live`` →
+  ``_tags/tag/live/<name>``. Legacy ``artist:…`` maps like ``artist;…``.
 
 * ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
-* **Directory tags** = union over **direct children** (files use DB tags; subdirs use
+* **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
   their computed set).
-* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, ... when
+* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, … when
   the same basename appears more than once (see :func:`plan_refresh_extracted_tag_mirrors`).
 
 The user worked example under ``test_user_abcdf_tree_mirror_plan``; one line in
-their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) --
+their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) —
 the test encodes the corrected plan.
 """
 
@@ -41,7 +45,11 @@ def _load_shadup() -> object:
 _sh = _load_shadup()
 plan_refresh_extracted_tag_mirrors = _sh.plan_refresh_extracted_tag_mirrors
 NOTAGS_DIR_NAME = _sh.NOTAGS_DIR_NAME
-tag_mirror_dir_name = _sh.tag_mirror_dir_name
+tag_mirror_relpath = _sh.tag_mirror_relpath
+
+
+def _mirror_link_rel(tag: str, name: str) -> Path:
+    return Path("_tags").joinpath(*tag_mirror_relpath(tag), name)
 
 
 def _run_shadup(
@@ -81,7 +89,7 @@ def _depth(dir_key: str) -> int:
 def compute_dir_tags_from_file_specs(
     files_root: Path, file_specs: list[tuple[Path, list[str]]]
 ) -> dict[str, frozenset[str]]:
-    """Directory relpath (``\"\"`` = root) -> recursive-union tag set."""
+    """Directory relpath (``\"\"`` = root) → recursive-union tag set."""
     rel_pairs: list[tuple[Path, frozenset[str]]] = [
         (p.relative_to(files_root), frozenset(tags)) for p, tags in file_specs
     ]
@@ -154,7 +162,7 @@ def _expected_find_lines_from_plan(
 
     add_chain(fr / "_tags")
     for tag, name, _dk in rows:
-        add_chain(fr / "_tags" / tag_mirror_dir_name(tag) / name)
+        add_chain(fr / _mirror_link_rel(tag, name))
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
@@ -164,7 +172,7 @@ def _symlink_checks_from_plan(
     """(path relative to ``files_root``, expected readlink text)."""
     out: list[tuple[Path, str]] = []
     for tag, name, dk in rows:
-        rel = Path("_tags") / tag_mirror_dir_name(tag) / name
+        rel = _mirror_link_rel(tag, name)
         target = files_root / dk
         link_parent = (files_root / rel).parent
         txt = os.path.relpath(target, link_parent)
@@ -173,24 +181,29 @@ def _symlink_checks_from_plan(
 
 
 def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
-    """Map ``_tags/<tag_dir>/<name>`` back to dir_key using the plan."""
+    """Map ``_tags/…/<name>`` back to dir_key using the plan."""
     assert rel.parts[0] == "_tags"
-    tag_fs, name = rel.parts[1], rel.parts[2]
+    name = rel.parts[-1]
+    tag_fs = rel.parts[1:-1]
     for t, n, dk in rows:
-        if tag_mirror_dir_name(t) == tag_fs and n == name:
+        if n == name and tag_mirror_relpath(t) == tag_fs:
             return dk
     raise AssertionError(f"no plan row for {rel}")
 
 
-def test_tag_mirror_dir_name_legacy_artist_colon() -> None:
-    assert tag_mirror_dir_name("artist:depechemode") == "artist;depechemode"
-    assert tag_mirror_dir_name("rock") == "rock"
-    assert tag_mirror_dir_name(NOTAGS_DIR_NAME) == NOTAGS_DIR_NAME
-    assert tag_mirror_dir_name('a<b>c') == "a_b_c"
+def test_tag_mirror_relpath_namespaced_and_legacy() -> None:
+    assert tag_mirror_relpath("artist;beck") == ("artist", "beck")
+    assert tag_mirror_relpath("artist:Depeche Mode") == ("artist", "Depeche Mode")
+    assert tag_mirror_relpath("album;The Information") == ("album", "The Information")
+    assert tag_mirror_relpath("genre;rock") == ("genre", "rock")
+    assert tag_mirror_relpath("tag;live") == ("tag", "live")
+    assert tag_mirror_relpath("x") == ("x",)
+    assert tag_mirror_relpath(NOTAGS_DIR_NAME) == (NOTAGS_DIR_NAME,)
+    assert tag_mirror_relpath("artist;foo<bar>") == ("artist", "foo_bar")
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
-    """Precomputed tag sets from the a/b/f ... tree.`."""
+    """Precomputed tag sets from the a/b/f … tree.`."""
     tags_by_dir: dict[str, frozenset[str]] = {
         "a": frozenset({"x", "y", "z"}),
         "a/b": frozenset({"x", "y"}),
@@ -217,7 +230,7 @@ def test_user_abcdf_tree_mirror_plan() -> None:
 def _build_three_level_two_plus_two(
     files_root: Path,
 ) -> list[tuple[Path, list[str]]]:
-    """3 levels: levels 0-1 have 2 files + 2 dirs; level-2 dirs are leaves (2 files)."""
+    """3 levels: levels 0–1 have 2 files + 2 dirs; level-2 dirs are leaves (2 files)."""
     spec: list[tuple[Path, list[str]]] = []
 
     def rel(p: Path) -> Path:
@@ -278,7 +291,7 @@ def test_golden_directory_tags_three_level_tree(
 def test_refresh_extracted_tags_pipeline_find_and_symlinks(
     three_level_fixture: tuple[Path, Path, list[tuple[Path, list[str]]]],
 ) -> None:
-    """Store -> tag-add -> extract -> refresh; ``find`` + symlinks match ``plan_*``."""
+    """Store → tag-add → extract → refresh; ``find`` + symlinks match ``plan_*``."""
     shadir, files_root, file_specs = three_level_fixture
     assert len(file_specs) == 14
 

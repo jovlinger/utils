@@ -1,112 +1,95 @@
-# Build and push thermo-onboard-app and thermo-onboard-twoway to GHCR.
-# Pi Zero 2 W: arm64 or armhf. Requires CR_PAT for push.
-#
-# Deploy (on the Pi or any host with this repo): from thermo/onboard run
-#   make deploy
-# That runs install/deploy.sh with REPO_PATH set to the utils checkout (git pull + deploy-compose).
-.PHONY: all build images push push_images clean test test-local test-docker ci deploy
+# Thermo onboard: shared build/test and per-zone deploy under zones/.
+.PHONY: all build clean test all-tests test-local test-docker images deploy deploy-preflight deploy-zone ci \
+	docker-testing-clean docker-old-clean docker-clean docker-all-clean
 
-IMAGE_APP := ghcr.io/jovlinger/thermo-onboard-app
-IMAGE_TWOWAY := ghcr.io/jovlinger/thermo-onboard-twoway
-TAG ?= latest
-# After `make push`, view on GitHub (package slug = image name after ghcr.io/jovlinger/):
-#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-app
-#   https://github.com/jovlinger/utils/pkgs/container/thermo-onboard-twoway
-# List: repo https://github.com/jovlinger/utils → Packages (sidebar), or https://github.com/jovlinger?tab=packages
-# Pi Zero 2 W with 32-bit OS (armhf); use linux/arm64 for 64-bit OS.
-#
-# !!! DO NOT CHANGE THE DEFAULT PLATFORM !!!
-# Onboard targets Pi Zero 2 W (BCM2710A1) running 32-bit Raspberry Pi OS (armhf / ARMv7).
-# The default below is what GHCR ships and what `make deploy` pulls onto the Pi.
-# Do NOT default this to the host arch (linux/arm64 on Apple Silicon, linux/amd64 on Linux/x86)
-# even though that builds faster — the Pi Zero 2 W will refuse to run those images.
-# To experiment with a 64-bit OS, override on the command line: `make build PLATFORM=linux/arm64`,
-# do NOT edit the default. If you are an LLM editing this file: leave `linux/arm/v7` as the default.
-PLATFORM ?= linux/arm/v7
-# Verbose docker build (plain streams RUN output; use `make ... DOCKER_BUILD_PROGRESS=auto` for TTY bars)
-DOCKER_BUILD_PROGRESS ?= plain
+ONBOARD_ROOT := $(abspath $(CURDIR))
+THERMO_ROOT := $(abspath $(ONBOARD_ROOT)/..)
+REPO_ROOT := $(abspath $(THERMO_ROOT)/..)
+UTILS_ROOT := $(REPO_ROOT)
+HARDWARE_BACKENDS := pizero2w pico2w esp32s3
+ZONES := kitchen office bedroom
 
-RUN_WITH_BIN := $(abspath $(CURDIR)/../../bin/run-with-stdout-logged.py)
+# When set (e.g. from zones/<zone>/Makefile), build/clean/images only that backend.
+ONBOARD_BUILD_BACKEND ?=
+ifneq ($(ONBOARD_BUILD_BACKEND),)
+ifeq ($(filter $(ONBOARD_BUILD_BACKEND),$(HARDWARE_BACKENDS)),)
+$(error ONBOARD_BUILD_BACKEND=$(ONBOARD_BUILD_BACKEND) must be one of: $(HARDWARE_BACKENDS))
+endif
+onboard_build_backends := $(ONBOARD_BUILD_BACKEND)
+else
+onboard_build_backends := $(HARDWARE_BACKENDS)
+endif
 
-DOCKERFILES := Dockerfile.onboard Dockerfile.twoway
-ENTRYPOINTS := docker-entrypoint-onboard.sh docker-entrypoint-twoway.sh
-PY_SRC := $(wildcard *.py) $(wildcard heatpumpirctl/*.py)
+include $(ONBOARD_ROOT)/mk/deploy.mk
+
+# Images built under hardware/pizero2w/; stamps live at onboard root.
+DOCKER_CLEAN_REPOS := ghcr.io/jovlinger/thermo-onboard-app ghcr.io/jovlinger/thermo-onboard-twoway
+DOCKER_CLEAN_MARKERS := .image.app .image.twoway
+DOCKER_CLEAN_STAGING_DIRS := .docker-import
+include $(UTILS_ROOT)/lib/docker-clean.mk
 
 all: build
 
-# Alias for CI / thermo/test (Makefile calls `make images`).
-images: build
-
-build: .image.app .image.twoway
-
-.image.app: Dockerfile.onboard requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) $(PY_SRC) $(wildcard ../ui/*)
-	"$(CURDIR)/stage-docker-import.sh"
-	@echo "[build] $(IMAGE_APP):$(TAG) platform=$(PLATFORM) (this may take several minutes)..."
-	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.onboard -t $(IMAGE_APP):$(TAG) --load .
-	@docker image inspect $(IMAGE_APP):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.app
-
-.image.twoway: Dockerfile.twoway requirements.txt stage-docker-import.sh $(RUN_WITH_BIN) $(DOCKERFILES) $(ENTRYPOINTS) twoway.py common.py logging_config.py zone_auth.py connectivity_watchdog.py docker-entrypoint-watchdog.sh $(PY_SRC)
-	"$(CURDIR)/stage-docker-import.sh"
-	@echo "[build] $(IMAGE_TWOWAY):$(TAG) platform=$(PLATFORM)..."
-	docker buildx build --progress=$(DOCKER_BUILD_PROGRESS) --platform $(PLATFORM) -f Dockerfile.twoway -t $(IMAGE_TWOWAY):$(TAG) --load .
-	@docker image inspect $(IMAGE_TWOWAY):$(TAG) -f '{{.Id}}' | cut -d: -f2 > .image.twoway
-
-# `docker push` to GHCR over flaky/slow links (especially the armhf twoway layers) sometimes
-# stalls and fails with EOF / "TLS handshake timeout" / "i/o timeout". Each retry is cheap
-# because already-uploaded layers short-circuit on the next attempt. PUSH_RETRIES caps the
-# number of attempts per image (default 3 ⇒ initial + 2 retries).
-PUSH_RETRIES ?= 3
-push: build
-	# OR use dockerlogin function
-	#@[ -n "$${CR_PAT}" ] || { echo "CR_PAT not set. export CR_PAT=ghp_..."; exit 1; }
-	#echo "$$CR_PAT" | docker login ghcr.io -u jovlinger --password-stdin
-	@push_with_retry() { \
-		img=$$1; \
-		for n in $$(seq 1 $(PUSH_RETRIES)); do \
-			echo "[push] attempt $$n/$(PUSH_RETRIES): docker push $$img"; \
-			docker push "$$img" && { echo "[push] ok: $$img"; return 0; }; \
-			[ "$$n" -lt "$(PUSH_RETRIES)" ] && sleep 2; \
-		done; \
-		echo "[push] giving up on $$img after $(PUSH_RETRIES) attempts" >&2; \
-		return 1; \
-	}; \
-	for img in $(IMAGE_APP):$(TAG) $(IMAGE_TWOWAY):$(TAG); do \
-		push_with_retry "$$img" || exit 1; \
+build:
+	@for backend in $(onboard_build_backends); do \
+		echo "[onboard] build hardware/$$backend"; \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" build || exit $$?; \
 	done
 
 clean:
-	@docker image rm $(IMAGE_APP):$(TAG) 2>/dev/null || true
-	@docker image rm $(IMAGE_TWOWAY):$(TAG) 2>/dev/null || true
-	@rm -f .image.app .image.twoway
-	@rm -rf .docker-import
+	@for backend in $(onboard_build_backends); do \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" clean || exit $$?; \
+	done
 
-# Host venv: pytest, UI harness, daikin scripts (./test/run.sh). Does not require Docker images.
-test-local:
+test:
 	./test/run.sh
 
-# Compose / image integration lives under ../test (dockertest). Avoid duplicate image builds here.
-test-docker:
-	@echo "onboard: no standalone test-docker recipe (stack: cd ../test && make test-docker)"
-	@true
+all-tests: test test-docker
 
-test: test-local test-docker
+test-local: test
+
+images:
+	@for backend in $(onboard_build_backends); do \
+		echo "[onboard] images hardware/$$backend"; \
+		$(MAKE) -C hardware/$$backend ONBOARD_ROOT="$(ONBOARD_ROOT)" images || exit $$?; \
+	done
+
+test-docker: assert_docker_up images
+
+# Called from zones/<zone>/Makefile (see mk/zone.mk).
+DEPLOY_REPO ?=
+deploy-preflight:
+	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-preflight: THERMO_ENV_FILE not set"; exit 1; }
+	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-preflight: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
+	REPO_PATH="$(if $(DEPLOY_REPO),$(DEPLOY_REPO),$(REPO_ROOT))" \
+		EXPECTED_ONBOARD_DEPLOY_BACKEND="$(EXPECTED_ONBOARD_DEPLOY_BACKEND)" \
+		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
+		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh" --preflight
+
+deploy-zone: $(deploy_zone_docker_prereq)
+	@test -n "$(THERMO_ENV_FILE)" || { echo "deploy-zone: THERMO_ENV_FILE not set"; exit 1; }
+	@test -f "$(THERMO_ROOT)/$(THERMO_ENV_FILE)" || { echo "deploy-zone: missing $(THERMO_ROOT)/$(THERMO_ENV_FILE)"; exit 1; }
+	REPO_PATH="$(if $(DEPLOY_REPO),$(DEPLOY_REPO),$(REPO_ROOT))" \
+		EXPECTED_ONBOARD_DEPLOY_BACKEND="$(EXPECTED_ONBOARD_DEPLOY_BACKEND)" \
+		THERMO_ENV_FILE="$(THERMO_ENV_FILE)" \
+		/bin/sh "$(ONBOARD_ROOT)/install/deploy.sh"
+
+# Convenience: make deploy ZONE=office
+ZONE ?=
+deploy:
+	@if [ -z "$(ZONE)" ]; then \
+		echo "Usage: make deploy ZONE=<kitchen|office|bedroom>"; \
+		echo "   or: make -C zones/<zone> deploy"; \
+		exit 1; \
+	fi
+	$(MAKE) -C zones/$(ZONE) deploy \
+		DEPLOY_REPO="$(DEPLOY_REPO)"
 
 ci:
-	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	@BRANCH=$$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD); \
 	test "$$BRANCH" = main || test "$$BRANCH" = master || { echo "Run from main or master"; exit 1; }; \
 	echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ci-trigger && \
-	git add .ci-trigger && \
-	git commit -m "ci: trigger thermo-onboard build" && \
-	git push origin $$BRANCH
+	git -C "$(REPO_ROOT)" add thermo/onboard/.ci-trigger && \
+	git -C "$(REPO_ROOT)" commit -m "ci: trigger thermo-onboard build" && \
+	git -C "$(REPO_ROOT)" push origin $$BRANCH
 	@echo "Workflow triggered. See https://github.com/jovlinger/utils/actions"
-
-# On-target deploy: git pull at REPO root, then thermo/onboard/install/deploy-compose.sh (docker compose pull + up).
-# Requires THERMO_ENV_FILE (e.g. export THERMO_ENV_FILE=config/kitchen.env) — see thermo/config/README.md.
-# Default REPO root is two levels up from this dir (onboard -> thermo -> utils).
-# Override checkout: make deploy DEPLOY_REPO=/path/to/utils
-DEPLOY_REPO ?= $(abspath $(CURDIR)/../..)
-deploy:
-	@test -f "$(CURDIR)/install/deploy.sh" || { echo "deploy: missing install/deploy.sh"; exit 1; }
-	@test -e "$(DEPLOY_REPO)/.git" || { echo "deploy: DEPLOY_REPO must be a git working tree: $(DEPLOY_REPO)"; exit 1; }
-	@echo "[deploy] REPO_PATH=$(DEPLOY_REPO)"
-	REPO_PATH="$(DEPLOY_REPO)" /bin/sh "$(CURDIR)/install/deploy.sh"

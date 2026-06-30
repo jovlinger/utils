@@ -16,14 +16,28 @@ import termios
 import tty
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "onboard"))
-from heatpumpirctl import Fan, Mode, State
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import Fan, Mode, State
+from common.heatpumpirctl import ARC452A9 as proto
 
 LIRC_TX = "/dev/lirc0"
 LIRC_RX = "/dev/lirc1"
 
-FAN_KEY = {"0": Fan.AUTO, "`": Fan.SILENT, "1": Fan.F1, "2": Fan.F2, "3": Fan.F3, "4": Fan.F4, "5": Fan.F5}
-MODE_KEY = {"h": Mode.HEAT, "c": Mode.COOL, "f": Mode.FAN, "d": Mode.DRY, "a": Mode.AUTO}
+FAN_KEY = {
+    "0": Fan.AUTO,
+    "`": Fan.SILENT,
+    "1": Fan.F1,
+    "2": Fan.F2,
+    "3": Fan.F3,
+    "4": Fan.F4,
+    "5": Fan.F5,
+}
+MODE_KEY = {
+    "h": Mode.HEAT,
+    "c": Mode.COOL,
+    "f": Mode.FAN,
+    "d": Mode.DRY,
+    "a": Mode.AUTO,
+}
 
 
 def getkey() -> str:
@@ -70,7 +84,15 @@ def listen_for_ir() -> State | None:
         tty.setraw(fd)
         try:
             proc = subprocess.Popen(
-                ["ir-ctl", "-d", LIRC_RX, "--receive", "--mode2", "--timeout", "200000"],
+                [
+                    "ir-ctl",
+                    "-d",
+                    LIRC_RX,
+                    "--receive",
+                    "--mode2",
+                    "--timeout",
+                    "200000",
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
@@ -115,7 +137,9 @@ def listen_for_ir() -> State | None:
 
 
 def main() -> None:
-    state = State().set_power(False).set_mode(Mode.HEAT).set_temp(22.0).set_fan(Fan.AUTO)
+    state = (
+        State().set_power(False).set_mode(Mode.HEAT).set_temp(22.0).set_fan(Fan.AUTO)
+    )
     menu = "0 auto ` whisper 1-5 fan | h/c/f/d/a mode | Space power | ↑↓ temp | Enter send | ? listen / stop | q quit"
 
     first = True

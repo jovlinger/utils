@@ -1,0 +1,11 @@
+# UNIT_MM=2.54
+# ASCII fixture for straight traces and pads.
+layer base (0, 5, 3)
+XXXXX
+XX*OX
+XXXXX
+
+layer trace (0, 5, 3)
+.....
+.-*O.
+.....

@@ -1,0 +1,74 @@
+# Text voxel design for thermo ESP32-S3 sensor HAT, up-side variant.
+# UNIT_MM=2.54
+
+# Simple DevKitC-compatible ESP32-S3 header grid.
+# Source dimensions:
+# - 2.54 mm in-row pitch
+# - 25.40 mm header center spacing, 10 grid intervals
+# - 2 x 22 header pins
+# Layer header: layer NAME (horizontal_offset, width_columns, height_rows)
+# Grid columns west to east: border, J1, 9 interior pitch cells, J3, border
+# Rows north to south.
+# Legend: X=solid substrate, *=ESP32-S3 header pad, .=empty/air, a-z=embossed labels.
+# This first file captures only host-board pads; no module pads or traces yet.
+
+layer base (7, 13, 24)
+       XXXXXXXXXXXXX
+GND    X*XXXXXXXXX*X 3V3
+GPIO43 X*XXXXXXXXX*X 3V3
+GPIO44 X*XXXXXXXXX*X RST
+GPIO1  X*XXXXXXXXX*X GPIO4
+GPIO2  X*XXXXXXXXX*X GPIO5
+GPIO42 X*XXXXOOOXX*X GPIO6
+GPIO41 X*XXXXXXXXX*X GPIO7
+GPIO40 X*XXXXXXXXX*X GPIO15
+GPIO39 X*XXXXXXXXX*X GPIO16
+GPIO38 X*XXXXOOOXX*X GPIO17
+GPIO37 X*XXXXXXXXX*X GPIO18
+GPIO36 X*XXXXXXXXX*X GPIO8
+GPIO35 X*XXOOOOXXX*X GPIO3
+GPIO0  X*XXXXXXXXX*X GPIO46
+GPIO45 X*XXXXXXXXX*X GPIO9
+GPIO48 X*XXXXXXXXX*X GPIO10
+GPIO47 X*XXXXXXXXX*X GPIO11
+GPIO21 X*XXXXXXXXX*X GPIO12
+GPIO20 X*XXXXXXXXX*X GPIO13
+GPIO19 X*XXXXXXXXX*X GPIO14
+GND    X*XXXXXXXXX*X 5V
+GND    X*XXXXXXXXX*X GND
+       XXXXXXXXXXXXX
+
+
+alias V -> | = 3V3
+alias G -> | = GND
+
+
+layer trace (7, 13, 24)
+       .............
+GND    .*--┐.up..... 3V3
+GPIO43 ....|side┌-*. 3V3
+GPIO44 ....|....|... RST
+GPIO1  ....└-┐┌-┘... GPIO4
+GPIO2  ......||..... GPIO5
+GPIO42 ......OOO--*. GPIO6  IR RX target .c8= GPIO6, .c7 = 3V3  .c6 = GND
+GPIO41 ......||..... GPIO7
+GPIO40 ......GV..... GPIO15
+GPIO39 ......||..... GPIO16  
+GPIO38 ......OOO--*. GPIO17  IR TX target .c8= GPIO17  .c7 = 3V3, .c6 = GND
+GPIO37 ......||..... GPIO18                                               
+GPIO36 .*---┐||..... GPIO8
+GPIO35 .*--OOOO..... GPIO3 AHT20 target .c7 = 3V3, .c6 = GND, .c5 = GPIO36 (SCL) .c4 = GPIO35 (SDA)
+GPIO0  ............. GPIO46
+GPIO45 ...e...t..... GPIO9
+GPIO48 ...s...h..... GPIO10
+GPIO47 ...p.. e..... GPIO11
+GPIO21 ...3...r..... GPIO12
+GPIO20 ...2...m..... GPIO13
+GPIO19 ...s...o..... GPIO14
+GND    .*.3......... 5V
+GND    .*....usb..*. GND
+       .............
+
+# scratch
+# Base placement only. J1 and J3 header pads are 10 grid intervals apart.
+# Add sensor/module O pads only after the physical board grid is confirmed.

@@ -1,3 +1,3 @@
 pytest
 requests
-cryptography
+cryptography==48.0.1

@@ -31,7 +31,10 @@ def _image_exists(name: str) -> bool:
 def _docker_running() -> bool:
     try:
         r = subprocess.run(
-            ["docker", "info"], capture_output=True, text=True, timeout=15,
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
@@ -58,7 +61,9 @@ def _export_payload() -> bytes:
 
 
 @pytest.mark.skipif(not _docker_running(), reason="docker daemon not reachable")
-@pytest.mark.skipif(not _image_exists(DOCKER_IMAGE), reason=f"{DOCKER_IMAGE} not built locally")
+@pytest.mark.skipif(
+    not _image_exists(DOCKER_IMAGE), reason=f"{DOCKER_IMAGE} not built locally"
+)
 def test_armv6_export_contains_paths_used_by_pi_chroot_launch() -> None:
     """Same members Pi needs: ``tini -- /app/start.sh`` plus interpreters for ``#!/bin/sh``."""
     blob = _export_payload()

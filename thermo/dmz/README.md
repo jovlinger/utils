@@ -18,7 +18,7 @@ Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 |------|------|
 | `Dockerfile` | Multi-stage build: Python deps (pydantic **&lt; 2** / pydantic-core from source on musl when needed) |
 | `start.sh` | Privileged setup, then drop to `dmz` with log wrapper around `run.sh` |
-| `bin/run-with-stdout-logged.py` (repo root) | Snapshotted from sister `bin` repo; staged into `.docker-import/` before image build. Refresh: `make -C bin all` |
+| `extdeps/run-with-stdout-logged.py` (repo root) | Snapshotted from sister `bin` repo; staged into `.docker-import/` before image build. Refresh: `make -C extdeps all` |
 | `run.sh` | Always `pytest -q test` on `test/`, then stack probes (log: `/tmp/dmz-run.log`), then `exec` app |
 | `app.py` | Flask API |
 | `requirements.txt` | Runtime deps including **`requests`** (for **`manage.py`**) and **`pytest`** for in-container tests; **`requirements-dev.txt`** includes the same set for host venv (`-r requirements.txt`) |
@@ -27,7 +27,7 @@ Alpine Linux, **non-root user `dmz` (uid 1000)**. Process chain:
 
 **HTTPS:** For a browser-trusted certificate on the public internet (e.g. DuckDNS + Let’s Encrypt), see [HTTPS-TRUSTED-CERT.md](HTTPS-TRUSTED-CERT.md).
 
-**Zone keys + TLS layout (generate, gitignore, distribute):** see **[`../KEYS-AND-CERTS.md`](../KEYS-AND-CERTS.md)**. Generate Ed25519 keys with **`make -C thermo/dmz zone-keys`** (writes under **`dmz/.secrets/zone/`**, ignored by git).
+**Zone keys + TLS layout (generate, gitignore, distribute):** see **[`../KEYS-AND-CERTS.md`](../KEYS-AND-CERTS.md)**. Generate Ed25519 keys with **`make -C thermo/dmz zone-keys`** (writes private key under **`thermo/priv/zone/`** and public key under **`thermo/config/zone/`**).
 
 ```bash
 cd thermo/dmz
@@ -43,8 +43,8 @@ docker run --rm -p 8080:8080 jovlinger/thermo/dmz
 
 ## Pi 1B: bootable SD image (same root as Docker, `dd` to card)
 
-1. **Required:** at least one **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, or **`id_rsa.pub`** on the **build machine** — merged into **`install/rescue_authorized_keys`** on the FAT and **`/root/install/`** in the apkovl so **`sh /root/sshd.sh`** can install **`authorized_keys`** and start **`sshd`**. Stable **host keys**: **[`../.secrets/ssh-host/`](../.secrets/)** (`../.gitignore`).
-2. Prepare **`thermo/dmz/.secrets/zone/pub.pem`** and **`thermo/dmz/.secrets/oauth/`** (see **[`SECRETS.md`](SECRETS.md)**); **`./build-and-write.sh`** fails fast if required files are missing (paths are fixed; no overrides). From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/…`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free. **Write progress:** Linux uses GNU **`dd status=progress`**. On macOS, **`brew install pv`** gives a byte-accurate bar and ETA; without **`pv`**, the script prints a **heartbeat every 20s** so long writes are not silent.
+1. **Required:** at least one **`~/.ssh/id_ed25519.pub`**, **`id_ecdsa.pub`**, or **`id_rsa.pub`** on the **build machine** - merged into **`install/rescue_authorized_keys`** on the FAT and **`/root/install/`** in the apkovl so **`sh /root/sshd.sh`** can install **`authorized_keys`** and start **`sshd`**. Stable **host keys**: **`thermo/priv/ssh-host/`**.
+2. Prepare **`thermo/config/zone/pub.pem`**, **`thermo/config/oauth/google-client-id`**, and private files under **`thermo/priv/oauth/`** (see **[`SECRETS.md`](SECRETS.md)**); **`./build-and-write.sh`** fails fast if required files are missing (paths are fixed; no overrides). From **`thermo/dmz`**, run **`./build-and-write.sh`** to build **`dist/dmz.img`** only (no **`sudo`**). To flash in one step, pass the **whole-disk** device: **`./build-and-write.sh /dev/...`** (macOS: **`/dev/rdiskN`**; Linux: **`/dev/sdX`**, not a partition). Then the script prompts for **`sudo`**, runs a **background unmount loop** on that device while the build runs, and **`dd`** when the card is free. **Write progress:** Linux uses GNU **`dd status=progress`**. On macOS, **`brew install pv`** gives a byte-accurate bar and ETA; without **`pv`**, the script prints a **heartbeat every 20s** so long writes are not silent.
 3. Eject the card, insert in Pi 1B, power on.
 
 The image is a **256MB FAT** volume: Alpine Raspberry Pi **3.19.0 armhf** boot files, **`dmz_rootfs.tar`** (docker export of **`linux/arm/v6`**), **`dmz.apkovl.tar.gz`** (haveged + **`install/dmz-boot.start`** as OpenRC `local.d`). Boot logs to **`/tmp/boot.log`** on the Pi RAM root; the app logs to **`/var/log/dmz.log`** (bind-mounted through the chroot). Boot brings up **`eth0`** from **`install/network.conf`**, extracts the tarball, **chroots** into it, runs **`/sbin/tini -- /app/start.sh`** — same chain as the container (including **`run-with-stdout-logged.py`**).

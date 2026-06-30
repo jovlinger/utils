@@ -8,16 +8,16 @@ Shared shell helpers live in **`lib/`** (e.g. **`lib/venv-resolve.sh`**).
 
 | Tree | Venv path | How to create |
 |------|-----------|---------------|
-| **`utils/<project>/`** | **`utils/<project>/.venv/`** | `./create_pipenv.sh <project>` from utils root (e.g. `thermo/dmz`) |
+| **`utils/<project>/`** | nearest **`.venv/`**, **`venv/`**, or legacy **`env/`** marker walking upward | `./create_pipenv.sh <project>` from utils root (e.g. `thermo/dmz`) |
 | **`bin/`** (sibling repo) | **`bin/.venv/`** (one shared venv for all bin scripts) | `bin/setup-venv.sh` |
 
 Examples:
 
-- `utils/thermo/dmz/manage.py` → use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
+- `utils/thermo/dmz/manage` -> use **`utils/thermo/dmz/.venv`**, not `bin/.venv`.
 - `utils/shadup/ingest.sh` → use **`utils/shadup/.venv`**.
-- `bin/pylauncher.sh` → use **`bin/.venv`**.
+- Python CLIs use `#!/usr/bin/env venv-run` on their `.py` files; put `utils/extdeps` (or sibling `bin/`) on `PATH` so the shebang resolves. `venv-run` walks up for the nearest `.venv/`, `venv/`, or legacy `env/` marker.
 
-If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, `./manage.py` will run with the **wrong** Python and miss project deps (e.g. `cryptography`). **`deactivate`**, then **`source thermo/dmz/.venv/bin/activate`**.
+If your shell has **`bin/.venv` activated** while you work under **`utils/thermo/`**, run `manage` through its launcher or deactivate before using `./manage.py` directly.
 
 Legacy **`env/`** directories (older thermo layout) are migrated to **`.venv/`** automatically the next time you run **`create_pipenv.sh`** on that project.
 
@@ -48,13 +48,11 @@ done
 
 Nested deps (e.g. `esp32/volctrl/requirements.txt`): create `.venv` in that subpath manually.
 
-## Use a project venv
+## Use a project launcher
 
 ```bash
-cd thermo/dmz
-source .venv/bin/activate
-./manage.py healthz
-deactivate
+PATH="$PWD/extdeps:$PWD/thermo/dmz:$PATH"
+manage healthz
 ```
 
-Scripts can source **`lib/venv-resolve.sh`** to pick `.venv` (or legacy `env/`) and fail with the right **`create_pipenv.sh`** hint.
+Scripts can source **`lib/venv-resolve.sh`** to pick the nearest `.venv`, `venv`, or legacy `env` marker and fail with the right setup hint. Empty marker directories keep the intended venv root in git with only `README.md`; generated venv contents stay untracked.

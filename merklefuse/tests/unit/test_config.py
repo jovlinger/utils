@@ -77,17 +77,17 @@ class TestConfig:
         }
         
         with patch('merklefuse.config.get_config_path') as mock_get_path, \
-             patch('merklefuse.config._write_config_file') as mock_write, \
-             patch('pathlib.Path.mkdir') as mock_mkdir:
+             patch('merklefuse.config._write_config_file') as mock_write:
             
             mock_path = Mock()
-            mock_path.parent = Mock()
+            mock_parent = Mock()
+            mock_path.parent = mock_parent
             mock_get_path.return_value = mock_path
             
             save_config(test_config, "/test/config.json")
             
-            # Verify mkdir was called
-            mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+            # Verify mkdir was called on the config file parent
+            mock_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
             
             # Verify write was called
             mock_write.assert_called_once_with(mock_path, test_config)

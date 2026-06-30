@@ -6,19 +6,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ONBOARD="$(cd "$SCRIPT_DIR/.." && pwd)"
 THERMO="$(cd "$ONBOARD/.." && pwd)"
 COMMON_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-# run-with-stdout-logged: repo-root bin/ (same as Makefile RUN_WITH_BIN).
-RUN_WITH_STDOUT="$(cd "$ONBOARD/../../bin" && pwd)/run-with-stdout-logged.py"
+# run-with-stdout-logged: repo-root extdeps/ (same as Makefile RUN_WITH_BIN).
+RUN_WITH_STDOUT="$(cd "$ONBOARD/../../extdeps" && pwd)/run-with-stdout-logged.py"
 FAKE_IRCTL_DIR="$THERMO/test/daikin"
 # Use high ports to avoid conflicts; 5xxxx range often free
 PORT_APP=$((50000 + RANDOM % 1000))
 PORT_UI=$((51000 + RANDOM % 1000))
 
-if [ ! -f "$ONBOARD/env/bin/activate" ]; then
-  echo "No venv at $ONBOARD/env." >&2
-  echo "Run: $COMMON_ROOT/create_pipenv.sh thermo/onboard" >&2
-  exit 1
-fi
-PYTHON="$ONBOARD/env/bin/python"
+# shellcheck source=/dev/null
+. "$COMMON_ROOT/lib/venv-resolve.sh"
+resolve_utils_venv "$ONBOARD" "$COMMON_ROOT"
+PYTHON="$(utils_venv_python_bin "$VENV_DIR")"
 
 cd "$ONBOARD"
 export PYTHONPATH="$ONBOARD${PYTHONPATH:+:$PYTHONPATH}"
@@ -32,7 +30,7 @@ TEST_LOG="/tmp/onboard-test-$$.log"
 LOG_FILELIMIT=1048576
 LOG_TOTALLIMIT=2097152
 # Start app in background
-PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" "$RUN_WITH_STDOUT" "$TEST_LOG" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" "$PYTHON" app.py &
+PORT=$PORT_APP ENV=TEST LOG_PATH="$TEST_LOG" "$PYTHON" "$RUN_WITH_STDOUT" "$TEST_LOG" "$LOG_FILELIMIT" "$LOG_TOTALLIMIT" "$PYTHON" -m hardware.pizero2w.app &
 APP_PID=$!
 trap 'kill $APP_PID $UI_PID 2>/dev/null || true' EXIT
 
@@ -53,7 +51,7 @@ echo "$GET_OUT" | grep -q '<form method="post"' || { echo "FAIL: GET missing for
 echo "$GET_OUT" | grep -q 'Environment' || { echo "FAIL: GET missing Environment"; exit 1; }
 echo "$GET_OUT" | grep -q '<table class="env"' || { echo "FAIL: GET missing environment table"; exit 1; }
 echo "$GET_OUT" | grep -q 'Current time:' || { echo "FAIL: GET missing Current time"; exit 1; }
-echo "$GET_OUT" | grep -q 'State (full JSON):' || { echo "FAIL: GET missing State full JSON"; exit 1; }
+echo "$GET_OUT" | grep -q 'State (full JSON)</b>' || { echo "FAIL: GET missing State full JSON"; exit 1; }
 echo "$GET_OUT" | grep -q 'Power on' || { echo "FAIL: GET missing Power on button"; exit 1; }
 echo "$GET_OUT" | grep -q 'Power off' || { echo "FAIL: GET missing Power off button"; exit 1; }
 echo "$GET_OUT" | grep -q 'Refresh' || { echo "FAIL: GET missing Refresh link"; exit 1; }
@@ -71,7 +69,7 @@ echo "$POST2_OUT" | grep -q '18.5' || { echo "FAIL: POST response missing refres
 echo "$POST2_OUT" | grep -q '62' || { echo "FAIL: POST response missing refreshed humidity 62"; echo "$POST2_OUT" | head -5; exit 1; }
 
 # Logs section: must show entries (bold datetime, one per line). Verifies log feature works.
-echo "$POST2_OUT" | grep -q '<b>Logs</b>' || { echo "FAIL: Logs section missing"; exit 1; }
+echo "$POST2_OUT" | grep -q '<b>Onboard logs' || { echo "FAIL: Logs section missing"; exit 1; }
 echo "$POST2_OUT" | grep -qE '<b>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' || { echo "FAIL: Logs section empty or malformed (expected bold datetime)"; exit 1; }
 
 echo "PASS: UI GET and POST OK"

@@ -1,7 +1,14 @@
-env
-.venv
+env/*
+!env/
+!env/README.md
+venv/*
+!venv/
+!venv/README.md
+.venv/*
+!.venv/
+!.venv/README.md
 .image
 dist/
 .docker-import/
-# Rescue sshd host keys + other local secrets (see install/README.md).
+# Legacy local secrets path; canonical location is thermo/priv/.
 .secrets/

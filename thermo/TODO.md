@@ -14,7 +14,7 @@ Living backlog for heat-pump / IR / onboard work. Numbered sections are stable I
 
 **Intended responsibility:** **DMZ** stores and echoes a zone command as an **opaque** blob (today mostly `lolidk`; later maybe richer JSON **still not** parsed for IR on the server). **Twoway** POSTs sensors, gets the response, and forwards the command fields to onboard **without** mapping them to `State`. **Short polling** stays until twoway↔DMZ becomes long poll. **Onboard** is the **only** place that parses command → `heatpumpirctl.State` and decides IR.
 
-**Bug 1 — onboard:** **`app.set_daikin`** (`thermo/onboard/app.py`) always calls **`send_daikin_state`** after `State.from_json` without comparing to the **last IR-applied** logical `State`. Identical desired state → **at most one** IR per change (normalize/compare, then no-op).
+**Bug 1 - onboard:** **`app.set_daikin`** (`thermo/onboard/hardware/pizero2w/app.py`) always calls **`send_daikin_state`** after `State.from_json` without comparing to the **last IR-applied** logical `State`. Identical desired state -> **at most one** IR per change (normalize/compare, then no-op).
 
 **Bug 2 — DMZ + twoway (no parsing job):** **Neither layer should parse the command into heat-pump state.** Today **`twoway._lolidk_to_state`** expands `lolidk` into full `State` JSON before **`POST /daikin`** — that policy does not belong there (or on DMZ). Pass **`lolidk` (or command dict) through**; **onboard** owns validation, defaults, and `lolidk` → `State`. DMZ today mostly stores `lolidk` opaquely — keep it that way; do not add IR interpretation there.
 
@@ -28,7 +28,7 @@ Living backlog for heat-pump / IR / onboard work. Numbered sections are stable I
 
 3. **Onboard `set_daikin`:** Should accept opaque command, **parse to `State` here only**, then compare to last IR’d state before **`send_daikin_state`**.
 
-4. **Incident detail:** **`_lolidk_to_state("3000")`** (`twoway.py`) defaulting to AUTO-on illustrates **bug 2** (wrong layer + bad fallback), not something DMZ/twoway should fix by tweaking the fallback alone — move parsing to onboard and delete/retire twoway’s decoder.
+4. **Incident detail:** **`_lolidk_to_state("3000")`** (`common/twoway.py`) defaulting to AUTO-on illustrates **bug 2** (wrong layer + bad fallback), not something DMZ/twoway should fix by tweaking the fallback alone - move parsing to onboard and delete/retire twoway's decoder.
 
 **Operational note:** When debugging incidents like this, **interpret logs while fresh** and **copy Pi Zero (onboard) logs quickly** — they tend to rotate or be harder to recover than central DMZ logs.
 

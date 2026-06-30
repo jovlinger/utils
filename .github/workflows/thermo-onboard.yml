@@ -18,7 +18,7 @@ on:
     branches: [main, master]
     paths:
       - "thermo/onboard/**"
-      - "bin/**"
+      - "extdeps/**"
       - ".github/workflows/thermo-onboard.yml"
   workflow_dispatch:
 
@@ -47,14 +47,16 @@ jobs:
           mkdir -p ./.docker-build/thermo-onboard
           cp -a ./thermo/onboard/. ./.docker-build/thermo-onboard/
           mkdir -p ./.docker-build/thermo-onboard/.docker-import
-          cp ./bin/run-with-stdout-logged.py \
+          cp ./extdeps/run-with-stdout-logged.py \
             ./.docker-build/thermo-onboard/.docker-import/run-with-stdout-logged.py
+          mkdir -p ./.docker-build/thermo-onboard/.docker-import/ui
+          cp -a ./thermo/ui/. ./.docker-build/thermo-onboard/.docker-import/ui/
 
       - name: Build and push onboard app
         uses: docker/build-push-action@v6
         with:
           context: ./.docker-build/thermo-onboard
-          file: ./.docker-build/thermo-onboard/Dockerfile.onboard
+          file: ./.docker-build/thermo-onboard/hardware/pizero2w/Dockerfile.onboard
           platforms: linux/arm64,linux/arm/v7
           push: true
           provenance: false
@@ -66,7 +68,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./.docker-build/thermo-onboard
-          file: ./.docker-build/thermo-onboard/Dockerfile.twoway
+          file: ./.docker-build/thermo-onboard/hardware/pizero2w/Dockerfile.twoway
           platforms: linux/arm64,linux/arm/v7
           push: true
           provenance: false

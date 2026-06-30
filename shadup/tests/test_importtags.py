@@ -247,9 +247,9 @@ def test_build_tags_unions_and_prefixes() -> None:
     }
     tags = mod.build_tags_from_export(payload)
     assert tags == [
-        "live",
-        "dup",
-        "Rock",
+        "tag;live",
+        "tag;dup",
+        "genre;Rock",
         "artist;The Artist",
         "album;The LP",
     ]
@@ -281,7 +281,7 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac")
-    assert tags == ["album;B2", "artist;A1", "gr", "im"]
+    assert tags == ["album;B2", "artist;A1", "genre;gr", "tag;im"]
 
 
 def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
@@ -313,7 +313,7 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac", db_path=custom_db)
-    assert tags == ["album;B2", "artist;A1", "gr", "im"]
+    assert tags == ["album;B2", "artist;A1", "genre;gr", "tag;im"]
 
 
 def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
@@ -341,7 +341,7 @@ def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
     r = _run_importtags(tmp_path, shadir, fake_mt, album, reset=True)
     assert r.returncode == 0, r.stderr
     assert r.stdout == ".\n"
-    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["new"]
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["tag;new"]
 
 
 def test_importtags_skips_nondir(tmp_path: Path) -> None:

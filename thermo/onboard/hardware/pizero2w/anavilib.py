@@ -1,0 +1,312 @@
+"""
+This is my own shim library for anavi's sensor code.
+
+This is the main export of the onboard project, and the flask app.pyy
+is just a stub api for it.
+
+This library will require system libraries like i2c to be installed,
+and hopefully described in hardware/pizero2w/README.md
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+import subprocess
+import tempfile
+from typing import Any
+
+from common import is_test_env
+from common.heatpumpirctl import profiles
+from common.logging_config import format_kv
+
+logger = logging.getLogger(__name__)
+
+LIRC_TX = (os.environ.get("IR_DEVICE") or "/dev/lirc0").strip()
+IR_KIND = "heatpump_ir"
+IR_DEVICE = "lirc:%s" % LIRC_TX
+RAW_IR_COMMAND_TYPE = "raw_ir_sequence"
+RAW_IR_CARRIER_HZ = 38_000
+RAW_IR_MAX_SEQUENCE_LEN = 1024
+RAW_IR_MAX_DURATION_US = 1_250_000
+
+
+def _state_summary(state: Any) -> str:
+    fn = getattr(state, "summary", None)
+    if callable(fn):
+        try:
+            return str(fn())
+        except Exception:
+            pass
+    return repr(state)
+
+
+def _payload_sha256(mode2: str) -> str:
+    return hashlib.sha256(mode2.encode("utf-8")).hexdigest()
+
+
+def _protocol_name() -> str:
+    send_behavior = (
+        os.environ.get("ONBOARD_SEND_BEHAVIOR") or profiles.LEGACY_DAIKIN_SEND_BEHAVIOR
+    ).strip()
+    return profiles.protocol_from_env(os.environ, send_behavior)
+
+
+def _send_mode2_payload(mode2: str, dialect: str, protocol: str) -> bool:
+    digest = _payload_sha256(mode2)
+    first_line = mode2.split("\n", 1)[0] if mode2 else ""
+    line_count = mode2.count("\n") + (1 if mode2 else 0)
+    logger.debug(
+        "encoded%s",
+        format_kv(
+            kind=IR_KIND,
+            dialect=dialect,
+            protocol=protocol,
+            device=IR_DEVICE,
+            mode2_bytes=len(mode2.encode("utf-8")),
+            mode2_lines=line_count,
+            sha256=digest,
+            first_line_preview=first_line[:160],
+        ),
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(mode2)
+            path = f.name
+        try:
+            logger.info(
+                "ir_send%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    device=IR_DEVICE,
+                    payload_sha256_prefix=digest[:16],
+                ),
+            )
+            argv = ["ir-ctl", "-d", LIRC_TX, "--send", path]
+            logger.debug(
+                "ir_ctl_invoke%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    argv=argv,
+                ),
+            )
+            subprocess.run(argv, check=True)
+            logger.debug(
+                "ir_ctl_sent_ok%s",
+                format_kv(
+                    kind=IR_KIND,
+                    dialect=dialect,
+                    protocol=protocol,
+                    device=IR_DEVICE,
+                ),
+            )
+            return True
+        finally:
+            os.unlink(path)
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError) as e:
+        logger.error(
+            "ir_ctl_failed%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=dialect,
+                protocol=protocol,
+                device=IR_DEVICE,
+                payload_sha256_prefix=digest[:16],
+                error=str(e),
+            ),
+        )
+        return False
+
+
+def raw_ir_sequence_to_mode2(sequence: Any) -> str:
+    if not isinstance(sequence, list):
+        raise ValueError("raw IR sequence must be a list")
+    if not sequence:
+        raise ValueError("raw IR sequence must not be empty")
+    if len(sequence) > RAW_IR_MAX_SEQUENCE_LEN:
+        raise ValueError(f"raw IR sequence max length is {RAW_IR_MAX_SEQUENCE_LEN}")
+
+    lines: list[str] = []
+    for index, value in enumerate(sequence):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"raw IR sequence entry {index} must be an integer")
+        if value == 0:
+            raise ValueError(f"raw IR sequence entry {index} must not be zero")
+        duration = abs(value)
+        if duration > RAW_IR_MAX_DURATION_US:
+            raise ValueError(
+                f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us"
+            )
+        lines.append("%s %d" % ("pulse" if value > 0 else "space", duration))
+    return "\n".join(lines) + "\n"
+
+
+def send_raw_ir_sequence(sequence: Any, carrier_hz: Any = RAW_IR_CARRIER_HZ) -> bool:
+    """Send a raw signed microsecond sequence via ir-ctl mode2 text."""
+    if isinstance(carrier_hz, bool) or not isinstance(carrier_hz, int):
+        raise ValueError("raw IR carrier_hz must be an integer")
+    if carrier_hz != RAW_IR_CARRIER_HZ:
+        raise ValueError("raw IR carrier_hz must be 38000")
+    mode2 = raw_ir_sequence_to_mode2(sequence)
+    if is_test_env():
+        logger.debug(
+            "send_skipped%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=RAW_IR_COMMAND_TYPE,
+                protocol=RAW_IR_COMMAND_TYPE,
+                device=IR_DEVICE,
+                reason="test_env",
+                mode2_lines=len(mode2.splitlines()),
+            ),
+        )
+        return True
+    return _send_mode2_payload(mode2, RAW_IR_COMMAND_TYPE, RAW_IR_COMMAND_TYPE)
+
+
+def send_heatpump_state(state: Any) -> bool:
+    """Send heat-pump IR state via ir-ctl. Return True if sent, False on error."""
+    protocol_name = _protocol_name()
+    spec = profiles.protocol_spec(protocol_name)
+    if is_test_env():
+        logger.debug(
+            "send_skipped%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=spec.display_name,
+                protocol=spec.name,
+                device=IR_DEVICE,
+                reason="test_env",
+                state_summary=_state_summary(state),
+            ),
+        )
+        return True
+
+    logger.debug(
+        "encode_start%s",
+        format_kv(
+            kind=IR_KIND,
+            dialect=spec.display_name,
+            protocol=spec.name,
+            device=IR_DEVICE,
+            state_summary=_state_summary(state),
+        ),
+    )
+    try:
+        mode2 = profiles.dumps(state, protocol_name)
+    except Exception as e:
+        logger.error(
+            "encode_failed%s",
+            format_kv(
+                kind=IR_KIND,
+                dialect=spec.display_name,
+                protocol=spec.name,
+                device=IR_DEVICE,
+                error=str(e),
+            ),
+        )
+        return False
+
+    return _send_mode2_payload(mode2, spec.display_name, spec.name)
+
+
+def send_daikin_state(state: Any) -> bool:
+    """Compatibility wrapper for old call sites and tests."""
+    return send_heatpump_state(state)
+
+
+def get_smbus():
+    """Return SMBus(1) for I2C, or smbus_fake when ENV=TEST/DOCKERTEST."""
+    if is_test_env():
+        from hardware.pizero2w import smbus_fake
+
+        return smbus_fake.SMBus(1)
+    # smbus2: pip package, works in container (host may use python3-smbus instead)
+    import smbus2
+
+    return smbus2.SMBus(1)
+
+
+### <<< start theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py
+
+
+def unit_float(msb: int, lsb: int) -> float:
+    """Convert MSB/LSB pair to unit [0,1) for HTU21D raw readings."""
+    return (msb * 256.0 + lsb) / 65536.0
+
+
+class HTU21D(object):
+    HTU21D_ADDR = 0x40
+    CMD_READ_TEMP = 0xE3
+    CMD_READ_HUM = 0xE5
+    CMD_RESET = 0xFE
+
+    instance = None
+
+    @classmethod
+    def singleton(cls) -> "HTU21D":
+        """Return singleton HTU21D instance."""
+        if x := cls.instance:
+            return x
+        x = cls()
+        cls.instance = x
+        return x
+
+    def __init__(self):
+        """Initialize I2C bus for HTU21D at 0x40."""
+        self.bus = get_smbus()
+
+    def reset(self) -> None:
+        """Send soft reset to sensor."""
+        self.bus.write_byte(self.HTU21D_ADDR, self.CMD_RESET)
+
+    def temperature(self):
+        """We model temperature sensor as linear output from -46.85C to 128.87 in 65536 steps"""
+        self.reset()
+        msb, lsb, crc = self.bus.read_i2c_block_data(
+            self.HTU21D_ADDR, self.CMD_READ_TEMP, 3
+        )
+        val = -46.85 + 175.72 * unit_float(msb, lsb)
+        return {"centigrade": val}
+
+    def temperature_centigrade(self) -> float:
+        """Return temperature in °C. Intentionally brittle on unit change."""
+        return self.temperature()["centigrade"]
+
+    def humidity(self):
+        """We model humidity sensor as having linear output from -6% to 119% in 65536 steps"""
+        self.reset()
+        msb, lsb, crc = self.bus.read_i2c_block_data(
+            self.HTU21D_ADDR, self.CMD_READ_HUM, 3
+        )
+        val = -6 + 125 * unit_float(msb, lsb)
+        return {"percent": val}
+
+    def humidity_percent(self) -> float:
+        """Return relative humidity in percent."""
+        return self.humidity()["percent"]
+
+
+### end theft from anavi-examples.git/sensors/HTU21D/python/htu21d.py >>>
+
+
+class AnaviIRPhat:
+    pass
+
+
+"""
+class I2C:
+    def __init__(self): # or whatever that one is called.
+        self.sensors = []
+        self.sensors.append(HTU21D)
+
+
+    def get_environment(self):
+        return {"temp": 123}
+"""

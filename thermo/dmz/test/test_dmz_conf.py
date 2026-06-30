@@ -15,7 +15,9 @@ DMZ_CONF = DMZ_DIR / "dmz.conf"
 @pytest.mark.skipif(not PARSE.is_file(), reason="parse-dmz-conf.sh not in tree")
 def test_repo_dmz_conf_parses(tmp_path: Path) -> None:
     out = tmp_path / "out"
-    subprocess.run(["/bin/sh", str(PARSE), str(DMZ_CONF), str(out)], check=True, timeout=10)
+    subprocess.run(
+        ["/bin/sh", str(PARSE), str(DMZ_CONF), str(out)], check=True, timeout=10
+    )
     net = (out / "network.conf").read_text(encoding="utf-8").strip()
     assert net.count(" ") == 1
     assert "/" in net.split()[0]
@@ -30,7 +32,10 @@ def test_repo_dmz_conf_parses(tmp_path: Path) -> None:
 @pytest.mark.skipif(not PARSE.is_file(), reason="parse-dmz-conf.sh not in tree")
 def test_parse_rejects_unknown_key(tmp_path: Path) -> None:
     conf = tmp_path / "bad.conf"
-    conf.write_text("NETWORK_ADDR=10.0.0.2/24\nNETWORK_GATEWAY=10.0.0.1\nFOO=bar\n", encoding="utf-8")
+    conf.write_text(
+        "NETWORK_ADDR=10.0.0.2/24\nNETWORK_GATEWAY=10.0.0.1\nFOO=bar\n",
+        encoding="utf-8",
+    )
     res = subprocess.run(
         ["/bin/sh", str(PARSE), str(conf), str(tmp_path / "out")],
         capture_output=True,
@@ -59,7 +64,9 @@ def test_parse_generates_expected_network_line(tmp_path: Path) -> None:
     )
     out = tmp_path / "out"
     subprocess.run(["/bin/sh", str(PARSE), str(conf), str(out)], check=True, timeout=10)
-    assert (out / "network.conf").read_text(encoding="utf-8") == "10.1.1.2/24 10.1.1.1\n"
+    assert (out / "network.conf").read_text(
+        encoding="utf-8"
+    ) == "10.1.1.2/24 10.1.1.1\n"
     assert (out / "sshd-on-boot").read_text(encoding="utf-8").strip() == "yes"
     assert (out / "dns.conf").read_text(encoding="utf-8") == "9.9.9.9\n1.1.1.1\n"
     env = (out / "dmz-app.env").read_text(encoding="utf-8")

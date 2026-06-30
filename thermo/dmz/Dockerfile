@@ -48,9 +48,9 @@ RUN addgroup -g 1000 dmz \
 WORKDIR /app
 
 COPY --from=builder /usr/lib/python3.11/site-packages /usr/lib/python3.11/site-packages
-# Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source bin repo).
+# Log wrapper: staged into .docker-import/ before build (see stage-docker-import.sh; source extdeps).
 COPY .docker-import/run-with-stdout-logged.py /app/run-with-stdout-logged.py
-COPY .docker-import/heatpumpirctl /app/heatpumpirctl
+COPY .docker-import/common /app/common
 COPY .docker-import/ui /app/ui
 COPY . .
 RUN chown -R dmz:dmz /app \

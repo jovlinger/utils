@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-import app
-import constants
-from heatpumpirctl import State
+from common.constants import help_msg
+from common.heatpumpirctl import State
+from hardware.pizero2w import app
+from hardware.pizero2w.anavilib import raw_ir_sequence_to_mode2
 
 
 def equalish(a: object, b: object) -> bool:
@@ -39,7 +40,82 @@ def equalish_float(a: float, b: object) -> bool:
 def test_help() -> None:
     """Test using local call."""
     msg = app.help().get("msg")
-    assert constants.help_msg == msg
+    assert help_msg == msg
+
+
+def test_healthz_returns_basic_health_and_recent_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOG_PATH", "/run/thermo-onboard-log/onboard-app.log")
+    client = app.app.test_client()
+    app.logger.info("test healthz rolling log marker")
+
+    r = client.get("/healthz?n=5")
+
+    assert r.status_code == 200
+    body = r.json
+    assert body["ok"] is True
+    assert body["service"] == "onboard-app"
+    assert body["hardware_backend"] == "pizero2w"
+    assert body["log_buffer"]["returned"] == 5
+    assert any(
+        "test healthz rolling log marker" in line
+        for line in body["log_buffer"]["lines"]
+    )
+    assert body["log_storage"]["path"] == "/run/thermo-onboard-log/onboard-app.log"
+
+
+def test_environment_includes_recent_logs_for_dmz_post() -> None:
+    client = app.app.test_client()
+    app.logger.info("test environment rolling log marker")
+
+    r = client.get("/environment")
+
+    assert r.status_code == 200
+    body = r.json
+    assert "log_buffer" in body
+    assert any(
+        "test environment rolling log marker" in line
+        for line in body["log_buffer"]["lines"]
+    )
+
+
+def test_environment_includes_best_effort_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ONBOARD_LOCAL_IP", "192.168.1.44")
+    client = app.app.test_client()
+
+    r = client.get("/environment")
+
+    assert r.status_code == 200
+    assert r.json["network"] == {
+        "local_ip": "192.168.1.44",
+        "onboard_url": "http://192.168.1.44:5000",
+    }
+
+
+def test_mount_info_for_tmpfs_log_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.os.path, "exists", lambda _path: True)
+    mountinfo = (
+        "10 1 0:1 / / rw,relatime - overlay overlay rw\n"
+        "20 1 0:2 / /run rw,nosuid,nodev - tmpfs tmpfs rw,size=16384k\n"
+    )
+
+    def fake_open(path: str, *args: object, **kwargs: object):
+        if path == "/proc/self/mountinfo":
+            from io import StringIO
+
+            return StringIO(mountinfo)
+        raise AssertionError(path)
+
+    monkeypatch.setattr(app, "open", fake_open, raising=False)
+
+    info = app._mount_info_for_path("/run/thermo-onboard-log/onboard-app.log")
+
+    assert info["mount_point"] == "/run"
+    assert info["fs_type"] == "tmpfs"
+    assert info["is_tmpfs"] is True
 
 
 def test_get_daikin_empty_queue_shows_last_applied_default() -> None:
@@ -113,7 +189,7 @@ def test_daikin_sequence(send_daikin_spy) -> None:
 
 
 def test_daikin_identical_skips_ir(send_daikin_spy) -> None:
-    """Repeated identical State must not call send_daikin_state (no duplicate IR)."""
+    """Repeated identical State must not call the IR sender."""
     app.daikin_cmds.clear()
     app._last_daikin_ir_fingerprint = None
     app._last_applied_state = State()
@@ -185,9 +261,11 @@ def test_daikin_metadata_only_no_ir(monkeypatch: pytest.MonkeyPatch) -> None:
     """DMZ-only keys must not build a default State or call IR."""
 
     def must_not_send(state: object) -> bool:
-        raise AssertionError("send_daikin_state must not run for metadata-only command")
+        raise AssertionError(
+            "send_heatpump_state must not run for metadata-only command"
+        )
 
-    monkeypatch.setattr(app, "send_daikin_state", must_not_send)
+    monkeypatch.setattr(app, "send_heatpump_state", must_not_send)
     app.daikin_cmds.clear()
     app._last_daikin_ir_fingerprint = None
     app._last_applied_state = State()
@@ -363,6 +441,7 @@ def test_manage_get_state(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "pid" in r.json
     assert "log_level" in r.json
     assert "fake_sensor" in r.json
+    assert r.json["deployment"]["hardware_profile"] == "pi_zero_2w_htu21d_ir"
 
 
 def test_manage_set_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -422,6 +501,9 @@ def test_ui_context_single_zone(monkeypatch: pytest.MonkeyPatch) -> None:
     assert js["environments"][0]["temperature_centigrade"] is not None
     assert js["zone_states"]["pizero"]["command"]["mode"] == "COOL"
     assert js["zone_states"]["pizero"]["sensors"] is None
+    assert js["deployment"]["zone_name"] == "pizero"
+    assert js["deployment"]["send_behavior"] == "ir_heatpump"
+    assert js["deployment"]["ir_protocol"] == "daikin_arc452a9"
 
 
 def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -443,3 +525,38 @@ def test_ui_command_matches_daikin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.json["command"]["mode"] == "HEAT"
     assert r.json["sent"] is True
     assert r.json["sensors"] is None
+
+
+def test_raw_ir_sequence_to_mode2() -> None:
+    assert raw_ir_sequence_to_mode2([4500, -4500, 560, -1600]) == (
+        "pulse 4500\nspace 4500\npulse 560\nspace 1600\n"
+    )
+
+
+def test_ui_command_sends_raw_ir_sequence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENV", "TEST")
+    app._last_command_created_dt = None
+    sent: list[tuple] = []
+
+    def _fake_send_raw_ir_sequence(sequence, carrier_hz=38000):
+        sent.append((sequence, carrier_hz))
+        return True
+
+    monkeypatch.setattr(app, "send_raw_ir_sequence", _fake_send_raw_ir_sequence)
+    client = app.app.test_client()
+    r = client.post(
+        "/ui/command",
+        json={
+            "zone": "ignored",
+            "command": {
+                "command_type": "raw_ir_sequence",
+                "sequence": [4500, -4500, 560, -1600],
+                "carrier_hz": 38000,
+            },
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json["command"]["command_type"] == "raw_ir_sequence"
+    assert r.json["sent"] is True
+    assert sent == [([4500, -4500, 560, -1600], 38000)]

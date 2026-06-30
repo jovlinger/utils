@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env venv-run
 """
 CLI for the DMZ HTTP API (see app.py).
 
@@ -14,7 +14,7 @@ CLI argument.
 Usage:
   DMZ_URL=http://host:5000   # or host:5000 (treated as http://…)
   ZONE_PRIVATE_KEY_PATH=... \\
-    python manage.py <action> [args...]
+    manage <action> [args...]
 
 Optional: ZONE_NAME — only needed when it differs from the zone you pass on
 the command line (``command``/``sensors``/``updatezone``). Omit for ``zones``,
@@ -25,43 +25,45 @@ Actions (first arg) map to app routes:
   login | authorize | logout     — GET OAuth helpers (browser-oriented)
   sensors <zone> [body...]       — POST /zone/<zone>/sensors
   command <zone> [body...]      — POST /zone/<zone>/command
+  rawir <zone> <file>           - POST raw IR sequence command from file
   zones                         — GET /zones
   healthz                       — GET /ui/diagnostics (unsigned; uptime, config, access tail)
   debug_logs | logs             — GET /debug/logs
   test_reset [json]             — POST /test_reset (unsigned; testing only)
   updatezone <zone> key=val...  — GET /zones, merge key=val into command, POST command
-    (see onboard heatpumpirctl.State; run updatezone with no args for a full JSON example)
+    (see common.heatpumpirctl.State; run updatezone with no args for a full JSON example)
 
 Body arguments for sensors/command: either one JSON object string, or key=value pairs
 (e.g. mode=HEAT temp_c=22 power=true).
 
-python manage.py zones
+manage zones
 One zone: dump current zone JSON (from GET /zones, then print that entry)
 
-python manage.py updatezone myzone
+manage updatezone myzone
 One zone: merge key=value into that zone’s command and POST
 
-python manage.py updatezone myzone power=true mode=HEAT half_c=45 fan=F4
+manage updatezone myzone power=true mode=HEAT half_c=45 fan=F4
 
 Direct POSTs (body is either key=value pairs or one JSON object string)
 
-python manage.py sensors myzone temp_centigrade=20.5
-python manage.py command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage sensors myzone temp_centigrade=20.5
+manage command myzone '{"power": true, "mode": "HEAT", "temp_c": 22}'
+manage rawir myzone capture-sequence.txt
 OAuth helpers (browser-oriented; no zone signing)
 
-python manage.py login
-python manage.py authorize
-python manage.py logout
+manage login
+manage authorize
+manage logout
 Debug logs
 
-python manage.py healthz
-  DMZ_URL=http://your-host:5000 ./manage.py healthz
-python manage.py debug_logs
+manage healthz
+  DMZ_URL=http://your-host:5000 manage healthz
+manage debug_logs
 # same as:
-python manage.py logs
+manage logs
 Test reset (unsigned; testing)
 
-python manage.py test_reset
+manage test_reset
 Machine auth: one Ed25519 keypair for the whole DMZ (``ZONE_PRIVATE_KEY`` or
 ``ZONE_PRIVATE_KEY_PATH``). Zone-scoped actions take the zone name as a CLI arg.
 
@@ -79,17 +81,17 @@ from urllib.parse import urljoin, urlparse
 # macOS system/LibreSSL Pythons trigger urllib3 v2 noise on import; harmless for this CLI.
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
-import requests
+import requests  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-# Repo layout: thermo/dmz/manage.py → thermo/onboard/heatpumpirctl (State)
+# Repo layout: thermo/dmz/manage.py -> thermo/onboard/common/heatpumpirctl (State)
 _ONBOARD_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "onboard"))
 
-# When heatpumpirctl is not importable (e.g. DMZ Docker image has no onboard tree), help text
-# still matches State.to_json() for the same builder chain — keep in sync with onboard.
+# When common.heatpumpirctl is not importable, help text still matches
+# State.to_json() for the same builder chain. Keep in sync with onboard.
 _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "power": True,
     "mode": "HEAT",
@@ -105,6 +107,11 @@ _FALLBACK_ONBOARD_STATE_EXAMPLE: Dict[str, Any] = {
     "timer_off_minutes": 120,
 }
 
+RAW_IR_COMMAND_TYPE = "raw_ir_sequence"
+RAW_IR_DEFAULT_CARRIER_HZ = 38_000
+RAW_IR_MAX_SEQUENCE_LEN = 1024
+RAW_IR_MAX_DURATION_US = 1_250_000
+
 
 def _die(msg: str, code: int = 2) -> None:
     print(msg, file=sys.stderr)
@@ -118,14 +125,14 @@ def _print_help() -> int:
 
 def _usage() -> int:
     print(
-        "usage: manage.py "
-        "{help|login|authorize|logout|sensors|command|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
+        "usage: manage "
+        "{help|login|authorize|logout|sensors|command|rawir|zones|healthz|debug_logs|logs|test_reset|updatezone} ...",
         file=sys.stderr,
     )
     print(
         "Set DMZ_URL to the DMZ base. Example:\n"
-        "  DMZ_URL=http://your-host:5000 ./manage.py healthz\n"
-        "Run ./manage.py help for full documentation.",
+        "  DMZ_URL=http://your-host:5000 manage healthz\n"
+        "Run manage help for full documentation.",
         file=sys.stderr,
     )
     return 0
@@ -143,6 +150,19 @@ def _dmz_base() -> str:
     if not raw:
         _die("DMZ_URL is not set")
 
+    # Scheme-less host or host:port (including IPs). urlparse("192.168.1.1:5000")
+    # mis-parses the dotted quad as scheme, so handle "://" absence first.
+    if "://" not in raw:
+        candidate = "http://" + raw.lstrip("/")
+        trial = urlparse(candidate)
+        if trial.scheme == "http" and trial.netloc:
+            return candidate.rstrip("/")
+        _die(
+            "DMZ_URL is not a valid base URL. Use http:// or https:// with a host "
+            "(e.g. http://192.168.88.200:5000), or host:port alone for plain HTTP.\n"
+            f"  (got {raw!r})"
+        )
+
     parsed = urlparse(raw)
     if parsed.scheme in ("http", "https"):
         if not parsed.netloc:
@@ -152,20 +172,7 @@ def _dmz_base() -> str:
             )
         return raw.rstrip("/")
 
-    if parsed.scheme:
-        _die(f"DMZ_URL must use http or https (got scheme {parsed.scheme!r})")
-
-    # No scheme: urlparse puts "host:port" in .path, not .netloc — try http:// + raw
-    candidate = "http://" + raw.lstrip("/")
-    trial = urlparse(candidate)
-    if trial.scheme == "http" and trial.netloc:
-        return candidate.rstrip("/")
-
-    _die(
-        "DMZ_URL is not a valid base URL. Use http:// or https:// with a host "
-        "(e.g. http://192.168.88.200:5000), or host:port alone for plain HTTP.\n"
-        f"  (got {raw!r})"
-    )
+    _die(f"DMZ_URL must use http or https (got scheme {parsed.scheme!r})")
 
 
 def _zone_private_key_material() -> str:
@@ -185,8 +192,8 @@ def _sign_zone_name(explicit: str = "") -> str:
 
 
 def _project_venv_python() -> Optional[str]:
-    """Preferred project venv interpreter (.venv, then legacy env/)."""
-    for sub in (".venv", "env"):
+    """Preferred project venv interpreter (.venv, venv, then legacy env/)."""
+    for sub in (".venv", "venv", "env"):
         py = os.path.join(SCRIPT_DIR, sub, "bin", "python")
         if os.path.isfile(py):
             return py
@@ -264,11 +271,11 @@ def _cryptography_install_hint() -> str:
         lines.extend(
             [
                 "thermo/dmz/.venv is chained to bin/.venv — recreate it:",
-                f"  deactivate",
+                "  deactivate",
                 f"  rm -rf {os.path.join(SCRIPT_DIR, '.venv')}",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                "  manage ...",
             ]
         )
         return "\n".join(lines)
@@ -276,10 +283,10 @@ def _cryptography_install_hint() -> str:
         lines.extend(
             [
                 "Use the project venv (recommended):",
-                f"  deactivate                    # drop bin/.venv if active",
+                "  deactivate                    # drop bin/.venv if active",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                "  manage ...",
                 "",
             ]
         )
@@ -296,7 +303,7 @@ def _cryptography_install_hint() -> str:
                 "Create the project venv first:",
                 f"  {create_pipenv} thermo/dmz",
                 f"  source {venv_activate}",
-                f"  ./manage.py …",
+                "  manage ...",
             ]
         )
     return "\n".join(lines)
@@ -353,6 +360,72 @@ def _parse_body_args(argv: List[str]) -> Dict[str, Any]:
             _die(f"empty key in: {item!r}")
         out[key] = val.strip()
     return out
+
+
+def _validate_raw_ir_sequence(raw: Any) -> List[int]:
+    if not isinstance(raw, list):
+        _die("raw IR sequence must be a JSON array or signed integer list")
+    if not raw:
+        _die("raw IR sequence must not be empty")
+    if len(raw) > RAW_IR_MAX_SEQUENCE_LEN:
+        _die(f"raw IR sequence too long: max {RAW_IR_MAX_SEQUENCE_LEN} entries")
+
+    out: List[int] = []
+    for index, value in enumerate(raw):
+        if isinstance(value, bool) or not isinstance(value, int):
+            _die(f"raw IR sequence entry {index} must be an integer")
+        if value == 0:
+            _die(f"raw IR sequence entry {index} must not be zero")
+        if abs(value) > RAW_IR_MAX_DURATION_US:
+            _die(f"raw IR sequence entry {index} exceeds {RAW_IR_MAX_DURATION_US} us")
+        out.append(value)
+    return out
+
+
+def _parse_raw_ir_text(text: str) -> Dict[str, Any]:
+    clean = text.strip()
+    if not clean:
+        _die("raw IR file is empty")
+
+    carrier_hz = RAW_IR_DEFAULT_CARRIER_HZ
+    if clean.startswith("[") or clean.startswith("{"):
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            _die(f"invalid raw IR JSON: {exc}")
+        if isinstance(parsed, dict):
+            command_type = parsed.get("command_type", RAW_IR_COMMAND_TYPE)
+            if command_type != RAW_IR_COMMAND_TYPE:
+                _die(f"unsupported raw IR command_type: {command_type!r}")
+            sequence = _validate_raw_ir_sequence(parsed.get("sequence"))
+            raw_carrier = parsed.get("carrier_hz", carrier_hz)
+            if isinstance(raw_carrier, bool) or not isinstance(raw_carrier, int):
+                _die("raw IR carrier_hz must be an integer")
+            carrier_hz = raw_carrier
+        else:
+            sequence = _validate_raw_ir_sequence(parsed)
+    else:
+        tokens = clean.replace(",", " ").split()
+        try:
+            sequence = _validate_raw_ir_sequence([int(token) for token in tokens])
+        except ValueError as exc:
+            _die(f"raw IR text contains a non-integer token: {exc}")
+
+    if carrier_hz <= 0:
+        _die("raw IR carrier_hz must be positive")
+    return {
+        "command_type": RAW_IR_COMMAND_TYPE,
+        "sequence": sequence,
+        "carrier_hz": carrier_hz,
+    }
+
+
+def _read_raw_ir_command_file(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return _parse_raw_ir_text(f.read())
+    except OSError as exc:
+        _die(f"cannot read raw IR file {path!r}: {exc}", code=1)
 
 
 def _json_dumps_body(payload: Dict[str, Any]) -> bytes:
@@ -417,11 +490,7 @@ def _redirect_error_message(url: str, response: requests.Response) -> str:
 
 def _html_instead_of_json_message(url: str, body: str = "") -> str:
     lower = body[:4096].lower()
-    if (
-        "accounts.google.com" in lower
-        or "signin" in lower
-        or _is_oauth_redirect(url)
-    ):
+    if "accounts.google.com" in lower or "signin" in lower or _is_oauth_redirect(url):
         return (
             f"DMZ OAuth redirect: received HTML login page instead of JSON ({url}). "
             "Set ZONE_PRIVATE_KEY or ZONE_PRIVATE_KEY_PATH for machine auth."
@@ -514,11 +583,11 @@ def _emit(status: int, body: Union[dict, list, str, None]) -> int:
 
 
 def _onboard_state_example_dict() -> Dict[str, Any]:
-    """Fully-populated onboard heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
+    """Fully-populated common.heatpumpirctl.State as .to_json() (same shape as /daikin command)."""
     if _ONBOARD_ROOT not in sys.path:
         sys.path.insert(0, _ONBOARD_ROOT)
     try:
-        from heatpumpirctl import Fan, Mode, State
+        from common.heatpumpirctl import Fan, Mode, State
     except ImportError:
         return dict(_FALLBACK_ONBOARD_STATE_EXAMPLE)
 
@@ -561,10 +630,10 @@ def _updatezone_help_message() -> str:
     pretty = json.dumps(example, indent=2, sort_keys=True)
     pretty_kv = _flat_dict_as_updatezone_kv_args(example)
     return (
-        "usage: manage.py updatezone <zone> key=value ...\n"
+        "usage: manage updatezone <zone> key=value ...\n"
         "\n"
         "Merges each key=value into the zone's command dict and POSTs it. Key names match "
-        "onboard heatpumpirctl.State.to_json() / from_json() — the same object you send as "
+        "common.heatpumpirctl.State.to_json() / from_json() - the same object you send as "
         '{"command": ...} to POST /daikin on the Pi. The DMZ stores the command object '
         "as JSON (7-bit ASCII strings only); onboard owns parsing and IR.\n"
         "\n"
@@ -572,7 +641,7 @@ def _updatezone_help_message() -> str:
         f"{pretty}\n"
         "\n"
         "Same payload as one line of flat key=value args:\n"
-        f"  manage.py updatezone <zone> {pretty_kv}\n"
+        f"  manage updatezone <zone> {pretty_kv}\n"
         "\n"
         "Note: from_json() also accepts temp_c (°C) instead of half_c. "
         "mode: AUTO, DRY, COOL, HEAT, FAN. fan: F1..F5, AUTO, SILENT."
@@ -638,6 +707,18 @@ def _cmd_updatezone(zone: str, kv_args: List[str]) -> int:
     return _emit(st2, resp)
 
 
+def _cmd_rawir(zone: str, path: str) -> int:
+    payload = _read_raw_ir_command_file(path)
+    st, body = _request_json(
+        "POST",
+        f"/zone/{zone}/command",
+        zone_for_sign=zone,
+        body=payload,
+        sign=True,
+    )
+    return _emit(st, body)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _warn_if_wrong_interpreter()
     args = list(sys.argv[1:] if argv is None else argv)
@@ -700,6 +781,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             _die(_updatezone_help_message())
         zone = rest[0]
         return _cmd_updatezone(zone, rest[1:])
+
+    if action in ("rawir", "raw-ir"):
+        if len(rest) != 2:
+            _die("rawir <zone> <file>")
+        return _cmd_rawir(rest[0], rest[1])
 
     if action == "sensors":
         if not rest:

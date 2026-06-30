@@ -2,7 +2,7 @@
 
 ## Flask app (port `PORT`, default 5000)
 
-Import the WSGI/Flask instance as **`app`** from **`app`** after adding `thermo/onboard` to `PYTHONPATH`. Daikin command JSON maps to **`State`** in **`heatpumpirctl`** (`heatpumpirctl.State`, `State.from_json`, `State.to_json`). Static help text is in **`constants.help_msg`** (`constants`).
+For the Pi Zero 2 W backend, import the WSGI/Flask instance as **`app`** from **`hardware.pizero2w.app`** after adding `thermo/onboard` to `PYTHONPATH`. Daikin command JSON maps to **`State`** in **`common.heatpumpirctl`** (`State.from_json`, `State.to_json`). Static help text is in **`common.constants.help_msg`**.
 
 ---
 
@@ -30,6 +30,20 @@ Returns a JSON array of recent Daikin commands (newest first), each entry with `
 
 Accepts JSON with a `command` object (or a top-level command dict), parses it as **`heatpumpirctl.State`**, sends it over IR, records it in the rolling queue, and returns `time`, `command`, and `sent` boolean.
 
+Capable backends also accept raw IR replay commands:
+
+```json
+{
+  "command": {
+    "command_type": "raw_ir_sequence",
+    "sequence": [4500, -4500, 560, -1600, 560, -520],
+    "carrier_hz": 38000
+  }
+}
+```
+
+Positive `sequence` values are marks/pulses in microseconds; negative values are spaces in microseconds. `carrier_hz` may be omitted and defaults to `38000`.
+
 ## `GET /logs`
 
 Returns JSON with up to the last 200 lines of the log file at `LOG_PATH` (key `lines`), or empty lines if the path is missing or unreadable. Lines are ordered **newest first** (reverse chronological within the tail window).
@@ -44,7 +58,7 @@ Runs one management action from a JSON body (`action`, plus action-specific fiel
 
 ## `GET /ui/context`
 
-JSON snapshot for the shared thermo UI: **`zones`** (single element: `ZONE_NAME` or `"default"`), **`environments`** (one row: local sensor / time), **`zone_states`** (that zone’s latest command and `sensors: null`).
+JSON snapshot for the shared thermo UI: **`zones`** (single element: `ZONE_NAME` or `"default"`), **`environments`** (one row: local sensor / time), **`zone_states`** (that zone's latest command and `sensors: null`), and **`deployment`** (the selected hardware/send/report config).
 
 ## `POST /ui/command`
 

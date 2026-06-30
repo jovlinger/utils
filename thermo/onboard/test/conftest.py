@@ -12,15 +12,15 @@ _ONBOARD = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ONBOARD not in sys.path:
     sys.path.insert(0, _ONBOARD)
 
-import smbus_fake
+from hardware.pizero2w import smbus_fake  # noqa: E402
 
 sys.modules["smbus"] = smbus_fake
 
-import app as app_module
+from hardware.pizero2w import app as app_module  # noqa: E402
 
 
 class DaikinSendSpy:
-    """Records ``send_daikin_state`` calls; returns ``return_value`` each time."""
+    """Records heat-pump IR send calls; returns ``return_value`` each time."""
 
     def __init__(self, return_value: bool = True) -> None:
         self.return_value = return_value
@@ -34,5 +34,5 @@ class DaikinSendSpy:
 @pytest.fixture
 def send_daikin_spy(monkeypatch: pytest.MonkeyPatch) -> DaikinSendSpy:
     spy = DaikinSendSpy()
-    monkeypatch.setattr(app_module, "send_daikin_state", spy)
+    monkeypatch.setattr(app_module, "send_heatpump_state", spy)
     return spy

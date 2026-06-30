@@ -13,12 +13,17 @@ chown dmz:dmz /var/log 2>/dev/null || true
 touch /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 chown dmz:dmz /var/log/dmz.log /var/log/startup_tests.log 2>/dev/null || true
 
+if [ -f /etc/dmz/buildinfo.txt ]; then
+	_buildinfo_first=$(head -n1 /etc/dmz/buildinfo.txt | tr -d '\r')
+	echo "start.sh: buildinfo ${_buildinfo_first} (/version reads /etc/dmz/buildinfo.txt)"
+fi
+
 mount -t tmpfs -o nosuid,nodev,size=64m tmpfs /tmp 2>/dev/null \
 	|| echo "start.sh: tmpfs /tmp skipped" >&2
 
 # Zone Ed25519 pub key (twoway → DMZ machine auth). Baked on every SD image by build-and-write.sh
 # (Pi: /etc/dmz/zone-pub.pem in the chroot, copied by dmz-boot.start). Local docker can also bind
-# -v $PWD/.secrets/zone/pub.pem:/etc/dmz/zone-pub.pem:ro. An explicit env wins.
+# -v ../config/zone/pub.pem:/etc/dmz/zone-pub.pem:ro. An explicit env wins.
 if [ -z "${ZONE_PUBLIC_KEY_PATH:-}" ] && [ -z "${ZONE_PUBLIC_KEY:-}" ] && [ -f /etc/dmz/zone-pub.pem ]; then
 	export ZONE_PUBLIC_KEY_PATH=/etc/dmz/zone-pub.pem
 	echo "start.sh: ZONE_PUBLIC_KEY_PATH=$ZONE_PUBLIC_KEY_PATH (twoway auth enforced)"
@@ -61,5 +66,13 @@ fi
 
 mount -o remount,ro / 2>/dev/null \
 	|| echo "start.sh: remount ro / not applied" >&2
+
+# Supervised restarts: while /tmp/dmz.run exists, run-with-stdout-logged relaunches run.sh
+# after exit (hot reload: scp code, kill app.py or run.sh). Clean stop: rm /tmp/dmz.run
+# then kill the app tree (or SIGTERM run-with-stdout-logged's child); no further restart.
+export RUN_WITH_STDOUT_RUNFILE=/tmp/dmz.run
+: >"$RUN_WITH_STDOUT_RUNFILE"
+chmod 644 "$RUN_WITH_STDOUT_RUNFILE" 2>/dev/null || true
+echo "start.sh: supervised runfile=$RUN_WITH_STDOUT_RUNFILE (rm file + stop app for shutdown)"
 
 exec su-exec dmz python /app/run-with-stdout-logged.py /var/log/dmz.log 1048576 2097152 /bin/sh /app/run.sh

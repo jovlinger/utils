@@ -1,3 +1,4 @@
+#!/usr/bin/env venv-run
 """Import metatool ``export-json`` metadata as shadup tags on one file per album dir."""
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ def _symlink_resolves_under_shadir(path: str, shadir_abs: str) -> bool:
     return sh.is_under_dir(resolved, shadir_abs)
 
 
-# Same idea as musicology ``audio.AUDIO_EXTS`` -- files we treat as music tracks.
+# Same idea as musicology ``audio.AUDIO_EXTS`` — files we treat as music tracks.
 _AUDIO_EXTS = frozenset(
     {
         ".mp3",
@@ -181,20 +182,20 @@ _ART_ALB_SEP = ";"
 
 
 def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
-    """Union of ``tag`` and ``genre`` entries plus ``artist;...`` / ``album;...`` prefixes."""
+    """Union of namespaced ``tag;…``, ``genre;…``, ``artist;…``, ``album;…`` tags."""
     out: list[str] = []
     seen: set[str] = set()
-    for key in ("tag", "genre"):
+    for key, prefix in (("tag", "tag"), ("genre", "genre")):
         vals = obj.get(key)
         if not isinstance(vals, list):
             continue
         for v in vals:
             if not isinstance(v, str) or not v.strip():
                 continue
-            s = v.strip()
-            if s not in seen:
-                seen.add(s)
-                out.append(s)
+            bare = v.strip()
+            if bare not in seen:
+                seen.add(bare)
+                out.append(f"{prefix}{_ART_ALB_SEP}{bare}")
     artist = obj.get("artist")
     if isinstance(artist, str) and artist.strip():
         t = f"artist{_ART_ALB_SEP}{artist.strip()}"
@@ -353,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             "has no such file. Use --dryrun to print DB effects without writing. "
             "Quiet mode: one dot per album on a single line (flush per dot); use "
             "--debug for one line per album instead. Pass many DIRs in one run "
-            "(e.g. importtags ... ./*/) so dots stay on one line--do not wrap importtags "
+            "(e.g. importtags … ./*/) so dots stay on one line—do not wrap importtags "
             "in a shell loop one album per process."
         )
     )

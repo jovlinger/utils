@@ -18,8 +18,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "onboard"))
-from heatpumpirctl import Fan, Mode, State
-from heatpumpirctl import ARC452A9 as proto
+from common.heatpumpirctl import Fan, Mode, State
+from common.heatpumpirctl import ARC452A9 as proto
 
 LIRC_TX: str = "/dev/lirc0"
 

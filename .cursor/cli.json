@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(/Users/johan/github.com/jovlinger/utils/**)",
+      "WebSearch(*)",
+      "WebFetch(*)"
+    ],
+    "deny": []
+  }
+}

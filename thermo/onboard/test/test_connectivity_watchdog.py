@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import requests
 
-import connectivity_watchdog
-from connectivity_watchdog import (
+from hardware.pizero2w import connectivity_watchdog
+from hardware.pizero2w.connectivity_watchdog import (
     check_http_reachable,
     decode_pi_throttled,
     parse_measure_temp_line,
@@ -39,7 +39,9 @@ def test_trim_keeps_newest() -> None:
     with tempfile.TemporaryDirectory() as d:
         dump = Path(d)
         for i in range(5):
-            (dump / f"incident-2026010{i}-120000Z.txt").write_text("x", encoding="utf-8")
+            (dump / f"incident-2026010{i}-120000Z.txt").write_text(
+                "x", encoding="utf-8"
+            )
         trim_old_incidents(dump, keep=2)
         remaining = sorted(dump.glob("incident-*.txt"))
         assert len(remaining) == 2
@@ -93,7 +95,10 @@ def test_resolve_dmz_base_url_default_host(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("DMZ_HOST", raising=False)
     monkeypatch.delenv("DMZ_PORT", raising=False)
     monkeypatch.delenv("DMZ_SCHEME", raising=False)
-    assert connectivity_watchdog.resolve_dmz_base_url() == "http://jovlinger.duckdns.org:5000"
+    assert (
+        connectivity_watchdog.resolve_dmz_base_url()
+        == "http://jovlinger.duckdns.org:5000"
+    )
 
 
 def test_resolve_dmz_base_url_from_parts(monkeypatch: pytest.MonkeyPatch) -> None:

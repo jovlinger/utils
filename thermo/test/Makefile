@@ -1,4 +1,18 @@
-.PHONY: dockertest test test-local test-docker test_e2e clean
+.PHONY: dockertest test all-tests test-local test-docker test_e2e clean assert_docker_up \
+	docker-testing-clean docker-old-clean docker-clean docker-all-clean
+
+include $(abspath $(CURDIR)/../../lib/assert-docker.mk)
+
+UTILS_ROOT := $(abspath $(CURDIR)/../..)
+
+# docker-testing-clean: compose stack, gen_keys output, dockertest log.
+# docker-all-clean: also jovlinger/thermo/test image and .image stamp.
+DOCKER_CLEAN_REPOS := jovlinger/thermo/test
+DOCKER_CLEAN_MARKERS := .image
+DOCKER_CLEAN_STAGING_DIRS := keys
+DOCKER_CLEAN_TEST_FILES := .dockertest-last.log
+DOCKER_CLEAN_COMPOSE_DIRS := .
+include $(UTILS_ROOT)/lib/docker-clean.mk
 
 # Host pytest (e2e testcases; skips compose-only tests without DMZ_URL=http://dmz:…).
 # Sources THERMO_ENV_FILE via thermo/config/source-thermo-env.sh (default: config/test.env.sample).
@@ -10,19 +24,21 @@ test-local:
 	export THERMO_ROOT="$(THERMO_ROOT)"; \
 	export THERMO_ENV_FILE="$(THERMO_ENV_FILE)"; \
 	. "$(THERMO_ROOT)/config/source-thermo-env.sh"; \
-	if [ -f "$(CURDIR)/../dmz/env/bin/python" ]; then PY="$(CURDIR)/../dmz/env/bin/python"; \
-	elif [ -f "$(CURDIR)/env/bin/python" ]; then PY="$(CURDIR)/env/bin/python"; \
-	else echo "test-local: need thermo/dmz/env or thermo/test/env (create_pipenv.sh thermo/dmz thermo/test)" >&2; exit 1; \
-	fi; \
+	. "$(THERMO_ROOT)/../lib/venv-resolve.sh"; \
+	resolve_utils_venv "$(CURDIR)" "$(THERMO_ROOT)/.." >/dev/null; \
+	PY="$$(utils_venv_python_bin "$$VENV_DIR")"; \
 	cd "$(CURDIR)" && "$$PY" -m pytest -q testcases/
 
 # Builds dmz + onboard images + testdriver, then docker compose (full stack).
 test-docker: dockertest
 
-test: test-local test-docker
+test: test-local
 
-# Alias: same stack as historical `make test_e2e` name in docs.
-test_e2e: test-docker
+all-tests: test-local test-docker
+
+# Legacy aliases.
+test_e2e: all-tests
+testall: all-tests
 
 # Builds thermo/dmz + onboard GHCR-tagged images (../onboard make images) + testdriver, then docker compose up.
 # IMPORTANT: this is the *test* path on a developer host. We override PLATFORM to host-native here so the
@@ -30,7 +46,7 @@ test_e2e: test-docker
 #   - DMZ Pi 1B (armv6): thermo/dmz/build-and-write.sh (Alpine RPi armhf SD image)
 #   - Onboard Pi Zero 2 W (armv7 default / arm64): thermo/onboard/Makefile `make images` with PLATFORM
 # Do NOT remove the Darwin-arm64 → linux/arm64 mapping below — it only applies to the test stack.
-dockertest: .image
+dockertest: assert_docker_up .image
 	@set -e; \
 	case "$$(uname -s)-$$(uname -m)" in \
 	Darwin-arm64) export PLATFORM="$${PLATFORM:-linux/arm64}";; \
@@ -45,7 +61,7 @@ dockertest: .image
 # Plain progress: avoid `docker build -q` (silent until complete; dockertest looked “stuck” after onboard builds).
 DOCKER_BUILD_PROGRESS ?= plain
 
-.image: testcases/*.py *.sh  requirements.txt
+.image: assert_docker_up testcases/*.py *.sh  requirements.txt
 	docker build --progress=$(DOCKER_BUILD_PROGRESS) -t jovlinger/thermo/test .
 	@docker image inspect jovlinger/thermo/test -f '{{.Id}}' | cut -d: -f2 > .image
 

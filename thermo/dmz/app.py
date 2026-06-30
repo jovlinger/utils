@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple, TypedDict, Union
 from urllib.parse import urlparse
 
-from flask import Flask, g, redirect, request, session, url_for
+from flask import Flask, redirect, request, session, url_for
 from pydantic import BaseModel, validator
 
 from logging_config import configure_logging, set_log_level
@@ -112,6 +112,9 @@ class Sensors(BaseModel):
 class ZoneState(BaseModel):
     command: Optional[Any] = None
     sensors: Optional[Sensors] = None
+    logs: Optional[Dict[str, Any]] = None
+    network: Optional[Dict[str, Any]] = None
+    deployment: Optional[Dict[str, Any]] = None
 
 
 def _json_strings_only_ascii(value: Any) -> Optional[str]:
@@ -221,11 +224,23 @@ def _full_zone_state_snapshot() -> Dict[str, Dict[str, Any]]:
     the entire DMZ state on every mutation; cheap (one-deep dict + Pydantic .dict()).
     """
     snap: Dict[str, Dict[str, Any]] = {}
-    for z in sorted(set(commands.keys()) | set(sensors.keys())):
-        cmd = _lastor(commands[z])
-        sns = _lastor(sensors[z])
+    for z in sorted(
+        set(commands.keys())
+        | set(sensors.keys())
+        | set(zone_logs.keys())
+        | set(zone_networks.keys())
+        | set(zone_deployments.keys())
+    ):
+        cmd = _lastor(commands.get(z, []))
+        sns = _lastor(sensors.get(z, []))
         sns_d = sns.dict() if hasattr(sns, "dict") else sns
-        snap[z] = {"command": cmd, "sensors": sns_d}
+        snap[z] = {
+            "command": cmd,
+            "sensors": sns_d,
+            "logs": zone_logs.get(z),
+            "network": zone_networks.get(z),
+            "deployment": zone_deployments.get(z),
+        }
     return snap
 
 
@@ -407,10 +422,14 @@ def build_dmz_config_from_environ() -> DmzConfig:
     env_raw: Optional[str] = os.environ.get("ENV")
     thermo_ui = (os.environ.get("THERMO_UI_PUBLIC_ORIGIN") or "").strip().rstrip("/")
     base_raw = (
-        os.environ.get("DMZ_PUBLIC_BASE_URL")
-        or os.environ.get("DMZ_PUBLIC_URL")
-        or ""
-    ).strip().rstrip("/")
+        (
+            os.environ.get("DMZ_PUBLIC_BASE_URL")
+            or os.environ.get("DMZ_PUBLIC_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
     dmz_public_base_url: Optional[str] = base_raw or None
     port_s = os.environ.get("PORT", "5000")
     try:
@@ -427,7 +446,9 @@ def build_dmz_config_from_environ() -> DmzConfig:
         "google_client_id": google_client_id,
         "google_client_secret": google_client_secret,
         "oauth_enabled": bool(google_client_id),
-        "allowed_email_pattern": (os.environ.get("ALLOWED_EMAIL_PATTERN") or "").strip(),
+        "allowed_email_pattern": (
+            os.environ.get("ALLOWED_EMAIL_PATTERN") or ""
+        ).strip(),
         "allowed_email": (os.environ.get("ALLOWED_EMAIL") or "").strip(),
         "zone_public_key": os.environ.get("ZONE_PUBLIC_KEY"),
         "zone_public_key_path": os.environ.get("ZONE_PUBLIC_KEY_PATH"),
@@ -604,7 +625,11 @@ def _auth_config_detail() -> Dict[str, Any]:
     if pem_bytes:
         zone_key_last4 = hashlib.sha256(pem_bytes).hexdigest()[-4:]
     google_id = str(CONFIG["google_client_id"] or "")
-    google_last4 = google_id[-4:] if len(google_id) >= 4 else ("n/a" if not google_id else google_id)
+    google_last4 = (
+        google_id[-4:]
+        if len(google_id) >= 4
+        else ("n/a" if not google_id else google_id)
+    )
     allow_pat = CONFIG["allowed_email_pattern"]
     allowlist_mode = (
         "regex"
@@ -631,6 +656,77 @@ def _auth_config_detail() -> Dict[str, Any]:
         "dmz_public_base_url": CONFIG["dmz_public_base_url"],
         "oauth_session_lifetime_secs": CONFIG["oauth_session_lifetime_secs"],
     }
+
+
+DEFAULT_BUILDINFO_PATHS: Tuple[Path, ...] = (
+    Path("/etc/dmz/buildinfo.txt"),
+    Path("/app/buildinfo.txt"),
+    Path("/BUILD.txt"),
+)
+
+
+def _candidate_buildinfo_paths() -> List[Path]:
+    """Return buildinfo probe paths, with ``DMZ_BUILDINFO_PATH`` taking precedence."""
+    override = (os.environ.get("DMZ_BUILDINFO_PATH") or "").strip()
+    paths: List[Path] = []
+    if override:
+        paths.append(Path(override))
+    paths.extend(DEFAULT_BUILDINFO_PATHS)
+    return paths
+
+
+def _parse_buildinfo(text: str, source: str) -> Dict[str, Any]:
+    """Parse build-and-write.sh buildinfo.txt into an operator-safe JSON object."""
+    out: Dict[str, Any] = {
+        "available": True,
+        "source": source,
+    }
+    first_data_line = True
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if first_data_line and "=" not in line:
+            parts = line.split(None, 1)
+            out["build_id"] = parts[0]
+            if len(parts) > 1:
+                out["build_date_utc"] = parts[1]
+            first_data_line = False
+            continue
+        first_data_line = False
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        clean_key = key.strip()
+        if clean_key:
+            out[clean_key] = value.strip()
+    return out
+
+
+def _build_version_payload() -> Dict[str, Any]:
+    """Return image provenance visible to operators and deployment checks."""
+    tried: List[str] = []
+    for path in _candidate_buildinfo_paths():
+        path_s = str(path)
+        if path_s in tried:
+            continue
+        tried.append(path_s)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        return _parse_buildinfo(text, path_s)
+    return {
+        "available": False,
+        "source": "none",
+        "paths_tried": tried,
+    }
+
+
+@app.route("/version", methods=["GET"])
+def version() -> Any:
+    """Open build provenance endpoint for checking which image is live."""
+    return _build_version_payload()
 
 
 def _log_auth_startup() -> None:
@@ -691,9 +787,12 @@ def _diagnostics_payload() -> Dict[str, Any]:
     """Shared JSON for ``/ui/diagnostics`` and augmented ``GET /debug/logs``."""
     cfg = _auth_config_detail()
     return {
-        "server_time_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "server_time_utc": datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "process_start_utc": _START_UTC_ISO,
         "uptime_seconds": round(time.time() - _START_WALL, 3),
+        "version": _build_version_payload(),
         "config": cfg,
         "access_log": list(_access_log),
         "zone_attempts": list(_zone_attempts),
@@ -748,6 +847,9 @@ def assertAuthAzZone(req: Any) -> None:
 ### BEGIN STATE (make this sqlite)
 commands: Dict[str, List[Any]] = defaultdict(list)
 sensors: Dict[str, List[Sensors]] = defaultdict(list)
+zone_logs: Dict[str, Dict[str, Any]] = {}
+zone_networks: Dict[str, Dict[str, Any]] = {}
+zone_deployments: Dict[str, Dict[str, Any]] = {}
 # Wall-clock floats (``time.time()``), comparable across NTP adjustments.
 _ui_command_received_at: Dict[str, float] = defaultdict(float)
 _last_zone_command_reply_at: Dict[str, float] = defaultdict(float)
@@ -779,7 +881,12 @@ def _wake_long_poll_waiters_for_config_reload() -> None:
     """Bump UI-command wall time so in-flight zone long-polls return promptly."""
     now = time.time()
     with _zone_command_clock_lock:
-        for zonename in set(commands.keys()) | set(sensors.keys()):
+        for zonename in (
+            set(commands.keys())
+            | set(sensors.keys())
+            | set(zone_networks.keys())
+            | set(zone_deployments.keys())
+        ):
             _ui_command_received_at[zonename] = now
 
 
@@ -812,13 +919,109 @@ def _await_new_ui_command_or_timeout(zonename: str) -> None:
 
 def _zone_response(zonename: str, update_access: bool) -> JSON:
     """Craft the json for one zone's response"""
-    cmd = _lastor(commands[zonename])
-    sns = _lastor(sensors[zonename])
+    cmd = _lastor(commands.get(zonename, []))
+    sns = _lastor(sensors.get(zonename, []))
     if cmd is not None and update_access:
         _mark_command_accessed(cmd)
-    ret = ZoneState(command=cmd, sensors=sns).dict()
+    ret = ZoneState(
+        command=cmd,
+        sensors=sns,
+        logs=zone_logs.get(zonename),
+        network=zone_networks.get(zonename),
+        deployment=zone_deployments.get(zonename),
+    ).dict()
     print(f"_zone_response({zonename}, {update_access}) -> {ret}")
     return ret
+
+
+def _normalize_zone_log_lines(payload: Any, *, limit: int = 80) -> List[str]:
+    """Return newest-first, ASCII-only, de-duped onboard log lines from a POST payload."""
+    if payload is None:
+        return []
+    raw_lines: Any
+    if isinstance(payload, dict):
+        raw_lines = payload.get("lines")
+    else:
+        raw_lines = payload
+    if not isinstance(raw_lines, list):
+        return []
+
+    seen: set[str] = set()
+    lines: List[str] = []
+    for raw in raw_lines:
+        if not isinstance(raw, str):
+            continue
+        clean = raw.replace("\r", " ").replace("\n", " ").strip()
+        clean = "".join(ch if ord(ch) < 128 else "?" for ch in clean)
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        lines.append(clean[:500])
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _update_zone_logs(zonename: str, payload: Any) -> None:
+    """Store the last reported onboard log tail for a zone."""
+    lines = _normalize_zone_log_lines(payload)
+    if not lines:
+        return
+    zone_logs[zonename] = {
+        "received_dt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "count": len(lines),
+        "lines": lines,
+    }
+
+
+def _update_zone_network(zonename: str, payload: Any) -> None:
+    """Store the last reported best-effort network metadata for a zone."""
+    if not isinstance(payload, dict) or not payload:
+        return
+    network: Dict[str, Any] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            network[key[:80]] = value
+    if network:
+        network["received_dt"] = (
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        zone_networks[zonename] = network
+
+
+def _normalize_zone_deployment(payload: Any) -> Dict[str, str]:
+    """Extract ASCII-safe onboard deploy metadata from a zone sensors POST."""
+    if not isinstance(payload, dict) or not payload:
+        return {}
+    deployment: Dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, str):
+            clean = value.strip()
+            if not clean:
+                continue
+            if _json_strings_only_ascii(clean) is not None:
+                continue
+            deployment[key[:80]] = clean[:500]
+        elif isinstance(value, (int, float, bool)):
+            deployment[key[:80]] = str(value)[:500]
+    return deployment
+
+
+def _update_zone_deployment(zonename: str, payload: Any) -> None:
+    """Store the last reported onboard deployment metadata for a zone."""
+    deployment = _normalize_zone_deployment(payload)
+    if not deployment:
+        return
+    if _json_strings_only_ascii(deployment) is not None:
+        return
+    deployment["received_dt"] = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+    zone_deployments[zonename] = deployment
 
 
 MAXLEN = 10000
@@ -863,14 +1066,18 @@ def _redirect_public_ui_home_or_503() -> Any:
     origin = CONFIG["thermo_ui_public_origin"]
     if origin:
         return redirect(f"{origin}/")
-    login_origin = (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
+    login_origin = (
+        (session.get(_SESSION_OAUTH_PUBLIC_UI_HOME) or "").strip().rstrip("/")
+    )
     if login_origin:
         return redirect(f"{login_origin}/")
     fallback = _public_ui_root_url()
     if fallback:
         return redirect(f"{fallback}/")
     return (
-        {"error": "cannot derive public UI URL (set THERMO_UI_PUBLIC_ORIGIN or open /login on this host)"},
+        {
+            "error": "cannot derive public UI URL (set THERMO_UI_PUBLIC_ORIGIN or open /login on this host)"
+        },
         503,
     )
 
@@ -913,7 +1120,9 @@ def logout() -> Any:
     """Clear session."""
     session.pop("user", None)
     session.pop(_SESSION_OAUTH_PUBLIC_UI_HOME, None)
-    return redirect(url_for("login") if CONFIG["oauth_enabled"] else url_for("get_zones"))
+    return redirect(
+        url_for("login") if CONFIG["oauth_enabled"] else url_for("get_zones")
+    )
 
 
 def _zone_public_key_configured() -> Optional[str]:
@@ -1007,7 +1216,7 @@ def _authorize_ui() -> Optional[Any]:
 
 
     RETURNS NONE WHEN ACCESS IS GRANTED.
-    When OAuth is enabled and no session exists, browser requests 
+    When OAuth is enabled and no session exists, browser requests
     (``Accept: text/html``) receive a **302** to ``/login``; programmatic clients receive **401** JSON.
     ``/ui/diagnostics`` is intentionally left open for operator debugging.
     """
@@ -1126,11 +1335,20 @@ def update_sensors(zonename: str) -> Any:
     if isinstance(body, dict) and ("sensors" in body or "command" in body):
         sensors_body = body.get("sensors") or {}
         cmd_body = body.get("command")
+        logs_body = body.get("logs") or body.get("log_buffer")
+        network_body = body.get("network")
+        deployment_body = body.get("deployment")
     else:
         sensors_body = body
         cmd_body = None
+        logs_body = None
+        network_body = None
+        deployment_body = None
     sns = Sensors(**sensors_body)
     _append_and_trim(sensors[zonename], sns)
+    _update_zone_logs(zonename, logs_body)
+    _update_zone_network(zonename, network_body)
+    _update_zone_deployment(zonename, deployment_body)
     _log_full_zone_state(reason="sensors", zonename=zonename)
     if isinstance(cmd_body, dict) and cmd_body:
         _replace_command_if_newer(zonename, cmd_body, source="zone-sensors")
@@ -1145,7 +1363,7 @@ def update_command(zonename: str) -> Any:
     Store the JSON body as the zone’s latest command and return the zone snapshot.
     Body checks: valid UTF-8, parse as JSON, all JSON strings 7-bit ASCII only.
     """
-    if (denied := _authorize_zone_command_post(zonename)):
+    if denied := _authorize_zone_command_post(zonename):
         return denied
     assertAuthAzZone(request)
     raw = request.get_data(cache=True)
@@ -1173,6 +1391,8 @@ def _environment_row_for_zone(zonename: str) -> Dict[str, Any]:
             "temperature_centigrade": None,
             "humidity_percent": None,
             "time": None,
+            "network": zone_networks.get(zonename),
+            "deployment": zone_deployments.get(zonename),
         }
     d = sns.dict()
     return {
@@ -1180,6 +1400,8 @@ def _environment_row_for_zone(zonename: str) -> Dict[str, Any]:
         "temperature_centigrade": d.get("temp_centigrade"),
         "humidity_percent": d.get("humid_percent"),
         "time": d.get("created_dt") or None,
+        "network": zone_networks.get(zonename),
+        "deployment": zone_deployments.get(zonename),
     }
 
 
@@ -1193,7 +1415,7 @@ def ui_context() -> Any:
     Authenticated browser requests are **302**'d to the public HTML UI root (same rules as after **`GET /authorize`**), not JSON.
     API clients (no ``text/html`` in ``Accept``) receive JSON or **401** JSON when unauthenticated.
     """
-    if (denied := _authorize_ui()):
+    if denied := _authorize_ui():
         return denied
     if (
         CONFIG["oauth_enabled"]
@@ -1201,7 +1423,13 @@ def ui_context() -> Any:
         and "text/html" in (request.headers.get("Accept") or "")
     ):
         return _redirect_public_ui_home_or_503()
-    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    all_zones = sorted(
+        set(commands.keys())
+        | set(sensors.keys())
+        | set(zone_logs.keys())
+        | set(zone_networks.keys())
+        | set(zone_deployments.keys())
+    )
     env_rows = [_environment_row_for_zone(z) for z in all_zones]
     zone_states = {z: _zone_response(z, False) for z in all_zones}
     return {
@@ -1218,7 +1446,7 @@ def ui_command() -> Any:
 
     Gated on OAuth session when GOOGLE_CLIENT_ID is configured; open otherwise.
     """
-    if (denied := _authorize_ui()):
+    if denied := _authorize_ui():
         return denied
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -1259,10 +1487,16 @@ def get_zones() -> Any:
     """
     Stateless query.  Read ALL zone states, including pending commands.
     """
-    if (denied := _authorize_global_read()):
+    if denied := _authorize_global_read():
         return denied
     assertAuthAzZone(request)
-    all_zones = sorted(set(commands.keys()) | set(sensors.keys()))
+    all_zones = sorted(
+        set(commands.keys())
+        | set(sensors.keys())
+        | set(zone_logs.keys())
+        | set(zone_networks.keys())
+        | set(zone_deployments.keys())
+    )
     res = {zonename: _zone_response(zonename, False) for zonename in all_zones}
     return res
 
@@ -1270,7 +1504,7 @@ def get_zones() -> Any:
 @app.route("/debug/logs", methods=["GET"])
 def debug_logs() -> Any:
     """Return bounded in-memory access log plus diagnostics (same data as ``/ui/diagnostics``)."""
-    if (denied := _authorize_global_read()):
+    if denied := _authorize_global_read():
         return denied
     assertAuthAzZone(request)
     bundle = _diagnostics_payload()
@@ -1300,6 +1534,21 @@ def test_reset() -> Any:
     if "sensors" in updates:
         sensors.clear()
         sensors.update(updates.get("sensors", {}))
+    if "logs" in updates:
+        zone_logs.clear()
+        zone_logs.update(updates.get("logs", {}))
+    elif "commands" in updates or "sensors" in updates:
+        zone_logs.clear()
+    if "network" in updates:
+        zone_networks.clear()
+        zone_networks.update(updates.get("network", {}))
+    elif "commands" in updates or "sensors" in updates:
+        zone_networks.clear()
+    if "deployment" in updates:
+        zone_deployments.clear()
+        zone_deployments.update(updates.get("deployment", {}))
+    elif "commands" in updates or "sensors" in updates:
+        zone_deployments.clear()
     _ui_command_received_at.clear()
     _last_zone_command_reply_at.clear()
     _zone_attempts.clear()

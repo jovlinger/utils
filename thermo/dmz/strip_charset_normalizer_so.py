@@ -20,7 +20,6 @@ def main() -> None:
     from charset_normalizer import from_bytes
 
     from_bytes(b"abc")
-    from authlib.integrations.flask_client import OAuth  # noqa: F401 — validates Flask OAuth import chain
 
     print("strip_charset_normalizer_so: import smoke ok")
 

@@ -23,9 +23,13 @@ def test_load_dmz_app_env_file(tmp_path: Path) -> None:
     assert os.environ["OBSOLETE_LOG_SUPPRESS_REPEAT"] == "5"
 
 
-def test_reload_dmz_config_from_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reload_dmz_config_from_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     env_file = tmp_path / "dmz-app.env"
-    env_file.write_text("LOG_LEVEL=ERROR\nOBSOLETE_LOG_SUPPRESS_REPEAT=1\n", encoding="utf-8")
+    env_file.write_text(
+        "LOG_LEVEL=ERROR\nOBSOLETE_LOG_SUPPRESS_REPEAT=1\n", encoding="utf-8"
+    )
     monkeypatch.setenv("DMZ_APP_ENV_PATH", str(env_file))
     assert app_module.reload_dmz_config_from_disk() is True
     assert app_module.CONFIG["log_level"] == "ERROR"
