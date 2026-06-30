@@ -582,5 +582,37 @@ class LogTests(TodoCase):
         self.assertIn("chore(todo): init ticket", verbose.stdout)
 
 
+class WebViewerTests(TodoCase):
+    def test_web_dump_html_renders_done_todo_graph_and_diff(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        init = self.todo("init", "--summary=Viewer parent")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        (self.repo / "app.txt").write_text("before\n", encoding="utf-8")
+        self._git("add", "app.txt")
+        self._git("commit", "-qm", "add app evidence")
+        app_hash = self._git("rev-parse", "HEAD").stdout.strip()
+        done = self.todo("set-state", "done")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        proc = self.todo("web", "--dump-html", "--commit", app_hash, "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Viewer parent", proc.stdout)
+        self.assertIn("add app evidence", proc.stdout)
+        self.assertIn(app_hash, proc.stdout)
+        self.assertIn(str(self.repo), proc.stdout)
+        self.assertIn("+before", proc.stdout)
+        self.assertIn("https://github.com/jovlinger/utils/commit/" + app_hash, proc.stdout)
+
+    def test_web_dump_html_renders_open_todo(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        init = self.todo("init", "--summary=Open viewer")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        proc = self.todo("web", "--dump-html", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Open viewer", proc.stdout)
+        self.assertIn("state init", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
