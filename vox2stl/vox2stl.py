@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import gzip
 import math
 import pickle
@@ -80,6 +81,7 @@ from constants import (
     parse_layer_header,
     UNIT_RE,
 )
+from voxconf import VoxProfile, load_config
 from letter_mesh import generate_letter_tile_triangles
 
 Vec3 = Tuple[float, float, float]
@@ -147,6 +149,12 @@ class RenderConfig:
     trace_hole_clearance_mm: float = DEFAULT_TRACE_HOLE_CLEARANCE_MM
     label_recess_mm: float = DEFAULT_LABEL_RECESS_MM
     label_height_mm: float = DEFAULT_LABEL_HEIGHT_MM
+    label_recess_frac: float = DEFAULT_LABEL_RECESS_FRAC
+    label_height_frac: float = DEFAULT_LABEL_HEIGHT_FRAC
+    hole_oval_minor_frac: float = DEFAULT_HOLE_OVAL_MINOR_FRAC
+    hole_oval_band_mm: float = DEFAULT_HOLE_OVAL_BAND_MM
+    hole_oval_z_fracs: Tuple[float, ...] = DEFAULT_HOLE_OVAL_Z_FRACS
+    hole_void_grid_divisor: int = HOLE_VOID_GRID_DIVISOR
     base_z0_mm: float = DEFAULT_BASE_Z0_MM
     base_z1_mm: float = DEFAULT_BASE_Z1_MM
     trace_z0_mm: float = DEFAULT_TRACE_Z0_MM
@@ -155,6 +163,35 @@ class RenderConfig:
     origin_x_mm: float = 0.0
     origin_y_mm: float = 0.0
     include_pads: bool = True
+
+
+def render_config_from_profile(profile: VoxProfile) -> RenderConfig:
+    return RenderConfig(
+        unit_mm=profile.unit_mm,
+        trace_width_mm=profile.trace_width_mm,
+        pad_width_mm=profile.pad_width_mm,
+        device_pad_width_mm=profile.device_pad_width_mm,
+        pin_hole_diameter_mm=profile.pin_hole_diameter_mm,
+        device_hole_diameter_mm=profile.device_hole_diameter_mm,
+        adjacent_isolation_gap_mm=profile.adjacent_isolation_gap_mm,
+        overlap_mm=profile.overlap_mm,
+        cond_lig_mm=profile.cond_lig_mm,
+        isol_lig_mm=profile.isol_lig_mm,
+        trace_hole_clearance_mm=profile.trace_hole_clearance_mm,
+        label_recess_mm=profile.label_recess_mm,
+        label_height_mm=profile.label_height_mm,
+        label_recess_frac=profile.label_recess_frac,
+        label_height_frac=profile.label_height_frac,
+        hole_oval_minor_frac=profile.hole_oval_minor_frac,
+        hole_oval_band_mm=profile.hole_oval_band_mm,
+        hole_oval_z_fracs=profile.hole_oval_z_fracs,
+        hole_void_grid_divisor=profile.hole_void_grid_divisor,
+        base_z0_mm=profile.base_z0_mm,
+        base_z1_mm=profile.resolved_base_z1_mm,
+        trace_z0_mm=profile.resolved_trace_z0_mm,
+        trace_z1_mm=profile.resolved_trace_z1_mm,
+        grid_mm=profile.grid_mm,
+    )
 
 
 _PROGRESS_ENABLED = True
@@ -404,14 +441,14 @@ def copper_pad_hole_void(
         radius,
         config.trace_z0_mm,
         config.trace_z1_mm,
-        oval_minor_frac=DEFAULT_HOLE_OVAL_MINOR_FRAC,
-        oval_band_half_mm=DEFAULT_HOLE_OVAL_BAND_MM * 0.5,
-        oval_z_fracs=DEFAULT_HOLE_OVAL_Z_FRACS,
+        oval_minor_frac=config.hole_oval_minor_frac,
+        oval_band_half_mm=config.hole_oval_band_mm * 0.5,
+        oval_z_fracs=config.hole_oval_z_fracs,
     )
 
 
 def pad_hole_void_grid_mm(config: RenderConfig) -> float:
-    return config.grid_mm / HOLE_VOID_GRID_DIVISOR
+    return config.grid_mm / config.hole_void_grid_divisor
 
 
 def void_has_oval_bands(void: CylindricalVoid) -> bool:
@@ -534,19 +571,19 @@ def load_letter_tile(letter: str) -> List[Tri]:
 
 
 def letter_xy_scale(config: RenderConfig) -> float:
-    tile_span = 1.0 - 2.0 * DEFAULT_LABEL_RECESS_FRAC
+    tile_span = 1.0 - 2.0 * config.label_recess_frac
     runtime_span = config.unit_mm - 2.0 * config.label_recess_mm
     return runtime_span / tile_span if tile_span > 0.0 else config.unit_mm
 
 
-def letter_tile_footprint_boxes(letter: str) -> List[LetterFootprintBox]:
+def letter_tile_footprint_boxes(letter: str, *, label_height_frac: float = DEFAULT_LABEL_HEIGHT_FRAC) -> List[LetterFootprintBox]:
     key = letter.upper()
     cached = _LETTER_FOOTPRINT_CACHE.get(key)
     if cached is not None:
         return cached
     boxes: Dict[Tuple[int, int, int, int], LetterFootprintBox] = {}
     for triangle in load_letter_tile(key):
-        if any(abs(vertex[2] - DEFAULT_LABEL_HEIGHT_FRAC) > 1e-6 for vertex in triangle):
+        if any(abs(vertex[2] - label_height_frac) > 1e-6 for vertex in triangle):
             continue
         xs = [vertex[0] for vertex in triangle]
         ys = [vertex[1] for vertex in triangle]
@@ -580,7 +617,7 @@ def letter_footprint_voids(
         return []
     xy_scale = letter_xy_scale(config)
     voids: List[BoxSolid] = []
-    for x0, y0, x1, y1 in letter_tile_footprint_boxes(char):
+    for x0, y0, x1, y1 in letter_tile_footprint_boxes(char, label_height_frac=config.label_height_frac):
         if mirror_x:
             x0, x1 = -x1, -x0
         voids.append(
@@ -604,8 +641,8 @@ def place_letter_tris(
 ) -> List[Tri]:
     xy_scale = letter_xy_scale(config)
     z_scale = (
-        config.label_height_mm / DEFAULT_LABEL_HEIGHT_FRAC
-        if DEFAULT_LABEL_HEIGHT_FRAC > 0.0
+        config.label_height_mm / config.label_height_frac
+        if config.label_height_frac > 0.0
         else config.label_height_mm
     )
 
@@ -627,6 +664,7 @@ def letter_tris(cx: float, cy: float, char: str, config: RenderConfig) -> List[T
 
 
 _PERSISTENT_TILE_CACHE: Optional[TileCache] = None
+_PERSISTENT_TILE_CACHE_DIRTY = False
 _RUNTIME_TILE_CACHES: Dict[Tuple[float, ...], TileCache] = {}
 TILE_CACHE_SIGNATURE_KEY = "__tile_cache_signature__"
 
@@ -667,8 +705,12 @@ def load_persistent_tile_cache() -> TileCache:
     if _PERSISTENT_TILE_CACHE is not None:
         return _PERSISTENT_TILE_CACHE
     if TILE_CACHE_PATH.is_file():
-        with gzip.open(TILE_CACHE_PATH, "rb") as file_obj:
-            loaded = pickle.load(file_obj)
+        try:
+            with gzip.open(TILE_CACHE_PATH, "rb") as file_obj:
+                loaded = pickle.load(file_obj)
+        except (OSError, EOFError, pickle.UnpicklingError, ValueError) as exc:
+            report_progress(f"Ignoring corrupt tile cache {TILE_CACHE_PATH}: {exc}")
+            loaded = {}
         if not isinstance(loaded, dict):
             raise ValueError(f"{TILE_CACHE_PATH}: tile cache is not a dictionary")
         _PERSISTENT_TILE_CACHE = loaded
@@ -677,10 +719,101 @@ def load_persistent_tile_cache() -> TileCache:
     return _PERSISTENT_TILE_CACHE
 
 
-def save_persistent_tile_cache(cache: TileCache) -> None:
+def mark_persistent_tile_cache_dirty() -> None:
+    global _PERSISTENT_TILE_CACHE_DIRTY
+    _PERSISTENT_TILE_CACHE_DIRTY = True
+
+
+def save_persistent_tile_cache(cache: TileCache, *, force: bool = False) -> None:
+    global _PERSISTENT_TILE_CACHE_DIRTY
+    if not force and not _PERSISTENT_TILE_CACHE_DIRTY:
+        return
     TILE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(TILE_CACHE_PATH, "wb") as file_obj:
         pickle.dump(cache, file_obj, protocol=pickle.HIGHEST_PROTOCOL)
+    _PERSISTENT_TILE_CACHE_DIRTY = False
+
+
+def flush_persistent_tile_cache() -> None:
+    if _PERSISTENT_TILE_CACHE is not None:
+        save_persistent_tile_cache(_PERSISTENT_TILE_CACHE, force=True)
+
+
+atexit.register(flush_persistent_tile_cache)
+
+VOX2STL_PACKAGE_DIR = Path(__file__).resolve().parent
+
+DEFAULT_TILE_CACHE_WARMUP_SOURCES: Tuple[Path, ...] = (
+    VOX2STL_PACKAGE_DIR / "testdata" / "straight.vox",
+    VOX2STL_PACKAGE_DIR / "testdata" / "box_glyphs.vox",
+    VOX2STL_PACKAGE_DIR.parent / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox",
+)
+
+
+def warm_tile_cache_from_vox(path: Path, config: RenderConfig) -> None:
+    report_progress(f"Warming tile cache from {path}...")
+    layers = read_layers(path)
+    base_layer = layers.get("base")
+    trace_layer = layers.get("trace")
+    if base_layer is not None and trace_layer is not None:
+        full_mesh_from_layers(base_layer, trace_layer, config)
+        return
+    if trace_layer is not None:
+        build_layer_mesh(trace_layer, config)
+        return
+    raise ValueError(f"{path}: missing trace layer")
+
+
+def verify_persistent_tile_cache(path: Path = TILE_CACHE_PATH) -> int:
+    with gzip.open(path, "rb") as file_obj:
+        cache = pickle.load(file_obj)
+    if not isinstance(cache, dict):
+        raise ValueError(f"{path}: tile cache is not a dictionary")
+    if TILE_CACHE_SIGNATURE_KEY not in cache:
+        raise ValueError(f"{path}: tile cache is missing signature key")
+    return len(cache)
+
+
+def warm_persistent_tile_cache(
+    sources: Optional[Sequence[Path]] = None,
+    *,
+    profile_name: str = "default",
+) -> Tuple[Path, int, Tuple[float, ...]]:
+    """Rebuild the on-disk ligature tile cache for one geometry profile."""
+
+    profile = load_config(profile_name)
+    config = render_config_from_profile(profile)
+    warmup_sources = tuple(sources) if sources is not None else DEFAULT_TILE_CACHE_WARMUP_SOURCES
+    missing = [path for path in warmup_sources if not path.is_file()]
+    if missing:
+        missing_list = ", ".join(str(path) for path in missing)
+        raise ValueError(f"missing warmup source(s): {missing_list}")
+
+    global _PERSISTENT_TILE_CACHE, _PERSISTENT_TILE_CACHE_DIRTY
+    if TILE_CACHE_PATH.is_file():
+        TILE_CACHE_PATH.unlink()
+    signature = tile_cache_signature(config)
+    warm_cache: TileCache = {TILE_CACHE_SIGNATURE_KEY: signature}
+    _PERSISTENT_TILE_CACHE = warm_cache
+    _PERSISTENT_TILE_CACHE_DIRTY = False
+
+    def warming_tile_cache_for_config(cfg: RenderConfig) -> Tuple[TileCache, bool]:
+        if tile_cache_signature(cfg) != signature:
+            raise ValueError("warmup geometry does not match the selected profile")
+        seed_pre_rendered_letters(warm_cache, cfg)
+        return warm_cache, True
+
+    original_tile_cache_for_config = tile_cache_for_config
+    try:
+        globals()["tile_cache_for_config"] = warming_tile_cache_for_config
+        for path in warmup_sources:
+            warm_tile_cache_from_vox(path, config)
+    finally:
+        globals()["tile_cache_for_config"] = original_tile_cache_for_config
+
+    flush_persistent_tile_cache()
+    key_count = verify_persistent_tile_cache(TILE_CACHE_PATH)
+    return TILE_CACHE_PATH, key_count, signature
 
 
 def format_tile_cache_key(key: TileCacheKey) -> str:
@@ -718,7 +851,7 @@ def seed_pre_rendered_letters(cache: TileCache, config: RenderConfig) -> None:
         cache[letter] = place_letter_tris(template, 0.0, 0.0, config)
         dirty = True
     if dirty:
-        save_persistent_tile_cache(cache)
+        mark_persistent_tile_cache_dirty()
 
 
 def translate_tris(tris: Sequence[Tri], dx: float, dy: float) -> List[Tri]:
@@ -742,7 +875,7 @@ def cached_tile_tris(key: TileCacheKey, config: RenderConfig) -> List[Tri]:
         tris = render_ligature_tile(key, config)
     cache[key] = tris
     if persistent:
-        save_persistent_tile_cache(cache)
+        mark_persistent_tile_cache_dirty()
     return tris
 
 
@@ -756,7 +889,7 @@ def cached_negative_base_letter_tris(char: str, config: RenderConfig) -> List[Tr
     tris = render_base_tile(char, config, letter_style="negative")
     cache[key] = tris
     if persistent:
-        save_persistent_tile_cache(cache)
+        mark_persistent_tile_cache_dirty()
     return tris
 
 
@@ -1532,28 +1665,77 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--layer", default="trace")
     parser.add_argument("--base-layer", default="base")
     parser.add_argument("--solid-name")
+    parser.add_argument(
+        "--conf",
+        default="default",
+        help="geometry profile basename in the vox2stl directory (default: default)",
+    )
     parser.add_argument("--unit-mm", type=float)
-    parser.add_argument("--trace-width-mm", type=float, default=DEFAULT_TRACE_WIDTH_MM)
-    parser.add_argument("--pad-width-mm", type=float, default=DEFAULT_PAD_WIDTH_MM)
-    parser.add_argument("--device-pad-width-mm", type=float, default=DEFAULT_DEVICE_PAD_WIDTH_MM)
-    parser.add_argument("--pin-hole-diameter-mm", type=float, default=DEFAULT_PIN_HOLE_DIAMETER_MM)
-    parser.add_argument("--device-hole-diameter-mm", type=float, default=DEFAULT_DEVICE_HOLE_DIAMETER_MM)
-    parser.add_argument("--adjacent-isolation-gap-mm", type=float, default=DEFAULT_ADJACENT_ISOLATION_GAP_MM)
-    parser.add_argument("--overlap-mm", type=float, default=DEFAULT_OVERLAP_MM)
-    parser.add_argument("--cond-lig-mm", type=float, default=DEFAULT_COND_LIG_MM)
-    parser.add_argument("--isol-lig-mm", type=float, default=DEFAULT_ISOL_LIG_MM)
-    parser.add_argument("--trace-hole-clearance-mm", type=float, default=DEFAULT_TRACE_HOLE_CLEARANCE_MM)
-    parser.add_argument("--label-recess-mm", type=float, default=DEFAULT_LABEL_RECESS_MM)
-    parser.add_argument("--label-height-mm", type=float, default=DEFAULT_LABEL_HEIGHT_MM)
-    parser.add_argument("--base-z0-mm", type=float, default=DEFAULT_BASE_Z0_MM)
-    parser.add_argument("--base-z1-mm", type=float, default=DEFAULT_BASE_Z1_MM)
+    parser.add_argument("--trace-width-mm", type=float)
+    parser.add_argument("--pad-width-mm", type=float)
+    parser.add_argument("--device-pad-width-mm", type=float)
+    parser.add_argument("--pin-hole-diameter-mm", type=float)
+    parser.add_argument("--device-hole-diameter-mm", type=float)
+    parser.add_argument("--adjacent-isolation-gap-mm", type=float)
+    parser.add_argument("--overlap-mm", type=float)
+    parser.add_argument("--cond-lig-mm", type=float)
+    parser.add_argument("--isol-lig-mm", type=float)
+    parser.add_argument("--trace-hole-clearance-mm", type=float)
+    parser.add_argument("--label-recess-mm", type=float)
+    parser.add_argument("--label-height-mm", type=float)
+    parser.add_argument("--base-z0-mm", type=float)
+    parser.add_argument("--base-z1-mm", type=float)
     parser.add_argument("--trace-z0-mm", type=float)
-    parser.add_argument("--trace-z1-mm", type=float, default=DEFAULT_TRACE_Z1_MM)
-    parser.add_argument("--grid-mm", type=float, default=DEFAULT_GRID_MM)
+    parser.add_argument("--trace-z1-mm", type=float)
+    parser.add_argument("--grid-mm", type=float)
     parser.add_argument("--origin-x-mm", type=float, default=0.0)
     parser.add_argument("--origin-y-mm", type=float, default=0.0)
     parser.add_argument("--no-pads", action="store_true")
     parser.add_argument("--quiet", action="store_true", help="suppress progress messages on stderr")
+
+
+def _cli_render_config(args: argparse.Namespace, file_unit: Optional[float]) -> RenderConfig:
+    profile = load_config(args.conf)
+    config = render_config_from_profile(profile)
+    overrides: Dict[str, float] = {}
+    if args.unit_mm is not None:
+        overrides["unit_mm"] = args.unit_mm
+    elif file_unit is not None:
+        overrides["unit_mm"] = file_unit
+    for field_name in (
+        "trace_width_mm",
+        "pad_width_mm",
+        "device_pad_width_mm",
+        "pin_hole_diameter_mm",
+        "device_hole_diameter_mm",
+        "adjacent_isolation_gap_mm",
+        "overlap_mm",
+        "cond_lig_mm",
+        "isol_lig_mm",
+        "trace_hole_clearance_mm",
+        "label_recess_mm",
+        "label_height_mm",
+        "base_z0_mm",
+        "base_z1_mm",
+        "trace_z1_mm",
+        "grid_mm",
+        "origin_x_mm",
+        "origin_y_mm",
+    ):
+        value = getattr(args, field_name)
+        if value is not None:
+            overrides[field_name] = value
+    trace_z0_mm = args.trace_z0_mm
+    if trace_z0_mm is None:
+        if args.base_z1_mm is not None:
+            trace_z0_mm = args.base_z1_mm
+        elif "base_z1_mm" not in overrides:
+            trace_z0_mm = config.trace_z0_mm
+    if trace_z0_mm is not None:
+        overrides["trace_z0_mm"] = trace_z0_mm
+    if args.no_pads:
+        return replace(config, include_pads=False, **overrides)
+    return replace(config, **overrides)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -1567,30 +1749,7 @@ def run_from_args(args: argparse.Namespace) -> int:
     report_progress(f"Reading {args.vox_path}...")
     layers = read_layers(args.vox_path)
     file_unit = unit_from_file(args.vox_path)
-    trace_z0_mm = args.trace_z0_mm if args.trace_z0_mm is not None else args.base_z1_mm
-    config = RenderConfig(
-        unit_mm=args.unit_mm if args.unit_mm is not None else file_unit or DEFAULT_UNIT_MM,
-        trace_width_mm=args.trace_width_mm,
-        pad_width_mm=args.pad_width_mm,
-        device_pad_width_mm=args.device_pad_width_mm,
-        pin_hole_diameter_mm=args.pin_hole_diameter_mm,
-        device_hole_diameter_mm=args.device_hole_diameter_mm,
-        adjacent_isolation_gap_mm=args.adjacent_isolation_gap_mm,
-        overlap_mm=args.overlap_mm,
-        cond_lig_mm=args.cond_lig_mm,
-        isol_lig_mm=args.isol_lig_mm,
-        trace_hole_clearance_mm=args.trace_hole_clearance_mm,
-        label_recess_mm=args.label_recess_mm,
-        label_height_mm=args.label_height_mm,
-        base_z0_mm=args.base_z0_mm,
-        base_z1_mm=args.base_z1_mm,
-        trace_z0_mm=trace_z0_mm,
-        trace_z1_mm=args.trace_z1_mm,
-        grid_mm=args.grid_mm,
-        origin_x_mm=args.origin_x_mm,
-        origin_y_mm=args.origin_y_mm,
-        include_pads=not args.no_pads,
-    )
+    config = _cli_render_config(args, file_unit)
 
     names = ", ".join(sorted(layers))
     base_layer = layers.get(args.base_layer)

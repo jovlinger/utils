@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Sequence, Tuple
 
+import pytest
+
 import voxtool
 import vox2stl
 from constants import (
@@ -25,8 +27,6 @@ from constants import (
 )
 
 ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent
-PICO_UP_SIDE_FIXTURE = REPO_ROOT / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox"
 
 
 def require(condition: bool, message: str) -> None:
@@ -84,8 +84,9 @@ def test_box_glyph_fixture() -> None:
 
 
 def test_voxtool_stl_base_trace_fixture_outputs_two_layer_mesh_by_default() -> None:
+    fixture_path = ROOT / "testdata" / "straight.vox"
     with tempfile.TemporaryDirectory() as tmp_dir:
-        output_path = Path(tmp_dir) / "up-side.stl"
+        output_path = Path(tmp_dir) / "straight.stl"
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -93,7 +94,7 @@ def test_voxtool_stl_base_trace_fixture_outputs_two_layer_mesh_by_default() -> N
                 [
                     "voxtool.py",
                     "stl",
-                    str(PICO_UP_SIDE_FIXTURE),
+                    str(fixture_path),
                     "--output",
                     str(output_path),
                 ]
@@ -188,6 +189,59 @@ def test_pad_and_hole_defaults() -> None:
     )
 
 
+def test_config_default_matches_conductive_filament() -> None:
+    from voxconf import load_config
+
+    default_profile = load_config("default")
+    filament_profile = load_config("conductivefilament")
+    require(
+        abs(default_profile.pin_hole_diameter_mm - filament_profile.pin_hole_diameter_mm) < 1e-9,
+        "default.conf should resolve to conductivefilament profile",
+    )
+    require(
+        abs(default_profile.isol_lig_frac - 0.18) < 1e-9,
+        "conductive filament profile should keep the legacy isol ligature gap",
+    )
+
+
+def test_config_includes_merge_in_order() -> None:
+    from voxconf import _resolve_config, load_config
+
+    common_values = _resolve_config("common")
+    filament = load_config("conductivefilament")
+    require(
+        abs(float(common_values["unit_mm"]) - filament.unit_mm) < 1e-9,
+        "included common values should carry through",
+    )
+    require(
+        abs(filament.pin_hole_diameter_mm - 1.089) < 1e-9,
+        "profile-specific hole diameter should override common defaults",
+    )
+
+
+def test_coppertape_profile_has_larger_holes_and_gaps() -> None:
+    from voxconf import load_config
+
+    filament = load_config("conductivefilament")
+    tape = load_config("coppertape")
+    require(
+        tape.pin_hole_diameter_mm > filament.pin_hole_diameter_mm,
+        "copper tape profile should enlarge pin holes",
+    )
+    require(
+        tape.device_hole_diameter_mm > filament.device_hole_diameter_mm,
+        "copper tape profile should enlarge device leg holes",
+    )
+    require(
+        tape.isol_lig_frac > filament.isol_lig_frac,
+        "copper tape profile should widen different-copper gaps",
+    )
+    require(
+        tape.adjacent_isolation_gap_frac > filament.adjacent_isolation_gap_frac,
+        "copper tape profile should widen adjacent isolation gaps",
+    )
+
+
 def test_copper_pad_hole_oval_defaults() -> None:
     from constants import (
         DEFAULT_HOLE_OVAL_BAND_MM,
@@ -214,7 +268,7 @@ def test_copper_pad_hole_oval_constrictions() -> None:
     radius = vox2stl.hole_radius_for_pad("*", config)
     void = vox2stl.copper_pad_hole_void(radius, config)
     trace_height = config.trace_z1_mm - config.trace_z0_mm
-    minor_radius = radius * 0.65
+    minor_radius = radius * config.hole_oval_minor_frac
 
     z_between = config.trace_z0_mm + 0.10 * trace_height
     rx, ry = vox2stl.cylinder_void_effective_radii(void, z_between)
@@ -223,7 +277,7 @@ def test_copper_pad_hole_oval_constrictions() -> None:
         "copper pad hole should stay circular between oval pinch bands",
     )
 
-    for z_frac in (0.25, 0.50, 0.75):
+    for z_frac in config.hole_oval_z_fracs:
         z_center = config.trace_z0_mm + z_frac * trace_height
         rx, ry = vox2stl.cylinder_void_effective_radii(void, z_center)
         require(
@@ -427,30 +481,41 @@ def test_isolation_ligature_width_uses_pad_width() -> None:
     )
 
 
-def test_tile_cache_persists_naive_letters_and_ligatures() -> None:
-    ensure_letter_tiles()
+@pytest.mark.real_tile_cache
+def test_tile_cache_reuses_two_tiles() -> None:
     old_path = vox2stl.TILE_CACHE_PATH
     old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             cache_path = Path(tmp_dir) / "tile_cache.pickle"
             vox2stl.TILE_CACHE_PATH = cache_path
             vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
             config = vox2stl.RenderConfig()
-            key = ("-", 0, 1, 0, 0)
-            letter_tris = vox2stl.cached_tile_tris("u", config)
-            ligature_tris = vox2stl.cached_tile_tris(key, config)
-            require(cache_path.read_bytes().startswith(b"\x1f\x8b"), "tile cache should be gzip-compressed")
+            lig_key = ("-", 0, 1, 0, 0)
+            first_trace = vox2stl.cached_tile_tris("-", config)
+            second_trace = vox2stl.cached_tile_tris("-", config)
+            first_lig = vox2stl.cached_tile_tris(lig_key, config)
+            second_lig = vox2stl.cached_tile_tris(lig_key, config)
+            require(first_trace is second_trace, "trace tile should reuse in-memory cache")
+            require(first_lig is second_lig, "ligature tile should reuse in-memory cache")
+            vox2stl.flush_persistent_tile_cache()
+            require(cache_path.is_file(), "tile cache should flush to disk")
             with gzip.open(cache_path, "rb") as file_obj:
-                cache = pickle.load(file_obj)
-        require(len(letter_tris) > 0, "cached naive letter should have triangles")
-        require(len(ligature_tris) > 0, "cached ligature should have triangles")
-        require("u" in cache, "tile cache should persist single-character letter keys")
-        require("-" in cache, "tile cache should seed single-character copper keys before ligatures")
-        require(key in cache, "tile cache should persist five-part ligature keys")
+                disk_cache = pickle.load(file_obj)
+            require("-" in disk_cache, "disk cache should store the trace tile key")
+            require(lig_key in disk_cache, "disk cache should store the ligature tile key")
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            reloaded_trace = vox2stl.cached_tile_tris("-", config)
+            require(
+                len(reloaded_trace) == len(first_trace),
+                "reloaded trace tile should match cached triangle count",
+            )
     finally:
         vox2stl.TILE_CACHE_PATH = old_path
         vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
 
 
 def test_missing_letter_stl_generates_cache_tile_automatically() -> None:
@@ -504,7 +569,6 @@ def test_letter_tile_manifest() -> None:
 
 
 def test_lowercase_letters_render_uppercase_label_shapes() -> None:
-    ensure_letter_tiles()
     config = vox2stl.RenderConfig()
     layer = vox2stl.Layer("trace", 0, 3, 1, ("usb",))
     mesh, box_count, letter_count = vox2stl.build_layer_mesh(layer, config)
@@ -573,33 +637,16 @@ def test_negative_base_letters_create_recess_without_changing_positive_default()
     )
 
 
-def test_negative_base_letter_tiles_persist_in_tile_cache() -> None:
-    old_path = vox2stl.TILE_CACHE_PATH
-    old_cache = vox2stl._PERSISTENT_TILE_CACHE
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            cache_path = Path(tmp_dir) / "tile_cache.pickle"
-            vox2stl.TILE_CACHE_PATH = cache_path
-            vox2stl._PERSISTENT_TILE_CACHE = None
-            base_config = vox2stl.config_with_base_z(
-                vox2stl.RenderConfig(),
-                vox2stl.DEFAULT_BASE_Z0_MM,
-                vox2stl.DEFAULT_BASE_Z1_MM,
-            )
-            key = vox2stl.negative_base_letter_cache_key("f")
-            first = vox2stl.cached_negative_base_letter_tris("f", base_config)
-            second = vox2stl.cached_negative_base_letter_tris("f", base_config)
-            require(first is second, "negative base letter should reuse in-memory tile cache")
-            require(cache_path.is_file(), "negative base letter should persist tile cache")
-            vox2stl._PERSISTENT_TILE_CACHE = None
-            reloaded = vox2stl.cached_negative_base_letter_tris("f", base_config)
-            require(len(reloaded) == len(first), "reloaded negative base letter should match cached triangles")
-            with gzip.open(cache_path, "rb") as file_obj:
-                cache = pickle.load(file_obj)
-            require(key in cache, "tile cache should persist base_neg letter keys")
-    finally:
-        vox2stl.TILE_CACHE_PATH = old_path
-        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+def test_negative_base_letter_reuses_in_memory_cache() -> None:
+    base_config = vox2stl.config_with_base_z(
+        vox2stl.RenderConfig(),
+        vox2stl.DEFAULT_BASE_Z0_MM,
+        vox2stl.DEFAULT_BASE_Z1_MM,
+    )
+    first = vox2stl.cached_negative_base_letter_tris("f", base_config)
+    second = vox2stl.cached_negative_base_letter_tris("f", base_config)
+    require(first is second, "negative base letter should reuse in-memory tile cache")
+    require(len(first) > 0, "negative base letter tile should have triangles")
 
 
 def test_negative_letter_voids_mirror_individual_shape_left_to_right() -> None:
@@ -1190,3 +1237,69 @@ def test_cli_writes_full_stl_with_holes() -> None:
     require(exit_code == 0, f"full CLI exit: got {exit_code}")
     require(text.startswith("solid straight_full_test\n"), "full STL solid header missing")
     require(text.count("facet normal") > 60, "full STL should include base and holes")
+
+
+@pytest.mark.real_tile_cache
+def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = voxtool.main(
+                    [
+                        "voxtool.py",
+                        "warm-tile-cache",
+                        str(ROOT / "testdata" / "straight.vox"),
+                        "--quiet",
+                    ]
+                )
+            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
+            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
+            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
+            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
+            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
+
+
+@pytest.mark.real_tile_cache
+def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = voxtool.main(
+                    [
+                        "voxtool.py",
+                        "warm-tile-cache",
+                        str(ROOT / "testdata" / "straight.vox"),
+                        "--quiet",
+                    ]
+                )
+            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
+            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
+            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
+            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
+            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty

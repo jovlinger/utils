@@ -335,6 +335,21 @@ def run_stl(args: argparse.Namespace) -> int:
         return 1
 
 
+def run_warm_tile_cache(args: argparse.Namespace) -> int:
+    _vox2stl.set_progress_enabled(not args.quiet)
+    try:
+        sources = tuple(args.vox_paths) if args.vox_paths else None
+        cache_path, key_count, signature = _vox2stl.warm_persistent_tile_cache(
+            sources,
+            profile_name=args.conf,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"ok wrote {cache_path} ({key_count} keys, conf={args.conf!r}, signature={signature})")
+    return 0
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -361,6 +376,29 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     stl = subparsers.add_parser("stl", help="generate ASCII STL geometry from a .vox file")
     _vox2stl.add_cli_arguments(stl)
     stl.set_defaults(func=run_stl)
+
+    warm_tile_cache = subparsers.add_parser(
+        "warm-tile-cache",
+        help="rebuild tiles/tile_cache.pickle for a geometry profile",
+    )
+    warm_tile_cache.add_argument(
+        "vox_paths",
+        metavar="vox_path",
+        nargs="*",
+        type=Path,
+        help="extra .vox files to warm (default: straight, box_glyphs, up-side)",
+    )
+    warm_tile_cache.add_argument(
+        "--conf",
+        default="default",
+        help="geometry profile basename in the vox2stl directory (default: default)",
+    )
+    warm_tile_cache.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress progress messages on stderr",
+    )
+    warm_tile_cache.set_defaults(func=run_warm_tile_cache)
 
     args = parser.parse_args(argv[1:])
     if args.command == "check":

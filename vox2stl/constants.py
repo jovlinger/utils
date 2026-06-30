@@ -8,74 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
-# Physical pitch of one text-grid cell.
-DEFAULT_UNIT_MM = 2.54
-
-# Trace width as a fraction of one grid cell.
-DEFAULT_TRACE_WIDTH_FRAC = 0.72 * (0.72 / 0.88)
-
-# Minimum no-copper gap between adjacent isolated features, in cell fractions.
-DEFAULT_ADJACENT_ISOLATION_GAP_FRAC = 0.12
-
-# Pico pin raised pad outside width as a fraction of one grid cell.
-DEFAULT_PIN_OUTSIDE_FRAC = 0.88
-
-# Device-leg raised pad outside width as a fraction of one grid cell.
-DEFAULT_LEG_OUTSIDE_FRAC = 0.88
-
-# Extra trace reach past tile centers to help slicers fuse neighboring tiles.
-DEFAULT_TILE_OVERLAP_FRAC = 0.08
-
-# Same-copper ligature length centered on a shared tile edge.
-DEFAULT_COND_LIG_FRAC = 0.46
-
-# Different-copper ligature cut length centered on a shared tile edge.
-DEFAULT_ISOL_LIG_FRAC = 0.18
-
-# Clearance from trace arms to through-hole voids, in cell fractions.
-DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = 0.04
-
-# Subtractive mesh sampling pitch as a fraction of one grid cell.
-DEFAULT_GRID_FRAC = 0.04
-
-# Copper pad hole oval pinch: minor axis as a fraction of the full hole radius.
-DEFAULT_HOLE_OVAL_MINOR_FRAC = 0.65
-
-# Total Z thickness of each oval pinch band, in millimeters (~two 0.2 mm layers).
-DEFAULT_HOLE_OVAL_BAND_MM = 0.40
-
-# Trace-height fractions where copper pad holes pinch to an oval cross-section.
-DEFAULT_HOLE_OVAL_Z_FRACS: Tuple[float, ...] = (0.25, 0.50, 0.75)
-
-# Finer subtractive grid divisor used inside copper pad hole voids.
-HOLE_VOID_GRID_DIVISOR = 3
+from voxconf import VoxProfile, load_config
 
 # Bump when cached naive/ligature tile geometry changes.
 TILE_CACHE_GEOMETRY_REVISION = 3
-
-# Embossed label inset from tile edges, in cell fractions.
-DEFAULT_LABEL_RECESS_FRAC = 0.04
-
-# Embossed label height above the trace-layer base, in cell fractions.
-DEFAULT_LABEL_HEIGHT_FRAC = 0.40
-
-# Maximum triangles allowed for one pre-rendered letter tile.
-DEFAULT_LABEL_TILE_MAX_TRIANGLES = 30000
-
-# Raster field resolution used before meshing letter strokes.
-DEFAULT_LABEL_RASTER_SIZE = 512
-
-# Stroke width for Hershey letter centerlines, in cell fractions.
-DEFAULT_LABEL_STROKE_FRAC = 0.20
-
-# Number of blur passes used to smooth rasterized letter strokes.
-DEFAULT_LABEL_BLUR_PASSES = 4
-
-# Box-blur radius used per smoothing pass for letter strokes.
-DEFAULT_LABEL_BLUR_RADIUS = 5
-
-# Comfortable upper bound for welded mesh edges sharing one vertex.
-DEFAULT_MAX_VERTEX_VALENCE = 20
 
 # Default per-layer rendering mode for lowercase letter cells.
 DEFAULT_LETTER_STYLE = "positive"
@@ -109,59 +45,133 @@ LAYER_KEY_ALIASES: Mapping[str, str] = {
     "height": "height_rows",
 }
 
-# Trace width in millimeters.
-DEFAULT_TRACE_WIDTH_MM = DEFAULT_TRACE_WIDTH_FRAC * DEFAULT_UNIT_MM
+def _apply_profile(profile: VoxProfile) -> None:
+    global DEFAULT_UNIT_MM
+    global DEFAULT_TRACE_WIDTH_FRAC
+    global DEFAULT_ADJACENT_ISOLATION_GAP_FRAC
+    global DEFAULT_PIN_OUTSIDE_FRAC
+    global DEFAULT_LEG_OUTSIDE_FRAC
+    global DEFAULT_TILE_OVERLAP_FRAC
+    global DEFAULT_COND_LIG_FRAC
+    global DEFAULT_ISOL_LIG_FRAC
+    global DEFAULT_TRACE_HOLE_CLEARANCE_FRAC
+    global DEFAULT_GRID_FRAC
+    global DEFAULT_HOLE_OVAL_MINOR_FRAC
+    global DEFAULT_HOLE_OVAL_BAND_MM
+    global DEFAULT_HOLE_OVAL_Z_FRACS
+    global HOLE_VOID_GRID_DIVISOR
+    global DEFAULT_LABEL_RECESS_FRAC
+    global DEFAULT_LABEL_HEIGHT_FRAC
+    global DEFAULT_LABEL_TILE_MAX_TRIANGLES
+    global DEFAULT_LABEL_RASTER_SIZE
+    global DEFAULT_LABEL_STROKE_FRAC
+    global DEFAULT_LABEL_BLUR_PASSES
+    global DEFAULT_LABEL_BLUR_RADIUS
+    global DEFAULT_MAX_VERTEX_VALENCE
+    global DEFAULT_TRACE_WIDTH_MM
+    global DEFAULT_ADJACENT_ISOLATION_GAP_MM
+    global DEFAULT_PAD_WIDTH_MM
+    global DEFAULT_DEVICE_PAD_WIDTH_MM
+    global DEFAULT_PIN_HOLE_DIAMETER_MM
+    global DEFAULT_DEVICE_HOLE_DIAMETER_MM
+    global DEFAULT_OVERLAP_MM
+    global DEFAULT_COND_LIG_MM
+    global DEFAULT_ISOL_LIG_MM
+    global DEFAULT_TRACE_HOLE_CLEARANCE_MM
+    global DEFAULT_LABEL_RECESS_MM
+    global DEFAULT_LABEL_HEIGHT_MM
+    global DEFAULT_LAYER_THICKNESS_MM
+    global DEFAULT_BASE_Z0_MM
+    global DEFAULT_BASE_Z1_MM
+    global DEFAULT_TRACE_Z0_MM
+    global DEFAULT_TRACE_Z1_MM
+    global DEFAULT_GRID_MM
 
-# Minimum no-copper gap in millimeters.
-DEFAULT_ADJACENT_ISOLATION_GAP_MM = DEFAULT_ADJACENT_ISOLATION_GAP_FRAC * DEFAULT_UNIT_MM
+    DEFAULT_UNIT_MM = profile.unit_mm
+    DEFAULT_TRACE_WIDTH_FRAC = profile.trace_width_frac
+    DEFAULT_ADJACENT_ISOLATION_GAP_FRAC = profile.adjacent_isolation_gap_frac
+    DEFAULT_PIN_OUTSIDE_FRAC = profile.pin_outside_frac
+    DEFAULT_LEG_OUTSIDE_FRAC = profile.leg_outside_frac
+    DEFAULT_TILE_OVERLAP_FRAC = profile.tile_overlap_frac
+    DEFAULT_COND_LIG_FRAC = profile.cond_lig_frac
+    DEFAULT_ISOL_LIG_FRAC = profile.isol_lig_frac
+    DEFAULT_TRACE_HOLE_CLEARANCE_FRAC = profile.trace_hole_clearance_frac
+    DEFAULT_GRID_FRAC = profile.grid_frac
+    DEFAULT_HOLE_OVAL_MINOR_FRAC = profile.hole_oval_minor_frac
+    DEFAULT_HOLE_OVAL_BAND_MM = profile.hole_oval_band_mm
+    DEFAULT_HOLE_OVAL_Z_FRACS = profile.hole_oval_z_fracs
+    HOLE_VOID_GRID_DIVISOR = profile.hole_void_grid_divisor
+    DEFAULT_LABEL_RECESS_FRAC = profile.label_recess_frac
+    DEFAULT_LABEL_HEIGHT_FRAC = profile.label_height_frac
+    DEFAULT_LABEL_TILE_MAX_TRIANGLES = profile.label_tile_max_triangles
+    DEFAULT_LABEL_RASTER_SIZE = profile.label_raster_size
+    DEFAULT_LABEL_STROKE_FRAC = profile.label_stroke_frac
+    DEFAULT_LABEL_BLUR_PASSES = profile.label_blur_passes
+    DEFAULT_LABEL_BLUR_RADIUS = profile.label_blur_radius
+    DEFAULT_MAX_VERTEX_VALENCE = profile.max_vertex_valence
+    DEFAULT_TRACE_WIDTH_MM = profile.trace_width_mm
+    DEFAULT_ADJACENT_ISOLATION_GAP_MM = profile.adjacent_isolation_gap_mm
+    DEFAULT_PAD_WIDTH_MM = profile.pad_width_mm
+    DEFAULT_DEVICE_PAD_WIDTH_MM = profile.device_pad_width_mm
+    DEFAULT_PIN_HOLE_DIAMETER_MM = profile.pin_hole_diameter_mm
+    DEFAULT_DEVICE_HOLE_DIAMETER_MM = profile.device_hole_diameter_mm
+    DEFAULT_OVERLAP_MM = profile.overlap_mm
+    DEFAULT_COND_LIG_MM = profile.cond_lig_mm
+    DEFAULT_ISOL_LIG_MM = profile.isol_lig_mm
+    DEFAULT_TRACE_HOLE_CLEARANCE_MM = profile.trace_hole_clearance_mm
+    DEFAULT_LABEL_RECESS_MM = profile.label_recess_mm
+    DEFAULT_LABEL_HEIGHT_MM = profile.label_height_mm
+    DEFAULT_LAYER_THICKNESS_MM = profile.layer_thickness_mm
+    DEFAULT_BASE_Z0_MM = profile.base_z0_mm
+    DEFAULT_BASE_Z1_MM = profile.resolved_base_z1_mm
+    DEFAULT_TRACE_Z0_MM = profile.resolved_trace_z0_mm
+    DEFAULT_TRACE_Z1_MM = profile.resolved_trace_z1_mm
+    DEFAULT_GRID_MM = profile.grid_mm
 
-# Pico pin raised pad outside width in millimeters.
-DEFAULT_PAD_WIDTH_MM = DEFAULT_PIN_OUTSIDE_FRAC * DEFAULT_UNIT_MM
 
-# Device-leg raised pad outside width in millimeters.
-DEFAULT_DEVICE_PAD_WIDTH_MM = DEFAULT_LEG_OUTSIDE_FRAC * DEFAULT_UNIT_MM
+# Physical pitch of one text-grid cell.
+DEFAULT_UNIT_MM: float
+DEFAULT_TRACE_WIDTH_FRAC: float
+DEFAULT_ADJACENT_ISOLATION_GAP_FRAC: float
+DEFAULT_PIN_OUTSIDE_FRAC: float
+DEFAULT_LEG_OUTSIDE_FRAC: float
+DEFAULT_TILE_OVERLAP_FRAC: float
+DEFAULT_COND_LIG_FRAC: float
+DEFAULT_ISOL_LIG_FRAC: float
+DEFAULT_TRACE_HOLE_CLEARANCE_FRAC: float
+DEFAULT_GRID_FRAC: float
+DEFAULT_HOLE_OVAL_MINOR_FRAC: float
+DEFAULT_HOLE_OVAL_BAND_MM: float
+DEFAULT_HOLE_OVAL_Z_FRACS: Tuple[float, ...]
+HOLE_VOID_GRID_DIVISOR: int
+DEFAULT_LABEL_RECESS_FRAC: float
+DEFAULT_LABEL_HEIGHT_FRAC: float
+DEFAULT_LABEL_TILE_MAX_TRIANGLES: int
+DEFAULT_LABEL_RASTER_SIZE: int
+DEFAULT_LABEL_STROKE_FRAC: float
+DEFAULT_LABEL_BLUR_PASSES: int
+DEFAULT_LABEL_BLUR_RADIUS: int
+DEFAULT_MAX_VERTEX_VALENCE: int
+DEFAULT_TRACE_WIDTH_MM: float
+DEFAULT_ADJACENT_ISOLATION_GAP_MM: float
+DEFAULT_PAD_WIDTH_MM: float
+DEFAULT_DEVICE_PAD_WIDTH_MM: float
+DEFAULT_PIN_HOLE_DIAMETER_MM: float
+DEFAULT_DEVICE_HOLE_DIAMETER_MM: float
+DEFAULT_OVERLAP_MM: float
+DEFAULT_COND_LIG_MM: float
+DEFAULT_ISOL_LIG_MM: float
+DEFAULT_TRACE_HOLE_CLEARANCE_MM: float
+DEFAULT_LABEL_RECESS_MM: float
+DEFAULT_LABEL_HEIGHT_MM: float
+DEFAULT_LAYER_THICKNESS_MM: float
+DEFAULT_BASE_Z0_MM: float
+DEFAULT_BASE_Z1_MM: float
+DEFAULT_TRACE_Z0_MM: float
+DEFAULT_TRACE_Z1_MM: float
+DEFAULT_GRID_MM: float
 
-# Pico pin through-hole diameter in millimeters.
-DEFAULT_PIN_HOLE_DIAMETER_MM = 1.10 * 0.66 * 1.50
-
-# Device-leg through-hole diameter in millimeters.
-DEFAULT_DEVICE_HOLE_DIAMETER_MM = 1.10
-
-# Trace overlap distance in millimeters.
-DEFAULT_OVERLAP_MM = DEFAULT_TILE_OVERLAP_FRAC * DEFAULT_UNIT_MM
-
-# Same-copper ligature length in millimeters.
-DEFAULT_COND_LIG_MM = DEFAULT_COND_LIG_FRAC * DEFAULT_UNIT_MM
-
-# Different-copper ligature cut length in millimeters.
-DEFAULT_ISOL_LIG_MM = DEFAULT_ISOL_LIG_FRAC * DEFAULT_UNIT_MM
-
-# Trace-to-through-hole clearance in millimeters.
-DEFAULT_TRACE_HOLE_CLEARANCE_MM = DEFAULT_TRACE_HOLE_CLEARANCE_FRAC * DEFAULT_UNIT_MM
-
-# Label inset from tile edges in millimeters.
-DEFAULT_LABEL_RECESS_MM = DEFAULT_LABEL_RECESS_FRAC * DEFAULT_UNIT_MM
-
-# Label height above the trace-layer base in millimeters.
-DEFAULT_LABEL_HEIGHT_MM = DEFAULT_LABEL_HEIGHT_FRAC * DEFAULT_UNIT_MM
-
-# Default vertical thickness for one rendered .vox layer.
-DEFAULT_LAYER_THICKNESS_MM = 2.5
-
-# Bottom Z coordinate of the substrate.
-DEFAULT_BASE_Z0_MM = 0.0
-
-# Top Z coordinate of the substrate.
-DEFAULT_BASE_Z1_MM = DEFAULT_BASE_Z0_MM + DEFAULT_LAYER_THICKNESS_MM
-
-# Bottom Z coordinate for raised traces, pads, and labels.
-DEFAULT_TRACE_Z0_MM = DEFAULT_BASE_Z1_MM
-
-# Top Z coordinate for raised traces and pads.
-DEFAULT_TRACE_Z1_MM = DEFAULT_TRACE_Z0_MM + DEFAULT_LAYER_THICKNESS_MM
-
-# Subtractive mesh sampling pitch in millimeters.
-DEFAULT_GRID_MM = DEFAULT_GRID_FRAC * DEFAULT_UNIT_MM
+_apply_profile(load_config("default"))
 
 # Layer header parser for .vox files.
 LAYER_HEADER_RE = re.compile(r"^layer\s+([A-Za-z0-9_-]+)\s*\((.*)\)$")
