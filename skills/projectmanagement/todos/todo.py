@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
+import todo_web
+
 JsonDict = Dict[str, Any]
 
 # Local-first: remote polling is feature-flagged off for now. Flip to True to
@@ -1784,6 +1786,61 @@ class LogCommand(TodoSubCommand):
         return 0
 
 
+class WebCommand(TodoSubCommand):
+    command_names = ("web", "web-viewer")
+    doc_short: ClassVar[str] = "Serve todo postmortem viewer"
+    doc_long: ClassVar[str] = (
+        "Web serves a two-pane viewer for a todo graph. The top pane walks "
+        "the root todo, subtodos, and their branch commits. The bottom pane shows the selected "
+        "commit diff in unified or pre/post form. It can be used during active work or as a "
+        "postmortem review after the branch effort finishes."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register web viewer arguments."""
+        parser.add_argument(
+            "selector",
+            nargs="?",
+            default="self",
+            help="root todo selector: self, curr, or 4+ hex Id prefix (default: self)",
+        )
+        parser.add_argument("--host", default="127.0.0.1", help="bind host")
+        parser.add_argument("--port", type=int, default=8765, help="bind port")
+        parser.add_argument("--commit", help="selected commit hash")
+        parser.add_argument(
+            "--mode",
+            choices=("unified", "prepost"),
+            default="unified",
+            help="initial diff mode",
+        )
+        parser.add_argument(
+            "--dump-html",
+            action="store_true",
+            help="print the rendered HTML and exit instead of starting a server",
+        )
+
+    def do(self) -> int:
+        """Serve or print the todo postmortem web viewer."""
+        root = self.root()
+        _, ticket = resolve_ticket_by_selector(root, self.selector)
+        try:
+            if self.dump_html:
+                print(
+                    todo_web.render_page(
+                        root,
+                        ticket,
+                        selected_commit=self.commit,
+                        mode=self.mode,
+                    )
+                )
+            else:
+                todo_web.serve(root, ticket, host=self.host, port=self.port)
+        except todo_web.TodoWebError as exc:
+            raise TodoError(str(exc)) from exc
+        return 0
+
+
 class ListCommand(TodoSubCommand):
     command_names = ("list",)
     doc_short: ClassVar[str] = "List catalog rows (~/.todo/catalog.txt)"
@@ -1812,6 +1869,7 @@ class ListCommand(TodoSubCommand):
 COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     MintCommand,
     LogCommand,
+    WebCommand,
     ListCommand,
     ReadCommand,
     ReadPathCommand,
