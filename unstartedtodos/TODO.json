@@ -1,0 +1,22 @@
+{
+  "Id": "0b12b38cce73c2ea39b218b132cd5a1fb7d17f2b61998c9a944f3730e53d2896",
+  "Branch": "0b12b38c-github-action-mirror-cu",
+  "create_dt": "2026-06-30T15:41:01Z",
+  "update_dt": "2026-06-30T15:41:01Z",
+  "State": {
+    "init": {}
+  },
+  "Scope": {
+    "path_to_project": "/Users/ovlingej/github.com/jovlinger/utils",
+    "branch": "0b12b38c-github-action-mirror-cu",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "path_from_root": "unstartedtodos"
+  },
+  "Summary": {
+    "raw": "GitHub Action: mirror curated branch from private repo to public repo"
+  },
+  "Body": {
+    "raw": "Automate pushing a public-showcase branch from a private repo to a separate public repo via GitHub Actions. On push to the public-showcase branch in the private repo, squash/mirror that branch to main on the public repo using a PAT stored as a secret. Lets private work stay private while selectively exposing polished material."
+  },
+  "AC": "Action triggers on push to public-showcase branch; pushes to public repo main; uses PAT secret for auth; force-push to keep public history clean; no private branch history leaks"
+}

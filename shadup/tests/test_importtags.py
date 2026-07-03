@@ -1,4 +1,4 @@
-"""Tests for ``importtags`` (metatool export-json → shadup tag-add)."""
+"""Tests for ``importtags`` (metatool export-json -> shadup tag-add)."""
 
 from __future__ import annotations
 
