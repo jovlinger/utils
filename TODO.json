@@ -4,7 +4,9 @@
   "create_dt": "2026-07-04T22:31:54Z",
   "update_dt": "2026-07-04T22:37:30Z",
   "State": {
-    "init": {}
+    "working": {
+      "owner": "cursor"
+    }
   },
   "Scope": {
     "path_to_project": "/Users/johan/github.com/jovlinger/utils",
