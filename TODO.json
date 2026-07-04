@@ -2,10 +2,10 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:37:30Z",
+  "update_dt": "2026-07-04T22:46:10Z",
   "State": {
-    "working": {
-      "owner": "cursor"
+    "done": {
+      "last_commit": "feat(todos): add todo_db.worktrees_dir default ~/.todo/worktrees"
     }
   },
   "Scope": {
