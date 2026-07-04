@@ -42,6 +42,12 @@
       "Branch": "475ba3da-wt-teardown-legacy-tree",
       "Summary": "wt-teardown legacy tree",
       "State": "init"
+    },
+    {
+      "Id": "7839eeaab56477a426a02d64513f2de8f84e8c941ee12b321fefaca146fb3e39",
+      "Branch": "7839eeaa-db-schema-v1",
+      "Summary": "db schema v1",
+      "State": "init"
     }
   ]
 }
