@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:45Z",
+  "update_dt": "2026-07-04T22:33:46Z",
   "State": {
     "init": {}
   },
@@ -35,6 +35,12 @@
       "Id": "ac45da73d0d0ab117213213a071e6e4d96ddb34a59b8a25b5333e5df1264112c",
       "Branch": "ac45da73-wt-default-path-constan",
       "Summary": "wt-default path constant",
+      "State": "init"
+    },
+    {
+      "Id": "475ba3dacc4049f5a35b983909d6b89e5df8527ec703bb00f921f017b6a00f07",
+      "Branch": "475ba3da-wt-teardown-legacy-tree",
+      "Summary": "wt-teardown legacy tree",
       "State": "init"
     }
   ]
