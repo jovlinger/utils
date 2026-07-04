@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:51Z",
+  "update_dt": "2026-07-04T22:33:52Z",
   "State": {
     "init": {}
   },
@@ -83,6 +83,12 @@
       "Id": "c6fb2efc656b2bea049335cd3986c06202e46234afb88011516244bda9ae1538",
       "Branch": "c6fb2efc-cli-subcommand-audit",
       "Summary": "cli subcommand audit",
+      "State": "init"
+    },
+    {
+      "Id": "7bb1e0670683d98fa76667adc86dc7097f40babd49dbc8182fe38d85001e7a70",
+      "Branch": "7bb1e067-cli-json-import-once",
+      "Summary": "cli json import once",
       "State": "init"
     }
   ]
