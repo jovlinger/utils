@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:58Z",
+  "update_dt": "2026-07-04T22:33:59Z",
   "State": {
     "init": {}
   },
@@ -131,6 +131,12 @@
       "Id": "ccb2ce31af00e696ff60f87125d9442c48f5ae182026f1fc864edae12a3060c4",
       "Branch": "ccb2ce31-vec-sqlite-vec-extensio",
       "Summary": "vec sqlite vec extension",
+      "State": "init"
+    },
+    {
+      "Id": "99b77a811ef1c4e9ae21ee6e6cab4bb8e44993b79e93d71d487d79f809a813fb",
+      "Branch": "99b77a81-vec-index-write",
+      "Summary": "vec index on write",
       "State": "init"
     }
   ]
