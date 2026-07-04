@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:44Z",
+  "update_dt": "2026-07-04T22:33:45Z",
   "State": {
     "init": {}
   },
@@ -29,6 +29,12 @@
       "Id": "fe8edc2f0a1ad0c3cd47ec1517f3d1e04b0510d4b8186a3cdb651811f0c6ac86",
       "Branch": "fe8edc2f-wt-commit-stranded-work",
       "Summary": "wt-commit stranded work",
+      "State": "init"
+    },
+    {
+      "Id": "ac45da73d0d0ab117213213a071e6e4d96ddb34a59b8a25b5333e5df1264112c",
+      "Branch": "ac45da73-wt-default-path-constan",
+      "Summary": "wt-default path constant",
       "State": "init"
     }
   ]
