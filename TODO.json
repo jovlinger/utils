@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:49Z",
+  "update_dt": "2026-07-04T22:33:50Z",
   "State": {
     "init": {}
   },
@@ -71,6 +71,12 @@
       "Id": "fd96b8e2d364d638703b58a5b7eee23d6c177b446857a56ab514626f9c38ea56",
       "Branch": "fd96b8e2-cli-port-write-commands",
       "Summary": "cli port write commands",
+      "State": "init"
+    },
+    {
+      "Id": "13e57db1b1fe215e4c73c0c6e02d0c1166d919f88f8f01f32bf2c43d2d07f156",
+      "Branch": "13e57db1-cli-port-subtodo-flow",
+      "Summary": "cli port subtodo flow",
       "State": "init"
     }
   ]
