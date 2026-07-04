@@ -66,6 +66,12 @@
       "Branch": "94468c21-cli-port-read-commands",
       "Summary": "cli port read commands",
       "State": "init"
+    },
+    {
+      "Id": "fd96b8e2d364d638703b58a5b7eee23d6c177b446857a56ab514626f9c38ea56",
+      "Branch": "fd96b8e2-cli-port-write-commands",
+      "Summary": "cli port write commands",
+      "State": "init"
     }
   ]
 }
