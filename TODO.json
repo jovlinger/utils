@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:34:03Z",
+  "update_dt": "2026-07-04T22:34:04Z",
   "State": {
     "init": {}
   },
@@ -161,6 +161,12 @@
       "Id": "faea8de9b195c335c89ab51ae93a525edd2b5119bc6ee78a4194476db594fcf4",
       "Branch": "faea8de9-test-embedder-suite",
       "Summary": "test embedder suite",
+      "State": "init"
+    },
+    {
+      "Id": "d54721462f03b2cec1c8f417b72a9310cce2e3823c9b3c24981483aa187761c8",
+      "Branch": "d5472146-test-search-e2e",
+      "Summary": "test search e2e",
       "State": "init"
     }
   ]
