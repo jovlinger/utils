@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:34:01Z",
+  "update_dt": "2026-07-04T22:34:02Z",
   "State": {
     "init": {}
   },
@@ -149,6 +149,12 @@
       "Id": "a31d8f2426a4fe79d6553402510dda8e77937d407da5f159a4946175326fb0b5",
       "Branch": "a31d8f24-vec-search-ranking",
       "Summary": "vec search ranking",
+      "State": "init"
+    },
+    {
+      "Id": "515fc9ea083a069adf7ffb9020db907e58c8b3b074646c1c204e2c50bf57c2ad",
+      "Branch": "515fc9ea-test-sqlite-storage-sui",
+      "Summary": "test sqlite storage suite",
       "State": "init"
     }
   ]
