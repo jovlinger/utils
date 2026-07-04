@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:52Z",
+  "update_dt": "2026-07-04T22:33:53Z",
   "State": {
     "init": {}
   },
@@ -89,6 +89,12 @@
       "Id": "7bb1e0670683d98fa76667adc86dc7097f40babd49dbc8182fe38d85001e7a70",
       "Branch": "7bb1e067-cli-json-import-once",
       "Summary": "cli json import once",
+      "State": "init"
+    },
+    {
+      "Id": "1ae90d402aaeb445e5abf77e3268bab611bd3d069d73de8babfd0162e9811d66",
+      "Branch": "1ae90d40-cli-retire-json-files",
+      "Summary": "cli retire json files",
       "State": "init"
     }
   ]
