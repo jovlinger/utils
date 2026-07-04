@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:59Z",
+  "update_dt": "2026-07-04T22:34:00Z",
   "State": {
     "init": {}
   },
@@ -137,6 +137,12 @@
       "Id": "99b77a811ef1c4e9ae21ee6e6cab4bb8e44993b79e93d71d487d79f809a813fb",
       "Branch": "99b77a81-vec-index-write",
       "Summary": "vec index on write",
+      "State": "init"
+    },
+    {
+      "Id": "83cd1c8f2049cf7d611360bda4f16b2e8a31004b7be58ffdeb274d1ccde91fcc",
+      "Branch": "83cd1c8f-vec-search-command",
+      "Summary": "vec search command",
       "State": "init"
     }
   ]
