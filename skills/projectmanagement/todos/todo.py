@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AWS-style CLI for branch-bound TODO.json tickets."""
+"""AWS-style CLI for branch-bound todo tickets (sqlite-backed; legacy JSON import)."""
 
 from __future__ import annotations
 
@@ -18,9 +18,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
+import todo_db
+import todo_embed
 import todo_web
 
 JsonDict = Dict[str, Any]
+
+LEGACY_JSON_ENV = "TODO_USE_JSON"
+
+# Re-export for callers that import from todo.py.
+worktrees_dir = todo_db.worktrees_dir
+db_path = todo_db.db_path
 
 # Local-first: remote polling is feature-flagged off for now. Flip to True to
 # re-enable best-effort fetch on read once multi-agent sync is wanted.
@@ -134,8 +142,31 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
     return todo
 
 
+def use_sqlite() -> bool:
+    """Return True when tickets are stored in ~/.todo/sqlite.db (default)."""
+    return os.environ.get(LEGACY_JSON_ENV) != "1"
+
+
+def repo_key(root: Path) -> str:
+    """Canonical repo path string for sqlite keys."""
+    return str(root.resolve())
+
+
+def ref_to_branch_name(ref: str) -> str:
+    """Strip remote prefix from a short git ref name."""
+    if ref.startswith("origin/"):
+        return ref.split("/", 1)[1]
+    return ref
+
+
 def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
-    """Return parsed TODO.json from *ref*, or None if missing or invalid."""
+    """Return parsed ticket from sqlite or legacy git ref TODO.json."""
+    branch = ref_to_branch_name(ref)
+    if use_sqlite():
+        with todo_db.connection() as conn:
+            ticket = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), branch)
+            if ticket is not None:
+                return normalize_todo_schema(ticket)
     show: subprocess.CompletedProcess[str] = subprocess.run(
         ["git", "show", f"{ref}:TODO.json"],
         cwd=root,
@@ -155,9 +186,17 @@ def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
 
 
 def read_todo_worktree(root: Path) -> Optional[JsonDict]:
-    """Return parsed worktree TODO.json when present."""
+    """Return parsed ticket for the current branch from sqlite or legacy file."""
+    branch = current_branch(root)
+    if branch and use_sqlite():
+        with todo_db.connection() as conn:
+            ticket = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), branch)
+            if ticket is not None:
+                return normalize_todo_schema(ticket)
     path: Path = root / "TODO.json"
     if not path.is_file():
+        return None
+    if use_sqlite():
         return None
     try:
         parsed: Any = json.loads(path.read_text(encoding="utf-8"))
@@ -169,21 +208,70 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
 
 
 def read_todo_required(root: Path) -> JsonDict:
-    """Return parsed TODO.json from the worktree or raise."""
+    """Return parsed ticket from the worktree or raise."""
     todo = read_todo_worktree(root)
     if todo is None:
-        raise TodoError("TODO.json not found on current branch")
+        branch = current_branch(root) or "?"
+        raise TodoError(f"no todo found on current branch {branch!r}")
     return todo
 
 
 def write_todo_worktree(root: Path, todo: JsonDict) -> None:
-    """Atomically write TODO.json in the worktree."""
+    """Persist ticket to sqlite (default) or legacy TODO.json."""
     normalize_todo_schema(todo)
     todo["update_dt"] = utc_now()
+    branch = str(todo.get("Branch") or current_branch(root) or "")
+    if not branch:
+        raise TodoError("todo missing Branch")
+    if use_sqlite():
+        pending = _apply_embeddings_to_ticket(todo)
+        ticket_id = str(todo.get("Id", ""))
+        with todo_db.connection() as conn:
+            todo_db.put_ticket(conn, repo_key(root), branch, todo)
+            todo_db.sync_catalog_file(conn, catalog_path())
+            for field_path, embedder, vec in pending:
+                todo_db.put_embedding(conn, ticket_id, field_path, embedder, vec)
+        return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
     tmp.write_text(json.dumps(todo, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def _apply_embeddings_to_ticket(todo: JsonDict) -> List[tuple[str, str, List[float]]]:
+    """Embed Summary.raw and Body.raw; return sqlite embedding rows."""
+    if not use_sqlite():
+        return []
+    try:
+        embedder = todo_embed.get_embedder()
+    except ValueError:
+        return []
+    ticket_id = str(todo.get("Id", ""))
+    if not ticket_id:
+        return []
+    vectors: List[tuple[str, str, List[float]]] = []
+    summary = todo.get("Summary")
+    if isinstance(summary, dict) and summary.get("raw"):
+        vec = embedder.embed(str(summary["raw"]))
+        summary[embedder.name()] = vec
+        vectors.append(("Summary.raw", embedder.name(), vec))
+    body = todo.get("Body")
+    if isinstance(body, dict) and body.get("raw"):
+        vec = embedder.embed(str(body["raw"]))
+        body[embedder.name()] = vec
+        vectors.append(("Body.raw", embedder.name(), vec))
+    return vectors
+
+
+def index_ticket_embeddings(todo: JsonDict) -> None:
+    """Re-index embeddings for an existing ticket."""
+    pending = _apply_embeddings_to_ticket(todo)
+    ticket_id = str(todo.get("Id", ""))
+    if not ticket_id or not pending:
+        return
+    with todo_db.connection() as conn:
+        for field_path, embedder, vec in pending:
+            todo_db.put_embedding(conn, ticket_id, field_path, embedder, vec)
 
 
 def current_branch(root: Path) -> Optional[str]:
@@ -343,7 +431,10 @@ def build_ticket_skeleton(
 
 
 def commit_todo(root: Path, message: str) -> None:
-    """Stage and commit TODO.json on the current branch."""
+    """Record a todo change commit (empty when sqlite-only)."""
+    if use_sqlite():
+        run_git(root, "commit", "--allow-empty", "-m", message, check=False)
+        return
     if not (root / "TODO.json").is_file():
         raise TodoError("TODO.json missing; nothing to commit")
     run_git(root, "add", "TODO.json")
@@ -367,7 +458,9 @@ def catalog_line(repo: Path, ticket: JsonDict) -> str:
 
 
 def append_catalog(repo: Path, ticket: JsonDict) -> None:
-    """Append a row to the catalog (append-only; best-effort -- never fails the caller)."""
+    """Sync catalog row (sqlite handles storage; legacy appends to catalog.txt)."""
+    if use_sqlite():
+        return
     try:
         path = catalog_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,7 +471,10 @@ def append_catalog(repo: Path, ticket: JsonDict) -> None:
 
 
 def parse_catalog() -> List[JsonDict]:
-    """Read catalog rows as {repo, id, branch, summary} dicts (empty if no catalog)."""
+    """Read catalog rows from sqlite or legacy catalog.txt."""
+    if use_sqlite():
+        with todo_db.connection() as conn:
+            return todo_db.list_catalog_rows(conn)
     path = catalog_path()
     rows: List[JsonDict] = []
     if not path.is_file():
@@ -426,10 +522,20 @@ def catalog_matches(query: str) -> List[tuple[str, JsonDict]]:
 
 
 def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
-    """Locate TODO.json blobs whose Id matches *query*: current worktree, then the
-    catalog (fast, cross-repo), and only then a full ref scan of the current repo."""
+    """Locate tickets whose Id matches *query* via sqlite, catalog, or git refs."""
     matches: List[tuple[str, JsonDict]] = []
     seen_ids: set[str] = set()
+
+    if use_sqlite():
+        with todo_db.connection() as conn:
+            for repo_path, branch, todo in todo_db.find_tickets_by_id_prefix(conn, query):
+                ticket_id = str(todo.get("Id", ""))
+                if ticket_id and ticket_id not in seen_ids:
+                    loc = f"{repo_path}:{branch}" if repo_path != repo_key(root) else branch
+                    matches.append((loc, todo))
+                    seen_ids.add(ticket_id)
+        if matches:
+            return matches
 
     branch: Optional[str] = current_branch(root)
     worktree: Optional[JsonDict] = read_todo_worktree(root)
@@ -474,7 +580,7 @@ def resolve_ticket_by_id(root: Path, query: str) -> tuple[str, JsonDict]:
         raise TodoError("id prefix must be at least 4 hex chars")
     matches = find_todos_by_id(root, query)
     if not matches:
-        raise TodoError(f"no TODO.json found for id {query!r}")
+        raise TodoError(f"no todo found for id {query!r}")
     if len(matches) > 1:
         locations: str = ", ".join(loc for loc, _ in matches)
         raise TodoError(f"ambiguous id {query!r}; matches on: {locations}")
@@ -495,6 +601,107 @@ def mint_id(root: Path, attempts: int = 1000) -> str:
         if not find_todos_by_id(root, ticket_id[:8]):
             return ticket_id
     raise TodoError("could not mint a collision-free Id")
+
+
+def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = None) -> JsonDict:
+    """Load one ticket dict into sqlite for *root*."""
+    normalize_todo_schema(ticket)
+    branch_name = branch or str(ticket.get("Branch") or "")
+    if not branch_name:
+        raise TodoError("ticket missing Branch")
+    ticket["Branch"] = branch_name
+    scope = dict(ticket.get("Scope") or {})
+    scope.setdefault("path_to_project", str(root))
+    scope["branch"] = branch_name
+    remote = git_url_for_repo(root)
+    if remote:
+        scope.setdefault("git_url", remote)
+    ticket["Scope"] = scope
+    ticket.setdefault("create_dt", utc_now())
+    ticket.setdefault("update_dt", utc_now())
+    ticket.setdefault("State", {"init": {}})
+    write_todo_worktree(root, ticket)
+    return ticket
+
+
+def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
+    """Read TODO.json from git only (ignore sqlite)."""
+    show: subprocess.CompletedProcess[str] = subprocess.run(
+        ["git", "show", f"{ref}:TODO.json"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if show.returncode != 0:
+        return None
+    try:
+        parsed: Any = json.loads(show.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return normalize_todo_schema(parsed)
+
+
+def import_all_json_refs(root: Path) -> int:
+    """Import every TODO.json found on git refs in *root* into sqlite."""
+    count = 0
+    for ref in list_branch_refs(root):
+        todo = read_todo_at_ref_legacy(root, ref)
+        if todo is None:
+            continue
+        branch = ref_to_branch_name(ref)
+        import_json_ticket(root, todo, branch=branch)
+        count += 1
+    return count
+
+
+def search_tickets(root: Path, query: str, *, limit: int = 20) -> List[JsonDict]:
+    """Rank tickets by vector similarity plus lexical overlap."""
+    embedder = todo_embed.get_embedder()
+    query_vec = embedder.embed(query)
+    query_tokens = set(query.lower().split())
+    scored: List[tuple[float, JsonDict]] = []
+    with todo_db.connection() as conn:
+        rows = conn.execute("SELECT data FROM tickets").fetchall()
+        embeddings = {
+            (tid, field): vec
+            for tid, field, vec in todo_db.all_embeddings(conn, embedder.name())
+        }
+        for row in rows:
+            parsed: Any = json.loads(str(row["data"]))
+            if not isinstance(parsed, dict):
+                continue
+            ticket_id = str(parsed.get("Id", ""))
+            if not ticket_id:
+                continue
+            best = 0.0
+            for field in ("Summary.raw", "Body.raw"):
+                vec = embeddings.get((ticket_id, field))
+                if vec is not None:
+                    best = max(best, todo_embed.cosine_similarity(query_vec, vec))
+            summary = ""
+            body = ""
+            summary_obj = parsed.get("Summary")
+            body_obj = parsed.get("Body")
+            if isinstance(summary_obj, dict):
+                summary = str(summary_obj.get("raw", ""))
+            if isinstance(body_obj, dict):
+                body = str(body_obj.get("raw", ""))
+            text = f"{summary} {body}".lower()
+            query_lower = query.lower().strip()
+            if query_lower and query_lower in text:
+                best += 0.75
+            matched_tokens = sum(1 for token in query_tokens if token and token in text)
+            if matched_tokens:
+                best += 0.12 * matched_tokens
+                if query_tokens and matched_tokens == len(query_tokens):
+                    best += 0.25
+            if best > 0.0:
+                scored.append((best, parsed))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [ticket for _score, ticket in scored[:limit]]
 
 
 def load_json_file(path: Path) -> JsonDict:
@@ -825,6 +1032,10 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
                 except TodoError as exc:
                     findings.append(f"Subtodos.{index}.Id not discoverable: {exc}")
     findings.extend(wait_graph_findings(root, todo))
+    if use_sqlite() and (root / "TODO.json").is_file():
+        findings.append(
+            "legacy TODO.json file on worktree; sqlite is authoritative -- remove the file"
+        )
     return findings
 
 
@@ -1101,7 +1312,7 @@ class InitCommand(TodoSubCommand):
         """Mint Id, create branch, write TODO.json, and optionally commit."""
         root = self.root()
         if read_todo_worktree(root) is not None:
-            raise TodoError("TODO.json already exists on current branch; resume it instead of init")
+            raise TodoError("todo already exists on current branch; resume it instead of init")
 
         ticket_id: str = self.id or mint_id(root)
         branch: str = self.branch or kebab_branch_name(ticket_id, self.summary)
@@ -1559,7 +1770,6 @@ class DoctorCommand(TodoSubCommand):
         findings = doctor_findings(root, self.selector)
         print(json.dumps({"ok": not findings, "findings": findings}, indent=2))
         return 1 if findings else 0
-        return 0
 
 
 def _summary_snippet(text: str, limit: int = 60) -> str:
@@ -1689,8 +1899,19 @@ def render_ticket_graph(
 
 
 def discover_all_tickets(root: Path) -> Dict[str, JsonDict]:
-    """Map Id -> ticket for every discoverable TODO.json (worktree + branch refs)."""
+    """Map Id -> ticket for every discoverable ticket in sqlite or git refs."""
     tickets: Dict[str, JsonDict] = {}
+    if use_sqlite():
+        with todo_db.connection() as conn:
+            rows = conn.execute(
+                "SELECT data FROM tickets WHERE repo_path = ?", (repo_key(root),)
+            ).fetchall()
+            for row in rows:
+                parsed: Any = json.loads(str(row["data"]))
+                if isinstance(parsed, dict) and parsed.get("Id"):
+                    tickets[str(parsed["Id"])] = normalize_todo_schema(parsed)
+        if tickets:
+            return tickets
     worktree = read_todo_worktree(root)
     if worktree is not None and worktree.get("Id"):
         tickets[str(worktree["Id"])] = worktree
@@ -1841,6 +2062,66 @@ class WebCommand(TodoSubCommand):
         return 0
 
 
+class ImportJsonCommand(TodoSubCommand):
+    command_names = ("import-json",)
+    doc_short: ClassVar[str] = "Import legacy TODO.json into sqlite"
+    doc_long: ClassVar[str] = (
+        "Import-json loads ticket JSON into ~/.todo/sqlite.db. Use --from-json for one file "
+        "or --scan-refs to import every TODO.json on git refs in the current repo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register import-json arguments."""
+        parser.add_argument("--from-json", help="path to one TODO.json object")
+        parser.add_argument("--branch", help="branch name override")
+        parser.add_argument(
+            "--scan-refs",
+            action="store_true",
+            help="import all TODO.json blobs from git refs",
+        )
+
+    def do(self) -> int:
+        """Import legacy JSON ticket(s) into sqlite."""
+        root = self.root()
+        if self.scan_refs:
+            count = import_all_json_refs(root)
+            print(json.dumps({"imported": count}, indent=2))
+            return 0
+        if not self.from_json:
+            raise TodoError("--from-json or --scan-refs is required")
+        ticket = load_json_file(Path(self.from_json))
+        imported = import_json_ticket(root, ticket, branch=self.branch)
+        print(json.dumps({"Id": imported.get("Id"), "Branch": imported.get("Branch")}, indent=2))
+        return 0
+
+
+class SearchCommand(TodoSubCommand):
+    command_names = ("search",)
+    doc_short: ClassVar[str] = "Vector search tickets"
+    doc_long: ClassVar[str] = (
+        "Search ranks tickets by embedding similarity to QUERY plus lexical overlap. "
+        "Uses the configured embedder (default hash; set $TODO_EMBEDDER)."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register search arguments."""
+        parser.add_argument("query", help="search phrase or keywords")
+        parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
+
+    def do(self) -> int:
+        """Print ranked ticket search hits."""
+        root = self.root()
+        hits = search_tickets(root, self.query, limit=self.limit)
+        for ticket in hits:
+            tid = str(ticket.get("Id", ""))[:8]
+            summary_obj = ticket.get("Summary")
+            summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
+            print(f"{tid}  {summary}")
+        return 0
+
+
 class ListCommand(TodoSubCommand):
     command_names = ("list",)
     doc_short: ClassVar[str] = "List catalog rows (~/.todo/catalog.txt)"
@@ -1856,13 +2137,19 @@ class ListCommand(TodoSubCommand):
 
     def do(self) -> int:
         """Print all catalog rows."""
-        path = catalog_path()
-        if not path.is_file():
-            print(f"todo.py: no catalog at {path}", file=sys.stderr)
+        rows = parse_catalog()
+        if not rows:
+            print(f"todo.py: no catalog at {catalog_path()}", file=sys.stderr)
             return 0
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                print(line)
+        for row in rows:
+            print(
+                todo_db.catalog_line_from_row(
+                    str(row.get("repo", "")),
+                    str(row.get("id", "")),
+                    str(row.get("branch", "")),
+                    str(row.get("summary", "")),
+                )
+            )
         return 0
 
 
@@ -1885,6 +2172,8 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     WaitForCommand,
     WaitAndMergeCommand,
     DoctorCommand,
+    ImportJsonCommand,
+    SearchCommand,
 )
 
 
@@ -1895,7 +2184,7 @@ Repo & todo identity:
                repo can be cloned many times on one or many machines, so the
                same todo may exist in several checkouts; the repo root says
                WHICH checkout a branch lives in.
-  TODO branch  a git repo whose gitroot holds a TODO.json.
+  TODO branch  a git repo branch that carries a todo ticket in ~/.todo/sqlite.db.
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted
                fallback for todos written on dev/master).
@@ -1904,8 +2193,9 @@ Repo selection:
   The repo root is the CURRENT directory's gitroot; there is no --repo flag.
   `cd` into the target repo or worktree before invoking. todo.py hard-errors if
   CWD is not a git repo. Find other checkouts with `git worktree list`; new
-  worktrees go under ~/.todo/worktrees/<repo-path>/<branch> by convention.
-"""
+  worktrees go under {worktrees_root}/<repo-path>/<branch> by convention
+  (`todo_db.worktrees_dir()`; override with $TODO_WORKTREES_DIR).
+""".format(worktrees_root=todo_db.worktrees_dir())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1913,7 +2203,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="todo.py",
         description=(
-            "Branch-bound TODO.json ticket CLI. Repo root is the current "
+            "Branch-bound todo ticket CLI (sqlite-backed). Repo root is the current "
             "directory's gitroot (cd to the target repo; no --repo flag); "
             "hard-errors if CWD is not a git repo."
         ),

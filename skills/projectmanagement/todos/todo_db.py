@@ -1,0 +1,298 @@
+"""SQLite storage for branch-bound todo tickets (~/.todo/sqlite.db)."""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import struct
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+
+JsonDict = Dict[str, Any]
+
+DEFAULT_DB_PATH: Path = Path.home() / ".todo" / "sqlite.db"
+SCHEMA_VERSION: int = 1
+SQLITE_VEC_LOADED: bool = False
+
+
+class TodoDbError(Exception):
+    """User-facing todo database error."""
+
+
+def db_path() -> Path:
+    """Return path to the todo sqlite database."""
+    override = os.environ.get("TODO_DB_PATH")
+    return Path(override) if override else DEFAULT_DB_PATH
+
+
+def worktrees_dir() -> Path:
+    """Default root for new git worktrees."""
+    override = os.environ.get("TODO_WORKTREES_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".todo" / "worktrees"
+
+
+def try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
+    """Try to load the sqlite-vec extension; return True when available."""
+    global SQLITE_VEC_LOADED
+    if SQLITE_VEC_LOADED:
+        return True
+    override = os.environ.get("TODO_SQLITE_VEC_PATH")
+    candidates: List[str] = []
+    if override:
+        candidates.append(override)
+    candidates.extend(("vec0", "sqlite-vec"))
+    try:
+        conn.enable_load_extension(True)
+        for name in candidates:
+            try:
+                conn.load_extension(name)
+                SQLITE_VEC_LOADED = True
+                return True
+            except sqlite3.OperationalError:
+                continue
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        try:
+            conn.enable_load_extension(False)
+        except sqlite3.OperationalError:
+            pass
+    return False
+
+
+def vec_extension_available(conn: sqlite3.Connection) -> bool:
+    """Return True when sqlite-vec is loaded for this connection."""
+    return try_load_sqlite_vec(conn)
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    try_load_sqlite_vec(conn)
+    return conn
+
+
+@contextmanager
+def connection(path: Optional[Path] = None) -> Iterator[sqlite3.Connection]:
+    """Open a sqlite connection with migrations applied."""
+    db = path or db_path()
+    conn = _connect(db)
+    try:
+        migrate(conn)
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Apply schema migrations idempotently."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+    )
+    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    current = int(row["version"]) if row else 0
+    if current < 1:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id TEXT PRIMARY KEY,
+                repo_path TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                data TEXT NOT NULL,
+                update_dt TEXT NOT NULL,
+                UNIQUE(repo_path, branch)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tickets_repo_branch
+                ON tickets(repo_path, branch);
+            CREATE INDEX IF NOT EXISTS idx_tickets_id_prefix
+                ON tickets(substr(id, 1, 8));
+            CREATE TABLE IF NOT EXISTS catalog (
+                ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+                repo_path TEXT NOT NULL,
+                id_prefix TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                summary TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS embeddings (
+                ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                field_path TEXT NOT NULL,
+                embedder TEXT NOT NULL,
+                vector BLOB NOT NULL,
+                PRIMARY KEY (ticket_id, field_path, embedder)
+            );
+            """
+        )
+        if row is None:
+            conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+        else:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+
+def pack_vector(values: Sequence[float]) -> bytes:
+    """Pack floats into a little-endian blob."""
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+def unpack_vector(blob: bytes) -> List[float]:
+    """Unpack a little-endian float blob."""
+    count = len(blob) // 4
+    return list(struct.unpack(f"<{count}f", blob))
+
+
+def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: JsonDict) -> None:
+    """Insert or replace a ticket row and sync catalog."""
+    ticket_id = str(ticket["Id"])
+    update_dt = str(ticket.get("update_dt", ""))
+    payload = json.dumps(ticket, sort_keys=True)
+    conn.execute(
+        """
+        INSERT INTO tickets(id, repo_path, branch, data, update_dt)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            repo_path=excluded.repo_path,
+            branch=excluded.branch,
+            data=excluded.data,
+            update_dt=excluded.update_dt
+        """,
+        (ticket_id, repo_path, branch, payload, update_dt),
+    )
+    summary_obj = ticket.get("Summary")
+    summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
+    conn.execute(
+        """
+        INSERT INTO catalog(ticket_id, repo_path, id_prefix, branch, summary)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(ticket_id) DO UPDATE SET
+            repo_path=excluded.repo_path,
+            id_prefix=excluded.id_prefix,
+            branch=excluded.branch,
+            summary=excluded.summary
+        """,
+        (ticket_id, repo_path, ticket_id[:8], branch, summary),
+    )
+
+
+def get_ticket_by_repo_branch(
+    conn: sqlite3.Connection, repo_path: str, branch: str
+) -> Optional[JsonDict]:
+    """Load a ticket by repo path and branch name."""
+    row = conn.execute(
+        "SELECT data FROM tickets WHERE repo_path = ? AND branch = ?",
+        (repo_path, branch),
+    ).fetchone()
+    if row is None:
+        return None
+    parsed: Any = json.loads(str(row["data"]))
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def find_tickets_by_id_prefix(conn: sqlite3.Connection, query: str) -> List[Tuple[str, str, JsonDict]]:
+    """Return (repo_path, branch, ticket) for id prefix matches."""
+    rows = conn.execute("SELECT repo_path, branch, data FROM tickets").fetchall()
+    matches: List[Tuple[str, str, JsonDict]] = []
+    for row in rows:
+        parsed: Any = json.loads(str(row["data"]))
+        if not isinstance(parsed, dict):
+            continue
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if ticket_id == query or ticket_id.startswith(query):
+            matches.append((str(row["repo_path"]), str(row["branch"]), parsed))
+        elif len(query) >= 4 and ticket_id.startswith(query):
+            matches.append((str(row["repo_path"]), str(row["branch"]), parsed))
+    return matches
+
+
+def list_catalog_rows(conn: sqlite3.Connection) -> List[JsonDict]:
+    """Return catalog rows as dicts."""
+    rows = conn.execute(
+        "SELECT repo_path, id_prefix, branch, summary, ticket_id FROM catalog ORDER BY rowid"
+    ).fetchall()
+    result: List[JsonDict] = []
+    for row in rows:
+        result.append(
+            {
+                "repo": row["repo_path"],
+                "id": row["id_prefix"],
+                "branch": row["branch"],
+                "summary": row["summary"],
+                "ticket_id": row["ticket_id"],
+            }
+        )
+    return result
+
+
+def catalog_line_from_row(repo: str, id_prefix: str, branch: str, summary: str) -> str:
+    """Format one catalog line matching legacy catalog.txt layout."""
+    summary_clean = " ".join(summary.split())[:60]
+    return f"{repo:<30} {id_prefix:<10} {branch:<30} {summary_clean}"
+
+
+def sync_catalog_file(conn: sqlite3.Connection, catalog_file: Path) -> None:
+    """Rewrite ~/.todo/catalog.txt from sqlite catalog table."""
+    catalog_file.parent.mkdir(parents=True, exist_ok=True)
+    lines: List[str] = []
+    for row in list_catalog_rows(conn):
+        lines.append(
+            catalog_line_from_row(
+                str(row["repo"]),
+                str(row["id"]),
+                str(row["branch"]),
+                str(row.get("summary", "")),
+            )
+        )
+    catalog_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def put_embedding(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    field_path: str,
+    embedder: str,
+    vector: Sequence[float],
+) -> None:
+    """Store or replace an embedding vector."""
+    conn.execute(
+        """
+        INSERT INTO embeddings(ticket_id, field_path, embedder, vector)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ticket_id, field_path, embedder) DO UPDATE SET
+            vector=excluded.vector
+        """,
+        (ticket_id, field_path, embedder, pack_vector(vector)),
+    )
+
+
+def all_embeddings(
+    conn: sqlite3.Connection, embedder: str
+) -> List[Tuple[str, str, List[float]]]:
+    """Return (ticket_id, field_path, vector) for an embedder."""
+    rows = conn.execute(
+        "SELECT ticket_id, field_path, vector FROM embeddings WHERE embedder = ?",
+        (embedder,),
+    ).fetchall()
+    result: List[Tuple[str, str, List[float]]] = []
+    for row in rows:
+        result.append((str(row["ticket_id"]), str(row["field_path"]), unpack_vector(bytes(row["vector"]))))
+    return result
+
+
+def ticket_ids_for_repo(conn: sqlite3.Connection, repo_path: str) -> List[str]:
+    """Return all ticket ids registered for a repo."""
+    rows = conn.execute(
+        "SELECT id FROM tickets WHERE repo_path = ?", (repo_path,)
+    ).fetchall()
+    return [str(row["id"]) for row in rows]
