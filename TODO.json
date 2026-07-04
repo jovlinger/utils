@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:34:00Z",
+  "update_dt": "2026-07-04T22:34:01Z",
   "State": {
     "init": {}
   },
@@ -143,6 +143,12 @@
       "Id": "83cd1c8f2049cf7d611360bda4f16b2e8a31004b7be58ffdeb274d1ccde91fcc",
       "Branch": "83cd1c8f-vec-search-command",
       "Summary": "vec search command",
+      "State": "init"
+    },
+    {
+      "Id": "a31d8f2426a4fe79d6553402510dda8e77937d407da5f159a4946175326fb0b5",
+      "Branch": "a31d8f24-vec-search-ranking",
+      "Summary": "vec search ranking",
       "State": "init"
     }
   ]
