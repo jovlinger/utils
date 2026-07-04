@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:34:02Z",
+  "update_dt": "2026-07-04T22:34:03Z",
   "State": {
     "init": {}
   },
@@ -155,6 +155,12 @@
       "Id": "515fc9ea083a069adf7ffb9020db907e58c8b3b074646c1c204e2c50bf57c2ad",
       "Branch": "515fc9ea-test-sqlite-storage-sui",
       "Summary": "test sqlite storage suite",
+      "State": "init"
+    },
+    {
+      "Id": "faea8de9b195c335c89ab51ae93a525edd2b5119bc6ee78a4194476db594fcf4",
+      "Branch": "faea8de9-test-embedder-suite",
+      "Summary": "test embedder suite",
       "State": "init"
     }
   ]
