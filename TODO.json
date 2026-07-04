@@ -96,6 +96,12 @@
       "Branch": "1ae90d40-cli-retire-json-files",
       "Summary": "cli retire json files",
       "State": "init"
+    },
+    {
+      "Id": "72027b4d44f2526c04c395f0801c6e3cf4834d2286d7bff80edae3d93944167d",
+      "Branch": "72027b4d-vec-research-local-embe",
+      "Summary": "vec research local embedders",
+      "State": "init"
     }
   ]
 }
