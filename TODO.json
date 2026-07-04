@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:31:54Z",
+  "update_dt": "2026-07-04T22:33:43Z",
   "State": {
     "init": {}
   },
@@ -17,5 +17,13 @@
   "Body": {
     "raw": "Migrate worktrees to ~/.todo/worktrees; store todos in ~/.todo/sqlite.db; retire TODO.json; add sqlite-vec and embedder pluggable layer; implement todo search with vector similarity. This ticket is the last TODO.json."
   },
-  "AC": "All todos accessed only via todo.py against sqlite; ~/.todo-worktrees migrated and removed; todo search finds relevant tickets; tests pass; skill/docs updated."
+  "AC": "All todos accessed only via todo.py against sqlite; ~/.todo-worktrees migrated and removed; todo search finds relevant tickets; tests pass; skill/docs updated.",
+  "Subtodos": [
+    {
+      "Id": "cc756c327883bc0a79add1d62023f4b9ada9365c2de38b1d13ddab9ad0ecc9cd",
+      "Branch": "cc756c32-wt-inventory-old-worktr",
+      "Summary": "wt-inventory old worktrees",
+      "State": "init"
+    }
+  ]
 }
