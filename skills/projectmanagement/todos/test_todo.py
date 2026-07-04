@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, Optional
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -34,12 +34,21 @@ class TodoCase(unittest.TestCase):
 
     def setUp(self) -> None:
         self.repo: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))
+        self._db_dir: Path = Path(tempfile.mkdtemp(prefix="todo-db-"))
+        self._db_path: Path = self._db_dir / "sqlite.db"
+        self._catalog_path: Path = self._db_dir / "catalog.txt"
+        self._env: Dict[str, str] = {
+            **ENV,
+            "TODO_DB_PATH": str(self._db_path),
+            "TODO_CATALOG_PATH": str(self._catalog_path),
+        }
         self._git("init", "-q")
         self._git("config", "user.email", "t@example.com")
         self._git("config", "user.name", "Tester")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.repo, ignore_errors=True)
+        shutil.rmtree(self._db_dir, ignore_errors=True)
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -54,21 +63,43 @@ class TodoCase(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(TODO_PY), *args],
             cwd=str(cwd or self.repo), capture_output=True, text=True,
-            check=False, env=ENV,
+            check=False, env=self._env,
         )
 
-    def write_ticket(self, branch: str, ticket_id: str, summary: str = "x") -> None:
-        """Create *branch*, commit a TODO.json carrying *ticket_id*, stay on it."""
+    def read_self(self) -> Dict[str, Any]:
+        """Return the current branch ticket via the binary."""
+        proc = self.todo("read", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def write_ticket(
+        self,
+        branch: str,
+        ticket_id: str,
+        summary: str = "x",
+        *,
+        body: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
+    ) -> None:
+        """Create *branch*, import a seed ticket into sqlite, optionally commit."""
         self._git("checkout", "-q", "-b", branch)
-        ticket = {
+        ticket: Dict[str, Any] = {
             "Id": ticket_id,
             "Branch": branch,
             "State": {"init": {}},
             "Summary": {"raw": summary},
         }
-        (self.repo / "TODO.json").write_text(json.dumps(ticket), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", f"ticket {ticket_id[:8]}")
+        if body:
+            ticket["Body"] = {"raw": body}
+        if extra:
+            ticket.update(extra)
+        seed = self.repo / f"seed-{ticket_id[:8]}.json"
+        seed.write_text(json.dumps(ticket), encoding="utf-8")
+        proc = self.todo("import-json", f"--from-json={seed}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        if commit:
+            self._git("commit", "--allow-empty", "-qm", f"ticket {ticket_id[:8]}")
 
     def mint(self) -> str:
         """Mint an Id via the binary and assert the shape, returning it."""
@@ -128,7 +159,7 @@ class ReadTests(TodoCase):
     def test_read_missing_id(self) -> None:
         proc = self.todo("read", "deadbeef")
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("no TODO.json found", proc.stderr)
+        self.assertIn("no todo found", proc.stderr)
 
     def test_read_ambiguous_prefix_lists_locations(self) -> None:
         self.write_ticket("abcd0001-a", "abcd0001" + "f" * 56)
@@ -136,7 +167,6 @@ class ReadTests(TodoCase):
         proc = self.todo("read", "abcd")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("ambiguous", proc.stderr)
-        # both locations are surfaced so the caller can lengthen the prefix
         self.assertIn("abcd0001-a", proc.stderr)
         self.assertIn("abcd0002-b", proc.stderr)
 
@@ -148,12 +178,8 @@ class ReadTests(TodoCase):
         self.assertEqual(json.loads(proc.stdout)["Id"], "abcd0001" + "f" * 56)
 
     def test_worktree_uncommitted_is_found(self) -> None:
-        # ticket present in the working tree but never committed
         tid = self.mint()
-        self._git("checkout", "-q", "-b", f"{tid[:8]}-wt")
-        (self.repo / "TODO.json").write_text(
-            json.dumps({"Id": tid, "State": {"init": {}}}), encoding="utf-8",
-        )
+        self.write_ticket(f"{tid[:8]}-wt", tid, commit=False)
         proc = self.todo("read", tid[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["Id"], tid)
@@ -161,13 +187,11 @@ class ReadTests(TodoCase):
     def test_worktree_edit_takes_precedence_over_commit(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-demo", tid, summary="committed")
-        path = self.repo / "TODO.json"
-        ticket = json.loads(path.read_text(encoding="utf-8"))
-        ticket["Summary"]["raw"] = "worktree-edit"
-        path.write_text(json.dumps(ticket), encoding="utf-8")
-        proc = self.todo("read", tid[:8])
+        proc = self.todo("set", "--summary=worktree-edit")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["Summary"]["raw"], "worktree-edit")
+        proc2 = self.todo("read", tid[:8])
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertEqual(json.loads(proc2.stdout)["Summary"]["raw"], "worktree-edit")
 
     def test_read_self_uses_current_branch_without_id_in_name(self) -> None:
         tid = self.mint()
@@ -186,7 +210,6 @@ class ReadTests(TodoCase):
 
 class LocalFirstTests(TodoCase):
     def test_read_does_not_fetch_unreachable_remote(self) -> None:
-        # FETCH_ENABLED is off: an unreachable remote must not crash or hang read.
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-demo", tid)
         self._git("remote", "add", "origin", "https://invalid.invalid/nope.git")
@@ -199,7 +222,7 @@ class LocalFirstTests(TodoCase):
 class CliTests(TodoCase):
     def test_no_subcommand_is_usage_error(self) -> None:
         proc = self.todo()
-        self.assertEqual(proc.returncode, 2)  # argparse usage error
+        self.assertEqual(proc.returncode, 2)
 
     def test_unknown_subcommand_is_usage_error(self) -> None:
         proc = self.todo("frobnicate")
@@ -221,7 +244,10 @@ class InitTests(TodoCase):
         self.assertEqual(ticket["Summary"]["raw"], "Fix sensor")
         self.assertEqual(ticket["State"], {"init": {}})
         self._git("checkout", branch)
-        self.assertTrue((self.repo / "TODO.json").is_file())
+        proc3 = self.todo("read", "self")
+        self.assertEqual(proc3.returncode, 0, proc3.stderr)
+        self.assertEqual(json.loads(proc3.stdout)["Id"], payload["Id"])
+        self.assertFalse((self.repo / "TODO.json").is_file())
 
     def test_init_refuses_second_ticket_on_branch(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -249,9 +275,11 @@ class AddSubtodoTests(TodoCase):
             "AC": "children merged",
             "Subtodos": [],
         }
-        (self.repo / "TODO.json").write_text(json.dumps(parent), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", "parent todo")
+        parent_seed = self.repo / "parent.json"
+        parent_seed.write_text(json.dumps(parent), encoding="utf-8")
+        proc_parent = self.todo("import-json", f"--from-json={parent_seed}")
+        self.assertEqual(proc_parent.returncode, 0, proc_parent.stderr)
+        self._git("commit", "--allow-empty", "-qm", "parent todo")
 
         child_id = self.mint()
         child_path = self.repo / "child.json"
@@ -271,7 +299,7 @@ class AddSubtodoTests(TodoCase):
         proc = self.todo("add-subtodo", f"--from-json={child_path}")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self._git("checkout", "parent-branch")
-        parent_ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
+        parent_ticket = self.read_self()
         self.assertEqual(len(parent_ticket["Subtodos"]), 1)
         self.assertEqual(parent_ticket["Subtodos"][0]["Id"], child_id)
         proc2 = self.todo("read", child_id[:8])
@@ -289,7 +317,7 @@ class FieldAndWorkItemTests(TodoCase):
             "--ac=All checks pass",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
+        ticket = self.read_self()
         self.assertEqual(ticket["Summary"]["raw"], "Renamed ticket")
         self.assertEqual(ticket["Body"]["raw"], "More detail")
         self.assertEqual(ticket["AC"], "All checks pass")
@@ -304,7 +332,7 @@ class FieldAndWorkItemTests(TodoCase):
         proc3 = self.todo("chunk-done")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
 
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
+        ticket = self.read_self()
         self.assertEqual(
             ticket["WorkItems"],
             [
@@ -325,8 +353,9 @@ class UpdateTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
         self._git("checkout", branch)
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertEqual(ticket["Body"]["raw"], "patched body")
+        proc2 = self.todo("read", "self")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertEqual(json.loads(proc2.stdout)["Body"]["raw"], "patched body")
 
     def test_update_reads_stdin_when_value_is_dash(self) -> None:
         tid = self.mint()
@@ -338,12 +367,13 @@ class UpdateTests(TodoCase):
             capture_output=True,
             text=True,
             check=False,
-            env=ENV,
+            env=self._env,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "from stdin")
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertEqual(ticket["Summary"]["raw"], "from stdin")
+        proc2 = self.todo("read-path", "self", "Summary.raw")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertEqual(proc2.stdout.strip(), "from stdin")
 
     def test_read_path_prints_scalar_from_self(self) -> None:
         tid = self.mint()
@@ -365,8 +395,9 @@ class UpdateTests(TodoCase):
         proc = self.todo("set-path", "self", "Body.raw", "patched body")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertEqual(ticket["Body"]["raw"], "patched body")
+        proc2 = self.todo("read-path", "self", "Body.raw")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertEqual(proc2.stdout.strip(), "patched body")
 
     def test_set_path_accepts_json_null(self) -> None:
         tid = self.mint()
@@ -374,8 +405,9 @@ class UpdateTests(TodoCase):
         proc = self.todo("set-path", "self", "AC", "null")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "null")
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertIsNone(ticket["AC"])
+        proc2 = self.todo("read-path", "self", "AC")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertEqual(json.loads(proc2.stdout), None)
 
     def test_jq_projects_ticket_through_binary(self) -> None:
         if shutil.which("jq") is None:
@@ -388,12 +420,11 @@ class UpdateTests(TodoCase):
 
     def test_read_migrates_chunks_and_subtickets(self) -> None:
         tid = self.mint()
-        self.write_ticket(f"{tid[:8]}-legacy", tid)
-        path = self.repo / "TODO.json"
-        ticket = json.loads(path.read_text(encoding="utf-8"))
-        ticket["Chunks"] = [{"summary": "one", "done": False}]
-        ticket["Subtickets"] = []
-        path.write_text(json.dumps(ticket), encoding="utf-8")
+        self.write_ticket(
+            f"{tid[:8]}-legacy",
+            tid,
+            extra={"Chunks": [{"summary": "one", "done": False}], "Subtickets": []},
+        )
         proc = self.todo("read", tid[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         loaded = json.loads(proc.stdout)
@@ -409,14 +440,19 @@ class StateTests(TodoCase):
         self.write_ticket(f"{tid[:8]}-leaf", tid)
         proc = self.todo("set-state", "done", "--last-commit=finish child")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertEqual(ticket["State"], {"done": {"last_commit": "finish child"}})
-
-        proc2 = self.todo("set-state", "merged", "--merged-into=parent-branch")
+        proc2 = self.todo("read-path", "self", "State")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
-        ticket2 = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
         self.assertEqual(
-            ticket2["State"],
+            json.loads(proc2.stdout),
+            {"done": {"last_commit": "finish child"}},
+        )
+
+        proc3 = self.todo("set-state", "merged", "--merged-into=parent-branch")
+        self.assertEqual(proc3.returncode, 0, proc3.stderr)
+        proc4 = self.todo("read-path", "self", "State")
+        self.assertEqual(proc4.returncode, 0, proc4.stderr)
+        self.assertEqual(
+            json.loads(proc4.stdout),
             {"merged": {"merged_into": "parent-branch"}},
         )
 
@@ -449,9 +485,11 @@ class WaitTests(TodoCase):
             "Summary": {"raw": "parent"},
             "Subtodos": [],
         }
-        (self.repo / "TODO.json").write_text(json.dumps(parent), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", "parent todo")
+        parent_seed = self.repo / "parent.json"
+        parent_seed.write_text(json.dumps(parent), encoding="utf-8")
+        proc_parent = self.todo("import-json", f"--from-json={parent_seed}")
+        self.assertEqual(proc_parent.returncode, 0, proc_parent.stderr)
+        self._git("commit", "--allow-empty", "-qm", "parent todo")
 
         child_id = self.mint()
         proc = self.todo(
@@ -468,11 +506,15 @@ class WaitTests(TodoCase):
 
         proc3 = self.todo("wait-and-merge", child_id[:8], "--timeout=0", "--interval=0")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
-        parent_ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
+        parent_ticket = self.read_self()
         self.assertEqual(parent_ticket["Subtodos"][0]["State"], "merged")
         self._git("checkout", f"{child_id[:8]}-child")
-        child_ticket = json.loads((self.repo / "TODO.json").read_text(encoding="utf-8"))
-        self.assertEqual(child_ticket["State"], {"merged": {"merged_into": "parent-branch"}})
+        child_proc = self.todo("read-path", "self", "State")
+        self.assertEqual(child_proc.returncode, 0, child_proc.stderr)
+        self.assertEqual(
+            json.loads(child_proc.stdout),
+            {"merged": {"merged_into": "parent-branch"}},
+        )
 
 
 class DoctorTests(TodoCase):
@@ -485,11 +527,7 @@ class DoctorTests(TodoCase):
 
     def test_doctor_fails_unknown_top_level_field(self) -> None:
         tid = self.mint()
-        self.write_ticket("doctor-bad", tid)
-        path = self.repo / "TODO.json"
-        ticket = json.loads(path.read_text(encoding="utf-8"))
-        ticket["Surprise"] = True
-        path.write_text(json.dumps(ticket), encoding="utf-8")
+        self.write_ticket("doctor-bad", tid, extra={"Surprise": True})
         proc = self.todo("doctor", "self")
         self.assertEqual(proc.returncode, 1)
         payload = json.loads(proc.stdout)
@@ -499,34 +537,34 @@ class DoctorTests(TodoCase):
     def test_doctor_finds_wait_dependency_cycle(self) -> None:
         first_id = self.mint()
         second_id = self.mint()
-        self.write_ticket(f"{first_id[:8]}-first", first_id, summary="first")
-        first_path = self.repo / "TODO.json"
-        first_ticket = json.loads(first_path.read_text(encoding="utf-8"))
-        first_ticket["WorkItems"] = [
-            {
-                "summary": "wait for second",
-                "done": False,
-                "execution": {"wait_for": [second_id[:8]]},
-            }
-        ]
-        first_path.write_text(json.dumps(first_ticket), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", "first waits")
-
-        self.write_ticket(f"{second_id[:8]}-second", second_id, summary="second")
-        second_path = self.repo / "TODO.json"
-        second_ticket = json.loads(second_path.read_text(encoding="utf-8"))
-        second_ticket["WorkItems"] = [
-            {
-                "summary": "wait for first",
-                "done": False,
-                "execution": {"wait_for": [first_id[:8]]},
-            }
-        ]
-        second_path.write_text(json.dumps(second_ticket), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", "second waits")
-
+        self.write_ticket(
+            f"{first_id[:8]}-first",
+            first_id,
+            summary="first",
+            extra={
+                "WorkItems": [
+                    {
+                        "summary": "wait for second",
+                        "done": False,
+                        "execution": {"wait_for": [second_id[:8]]},
+                    }
+                ]
+            },
+        )
+        self.write_ticket(
+            f"{second_id[:8]}-second",
+            second_id,
+            summary="second",
+            extra={
+                "WorkItems": [
+                    {
+                        "summary": "wait for first",
+                        "done": False,
+                        "execution": {"wait_for": [first_id[:8]]},
+                    }
+                ]
+            },
+        )
         proc = self.todo("doctor", first_id[:8])
         self.assertEqual(proc.returncode, 1)
         findings = json.loads(proc.stdout)["findings"]
@@ -545,12 +583,10 @@ class LogTests(TodoCase):
         proc = self.todo("log", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         lines = proc.stdout.splitlines()
-        # parent renders at column 0 as a git-graph node
         self.assertTrue(
             any(ln.startswith("* ") and parent_id[:8] in ln and "Parent feature" in ln for ln in lines),
             proc.stdout,
         )
-        # the subtodo renders once, indented under the parent (gutter before '*')
         child_lines = [ln for ln in lines if "child one" in ln]
         self.assertEqual(len(child_lines), 1, proc.stdout)
         self.assertFalse(child_lines[0].startswith("* "), proc.stdout)
@@ -568,7 +604,7 @@ class LogTests(TodoCase):
         self._git("commit", "--allow-empty", "-qm", "seed")
         proc = self.todo("log", "deadbeef")
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("no TODO.json found", proc.stderr)
+        self.assertIn("no todo found", proc.stderr)
 
     def test_log_verbose_lists_branch_commits(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -576,10 +612,52 @@ class LogTests(TodoCase):
         self.assertEqual(init.returncode, 0, init.stderr)
         plain = self.todo("log", "self")
         self.assertEqual(plain.returncode, 0, plain.stderr)
-        self.assertNotIn("chore(todo)", plain.stdout)  # no commit lines without -v
+        self.assertNotIn("chore(todo)", plain.stdout)
         verbose = self.todo("log", "self", "-v")
         self.assertEqual(verbose.returncode, 0, verbose.stderr)
         self.assertIn("chore(todo): init ticket", verbose.stdout)
+
+
+class SearchTests(TodoCase):
+    def test_search_finds_oauth_bearer_ticket(self) -> None:
+        oauth_id = self.mint()
+        other_id = self.mint()
+        self.write_ticket(
+            f"{oauth_id[:8]}-oauth",
+            oauth_id,
+            summary="oauth bearer token refresh",
+            body="Handle oauth bearer token rotation for API clients.",
+        )
+        self.write_ticket(f"{other_id[:8]}-other", other_id, summary="unrelated database work")
+        proc = self.todo("search", "oauth bearer token")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(oauth_id[:8], proc.stdout)
+        self.assertNotIn(other_id[:8], proc.stdout)
+
+
+class ImportJsonTests(TodoCase):
+    def test_import_json_scan_refs_imports_committed_legacy_files(self) -> None:
+        tid = self.mint()
+        branch = f"{tid[:8]}-legacy-ref"
+        self._git("checkout", "-q", "-b", branch)
+        ticket = {
+            "Id": tid,
+            "Branch": branch,
+            "State": {"init": {}},
+            "Summary": {"raw": "legacy git blob"},
+        }
+        (self.repo / "TODO.json").write_text(json.dumps(ticket), encoding="utf-8")
+        self._git("add", "TODO.json")
+        self._git("commit", "-qm", "legacy todo json")
+
+        proc = self.todo("import-json", "--scan-refs")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertGreaterEqual(payload["imported"], 1)
+
+        read_proc = self.todo("read", tid[:8])
+        self.assertEqual(read_proc.returncode, 0, read_proc.stderr)
+        self.assertEqual(json.loads(read_proc.stdout)["Summary"]["raw"], "legacy git blob")
 
 
 class WebViewerTests(TodoCase):
