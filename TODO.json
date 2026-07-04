@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:34:05Z",
+  "update_dt": "2026-07-04T22:37:30Z",
   "State": {
     "init": {}
   },
@@ -15,7 +15,7 @@
     "raw": "Todo sqlite storage, embeddings, and vector search"
   },
   "Body": {
-    "raw": "Migrate worktrees to ~/.todo/worktrees; store todos in ~/.todo/sqlite.db; retire TODO.json; add sqlite-vec and embedder pluggable layer; implement todo search with vector similarity. This ticket is the last TODO.json."
+    "raw": "Broad plan from /tmp/foo.txt, aggressively split into 26 subtodos (24 implementation + 2 barrier phases) for parallel agents and frequent commits. Worktree: ~/.todo/worktrees/github.com/jovlinger/utils/todo-embedding. Branch: todo-embedding. Parent Id: 810154bd."
   },
   "AC": "All todos accessed only via todo.py against sqlite; ~/.todo-worktrees migrated and removed; todo search finds relevant tickets; tests pass; skill/docs updated.",
   "Subtodos": [
