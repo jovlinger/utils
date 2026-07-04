@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:54Z",
+  "update_dt": "2026-07-04T22:33:55Z",
   "State": {
     "init": {}
   },
@@ -107,6 +107,12 @@
       "Id": "f078e7469cbcee7556c682e52366305d8804c326a27da3a9b148c697a92efa9c",
       "Branch": "f078e746-vec-embedder-abc",
       "Summary": "vec embedder abc",
+      "State": "init"
+    },
+    {
+      "Id": "83d88d60fb6e8ccad858add4cafaab466979b1abcb80e4aca25b4dbbcc83c444",
+      "Branch": "83d88d60-vec-null-mock-embedder",
+      "Summary": "vec null mock embedder",
       "State": "init"
     }
   ]
