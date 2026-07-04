@@ -2,7 +2,7 @@
   "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
   "Branch": "todo-embedding",
   "create_dt": "2026-07-04T22:31:54Z",
-  "update_dt": "2026-07-04T22:33:56Z",
+  "update_dt": "2026-07-04T22:33:57Z",
   "State": {
     "init": {}
   },
@@ -119,6 +119,12 @@
       "Id": "23067f385c3634eb9de7cfa9f9949add403364328c6dc0b9dadc59ba929cfc27",
       "Branch": "23067f38-vec-local-embedder-impl",
       "Summary": "vec local embedder impl",
+      "State": "init"
+    },
+    {
+      "Id": "8b728526da5273c3886302072237207b0f3036e64fcffc317aefcd3a93816337",
+      "Branch": "8b728526-vec-summary-body-keys",
+      "Summary": "vec summary body keys",
       "State": "init"
     }
   ]
