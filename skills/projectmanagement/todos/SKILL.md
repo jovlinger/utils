@@ -56,6 +56,37 @@ Portable fallback remains polling: `todo.py wait-for <id>...` polls child todo
 state until each reaches `done`, then the parent runs `merge-subtodo` or
 `wait-and-merge`.
 
+### Recursive completion (subtodos)
+
+The **goal of a parent ticket is to finish by doing local work and merging
+subtodos.** Treat subtodos like function calls: each child must **return** before
+the parent can complete. Setting a child to `done` without `merge-subtodo` on
+the parent is an incomplete call -- same as forgetting to await a promise.
+
+**Invariants (hard rules for agents):**
+
+| Rule | Meaning |
+|------|---------|
+| Every subtodo must terminate | Each child reaches `done`, `merged`, or **surfaces** via `userneeded` / `stopped` (analogous to raising -- propagate blockers to the user; do not swallow them). |
+| No silent skips | Do not mark the parent `done` while any subtodo is still `init` or `working`, or `done` but not yet `merge-subtodo`'d on the parent. |
+| Merge is bookkeeping + git | After the child's git branch is merged (or absorbed), run `merge-subtodo <child-id>` on the **parent** branch so `Subtodos[].State` becomes `merged`. |
+| Parent synthesis last | Parent `done` only after all subtodos are `merged` (or explicitly waived by the user). |
+
+**Normal loop:**
+
+1. Parent `working`; file subtodos with `add-subtodo`.
+2. Per child (often one subagent each): checkout child branch -> `set-state working` -> commits -> `set-state done`.
+3. Parent: `wait-for` / `wait-and-merge` (or `merge-subtodo` each) until every child is `merged` on the parent record.
+4. Parent synthesis WorkItems (if any), then parent `set-state done`.
+
+**Surfacing blockers:** If a child cannot finish without the user, `set-state userneeded --note=...` on that child, then set parent `userneeded` with which child blocked. Never leave a child in `init`/`working` indefinitely without escalating.
+
+**Anti-patterns (do not do this):**
+
+- Landing all code on the parent branch while child branches stay `init`.
+- Marking children `done` from the parent checkout without working the child branch.
+- Marking parent `done` when `todo.py jq self '.Subtodos[].State'` still shows `init` or `done` (unmerged).
+
 ### Context-scoped subtodos (local subagents)
 
 **WorkItems** are ordered steps on the **parent** branch -- same checkout, same
@@ -80,8 +111,9 @@ same parent chat) when:
 3. Launch a **local subagent per child** (same session; user may say "local agents
    only" -- still use subtodos for context isolation without cloud-only assumptions).
 4. Each child: `working` -> narrow research -> `done` with a committed artifact.
-5. Parent: `wait-for` / `wait-and-merge`, then one synthesis WorkItem using merged
-   branches, then parent `done`.
+5. Parent: `wait-for` / `wait-and-merge` until every child is **`merged`** on the
+   parent (not merely `done` on the child branch), then synthesis WorkItems, then
+   parent `done`.
 
 Do **not** file subtodos when the work is a short linear edit, a single subsystem,
 or when child branches would be empty shells with no distinct artifact -- use
@@ -474,15 +506,19 @@ parallel-checkout use case, keep worktree creation/listing manual.
 - Dependency graph: waiting/barrier relationships are acyclic.
 - Wait sanity: a parent is not waiting on itself, a missing child, or a child in
   an impossible terminal state.
+- Subtodo merge completeness: every `Subtodos[]` entry should be `merged` (or
+  waived by user) before parent `done`; flag children still `init`, `working`, or
+  `done` but not merge-bookkept on the parent.
 
 ## How to work a ticket
 
-1. **Load:** `todo.py read <id-prefix>` or `todo.py read self`. Never assume chat memory matches the file.
-2. **Create parent:** `todo.py init --summary=... --body=... --ac=...` (mints Id, creates branch, writes and commits `TODO.json`). Do **not** hand-edit `TODO.json` for routine updates.
-3. **Create child (when warranted):** on the parent branch, `todo.py add-subtodo --from-json=<seed.json>` or `add-subtodo --summary=...`. Registers the child under parent `Subtodos`. Use for context-scoped fact-finding (DMZ CLI, per-hardware upgrade paths, etc.) -- not for every WorkItem.
-4. **Work loop:** `todo.py set-state working` -> work items (`work-item-add` / `work-item-done`) on the owning branch -> `todo.py set-state done --last-commit=...`. Children run the same loop on their branch; parent may delegate to local subagents one child at a time or in parallel.
-5. **Parent merge:** after merging the git branch, `todo.py merge-subtodo <child-id-prefix>` on the parent branch sets child `State` to `merged` and updates parent `Subtodos[].State`.
-6. **Field edits:** `todo.py set --ac=... --body=... --summary=...` on the current branch, or `todo.py update <id> <jsonpath> <value|->` on any todo by id. Long term spelling is `set-path <selector> <path> <value|->`.
+1. **Load:** `todo.py read <id-prefix>` or `todo.py read self`. Never assume chat memory matches sqlite.
+2. **Create parent:** `todo.py init --summary=... --body=... --ac=...` (mints Id, creates branch, stores ticket in sqlite).
+3. **Create child (when warranted):** on the parent branch, `todo.py add-subtodo --from-json=<seed.json>` or `add-subtodo --summary=...`. Registers the child under parent `Subtodos`.
+4. **Child work loop:** on the **child branch**, `set-state working` -> commits -> `set-state done --last-commit=...`. If blocked, `set-state userneeded --note=...` and escalate on the parent.
+5. **Parent merge (required):** on the **parent branch**, after git-merging the child branch (when there is code to land), `todo.py merge-subtodo <child-id-prefix>`. Repeat until all subtodos show `merged` in parent `Subtodos`. Batch: `wait-and-merge <id>...`.
+6. **Parent finish:** only when all subtodos are `merged` (or user waived), parent `set-state done --last-commit=...`.
+7. **Field edits:** `todo.py set`, `set-state`, work-item commands, or `set-path` / `update`.
 
 Split into child todos when the Body is too big for one clean run **or** when
 independent research domains would overload a single context (see
