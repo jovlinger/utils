@@ -604,6 +604,40 @@ class WebViewerTests(TodoCase):
         self.assertIn("+before", proc.stdout)
         self.assertIn("https://github.com/jovlinger/utils/commit/" + app_hash, proc.stdout)
 
+    def test_web_dump_html_ignores_parent_todo_on_child_branch(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        parent_id = self.mint()
+        child_id = self.mint()
+        parent_branch = f"{parent_id[:8]}-parent"
+        child_branch = f"{child_id[:8]}-child"
+        self._git("checkout", "-q", "-b", parent_branch)
+        parent = {
+            "Id": parent_id,
+            "Branch": parent_branch,
+            "State": {"init": {}},
+            "Summary": {"raw": "parent viewer"},
+            "Subtodos": [
+                {
+                    "Id": child_id,
+                    "Branch": child_branch,
+                    "State": "init",
+                    "Summary": "child viewer",
+                }
+            ],
+        }
+        (self.repo / "TODO.json").write_text(json.dumps(parent), encoding="utf-8")
+        self._git("add", "TODO.json")
+        self._git("commit", "-qm", "parent todo")
+
+        # Child branch inherits parent TODO.json (common mistake); viewer must not loop.
+        self._git("checkout", "-q", "-b", child_branch)
+
+        proc = self.todo("web", "--dump-html", parent_id[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("parent viewer", proc.stdout)
+        self.assertIn("child viewer", proc.stdout)
+        self.assertEqual(proc.stdout.count('class="ticket"'), 2)
+
     def test_web_dump_html_renders_open_todo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         init = self.todo("init", "--summary=Open viewer")

@@ -1824,6 +1824,14 @@ class WebCommand(TodoSubCommand):
         """Serve or print the todo postmortem web viewer."""
         root = self.root()
         _, ticket = resolve_ticket_by_selector(root, self.selector)
+        ticket_id = str(ticket.get("Id") or "")[:8]
+        if os.environ.get("TODO_WEB_DEBUG"):
+            print(
+                f"todo.py web: root={root} selector={self.selector!r} ticket={ticket_id} "
+                f"dump_html={self.dump_html} host={self.host} port={self.port}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             if self.dump_html:
                 print(
