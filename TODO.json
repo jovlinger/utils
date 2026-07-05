@@ -1,0 +1,398 @@
+{
+  "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52",
+  "Branch": "todo-embedding",
+  "create_dt": "2026-07-04T22:31:54Z",
+  "update_dt": "2026-07-04T22:46:10Z",
+  "State": {
+    "done": {
+      "last_commit": "feat(todos): add todo_db.worktrees_dir default ~/.todo/worktrees"
+    }
+  },
+  "Scope": {
+    "path_to_project": "/Users/johan/github.com/jovlinger/utils",
+    "branch": "todo-embedding",
+    "git_url": "git@github.com:jovlinger/utils.git"
+  },
+  "Summary": {
+    "raw": "Todo sqlite storage, embeddings, and vector search"
+  },
+  "Body": {
+    "raw": "Broad plan from /tmp/foo.txt, aggressively split into 26 subtodos (24 implementation + 2 barrier phases) for parallel agents and frequent commits. Worktree: ~/.todo/worktrees/github.com/jovlinger/utils/todo-embedding. Branch: todo-embedding. Parent Id: 810154bd."
+  },
+  "AC": "All todos accessed only via todo.py against sqlite; ~/.todo-worktrees migrated and removed; todo search finds relevant tickets; tests pass; skill/docs updated.",
+  "Subtodos": [
+    {
+      "Id": "cc756c327883bc0a79add1d62023f4b9ada9365c2de38b1d13ddab9ad0ecc9cd",
+      "Branch": "cc756c32-wt-inventory-old-worktr",
+      "Summary": "wt-inventory old worktrees",
+      "State": "init"
+    },
+    {
+      "Id": "fe8edc2f0a1ad0c3cd47ec1517f3d1e04b0510d4b8186a3cdb651811f0c6ac86",
+      "Branch": "fe8edc2f-wt-commit-stranded-work",
+      "Summary": "wt-commit stranded work",
+      "State": "init"
+    },
+    {
+      "Id": "ac45da73d0d0ab117213213a071e6e4d96ddb34a59b8a25b5333e5df1264112c",
+      "Branch": "ac45da73-wt-default-path-constan",
+      "Summary": "wt-default path constant",
+      "State": "init"
+    },
+    {
+      "Id": "475ba3dacc4049f5a35b983909d6b89e5df8527ec703bb00f921f017b6a00f07",
+      "Branch": "475ba3da-wt-teardown-legacy-tree",
+      "Summary": "wt-teardown legacy tree",
+      "State": "init"
+    },
+    {
+      "Id": "7839eeaab56477a426a02d64513f2de8f84e8c941ee12b321fefaca146fb3e39",
+      "Branch": "7839eeaa-db-schema-v1",
+      "Summary": "db schema v1",
+      "State": "init"
+    },
+    {
+      "Id": "57948aa587c54dd69dc9e33958660bccb2ba12e3b5228e89a07c9b9b62fb9003",
+      "Branch": "57948aa5-db-connection-module",
+      "Summary": "db connection module",
+      "State": "init"
+    },
+    {
+      "Id": "5de503050c39a7b08eb27f9dc6a1c8cd04601d7855a4ff87d242607a0a3a83ac",
+      "Branch": "5de50305-db-ticket-crud-api",
+      "Summary": "db ticket CRUD api",
+      "State": "init"
+    },
+    {
+      "Id": "94468c21fa83cbb3b38728d3918810b3647ca8c2572689311359d2459a3c54f9",
+      "Branch": "94468c21-cli-port-read-commands",
+      "Summary": "cli port read commands",
+      "State": "init"
+    },
+    {
+      "Id": "fd96b8e2d364d638703b58a5b7eee23d6c177b446857a56ab514626f9c38ea56",
+      "Branch": "fd96b8e2-cli-port-write-commands",
+      "Summary": "cli port write commands",
+      "State": "init"
+    },
+    {
+      "Id": "13e57db1b1fe215e4c73c0c6e02d0c1166d919f88f8f01f32bf2c43d2d07f156",
+      "Branch": "13e57db1-cli-port-subtodo-flow",
+      "Summary": "cli port subtodo flow",
+      "State": "init"
+    },
+    {
+      "Id": "c6fb2efc656b2bea049335cd3986c06202e46234afb88011516244bda9ae1538",
+      "Branch": "c6fb2efc-cli-subcommand-audit",
+      "Summary": "cli subcommand audit",
+      "State": "init"
+    },
+    {
+      "Id": "7bb1e0670683d98fa76667adc86dc7097f40babd49dbc8182fe38d85001e7a70",
+      "Branch": "7bb1e067-cli-json-import-once",
+      "Summary": "cli json import once",
+      "State": "init"
+    },
+    {
+      "Id": "1ae90d402aaeb445e5abf77e3268bab611bd3d069d73de8babfd0162e9811d66",
+      "Branch": "1ae90d40-cli-retire-json-files",
+      "Summary": "cli retire json files",
+      "State": "init"
+    },
+    {
+      "Id": "72027b4d44f2526c04c395f0801c6e3cf4834d2286d7bff80edae3d93944167d",
+      "Branch": "72027b4d-vec-research-local-embe",
+      "Summary": "vec research local embedders",
+      "State": "init"
+    },
+    {
+      "Id": "f078e7469cbcee7556c682e52366305d8804c326a27da3a9b148c697a92efa9c",
+      "Branch": "f078e746-vec-embedder-abc",
+      "Summary": "vec embedder abc",
+      "State": "init"
+    },
+    {
+      "Id": "83d88d60fb6e8ccad858add4cafaab466979b1abcb80e4aca25b4dbbcc83c444",
+      "Branch": "83d88d60-vec-null-mock-embedder",
+      "Summary": "vec null mock embedder",
+      "State": "init"
+    },
+    {
+      "Id": "23067f385c3634eb9de7cfa9f9949add403364328c6dc0b9dadc59ba929cfc27",
+      "Branch": "23067f38-vec-local-embedder-impl",
+      "Summary": "vec local embedder impl",
+      "State": "init"
+    },
+    {
+      "Id": "8b728526da5273c3886302072237207b0f3036e64fcffc317aefcd3a93816337",
+      "Branch": "8b728526-vec-summary-body-keys",
+      "Summary": "vec summary body keys",
+      "State": "init"
+    },
+    {
+      "Id": "ccb2ce31af00e696ff60f87125d9442c48f5ae182026f1fc864edae12a3060c4",
+      "Branch": "ccb2ce31-vec-sqlite-vec-extensio",
+      "Summary": "vec sqlite vec extension",
+      "State": "init"
+    },
+    {
+      "Id": "99b77a811ef1c4e9ae21ee6e6cab4bb8e44993b79e93d71d487d79f809a813fb",
+      "Branch": "99b77a81-vec-index-write",
+      "Summary": "vec index on write",
+      "State": "init"
+    },
+    {
+      "Id": "83cd1c8f2049cf7d611360bda4f16b2e8a31004b7be58ffdeb274d1ccde91fcc",
+      "Branch": "83cd1c8f-vec-search-command",
+      "Summary": "vec search command",
+      "State": "init"
+    },
+    {
+      "Id": "a31d8f2426a4fe79d6553402510dda8e77937d407da5f159a4946175326fb0b5",
+      "Branch": "a31d8f24-vec-search-ranking",
+      "Summary": "vec search ranking",
+      "State": "init"
+    },
+    {
+      "Id": "515fc9ea083a069adf7ffb9020db907e58c8b3b074646c1c204e2c50bf57c2ad",
+      "Branch": "515fc9ea-test-sqlite-storage-sui",
+      "Summary": "test sqlite storage suite",
+      "State": "init"
+    },
+    {
+      "Id": "faea8de9b195c335c89ab51ae93a525edd2b5119bc6ee78a4194476db594fcf4",
+      "Branch": "faea8de9-test-embedder-suite",
+      "Summary": "test embedder suite",
+      "State": "init"
+    },
+    {
+      "Id": "d54721462f03b2cec1c8f417b72a9310cce2e3823c9b3c24981483aa187761c8",
+      "Branch": "d5472146-test-search-e2e",
+      "Summary": "test search e2e",
+      "State": "init"
+    },
+    {
+      "Id": "74c68f77d1c1ec319fb74665cc410f9b739be519eba43a6bef138114555854cb",
+      "Branch": "74c68f77-docs-update-skill-sqlit",
+      "Summary": "docs update skill sqlite",
+      "State": "init"
+    }
+  ],
+  "WorkItems": [
+    {
+      "id": "wi-a0",
+      "summary": "Phase A parallel: worktree migration (4 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-a",
+        "primitive": "add-subtodo",
+        "subtodo_ids": [
+          "cc756c32",
+          "fe8edc2f",
+          "ac45da73",
+          "475ba3da"
+        ]
+      }
+    },
+    {
+      "id": "wi-a1",
+      "summary": "Barrier: Phase A complete before sqlite schema work",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "cc756c327883bc0a79add1d62023f4b9ada9365c2de38b1d13ddab9ad0ecc9cd",
+          "fe8edc2f0a1ad0c3cd47ec1517f3d1e04b0510d4b8186a3cdb651811f0c6ac86",
+          "ac45da73d0d0ab117213213a071e6e4d96ddb34a59b8a25b5333e5df1264112c",
+          "475ba3dacc4049f5a35b983909d6b89e5df8527ec703bb00f921f017b6a00f07"
+        ]
+      }
+    },
+    {
+      "id": "wi-b0",
+      "summary": "Phase B parallel: sqlite foundation (3 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-b",
+        "subtodo_ids": [
+          "7839eeaa",
+          "57948aa5",
+          "5de50305"
+        ]
+      }
+    },
+    {
+      "id": "wi-b1",
+      "summary": "Barrier: sqlite CRUD ready before CLI port",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "7839eeaab56477a426a02d64513f2de8f84e8c941ee12b321fefaca146fb3e39",
+          "57948aa587c54dd69dc9e33958660bccb2ba12e3b5228e89a07c9b9b62fb9003",
+          "5de503050c39a7b08eb27f9dc6a1c8cd04601d7855a4ff87d242607a0a3a83ac"
+        ]
+      }
+    },
+    {
+      "id": "wi-c0",
+      "summary": "Phase C parallel: CLI port to sqlite (6 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-c",
+        "subtodo_ids": [
+          "94468c21",
+          "fd96b8e2",
+          "13e57db1",
+          "c6fb2efc",
+          "7bb1e067",
+          "1ae90d40"
+        ]
+      }
+    },
+    {
+      "id": "wi-c1",
+      "summary": "Barrier: CLI sqlite port + json import before retire json",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "94468c21fa83cbb3b38728d3918810b3647ca8c2572689311359d2459a3c54f9",
+          "fd96b8e2d364d638703b58a5b7eee23d6c177b446857a56ab514626f9c38ea56",
+          "13e57db1b1fe215e4c73c0c6e02d0c1166d919f88f8f01f32bf2c43d2d07f156",
+          "c6fb2efc656b2bea049335cd3986c06202e46234afb88011516244bda9ae1538",
+          "7bb1e0670683d98fa76667adc86dc7097f40babd49dbc8182fe38d85001e7a70"
+        ]
+      }
+    },
+    {
+      "id": "wi-c2",
+      "summary": "Sequential: retire TODO.json filesystem (depends on import)",
+      "done": false,
+      "execution": {
+        "mode": "sequential",
+        "subtodo_id": "1ae90d402aaeb445e5abf77e3268bab611bd3d069d73de8babfd0162e9811d66"
+      }
+    },
+    {
+      "id": "wi-d0",
+      "summary": "Phase D0 parallel: embedder research + ABC + null/mock (3 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-d0",
+        "subtodo_ids": [
+          "72027b4d",
+          "f078e746",
+          "83d88d60"
+        ]
+      }
+    },
+    {
+      "id": "wi-d1",
+      "summary": "Barrier: embedder interfaces before local impl + sqlite-vec",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "72027b4d44f2526c04c395f0801c6e3cf4834d2286d7bff80edae3d93944167d",
+          "f078e7469cbcee7556c682e52366305d8804c326a27da3a9b148c697a92efa9c",
+          "83d88d60fb6e8ccad858add4cafaab466979b1abcb80e4aca25b4dbbcc83c444"
+        ]
+      }
+    },
+    {
+      "id": "wi-d2",
+      "summary": "Phase D1 parallel: local embedder + field keys + sqlite-vec (3 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-d1",
+        "subtodo_ids": [
+          "23067f38",
+          "8b728526",
+          "ccb2ce31"
+        ]
+      }
+    },
+    {
+      "id": "wi-d3",
+      "summary": "Barrier: vectors infrastructure before index-on-write",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "23067f385c3634eb9de7cfa9f9949add403364328c6dc0b9dadc59ba929cfc27",
+          "8b728526da5273c3886302072237207b0f3036e64fcffc317aefcd3a93816337",
+          "ccb2ce31af00e696ff60f87125d9442c48f5ae182026f1fc864edae12a3060c4"
+        ]
+      }
+    },
+    {
+      "id": "wi-d4",
+      "summary": "Phase D2 parallel: index-on-write + search cmd + ranking (3 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-d2",
+        "subtodo_ids": [
+          "99b77a81",
+          "83cd1c8f",
+          "a31d8f24"
+        ]
+      }
+    },
+    {
+      "id": "wi-d5",
+      "summary": "Barrier: vector search feature complete",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "99b77a811ef1c4e9ae21ee6e6cab4bb8e44993b79e93d71d487d79f809a813fb",
+          "83cd1c8f2049cf7d611360bda4f16b2e8a31004b7be58ffdeb274d1ccde91fcc",
+          "a31d8f2426a4fe79d6553402510dda8e77937d407da5f159a4946175326fb0b5"
+        ]
+      }
+    },
+    {
+      "id": "wi-e0",
+      "summary": "Phase E parallel: tests + docs (4 subtodos)",
+      "done": false,
+      "execution": {
+        "mode": "parallel",
+        "group": "phase-e",
+        "subtodo_ids": [
+          "515fc9ea",
+          "faea8de9",
+          "d5472146",
+          "74c68f77"
+        ]
+      }
+    },
+    {
+      "id": "wi-e1",
+      "summary": "Final barrier: merge all subtodos; parent done",
+      "done": false,
+      "execution": {
+        "mode": "barrier",
+        "primitive": "wait-and-merge",
+        "wait_for": [
+          "515fc9ea083a069adf7ffb9020db907e58c8b3b074646c1c204e2c50bf57c2ad",
+          "faea8de9b195c335c89ab51ae93a525edd2b5119bc6ee78a4194476db594fcf4",
+          "d54721462f03b2cec1c8f417b72a9310cce2e3823c9b3c24981483aa187761c8",
+          "74c68f77d1c1ec319fb74665cc410f9b739be519eba43a6bef138114555854cb"
+        ]
+      }
+    }
+  ]
+}
