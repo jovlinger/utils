@@ -886,16 +886,16 @@ def update_subtodo_state(parent: JsonDict, child_id: str, state: str) -> None:
     parent["Subtodos"] = subtodos
 
 
-def update_ticket_path(
+def apply_ticket_path(
     root: Path,
     selector: str,
     jsonpath: str,
-    raw_value: str,
+    value: Any,
     *,
     stay: bool = False,
     no_commit: bool = False,
 ) -> Any:
-    """Set *jsonpath* on a selected ticket and return the updated value."""
+    """Set *jsonpath* to an already-parsed *value* on a selected ticket."""
     origin_branch = current_branch(root)
     target_branch: Optional[str] = None
     if is_self_selector(selector):
@@ -905,7 +905,6 @@ def update_ticket_path(
         target_branch = checkout_todo_branch(root, located)
     try:
         todo = read_todo_required(root)
-        value = parse_update_value(raw_value, from_stdin=(raw_value == "-"))
         set_at_path(todo, jsonpath, value)
         write_todo_worktree(root, todo)
         if not no_commit:
@@ -919,6 +918,20 @@ def update_ticket_path(
             and not stay
         ):
             run_git(root, "checkout", origin_branch, check=False)
+
+
+def update_ticket_path(
+    root: Path,
+    selector: str,
+    jsonpath: str,
+    raw_value: str,
+    *,
+    stay: bool = False,
+    no_commit: bool = False,
+) -> Any:
+    """Parse a CLI/stdin *raw_value* and set it at *jsonpath* on a selected ticket."""
+    value = parse_update_value(raw_value, from_stdin=(raw_value == "-"))
+    return apply_ticket_path(root, selector, jsonpath, value, stay=stay, no_commit=no_commit)
 
 
 def checkout_todo_branch(root: Path, todo: JsonDict) -> str:
@@ -1665,10 +1678,10 @@ class SetCommand(TodoSubCommand):
     command_names = ("set",)
     doc_short: ClassVar[str] = "Patch ticket fields"
     doc_long: ClassVar[str] = (
-        "Set edits the current branch's ticket fields without changing branches. It can update "
-        "Summary.raw, Body.raw, AC, or replace WorkItems from a JSON array file. The deprecated "
-        "chunks-file option is treated as a WorkItems replacement for compatibility. The command "
-        "requires at least one field change and commits by default."
+        "Set edits the current branch's ticket fields without changing branches. It updates "
+        "Summary.raw, Body.raw, and/or AC. To replace WorkItems or any other JSON path from a file "
+        "or stdin, use set-json-path. The command requires at least one field change and commits "
+        "by default."
     )
 
     @classmethod
@@ -1677,8 +1690,6 @@ class SetCommand(TodoSubCommand):
         parser.add_argument("--summary")
         parser.add_argument("--body")
         parser.add_argument("--ac")
-        parser.add_argument("--work-items-file", help="replace WorkItems with JSON array from file")
-        parser.add_argument("--chunks-file", help="deprecated alias for --work-items-file")
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -1695,28 +1706,8 @@ class SetCommand(TodoSubCommand):
         if self.ac is not None:
             todo["AC"] = self.ac
             changed = True
-        if self.work_items_file is not None:
-            work_items_path = Path(self.work_items_file)
-            try:
-                work_items_payload: Any = json.loads(work_items_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise TodoError(f"could not read JSON from {work_items_path}: {exc}") from exc
-            if not isinstance(work_items_payload, list):
-                raise TodoError("--work-items-file must contain a JSON array")
-            todo["WorkItems"] = work_items_payload
-            changed = True
-        elif self.chunks_file is not None:
-            chunks_path = Path(self.chunks_file)
-            try:
-                chunks_payload: Any = json.loads(chunks_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise TodoError(f"could not read JSON from {chunks_path}: {exc}") from exc
-            if not isinstance(chunks_payload, list):
-                raise TodoError("--chunks-file must contain a JSON array")
-            todo["WorkItems"] = chunks_payload
-            changed = True
         if not changed:
-            raise TodoError("pass at least one of --summary, --body, --ac, --work-items-file, --chunks-file")
+            raise TodoError("pass at least one of --summary, --body, --ac")
         write_todo_worktree(root, todo)
         if not self.no_commit:
             commit_todo(root, "chore(todo): update ticket fields")
@@ -2012,6 +2003,58 @@ class UpdateCommand(TodoSubCommand):
             self.selector,
             self.jsonpath,
             self.value,
+            stay=self.stay,
+            no_commit=self.no_commit,
+        )
+        print_json_value(updated)
+        return 0
+
+
+class SetJsonPathCommand(TodoSubCommand):
+    command_names = ("set-json-path",)
+    doc_short: ClassVar[str] = "Set a JSON path from stdin or file"
+    doc_long: ClassVar[str] = (
+        "Set-json-path sets any JSON path on a selected ticket (e.g. WorkItems, Body.raw, "
+        "WorkItems.0.summary) to a value read as JSON from --file, or from stdin by default. The "
+        "input must be valid JSON. It checks out the target branch for a non-self selector, writes, "
+        "and commits by default, returning to the previous branch unless --stay. This is the "
+        "general way to replace WorkItems or seed a whole plan."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register set-json-path arguments."""
+        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("jsonpath", help="dot path, e.g. WorkItems or Body.raw")
+        parser.add_argument("--file", help="read the JSON value from this file (default: stdin)")
+        parser.add_argument(
+            "--stay",
+            action="store_true",
+            help="remain on the target branch after the write (default: return to previous branch)",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Set a JSON path from a file or stdin."""
+        root = self.root()
+        if self.file is not None:
+            try:
+                text = Path(self.file).read_text(encoding="utf-8")
+            except OSError as exc:
+                raise TodoError(f"could not read {self.file}: {exc}") from exc
+        else:
+            text = sys.stdin.read()
+        if not text.strip():
+            raise TodoError("no JSON value provided (use --file or pipe a value via stdin)")
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise TodoError(f"input is not valid JSON: {exc}") from exc
+        updated = apply_ticket_path(
+            root,
+            self.selector,
+            self.jsonpath,
+            value,
             stay=self.stay,
             no_commit=self.no_commit,
         )
@@ -2570,6 +2613,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     IsDoneCommand,
     LastShaCommand,
     UpdateCommand,
+    SetJsonPathCommand,
     MergeSubtodoCommand,
     WaitForCommand,
     WaitAndMergeCommand,

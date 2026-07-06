@@ -185,6 +185,7 @@ the `todo.py` interface.
 | `todo.py is-done [<selector>]` | implemented | Report whether the todo has no not-yet-done work items (#7); exits 0 when done, 1 when not |
 | `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py update <id> <jsonpath> <value\|->` | implemented | Compatibility alias for `set-path`. |
+| `todo.py set-json-path <id> <jsonpath> [--file <path>]` | implemented | Set any JSON path (e.g. `WorkItems`, `Body.raw`) to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
 | `todo.py doctor [<selector>]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7). Two tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo (unresolvable sha or subtodo_id), so transitional and cross-repo todos do not hard-fail |
@@ -306,7 +307,7 @@ or use `read self` / `read curr` to load the current branch's ticket.
 - **Never** hand-edit an existing `TODO.json` in the model context. Use `todo.py
   set`, `todo.py set-state`, work-item commands, `add-subtodo`, `merge-subtodo`,
   or `todo.py update <id> <jsonpath> <value|->`.
-- Temporary seed JSON files passed to `--from-json` or `--work-items-file` are
+- Temporary seed JSON files passed to `--from-json` or `set-json-path --file` are
   inputs to the CLI, not direct `TODO.json` access. They may be authored as
   ordinary files, then consumed by `todo.py`.
 
@@ -524,8 +525,9 @@ task), `work-item-delete` (drop it), and `work-item-read` (inspect it). Done
 items are the committed history of the todo -- edit the not-done frontier, never
 the done prefix.
 
-For a wholesale replan use `set --work-items-file <array.json>`; for a precise
-edit deep inside one item use `set-path`. `doctor` will flag a plan that breaks
+For a wholesale replan use `set-json-path <id> WorkItems --file <array.json>` (or
+pipe the JSON array via stdin); for a precise edit deep inside one item use
+`set-path`. `doctor` will flag a plan that breaks
 the invariants (a done item out of the prefix, a code/merge item missing its
 sha, a `start_subtodo` left as the last item).
 

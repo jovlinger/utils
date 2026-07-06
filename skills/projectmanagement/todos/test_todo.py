@@ -804,6 +804,45 @@ class ReadFormattingUnitTests(unittest.TestCase):
         )
 
 
+class SetJsonPathTests(TodoCase):
+    def _stdin(self, args: list[str], text: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(TODO_PY), *args],
+            cwd=str(self.repo), input=text, capture_output=True, text=True,
+            check=False, env=self._env,
+        )
+
+    def test_set_json_path_from_stdin_replaces_work_items(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-sjp", tid)
+        plan = [{"kind": "task", "summary": "a", "done": False}]
+        proc = self._stdin(["set-json-path", "self", "WorkItems"], json.dumps(plan))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["WorkItems"], plan)
+
+    def test_set_json_path_from_file(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-sjp", tid)
+        value_file = self._db_dir / "val.json"  # outside the repo -> tree stays clean
+        value_file.write_text('"patched body"', encoding="utf-8")
+        proc = self.todo("set-json-path", "self", "Body.raw", "--file", str(value_file))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Body"]["raw"], "patched body")
+
+    def test_set_json_path_invalid_json_exits_1(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-sjp", tid)
+        proc = self._stdin(["set-json-path", "self", "Body.raw"], "not json {")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not valid JSON", proc.stderr)
+
+    def test_set_no_longer_accepts_work_items_file(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-sjp", tid)
+        proc = self.todo("set", "--work-items-file", "plan.json")
+        self.assertNotEqual(proc.returncode, 0)
+
+
 class WorkItemModelUnitTests(unittest.TestCase):
     """Pure-function tests for the WorkItem cursor and invariant helpers."""
 
