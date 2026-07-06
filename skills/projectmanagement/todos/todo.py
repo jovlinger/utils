@@ -219,7 +219,6 @@ def write_todo_worktree(root: Path, todo: JsonDict) -> None:
                 todo_db.put_embedding(
                     conn, str(todo["Id"]), field_path, embedder_name, vec
                 )
-            todo_db.sync_catalog_file(conn, catalog_path())
         return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
@@ -437,87 +436,8 @@ def build_ticket_skeleton(
     return ticket
 
 
-def catalog_path() -> Path:
-    """Path of the catalog mirror under the resolved todo directory."""
-    return todo_db.catalog_path()
-
-
-def catalog_line(repo: Path, ticket: JsonDict) -> str:
-    """One catalog row: repo(30) id(10) branch(30) summary -- where to find a todo, not its content."""
-    rid: str = str(ticket.get("Id", ""))[:8]
-    branch: str = str(ticket.get("Branch", ""))
-    summary_obj = ticket.get("Summary")
-    summary: str = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
-    summary = " ".join(summary.split())[:60]
-    return f"{str(repo):<30} {rid:<10} {branch:<30} {summary}"
-
-
-def append_catalog(repo: Path, ticket: JsonDict) -> None:
-    """Sync catalog row (sqlite handles storage; legacy appends to catalog.txt)."""
-    if use_sqlite():
-        return
-    try:
-        path = catalog_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(catalog_line(repo, ticket) + "\n")
-    except OSError as exc:
-        print(f"todo.py: catalog append failed: {exc}", file=sys.stderr)
-
-
-def parse_catalog() -> List[JsonDict]:
-    """Read catalog rows from sqlite or legacy catalog.txt."""
-    if use_sqlite():
-        with todo_db.connection() as conn:
-            return todo_db.list_catalog_rows(conn)
-    path = catalog_path()
-    rows: List[JsonDict] = []
-    if not path.is_file():
-        return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        parts = line.split(None, 3)
-        if len(parts) < 3:
-            continue
-        rows.append(
-            {
-                "repo": parts[0],
-                "id": parts[1],
-                "branch": parts[2],
-                "summary": parts[3] if len(parts) > 3 else "",
-            }
-        )
-    return rows
-
-
-def catalog_matches(query: str) -> List[tuple[str, JsonDict]]:
-    """Resolve *query* via the catalog -- read each matching repo:branch directly.
-
-    Fast path: it avoids scanning every git ref and works across repos. Rows whose
-    repo/branch no longer resolve are skipped silently.
-    """
-    found: List[tuple[str, JsonDict]] = []
-    seen: set[str] = set()
-    for row in parse_catalog():
-        cid = str(row.get("id", ""))
-        if not cid or not (cid.startswith(query) or query.startswith(cid)):
-            continue
-        repo = Path(str(row.get("repo", "")))
-        if not repo.is_dir():
-            continue
-        todo = read_todo_at_ref(repo, str(row.get("branch", "")))
-        if todo is None:
-            continue
-        tid = str(todo.get("Id", ""))
-        if tid and id_matches(tid, query) and tid not in seen:
-            found.append((f"{repo}:{row.get('branch', '')}", todo))
-            seen.add(tid)
-    return found
-
-
 def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
-    """Locate tickets whose Id matches *query* via sqlite, catalog, or git refs."""
+    """Locate tickets whose Id matches *query* via sqlite or git refs."""
     matches: List[tuple[str, JsonDict]] = []
     seen_ids: set[str] = set()
 
@@ -540,15 +460,6 @@ def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
             loc: str = f"worktree:{branch or 'detached'}"
             matches.append((loc, worktree))
             seen_ids.add(ticket_id)
-
-    cat = catalog_matches(query)
-    if cat:
-        for loc, todo in cat:
-            tid = str(todo.get("Id", ""))
-            if tid and tid not in seen_ids:
-                matches.append((loc, todo))
-                seen_ids.add(tid)
-        return matches
 
     refs: List[str] = candidate_refs(list_branch_refs(root), query)
     for ref in refs:
@@ -1321,7 +1232,6 @@ class InitCommand(TodoSubCommand):
         write_todo_worktree(root, ticket)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
-        append_catalog(root, ticket)
         if self.stay_on_parent and parent_branch:
             run_git(root, "checkout", parent_branch)
         print(json.dumps({"Id": ticket_id, "Branch": branch}, indent=2))
@@ -1799,16 +1709,17 @@ def _ticket_repo(ticket: JsonDict, default: Path) -> Path:
 
 def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
     """Load a full child ticket via the Subtodos entry's Branch (O(1), no ref scan); fall back
-    to a catalog lookup by Id. None if neither resolves (caller uses the entry snapshot)."""
+    to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot)."""
     branch = str(entry.get("Branch", ""))
     if branch:
         todo = read_todo_at_ref(repo, branch)
         if todo is not None:
             return todo
     cid = str(entry.get("Id", ""))
-    if len(cid) >= 4:
-        for _loc, todo in catalog_matches(cid[:8]):
-            return todo
+    if len(cid) >= 4 and use_sqlite():
+        with todo_db.connection() as conn:
+            for _repo_path, _branch, todo in todo_db.find_tickets_by_id_prefix(conn, cid[:8]):
+                return todo
     return None
 
 
@@ -2114,35 +2025,37 @@ class SearchCommand(TodoSubCommand):
         return 0
 
 
-class ListCommand(TodoSubCommand):
-    command_names = ("list",)
-    doc_short: ClassVar[str] = "List catalog rows from the todo catalog"
+class LsCommand(TodoSubCommand):
+    command_names = ("ls",)
+    doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
-        "List prints the append-only todo catalog (repo, id, branch, summary) -- the registry of "
-        "where todos live, written on init. Where-to-find-it only; use 'read <id>' for ticket "
-        "content. Catalog lives under the resolved todo directory ($TODO_DIR, gitroot/.todo, or "
-        "~/.todo)."
+        "Ls prints one line per todo known to the resolved todo directory, as '<id[0:8]>  "
+        "<summary>'. Where-to-find-it only; use 'read <id>' for full ticket content. Default "
+        "order is insertion order; -t sorts by last-update time, most recent first, like shell "
+        "ls -t."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """No arguments."""
+        """Register ls arguments."""
+        parser.add_argument(
+            "-t",
+            dest="by_time",
+            action="store_true",
+            help="sort by last-update time, most recent first",
+        )
 
     def do(self) -> int:
-        """Print all catalog rows."""
-        rows = parse_catalog()
-        if not rows:
-            print(f"todo.py: no catalog at {catalog_path()}", file=sys.stderr)
-            return 0
+        """Print '<id>  <summary>' for every known todo."""
+        if not use_sqlite():
+            raise TodoError("ls requires sqlite storage (unset TODO_USE_JSON)")
+        with todo_db.connection() as conn:
+            rows = todo_db.list_tickets(conn)
+        if self.by_time:
+            rows.sort(key=lambda row: str(row.get("update_dt", "")), reverse=True)
         for row in rows:
-            print(
-                todo_db.catalog_line_from_row(
-                    str(row.get("repo", "")),
-                    str(row.get("id", "")),
-                    str(row.get("branch", "")),
-                    str(row.get("summary", "")),
-                )
-            )
+            tid = str(row.get("id", ""))[:8]
+            print(f"{tid}  {row.get('summary', '')}")
         return 0
 
 
@@ -2150,7 +2063,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     MintCommand,
     LogCommand,
     WebCommand,
-    ListCommand,
+    LsCommand,
     ReadCommand,
     ReadPathCommand,
     JqCommand,
@@ -2179,7 +2092,7 @@ Repo & todo identity:
                WHICH checkout a branch lives in.
   TODO branch  a git repo branch that carries a todo ticket in sqlite.
   todo dir     resolved once per invocation: $TODO_DIR, else gitroot/.todo, else
-               ~/.todo (first with sqlite.db wins; same dir for db, catalog,
+               ~/.todo (first with sqlite.db wins; same dir for db and
                worktrees).
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted

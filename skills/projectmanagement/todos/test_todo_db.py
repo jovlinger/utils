@@ -117,7 +117,6 @@ class TodoDirResolutionTest(unittest.TestCase):
                 todo_db.reset_todo_dir()
                 base = todo_db.todo_dir()
                 self.assertEqual(todo_db.db_path(), base / "sqlite.db")
-                self.assertEqual(todo_db.catalog_path(), base / "catalog.txt")
                 self.assertEqual(todo_db.worktrees_dir(), base / "worktrees")
 
 

@@ -134,13 +134,12 @@ Todo directory resolution (once per `todo.py` invocation; no mixing paths):
 3. `$HOME/.todo/` when that contains `sqlite.db`
 
 If none exist, create under the first applicable default: `$TODO_DIR`, else
-`$(gitroot)/.todo/`, else `$HOME/.todo/`. Db, catalog mirror, and worktrees all
-live under the chosen directory.
+`$(gitroot)/.todo/`, else `$HOME/.todo/`. Db and worktrees both live under the
+chosen directory.
 
 | Item | Location | Notes |
 |------|----------|-------|
-| Tickets | `<todo-dir>/sqlite.db` | One row per (repo_path, branch) |
-| Catalog | sqlite + mirror `<todo-dir>/catalog.txt` | |
+| Tickets | `<todo-dir>/sqlite.db` | One row per (repo_path, branch); `todo.py ls` lists them |
 | Embeddings | sqlite embeddings table | On write; search via todo.py search |
 | Worktrees | `<todo-dir>/worktrees/` | Nested by repo path |
 | Legacy JSON | git TODO.json | Import only: todo.py import-json |
@@ -165,14 +164,14 @@ the `todo.py` interface.
 | Command | Status | Behavior |
 |---------|--------|----------|
 | `todo.py mint` | implemented | Mint a fresh ticket `Id` (uuid1 -> SHA-256 of its raw bytes), collision-checked across the repo; print the 64-hex Id |
-| `todo.py read <selector>` | implemented | Locate the branch (or worktree) whose `TODO.json` matches `<selector>` and print the ticket JSON. Id selectors are any **4+ hex unambiguous prefix**, or the full digest. `curr`/`self` resolve to the checked-out branch's todo, even when the branch name does not contain the Id. Resolution is **catalog-first** (`~/.todo/catalog.txt`): a fast, cross-repo lookup that skips scanning every git ref; it falls back to a current-repo ref scan only when the catalog has no hit. Local-first: remote fetch is feature-flagged off (`FETCH_ENABLED`) |
+| `todo.py read <selector>` | implemented | Locate the branch (or worktree) whose `TODO.json` matches `<selector>` and print the ticket JSON. Id selectors are any **4+ hex unambiguous prefix**, or the full digest. `curr`/`self` resolve to the checked-out branch's todo, even when the branch name does not contain the Id. Resolution scans the sqlite `tickets` table directly (cross-repo, no catalog); it falls back to a current-repo ref scan only when sqlite has no hit. Local-first: remote fetch is feature-flagged off (`FETCH_ENABLED`) |
 | `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit) |
 | `todo.py import-json` | implemented | Migrate legacy JSON: --from-json PATH or --scan-refs |
-| `todo.py list` | implemented | Print catalog rows from sqlite: one row per todo as `repo  id  branch  summary` -- where todos live, written on `init`. Where-to-find-it only; use `read <id>` for content |
+| `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
 | `todo.py read-path <selector> <path>` | implemented | Low-level path read. Reads one value from a selected todo. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-path <selector> <path> <value\|->` | implemented | Low-level path write. Sets one value on a selected todo, with `-` reading the value from stdin. This is the canonical write primitive; higher-level commands are syntax sugar plus path-trigger behavior. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit, catalog row. Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json`, commit, return to parent, register in `Subtodos` (`add-child` alias) |
 | `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object, equivalent to `set-path self State '{"<state>": {...}}'` plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged` (`merge-child` alias) |
@@ -246,8 +245,9 @@ branch.** The `TODO.json` lives on the branch, the branch lives in the repo (and
 is pushed to the remote) -- that pair is the identity and the thing that
 survives. A worktree is just a disposable checkout used to work that branch;
 create and delete them freely, and never treat a worktree path as where a todo
-"lives." Find todos by repo + branch (and the `~/.todo/catalog.txt` registry);
-use `git worktree list` only to locate a branch's current checkout when one exists.
+"lives." Find todos by repo + branch (`todo.py ls` / `todo.py read <id>` query
+sqlite directly); use `git worktree list` only to locate a branch's current
+checkout when one exists.
 
 A todo's working tree may live in a dedicated git worktree rather than the main
 checkout. **Existing worktrees are found with `git worktree list` and are never

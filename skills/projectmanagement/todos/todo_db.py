@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 SQLITE_VEC_LOADED: bool = False
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
@@ -76,7 +76,7 @@ def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     Search order: ``$TODO_DIR``, ``$(gitroot)/.todo/``, ``$HOME/.todo/``.
     The first candidate containing ``sqlite.db`` wins; otherwise the default
     create location is the first entry in that list that applies (``$TODO_DIR``,
-    else repo-local ``.todo``, else home). All paths (db, catalog, worktrees)
+    else repo-local ``.todo``, else home). All paths (db, worktrees)
     live under the chosen directory for the rest of the call.
     """
     global _RESOLVED_TODO_DIR
@@ -100,11 +100,6 @@ def todo_dir() -> Path:
 def db_path() -> Path:
     """Return path to the todo sqlite database."""
     return todo_dir() / "sqlite.db"
-
-
-def catalog_path() -> Path:
-    """Return path to the catalog mirror file under the todo directory."""
-    return todo_dir() / "catalog.txt"
 
 
 def worktrees_dir() -> Path:
@@ -193,13 +188,6 @@ def migrate(conn: sqlite3.Connection) -> None:
                 ON tickets(repo_path, branch);
             CREATE INDEX IF NOT EXISTS idx_tickets_id_prefix
                 ON tickets(substr(id, 1, 8));
-            CREATE TABLE IF NOT EXISTS catalog (
-                ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
-                repo_path TEXT NOT NULL,
-                id_prefix TEXT NOT NULL,
-                branch TEXT NOT NULL,
-                summary TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS embeddings (
                 ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
                 field_path TEXT NOT NULL,
@@ -209,6 +197,9 @@ def migrate(conn: sqlite3.Connection) -> None:
             );
             """
         )
+    if current < 2:
+        conn.execute("DROP TABLE IF EXISTS catalog")
+    if current < SCHEMA_VERSION:
         if row is None:
             conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
         else:
@@ -227,7 +218,7 @@ def unpack_vector(blob: bytes) -> List[float]:
 
 
 def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: JsonDict) -> None:
-    """Insert or replace a ticket row and sync catalog."""
+    """Insert or replace a ticket row."""
     ticket_id = str(ticket["Id"])
     update_dt = str(ticket.get("update_dt", ""))
     payload = json.dumps(ticket, sort_keys=True)
@@ -242,20 +233,6 @@ def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: Js
             update_dt=excluded.update_dt
         """,
         (ticket_id, repo_path, branch, payload, update_dt),
-    )
-    summary_obj = ticket.get("Summary")
-    summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
-    conn.execute(
-        """
-        INSERT INTO catalog(ticket_id, repo_path, id_prefix, branch, summary)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(ticket_id) DO UPDATE SET
-            repo_path=excluded.repo_path,
-            id_prefix=excluded.id_prefix,
-            branch=excluded.branch,
-            summary=excluded.summary
-        """,
-        (ticket_id, repo_path, ticket_id[:8], branch, summary),
     )
 
 
@@ -293,45 +270,26 @@ def find_tickets_by_id_prefix(conn: sqlite3.Connection, query: str) -> List[Tupl
     return matches
 
 
-def list_catalog_rows(conn: sqlite3.Connection) -> List[JsonDict]:
-    """Return catalog rows as dicts."""
+def list_tickets(conn: sqlite3.Connection) -> List[JsonDict]:
+    """Return every known ticket as {id, repo, branch, summary, update_dt}, insertion order."""
     rows = conn.execute(
-        "SELECT repo_path, id_prefix, branch, summary, ticket_id FROM catalog ORDER BY rowid"
+        "SELECT id, repo_path, branch, data, update_dt FROM tickets ORDER BY rowid"
     ).fetchall()
     result: List[JsonDict] = []
     for row in rows:
+        parsed: Any = json.loads(str(row["data"]))
+        summary_obj = parsed.get("Summary") if isinstance(parsed, dict) else None
+        summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
         result.append(
             {
-                "repo": row["repo_path"],
-                "id": row["id_prefix"],
-                "branch": row["branch"],
-                "summary": row["summary"],
-                "ticket_id": row["ticket_id"],
+                "id": str(row["id"]),
+                "repo": str(row["repo_path"]),
+                "branch": str(row["branch"]),
+                "summary": summary,
+                "update_dt": str(row["update_dt"]),
             }
         )
     return result
-
-
-def catalog_line_from_row(repo: str, id_prefix: str, branch: str, summary: str) -> str:
-    """Format one catalog line matching legacy catalog.txt layout."""
-    summary_clean = " ".join(summary.split())[:60]
-    return f"{repo:<30} {id_prefix:<10} {branch:<30} {summary_clean}"
-
-
-def sync_catalog_file(conn: sqlite3.Connection, catalog_file: Path) -> None:
-    """Rewrite ~/.todo/catalog.txt from sqlite catalog table."""
-    catalog_file.parent.mkdir(parents=True, exist_ok=True)
-    lines: List[str] = []
-    for row in list_catalog_rows(conn):
-        lines.append(
-            catalog_line_from_row(
-                str(row["repo"]),
-                str(row["id"]),
-                str(row["branch"]),
-                str(row.get("summary", "")),
-            )
-        )
-    catalog_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def put_embedding(
