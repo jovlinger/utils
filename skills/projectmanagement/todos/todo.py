@@ -1121,20 +1121,80 @@ class MintCommand(TodoSubCommand):
         return 0
 
 
+_READ_FIRST_FIELDS = ("Id", "Summary", "Body")
+_READ_LAST_FIELDS = ("Subtodos", "WorkItems")
+
+
+def _ordered_subdict(value: JsonDict) -> JsonDict:
+    """Order a Summary/Body dict as raw first, then remaining keys sorted."""
+    out: JsonDict = {}
+    if "raw" in value:
+        out["raw"] = value["raw"]
+    for key in sorted(k for k in value if k != "raw"):
+        out[key] = value[key]
+    return out
+
+
+def order_ticket_fields(todo: JsonDict) -> JsonDict:
+    """Return the ticket with Id/Summary/Body first and Subtodos/WorkItems last.
+
+    Remaining fields keep a stable alphabetical order in the middle. Summary and
+    Body are ordered so their raw text leads.
+    """
+    first = [k for k in _READ_FIRST_FIELDS if k in todo]
+    last = [k for k in _READ_LAST_FIELDS if k in todo]
+    fixed = set(_READ_FIRST_FIELDS) | set(_READ_LAST_FIELDS)
+    middle = sorted(k for k in todo if k not in fixed)
+    ordered: JsonDict = {}
+    for key in first + middle + last:
+        value = todo[key]
+        if key in ("Summary", "Body") and isinstance(value, dict):
+            ordered[key] = _ordered_subdict(value)
+        else:
+            ordered[key] = value
+    return ordered
+
+
+def elide_embedding_vectors(obj: Any) -> Any:
+    """Recursively shorten embedding-like numeric lists to [first, last].
+
+    An embedding is a list of more than two numbers (never bools). Shortening to
+    the first and last elements keeps the output valid JSON while dropping the
+    bulk of the vector. Other structures pass through unchanged.
+    """
+    if isinstance(obj, dict):
+        return {k: elide_embedding_vectors(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        if len(obj) > 2 and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) for x in obj
+        ):
+            return [obj[0], obj[-1]]
+        return [elide_embedding_vectors(x) for x in obj]
+    return obj
+
+
 class ReadCommand(TodoSubCommand):
     command_names = ("read",)
     doc_short: ClassVar[str] = "Print ticket JSON"
     doc_long: ClassVar[str] = (
         "Read locates a TODO ticket by full Id, by an unambiguous prefix of at least four hex "
         "characters, or by self/curr for the checked-out branch. It searches the current worktree "
-        "first, then local and cached remote refs. Legacy field names are normalized in the output. "
-        "The command prints the selected ticket as formatted JSON to stdout."
+        "first, then local and cached remote refs. Legacy field names are normalized and fields are "
+        "ordered Id/Summary/Body first, Subtodos/WorkItems last. By default embedding vectors are "
+        "elided to their first and last element; pass -v/--verbose to print them in full. The "
+        "command prints the selected ticket as formatted JSON to stdout."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register read arguments."""
         parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
+        parser.add_argument(
+            "-v",
+            "--verbose",
+            action="store_true",
+            help="print embedding vectors in full instead of eliding them",
+        )
 
     def do(self) -> int:
         """Print the todo selected by selector."""
@@ -1142,7 +1202,10 @@ class ReadCommand(TodoSubCommand):
         git_fetch_if_remote(root)
         _, todo = resolve_ticket_by_selector(root, self.selector)
         normalize_todo_schema(todo)
-        json.dump(todo, sys.stdout, indent=2, sort_keys=True)
+        payload: Any = order_ticket_fields(todo)
+        if not self.verbose:
+            payload = elide_embedding_vectors(payload)
+        json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0
 

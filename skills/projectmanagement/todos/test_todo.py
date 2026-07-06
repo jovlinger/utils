@@ -171,6 +171,24 @@ class ReadTests(TodoCase):
         self.assertIn("abcd0001-a", proc.stderr)
         self.assertIn("abcd0002-b", proc.stderr)
 
+    def test_read_orders_fields_and_elides_vectors(self) -> None:
+        init = self.todo("init", "--summary=Vector demo", "--body=some text")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        add = self.todo("work-item-add", "--summary=wi one")
+        self.assertEqual(add.returncode, 0, add.stderr)
+
+        elided = self.read_self()
+        keys = list(elided.keys())
+        self.assertEqual(keys[:3], ["Id", "Summary", "Body"])
+        self.assertEqual(keys[-1], "WorkItems")
+        # Embedding vector under Summary is elided to [first, last].
+        self.assertEqual(len(elided["Summary"]["hash"]), 2)
+
+        proc = self.todo("read", "self", "-v")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        full = json.loads(proc.stdout)
+        self.assertGreater(len(full["Summary"]["hash"]), 2)
+
     def test_longer_prefix_disambiguates(self) -> None:
         self.write_ticket("abcd0001-a", "abcd0001" + "f" * 56)
         self.write_ticket("abcd0002-b", "abcd0002" + "e" * 56)
@@ -753,6 +771,38 @@ class WebViewerTests(TodoCase):
         self.assertIn(sha[:8], proc.stdout)
         # Every todo Id is a re-root link (openable as a new top-level timeline).
         self.assertIn("/?root=" + ticket["Id"], proc.stdout)
+
+
+class ReadFormattingUnitTests(unittest.TestCase):
+    """Pure-function tests for read's field ordering and vector elision."""
+
+    def test_order_ticket_fields_first_and_last(self) -> None:
+        ticket = {
+            "WorkItems": [], "State": {}, "Body": {"raw": "b"}, "Id": "x",
+            "Subtodos": [], "Summary": {"raw": "s"}, "AC": "", "Scope": {},
+        }
+        keys = list(todo.order_ticket_fields(ticket).keys())
+        self.assertEqual(keys[:3], ["Id", "Summary", "Body"])
+        self.assertEqual(keys[-2:], ["Subtodos", "WorkItems"])
+        self.assertEqual(keys[3:-2], ["AC", "Scope", "State"])  # middle stays sorted
+
+    def test_order_ticket_fields_puts_raw_first_in_summary(self) -> None:
+        ordered = todo.order_ticket_fields({"Id": "x", "Summary": {"hash": [1, 2, 3], "raw": "s"}})
+        self.assertEqual(list(ordered["Summary"].keys()), ["raw", "hash"])
+
+    def test_elide_shortens_numeric_vectors(self) -> None:
+        self.assertEqual(todo.elide_embedding_vectors([0.1, 0.2, 0.3, 0.9]), [0.1, 0.9])
+
+    def test_elide_leaves_short_and_non_numeric_lists(self) -> None:
+        self.assertEqual(todo.elide_embedding_vectors([1, 2]), [1, 2])
+        self.assertEqual(todo.elide_embedding_vectors(["a", "b", "c"]), ["a", "b", "c"])
+        self.assertEqual(todo.elide_embedding_vectors([True, False, True]), [True, False, True])
+
+    def test_elide_recurses_into_nested_dicts(self) -> None:
+        self.assertEqual(
+            todo.elide_embedding_vectors({"Summary": {"raw": "s", "hash": [1, 2, 3, 4]}}),
+            {"Summary": {"raw": "s", "hash": [1, 4]}},
+        )
 
 
 class MissingRepoCwdTests(unittest.TestCase):
