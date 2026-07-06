@@ -10,5 +10,6 @@ Random python to do
    - inject / eval test infra into subcontainers
 3. owngoal obvs
 
-5. jpg compress with interest region
+5. jpg compress with interest region 
+
 6. binary format parser generator
