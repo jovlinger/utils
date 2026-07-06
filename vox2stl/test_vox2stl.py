@@ -15,6 +15,7 @@ import pytest
 
 import voxtool
 import vox2stl
+from voxconf import conf_profile_hash
 from constants import (
     BOX_LL,
     BOX_LR,
@@ -504,6 +505,11 @@ def test_tile_cache_reuses_two_tiles() -> None:
             require(cache_path.is_file(), "tile cache should flush to disk")
             with gzip.open(cache_path, "rb") as file_obj:
                 disk_cache = pickle.load(file_obj)
+            require(
+                disk_cache.get(vox2stl.TILE_CACHE_CONF_HASH_KEY)
+                == conf_profile_hash(config.conf_name),
+                "disk cache should store the active conf profile hash",
+            )
             require("-" in disk_cache, "disk cache should store the trace tile key")
             require(lig_key in disk_cache, "disk cache should store the ligature tile key")
             vox2stl._PERSISTENT_TILE_CACHE = None
@@ -511,6 +517,37 @@ def test_tile_cache_reuses_two_tiles() -> None:
             require(
                 len(reloaded_trace) == len(first_trace),
                 "reloaded trace tile should match cached triangle count",
+            )
+    finally:
+        vox2stl.TILE_CACHE_PATH = old_path
+        vox2stl._PERSISTENT_TILE_CACHE = old_cache
+        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
+
+
+@pytest.mark.real_tile_cache
+def test_tile_cache_clears_when_conf_hash_changes() -> None:
+    old_path = vox2stl.TILE_CACHE_PATH
+    old_cache = vox2stl._PERSISTENT_TILE_CACHE
+    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "tile_cache.pickle"
+            vox2stl.TILE_CACHE_PATH = cache_path
+            vox2stl._PERSISTENT_TILE_CACHE = None
+            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
+            stale_cache = {
+                vox2stl.TILE_CACHE_CONF_HASH_KEY: "stale-hash",
+                "-": [((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))],
+            }
+            with gzip.open(cache_path, "wb") as file_obj:
+                pickle.dump(stale_cache, file_obj, protocol=pickle.HIGHEST_PROTOCOL)
+            config = vox2stl.RenderConfig()
+            tris = vox2stl.cached_tile_tris("-", config)
+            require(tris is not stale_cache["-"], "stale cache entry should be discarded after conf hash mismatch")
+            require(
+                vox2stl.load_persistent_tile_cache().get(vox2stl.TILE_CACHE_CONF_HASH_KEY)
+                == conf_profile_hash(config.conf_name),
+                "cache should record the current conf profile hash",
             )
     finally:
         vox2stl.TILE_CACHE_PATH = old_path
@@ -1237,69 +1274,3 @@ def test_cli_writes_full_stl_with_holes() -> None:
     require(exit_code == 0, f"full CLI exit: got {exit_code}")
     require(text.startswith("solid straight_full_test\n"), "full STL solid header missing")
     require(text.count("facet normal") > 60, "full STL should include base and holes")
-
-
-@pytest.mark.real_tile_cache
-def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
-    old_path = vox2stl.TILE_CACHE_PATH
-    old_cache = vox2stl._PERSISTENT_TILE_CACHE
-    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            cache_path = Path(tmp_dir) / "tile_cache.pickle"
-            vox2stl.TILE_CACHE_PATH = cache_path
-            vox2stl._PERSISTENT_TILE_CACHE = None
-            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                exit_code = voxtool.main(
-                    [
-                        "voxtool.py",
-                        "warm-tile-cache",
-                        str(ROOT / "testdata" / "straight.vox"),
-                        "--quiet",
-                    ]
-                )
-            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
-            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
-            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
-            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
-            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
-    finally:
-        vox2stl.TILE_CACHE_PATH = old_path
-        vox2stl._PERSISTENT_TILE_CACHE = old_cache
-        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty
-
-
-@pytest.mark.real_tile_cache
-def test_voxtool_warm_tile_cache_writes_pickled_cache() -> None:
-    old_path = vox2stl.TILE_CACHE_PATH
-    old_cache = vox2stl._PERSISTENT_TILE_CACHE
-    old_dirty = vox2stl._PERSISTENT_TILE_CACHE_DIRTY
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            cache_path = Path(tmp_dir) / "tile_cache.pickle"
-            vox2stl.TILE_CACHE_PATH = cache_path
-            vox2stl._PERSISTENT_TILE_CACHE = None
-            vox2stl._PERSISTENT_TILE_CACHE_DIRTY = False
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                exit_code = voxtool.main(
-                    [
-                        "voxtool.py",
-                        "warm-tile-cache",
-                        str(ROOT / "testdata" / "straight.vox"),
-                        "--quiet",
-                    ]
-                )
-            require(exit_code == 0, f"warm-tile-cache exit: got {exit_code}; {stderr.getvalue()}")
-            require(cache_path.is_file(), "warm-tile-cache should write a pickle file")
-            key_count = vox2stl.verify_persistent_tile_cache(cache_path)
-            require(key_count > 10, f"warm-tile-cache should store multiple tile keys: got {key_count}")
-            require(stdout.getvalue().startswith("ok wrote "), "warm-tile-cache should report success")
-    finally:
-        vox2stl.TILE_CACHE_PATH = old_path
-        vox2stl._PERSISTENT_TILE_CACHE = old_cache
-        vox2stl._PERSISTENT_TILE_CACHE_DIRTY = old_dirty

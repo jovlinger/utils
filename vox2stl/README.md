@@ -96,22 +96,15 @@ same-copper protrusions, then subtracts isolation slots and any `*` or `O`
 through-hole. Cached tiles may extend past one `UNIT_MM` cell; overlaps are
 intentional so neighboring same-copper tiles fuse robustly in slicers.
 
-The persistent tile cache is a pickled dictionary at
-`vox2stl/tiles/tile_cache.pickle`, written as a gzip-compressed pickle stream.
-Lowercase letter tiles are stored under their single-character keys, and copper
-ligatures are stored under their five-part keys. If the pickle is deleted, the
-cache is rebuilt lazily; lowercase letters are loaded from pre-rendered letter
-STL fragments when present, otherwise they are regenerated from the built-in
-letter renderer. Cache format or geometry upgrades are handled by deleting the
-cache file and letting it regenerate, or by running:
-
-```bash
-vox2stl/voxtool.py warm-tile-cache
-vox2stl/voxtool.py warm-tile-cache --conf coppertape
-```
-
-Non-default CLI geometry uses an in-memory
-cache so stale persisted dimensions are not reused.
+The persistent tile cache is a lazy gzip-compressed pickle at
+`vox2stl/tiles/tile_cache.pickle` (local only, not versioned). Each cache
+holds rendered ligature tiles under their keys plus
+`__tile_cache_conf_hash__`, a SHA-256 digest of the active profile's `.conf`
+file chain (includes and overrides, in order). When the hash does not match the
+current `--conf` profile, the cache is cleared and tiles are regenerated on
+demand during STL generation. Lowercase letter tiles still load from
+pre-rendered letter STL fragments when present, otherwise they are generated
+from the built-in letter renderer.
 
 Default `*` and `O` hole diameters are fixed physical dimensions, independent
 of `UNIT_MM`; only the `*` pin hole is enlarged from its previous value. `*` and `O` pad outer prisms use the same outside fraction and are enlarged close to

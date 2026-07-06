@@ -4,3 +4,4 @@ __pycache__/
 **/.venv/*
 !**/.venv/README.md
 **/env/
+vox2stl/tiles/tile_cache.pickle

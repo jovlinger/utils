@@ -115,7 +115,7 @@ def test_fixlinks_finds_blob_next_to_files_root(tmp_path: Path) -> None:
 
 
 def test_fixlinks_when_shadir_is_broad_flac_tree(tmp_path: Path) -> None:
-    """Mirror ``--shadir …/flac`` with ``flac/{files,data}`` — blobs under ``data/xx/…``."""
+    """Mirror ``--shadir .../flac`` with ``flac/{files,data}`` -- blobs under ``data/xx/...``."""
     music = tmp_path / "music"
     flac = music / "flac"
     files_root = flac / "files"
