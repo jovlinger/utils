@@ -345,18 +345,18 @@ class FieldAndWorkItemTests(TodoCase):
     def test_work_item_aliases_add_and_done_items(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-work-items", tid)
-        proc = self.todo("chunk-add", "--summary=first item")
+        proc = self.todo("work-item-add", "--summary=first item")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("work-item-add", "--summary=second item")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
-        proc3 = self.todo("chunk-done")
+        proc3 = self.todo("work-item-done")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
 
         ticket = self.read_self()
         work_items = ticket["WorkItems"]
         self.assertEqual(len(work_items), 2)
         first, second = work_items
-        # chunk-done completes the cursor (first not-done) item as a typed code item.
+        # work-item-done completes the cursor (first not-done) item as a typed code item.
         self.assertEqual(first["kind"], "code")
         self.assertEqual(first["summary"], "first item")
         self.assertTrue(first["done"])

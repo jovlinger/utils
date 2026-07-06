@@ -1495,7 +1495,7 @@ class InitCommand(TodoSubCommand):
 
 
 class AddSubtodoCommand(TodoSubCommand):
-    command_names = ("add-subtodo", "add-child")
+    command_names = ("add-subtodo",)
     doc_short: ClassVar[str] = "Create child todo"
     doc_long: ClassVar[str] = (
         "Add-subtodo creates a child TODO from the current parent todo branch. It can "
@@ -1670,7 +1670,7 @@ class SetCommand(TodoSubCommand):
 
 
 class WorkItemAddCommand(TodoSubCommand):
-    command_names = ("work-item-add", "chunk-add")
+    command_names = ("work-item-add",)
     doc_short: ClassVar[str] = "Append work item"
     doc_long: ClassVar[str] = (
         "Work-item-add appends a new open WorkItems entry to the current todo. The entry stores "
@@ -1698,7 +1698,7 @@ class WorkItemAddCommand(TodoSubCommand):
 
 
 class WorkItemDoneCommand(TodoSubCommand):
-    command_names = ("work-item-done", "chunk-done")
+    command_names = ("work-item-done",)
     doc_short: ClassVar[str] = "Complete cursor work item as code"
     doc_long: ClassVar[str] = (
         "Work-item-done completes the current (cursor) work item as a typed 'code' item and "
@@ -1976,7 +1976,7 @@ class SetJsonPathCommand(TodoSubCommand):
 
 
 class MergeSubtodoCommand(TodoSubCommand):
-    command_names = ("merge-subtodo", "merge-child")
+    command_names = ("merge-subtodo",)
     doc_short: ClassVar[str] = "Record child merge"
     doc_long: ClassVar[str] = (
         "Merge-subtodo records that a child todo has been merged into its parent. It verifies "
@@ -2340,7 +2340,7 @@ class LogCommand(TodoSubCommand):
 
 
 class WebCommand(TodoSubCommand):
-    command_names = ("web", "web-viewer")
+    command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo postmortem viewer"
     doc_long: ClassVar[str] = (
         "Web serves a two-pane viewer for a todo graph. The top pane walks "
