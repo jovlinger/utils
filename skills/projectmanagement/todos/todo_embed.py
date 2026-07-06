@@ -7,7 +7,7 @@ import math
 import os
 import struct
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Sequence, Type
+from typing import Callable, Dict, List, Optional, Sequence, Type
 
 JsonDict = dict
 
@@ -16,8 +16,15 @@ class Embedder(ABC):
     """Abstract text embedder."""
 
     @abstractmethod
-    def name(self) -> str:
-        """Stable embedder key used in Summary/Body and sqlite."""
+    def fingerprint(self) -> str:
+        """Stable identity of the vector space this embedder produces.
+
+        Persisted as the ``embedder`` column in the ``embeddings`` table and as
+        the per-field key in Summary/Body, so only vectors sharing a fingerprint
+        are ever compared. It must capture everything that changes the vector:
+        the model, the model's own revision, and this code's processing
+        (pooling, normalization). Bump it whenever any of those change.
+        """
 
     @abstractmethod
     def dimension(self) -> int:
@@ -34,7 +41,7 @@ class NullEmbedder(Embedder):
     def __init__(self, dim: int = 8) -> None:
         self._dim = dim
 
-    def name(self) -> str:
+    def fingerprint(self) -> str:
         return "null"
 
     def dimension(self) -> int:
@@ -50,7 +57,7 @@ class MockEmbedder(Embedder):
     def __init__(self, dim: int = 16) -> None:
         self._dim = dim
 
-    def name(self) -> str:
+    def fingerprint(self) -> str:
         return "mock"
 
     def dimension(self) -> int:
@@ -70,7 +77,7 @@ class HashEmbedder(Embedder):
     def __init__(self, dim: int = 128) -> None:
         self._dim = dim
 
-    def name(self) -> str:
+    def fingerprint(self) -> str:
         return "hash"
 
     def dimension(self) -> int:
@@ -99,7 +106,7 @@ class SentenceTransformerEmbedder(Embedder):
         sample = self._model.encode("test", normalize_embeddings=True)
         self._dim = len(sample)
 
-    def name(self) -> str:
+    def fingerprint(self) -> str:
         safe = self._model_name.replace("/", "_")
         return f"st_{safe}"
 
@@ -118,24 +125,61 @@ _REGISTRY: Dict[str, Type[Embedder]] = {
 }
 
 
+class _OptionalBackend:
+    """An embedder offered only when its enable flag is set.
+
+    Kept out of the always-available registry because it needs a heavy or
+    platform-specific dependency (ML wheels, a native sidecar). It is listed by
+    ``available_embedders()`` only when ``$enable_env == "1"``, and ``factory``
+    imports the dependency lazily so importing ``todo_embed`` never drags it in.
+    Selecting it by exact key still instantiates even when the flag is unset, so
+    the factory may still raise if the platform/dependency is missing.
+    """
+
+    def __init__(self, key: str, enable_env: str, factory: Callable[[], Embedder]) -> None:
+        self.key = key
+        self.enable_env = enable_env
+        self.factory = factory
+
+
+def _make_sentence_transformers() -> Embedder:
+    return SentenceTransformerEmbedder()
+
+
+def _make_apple() -> Embedder:
+    from todo_embed_apple import AppleEmbedder  # lazy: keeps todo_embed platform-free
+
+    return AppleEmbedder()
+
+
+_OPTIONAL: Dict[str, _OptionalBackend] = {
+    "sentence_transformers": _OptionalBackend(
+        "sentence_transformers", "TODO_ENABLE_ST_EMBEDDER", _make_sentence_transformers
+    ),
+    "apple": _OptionalBackend("apple", "TODO_ENABLE_APPLE_EMBEDDER", _make_apple),
+}
+
+
 def register_embedder(name: str, cls: Type[Embedder]) -> None:
-    """Register an embedder implementation by name."""
+    """Register an always-available embedder implementation by selection key."""
     _REGISTRY[name] = cls
 
 
 def available_embedders() -> List[str]:
-    """Return registered embedder names."""
+    """Return selectable embedder keys: always-on plus any enabled optional ones."""
     names = sorted(_REGISTRY.keys())
-    if os.environ.get("TODO_ENABLE_ST_EMBEDDER") == "1":
-        names.append("sentence_transformers")
+    for backend in _OPTIONAL.values():
+        if os.environ.get(backend.enable_env) == "1":
+            names.append(backend.key)
     return names
 
 
 def get_embedder(name: Optional[str] = None) -> Embedder:
-    """Instantiate the configured embedder."""
+    """Instantiate the configured embedder by selection key."""
     chosen = name or os.environ.get("TODO_EMBEDDER", "hash")
-    if chosen == "sentence_transformers":
-        return SentenceTransformerEmbedder()
+    backend = _OPTIONAL.get(chosen)
+    if backend is not None:
+        return backend.factory()
     cls = _REGISTRY.get(chosen)
     if cls is None:
         raise ValueError(f"unknown embedder {chosen!r}; choose from {available_embedders()}")

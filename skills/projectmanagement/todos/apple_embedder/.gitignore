@@ -1,0 +1,2 @@
+# Built sidecar binary (macOS-only artifact; build with `make apple-embedder`).
+nlce-embed

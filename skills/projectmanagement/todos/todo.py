@@ -255,13 +255,13 @@ def _compute_embeddings_on_ticket(
     summary = todo.get("Summary")
     if isinstance(summary, dict) and summary.get("raw"):
         vec = embedder.embed(str(summary["raw"]))
-        summary[embedder.name()] = vec
-        rows.append(("Summary.raw", embedder.name(), vec))
+        summary[embedder.fingerprint()] = vec
+        rows.append(("Summary.raw", embedder.fingerprint(), vec))
     body = todo.get("Body")
     if isinstance(body, dict) and body.get("raw"):
         vec = embedder.embed(str(body["raw"]))
-        body[embedder.name()] = vec
-        rows.append(("Body.raw", embedder.name(), vec))
+        body[embedder.fingerprint()] = vec
+        rows.append(("Body.raw", embedder.fingerprint(), vec))
     return rows
 
 
@@ -697,7 +697,7 @@ def search_tickets(root: Path, query: str, *, limit: int = 20) -> List[JsonDict]
         rows = conn.execute("SELECT data FROM tickets").fetchall()
         embeddings = {
             (tid, field): vec
-            for tid, field, vec in todo_db.all_embeddings(conn, embedder.name())
+            for tid, field, vec in todo_db.all_embeddings(conn, embedder.fingerprint())
         }
         for row in rows:
             parsed: Any = json.loads(str(row["data"]))

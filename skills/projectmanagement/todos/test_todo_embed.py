@@ -25,7 +25,7 @@ class NullEmbedderTest(unittest.TestCase):
 
     def test_name_and_dimension(self) -> None:
         embedder = todo_embed.NullEmbedder(dim=4)
-        self.assertEqual(embedder.name(), "null")
+        self.assertEqual(embedder.fingerprint(), "null")
         self.assertEqual(embedder.dimension(), 4)
 
     def test_embed_is_zeros(self) -> None:
@@ -37,7 +37,7 @@ class MockEmbedderTest(unittest.TestCase):
     """MockEmbedder is deterministic and normalized."""
 
     def test_name(self) -> None:
-        self.assertEqual(todo_embed.MockEmbedder().name(), "mock")
+        self.assertEqual(todo_embed.MockEmbedder().fingerprint(), "mock")
 
     def test_deterministic(self) -> None:
         embedder = todo_embed.MockEmbedder(dim=8)
@@ -56,7 +56,7 @@ class HashEmbedderTest(unittest.TestCase):
 
     def test_name_and_default_dim(self) -> None:
         embedder = todo_embed.HashEmbedder()
-        self.assertEqual(embedder.name(), "hash")
+        self.assertEqual(embedder.fingerprint(), "hash")
         self.assertEqual(embedder.dimension(), 128)
 
     def test_shared_tokens_increase_similarity(self) -> None:
@@ -73,7 +73,7 @@ class HashEmbedderTest(unittest.TestCase):
         env.pop("TODO_EMBEDDER", None)
         with unittest.mock.patch.dict(os.environ, env, clear=False):
             embedder = todo_embed.get_embedder()
-        self.assertEqual(embedder.name(), "hash")
+        self.assertEqual(embedder.fingerprint(), "hash")
 
 
 class RegistryTest(unittest.TestCase):

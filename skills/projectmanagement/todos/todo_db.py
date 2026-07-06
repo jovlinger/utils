@@ -15,7 +15,6 @@ JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
 SCHEMA_VERSION: int = 2
-SQLITE_VEC_LOADED: bool = False
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -107,48 +106,11 @@ def worktrees_dir() -> Path:
     return todo_dir() / "worktrees"
 
 
-def try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
-    """Try to load the sqlite-vec extension; return True when available."""
-    global SQLITE_VEC_LOADED
-    if SQLITE_VEC_LOADED:
-        return True
-    override = os.environ.get("TODO_SQLITE_VEC_PATH")
-    candidates: List[str] = []
-    if override:
-        candidates.append(override)
-    candidates.extend(("vec0", "sqlite-vec"))
-    try:
-        conn.enable_load_extension(True)
-        for name in candidates:
-            try:
-                conn.load_extension(name)
-                SQLITE_VEC_LOADED = True
-                return True
-            except sqlite3.OperationalError:
-                continue
-    except (sqlite3.OperationalError, AttributeError):
-        # AttributeError: this Python's sqlite3 was built without loadable
-        # extension support (e.g. --enable-loadable-sqlite-extensions off).
-        pass
-    finally:
-        try:
-            conn.enable_load_extension(False)
-        except (sqlite3.OperationalError, AttributeError):
-            pass
-    return False
-
-
-def vec_extension_available(conn: sqlite3.Connection) -> bool:
-    """Return True when sqlite-vec is loaded for this connection."""
-    return try_load_sqlite_vec(conn)
-
-
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    try_load_sqlite_vec(conn)
     return conn
 
 

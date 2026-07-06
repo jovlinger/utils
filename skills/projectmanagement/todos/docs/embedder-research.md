@@ -22,8 +22,25 @@ install. Weaknesses for this CLI:
   the framework entirely.
 - Token-level output needs mean-pooling before ticket-level vectors.
 
-**Verdict:** Good for a future macOS-native sidecar, not for the cross-platform
-todo CLI default.
+**Verdict:** Built as an opt-in macOS-native sidecar (see below), not the
+cross-platform default. It gives the best semantic quality of the three when
+available.
+
+**Now implemented** as the `apple` backend (`todo_embed_apple.AppleEmbedder`):
+
+- A Swift sidecar (`apple_embedder/nlce_embed.swift`, built to `nlce-embed` via
+  `make apple-embedder`) loads the on-device model and mean-pools + L2-normalizes
+  its per-token vectors. Python talks to it over JSON lines.
+- Long-lived but **lazily started** on the first `embed()`, since embedding is
+  rare next to other todo operations but the model load (and one-time asset
+  download) is expensive. One transparent respawn if the sidecar dies.
+- Its `fingerprint()` records the model identifier and Apple's integer
+  `revision` plus this code's pooling version, e.g.
+  `apple_nlce:<modelid>:r1:pool=mean:norm=l2:v1`, so vectors are only compared
+  within the exact space that produced them.
+- Gated behind `TODO_ENABLE_APPLE_EMBEDDER=1` (listing) and selected with
+  `TODO_EMBEDDER=apple`; requires macOS 14+ and the built binary. Verified
+  end-to-end: 512-dim vectors, related text ranks above unrelated.
 
 ### HashEmbedder (local, default)
 
@@ -56,7 +73,7 @@ slow cold start, unsuitable for bare CI runners.
 |-------------|----------|----------|
 | CI / agents / default | `hash` | (none) |
 | Developer semantic search | `sentence_transformers` | `TODO_ENABLE_ST_EMBEDDER=1`, `TODO_EMBEDDER=sentence_transformers` |
-| Future macOS app | NLContextualEmbedding sidecar | TBD |
+| macOS 14+ semantic search | `apple` (NLContextualEmbedding sidecar) | `TODO_ENABLE_APPLE_EMBEDDER=1`, `TODO_EMBEDDER=apple` (after `make apple-embedder`) |
 
 ## Storage and search
 
@@ -65,14 +82,22 @@ embedder, vector)`. On ticket write, `_apply_embeddings_to_ticket()` sets
 `Summary["hash"]` / `Body["hash"]` (or the active embedder name) and syncs
 sqlite rows.
 
-### sqlite-vec extension (optional)
+### In-DB vector search (sqlite-vec): deferred
 
-`todo_db.try_load_sqlite_vec()` attempts to load the sqlite-vec extension
-(`vec0`, `sqlite-vec`, or `TODO_SQLITE_VEC_PATH`) at connect time. When loading
-fails (typical in CI/Linux), search falls back to Python-side cosine similarity
-in `todo_embed.cosine_similarity()` over unpacked blobs. No behavior change is
-required for callers; ANN indexing can be wired later when vec is reliably
-available.
+Similarity ranking runs entirely in Python: `todo_embed.cosine_similarity()`
+over the float blobs unpacked from the `embeddings` table. The sqlite-vec
+extension (`vec0`) was evaluated and intentionally **not** adopted for now:
+
+- It is a performance/ergonomics play, not a quality one -- it computes the same
+  exact cosine over the same vectors, so ranking is unchanged. Relevance is set
+  by the embedder, not by where the distance math runs.
+- It only pays off at thousands-to-millions of vectors; the current corpus makes
+  the Python scan effectively instant.
+- It also needs a CPython built with loadable-extension support, which is absent
+  on the macOS system/venv interpreters here.
+
+Store the vector as a plain packed-float array and rank in Python. Revisit an
+in-DB `vec0` search path only when the index grows enough to justify it.
 
 ## Configuration summary
 
@@ -80,5 +105,7 @@ available.
 TODO_EMBEDDER=hash                    # default
 TODO_ENABLE_ST_EMBEDDER=1             # expose sentence_transformers in help
 TODO_EMBEDDER=sentence_transformers   # opt-in ML backend
-TODO_SQLITE_VEC_PATH=/path/to/vec0    # optional sqlite-vec load path
+TODO_ENABLE_APPLE_EMBEDDER=1          # expose the macOS apple backend in help
+TODO_EMBEDDER=apple                   # opt-in macOS NLContextualEmbedding sidecar
+TODO_APPLE_NLCE_BIN=/path/to/nlce-embed  # override the sidecar binary location
 ```
