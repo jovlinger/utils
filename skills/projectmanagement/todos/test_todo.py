@@ -19,11 +19,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import todo  # noqa: E402  (direct import for unit-level regression tests)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
@@ -749,6 +753,31 @@ class WebViewerTests(TodoCase):
         self.assertIn(sha[:8], proc.stdout)
         # Every todo Id is a re-root link (openable as a new top-level timeline).
         self.assertIn("/?root=" + ticket["Id"], proc.stdout)
+
+
+class MissingRepoCwdTests(unittest.TestCase):
+    """A subtodo can record a repo path (Scope.path_to_project) from another
+    machine that is absent here; git calls must not crash on the missing cwd."""
+
+    MISSING = Path("/no/such/repo/todo-missing-cwd")
+
+    def test_run_git_reports_failure_for_missing_repo(self) -> None:
+        result = todo.run_git(self.MISSING, "status", check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_run_git_raises_todoerror_when_checked(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            todo.run_git(self.MISSING, "status")
+
+    def test_read_todo_at_ref_returns_none_for_missing_repo(self) -> None:
+        # Force legacy (git-only) mode so this exercises the git-show path (the
+        # reported crash) without opening the default sqlite db, which would
+        # cache global todo-dir resolution and leak into other test modules.
+        with unittest.mock.patch.dict(os.environ, {"TODO_USE_JSON": "1"}):
+            self.assertIsNone(todo.read_todo_at_ref(self.MISSING, "some-branch"))
+
+    def test_branch_exists_false_for_missing_repo(self) -> None:
+        self.assertFalse(todo.branch_exists(self.MISSING, "main"))
 
 
 if __name__ == "__main__":

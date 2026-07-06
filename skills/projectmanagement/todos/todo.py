@@ -62,13 +62,21 @@ def utc_now() -> str:
 
 def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a git command in *root*."""
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", *args],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        # *root* may name a repo path recorded on another machine that does not
+        # exist here (e.g. a subtodo's Scope.path_to_project). Treat an
+        # unreachable working directory as a normal git failure.
+        result = subprocess.CompletedProcess(
+            ["git", *args], returncode=1, stdout="", stderr=str(exc)
+        )
     if check and result.returncode != 0:
         detail: str = (result.stderr or result.stdout or "").strip()
         raise TodoError(f"git {' '.join(args)} failed: {detail}")
@@ -155,13 +163,17 @@ def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
             ticket = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), ref)
             if ticket is not None:
                 return normalize_todo_schema(ticket)
-    show: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "show", f"{ref}:TODO.json"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        show: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "show", f"{ref}:TODO.json"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        # *root* recorded on another machine and absent here: ticket unavailable.
+        return None
     if show.returncode != 0:
         return None
     try:
