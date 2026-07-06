@@ -209,10 +209,7 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
 
 def read_todo_required(root: Path) -> JsonDict:
     """Return parsed ticket from the worktree or raise."""
-    todo = read_todo_worktree(root)
-    if todo is None:
-        branch = current_branch(root) or "?"
-        raise TodoError(f"no todo found on current branch {branch!r}")
+    _, todo = read_todo_current_branch(root)
     return todo
 
 

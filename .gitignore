@@ -5,4 +5,5 @@ __pycache__/
 !**/.venv/README.md
 **/env/
 vox2stl/tiles/tile_cache.pickle
-.todo/worktrees
+.todo/worktrees/
+.todo/worktrees/**
