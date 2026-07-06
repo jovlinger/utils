@@ -11,7 +11,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
 JsonDict = Dict[str, Any]
@@ -220,64 +220,47 @@ def load_child_ticket(root: Path, entry: JsonDict) -> JsonDict:
     }
 
 
-def walk_todos(
-    root: Path,
-    ticket: JsonDict,
-    depth: int = 0,
-    visited: Optional[set[str]] = None,
-) -> List[JsonDict]:
-    """Walk a todo and its child tickets, including each branch's commits."""
-    if visited is None:
-        visited = set()
-    ticket_id = str(ticket.get("Id") or "")
-    ticket_short = ticket_id[:8]
-    if ticket_id and ticket_id in visited:
-        _debug(
-            f"walk_todos skip already visited id={ticket_short} depth={depth}",
-            phase="walk",
-        )
-        return []
-    if ticket_id:
-        visited.add(ticket_id)
-    branch = str(ticket.get("Branch") or "")
-    subtodo_count = len(list(ticket.get("Subtodos") or []))
-    _debug(
-        f"walk_todos enter id={ticket_id} branch={branch!r} depth={depth} "
-        f"subtodos={subtodo_count}",
-        phase="walk",
-    )
-    started = time.monotonic()
+def lane_node(root: Path, ticket: JsonDict, *, depth: int, has_children: bool) -> JsonDict:
+    """Build one timeline lane from a todo: its metadata plus branch commits."""
     summary = ticket.get("Summary")
-    node = {
+    return {
         "id": str(ticket.get("Id") or ""),
         "branch": str(ticket.get("Branch") or ""),
         "summary": summary.get("raw", "") if isinstance(summary, dict) else "",
         "state": current_state_name(ticket) or "?",
         "depth": depth,
         "repo": str(root),
+        "has_children": has_children,
         "commits": branch_commits(root, ticket),
     }
-    nodes = [node]
-    child_index = 0
+
+
+def build_lanes(root: Path, ticket: JsonDict) -> List[JsonDict]:
+    """Build one level of side-by-side lanes: the root todo then each direct subtodo.
+
+    Deeper nesting is not expanded inline; a subtodo that has its own subtodos is
+    flagged so the viewer can offer a re-root link to open it as a new top level.
+    """
+    ticket_id = str(ticket.get("Id") or "")
+    _debug(f"build_lanes root id={ticket_id[:8]}", phase="lanes")
+    lanes = [lane_node(root, ticket, depth=0, has_children=False)]
     for entry in list(ticket.get("Subtodos") or []):
-        if isinstance(entry, dict):
-            child_index += 1
-            child_id = str(entry.get("Id") or "")[:8]
-            _debug(
-                f"walk_todos child {child_index}/{subtodo_count} parent={ticket_id} "
-                f"child={child_id} depth={depth + 1}",
-                phase="walk",
-            )
-            nodes.extend(
-                walk_todos(root, load_child_ticket(root, entry), depth + 1, visited)
-            )
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    _debug(
-        f"walk_todos exit id={ticket_id} depth={depth} nodes={len(nodes)} "
-        f"commits={sum(len(n['commits']) for n in nodes)} elapsed_ms={elapsed_ms}",
-        phase="walk",
-    )
-    return nodes
+        if not isinstance(entry, dict):
+            continue
+        child = load_child_ticket(root, entry)
+        has_children = bool(list(child.get("Subtodos") or []))
+        lanes.append(lane_node(root, child, depth=1, has_children=has_children))
+    _debug(f"build_lanes root id={ticket_id[:8]} lanes={len(lanes)}", phase="lanes")
+    return lanes
+
+
+def commit_message(root: Path, commit_hash: str) -> str:
+    """Return the full commit message (subject + body) for one commit."""
+    _debug(f"commit_message commit={commit_hash}")
+    result = run_git(root, "show", "-s", "--format=%B", commit_hash, check=False)
+    if result.returncode != 0:
+        return "[commit message unavailable]\n"
+    return result.stdout
 
 
 def diff_unified(root: Path, commit_hash: str) -> str:
@@ -350,18 +333,19 @@ def diff_prepost(root: Path, commit_hash: str) -> str:
     return html_out
 
 
-def flatten_commits(nodes: Sequence[JsonDict]) -> List[JsonDict]:
-    """Flatten node commits with ticket metadata attached."""
-    flattened: List[JsonDict] = []
-    for node in nodes:
-        for commit in node["commits"]:
-            enriched = dict(commit)
-            enriched["ticket_id"] = node["id"]
-            enriched["ticket_summary"] = node["summary"]
-            enriched["branch"] = node["branch"]
-            enriched["repo"] = node["repo"]
-            flattened.append(enriched)
-    return flattened
+def work_item_shas(ticket: JsonDict) -> List[str]:
+    """Return every commit sha recorded on the ticket's WorkItems, in order."""
+    shas: List[str] = []
+    items = ticket.get("WorkItems") or []
+    if not isinstance(items, list):
+        return shas
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for sha in item.get("commits") or []:
+            if isinstance(sha, str) and sha:
+                shas.append(sha)
+    return shas
 
 
 def render_page(
@@ -371,88 +355,169 @@ def render_page(
     selected_commit: Optional[str] = None,
     mode: str = "unified",
 ) -> str:
-    """Render the complete two-pane HTML viewer."""
-    ticket_id = str(ticket.get("Id") or "")[:8]
+    """Render the timeline (top) plus info/diff (bottom) HTML viewer."""
+    ticket_id = str(ticket.get("Id") or "")
     started = time.monotonic()
     _debug(
-        f"render_page enter root={root} ticket={ticket_id} "
+        f"render_page enter root={root} ticket={ticket_id[:8]} "
         f"selected_commit={selected_commit!r} mode={mode!r}",
         phase="render",
     )
-    nodes = walk_todos(root, ticket)
-    commits = flatten_commits(nodes)
-    _debug(
-        f"render_page walked nodes={len(nodes)} commits={len(commits)} ticket={ticket_id}",
-        phase="render",
-    )
-    commit = selected_commit or (commits[0]["hash"] if commits else "")
-    if commit and commit not in {item["hash"] for item in commits}:
-        raise TodoWebError(f"commit {commit!r} is not part of this todo graph")
     if mode not in {"unified", "prepost"}:
         raise TodoWebError("mode must be unified or prepost")
-    origin = repo_origin(root)
-    github = github_repo_url(origin)
+    lanes = build_lanes(root, ticket)
+    allowed = {commit["hash"] for lane in lanes for commit in lane["commits"]}
+    allowed |= set(work_item_shas(ticket))
+    commit = selected_commit or None
+    if commit and commit not in allowed:
+        raise TodoWebError(f"commit {commit!r} is not part of this todo")
+    github = github_repo_url(repo_origin(root))
+    root_sel = ticket_id or "self"
+    if commit:
+        info_html = _commit_info(root, commit, mode, root_sel, github)
+    else:
+        info_html = _root_info(root, ticket, root_sel, mode)
+    page = _html_shell(root, ticket, lanes, commit, root_sel, mode, info_html)
     _debug(
-        f"render_page diff commit={commit!r} mode={mode!r} github={bool(github)}",
-        phase="render",
-    )
-    diff_html = (
-        f"<pre><code>{html.escape(diff_unified(root, commit))}</code></pre>"
-        if commit and mode == "unified"
-        else diff_prepost(root, commit)
-        if commit
-        else "<p>No commits found for this todo graph.</p>"
-    )
-    page = _html_shell(root, ticket, nodes, commits, commit, mode, github, diff_html)
-    _debug(
-        f"render_page exit ticket={ticket_id} html_bytes={len(page.encode('utf-8'))} "
+        f"render_page exit ticket={ticket_id[:8]} html_bytes={len(page.encode('utf-8'))} "
         f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
         phase="render",
     )
     return page
 
 
+def _reroot_href(target_id: str) -> str:
+    """Link that re-displays *target_id* as the top-level timeline root."""
+    return html.escape(f"/?root={target_id}#top")
+
+
+def _commit_href(root_sel: str, commit_hash: str, mode: str) -> str:
+    """Link that keeps the current root but selects *commit_hash* in the info pane."""
+    return html.escape(f"/?root={root_sel}&commit={commit_hash}&mode={mode}#info")
+
+
+def _lane_html(
+    root: Path,
+    lane: JsonDict,
+    root_sel: str,
+    mode: str,
+    selected_commit: Optional[str],
+) -> str:
+    """Render one side-by-side lane: header plus its commits stacked oldest-first."""
+    is_root = int(lane["depth"]) == 0
+    lane_id = str(lane["id"])
+    expand = ""
+    if lane["has_children"]:
+        expand = (
+            f'<a class="expand" title="open this subtodo as its own timeline" '
+            f'href="{_reroot_href(lane_id)}">(+)</a>'
+        )
+    id_link = (
+        f'<a href="{_reroot_href(lane_id)}">{html.escape(lane_id[:8] or "?")}</a>'
+        if lane_id
+        else "?"
+    )
+    parts: List[str] = [
+        f'<div class="lane{" root" if is_root else ""}">',
+        '<div class="lane-head">',
+        expand,
+        f'<div class="lane-title">{html.escape(lane["summary"] or "(no summary)")}</div>',
+        f'<div class="meta">todo {id_link} &middot; {html.escape(lane["branch"] or "-")} '
+        f'&middot; {html.escape(lane["state"])}</div>',
+        "</div>",
+        '<ol class="commits">',
+    ]
+    for commit in lane["commits"]:
+        selected = " selected" if commit["hash"] == selected_commit else ""
+        href = _commit_href(root_sel, commit["hash"], mode)
+        parts.append(
+            f'<li class="commit{selected}"><a href="{href}">'
+            f'{html.escape(commit["short"])} {html.escape(commit["subject"])}</a></li>'
+        )
+    if not lane["commits"]:
+        parts.append('<li class="commit empty">no commits</li>')
+    parts.append("</ol></div>")
+    return "".join(parts)
+
+
+def _root_info(root: Path, ticket: JsonDict, root_sel: str, mode: str) -> str:
+    """Default bottom-pane content: root metadata and the WorkItems plan."""
+    items = ticket.get("WorkItems") or []
+    rows: List[str] = []
+    if isinstance(items, list):
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            done = bool(item.get("done"))
+            mark = "[x]" if done else "[ ]"
+            summary = html.escape(str(item.get("summary", "")))
+            sha_links = " ".join(
+                f'<a href="{_commit_href(root_sel, sha, mode)}">{html.escape(sha[:8])}</a>'
+                for sha in (item.get("commits") or [])
+                if isinstance(sha, str) and sha
+            )
+            sha_html = f' <span class="shas">{sha_links}</span>' if sha_links else ""
+            rows.append(f'<li>{mark} {summary}{sha_html}</li>')
+    plan = f'<ol class="workitems">{"".join(rows)}</ol>' if rows else "<p>No work items.</p>"
+    return (
+        '<div class="info-body">'
+        "<h2>More info</h2>"
+        '<div class="meta">Click any commit above to see its message and diff here. '
+        "Click a todo Id or (+) to open that todo as its own timeline.</div>"
+        f"<h3>Work plan</h3>{plan}"
+        "</div>"
+    )
+
+
+def _commit_info(
+    root: Path,
+    commit: str,
+    mode: str,
+    root_sel: str,
+    github: Optional[str],
+) -> str:
+    """Bottom-pane content for a selected commit: message (left), diff (right)."""
+    message = html.escape(commit_message(root, commit))
+    if mode == "unified":
+        diff_inner = f"<pre><code>{html.escape(diff_unified(root, commit))}</code></pre>"
+    else:
+        diff_inner = diff_prepost(root, commit)
+    mode_toggle = (
+        f'<a href="{_commit_href(root_sel, commit, "unified")}">unified</a> &middot; '
+        f'<a href="{_commit_href(root_sel, commit, "prepost")}">pre/post</a>'
+    )
+    github_link = ""
+    if github:
+        gh_href = html.escape(f"{github}/commit/{commit}")
+        github_link = f' &middot; <a href="{gh_href}">GitHub</a>'
+    return (
+        '<div class="info-split">'
+        '<div class="commit-msg">'
+        f"<h3>{html.escape(commit[:8])}</h3>"
+        f"<pre><code>{message}</code></pre>"
+        "</div>"
+        '<div class="commit-diff diff-code">'
+        f'<div class="diff-bar">{mode_toggle}{github_link}</div>'
+        f"{diff_inner}"
+        "</div>"
+        "</div>"
+    )
+
+
 def _html_shell(
     root: Path,
     ticket: JsonDict,
-    nodes: Sequence[JsonDict],
-    commits: Sequence[JsonDict],
-    selected_commit: str,
+    lanes: Sequence[JsonDict],
+    selected_commit: Optional[str],
+    root_sel: str,
     mode: str,
-    github: Optional[str],
-    diff_html: str,
+    info_html: str,
 ) -> str:
-    """Assemble graph and diff panes."""
-    title = html.escape(ticket.get("Summary", {}).get("raw", "todo postmortem"))
-    graph_parts: List[str] = []
-    for node in nodes:
-        indent = int(node["depth"]) * 24
-        graph_parts.append(
-            f'<article class="ticket" style="margin-left:{indent}px">'
-            f'<div class="ticket-title">{html.escape(node["summary"])}</div>'
-            f'<div class="meta">todo {html.escape(node["id"])} · branch '
-            f'{html.escape(node["branch"])} · state {html.escape(node["state"])} · repo '
-            f'{html.escape(node["repo"])}</div>'
-            '<ol class="commits">'
-        )
-        for commit in node["commits"]:
-            selected = " selected" if commit["hash"] == selected_commit else ""
-            url = f"/?commit={commit['hash']}&mode={mode}#diff"
-            github_link = ""
-            if github:
-                gh_href = f"{github}/commit/{commit['hash']}"
-                github_link = f' <a class="github" href="{html.escape(gh_href)}">GitHub</a>'
-            graph_parts.append(
-                f'<li class="commit{selected}"><a href="{html.escape(url)}">'
-                f'{html.escape(commit["short"])} {html.escape(commit["subject"])}</a>'
-                f'<div class="meta">hash {html.escape(commit["hash"])} · repo '
-                f'{html.escape(str(root))}{github_link}</div></li>'
-            )
-        graph_parts.append("</ol></article>")
-    mode_toggle = (
-        f'<a href="/?commit={html.escape(selected_commit)}&mode=unified#diff">unified</a>'
-        " · "
-        f'<a href="/?commit={html.escape(selected_commit)}&mode=prepost#diff">pre/post</a>'
+    """Assemble the timeline (top) and info (bottom) panes."""
+    title = html.escape(ticket.get("Summary", {}).get("raw", "todo timeline"))
+    ticket_id = str(ticket.get("Id") or "")
+    lane_html = "".join(
+        _lane_html(root, lane, root_sel, mode, selected_commit) for lane in lanes
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -461,18 +526,31 @@ def _html_shell(
   <title>{title}</title>
   <style>
     body {{ margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; color: #17202a; }}
-    header {{ padding: 12px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; }}
-    .pane {{ padding: 16px; }}
-    #graph {{ height: 42vh; overflow: auto; border-bottom: 3px solid #d8dee4; }}
-    #diff {{ height: 50vh; overflow: auto; background: #0d1117; color: #e6edf3; }}
-    .ticket {{ margin: 0 0 14px; padding-left: 12px; border-left: 3px solid #8c959f; }}
-    .ticket-title {{ font-weight: 700; }}
-    .meta {{ color: #57606a; font-size: 12px; overflow-wrap: anywhere; }}
-    .commits {{ margin: 8px 0 0 20px; padding: 0; }}
-    .commit {{ padding: 4px 6px; border-radius: 5px; }}
-    .commit.selected {{ background: #ddf4ff; }}
+    header {{ padding: 10px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; }}
     a {{ color: #0969da; text-decoration: none; }}
-    #diff a {{ color: #79c0ff; }}
+    a:hover {{ text-decoration: underline; }}
+    .meta {{ color: #57606a; font-size: 12px; overflow-wrap: anywhere; }}
+    #top {{ height: 45vh; overflow: auto; border-bottom: 3px solid #d8dee4; }}
+    #info {{ height: 47vh; overflow: auto; padding: 12px 16px; }}
+    .axis {{ padding: 6px 16px 0; color: #57606a; font-size: 12px; }}
+    .lanes {{ display: flex; gap: 10px; align-items: flex-start; padding: 8px 16px 16px; }}
+    .lane {{ flex: 0 0 240px; width: 240px; border: 1px solid #d8dee4; border-radius: 6px;
+             background: #fff; }}
+    .lane.root {{ border-color: #8c959f; background: #f6f8fa; }}
+    .lane-head {{ position: relative; padding: 8px; border-bottom: 1px solid #eaeef2; }}
+    .lane-title {{ font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }}
+    .expand {{ position: absolute; top: 6px; right: 8px; font-weight: 700; }}
+    .commits {{ list-style: none; margin: 0; padding: 6px; }}
+    .commit {{ padding: 4px 6px; border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }}
+    .commit.selected {{ background: #ddf4ff; }}
+    .commit.empty {{ color: #8c959f; }}
+    .workitems {{ margin: 6px 0 0; padding-left: 20px; }}
+    .workitems .shas a {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+    .info-split {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }}
+    .commit-msg pre {{ background: #f6f8fa; padding: 12px; border-radius: 6px; }}
+    .diff-code {{ background: #0d1117; color: #e6edf3; border-radius: 6px; padding: 12px; }}
+    .diff-code a {{ color: #79c0ff; }}
+    .diff-bar {{ margin-bottom: 8px; }}
     pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }}
     .split {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
     .file-pair {{ margin-bottom: 16px; }}
@@ -480,17 +558,18 @@ def _html_shell(
   </style>
 </head>
 <body>
-  <header>
-    <strong>{title}</strong>
-    <div class="meta">root {html.escape(str(ticket.get("Id", "")))} · repo {html.escape(str(root))}</div>
+  <header id="top">
+    <strong><a href="{_reroot_href(ticket_id or "self")}">{title}</a></strong>
+    <div class="meta">root {html.escape(ticket_id)} &middot; repo {html.escape(str(root))}</div>
   </header>
-  <section id="graph" class="pane">
-    {"".join(graph_parts)}
+  <section id="top-pane">
+    <div class="axis">time flows down &darr; &middot; lanes are parallel subtodos</div>
+    <div id="lanes-scroll" style="max-height: 40vh; overflow: auto;">
+      <div class="lanes">{lane_html}</div>
+    </div>
   </section>
-  <section id="diff" class="pane">
-    <div>{mode_toggle}</div>
-    <h2>Diff {html.escape(selected_commit)}</h2>
-    {diff_html}
+  <section id="info">
+    {info_html}
   </section>
 </body>
 </html>
@@ -503,8 +582,14 @@ def serve(
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
+    resolver: Optional[Callable[[str], JsonDict]] = None,
 ) -> str:
-    """Start the todo web viewer and serve until interrupted."""
+    """Start the todo web viewer and serve until interrupted.
+
+    *resolver* maps a todo selector (from the ?root= query param) to a ticket so
+    that todo-Id links can re-root the timeline on another todo. When omitted,
+    every request renders the ticket passed here.
+    """
     ticket_id = str(ticket.get("Id") or "")[:8]
     subtodos = len(list(ticket.get("Subtodos") or []))
     _debug(
@@ -528,8 +613,12 @@ def serve(
             params = parse_qs(parsed.query)
             commit = params.get("commit", [None])[0]
             mode = params.get("mode", ["unified"])[0]
+            root_sel = params.get("root", [None])[0]
             try:
-                payload = render_page(root, ticket, selected_commit=commit, mode=mode)
+                target = ticket
+                if root_sel and resolver is not None:
+                    target = resolver(root_sel)
+                payload = render_page(root, target, selected_commit=commit, mode=mode)
             except TodoWebError as exc:
                 _debug(f"GET 400 error={exc}", phase="http")
                 self.send_error(400, str(exc))

@@ -280,6 +280,20 @@ def commit_todo(root: Path, message: str) -> None:
     run_git(root, "commit", "-m", message, check=False)
 
 
+def head_sha(root: Path) -> Optional[str]:
+    """Return the current HEAD commit sha, or None when there is no commit."""
+    result: subprocess.CompletedProcess[str] = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def current_branch(root: Path) -> Optional[str]:
     """Return short name of the checked-out branch, if any."""
     result: subprocess.CompletedProcess[str] = subprocess.run(
@@ -946,6 +960,12 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
         if not isinstance(item, dict):
             findings.append(f"WorkItems.{index} must be an object")
             continue
+        commits = item.get("commits")
+        if commits is not None:
+            if not isinstance(commits, list):
+                findings.append(f"WorkItems.{index}.commits must be a list")
+            elif not all(isinstance(sha, str) for sha in commits):
+                findings.append(f"WorkItems.{index}.commits entries must be strings")
         execution = item.get("execution")
         if execution is None:
             continue
@@ -1445,7 +1465,7 @@ class WorkItemAddCommand(TodoSubCommand):
         root = self.root()
         todo = read_todo_required(root)
         work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        work_items.append({"summary": self.summary, "done": False})
+        work_items.append({"summary": self.summary, "done": False, "commits": []})
         todo["WorkItems"] = work_items
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -1459,8 +1479,9 @@ class WorkItemDoneCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Work-item-done marks one WorkItems entry complete on the current ticket. With no index, "
         "it selects the first item whose done field is not true. With an index, it updates that "
-        "specific zero-based item and errors if the index is out of range. The command writes "
-        "TODO.json and commits by default."
+        "specific zero-based item and errors if the index is out of range. It records the current "
+        "HEAD sha (the skill's one code commit for the item) into the item's commits list, then "
+        "writes TODO.json and commits by default."
     )
 
     @classmethod
@@ -1485,6 +1506,14 @@ class WorkItemDoneCommand(TodoSubCommand):
         if index < 0 or index >= len(work_items):
             raise TodoError(f"work item index out of range: {index}")
         work_items[index]["done"] = True
+        # Record the code commit for this unit: HEAD is the skill's one commit
+        # for the item. Capture it before commit_todo adds the bookkeeping commit.
+        sha = head_sha(root)
+        if sha:
+            commits = list(work_items[index].get("commits") or [])
+            if sha not in commits:
+                commits.append(sha)
+            work_items[index]["commits"] = commits
         todo["WorkItems"] = work_items
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -1959,7 +1988,16 @@ class WebCommand(TodoSubCommand):
                     )
                 )
             else:
-                todo_web.serve(root, ticket, host=self.host, port=self.port)
+                def resolve_root(selector: str) -> JsonDict:
+                    """Re-root the viewer on another todo for ?root= links."""
+                    try:
+                        return resolve_ticket_by_selector(root, selector)[1]
+                    except TodoError as exc:
+                        raise todo_web.TodoWebError(str(exc)) from exc
+
+                todo_web.serve(
+                    root, ticket, host=self.host, port=self.port, resolver=resolve_root
+                )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
         return 0

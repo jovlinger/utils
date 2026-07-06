@@ -330,12 +330,16 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
 
         ticket = self.read_self()
+        work_items = ticket["WorkItems"]
+        self.assertEqual(len(work_items), 2)
+        first, second = work_items
+        self.assertEqual(first["summary"], "first item")
+        self.assertTrue(first["done"])
+        # work-item-done records the HEAD sha (the unit's code commit) on the item.
+        self.assertEqual(len(first["commits"]), 1)
+        self.assertRegex(first["commits"][0], r"\A[0-9a-f]{40}\Z")
         self.assertEqual(
-            ticket["WorkItems"],
-            [
-                {"summary": "first item", "done": True},
-                {"summary": "second item", "done": False},
-            ],
+            second, {"summary": "second item", "done": False, "commits": []}
         )
 
 
@@ -711,7 +715,8 @@ class WebViewerTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("parent viewer", proc.stdout)
         self.assertIn("child viewer", proc.stdout)
-        self.assertEqual(proc.stdout.count('class="ticket"'), 2)
+        # One root lane (parent) plus one subtodo lane (child), no deeper recursion.
+        self.assertEqual(proc.stdout.count('class="lane-title"'), 2)
 
     def test_web_dump_html_renders_open_todo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -720,7 +725,30 @@ class WebViewerTests(TodoCase):
         proc = self.todo("web", "--dump-html", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("Open viewer", proc.stdout)
-        self.assertIn("state init", proc.stdout)
+        self.assertIn('class="lane root"', proc.stdout)
+        self.assertIn("&middot; init</div>", proc.stdout)
+        # No commit selected: the bottom pane shows the default "more info" view.
+        self.assertIn("More info", proc.stdout)
+
+    def test_web_dump_html_links_work_item_commits_and_reroot(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        init = self.todo("init", "--summary=Track commits")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        add = self.todo("work-item-add", "--summary=do the thing")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        done = self.todo("work-item-done")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        ticket = self.read_self()
+        sha = ticket["WorkItems"][0]["commits"][0]
+
+        proc = self.todo("web", "--dump-html", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Recorded work-item sha renders as a clickable commit link in the info pane.
+        self.assertIn("commit=" + sha, proc.stdout)
+        self.assertIn(sha[:8], proc.stdout)
+        # Every todo Id is a re-root link (openable as a new top-level timeline).
+        self.assertIn("/?root=" + ticket["Id"], proc.stdout)
 
 
 if __name__ == "__main__":
