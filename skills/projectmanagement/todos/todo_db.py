@@ -126,12 +126,14 @@ def try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
                 return True
             except sqlite3.OperationalError:
                 continue
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, AttributeError):
+        # AttributeError: this Python's sqlite3 was built without loadable
+        # extension support (e.g. --enable-loadable-sqlite-extensions off).
         pass
     finally:
         try:
             conn.enable_load_extension(False)
-        except sqlite3.OperationalError:
+        except (sqlite3.OperationalError, AttributeError):
             pass
     return False
 
