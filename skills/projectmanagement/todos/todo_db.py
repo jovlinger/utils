@@ -1,4 +1,4 @@
-"""SQLite storage for branch-bound todo tickets (~/.todo/sqlite.db)."""
+"""SQLite storage for branch-bound todo tickets under a single todo directory."""
 
 from __future__ import annotations
 
@@ -6,33 +6,110 @@ import json
 import os
 import sqlite3
 import struct
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 JsonDict = Dict[str, Any]
 
-DEFAULT_DB_PATH: Path = Path.home() / ".todo" / "sqlite.db"
+HOME_TODO_DIR_NAME: str = ".todo"
 SCHEMA_VERSION: int = 1
 SQLITE_VEC_LOADED: bool = False
+_RESOLVED_TODO_DIR: Optional[Path] = None
 
 
 class TodoDbError(Exception):
     """User-facing todo database error."""
 
 
+def reset_todo_dir() -> None:
+    """Clear cached todo directory (tests only)."""
+    global _RESOLVED_TODO_DIR
+    _RESOLVED_TODO_DIR = None
+
+
+def _optional_git_root(start: Optional[Path] = None) -> Optional[Path]:
+    """Return git toplevel for *start*, or None when not in a repo."""
+    cwd: Path = start or Path.cwd()
+    result: subprocess.CompletedProcess[str] = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip())
+
+
+def _home_todo_dir() -> Path:
+    return Path.home() / HOME_TODO_DIR_NAME
+
+
+def _todo_dir_candidates(git_root: Optional[Path]) -> List[Path]:
+    """Ordered todo directory candidates for one CLI invocation."""
+    candidates: List[Path] = []
+    todo_dir_env = os.environ.get("TODO_DIR")
+    if todo_dir_env:
+        candidates.append(Path(todo_dir_env))
+    if git_root is not None:
+        candidates.append(git_root / HOME_TODO_DIR_NAME)
+    candidates.append(_home_todo_dir())
+    return candidates
+
+
+def _default_todo_dir(git_root: Optional[Path]) -> Path:
+    """Directory to create when no sqlite.db exists in any candidate."""
+    todo_dir_env = os.environ.get("TODO_DIR")
+    if todo_dir_env:
+        return Path(todo_dir_env)
+    if git_root is not None:
+        return git_root / HOME_TODO_DIR_NAME
+    return _home_todo_dir()
+
+
+def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
+    """Resolve the todo directory once per process.
+
+    Search order: ``$TODO_DIR``, ``$(gitroot)/.todo/``, ``$HOME/.todo/``.
+    The first candidate containing ``sqlite.db`` wins; otherwise the default
+    create location is the first entry in that list that applies (``$TODO_DIR``,
+    else repo-local ``.todo``, else home). All paths (db, catalog, worktrees)
+    live under the chosen directory for the rest of the call.
+    """
+    global _RESOLVED_TODO_DIR
+    if _RESOLVED_TODO_DIR is not None:
+        return _RESOLVED_TODO_DIR
+    root = git_root if git_root is not None else _optional_git_root()
+    for candidate in _todo_dir_candidates(root):
+        db_file = candidate / "sqlite.db"
+        if db_file.is_file():
+            _RESOLVED_TODO_DIR = candidate.resolve()
+            return _RESOLVED_TODO_DIR
+    _RESOLVED_TODO_DIR = _default_todo_dir(root).resolve()
+    return _RESOLVED_TODO_DIR
+
+
+def todo_dir() -> Path:
+    """Return the resolved todo directory for this process."""
+    return resolve_todo_dir()
+
+
 def db_path() -> Path:
     """Return path to the todo sqlite database."""
-    override = os.environ.get("TODO_DB_PATH")
-    return Path(override) if override else DEFAULT_DB_PATH
+    return todo_dir() / "sqlite.db"
+
+
+def catalog_path() -> Path:
+    """Return path to the catalog mirror file under the todo directory."""
+    return todo_dir() / "catalog.txt"
 
 
 def worktrees_dir() -> Path:
-    """Default root for new git worktrees."""
-    override = os.environ.get("TODO_WORKTREES_DIR")
-    if override:
-        return Path(override)
-    return Path.home() / ".todo" / "worktrees"
+    """Return worktree root under the resolved todo directory."""
+    return todo_dir() / "worktrees"
 
 
 def try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:

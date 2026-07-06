@@ -139,7 +139,7 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
 
 
 def use_sqlite() -> bool:
-    """Return True when tickets are stored in ~/.todo/sqlite.db (default)."""
+    """Return True when tickets are stored in sqlite (default)."""
     return os.environ.get(LEGACY_JSON_ENV) != "1"
 
 
@@ -438,9 +438,8 @@ def build_ticket_skeleton(
 
 
 def catalog_path() -> Path:
-    """Path of the append-only todo catalog (override with $TODO_CATALOG_PATH)."""
-    override = os.environ.get("TODO_CATALOG_PATH")
-    return Path(override) if override else Path.home() / ".todo" / "catalog.txt"
+    """Path of the catalog mirror under the resolved todo directory."""
+    return todo_db.catalog_path()
 
 
 def catalog_line(repo: Path, ticket: JsonDict) -> str:
@@ -2059,7 +2058,7 @@ class ImportJsonCommand(TodoSubCommand):
     command_names = ("import-json",)
     doc_short: ClassVar[str] = "Import legacy TODO.json into sqlite"
     doc_long: ClassVar[str] = (
-        "Import-json loads ticket JSON into ~/.todo/sqlite.db. Use --from-json for one file "
+        "Import-json loads ticket JSON into the resolved todo sqlite db. Use --from-json for one file "
         "or --scan-refs to import every TODO.json on git refs in the current repo."
     )
 
@@ -2117,11 +2116,12 @@ class SearchCommand(TodoSubCommand):
 
 class ListCommand(TodoSubCommand):
     command_names = ("list",)
-    doc_short: ClassVar[str] = "List catalog rows (~/.todo/catalog.txt)"
+    doc_short: ClassVar[str] = "List catalog rows from the todo catalog"
     doc_long: ClassVar[str] = (
         "List prints the append-only todo catalog (repo, id, branch, summary) -- the registry of "
         "where todos live, written on init. Where-to-find-it only; use 'read <id>' for ticket "
-        "content. Path override: $TODO_CATALOG_PATH."
+        "content. Catalog lives under the resolved todo directory ($TODO_DIR, gitroot/.todo, or "
+        "~/.todo)."
     )
 
     @classmethod
@@ -2177,7 +2177,10 @@ Repo & todo identity:
                repo can be cloned many times on one or many machines, so the
                same todo may exist in several checkouts; the repo root says
                WHICH checkout a branch lives in.
-  TODO branch  a git repo branch that carries a todo ticket in ~/.todo/sqlite.db.
+  TODO branch  a git repo branch that carries a todo ticket in sqlite.
+  todo dir     resolved once per invocation: $TODO_DIR, else gitroot/.todo, else
+               ~/.todo (first with sqlite.db wins; same dir for db, catalog,
+               worktrees).
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted
                fallback for todos written on dev/master).
@@ -2186,7 +2189,7 @@ Repo selection:
   The repo root is the CURRENT directory's gitroot; there is no --repo flag.
   `cd` into the target repo or worktree before invoking. todo.py hard-errors if
   CWD is not a git repo. Find other checkouts with `git worktree list`; new
-  worktrees go under ~/.todo/worktrees/<repo-path>/<branch> by convention.
+  worktrees go under <todo-dir>/worktrees/<repo-path>/<branch> by convention.
 """
 
 

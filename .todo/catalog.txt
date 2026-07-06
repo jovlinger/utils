@@ -1,0 +1,134 @@
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-t_e0huu6 80a4ac2c   80a4ac2c-viewer-parent         Viewer parent
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 13e57db1   13e57db1-cli-port-subtodo-flow cli port subtodo flow
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 1ae90d40   1ae90d40-cli-retire-json-files cli retire json files
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 23067f38   23067f38-vec-local-embedder-impl vec local embedder impl
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 35e85ca4   35e85ca4-plan-ota-updates-thermo Plan OTA updates for thermo DMZ and onboard hardware
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 475ba3da   475ba3da-wt-teardown-legacy-tree wt-teardown legacy tree
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 515fc9ea   515fc9ea-test-sqlite-storage-sui test sqlite storage suite
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-ex1g3q71 700441bf   700441bf-open-viewer           Open viewer
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 57948aa5   57948aa5-db-connection-module  db connection module
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 5de50305   5de50305-db-ticket-crud-api    db ticket CRUD api
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 72027b4d   72027b4d-vec-research-local-embe vec research local embedders
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 74c68f77   74c68f77-docs-update-skill-sqlit docs update skill sqlite
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 7839eeaa   7839eeaa-db-schema-v1          db schema v1
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 7bb1e067   7bb1e067-cli-json-import-once  cli json import once
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 83cd1c8f   83cd1c8f-vec-search-command    vec search command
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 83d88d60   83d88d60-vec-null-mock-embedder vec null mock embedder
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 8b728526   8b728526-vec-summary-body-keys vec summary body keys
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 94468c21   94468c21-cli-port-read-commands cli port read commands
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 99b77a81   99b77a81-vec-index-write       vec index on write
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding a31d8f24   a31d8f24-vec-search-ranking    vec search ranking
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding ac45da73   ac45da73-wt-default-path-constan wt-default path constant
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding c6fb2efc   c6fb2efc-cli-subcommand-audit  cli subcommand audit
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding cc756c32   cc756c32-wt-inventory-old-worktr wt-inventory old worktrees
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding ccb2ce31   ccb2ce31-vec-sqlite-vec-extensio vec sqlite vec extension
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding d5472146   d5472146-test-search-e2e       test search e2e
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding f078e746   f078e746-vec-embedder-abc      vec embedder abc
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding faea8de9   faea8de9-test-embedder-suite   test embedder suite
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding fd96b8e2   fd96b8e2-cli-port-write-commands cli port write commands
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding fe8edc2f   fe8edc2f-wt-commit-stranded-work wt-commit stranded work
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 28e73587   public-private                 Public curated portfolio repo (johaneo) with squash-push fro
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 810154bd   todo-embedding                 Todo sqlite storage, embeddings, and vector search
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-x78m76e4 536da761   536da761-fix-sensor            Fix sensor
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-ci2et27k e308f3f4   e308f3f4-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-cix0or7k 5577ff96   5577ff96-open-viewer           Open viewer
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-_xtim5_p 215faa8c   215faa8c-fix-sensor            Fix sensor
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2jc9q431 71a01147   71a01147-one                   One
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-fqycrz0y 58a82679   58a82679-solo-ticket           Solo ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-6fife4x_ 7846d4b3   7846d4b3-parent-feature        Parent feature
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-6fife4x_ a358ebd5   a358ebd5-child-one             child one
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-v6x8mcws c29a406e   c29a406e-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-yb5e59a5 4bdec5ef   4bdec5ef-open-viewer           Open viewer
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-x1q38efn e73fdcc1   e73fdcc1-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-8hbwa150 e02a29f9   e02a29f9-open-viewer           Open viewer
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-wexs524v d5a06249   d5a06249-fix-sensor            Fix sensor
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-9f1uwm3y 31c6a45b   31c6a45b-solo-ticket           Solo ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-sa2j4i9c 66d9b3e7   66d9b3e7-parent-feature        Parent feature
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-5e8_s7vw 5bdae072   5bdae072-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-7ntq6dgj 0def9e0f   0def9e0f-open-viewer           Open viewer
+/Users/johan/github.com/jovlinger/utils 91e28fd0   91e28fd0-unsupervised-semantic-t Unsupervised semantic term vocabulary from corpus
+/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding 797e476e   797e476e-vec-nl-contextual-embed vec nl contextual embedding embedder
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-nvkpiyi4 b6231628   parent-branch                  parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-nvkpiyi4 bf7090fd   bf7090fd-child-demo            child work
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-8ct1nc6d b44311ae   doctor-bad                     x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-x81el_ua 25a9175d   25a9175d-first                 first
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-x81el_ua 0d40abd2   0d40abd2-second                second
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-j8qcgnnc 45743ff7   doctor-ok                      x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-17gshtqz 2f0e98e7   2f0e98e7-fields                Renamed ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-q_e4xrad b659661e   b659661e-work-items            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-pso8ejjn e22337e8   e22337e8-legacy-ref            legacy git blob
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tf0qdhah 914ee7b9   914ee7b9-fix-sensor            Fix sensor
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tpamblxx 5066cf74   5066cf74-one                   One
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-qcjagq9c 3fd9c804   3fd9c804-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-_vk_sua5 0ad1c6bc   0ad1c6bc-solo-ticket           Solo ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-4zc3dkgi 1de92ec5   1de92ec5-parent-feature        Parent feature
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-4zc3dkgi 2d96a383   2d96a383-child-one             child one
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-a627gz4_ 18e6fa4c   18e6fa4c-verbose-parent        Verbose parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-eu9l445s b3329c4e   another-feature-name           current branch
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-16peblkz abcd0001   abcd0001-a                     x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-16peblkz abcd0002   abcd0002-b                     x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-5gdqf8pk 2276bfb6   2276bfb6-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-vsk8o06d 02aff6df   02aff6df-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-gyp5gm1v 66fd1424   66fd1424-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-mcl98q7m 0610f0e5   feature-without-id             current branch
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-yn_k7vfv 9fe2b549   9fe2b549-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-osirdeh8 bbb84556   bbb84556-demo                  worktree-edit
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-7xqi5rpl 8554d5b7   8554d5b7-wt                    x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2b1tfpg5 2b220299   2b220299-oauth                 oauth bearer token refresh
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2b1tfpg5 442ae8a7   442ae8a7-other                 unrelated database work
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-zzo1ioh9 39b38fb7   39b38fb7-leaf                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tmmypnur 8befcae9   jq-current-branch              jq summary
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-jjbx6lxo 50cf544d   50cf544d-legacy                x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-6ib1cqbj 48e08a9c   state-branch                   x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-dcdnys3k 376eb417   plain-current-branch           read me
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-249hb674 8f013fac   null-current-branch            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-aoqrzj74 b940a2b7   path-current-branch            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-8kbi0qf6 82a2427b   82a2427b-target                target
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-h2gkrxil 770b84fe   770b84fe-target                from stdin
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2l8f48ka f14008f8   parent-branch                  parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2l8f48ka 3cbcfdb0   3cbcfdb0-child                 child
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-gbg04vak dddfd721   dddfd721-done                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-umic1ojs 65cc367f   65cc367f-init                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-4e9ukqa3 a26cc38e   a26cc38e-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-_fvefaon 339427c8   339427c8-open-viewer           Open viewer
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-0ftxv2zh e92c6486   parent-branch                  parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-0ftxv2zh 66919a62   66919a62-child-demo            child work
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-qf0tfmzf b939c9cf   doctor-bad                     x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tyqnamlp def67ff4   def67ff4-first                 first
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tyqnamlp 1027cd92   1027cd92-second                second
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-p9jy6vkz 47101d62   doctor-ok                      x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-1r88_4mq 281c2434   281c2434-fields                Renamed ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-shrzcecr ae1db849   ae1db849-work-items            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-rnyffqsr 9290601e   9290601e-legacy-ref            legacy git blob
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-3_vp8ase 4f2e1b7c   4f2e1b7c-fix-sensor            Fix sensor
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-tjlqk85n 52c8d67c   52c8d67c-one                   One
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-libnnd54 39ec0360   39ec0360-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-745zenu6 423a4223   423a4223-solo-ticket           Solo ticket
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-hserq64k 8395d2b8   8395d2b8-parent-feature        Parent feature
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-hserq64k 1afe8630   1afe8630-child-one             child one
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-pzuijyki 489c0e47   489c0e47-verbose-parent        Verbose parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-7sgsv216 43a3ab8d   another-feature-name           current branch
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-v46bklsj 899b64c9   899b64c9-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-6v8rf6hl d102bb41   d102bb41-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-rllc6046 8fc1c4aa   8fc1c4aa-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-gnnyitz6 2f67ec2a   feature-without-id             current branch
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-_uf_ey9y ba893657   ba893657-demo                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-dw177alf 75940820   75940820-demo                  worktree-edit
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-nh4v4b6h d12f80fa   d12f80fa-wt                    x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-bgrpwk4i cce72a4d   cce72a4d-oauth                 oauth bearer token refresh
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-bgrpwk4i eee6a7bc   eee6a7bc-other                 unrelated database work
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-ec86sytt 17f20e14   17f20e14-leaf                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-v1fosc97 796dc762   jq-current-branch              jq summary
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-smhry2lw a8cf16c2   a8cf16c2-legacy                x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-2fhni5d4 bc1f3e91   state-branch                   x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-rkpshhcn c1f50f46   plain-current-branch           read me
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-77wkhy_j bfc0ef6c   null-current-branch            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-oxlo8sp4 b6f44c73   path-current-branch            x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-c0as0sl5 a758bf80   a758bf80-target                target
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-t4cnhlr9 974c700f   974c700f-target                from stdin
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-8_f8jf9p a1c81a38   parent-branch                  parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-8_f8jf9p dd9f98b1   dd9f98b1-child                 child
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-vpa67a7y 717ecfe5   717ecfe5-done                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-h2_af73v 4ce39890   4ce39890-init                  x
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-ql193mi0 0f41bfcb   0f41bfcb-viewer-parent         Viewer parent
+/private/var/folders/p2/9g6c0zm14v5cylf3_lf6vy300000gn/T/todo-test-hu3cukev 71b61986   71b61986-open-viewer           Open viewer

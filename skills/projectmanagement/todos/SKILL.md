@@ -127,11 +127,22 @@ that are **deferred** and listed at the bottom.
 
 ## Storage (sqlite default)
 
+Todo directory resolution (once per `todo.py` invocation; no mixing paths):
+
+1. `$TODO_DIR` when set and it contains `sqlite.db`
+2. `$(gitroot)/.todo/` when that contains `sqlite.db`
+3. `$HOME/.todo/` when that contains `sqlite.db`
+
+If none exist, create under the first applicable default: `$TODO_DIR`, else
+`$(gitroot)/.todo/`, else `$HOME/.todo/`. Db, catalog mirror, and worktrees all
+live under the chosen directory.
+
 | Item | Location | Notes |
 |------|----------|-------|
-| Tickets | ~/.todo/sqlite.db ($TODO_DB_PATH) | One row per (repo_path, branch) |
-| Catalog | sqlite + mirror ~/.todo/catalog.txt | $TODO_CATALOG_PATH overrides file |
+| Tickets | `<todo-dir>/sqlite.db` | One row per (repo_path, branch) |
+| Catalog | sqlite + mirror `<todo-dir>/catalog.txt` | |
 | Embeddings | sqlite embeddings table | On write; search via todo.py search |
+| Worktrees | `<todo-dir>/worktrees/` | Nested by repo path |
 | Legacy JSON | git TODO.json | Import only: todo.py import-json |
 
 Set TODO_USE_JSON=1 for legacy file mode. Embedder: $TODO_EMBEDDER (default hash).
@@ -157,11 +168,11 @@ the `todo.py` interface.
 | `todo.py read <selector>` | implemented | Locate the branch (or worktree) whose `TODO.json` matches `<selector>` and print the ticket JSON. Id selectors are any **4+ hex unambiguous prefix**, or the full digest. `curr`/`self` resolve to the checked-out branch's todo, even when the branch name does not contain the Id. Resolution is **catalog-first** (`~/.todo/catalog.txt`): a fast, cross-repo lookup that skips scanning every git ref; it falls back to a current-repo ref scan only when the catalog has no hit. Local-first: remote fetch is feature-flagged off (`FETCH_ENABLED`) |
 | `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit) |
 | `todo.py import-json` | implemented | Migrate legacy JSON: --from-json PATH or --scan-refs |
-| `todo.py list` | implemented | Print catalog rows from sqlite (`~/.todo/catalog.txt`): one row per todo as `repo  id  branch  summary` -- where todos live, written on `init`. Where-to-find-it only; use `read <id>` for content. `$TODO_CATALOG_PATH` overrides the path |
+| `todo.py list` | implemented | Print catalog rows from sqlite: one row per todo as `repo  id  branch  summary` -- where todos live, written on `init`. Where-to-find-it only; use `read <id>` for content |
 | `todo.py read-path <selector> <path>` | implemented | Low-level path read. Reads one value from a selected todo. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-path <selector> <path> <value\|->` | implemented | Low-level path write. Sets one value on a selected todo, with `-` reading the value from stdin. This is the canonical write primitive; higher-level commands are syntax sugar plus path-trigger behavior. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit, catalog row to `~/.todo/catalog.txt` (`$TODO_CATALOG_PATH` to override). Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit, catalog row. Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json`, commit, return to parent, register in `Subtodos` (`add-child` alias) |
 | `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object, equivalent to `set-path self State '{"<state>": {...}}'` plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged` (`merge-child` alias) |
@@ -244,14 +255,13 @@ moved.** Only *new* worktrees follow the placement convention below; the path is
 never passed on the command line -- it is a creation convention, not a lookup
 key.
 
-New worktrees go under todo_db.worktrees_dir() (default ~/.todo/worktrees/; override with
-`$TODO_WORKTREES_DIR`), nested by the repo's full path with the branch as the
+New worktrees go under todo_db.worktrees_dir() (`<todo-dir>/worktrees/`), nested by the repo's full path with the branch as the
 leaf:
 
 ```
-~/.todo/worktrees/<repo-path>/<branch>
+<todo-dir>/worktrees/<repo-path>/<branch>
 # e.g. ~/.todo/worktrees/github.com/jovlinger/util/my-branch
-#      ~/.todo/worktrees/github.com/jovlinger/configfiles/todo-webui
+#      $(gitroot)/.todo/worktrees/github.com/jovlinger/configfiles/todo-webui
 ```
 
 - `<repo-path>` mirrors the repo's canonical path (host/org/repo) as real nested

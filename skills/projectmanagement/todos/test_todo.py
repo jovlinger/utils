@@ -35,12 +35,9 @@ class TodoCase(unittest.TestCase):
     def setUp(self) -> None:
         self.repo: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))
         self._db_dir: Path = Path(tempfile.mkdtemp(prefix="todo-db-"))
-        self._db_path: Path = self._db_dir / "sqlite.db"
-        self._catalog_path: Path = self._db_dir / "catalog.txt"
         self._env: Dict[str, str] = {
             **ENV,
-            "TODO_DB_PATH": str(self._db_path),
-            "TODO_CATALOG_PATH": str(self._catalog_path),
+            "TODO_DIR": str(self._db_dir),
         }
         self._git("init", "-q")
         self._git("config", "user.email", "t@example.com")
