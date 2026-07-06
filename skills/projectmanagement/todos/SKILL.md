@@ -74,10 +74,10 @@ the parent is an incomplete call -- same as forgetting to await a promise.
 
 **Normal loop:**
 
-1. Parent `working`; file subtodos with `add-subtodo`.
-2. Per child (often one subagent each): checkout child branch -> `set-state working` -> commits -> `set-state done`.
+1. Parent `working`; file subtodos with `add-subtodo` (each records a `start_subtodo` item and advances the parent cursor).
+2. Per child (often one subagent each): on the child branch run the lifecycle loop (`set-state working`, poll and work items to `is-done`, `set-state done`).
 3. Parent: `wait-for` / `wait-and-merge` (or `merge-subtodo` each) until every child is `merged` on the parent record.
-4. Parent synthesis WorkItems (if any), then parent `set-state done`.
+4. Parent works any remaining synthesis WorkItems to `is-done`, then `set-state done`.
 
 **Surfacing blockers:** If a child cannot finish without the user, `set-state userneeded --note=...` on that child, then set parent `userneeded` with which child blocked. Never leave a child in `init`/`working` indefinitely without escalating.
 
@@ -497,7 +497,7 @@ Initial implementation:
 
 1. Parent records a barrier WorkItem with `execution.primitive =
    "wait-and-merge"` and `wait_for` child Ids.
-2. Child finishes with `todo.py set-state done --last-commit=...`.
+2. Child runs its lifecycle loop to `is-done` and reaches `set-state done`.
 3. Parent `todo.py wait-for <child>...` polls `todo.py read-path <child> State`
    until every child reaches `done`.
 4. Parent `todo.py wait-and-merge <child>...` runs `merge-subtodo` for each done
@@ -515,19 +515,19 @@ Possible later signal channels:
 - **Git hooks:** too magical for v1. Avoid coupling child `set-state` to
   repository hooks unless there is a concrete repeated need.
 
-### Richer work-item operations
+### Editing the work plan
 
-Current operations cover the common story: append a simple WorkItem and mark the
-next or indexed item done. Add more commands only when a concrete use case
-appears. Examples that would justify a command:
+The cursor commands cover the common story, all acting on the current (first
+not-done) item: `work-item-add` (append a task), `work-item-insert` (split the
+current step, becoming the new cursor), `work-item-replace` (reword the cursor
+task), `work-item-delete` (drop it), and `work-item-read` (inspect it). Done
+items are the committed history of the todo -- edit the not-done frontier, never
+the done prefix.
 
-- Reordering a long plan after the user changes priorities.
-- Marking a blocked item with a note rather than completing it.
-- Updating `execution` metadata after subtodos are split differently than first
-  planned.
-
-Until those cases recur, use `set-path` for precise edits, or
-`set --work-items-file` when replacing the whole plan is clearer.
+For a wholesale replan use `set --work-items-file <array.json>`; for a precise
+edit deep inside one item use `set-path`. `doctor` will flag a plan that breaks
+the invariants (a done item out of the prefix, a code/merge item missing its
+sha, a `start_subtodo` left as the last item).
 
 ### Worktree operations
 
@@ -553,20 +553,62 @@ parallel-checkout use case, keep worktree creation/listing manual.
 - Subtodo merge completeness: every `Subtodos[]` entry should be `merged` (or
   waived by user) before parent `done`; flag children still `init`, `working`, or
   `done` but not merge-bookkept on the parent.
+- WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
+  `code`/`merge_subtodo` item carries a sha; a done todo does not end in
+  `start_subtodo`.
 
-## How to work a ticket
+Findings come in two tiers: hard **findings** fail doctor (exit 1); soft
+**warnings** never fail it. Checks that need an absent subbranch or another repo
+-- an unresolvable sha or `subtodo_id` -- are warnings, so transitional and
+cross-repo todos (where not every subbranch is available) do not hard-fail.
 
-1. **Load:** `todo.py read <id-prefix>` or `todo.py read self`. Never assume chat memory matches sqlite.
-2. **Create parent:** `todo.py init --summary=... --body=... --ac=...` (mints Id, creates branch, stores ticket in sqlite).
-3. **Create child (when warranted):** on the parent branch, `todo.py add-subtodo --from-json=<seed.json>` or `add-subtodo --summary=...`. Registers the child under parent `Subtodos`.
-4. **Child work loop:** on the **child branch**, `set-state working` -> commits -> `set-state done --last-commit=...`. If blocked, `set-state userneeded --note=...` and escalate on the parent.
-5. **Parent merge (required):** on the **parent branch**, after git-merging the child branch (when there is code to land), `todo.py merge-subtodo <child-id-prefix>`. Repeat until all subtodos show `merged` in parent `Subtodos`. Batch: `wait-and-merge <id>...`.
-6. **Parent finish:** only when all subtodos are `merged` (or user waived), parent `set-state done --last-commit=...`.
-7. **Field edits:** `todo.py set`, `set-state`, work-item commands, or `set-path` / `update`.
+## Todo lifecycle (poll the tool for the next step)
 
-Split into child todos when the Body is too big for one clean run **or** when
+This is the authoritative lifecycle. **The todo tool carries the process
+weight**: the agent does not track "where am I" in its head -- it polls the tool
+for the next work item and acts on what it gets back. One todo == one branch;
+its lifetime matches the branch's (invariant #4).
+
+**Create.** On the intended branch, `todo.py init --summary=... --body=...
+--ac=...` mints the Id, creates the branch, records `BaseSha` (invariant #5),
+and stores the ticket. Plan the work as WorkItems with `work-item-add
+--summary=...`; keep the **head of the list small enough to be one trackable
+unit** (see `frequentcommits`).
+
+**Poll.** Ask the tool what to do next, then act, then poll again:
+
+```bash
+todo.py work-item-read      # the cursor: the first not-done item, or null when done
+todo.py is-done             # exit 0 when nothing is left, 1 otherwise
+```
+
+The cursor only moves forward. Each row below advances it by recording a typed
+done item -- the tool guarantees the shape and captures the sha:
+
+| The cursor item is... | Do | Tool records |
+|------------------------|----|--------------|
+| a subtodo to start | `todo.py add-subtodo --summary=...` (on the parent) | `start_subtodo` (+ child branch & `BaseSha`) |
+| a subtodo to land | git-merge the child, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` (+ merge sha) |
+| local coding | make the change, then `todo.py work-item-done -m "..."` (dirty tree commits it) or `work-item-done` (already committed) | `code` (+ HEAD sha) |
+| too coarse | `todo.py work-item-insert --summary=...` to split it, then re-poll | new task at the cursor |
+| blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set-state userneeded --note=...` and **come back and poll later** | -- |
+
+"Come back and ask again later" is a first-class outcome: when the next item is
+a barrier, wait/poll rather than forcing progress.
+
+**Finish.** When `is-done`, the last item is a `code` or `merge` commit
+(invariant #6), so `todo.py last-sha` is the branch's last commit. Run `todo.py
+doctor` (must be `ok`), then `todo.py set-state done`. A parent only finishes
+after every subtodo shows `merged` (see Recursive completion).
+
+Each todo -- parent or child -- runs this same loop on its own branch. Split
+into child todos when the Body is too big for one clean run **or** when
 independent research domains would overload a single context (see
-Context-scoped subtodos). Keep sequential small steps as parent WorkItems only.
+Context-scoped subtodos); keep sequential small steps as parent WorkItems.
+
+We are iteratively moving process weight into the tool. Today the agent reads
+the cursor and picks the matching command; over time `work-item-read` will
+classify the next action more directly.
 
 ## Minimal skeleton
 
