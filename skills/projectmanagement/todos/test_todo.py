@@ -99,6 +99,7 @@ class TodoCase(unittest.TestCase):
         seed.write_text(json.dumps(ticket), encoding="utf-8")
         proc = self.todo("import-json", f"--from-json={seed}")
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        seed.unlink()  # transient import input; keep the worktree clean
         if commit:
             self._git("commit", "--allow-empty", "-qm", f"ticket {ticket_id[:8]}")
 
@@ -355,14 +356,12 @@ class FieldAndWorkItemTests(TodoCase):
         work_items = ticket["WorkItems"]
         self.assertEqual(len(work_items), 2)
         first, second = work_items
+        # chunk-done completes the cursor (first not-done) item as a typed code item.
+        self.assertEqual(first["kind"], "code")
         self.assertEqual(first["summary"], "first item")
         self.assertTrue(first["done"])
-        # work-item-done records the HEAD sha (the unit's code commit) on the item.
-        self.assertEqual(len(first["commits"]), 1)
-        self.assertRegex(first["commits"][0], r"\A[0-9a-f]{40}\Z")
-        self.assertEqual(
-            second, {"summary": "second item", "done": False, "commits": []}
-        )
+        self.assertRegex(first["sha"], r"\A[0-9a-f]{40}\Z")
+        self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
 class UpdateTests(TodoCase):
@@ -762,7 +761,7 @@ class WebViewerTests(TodoCase):
         self.assertEqual(done.returncode, 0, done.stderr)
 
         ticket = self.read_self()
-        sha = ticket["WorkItems"][0]["commits"][0]
+        sha = ticket["WorkItems"][0]["sha"]
 
         proc = self.todo("web", "--dump-html", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -805,6 +804,51 @@ class ReadFormattingUnitTests(unittest.TestCase):
         )
 
 
+class WorkItemModelUnitTests(unittest.TestCase):
+    """Pure-function tests for the WorkItem cursor and invariant helpers."""
+
+    def test_cursor_and_is_done(self) -> None:
+        t = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}, {"kind": "task", "done": False}]}
+        self.assertEqual(todo.cursor_index(t), 1)
+        self.assertFalse(todo.is_done(t))
+        done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
+        self.assertIsNone(todo.cursor_index(done_todo))
+        self.assertTrue(todo.is_done(done_todo))
+        self.assertTrue(todo.is_done({"WorkItems": []}))
+
+    def test_last_sha(self) -> None:
+        self.assertEqual(todo.last_sha({"WorkItems": [{"sha": "deadbeef"}]}), "deadbeef")
+        self.assertIsNone(todo.last_sha({"WorkItems": [{"kind": "task", "done": False}]}))
+        self.assertIsNone(todo.last_sha({"WorkItems": []}))
+
+    def test_mark_cursor_done_converts_and_carries_summary(self) -> None:
+        t = {"WorkItems": [{"kind": "task", "summary": "do X", "done": False}]}
+        self.assertEqual(todo.mark_cursor_done(t, todo.code_workitem("sha1")), 0)
+        self.assertEqual(
+            t["WorkItems"][0], {"kind": "code", "summary": "do X", "sha": "sha1", "done": True}
+        )
+
+    def test_mark_cursor_done_appends_when_no_open_item(self) -> None:
+        t = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
+        self.assertEqual(todo.mark_cursor_done(t, todo.merge_subtodo_workitem("sub", "s2", "m")), 1)
+        self.assertEqual(t["WorkItems"][1]["kind"], "merge_subtodo")
+
+    def test_workitem_findings_catch_invariant_violations(self) -> None:
+        after_open = {"WorkItems": [{"kind": "task", "done": False}, {"kind": "code", "done": True, "sha": "a"}]}
+        self.assertTrue(any("follows a not-done" in f for f in todo.workitem_findings(after_open)))
+        last_start = {"WorkItems": [{"kind": "start_subtodo", "done": True, "subtodo_id": "x"}]}
+        self.assertTrue(any("start_subtodo" in f for f in todo.workitem_findings(last_start)))
+        no_sha = {"WorkItems": [{"kind": "code", "done": True}]}
+        self.assertTrue(any("missing a sha" in f for f in todo.workitem_findings(no_sha)))
+        well_formed = {
+            "WorkItems": [
+                {"kind": "start_subtodo", "done": True, "subtodo_id": "x"},
+                {"kind": "code", "done": True, "sha": "a"},
+            ]
+        }
+        self.assertEqual(todo.workitem_findings(well_formed), [])
+
+
 class MissingRepoCwdTests(unittest.TestCase):
     """A subtodo can record a repo path (Scope.path_to_project) from another
     machine that is absent here; git calls must not crash on the missing cwd."""
@@ -828,6 +872,89 @@ class MissingRepoCwdTests(unittest.TestCase):
 
     def test_branch_exists_false_for_missing_repo(self) -> None:
         self.assertFalse(todo.branch_exists(self.MISSING, "main"))
+
+
+class WorkItemInvariantTests(TodoCase):
+    """CLI-level tests for the typed WorkItem invariants, cursor, and properties."""
+
+    def _init(self, summary: str = "Effort") -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        proc = self.todo("init", f"--summary={summary}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _head(self) -> str:
+        return self._git("rev-parse", "HEAD").stdout.strip()
+
+    def test_init_captures_base_sha(self) -> None:
+        self._init()
+        self.assertRegex(self.read_self()["BaseSha"], r"\A[0-9a-f]{40}\Z")
+
+    def test_code_workitem_dirty_requires_message_and_commits(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=code it")
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        self.assertEqual(self.todo("work-item-done").returncode, 1)  # dirty, no -m
+        proc = self.todo("work-item-done", "-m", "feat: f")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_self()["WorkItems"][0]
+        self.assertEqual(item["kind"], "code")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["sha"], self._head())
+
+    def test_code_workitem_clean_sha_mismatch_exits_1(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=code it")
+        proc = self.todo("work-item-done", "--sha", "0" * 40)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("does not match HEAD", proc.stderr)
+        ok = self.todo("work-item-done", "--sha", self._head())
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertEqual(self.read_self()["WorkItems"][0]["sha"], self._head())
+
+    def test_cursor_insert_replace_delete_read(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=A")
+        self.todo("work-item-insert", "--summary=B")  # B lands at the cursor, pushes A down
+        self.assertEqual([w["summary"] for w in self.read_self()["WorkItems"]], ["B", "A"])
+        read = json.loads(self.todo("work-item-read").stdout)
+        self.assertEqual(read["index"], 0)
+        self.assertEqual(read["item"]["summary"], "B")
+        self.todo("work-item-replace", "--summary=B2")
+        self.assertEqual(self.read_self()["WorkItems"][0]["summary"], "B2")
+        self.todo("work-item-delete")
+        self.assertEqual([w["summary"] for w in self.read_self()["WorkItems"]], ["A"])
+
+    def test_is_done_and_last_sha_subcommands(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=code it")
+        self.assertEqual(self.todo("is-done").returncode, 1)  # open item
+        self.assertEqual(self.todo("work-item-done").returncode, 0)  # clean tree -> HEAD
+        self.assertEqual(self.todo("is-done").returncode, 0)
+        self.assertEqual(self.todo("last-sha").stdout.strip(), self._head())
+
+    def test_add_subtodo_records_start_subtodo_item(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=fire A")
+        proc = self.todo("add-subtodo", "--summary=child A")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_self()["WorkItems"][0]
+        self.assertEqual(item["kind"], "start_subtodo")
+        self.assertTrue(item.get("subtodo_id"))
+
+    def test_doctor_flags_start_subtodo_as_last_item(self) -> None:
+        self._init()
+        self.todo("add-subtodo", "--summary=child A")  # only item: a done start_subtodo
+        payload = json.loads(self.todo("doctor").stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any("start_subtodo" in f for f in payload["findings"]))
+
+    def test_doctor_warns_softly_for_unresolvable_base_sha(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=x")
+        self.todo("update", "self", "BaseSha", "deadbeef" * 5)  # string sha, absent here
+        payload = json.loads(self.todo("doctor").stdout)
+        self.assertTrue(payload["ok"])  # soft: does not fail doctor
+        self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
 
 if __name__ == "__main__":

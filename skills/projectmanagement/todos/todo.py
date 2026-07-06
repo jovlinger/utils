@@ -462,6 +462,109 @@ def build_ticket_skeleton(
     return ticket
 
 
+# --- WorkItem model: typed items, cursor, and invariants -------------------
+#
+# A WorkItem is either not-done freetext (kind "task") or one of three typed
+# done kinds, each produced by the command that performs that work:
+#   - "code"          local coding; carries a `sha` (invariant #1)
+#   - "merge_subtodo" a merged subtodo; carries `subtodo_id` and a `sha`
+#   - "start_subtodo" a fired subtodo; carries `subtodo_id`, no sha
+# The cursor is the first not-done item (derived). Working proceeds by marking
+# the cursor done and advancing; the index never decreases though the list may
+# grow (invariant #3). A todo is done when nothing is not-done (invariant #7).
+
+WORKITEM_TASK = "task"
+WORKITEM_CODE = "code"
+WORKITEM_MERGE_SUBTODO = "merge_subtodo"
+WORKITEM_START_SUBTODO = "start_subtodo"
+WORKITEM_DONE_KINDS = frozenset(
+    {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO}
+)
+WORKITEM_KINDS = WORKITEM_DONE_KINDS | {WORKITEM_TASK}
+
+
+def workitem_kind(item: JsonDict) -> str:
+    """Best-effort kind for a work item, tolerating legacy shapes."""
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind:
+        return kind
+    return WORKITEM_CODE if item.get("done") else WORKITEM_TASK
+
+
+def workitem_is_done(item: JsonDict) -> bool:
+    """True when a work item is complete (a done kind or the legacy done flag)."""
+    if item.get("done"):
+        return True
+    return workitem_kind(item) in WORKITEM_DONE_KINDS
+
+
+def cursor_index(todo: JsonDict) -> Optional[int]:
+    """Index of the current work item -- the first not-done one, or None if none."""
+    items = todo.get("WorkItems") or []
+    for index, item in enumerate(items):
+        if isinstance(item, dict) and not workitem_is_done(item):
+            return index
+    return None
+
+
+def is_done(todo: JsonDict) -> bool:
+    """A todo is done when it has no not-yet-done work items (invariant #7)."""
+    return cursor_index(todo) is None
+
+
+def last_sha(todo: JsonDict) -> Optional[str]:
+    """Sha of the last work item -- the last branch commit (invariant #6), if any."""
+    items = todo.get("WorkItems") or []
+    if not items or not isinstance(items[-1], dict):
+        return None
+    sha = items[-1].get("sha")
+    return sha if isinstance(sha, str) and sha else None
+
+
+def code_workitem(sha: str, summary: str = "") -> JsonDict:
+    """Build a done 'code' work item."""
+    return {"kind": WORKITEM_CODE, "summary": summary, "sha": sha, "done": True}
+
+
+def start_subtodo_workitem(subtodo_id: str, summary: str = "") -> JsonDict:
+    """Build a done 'start_subtodo' work item (no sha)."""
+    return {
+        "kind": WORKITEM_START_SUBTODO,
+        "summary": summary,
+        "subtodo_id": subtodo_id,
+        "done": True,
+    }
+
+
+def merge_subtodo_workitem(subtodo_id: str, sha: str, summary: str = "") -> JsonDict:
+    """Build a done 'merge_subtodo' work item."""
+    return {
+        "kind": WORKITEM_MERGE_SUBTODO,
+        "summary": summary,
+        "subtodo_id": subtodo_id,
+        "sha": sha,
+        "done": True,
+    }
+
+
+def mark_cursor_done(todo: JsonDict, done_item: JsonDict) -> int:
+    """Convert the cursor (first not-done) item into *done_item*, or append it when
+    the plan has no open item. The cursor's freetext summary carries over as the
+    item's high-level description unless *done_item* already set one. Returns the
+    affected index."""
+    items = list(todo.get("WorkItems") or [])
+    index = cursor_index(todo)
+    if index is None:
+        items.append(done_item)
+        index = len(items) - 1
+    else:
+        if not done_item.get("summary"):
+            done_item["summary"] = items[index].get("summary", "")
+        items[index] = done_item
+    todo["WorkItems"] = items
+    return index
+
+
 def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
     """Locate tickets whose Id matches *query* via sqlite or git refs."""
     matches: List[tuple[str, JsonDict]] = []
@@ -859,12 +962,26 @@ def merge_subtodo(
     write_todo_worktree(root, child_worktree)
     commit_todo(root, f"chore(todo): merged into {merge_target}")
 
+    child_summary = ""
+    if isinstance(child.get("Summary"), dict):
+        child_summary = str(child["Summary"].get("raw", ""))
+
     run_git(root, "checkout", parent_branch)
     parent = read_todo_required(root)
     update_subtodo_state(parent, child_id, "merged")
     write_todo_worktree(root, parent)
+    # Marker commit first, then record its sha on the parent's cursor item as a
+    # typed merge_subtodo done item. Keeping the workitem sha == HEAD upholds
+    # "the last workitem is the last commit to the branch" (#6).
     commit_todo(root, f"chore(todo): subtodo {child_id[:8]} merged")
-    return {"child": child_id, "State": "merged", "merged_into": merge_target}
+    merge_sha = head_sha(root) or ""
+    index = mark_cursor_done(parent, merge_subtodo_workitem(child_id, merge_sha, summary=""))
+    if not parent["WorkItems"][index].get("summary"):
+        parent["WorkItems"][index]["summary"] = (
+            f"merge subtodo {child_id[:8]}: {_summary_snippet(child_summary)}"
+        )
+    write_todo_worktree(root, parent)
+    return {"child": child_id, "State": "merged", "merged_into": merge_target, "sha": merge_sha}
 
 
 def wait_for_state(
@@ -900,6 +1017,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "AC",
         "Agent",
+        "BaseSha",
         "Body",
         "Branch",
         "Id",
@@ -916,8 +1034,53 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
 REQUIRED_TOP_LEVEL_FIELDS = frozenset({"Branch", "Id", "State", "Summary"})
 
 
+def commit_exists(root: Path, sha: str) -> bool:
+    """True when *sha* resolves to a commit in this repo (best effort)."""
+    return run_git(root, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+
+
+def workitem_findings(todo: JsonDict) -> List[str]:
+    """Hard findings for the WorkItems invariants (#1, #3, #6, #7)."""
+    findings: List[str] = []
+    items = todo.get("WorkItems")
+    if items is None:
+        return findings
+    if not isinstance(items, list):
+        return ["WorkItems must be a list"]
+    seen_not_done = False
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue  # structural shape reported by wait_graph_findings
+        kind = item.get("kind")
+        if kind is not None and kind not in WORKITEM_KINDS:
+            findings.append(f"WorkItems.{index}.kind {kind!r} is not valid")
+        if not workitem_is_done(item):
+            seen_not_done = True
+            continue
+        # done items must form a prefix -- none after a not-done item (#3)
+        if seen_not_done:
+            findings.append(f"WorkItems.{index} is done but follows a not-done item")
+        k = workitem_kind(item)
+        if k in (WORKITEM_CODE, WORKITEM_MERGE_SUBTODO) and not (
+            isinstance(item.get("sha"), str) and item.get("sha")
+        ):
+            findings.append(f"WorkItems.{index} {k} item is missing a sha")
+        if k in (WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO) and not (
+            isinstance(item.get("subtodo_id"), str) and item.get("subtodo_id")
+        ):
+            findings.append(f"WorkItems.{index} {k} item is missing subtodo_id")
+    # a done todo must not end in start_subtodo -- it must be a code/merge commit (#6)
+    if items and is_done(todo):
+        last = items[-1]
+        if isinstance(last, dict) and workitem_kind(last) == WORKITEM_START_SUBTODO:
+            findings.append(
+                "last work item is start_subtodo; a done todo must end in a code or merge commit (#6)"
+            )
+    return findings
+
+
 def doctor_findings(root: Path, selector: str) -> List[str]:
-    """Return doctor findings for the selected todo."""
+    """Return hard doctor findings for the selected todo (shape invariants)."""
     _, todo = resolve_ticket_by_selector(root, selector)
     findings: List[str] = []
     unknown = sorted(set(todo) - ALLOWED_TOP_LEVEL_FIELDS)
@@ -950,13 +1113,46 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
                 child_id = entry.get("Id")
                 if not isinstance(child_id, str) or not child_id:
                     findings.append(f"Subtodos.{index}.Id must be a string")
-                    continue
-                try:
-                    resolve_ticket_by_selector(root, child_id[:8])
-                except TodoError as exc:
-                    findings.append(f"Subtodos.{index}.Id not discoverable: {exc}")
+    findings.extend(workitem_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     return findings
+
+
+def doctor_warnings(root: Path, selector: str) -> List[str]:
+    """Return soft doctor warnings that need an absent subbranch or other repo to
+    verify. These never fail doctor, so transitional and cross-repo todos (where
+    not every subbranch is available) do not hard-fail."""
+    _, todo = resolve_ticket_by_selector(root, selector)
+    warnings: List[str] = []
+    base = todo.get("BaseSha")
+    if isinstance(base, str) and base and not commit_exists(root, base):
+        warnings.append(f"BaseSha {base[:8]} not found in this repo")
+    subtodos = todo.get("Subtodos")
+    if isinstance(subtodos, list):
+        for index, entry in enumerate(subtodos):
+            if not isinstance(entry, dict):
+                continue
+            child_id = entry.get("Id")
+            if isinstance(child_id, str) and child_id:
+                try:
+                    resolve_ticket_by_selector(root, child_id[:8])
+                except TodoError:
+                    warnings.append(f"Subtodos.{index}.Id {child_id[:8]} not discoverable here")
+    items = todo.get("WorkItems") or []
+    if isinstance(items, list):
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            sha = item.get("sha")
+            if isinstance(sha, str) and sha and not commit_exists(root, sha):
+                warnings.append(f"WorkItems.{index}.sha {sha[:8]} not found in this repo")
+            sub = item.get("subtodo_id")
+            if isinstance(sub, str) and sub:
+                try:
+                    resolve_ticket_by_selector(root, sub[:8])
+                except TodoError:
+                    warnings.append(f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here")
+    return warnings
 
 
 def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
@@ -972,12 +1168,6 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
         if not isinstance(item, dict):
             findings.append(f"WorkItems.{index} must be an object")
             continue
-        commits = item.get("commits")
-        if commits is not None:
-            if not isinstance(commits, list):
-                findings.append(f"WorkItems.{index}.commits must be a list")
-            elif not all(isinstance(sha, str) for sha in commits):
-                findings.append(f"WorkItems.{index}.commits entries must be strings")
         execution = item.get("execution")
         if execution is None:
             continue
@@ -1324,6 +1514,9 @@ class InitCommand(TodoSubCommand):
 
         parent_branch = current_branch(root)
         run_git(root, "checkout", "-b", branch)
+        base = head_sha(root)  # branch's initial sha (invariant #5)
+        if base:
+            ticket["BaseSha"] = base
         write_todo_worktree(root, ticket)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
@@ -1403,11 +1596,21 @@ class AddSubtodoCommand(TodoSubCommand):
             raise TodoError(f"branch {child_branch!r} already exists")
 
         run_git(root, "checkout", "-b", child_branch)
+        base = head_sha(root)  # child branch's initial sha (invariant #5)
+        if base:
+            child_spec["BaseSha"] = base
         write_todo_worktree(root, child_spec)
         commit_todo(root, f"chore(todo): init subtodo {child_id[:8]}")
         run_git(root, "checkout", parent_branch)
 
         upsert_subtodo(parent, child_spec)
+        # Firing the subtodo completes the parent's cursor work item as a typed
+        # start_subtodo done item and advances the cursor (invariants #1, #3).
+        index = mark_cursor_done(parent, start_subtodo_workitem(child_id, summary=""))
+        if not parent["WorkItems"][index].get("summary"):
+            parent["WorkItems"][index]["summary"] = (
+                f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
+            )
         write_todo_worktree(root, parent)
         commit_todo(root, f"chore(todo): register subtodo {child_id[:8]} on parent")
 
@@ -1536,11 +1739,11 @@ class WorkItemAddCommand(TodoSubCommand):
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Append a work item to the current todo."""
+        """Append a not-done task work item to the current todo."""
         root = self.root()
         todo = read_todo_required(root)
         work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        work_items.append({"summary": self.summary, "done": False, "commits": []})
+        work_items.append({"kind": WORKITEM_TASK, "summary": self.summary, "done": False})
         todo["WorkItems"] = work_items
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -1550,53 +1753,227 @@ class WorkItemAddCommand(TodoSubCommand):
 
 class WorkItemDoneCommand(TodoSubCommand):
     command_names = ("work-item-done", "chunk-done")
-    doc_short: ClassVar[str] = "Complete work item"
+    doc_short: ClassVar[str] = "Complete cursor work item as code"
     doc_long: ClassVar[str] = (
-        "Work-item-done marks one WorkItems entry complete on the current ticket. With no index, "
-        "it selects the first item whose done field is not true. With an index, it updates that "
-        "specific zero-based item and errors if the index is out of range. It records the current "
-        "HEAD sha (the skill's one code commit for the item) into the item's commits list, then "
-        "writes TODO.json and commits by default."
+        "Work-item-done completes the current (cursor) work item as a typed 'code' item and "
+        "advances the cursor. If the working tree has uncommitted changes it requires -m and "
+        "commits them (git add -A), recording the new HEAD sha. If the tree is clean it records "
+        "the branch's most recent commit, or a --sha that must match HEAD (mismatch exits 1). It "
+        "does not add a bookkeeping commit, so the recorded sha stays the branch HEAD (invariant "
+        "#6). --summary overrides the item's high-level description (defaults to the cursor task's "
+        "summary)."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
-        parser.add_argument("--index", type=int, help="work item index (default: first open)")
+        parser.add_argument("-m", "--message", help="commit message (required when the tree is dirty)")
+        parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
+        parser.add_argument("--summary", help="override the work item's high-level description")
+
+    def do(self) -> int:
+        """Complete the cursor work item as code (invariant #1)."""
+        root = self.root()
+        todo = read_todo_required(root)
+        dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
+        if dirty:
+            if self.sha:
+                raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
+            if not self.message:
+                raise TodoError("uncommitted changes present: -m/--message is required")
+            run_git(root, "add", "-A")
+            run_git(root, "commit", "-m", self.message)
+            sha = head_sha(root)
+        else:
+            head = head_sha(root)
+            if not head:
+                raise TodoError("no commits on branch; cannot record a code work item")
+            if self.sha and self.sha != head:
+                raise TodoError(
+                    f"--sha {self.sha[:8]} does not match HEAD {head[:8]}; "
+                    "commit your work or pass the current HEAD"
+                )
+            sha = head
+        item = code_workitem(str(sha), summary=self.summary or "")
+        index = mark_cursor_done(todo, item)
+        write_todo_worktree(root, todo)
+        summary = todo["WorkItems"][index].get("summary", "")
+        print(json.dumps({"index": index, "kind": WORKITEM_CODE, "sha": sha, "summary": summary}, indent=2))
+        return 0
+
+
+class WorkItemReadCommand(TodoSubCommand):
+    command_names = ("work-item-read",)
+    doc_short: ClassVar[str] = "Read the cursor work item"
+    doc_long: ClassVar[str] = (
+        "Work-item-read prints the current work item -- the cursor, which is the first not-done "
+        "item -- with its index, plus whether the todo is done. Index is null when there is no "
+        "open item."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-read arguments."""
+        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+
+    def do(self) -> int:
+        """Print the cursor work item for the selected todo."""
+        root = self.root()
+        _, todo = resolve_ticket_by_selector(root, self.selector)
+        normalize_todo_schema(todo)
+        index = cursor_index(todo)
+        items = todo.get("WorkItems") or []
+        item = items[index] if index is not None else None
+        print(json.dumps({"index": index, "item": item, "is_done": is_done(todo)}, indent=2))
+        return 0
+
+
+class WorkItemInsertCommand(TodoSubCommand):
+    command_names = ("work-item-insert",)
+    doc_short: ClassVar[str] = "Insert a task at the cursor"
+    doc_long: ClassVar[str] = (
+        "Work-item-insert adds a not-done task at the cursor so it becomes the current item, "
+        "pushing the existing frontier down (used to explode a step into finer steps). It appends "
+        "when the todo has no open item. Writes and commits by default."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-insert arguments."""
+        parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Mark a work item done (default: first open item)."""
+        """Insert a not-done task at the cursor."""
         root = self.root()
         todo = read_todo_required(root)
-        work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        if not work_items:
-            raise TodoError("no WorkItems on todo")
-        index = self.index if self.index is not None else next(
-            (idx for idx, item in enumerate(work_items) if not item.get("done")),
-            None,
-        )
+        items: List[JsonDict] = list(todo.get("WorkItems") or [])
+        new_item = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        index = cursor_index(todo)
         if index is None:
-            raise TodoError("no open work items to mark done")
-        if index < 0 or index >= len(work_items):
-            raise TodoError(f"work item index out of range: {index}")
-        work_items[index]["done"] = True
-        # Record the code commit for this unit: HEAD is the skill's one commit
-        # for the item. Capture it before commit_todo adds the bookkeeping commit.
-        sha = head_sha(root)
-        if sha:
-            commits = list(work_items[index].get("commits") or [])
-            if sha not in commits:
-                commits.append(sha)
-            work_items[index]["commits"] = commits
-        todo["WorkItems"] = work_items
+            items.append(new_item)
+            index = len(items) - 1
+        else:
+            items.insert(index, new_item)
+        todo["WorkItems"] = items
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): insert work item: {_summary_snippet(self.summary)}")
+        print(json.dumps({"index": index, "summary": self.summary}, indent=2))
+        return 0
+
+
+class WorkItemReplaceCommand(TodoSubCommand):
+    command_names = ("work-item-replace",)
+    doc_short: ClassVar[str] = "Replace the cursor work item"
+    doc_long: ClassVar[str] = (
+        "Work-item-replace rewrites the current (cursor) task's freetext summary, leaving it "
+        "not-done. Errors when there is no open item. Writes and commits by default."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-replace arguments."""
+        parser.add_argument("--summary", required=True)
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Replace the cursor task's summary."""
+        root = self.root()
+        todo = read_todo_required(root)
+        index = cursor_index(todo)
+        if index is None:
+            raise TodoError("no open work item to replace")
+        items: List[JsonDict] = list(todo.get("WorkItems") or [])
+        items[index] = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        todo["WorkItems"] = items
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): replace work item: {_summary_snippet(self.summary)}")
+        print(json.dumps({"index": index, "summary": self.summary}, indent=2))
+        return 0
+
+
+class WorkItemDeleteCommand(TodoSubCommand):
+    command_names = ("work-item-delete",)
+    doc_short: ClassVar[str] = "Delete the cursor work item"
+    doc_long: ClassVar[str] = (
+        "Work-item-delete removes the current (cursor) not-done item. Done items are the "
+        "committed history of the todo and are never the cursor, so they are never deleted here. "
+        "Errors when there is no open item. Writes and commits by default."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-delete arguments."""
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Delete the cursor work item."""
+        root = self.root()
+        todo = read_todo_required(root)
+        index = cursor_index(todo)
+        if index is None:
+            raise TodoError("no open work item to delete")
+        items: List[JsonDict] = list(todo.get("WorkItems") or [])
+        removed = items.pop(index)
+        todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
             commit_todo(
                 root,
-                f"chore(todo): done work item {index}: "
-                f"{_summary_snippet(work_items[index].get('summary', ''))}",
+                f"chore(todo): delete work item: {_summary_snippet(removed.get('summary', ''))}",
             )
+        print(json.dumps({"deleted_index": index, "summary": removed.get("summary", "")}, indent=2))
+        return 0
+
+
+class IsDoneCommand(TodoSubCommand):
+    command_names = ("is-done",)
+    doc_short: ClassVar[str] = "Report todo completion"
+    doc_long: ClassVar[str] = (
+        "Is-done reports whether the selected todo has no not-yet-done work items (invariant #7). "
+        "It prints a small JSON object and exits 0 when done, 1 when not done, for use as a shell "
+        "predicate."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register is-done arguments."""
+        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+
+    def do(self) -> int:
+        """Print and return the todo's done state."""
+        root = self.root()
+        _, todo = resolve_ticket_by_selector(root, self.selector)
+        normalize_todo_schema(todo)
+        done = is_done(todo)
+        print(json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2))
+        return 0 if done else 1
+
+
+class LastShaCommand(TodoSubCommand):
+    command_names = ("last-sha",)
+    doc_short: ClassVar[str] = "Print the last work item sha"
+    doc_long: ClassVar[str] = (
+        "Last-sha prints the sha of the selected todo's last work item, which is the last commit "
+        "on its branch (invariant #6). Errors when the todo has no completed code/merge tail."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register last-sha arguments."""
+        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+
+    def do(self) -> int:
+        """Print the last work item's sha."""
+        root = self.root()
+        _, todo = resolve_ticket_by_selector(root, self.selector)
+        normalize_todo_schema(todo)
+        sha = last_sha(todo)
+        if not sha:
+            raise TodoError("no work item sha (todo has no completed code/merge tail)")
+        print(sha)
         return 0
 
 
@@ -1765,9 +2142,9 @@ class DoctorCommand(TodoSubCommand):
         """Audit a selected todo."""
         root = self.root()
         findings = doctor_findings(root, self.selector)
-        print(json.dumps({"ok": not findings, "findings": findings}, indent=2))
+        warnings = doctor_warnings(root, self.selector)
+        print(json.dumps({"ok": not findings, "findings": findings, "warnings": warnings}, indent=2))
         return 1 if findings else 0
-        return 0
 
 
 def _summary_snippet(text: str, limit: int = 60) -> str:
@@ -2186,6 +2563,12 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     SetCommand,
     WorkItemAddCommand,
     WorkItemDoneCommand,
+    WorkItemReadCommand,
+    WorkItemInsertCommand,
+    WorkItemReplaceCommand,
+    WorkItemDeleteCommand,
+    IsDoneCommand,
+    LastShaCommand,
     UpdateCommand,
     MergeSubtodoCommand,
     WaitForCommand,

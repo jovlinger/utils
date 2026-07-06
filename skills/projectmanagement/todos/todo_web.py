@@ -342,9 +342,13 @@ def work_item_shas(ticket: JsonDict) -> List[str]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        for sha in item.get("commits") or []:
-            if isinstance(sha, str) and sha:
-                shas.append(sha)
+        sha = item.get("sha")
+        if isinstance(sha, str) and sha:
+            shas.append(sha)
+        # tolerate the legacy commits-list shape
+        for legacy in item.get("commits") or []:
+            if isinstance(legacy, str) and legacy:
+                shas.append(legacy)
     return shas
 
 
@@ -450,14 +454,17 @@ def _root_info(root: Path, ticket: JsonDict, root_sel: str, mode: str) -> str:
                 continue
             done = bool(item.get("done"))
             mark = "[x]" if done else "[ ]"
+            kind = html.escape(str(item.get("kind", "")))
+            kind_html = f' <span class="kind">{kind}</span>' if kind else ""
             summary = html.escape(str(item.get("summary", "")))
+            item_shas = [item["sha"]] if isinstance(item.get("sha"), str) and item.get("sha") else []
+            item_shas += [s for s in (item.get("commits") or []) if isinstance(s, str) and s]
             sha_links = " ".join(
                 f'<a href="{_commit_href(root_sel, sha, mode)}">{html.escape(sha[:8])}</a>'
-                for sha in (item.get("commits") or [])
-                if isinstance(sha, str) and sha
+                for sha in item_shas
             )
             sha_html = f' <span class="shas">{sha_links}</span>' if sha_links else ""
-            rows.append(f'<li>{mark} {summary}{sha_html}</li>')
+            rows.append(f'<li>{mark}{kind_html} {summary}{sha_html}</li>')
     plan = f'<ol class="workitems">{"".join(rows)}</ol>' if rows else "<p>No work items.</p>"
     return (
         '<div class="info-body">'

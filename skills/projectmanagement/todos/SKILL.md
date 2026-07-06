@@ -171,17 +171,23 @@ the `todo.py` interface.
 | `todo.py read-path <selector> <path>` | implemented | Low-level path read. Reads one value from a selected todo. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-path <selector> <path> <value\|->` | implemented | Low-level path write. Sets one value on a selected todo, with `-` reading the value from stdin. This is the canonical write primitive; higher-level commands are syntax sugar plus path-trigger behavior. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
-| `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json`, commit, return to parent, register in `Subtodos` (`add-child` alias) |
+| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos` (`add-child` alias). Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
 | `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object, equivalent to `set-path self State '{"<state>": {...}}'` plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
-| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged` (`merge-child` alias) |
+| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged` (`merge-child` alias). Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor |
 | `todo.py set --summary=... --body=... --ac=...` | implemented | Sugar for `set-path self Summary.raw ...`, `set-path self Body.raw ...`, and `set-path self AC ...` |
-| `todo.py work-item-add --summary=...` | implemented | Sugar for appending `{summary, done:false}` to `WorkItems` (`chunk-add` alias). Keep richer operations demand-driven. |
-| `todo.py work-item-done [--index=N]` | implemented | Sugar for setting `WorkItems.<index>.done` to `true`; default index is first open (`chunk-done` alias) |
+| `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` (`chunk-add` alias) |
+| `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor (`chunk-done` alias). Dirty tree: `-m` required, commits `git add -A`, records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6) |
+| `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, and whether the todo is done |
+| `todo.py work-item-insert --summary=...` | implemented | Insert a not-done `task` at the cursor so it becomes current, pushing the frontier down (used to explode a step into finer steps); appends when there is no open item |
+| `todo.py work-item-replace --summary=...` | implemented | Rewrite the cursor task's freetext summary, leaving it not-done |
+| `todo.py work-item-delete` | implemented | Delete the cursor (not-done) work item |
+| `todo.py is-done [<selector>]` | implemented | Report whether the todo has no not-yet-done work items (#7); exits 0 when done, 1 when not |
+| `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py update <id> <jsonpath> <value\|->` | implemented | Compatibility alias for `set-path`. |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
-| `todo.py doctor [<selector>]` | implemented | Audit schema, references, wait graph; warns if legacy TODO.json on disk in sqlite mode |
+| `todo.py doctor [<selector>]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7). Two tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo (unresolvable sha or subtodo_id), so transitional and cross-repo todos do not hard-fail |
 | `todo.py log [<selector>]` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (default `self`; `self`/`curr` or a 4+ hex Id prefix) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. `--all` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
 | `todo.py new --summary=... --body=...` | planned | alias for `init` with optional JSON seed |
 
@@ -405,11 +411,39 @@ Where the ticket applies. Set at least one locator.
 `Summary.raw` and `Body.raw` are always present; embedding keys are optional
 enrichments, omitted on first write and backfilled later if ever.
 
-### WorkItems and coordination
+### WorkItems: invariants and the cursor
 
-`WorkItems` is the ordered work plan for a todo. Simple items only need
-`summary` and `done`. Larger work may add an `execution` object to make ordering
-and parallelism explicit without inventing a scheduler.
+`WorkItems` is the ordered work plan for a todo. Each item is either a not-done
+`task` (freetext, may list not-yet-started subtasks in prose) or one of three
+typed **done** kinds, each produced by the command that performs that work:
+
+| kind | fields | produced by |
+| --- | --- | --- |
+| `task` | `summary`, `done:false` | `work-item-add` / `work-item-insert` (not done) |
+| `code` | `summary`, `sha`, `done:true` | `work-item-done` (local coding) |
+| `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
+| `start_subtodo` | `summary`, `subtodo_id`, `done:true` (no sha) | `add-subtodo` |
+
+The **cursor** is the first not-done item (derived, not stored). Work proceeds
+by completing the cursor and advancing; the cursor index never decreases though
+the list may grow (e.g. `work-item-insert` explodes one step into several). The
+invariants the tool guarantees and `doctor` enforces:
+
+1. A done item is a `start_subtodo`, or carries a `sha` (a `code` or
+   `merge_subtodo` commit) with a high-level description.
+2. A not-done item is freetext (a task or a list of not-yet-started subtasks).
+3. Done items form a prefix; the cursor moves monotonically down.
+5. `BaseSha` records the branch's initial sha, captured at branch creation.
+6. The last item cannot be `start_subtodo` -- it must be a `code`/`merge`
+   commit, so the last item's sha (`last-sha`) is the branch's last commit.
+7. A todo `is-done` when it has no not-yet-done items.
+
+`is-done` and `last-sha` expose these as subcommands. `doctor` reports shape
+violations as hard `findings` and checks that need an absent subbranch/other
+repo (unresolvable sha or subtodo_id) as soft `warnings`.
+
+Larger work may add an `execution` object to make ordering and parallelism
+explicit without inventing a scheduler.
 
 Common shapes:
 
