@@ -168,14 +168,14 @@ the `todo.py` interface.
 | `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit) |
 | `todo.py import-json` | implemented | Migrate legacy JSON: --from-json PATH or --scan-refs |
 | `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
-| `todo.py read-path <selector> <path>` | implemented | Low-level path read. Reads one value from a selected todo. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
-| `todo.py set-path <selector> <path> <value\|->` | implemented | Low-level path write. Sets one value on a selected todo, with `-` reading the value from stdin. This is the canonical write primitive; higher-level commands are syntax sugar plus path-trigger behavior. |
+| `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
+| `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
 | `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos` (`add-child` alias). Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
-| `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object, equivalent to `set-path self State '{"<state>": {...}}'` plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
+| `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged` (`merge-child` alias). Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor |
-| `todo.py set --summary=... --body=... --ac=...` | implemented | Sugar for `set-path self Summary.raw ...`, `set-path self Body.raw ...`, and `set-path self AC ...` |
+| `todo.py set --summary=... --body=... --ac=...` | implemented | Patch `Summary.raw`, `Body.raw`, and/or `AC` on the current branch's todo |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` (`chunk-add` alias) |
 | `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor (`chunk-done` alias). Dirty tree: `-m` required, commits `git add -A`, records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6) |
 | `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, and whether the todo is done |
@@ -184,8 +184,6 @@ the `todo.py` interface.
 | `todo.py work-item-delete` | implemented | Delete the cursor (not-done) work item |
 | `todo.py is-done [<selector>]` | implemented | Report whether the todo has no not-yet-done work items (#7); exits 0 when done, 1 when not |
 | `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
-| `todo.py update <id> <jsonpath> <value\|->` | implemented | Compatibility alias for `set-path`. |
-| `todo.py set-json-path <id> <jsonpath> [--file <path>]` | implemented | Set any JSON path (e.g. `WorkItems`, `Body.raw`) to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
 | `todo.py doctor [<selector>]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7). Two tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo (unresolvable sha or subtodo_id), so transitional and cross-repo todos do not hard-fail |
@@ -221,13 +219,14 @@ The lowest-level API should be:
 | Primitive | Behavior |
 |-----------|----------|
 | `read <selector>` | Print the whole todo. |
-| `read-path <selector> <path>` | Print one internal dot-path value. |
-| `set-path <selector> <path> <value|->` | Set one internal dot-path value. |
+| `get-json-path <selector> <path>` | Print one internal dot-path value as JSON. |
+| `set-json-path <selector> <path> [--file <path>]` | Set one internal dot-path value from JSON on stdin or `--file`. |
 | `jq <selector> <filter>` | Run a jq filter against the selected todo and print the result. |
 
 Higher-level commands are special syntax for these primitives, plus triggers.
 Triggers fire by changed path, not by command name, so `set-state done` and
-`set-path self State '{"done": {}}'` share the same downstream behavior.
+`set-json-path self State` (with `{"done": {}}` on stdin) share the same
+downstream behavior.
 
 ## Placement and branch rule
 
@@ -306,17 +305,17 @@ or use `read self` / `read curr` to load the current branch's ticket.
   is `todo.py read <id-prefix>`.
 - **Never** hand-edit an existing `TODO.json` in the model context. Use `todo.py
   set`, `todo.py set-state`, work-item commands, `add-subtodo`, `merge-subtodo`,
-  or `todo.py update <id> <jsonpath> <value|->`.
+  or `todo.py set-json-path <id> <jsonpath>` (value as JSON on stdin or `--file`).
 - Temporary seed JSON files passed to `--from-json` or `set-json-path --file` are
   inputs to the CLI, not direct `TODO.json` access. They may be authored as
   ordinary files, then consumed by `todo.py`.
 
 ```bash
-# read the full ticket JSON
+# read the full todo JSON
 todo.py read 8f3a2c1d
 
 # read one field
-todo.py read-path self Summary.raw
+todo.py get-json-path self Summary.raw
 
 # jq-compatible read projection (todo.py shells out to jq internally)
 todo.py jq self '.Id, (.State | keys[0]), .Summary.raw'
@@ -324,11 +323,8 @@ todo.py jq self '.Id, (.State | keys[0]), .Summary.raw'
 # patch simple fields on the current branch
 todo.py set --ac="new criteria"
 
-# patch a field on any todo by id; use "-" to read the new value from stdin
-printf '%s\n' "new body" | todo.py update 8f3a2c1d Body.raw -
-
-# canonical spelling for the same low-level write
-printf '%s\n' "new body" | todo.py set-path 8f3a2c1d Body.raw -
+# patch any JSON path on any todo by id; value is JSON read from stdin (or --file)
+printf '%s' '"new body"' | todo.py set-json-path 8f3a2c1d Body.raw
 
 # transition state; todo.py updates update_dt and commits by default
 todo.py set-state working --owner=agent
@@ -499,7 +495,7 @@ Initial implementation:
 1. Parent records a barrier WorkItem with `execution.primitive =
    "wait-and-merge"` and `wait_for` child Ids.
 2. Child runs its lifecycle loop to `is-done` and reaches `set-state done`.
-3. Parent `todo.py wait-for <child>...` polls `todo.py read-path <child> State`
+3. Parent `todo.py wait-for <child>...` polls `todo.py get-json-path <child> State`
    until every child reaches `done`.
 4. Parent `todo.py wait-and-merge <child>...` runs `merge-subtodo` for each done
    child and marks the barrier WorkItem done.
@@ -527,7 +523,7 @@ the done prefix.
 
 For a wholesale replan use `set-json-path <id> WorkItems --file <array.json>` (or
 pipe the JSON array via stdin); for a precise edit deep inside one item use
-`set-path`. `doctor` will flag a plan that breaks
+`set-json-path <id> WorkItems.<n>.summary`. `doctor` will flag a plan that breaks
 the invariants (a done item out of the prefix, a code/merge item missing its
 sha, a `start_subtodo` left as the last item).
 

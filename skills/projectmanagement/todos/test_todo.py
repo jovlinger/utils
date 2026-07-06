@@ -364,14 +364,21 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
-class UpdateTests(TodoCase):
-    def test_update_jsonpath_on_other_branch(self) -> None:
+class PathTests(TodoCase):
+    def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(TODO_PY), "set-json-path", *args],
+            cwd=str(self.repo), input=stdin, capture_output=True, text=True,
+            check=False, env=self._env,
+        )
+
+    def test_set_json_path_on_other_branch(self) -> None:
         tid = self.mint()
         branch = f"{tid[:8]}-target"
         self.write_ticket(branch, tid, summary="target")
         self._git("checkout", "-q", "-b", "other-branch")
         self._git("commit", "--allow-empty", "-qm", "seed")
-        proc = self.todo("update", tid[:8], "Body.raw", "patched body")
+        proc = self._set_json_path(tid[:8], "Body.raw", stdin='"patched body"')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
         self._git("checkout", branch)
@@ -379,55 +386,37 @@ class UpdateTests(TodoCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout)["Body"]["raw"], "patched body")
 
-    def test_update_reads_stdin_when_value_is_dash(self) -> None:
-        tid = self.mint()
-        self.write_ticket(f"{tid[:8]}-target", tid)
-        proc = subprocess.run(
-            [sys.executable, str(TODO_PY), "update", tid[:8], "Summary.raw", "-"],
-            cwd=str(self.repo),
-            input="from stdin\n",
-            capture_output=True,
-            text=True,
-            check=False,
-            env=self._env,
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "from stdin")
-        proc2 = self.todo("read-path", "self", "Summary.raw")
-        self.assertEqual(proc2.returncode, 0, proc2.stderr)
-        self.assertEqual(proc2.stdout.strip(), "from stdin")
-
-    def test_read_path_prints_scalar_from_self(self) -> None:
+    def test_get_json_path_prints_scalar_from_self(self) -> None:
         tid = self.mint()
         self.write_ticket("plain-current-branch", tid, summary="read me")
-        proc = self.todo("read-path", "self", "Summary.raw")
+        proc = self.todo("get-json-path", "self", "Summary.raw")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "read me")
 
-    def test_read_path_prints_json_values_as_json(self) -> None:
+    def test_get_json_path_prints_json_values_as_json(self) -> None:
         tid = self.mint()
         self.write_ticket("state-branch", tid)
-        proc = self.todo("read-path", "self", "State")
+        proc = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout), {"init": {}})
 
-    def test_set_path_updates_current_branch(self) -> None:
+    def test_set_json_path_updates_current_branch(self) -> None:
         tid = self.mint()
         self.write_ticket("path-current-branch", tid)
-        proc = self.todo("set-path", "self", "Body.raw", "patched body")
+        proc = self._set_json_path("self", "Body.raw", stdin='"patched body"')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
-        proc2 = self.todo("read-path", "self", "Body.raw")
+        proc2 = self.todo("get-json-path", "self", "Body.raw")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(proc2.stdout.strip(), "patched body")
 
-    def test_set_path_accepts_json_null(self) -> None:
+    def test_set_json_path_accepts_json_null(self) -> None:
         tid = self.mint()
         self.write_ticket("null-current-branch", tid)
-        proc = self.todo("set-path", "self", "AC", "null")
+        proc = self._set_json_path("self", "AC", stdin="null")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "null")
-        proc2 = self.todo("read-path", "self", "AC")
+        proc2 = self.todo("get-json-path", "self", "AC")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout), None)
 
@@ -462,7 +451,7 @@ class StateTests(TodoCase):
         self.write_ticket(f"{tid[:8]}-leaf", tid)
         proc = self.todo("set-state", "done", "--last-commit=finish child")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        proc2 = self.todo("read-path", "self", "State")
+        proc2 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(
             json.loads(proc2.stdout),
@@ -471,7 +460,7 @@ class StateTests(TodoCase):
 
         proc3 = self.todo("set-state", "merged", "--merged-into=parent-branch")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
-        proc4 = self.todo("read-path", "self", "State")
+        proc4 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc4.returncode, 0, proc4.stderr)
         self.assertEqual(
             json.loads(proc4.stdout),
@@ -531,7 +520,7 @@ class WaitTests(TodoCase):
         parent_ticket = self.read_self()
         self.assertEqual(parent_ticket["Subtodos"][0]["State"], "merged")
         self._git("checkout", f"{child_id[:8]}-child")
-        child_proc = self.todo("read-path", "self", "State")
+        child_proc = self.todo("get-json-path", "self", "State")
         self.assertEqual(child_proc.returncode, 0, child_proc.stderr)
         self.assertEqual(
             json.loads(child_proc.stdout),
@@ -990,7 +979,12 @@ class WorkItemInvariantTests(TodoCase):
     def test_doctor_warns_softly_for_unresolvable_base_sha(self) -> None:
         self._init()
         self.todo("work-item-add", "--summary=x")
-        self.todo("update", "self", "BaseSha", "deadbeef" * 5)  # string sha, absent here
+        # inject a string sha that is absent from this repo
+        subprocess.run(
+            [sys.executable, str(TODO_PY), "set-json-path", "self", "BaseSha"],
+            cwd=str(self.repo), input='"%s"' % ("deadbeef" * 5), capture_output=True,
+            text=True, check=False, env=self._env,
+        )
         payload = json.loads(self.todo("doctor").stdout)
         self.assertTrue(payload["ok"])  # soft: does not fail doctor
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))

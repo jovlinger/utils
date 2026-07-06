@@ -818,37 +818,6 @@ def set_at_path(root: JsonDict, path_str: str, value: Any) -> None:
         current[last] = value
 
 
-def parse_update_value(raw: Optional[str], *, from_stdin: bool) -> Any:
-    """Parse a CLI or stdin value for ``update`` (JSON when unambiguous, else string)."""
-    if from_stdin:
-        text = sys.stdin.read()
-        if not text:
-            raise TodoError("stdin value is empty")
-        stripped = text.strip()
-        if stripped.startswith(("{", "[")):
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                raise TodoError(f"stdin is not valid JSON: {exc}") from exc
-        return text.rstrip("\n")
-    if raw is None:
-        raise TodoError("value is required unless reading from stdin with '-'")
-    if raw == "-":
-        return parse_update_value(None, from_stdin=True)
-    if raw.startswith(("{", "[")):
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise TodoError(f"value is not valid JSON: {exc}") from exc
-    if raw in {"true", "false", "null"}:
-        return json.loads(raw)
-    if re.fullmatch(r"-?\d+", raw):
-        return int(raw)
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
-        return raw[1:-1]
-    return raw
-
-
 def subtodo_entry_from_child(child: JsonDict) -> JsonDict:
     """Build a parent Subtodos row from a child todo."""
     return {
@@ -918,20 +887,6 @@ def apply_ticket_path(
             and not stay
         ):
             run_git(root, "checkout", origin_branch, check=False)
-
-
-def update_ticket_path(
-    root: Path,
-    selector: str,
-    jsonpath: str,
-    raw_value: str,
-    *,
-    stay: bool = False,
-    no_commit: bool = False,
-) -> Any:
-    """Parse a CLI/stdin *raw_value* and set it at *jsonpath* on a selected ticket."""
-    value = parse_update_value(raw_value, from_stdin=(raw_value == "-"))
-    return apply_ticket_path(root, selector, jsonpath, value, stay=stay, no_commit=no_commit)
 
 
 def checkout_todo_branch(root: Path, todo: JsonDict) -> str:
@@ -1306,9 +1261,9 @@ class TodoSubCommand(ABC):
 
 class MintCommand(TodoSubCommand):
     command_names = ("mint",)
-    doc_short: ClassVar[str] = "Mint ticket Id"
+    doc_short: ClassVar[str] = "Mint todo Id"
     doc_long: ClassVar[str] = (
-        "Mint creates a new TODO ticket identifier. It hashes a uuid1 value into the canonical "
+        "Mint creates a new TODO identifier. It hashes a uuid1 value into the canonical "
         "64-character lowercase hex Id stored in TODO.json. Before returning the value, it checks "
         "existing branch and worktree todos for an 8-hex prefix collision. It prints only the Id so "
         "callers can capture it directly."
@@ -1378,20 +1333,20 @@ def elide_embedding_vectors(obj: Any) -> Any:
 
 class ReadCommand(TodoSubCommand):
     command_names = ("read",)
-    doc_short: ClassVar[str] = "Print ticket JSON"
+    doc_short: ClassVar[str] = "Print todo JSON"
     doc_long: ClassVar[str] = (
-        "Read locates a TODO ticket by full Id, by an unambiguous prefix of at least four hex "
+        "Read locates a TODO by full Id, by an unambiguous prefix of at least four hex "
         "characters, or by self/curr for the checked-out branch. It searches the current worktree "
         "first, then local and cached remote refs. Legacy field names are normalized and fields are "
         "ordered Id/Summary/Body first, Subtodos/WorkItems last. By default embedding vectors are "
         "elided to their first and last element; pass -v/--verbose to print them in full. The "
-        "command prints the selected ticket as formatted JSON to stdout."
+        "command prints the selected todo as formatted JSON to stdout."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register read arguments."""
-        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
         parser.add_argument(
             "-v",
             "--verbose",
@@ -1413,18 +1368,18 @@ class ReadCommand(TodoSubCommand):
         return 0
 
 
-class ReadPathCommand(TodoSubCommand):
-    command_names = ("read-path",)
-    doc_short: ClassVar[str] = "Print ticket path"
+class GetJsonPathCommand(TodoSubCommand):
+    command_names = ("get-json-path",)
+    doc_short: ClassVar[str] = "Print a JSON path value"
     doc_long: ClassVar[str] = (
-        "Read-path locates a ticket by selector and prints one internal dot-path value. It is the "
-        "low-level read primitive for scripts that should not inspect TODO.json directly."
+        "Get-json-path locates a todo by selector and prints one internal dot-path value as JSON. "
+        "It is the low-level read primitive for scripts that should not inspect TODO.json directly."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """Register read-path arguments."""
-        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
+        """Register get-json-path arguments."""
+        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
         parser.add_argument("jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary")
 
     def do(self) -> int:
@@ -1437,9 +1392,9 @@ class ReadPathCommand(TodoSubCommand):
 
 class JqCommand(TodoSubCommand):
     command_names = ("jq",)
-    doc_short: ClassVar[str] = "Run jq against ticket"
+    doc_short: ClassVar[str] = "Run jq against todo"
     doc_long: ClassVar[str] = (
-        "Jq locates a ticket by selector, feeds the normalized ticket JSON to the jq binary, and "
+        "Jq locates a todo by selector, feeds the normalized todo JSON to the jq binary, and "
         "prints jq's stdout. This keeps all TODO.json access behind todo.py while preserving jq "
         "filter behavior."
     )
@@ -1447,8 +1402,8 @@ class JqCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register jq arguments."""
-        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
-        parser.add_argument("filter", help="jq filter to run against the selected ticket")
+        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("filter", help="jq filter to run against the selected todo")
 
     def do(self) -> int:
         """Run jq over a selected ticket."""
@@ -1474,12 +1429,12 @@ class JqCommand(TodoSubCommand):
 
 class InitCommand(TodoSubCommand):
     command_names = ("init",)
-    doc_short: ClassVar[str] = "Create ticket branch"
+    doc_short: ClassVar[str] = "Create todo branch"
     doc_long: ClassVar[str] = (
-        "Init starts a new branch-bound TODO ticket. It mints or accepts an Id, derives or accepts "
+        "Init starts a new branch-bound TODO. It mints or accepts an Id, derives or accepts "
         "the branch name, writes the initial TODO.json skeleton, and commits it by default. It "
         "refuses to create a second TODO.json on a branch that already has one. It can optionally "
-        "return to the parent branch after creating the ticket branch."
+        "return to the parent branch after creating the todo branch."
     )
 
     @classmethod
@@ -1541,10 +1496,10 @@ class InitCommand(TodoSubCommand):
 
 class AddSubtodoCommand(TodoSubCommand):
     command_names = ("add-subtodo", "add-child")
-    doc_short: ClassVar[str] = "Create child ticket"
+    doc_short: ClassVar[str] = "Create child todo"
     doc_long: ClassVar[str] = (
-        "Add-subtodo creates a child TODO ticket from the current parent ticket branch. It can "
-        "load the child ticket from JSON or build one from summary, body, and acceptance criteria. "
+        "Add-subtodo creates a child TODO from the current parent todo branch. It can "
+        "load the child todo from JSON or build one from summary, body, and acceptance criteria. "
         "The command creates and commits the child branch, then returns to the parent branch. It "
         "registers the child in the parent's Subtodos list so later merge bookkeeping can find it."
     )
@@ -1633,9 +1588,9 @@ class AddSubtodoCommand(TodoSubCommand):
 
 class SetStateCommand(TodoSubCommand):
     command_names = ("set-state",)
-    doc_short: ClassVar[str] = "Set ticket state"
+    doc_short: ClassVar[str] = "Set todo state"
     doc_long: ClassVar[str] = (
-        "Set-state replaces the current ticket's State object with one of the supported workflow "
+        "Set-state replaces the current todo's State object with one of the supported workflow "
         "states. State-specific metadata such as owner, note, last commit, or merged-into can be "
         "recorded with the transition. The command updates TODO.json and commits the change by "
         "default. It prints the new State object for confirmation."
@@ -1676,9 +1631,9 @@ class SetStateCommand(TodoSubCommand):
 
 class SetCommand(TodoSubCommand):
     command_names = ("set",)
-    doc_short: ClassVar[str] = "Patch ticket fields"
+    doc_short: ClassVar[str] = "Patch todo fields"
     doc_long: ClassVar[str] = (
-        "Set edits the current branch's ticket fields without changing branches. It updates "
+        "Set edits the current branch's todo fields without changing branches. It updates "
         "Summary.raw, Body.raw, and/or AC. To replace WorkItems or any other JSON path from a file "
         "or stdin, use set-json-path. The command requires at least one field change and commits "
         "by default."
@@ -1718,7 +1673,7 @@ class WorkItemAddCommand(TodoSubCommand):
     command_names = ("work-item-add", "chunk-add")
     doc_short: ClassVar[str] = "Append work item"
     doc_long: ClassVar[str] = (
-        "Work-item-add appends a new open WorkItems entry to the current ticket. The entry stores "
+        "Work-item-add appends a new open WorkItems entry to the current todo. The entry stores "
         "the provided summary and starts with done set to false. Existing work items keep their "
         "order and content. The command writes TODO.json and commits by default."
     )
@@ -1805,7 +1760,7 @@ class WorkItemReadCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-read arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
 
     def do(self) -> int:
         """Print the cursor work item for the selected todo."""
@@ -1931,7 +1886,7 @@ class IsDoneCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register is-done arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
 
     def do(self) -> int:
         """Print and return the todo's done state."""
@@ -1954,7 +1909,7 @@ class LastShaCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register last-sha arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="ticket selector (default: self)")
+        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
 
     def do(self) -> int:
         """Print the last work item's sha."""
@@ -1968,53 +1923,11 @@ class LastShaCommand(TodoSubCommand):
         return 0
 
 
-class UpdateCommand(TodoSubCommand):
-    command_names = ("update", "set-path")
-    doc_short: ClassVar[str] = "Update ticket path"
-    doc_long: ClassVar[str] = (
-        "Update/set-path edits a JSON path on a ticket selected by Id, unambiguous Id prefix, or "
-        "self/curr. It checks out the branch that carries a non-current target ticket, parses the "
-        "value as JSON when appropriate, and writes the updated TODO.json. By default it returns "
-        "to the original branch after the edit. It prints the updated value so scripts can confirm "
-        "the patch."
-    )
-
-    @classmethod
-    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """Register update arguments."""
-        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
-        parser.add_argument("jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary")
-        parser.add_argument(
-            "value",
-            help="new value (JSON literal or string); use - to read from stdin",
-        )
-        parser.add_argument(
-            "--stay",
-            action="store_true",
-            help="remain on the target branch after update (default: return to previous branch)",
-        )
-        parser.add_argument("--no-commit", action="store_true")
-
-    def do(self) -> int:
-        """Set a JSON path on the selected todo."""
-        root = self.root()
-        updated = update_ticket_path(
-            root,
-            self.selector,
-            self.jsonpath,
-            self.value,
-            stay=self.stay,
-            no_commit=self.no_commit,
-        )
-        print_json_value(updated)
-        return 0
-
-
 class SetJsonPathCommand(TodoSubCommand):
     command_names = ("set-json-path",)
     doc_short: ClassVar[str] = "Set a JSON path from stdin or file"
     doc_long: ClassVar[str] = (
-        "Set-json-path sets any JSON path on a selected ticket (e.g. WorkItems, Body.raw, "
+        "Set-json-path sets any JSON path on a selected todo (e.g. WorkItems, Body.raw, "
         "WorkItems.0.summary) to a value read as JSON from --file, or from stdin by default. The "
         "input must be valid JSON. It checks out the target branch for a non-self selector, writes, "
         "and commits by default, returning to the previous branch unless --stay. This is the "
@@ -2024,7 +1937,7 @@ class SetJsonPathCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register set-json-path arguments."""
-        parser.add_argument("selector", help="ticket selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
         parser.add_argument("jsonpath", help="dot path, e.g. WorkItems or Body.raw")
         parser.add_argument("--file", help="read the JSON value from this file (default: stdin)")
         parser.add_argument(
@@ -2066,8 +1979,8 @@ class MergeSubtodoCommand(TodoSubCommand):
     command_names = ("merge-subtodo", "merge-child")
     doc_short: ClassVar[str] = "Record child merge"
     doc_long: ClassVar[str] = (
-        "Merge-subtodo records that a child ticket has been merged into its parent. It verifies "
-        "the child ticket is done or already merged, checks out the child branch, and marks the "
+        "Merge-subtodo records that a child todo has been merged into its parent. It verifies "
+        "the child todo is done or already merged, checks out the child branch, and marks the "
         "child State as merged. It then returns to the parent branch and updates the parent's "
         "Subtodos entry for that child. The command prints a small JSON merge summary."
     )
@@ -2094,9 +2007,9 @@ class MergeSubtodoCommand(TodoSubCommand):
 
 class WaitForCommand(TodoSubCommand):
     command_names = ("wait-for",)
-    doc_short: ClassVar[str] = "Wait for ticket state"
+    doc_short: ClassVar[str] = "Wait for todo state"
     doc_long: ClassVar[str] = (
-        "Wait-for polls selected child tickets until each reaches the requested state, done by "
+        "Wait-for polls selected child todos until each reaches the requested state, done by "
         "default. Children signal progress by using set-state through todo.py; this command keeps "
         "the parent behind the same read interface instead of inspecting TODO.json directly."
     )
@@ -2104,7 +2017,7 @@ class WaitForCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-for arguments."""
-        parser.add_argument("selectors", nargs="+", help="ticket selectors to wait on")
+        parser.add_argument("selectors", nargs="+", help="todo selectors to wait on")
         parser.add_argument("--state", default="done", choices=sorted(VALID_STATES), help="target state")
         parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
         parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
@@ -2127,14 +2040,14 @@ class WaitAndMergeCommand(TodoSubCommand):
     command_names = ("wait-and-merge",)
     doc_short: ClassVar[str] = "Wait and merge children"
     doc_long: ClassVar[str] = (
-        "Wait-and-merge waits for child tickets to reach done, then records each merge using the "
+        "Wait-and-merge waits for child todos to reach done, then records each merge using the "
         "same merge-subtodo bookkeeping command. It is the barrier primitive for parent work items."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-and-merge arguments."""
-        parser.add_argument("child_ids", nargs="+", help="child ticket selectors to merge")
+        parser.add_argument("child_ids", nargs="+", help="child todo selectors to merge")
         parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
         parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
         parser.add_argument("--merged-into", help="parent branch name")
@@ -2165,9 +2078,9 @@ class WaitAndMergeCommand(TodoSubCommand):
 
 class DoctorCommand(TodoSubCommand):
     command_names = ("doctor",)
-    doc_short: ClassVar[str] = "Audit ticket health"
+    doc_short: ClassVar[str] = "Audit todo health"
     doc_long: ClassVar[str] = (
-        "Doctor performs a read-only audit of a selected ticket. It validates selector resolution, "
+        "Doctor performs a read-only audit of a selected todo. It validates selector resolution, "
         "top-level schema, State shape, Subtodos references, and basic wait graph sanity."
     )
 
@@ -2178,7 +2091,7 @@ class DoctorCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default="self",
-            help="ticket selector to audit (default: self)",
+            help="todo selector to audit (default: self)",
         )
 
     def do(self) -> int:
@@ -2354,14 +2267,14 @@ def forest_roots(root: Path) -> List[JsonDict]:
 
 class LogCommand(TodoSubCommand):
     command_names = ("log",)
-    doc_short: ClassVar[str] = "Show ticket graph (oneline, from TODO.json)"
+    doc_short: ClassVar[str] = "Show todo graph (oneline, from TODO.json)"
     doc_long: ClassVar[str] = (
-        "Log renders the ticket graph derived from TODO.json Subtodos relationships in "
-        "git-log --graph --oneline style: one line per ticket as "
+        "Log renders the todo graph derived from TODO.json Subtodos relationships in "
+        "git-log --graph --oneline style: one line per todo as "
         "'* <Id[0:8]> <summary>  [<state>]', with vertical rails for the subtodo tree. The "
         "graph is read entirely from TODO.json files through todo.py's own readers, never "
         "from git history. Selector is self/curr or a 4+ hex Id prefix (default self); --all "
-        "renders every discoverable ticket as a forest."
+        "renders every discoverable todo as a forest."
     )
 
     @classmethod
@@ -2371,32 +2284,32 @@ class LogCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default="self",
-            help="ticket selector: self, curr, or 4+ hex Id prefix (default: self)",
+            help="todo selector: self, curr, or 4+ hex Id prefix (default: self)",
         )
         parser.add_argument(
             "--all",
             dest="all_tickets",
             action="store_true",
-            help="render every discoverable ticket as a forest",
+            help="render every discoverable todo as a forest",
         )
         parser.add_argument(
             "-n",
             "--max-count",
             type=int,
             default=None,
-            help="limit the number of ticket lines printed",
+            help="limit the number of todo lines printed",
         )
         parser.add_argument(
             "-v",
             "--verbose",
             action="store_true",
-            help="under each ticket, list its branch commits (the frequentcommit trail)",
+            help="under each todo, list its branch commits (the frequentcommit trail)",
         )
         parser.add_argument(
             "-t",
             "--timestamps",
             action="store_true",
-            help="show timestamps: ticket update time on nodes, commit date on -v commit lines",
+            help="show timestamps: todo update time on nodes, commit date on -v commit lines",
         )
 
     def do(self) -> int:
@@ -2502,7 +2415,7 @@ class ImportJsonCommand(TodoSubCommand):
     command_names = ("import-json",)
     doc_short: ClassVar[str] = "Import legacy TODO.json into sqlite"
     doc_long: ClassVar[str] = (
-        "Import-json loads ticket JSON into the resolved todo sqlite db. Use --from-json for one file "
+        "Import-json loads todo JSON into the resolved todo sqlite db. Use --from-json for one file "
         "or --scan-refs to import every TODO.json on git refs in the current repo."
     )
 
@@ -2534,9 +2447,9 @@ class ImportJsonCommand(TodoSubCommand):
 
 class SearchCommand(TodoSubCommand):
     command_names = ("search",)
-    doc_short: ClassVar[str] = "Vector search tickets"
+    doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
-        "Search ranks tickets by embedding similarity to QUERY plus lexical overlap. "
+        "Search ranks todos by embedding similarity to QUERY plus lexical overlap. "
         "Uses the configured embedder (default hash; set $TODO_EMBEDDER)."
     )
 
@@ -2563,7 +2476,7 @@ class LsCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
         "Ls prints one line per todo known to the resolved todo directory, as '<id[0:8]>  "
-        "<summary>'. Where-to-find-it only; use 'read <id>' for full ticket content. Default "
+        "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. Default "
         "order is insertion order; -t sorts by last-update time, most recent first, like shell "
         "ls -t."
     )
@@ -2598,7 +2511,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     WebCommand,
     LsCommand,
     ReadCommand,
-    ReadPathCommand,
+    GetJsonPathCommand,
     JqCommand,
     InitCommand,
     AddSubtodoCommand,
@@ -2612,7 +2525,6 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     WorkItemDeleteCommand,
     IsDoneCommand,
     LastShaCommand,
-    UpdateCommand,
     SetJsonPathCommand,
     MergeSubtodoCommand,
     WaitForCommand,
@@ -2630,7 +2542,7 @@ Repo & todo identity:
                repo can be cloned many times on one or many machines, so the
                same todo may exist in several checkouts; the repo root says
                WHICH checkout a branch lives in.
-  TODO branch  a git repo branch that carries a todo ticket in sqlite.
+  TODO branch  a git repo branch that carries a todo in sqlite.
   todo dir     resolved once per invocation: $TODO_DIR, else gitroot/.todo, else
                ~/.todo (first with sqlite.db wins; same dir for db and
                worktrees).
@@ -2651,7 +2563,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="todo.py",
         description=(
-            "Branch-bound todo ticket CLI (sqlite-backed). Repo root is the current "
+            "Branch-bound todo CLI (sqlite-backed). Repo root is the current "
             "directory's gitroot (cd to the target repo; no --repo flag); "
             "hard-errors if CWD is not a git repo."
         ),
