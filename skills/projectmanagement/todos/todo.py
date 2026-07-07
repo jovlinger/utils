@@ -1088,6 +1088,12 @@ def set_at_path(root: JsonDict, path_str: str, value: Any) -> None:
         current[last] = value
 
 
+# Subtodos[].State for a child-declared informational back-link: a follow-only
+# link (HATEOAS) inserted by `init --parent` and repaired by `doctor`, distinct
+# from a tracked subtodo the parent must merge. Excluded from merge-completeness.
+SUBTODO_STATE_INFO = "INFO"
+
+
 def subtodo_entry_from_child(child: JsonDict) -> JsonDict:
     """Build a parent Subtodos row from a child todo."""
     return {
@@ -1096,6 +1102,92 @@ def subtodo_entry_from_child(child: JsonDict) -> JsonDict:
         "Summary": child.get("Summary", {}).get("raw", ""),
         "State": current_state_name(child) or "init",
     }
+
+
+def info_backlink_entry(child: JsonDict) -> JsonDict:
+    """A parent Subtodos row for a child-declared informational back-link.
+
+    `State` is INFO (follow-only, not a mergeable subtodo); `Summary` is a
+    best-effort copy of the child's summary that doctor refreshes when sweeping.
+    """
+    summary_obj = child.get("Summary")
+    summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
+    return {
+        "Id": str(child["Id"]),
+        "Branch": str(child.get("Branch", "")),
+        "Summary": summary,
+        "State": SUBTODO_STATE_INFO,
+    }
+
+
+def upsert_info_backlink(parent: JsonDict, child: JsonDict) -> bool:
+    """Ensure *parent*'s Subtodos carries an INFO back-link to *child*.
+
+    Returns True when the parent changed. Never downgrades a real (tracked)
+    subtodo entry to INFO -- if the child is already listed as a mergeable
+    subtodo it is left untouched; an existing INFO entry gets its best-effort
+    Summary/Branch refreshed.
+    """
+    entry = info_backlink_entry(child)
+    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
+    for existing in subtodos:
+        if existing.get("Id") == entry["Id"]:
+            if existing.get("State") != SUBTODO_STATE_INFO:
+                return False  # a real tracked subtodo -- do not clobber it
+            if (
+                existing.get("Summary") == entry["Summary"]
+                and existing.get("Branch") == entry["Branch"]
+            ):
+                return False
+            existing["Summary"] = entry["Summary"]
+            existing["Branch"] = entry["Branch"]
+            parent["Subtodos"] = subtodos
+            return True
+    subtodos.append(entry)
+    parent["Subtodos"] = subtodos
+    return True
+
+
+def reestablish_backlinks(root: Path, child: JsonDict, *, dry_run: bool = False) -> List[str]:
+    """Make each of *child*'s `Parent` refs point back at the child.
+
+    For every parent the child references, ensure the parent's Subtodos carries
+    an INFO back-link to this child (so a reader can follow parent -> child, not
+    just child -> parent). Returns human descriptions of the back-links added or
+    refreshed; writes them unless *dry_run*.
+
+    Best-effort and sqlite-only: unresolvable and cross-repo parents are skipped
+    (a write keys by the current repo, so persisting another repo's parent would
+    misfile it), and legacy JSON mode -- where a write targets the current
+    branch's file -- makes no changes.
+    """
+    if not use_sqlite():
+        return []
+    child_id = str(child.get("Id") or "")
+    current = repo_key(root)
+    repairs: List[str] = []
+    seen: set = set()
+    for ref in child.get("Parent") or []:
+        if not isinstance(ref, dict):
+            continue
+        parent_id = str(ref.get("Id") or "")
+        if not parent_id or parent_id in seen:
+            continue
+        seen.add(parent_id)
+        try:
+            loc, parent = resolve_ticket_by_id(root, parent_id)
+        except TodoError:
+            continue
+        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
+        if parent_repo and parent_repo not in ("worktree", current):
+            continue  # cross-repo parent: cannot safely persist here
+        if str(parent.get("Id") or "") == child_id:
+            continue  # never self-link
+        if upsert_info_backlink(parent, child):
+            repairs.append(f"parent {parent_id[:8]} <- INFO back-link {child_id[:8]}")
+            if not dry_run:
+                write_todo_worktree(root, parent)
+    return repairs
 
 
 def upsert_subtodo(parent: JsonDict, child: JsonDict) -> None:
@@ -1345,8 +1437,8 @@ def unmerged_subtodos(todo: JsonDict) -> List[str]:
         if not isinstance(entry, dict):
             continue
         state = entry.get("State")
-        if state == "merged":
-            continue
+        if state in ("merged", SUBTODO_STATE_INFO):
+            continue  # merged, or a follow-only INFO back-link (not a subtodo)
         child_id = entry.get("Id")
         short = child_id[:8] if isinstance(child_id, str) and child_id else "?"
         labels.append(f"Subtodos.{index}.Id {short} is {state or 'unset'}, not merged")
@@ -1756,10 +1848,11 @@ class InitCommand(TodoSubCommand):
         "the branch name, writes the initial TODO.json skeleton, and commits it by default. It "
         "refuses to create a second TODO.json on a branch that already has one. It can optionally "
         "return to the parent branch after creating the todo branch. Pass --parent <id> "
-        "(repeatable) to record parent/context todos on this one; the reference is one-way "
-        "(the parent is left untouched and unaware), so a fresh agent can walk up via "
-        "'todo.py prompt <id>' to see WHY. For the full bidirectional subtodo lifecycle "
-        "(parent lists the child, merge bookkeeping), use add-subtodo from the parent branch."
+        "(repeatable) to record parent/context todos on this one; the child points at the parent "
+        "(walk up via 'todo.py prompt <id>' to see WHY), and the parent gets a follow-only INFO "
+        "back-link in its Subtodos so a reader can follow parent -> child too. The INFO link is "
+        "not a tracked subtodo -- it carries no merge obligation. For the full subtodo lifecycle "
+        "(merge bookkeeping), use add-subtodo from the parent branch."
     )
 
     @classmethod
@@ -1828,6 +1921,9 @@ class InitCommand(TodoSubCommand):
         write_todo_worktree(root, ticket)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
+        # Make the --parent references bidirectional: give each parent a
+        # follow-only INFO back-link to this child (best-effort, same-repo).
+        reestablish_backlinks(root, ticket, dry_run=False)
         if self.stay_on_parent and parent_branch:
             run_git(root, "checkout", parent_branch)
         print(json.dumps({"Id": ticket_id, "Branch": branch}, indent=2))
@@ -2463,12 +2559,36 @@ class WaitAndMergeCommand(TodoSubCommand):
         return 0
 
 
+def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
+    """Audit one todo and (unless dry_run) repair its parent back-links.
+
+    Repair walks the audited todo's `Parent` refs and re-establishes a
+    follow-only INFO back-link on each parent -- healing links that were
+    one-way (legacy `init --parent`) or lost, and refreshing INFO summaries.
+    """
+    _loc, todo = resolve_ticket_by_selector(root, selector)
+    findings = doctor_findings(root, selector)
+    warnings = doctor_warnings(root, selector)
+    repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
+    return {
+        "id": str(todo.get("Id", ""))[:8],
+        "ok": not findings,
+        "findings": findings,
+        "warnings": warnings,
+        "repairs": repairs,
+    }
+
+
 class DoctorCommand(TodoSubCommand):
     command_names = ("doctor",)
-    doc_short: ClassVar[str] = "Audit todo health"
+    doc_short: ClassVar[str] = "Audit and repair todo health"
     doc_long: ClassVar[str] = (
-        "Doctor performs a read-only audit of a selected todo. It validates selector resolution, "
-        "top-level schema, State shape, Subtodos references, and basic wait graph sanity."
+        "Doctor audits a todo -- selector resolution, top-level schema, State shape, Subtodos "
+        "references, and wait-graph sanity -- and repairs parent back-links: for each of the "
+        "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
+        "Subtodos (best-effort, same-repo, sqlite only). Repair runs by default; pass --dry-run to "
+        "audit and report intended repairs without writing. Pass --all to sweep the whole corpus "
+        "instead of a single selector. Exit 1 when any hard finding is present."
     )
 
     @classmethod
@@ -2478,16 +2598,50 @@ class DoctorCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default="self",
-            help="todo selector to audit (default: self)",
+            help="todo selector to audit (default: self; ignored with --all)",
+        )
+        parser.add_argument(
+            "--all",
+            dest="sweep_all",
+            action="store_true",
+            help="sweep every todo in the corpus instead of one selector",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="audit and report intended back-link repairs without writing",
         )
 
     def do(self) -> int:
-        """Audit a selected todo."""
+        """Audit (and unless --dry-run, repair) one todo or the whole corpus."""
         root = self.root()
-        findings = doctor_findings(root, self.selector)
-        warnings = doctor_warnings(root, self.selector)
-        print(json.dumps({"ok": not findings, "findings": findings, "warnings": warnings}, indent=2))
-        return 1 if findings else 0
+        if self.sweep_all:
+            if not use_sqlite():
+                raise TodoError("--all requires the db store (unset TODO_USE_JSON)")
+            ids = [str(t.get("Id", "")) for t in todo_store.get_store().list_all()]
+            results = [_doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid]
+            ok = all(r["ok"] for r in results)
+            print(
+                json.dumps(
+                    {"ok": ok, "dry_run": self.dry_run, "audited": len(results), "results": results},
+                    indent=2,
+                )
+            )
+            return 0 if ok else 1
+        result = _doctor_one(root, self.selector, dry_run=self.dry_run)
+        print(
+            json.dumps(
+                {
+                    "ok": result["ok"],
+                    "dry_run": self.dry_run,
+                    "findings": result["findings"],
+                    "warnings": result["warnings"],
+                    "repairs": result["repairs"],
+                },
+                indent=2,
+            )
+        )
+        return 0 if result["ok"] else 1
 
 
 def _summary_snippet(text: str, limit: int = 60) -> str:
