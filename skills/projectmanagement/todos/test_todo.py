@@ -843,7 +843,7 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
 
-    def test_init_parent_is_one_way_reference(self) -> None:
+    def test_init_parent_inserts_info_backlink(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent", body="why we are here")
@@ -852,9 +852,76 @@ class ParentPromptTests(TodoCase):
         # Child records the parent ref...
         child = self._read(child_id[:8])
         self.assertEqual([p["Id"] for p in child["Parent"]], [parent_id])
-        # ...and the parent is left unaware (no Subtodos entry for the child).
+        # ...and the parent now carries a follow-only INFO back-link to the child.
         parent = self._read(parent_id[:8])
-        self.assertEqual(parent.get("Subtodos", []), [])
+        subtodos = parent.get("Subtodos", [])
+        self.assertEqual(len(subtodos), 1, subtodos)
+        self.assertEqual(subtodos[0]["Id"], child_id)
+        self.assertEqual(subtodos[0]["State"], "INFO")
+        self.assertEqual(subtodos[0]["Summary"], "child")
+
+    def test_info_backlink_excluded_from_merge_completeness(self) -> None:
+        # A parent with only an INFO back-link can go done without a hard finding.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent", body="ctx")
+        self._git("checkout", base)
+        self._init("child", body="task", parents=[parent_id[:8]])
+        self._git("checkout", f"{parent_id[:8]}-parent")
+        self.assertEqual(self.todo("set-state", "done").returncode, 0)
+        doc = self.todo("doctor", "self")
+        self.assertEqual(doc.returncode, 0, doc.stdout)
+        self.assertTrue(json.loads(doc.stdout)["ok"])
+
+    def _strip_subtodos(self, parent_id: str) -> None:
+        """Mimic a legacy one-way link: remove the auto-inserted back-link."""
+        empty = self.repo / "empty.json"
+        empty.write_text("[]", encoding="utf-8")
+        proc = self.todo("set-json-path", parent_id[:8], "Subtodos", "--file", str(empty), "--no-commit")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        empty.unlink()
+        self.assertEqual(self._read(parent_id[:8]).get("Subtodos", []), [])
+
+    def test_doctor_repairs_backlink_and_dry_run_does_not_write(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent", body="ctx")
+        self._git("checkout", base)
+        child_id = self._init("child", body="task", parents=[parent_id[:8]])
+        self._strip_subtodos(parent_id)
+
+        # --dry-run reports the intended repair but does not write it
+        dry = self.todo("doctor", child_id[:8], "--dry-run")
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        payload = json.loads(dry.stdout)
+        self.assertTrue(payload["dry_run"])
+        self.assertTrue(any(child_id[:8] in r for r in payload["repairs"]), payload["repairs"])
+        self.assertEqual(self._read(parent_id[:8]).get("Subtodos", []), [])
+
+        # a real run re-establishes the INFO back-link
+        fix = self.todo("doctor", child_id[:8])
+        self.assertEqual(fix.returncode, 0, fix.stderr)
+        self.assertTrue(any(child_id[:8] in r for r in json.loads(fix.stdout)["repairs"]))
+        parent = self._read(parent_id[:8])
+        self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
+        self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
+
+    def test_doctor_all_sweeps_corpus_and_repairs(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent", body="ctx")
+        self._git("checkout", base)
+        self._init("child", body="task", parents=[parent_id[:8]])
+        self._strip_subtodos(parent_id)
+
+        proc = self.todo("doctor", "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertGreaterEqual(payload["audited"], 2)
+        self.assertTrue(payload["ok"])
+        # the corpus sweep visited the child and repaired the parent
+        parent = self._read(parent_id[:8])
+        self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
 
     def test_init_accepts_multiple_parents(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -1208,6 +1275,40 @@ class WorkItemModelUnitTests(unittest.TestCase):
             ]
         }
         self.assertEqual(todo.workitem_findings(well_formed), [])
+
+
+class BacklinkUnitTests(unittest.TestCase):
+    """Pure-function tests for INFO back-link helpers."""
+
+    def _child(self) -> Dict[str, Any]:
+        return {"Id": "c" * 64, "Branch": "cccccccc-child", "Summary": {"raw": "do it"}}
+
+    def test_info_backlink_entry_is_marked_info(self) -> None:
+        entry = todo.info_backlink_entry(self._child())
+        self.assertEqual(entry["State"], "INFO")
+        self.assertEqual(entry["Summary"], "do it")
+        self.assertEqual(entry["Id"], "c" * 64)
+
+    def test_upsert_appends_then_refreshes_but_keeps_real_entry(self) -> None:
+        parent: Dict[str, Any] = {"Subtodos": []}
+        self.assertTrue(todo.upsert_info_backlink(parent, self._child()))
+        self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
+        # idempotent: same child, no change
+        self.assertFalse(todo.upsert_info_backlink(parent, self._child()))
+        # refreshes the best-effort summary on an existing INFO entry
+        moved = {"Id": "c" * 64, "Branch": "new-branch", "Summary": {"raw": "renamed"}}
+        self.assertTrue(todo.upsert_info_backlink(parent, moved))
+        self.assertEqual(parent["Subtodos"][0]["Summary"], "renamed")
+        # never downgrades a real tracked subtodo entry to INFO
+        real: Dict[str, Any] = {"Subtodos": [{"Id": "c" * 64, "State": "working", "Summary": "x"}]}
+        self.assertFalse(todo.upsert_info_backlink(real, self._child()))
+        self.assertEqual(real["Subtodos"][0]["State"], "working")
+
+    def test_unmerged_subtodos_skips_info(self) -> None:
+        parent = {"Subtodos": [{"Id": "a" * 64, "State": "INFO"}, {"Id": "b" * 64, "State": "working"}]}
+        labels = todo.unmerged_subtodos(parent)
+        self.assertEqual(len(labels), 1)
+        self.assertIn("b" * 8, labels[0])
 
 
 class MissingRepoCwdTests(unittest.TestCase):

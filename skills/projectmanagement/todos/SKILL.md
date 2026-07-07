@@ -94,13 +94,23 @@ recover WHY it is doing the work. The link is the child's `Parent` field -- a
 **list** of `{Id, Branch}` refs:
 
 - `add-subtodo` sets it (element 0 = the structural/fork parent) and also
-  registers the child on the parent side (`Subtodos`) for merge bookkeeping --
-  the full bidirectional lifecycle.
-- `todo.py init --parent <id>` (repeatable) records a **one-way** reference: the
-  new todo points at the parent/context todo, which is left untouched and
-  unaware. Use it to hang a fresh todo off an existing one (even an old,
-  unrelated todo) purely for context. For a real subtodo that the parent must
-  track and merge, use `add-subtodo` instead.
+  registers the child on the parent side (`Subtodos`) as a **tracked, mergeable**
+  subtodo -- the full merge-bookkeeping lifecycle.
+- `todo.py init --parent <id>` (repeatable) records the child's `Parent` ref
+  **and** writes a follow-only **INFO back-link** into the parent's `Subtodos`
+  (`State: "INFO"`), so the link is navigable both ways (HATEOAS) without the
+  parent taking on any merge obligation. Use it to hang a fresh todo off an
+  existing one (even an old, unrelated todo) for context. The INFO link is *not*
+  a tracked subtodo: it is excluded from merge-completeness, the child sets it
+  once at creation and never updates it, and `doctor` refreshes its best-effort
+  `Summary` when sweeping. For a real subtodo the parent must merge, use
+  `add-subtodo` instead.
+
+INFO back-links are best-effort and same-repo (a write keys by the current
+repo). A child created before this behavior, or one whose parent lives in
+another repo at creation time, is healed by `doctor` (which re-establishes the
+back-link from the child's `Parent` ref) the next time it runs in the parent's
+repo.
 
 **First thing a working agent should do:** run `todo.py prompt <id>` (default
 `self`). It walks the `Parent` chain up and concatenates each todo's
@@ -196,7 +206,7 @@ the `todo.py` interface.
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--parent <id>` (repeatable) records a one-way parent/context reference on the new todo (leaves the parent untouched; use `add-subtodo` for the tracked, mergeable lifecycle). `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--parent <id>` (repeatable) records a parent/context reference on the new todo and writes a follow-only `INFO` back-link into each parent's `Subtodos` (bidirectional but no merge obligation; use `add-subtodo` for the tracked, mergeable lifecycle). `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
 | `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default. `--actual-summary=...` records how the work actually panned out into `ActualSummary` (used later as the merge message) |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
@@ -211,7 +221,7 @@ the `todo.py` interface.
 | `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
-| `todo.py doctor [<selector>]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7). Two tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo (unresolvable sha or subtodo_id), so transitional and cross-repo todos do not hard-fail |
+| `todo.py doctor [<selector>] [--all] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, sqlite only). Repair runs by default; `--dry-run` reports intended repairs without writing; `--all` sweeps the whole corpus instead of one selector. Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
 | `todo.py log [<selector>]` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (default `self`; `self`/`curr` or a 4+ hex Id prefix) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. `--all` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
 | `todo.py new --summary=... --body=...` | planned | alias for `init` with optional JSON seed |
 
@@ -576,7 +586,10 @@ parallel-checkout use case, keep worktree creation/listing manual.
 
 ## Doctor checks
 
-`todo.py doctor [<selector>]` starts as a read-only audit. First checks:
+`todo.py doctor [<selector>]` audits and, by default, repairs. It re-establishes
+follow-only `INFO` parent back-links from the audited todo's `Parent` refs
+(best-effort, same-repo, sqlite only); `--dry-run` makes it report-only and
+`--all` sweeps the whole corpus. Checks:
 
 - Selector resolution: ids are unambiguous; `self`/`curr` resolves to exactly one
   branch-bound todo.
@@ -587,12 +600,13 @@ parallel-checkout use case, keep worktree creation/listing manual.
 - Dependency graph: waiting/barrier relationships are acyclic.
 - Wait sanity: a parent is not waiting on itself, a missing child, or a child in
   an impossible terminal state.
-- Subtodo merge completeness: every `Subtodos[]` entry should be `merged` (or
-  waived by user) before parent `done`. Any child not `merged` (including one
-  spawned via `start_subtodo` that terminated `userneeded`/`stopped`) is a soft
-  **warning** while the parent is still open, and a hard **finding** once the
-  parent is `done`/`merged` -- a spawn without a merge cannot survive parent
-  completion.
+- Subtodo merge completeness: every *tracked* `Subtodos[]` entry should be
+  `merged` (or waived by user) before parent `done`. Any child not `merged`
+  (including one spawned via `start_subtodo` that terminated
+  `userneeded`/`stopped`) is a soft **warning** while the parent is still open,
+  and a hard **finding** once the parent is `done`/`merged` -- a spawn without a
+  merge cannot survive parent completion. Follow-only `INFO` back-links are
+  excluded (they carry no merge obligation).
 - WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
   `code`/`merge_subtodo` item carries a sha; a done todo does not end in
   `start_subtodo`.
