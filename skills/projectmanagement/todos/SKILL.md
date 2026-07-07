@@ -87,6 +87,28 @@ the parent is an incomplete call -- same as forgetting to await a promise.
 - Marking children `done` from the parent checkout without working the child branch.
 - Marking parent `done` when `todo.py jq self '.Subtodos[].State'` still shows `init` or `done` (unmerged).
 
+### Parent linkage and startup context (`prompt`)
+
+Every child records its parent(s) so a fresh agent with **zero context** can
+recover WHY it is doing the work. The link is the child's `Parent` field -- a
+**list** of `{Id, Branch}` refs:
+
+- `add-subtodo` sets it (element 0 = the structural/fork parent) and also
+  registers the child on the parent side (`Subtodos`) for merge bookkeeping --
+  the full bidirectional lifecycle.
+- `todo.py init --parent <id>` (repeatable) records a **one-way** reference: the
+  new todo points at the parent/context todo, which is left untouched and
+  unaware. Use it to hang a fresh todo off an existing one (even an old,
+  unrelated todo) purely for context. For a real subtodo that the parent must
+  track and merge, use `add-subtodo` instead.
+
+**First thing a working agent should do:** run `todo.py prompt <id>` (default
+`self`). It walks the `Parent` chain up and concatenates each todo's
+Summary/Body -- farthest ancestor first, this todo last -- into one startup
+prompt, so you read the overarching WHY down to your specific WHAT before
+touching code. It is read-only and resolves parents from the db without checking
+out branches; an unresolvable parent is noted, not fatal.
+
 ### Context-scoped subtodos (local subagents)
 
 **WorkItems** are ordered steps on the **parent** branch -- same checkout, same
@@ -140,11 +162,12 @@ chosen directory.
 | Item | Location | Notes |
 |------|----------|-------|
 | Tickets | `<todo-dir>/sqlite.db` | One row per (repo_path, branch); `todo.py ls` lists them |
-| Embeddings | sqlite embeddings table | On write; search via todo.py search |
+| Embeddings | sqlite embeddings table | Cheap (hash) on write; others backfilled on search |
 | Worktrees | `<todo-dir>/worktrees/` | Nested by repo path |
 | Legacy JSON | git TODO.json | Import only: todo.py import-json |
 
-Set TODO_USE_JSON=1 for legacy file mode. Embedder: $TODO_EMBEDDER (default hash).
+Set TODO_USE_JSON=1 for legacy file mode. Search embedders: `todo.py search
+--embedder` (comma list; default all non-hidden; see `todo.py embedders`).
 
 ## CLI (`todo.py`)
 
@@ -165,13 +188,15 @@ the `todo.py` interface.
 |---------|--------|----------|
 | `todo.py mint` | implemented | Mint a fresh ticket `Id` (uuid1 -> SHA-256 of its raw bytes), collision-checked across the repo; print the 64-hex Id |
 | `todo.py read <selector>` | implemented | Locate the branch (or worktree) whose `TODO.json` matches `<selector>` and print the ticket JSON. Id selectors are any **4+ hex unambiguous prefix**, or the full digest. `curr`/`self` resolve to the checked-out branch's todo, even when the branch name does not contain the Id. Resolution scans the sqlite `tickets` table directly (cross-repo, no catalog); it falls back to a current-repo ref scan only when sqlite has no hit. Local-first: remote fetch is feature-flagged off (`FETCH_ENABLED`) |
-| `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit) |
+| `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit); `--embedder` comma list (default all non-hidden), `--dry-run` |
+| `todo.py prompt [<selector>]` | implemented | Concatenate a todo and its `Parent` chain (Summary/Body) into one startup prompt, farthest ancestor first, target last -- zero-context agent reads WHY down to WHAT. Read-only; default `self` |
+| `todo.py embedders` | implemented | List selectable search embedders (non-hidden) with cheap/expensive |
 | `todo.py import-json` | implemented | Migrate legacy JSON: --from-json PATH or --scan-refs |
 | `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--parent <id>` (repeatable) records a one-way parent/context reference on the new todo (leaves the parent untouched; use `add-subtodo` for the tracked, mergeable lifecycle). `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
 | `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor |
@@ -288,8 +313,10 @@ and discovery relies on `git worktree list`.
 ```bash
 git rev-parse --show-toplevel        # confirm repo root; cwd should be here
 todo.py init --summary="..."         # refuses if current branch already has a ticket
+todo.py init --summary="..." --parent <id>   # hang a new todo off an existing one for context
 todo.py read <known-id-prefix>        # load a known ticket; do not read TODO.json directly
 todo.py read self                     # current-branch lookup
+todo.py prompt self                   # WHY->WHAT startup context: self + its Parent chain
 ```
 
 Use `init`'s refusal as the guard against creating a second ticket on the branch,
@@ -544,7 +571,7 @@ parallel-checkout use case, keep worktree creation/listing manual.
 - Schema: allowed top-level fields only; required fields present; optional fields
   are either valid values or `null`.
 - State: `State` has exactly one key and the state name is valid.
-- References: `Parent` and `Subtodos` point to existing todos when discoverable.
+- References: `Parent` (a list of `{Id, Branch}` refs) and `Subtodos` point to existing todos when discoverable.
 - Dependency graph: waiting/barrier relationships are acyclic.
 - Wait sanity: a parent is not waiting on itself, a missing child, or a child in
   an impossible terminal state.

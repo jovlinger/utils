@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import struct
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Sequence, Type
+from typing import Callable, Dict, List, Sequence, Tuple
 
 JsonDict = dict
 
@@ -118,28 +117,31 @@ class SentenceTransformerEmbedder(Embedder):
         return [float(x) for x in vector]
 
 
-_REGISTRY: Dict[str, Type[Embedder]] = {
-    "null": NullEmbedder,
-    "mock": MockEmbedder,
-    "hash": HashEmbedder,
-}
+class _Backend:
+    """Registry entry for one selectable embedder.
 
+    Flags live here, not on the class, so listing and selection never import an
+    optional backend just to read its metadata. ``factory`` imports any heavy or
+    platform-specific dependency lazily.
 
-class _OptionalBackend:
-    """An embedder offered only when its enable flag is set.
-
-    Kept out of the always-available registry because it needs a heavy or
-    platform-specific dependency (ML wheels, a native sidecar). It is listed by
-    ``available_embedders()`` only when ``$enable_env == "1"``, and ``factory``
-    imports the dependency lazily so importing ``todo_embed`` never drags it in.
-    Selecting it by exact key still instantiates even when the flag is unset, so
-    the factory may still raise if the platform/dependency is missing.
+    ``cheap``: cheap enough to auto-populate on every write (kept always-current).
+    ``hidden``: excluded from the default "all" set and from ``embedders``
+    listing, but still selectable by exact key -- test doubles (``null``,
+    ``mock``) and opt-in backends (``st``) that we do not advertise.
     """
 
-    def __init__(self, key: str, enable_env: str, factory: Callable[[], Embedder]) -> None:
+    def __init__(
+        self,
+        key: str,
+        factory: Callable[[], "Embedder"],
+        *,
+        cheap: bool = False,
+        hidden: bool = False,
+    ) -> None:
         self.key = key
-        self.enable_env = enable_env
         self.factory = factory
+        self.cheap = cheap
+        self.hidden = hidden
 
 
 def _make_sentence_transformers() -> Embedder:
@@ -152,38 +154,57 @@ def _make_apple() -> Embedder:
     return AppleEmbedder()
 
 
-_OPTIONAL: Dict[str, _OptionalBackend] = {
-    "sentence_transformers": _OptionalBackend(
-        "sentence_transformers", "TODO_ENABLE_ST_EMBEDDER", _make_sentence_transformers
-    ),
-    "apple": _OptionalBackend("apple", "TODO_ENABLE_APPLE_EMBEDDER", _make_apple),
+# Insertion order defines the default "all" order (non-hidden entries).
+_BACKENDS: Dict[str, _Backend] = {
+    "hash": _Backend("hash", HashEmbedder, cheap=True),
+    "apple": _Backend("apple", _make_apple),
+    "st": _Backend("st", _make_sentence_transformers, hidden=True),
+    "mock": _Backend("mock", MockEmbedder, hidden=True),
+    "null": _Backend("null", NullEmbedder, hidden=True),
 }
 
 
-def register_embedder(name: str, cls: Type[Embedder]) -> None:
-    """Register an always-available embedder implementation by selection key."""
-    _REGISTRY[name] = cls
+def register_embedder(
+    key: str,
+    factory: Callable[[], Embedder],
+    *,
+    cheap: bool = False,
+    hidden: bool = False,
+) -> None:
+    """Register a selectable embedder by key."""
+    _BACKENDS[key] = _Backend(key, factory, cheap=cheap, hidden=hidden)
+
+
+def default_embedder_names() -> List[str]:
+    """Selection keys in the default 'all' set: every non-hidden embedder."""
+    return [b.key for b in _BACKENDS.values() if not b.hidden]
 
 
 def available_embedders() -> List[str]:
-    """Return selectable embedder keys: always-on plus any enabled optional ones."""
-    names = sorted(_REGISTRY.keys())
-    for backend in _OPTIONAL.values():
-        if os.environ.get(backend.enable_env) == "1":
-            names.append(backend.key)
-    return names
+    """Non-hidden selection keys, for user-facing 'choose from' messages."""
+    return default_embedder_names()
 
 
-def get_embedder(name: Optional[str] = None) -> Embedder:
-    """Instantiate the configured embedder by selection key."""
-    chosen = name or os.environ.get("TODO_EMBEDDER", "hash")
-    backend = _OPTIONAL.get(chosen)
-    if backend is not None:
-        return backend.factory()
-    cls = _REGISTRY.get(chosen)
-    if cls is None:
-        raise ValueError(f"unknown embedder {chosen!r}; choose from {available_embedders()}")
-    return cls()
+def list_embedders() -> List[Tuple[str, bool, bool]]:
+    """Return ``(key, cheap, hidden)`` for every registered embedder, in order."""
+    return [(b.key, b.cheap, b.hidden) for b in _BACKENDS.values()]
+
+
+def cheap_embedders() -> List[Embedder]:
+    """Instantiate the cheap embedders -- the ones auto-populated on write."""
+    return [b.factory() for b in _BACKENDS.values() if b.cheap]
+
+
+def get_embedder(name: str) -> Embedder:
+    """Instantiate an embedder by exact selection key.
+
+    Raises ``ValueError`` for an unknown key; the backend's own factory may raise
+    ``RuntimeError`` (e.g. missing sidecar/wheels) when the dependency is absent.
+    """
+    backend = _BACKENDS.get(name)
+    if backend is None:
+        raise ValueError(f"unknown embedder {name!r}; choose from {available_embedders()}")
+    return backend.factory()
 
 
 def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:

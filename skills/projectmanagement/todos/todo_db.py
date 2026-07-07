@@ -275,6 +275,28 @@ def put_embedding(
     )
 
 
+def clear_embeddings(
+    conn: sqlite3.Connection, ticket_id: str, field_path: Optional[str] = None
+) -> None:
+    """Delete stored vectors for a ticket, or just one field when given."""
+    if field_path is None:
+        conn.execute("DELETE FROM embeddings WHERE ticket_id = ?", (ticket_id,))
+    else:
+        conn.execute(
+            "DELETE FROM embeddings WHERE ticket_id = ? AND field_path = ?",
+            (ticket_id, field_path),
+        )
+
+
+def existing_embeddings(conn: sqlite3.Connection, ticket_id: str) -> set:
+    """Return the set of ``(field_path, embedder)`` vectors stored for a ticket."""
+    rows = conn.execute(
+        "SELECT field_path, embedder FROM embeddings WHERE ticket_id = ?",
+        (ticket_id,),
+    ).fetchall()
+    return {(str(row["field_path"]), str(row["embedder"])) for row in rows}
+
+
 def all_embeddings(
     conn: sqlite3.Connection, embedder: str
 ) -> List[Tuple[str, str, List[float]]]:

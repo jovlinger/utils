@@ -136,9 +136,10 @@ class AppleEmbedderTest(unittest.TestCase):
             AppleEmbedder(bin_path=os.path.join(self._dir, "does-not-exist"))
 
     def test_registry_lists_and_builds_apple(self) -> None:
-        env = {"TODO_ENABLE_APPLE_EMBEDDER": "1", "TODO_APPLE_NLCE_BIN": self._bin}
-        with unittest.mock.patch.dict(os.environ, env):
-            self.assertIn("apple", todo_embed.available_embedders())
+        # apple is a non-hidden default embedder; TODO_APPLE_NLCE_BIN points the
+        # backend at the fake sidecar so this runs off-macOS too.
+        self.assertIn("apple", todo_embed.available_embedders())
+        with unittest.mock.patch.dict(os.environ, {"TODO_APPLE_NLCE_BIN": self._bin}):
             emb = todo_embed.get_embedder("apple")
             self.addCleanup(emb.close)  # type: ignore[attr-defined]
             self.assertEqual(len(emb.embed("via registry")), 4)

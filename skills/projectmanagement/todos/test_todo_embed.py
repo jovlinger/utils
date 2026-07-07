@@ -68,22 +68,37 @@ class HashEmbedderTest(unittest.TestCase):
         sim_ac = todo_embed.cosine_similarity(a, c)
         self.assertGreater(sim_ab, sim_ac)
 
-    def test_get_embedder_default_is_hash(self) -> None:
-        env = os.environ.copy()
-        env.pop("TODO_EMBEDDER", None)
-        with unittest.mock.patch.dict(os.environ, env, clear=False):
-            embedder = todo_embed.get_embedder()
-        self.assertEqual(embedder.fingerprint(), "hash")
+    def test_get_embedder_by_name(self) -> None:
+        self.assertEqual(todo_embed.get_embedder("hash").fingerprint(), "hash")
 
 
 class RegistryTest(unittest.TestCase):
     """Embedder registry and cosine helper."""
 
-    def test_available_embedders(self) -> None:
-        names = todo_embed.available_embedders()
-        self.assertIn("hash", names)
-        self.assertIn("mock", names)
-        self.assertIn("null", names)
+    def test_default_set_is_non_hidden(self) -> None:
+        names = todo_embed.default_embedder_names()
+        self.assertEqual(names, ["hash", "apple"])
+        # available_embedders mirrors the default (non-hidden) set.
+        self.assertEqual(todo_embed.available_embedders(), names)
+
+    def test_hidden_excluded_but_selectable(self) -> None:
+        # mock/null/st are hidden: not in the default set...
+        self.assertNotIn("mock", todo_embed.default_embedder_names())
+        self.assertNotIn("null", todo_embed.default_embedder_names())
+        self.assertNotIn("st", todo_embed.default_embedder_names())
+        # ...but still selectable by exact key.
+        self.assertEqual(todo_embed.get_embedder("mock").fingerprint(), "mock")
+
+    def test_cheap_embedders_is_hash(self) -> None:
+        self.assertEqual(
+            [e.fingerprint() for e in todo_embed.cheap_embedders()], ["hash"]
+        )
+
+    def test_list_embedders_flags(self) -> None:
+        flags = dict((key, (cheap, hidden)) for key, cheap, hidden in todo_embed.list_embedders())
+        self.assertEqual(flags["hash"], (True, False))
+        self.assertEqual(flags["apple"], (False, False))
+        self.assertEqual(flags["st"], (False, True))
 
     def test_unknown_embedder_raises(self) -> None:
         with self.assertRaises(ValueError):

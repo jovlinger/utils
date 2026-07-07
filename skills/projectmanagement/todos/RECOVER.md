@@ -55,11 +55,11 @@ findings ("`code` item is missing a sha", invariant #1) and/or a soft
 | Bookkeeping vs work commits | `chore(todo):` prefix marks bookkeeping; everything else is real work | which commits map to `code` items |
 | Merge markers `chore(todo): subtodo <id8> merged` | `git log --grep=...` on the parent | `merge_subtodo` item shas |
 | `create_dt` / `update_dt` | `todo.py get-json-path <sel> create_dt` | time-window bound (the dev/master fallback) |
-| `Parent.Branch`, `Subtodos[].Branch` | `todo.py read <sel>` | the diff base for a subtodo; child merge points |
+| `Parent.0.Branch`, `Subtodos[].Branch` | `todo.py read <sel>` | the diff base for a subtodo; child merge points |
 | Other checkouts | `git worktree list` | where the branch actually lives |
 
 `todo.py log -v <sel>` already renders a branch's trail as `git log
-<base>..<branch>` (base = `Parent.Branch` for a subtodo, else the first of
+<base>..<branch>` (base = `Parent.0.Branch` for a subtodo, else the first of
 `dev`/`main`/`master`). Recovery is the same idea, but it writes the shas it
 finds back into the record instead of only displaying them.
 
@@ -131,7 +131,7 @@ Fallback when the init commit is gone (rebased/squashed): the fork point.
 
 ```bash
 # base = parent branch for a subtodo, else first of dev/main/master
-PBASE=$("$TODO" get-json-path <sel> Parent.Branch 2>/dev/null | tr -d '"')
+PBASE=$("$TODO" get-json-path <sel> Parent.0.Branch 2>/dev/null | tr -d '"')
 if [ -z "$PBASE" ] || [ "$PBASE" = null ]; then
   for b in dev main master; do
     git show-ref -q --verify "refs/heads/$b" && PBASE=$b && break

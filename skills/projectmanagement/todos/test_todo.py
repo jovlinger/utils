@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -630,6 +631,16 @@ class LogTests(TodoCase):
 
 
 class SearchTests(TodoCase):
+    def _emb_rows(self) -> list:
+        """Return (ticket_id, field_path, embedder) rows straight from sqlite."""
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            return conn.execute(
+                "SELECT ticket_id, field_path, embedder FROM embeddings"
+            ).fetchall()
+        finally:
+            conn.close()
+
     def test_search_finds_oauth_bearer_ticket(self) -> None:
         oauth_id = self.mint()
         other_id = self.mint()
@@ -640,10 +651,174 @@ class SearchTests(TodoCase):
             body="Handle oauth bearer token rotation for API clients.",
         )
         self.write_ticket(f"{other_id[:8]}-other", other_id, summary="unrelated database work")
-        proc = self.todo("search", "oauth bearer token")
+        # --embedder hash keeps this hermetic (apple is unavailable on CI) and
+        # gives a hard 0-similarity cutoff so the unrelated ticket is excluded.
+        proc = self.todo("search", "oauth bearer token", "--embedder", "hash")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(oauth_id[:8], proc.stdout)
         self.assertNotIn(other_id[:8], proc.stdout)
+
+    def test_cheap_embedder_autopopulated_on_write(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
+        self.assertIn((tid, "Summary.raw", "hash"), self._emb_rows())
+
+    def test_raw_change_clears_stale_expensive_vector(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="first summary text")
+        # Inject a stale expensive vector as if a prior search had backfilled it.
+        stale = "apple_nlce:x:r1:pool=mean:norm=l2:v1"
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        conn.execute(
+            "INSERT INTO embeddings(ticket_id, field_path, embedder, vector) VALUES (?,?,?,?)",
+            (tid, "Summary.raw", stale, b"\x00\x00\x00\x00"),
+        )
+        conn.commit()
+        conn.close()
+        proc = self.todo("set", "--summary", "completely different text", "--no-commit")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        embedders = {emb for _t, _f, emb in self._emb_rows()}
+        self.assertNotIn(stale, embedders)  # cleared on raw change
+        self.assertIn("hash", embedders)  # cheap repopulated
+
+    def test_no_clear_keeps_stale_vector(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="first summary text")
+        stale = "apple_nlce:x:r1:pool=mean:norm=l2:v1"
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        conn.execute(
+            "INSERT INTO embeddings(ticket_id, field_path, embedder, vector) VALUES (?,?,?,?)",
+            (tid, "Summary.raw", stale, b"\x00\x00\x00\x00"),
+        )
+        conn.commit()
+        conn.close()
+        proc = self.todo(
+            "set", "--summary", "completely different text", "--no-commit", "--no-clear"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(stale, {emb for _t, _f, emb in self._emb_rows()})  # kept
+
+    def test_search_backfills_missing_and_dry_run_does_not(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
+        # mock is not cheap, so it is not populated on write.
+        self.assertNotIn("mock", {emb for _t, _f, emb in self._emb_rows()})
+        # dry-run must not write any mock vector...
+        proc = self.todo("search", "alpha", "--embedder", "mock", "--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("mock", {emb for _t, _f, emb in self._emb_rows()})
+        # ...a normal search backfills it.
+        proc = self.todo("search", "alpha", "--embedder", "mock")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("mock", {emb for _t, _f, emb in self._emb_rows()})
+
+    def test_search_unknown_embedder_errors(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha")
+        proc = self.todo("search", "alpha", "--embedder", "bogus")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("bogus", proc.stderr)
+
+    def test_embedders_lists_non_hidden_only(self) -> None:
+        proc = self.todo("embedders")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("hash", proc.stdout)
+        self.assertIn("apple", proc.stdout)
+        for hidden in ("mock", "null", "st"):
+            self.assertNotIn(hidden, proc.stdout)
+
+
+class ParentPromptTests(TodoCase):
+    def _base_branch(self) -> str:
+        return self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+    def _init(self, summary: str, body: str = "", parents: Optional[list] = None) -> str:
+        args = ["init", f"--summary={summary}", f"--body={body}"]
+        for parent in parents or []:
+            args += ["--parent", parent]
+        proc = self.todo(*args)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)["Id"]
+
+    def _read(self, sel: str) -> Dict[str, Any]:
+        proc = self.todo("read", sel)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_init_parent_is_one_way_reference(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent", body="why we are here")
+        self._git("checkout", base)
+        child_id = self._init("child", body="do the thing", parents=[parent_id[:8]])
+        # Child records the parent ref...
+        child = self._read(child_id[:8])
+        self.assertEqual([p["Id"] for p in child["Parent"]], [parent_id])
+        # ...and the parent is left unaware (no Subtodos entry for the child).
+        parent = self._read(parent_id[:8])
+        self.assertEqual(parent.get("Subtodos", []), [])
+
+    def test_init_accepts_multiple_parents(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        a_id = self._init("alpha", body="a")
+        self._git("checkout", base)
+        b_id = self._init("beta", body="b")
+        self._git("checkout", base)
+        child_id = self._init("child", body="c", parents=[a_id[:8], b_id[:8]])
+        child = self._read(child_id[:8])
+        self.assertEqual({p["Id"] for p in child["Parent"]}, {a_id, b_id})
+
+    def test_prompt_concatenates_chain_root_first(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        gp_id = self._init("grandparent", body="GP-WHY")
+        self._git("checkout", base)
+        parent_id = self._init("parent", body="PARENT-WHY", parents=[gp_id[:8]])
+        self._git("checkout", base)
+        child_id = self._init("child", body="CHILD-TASK", parents=[parent_id[:8]])
+        proc = self.todo("prompt", child_id[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertLess(out.index("GP-WHY"), out.index("PARENT-WHY"))
+        self.assertLess(out.index("PARENT-WHY"), out.index("CHILD-TASK"))
+
+    def test_prompt_defaults_to_self(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("solo", body="SELF-BODY")  # leaves us on the new todo branch
+        proc = self.todo("prompt")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("SELF-BODY", proc.stdout)
+
+    def test_prompt_notes_unresolvable_parent(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("orphan", body="ORPHAN")  # on the orphan todo branch (self)
+        # Hand-graft a dangling parent ref; prompt should note it, not crash.
+        ref = self.repo / "parent.json"
+        ref.write_text(json.dumps([{"Id": "deadbeefdeadbeef", "Branch": "gone"}]))
+        proc = self.todo(
+            "set-json-path", "self", "Parent", "--file", str(ref), "--no-commit"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ref.unlink()
+        proc = self.todo("prompt", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("not found", proc.stdout)
+        self.assertIn("ORPHAN", proc.stdout)
+
+    def test_add_subtodo_parent_is_list_and_prompt_walks_up(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        parent_id = self._init("parent feature", body="parent why")
+        add = self.todo("add-subtodo", "--summary=child one", "--body=child body")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        child_id = json.loads(add.stdout)["Id"]
+        child = self._read(child_id[:8])
+        self.assertIsInstance(child["Parent"], list)
+        self.assertEqual(child["Parent"][0]["Id"], parent_id)
+        proc = self.todo("prompt", child_id[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("parent why", proc.stdout)
+        self.assertIn("child body", proc.stdout)
 
 
 class ImportJsonTests(TodoCase):

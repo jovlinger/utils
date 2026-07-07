@@ -38,9 +38,11 @@ available.
   `revision` plus this code's pooling version, e.g.
   `apple_nlce:<modelid>:r1:pool=mean:norm=l2:v1`, so vectors are only compared
   within the exact space that produced them.
-- Gated behind `TODO_ENABLE_APPLE_EMBEDDER=1` (listing) and selected with
-  `TODO_EMBEDDER=apple`; requires macOS 14+ and the built binary. Verified
-  end-to-end: 512-dim vectors, related text ranks above unrelated.
+- A first-class non-hidden embedder: in the default `search` set and selectable
+  as `--embedder apple`. Requires macOS 14+ and the built binary; if it is
+  missing, a search that includes it errors (choose `--embedder` explicitly).
+  `TODO_APPLE_NLCE_BIN` overrides the binary path. Verified end-to-end: 512-dim
+  vectors, related text ranks above unrelated.
 
 ### HashEmbedder (local, default)
 
@@ -51,36 +53,55 @@ when combined with lexical phrase/token boosts in `search_tickets()`.
 
 Properties:
 
-- Stable key suffix: `"hash"` on Summary/Body and in the `embeddings` table.
+- Stable fingerprint: `"hash"` on Summary/Body and in the `embeddings` table.
 - Works offline in CI and agent sandboxes without GPU or model downloads.
-- Limitation: no cross-lingual or deep semantic similarity; lexical boost carries
-  recall for exact phrases.
+- The only `cheap` embedder: auto-populated on every write (see below).
+- Limitation: no cross-lingual or deep semantic similarity; the lexical ranker
+  carries recall for exact phrases.
 
-**Verdict:** Default via `TODO_EMBEDDER=hash` (also the default when unset).
+**Verdict:** The always-on default; first entry in the `search` default set.
 
 ### sentence-transformers MiniLM
 
-`SentenceTransformerEmbedder` wraps `all-MiniLM-L6-v2` when
-`TODO_ENABLE_ST_EMBEDDER=1` and `TODO_EMBEDDER=sentence_transformers`. Strengths:
-much better semantic ranking for paraphrases. Weaknesses: large install (~400MB+),
-slow cold start, unsuitable for bare CI runners.
+`SentenceTransformerEmbedder` wraps `all-MiniLM-L6-v2`. Strengths: much better
+semantic ranking for paraphrases. Weaknesses: large install (~400MB+), slow cold
+start, unsuitable for bare CI runners.
 
-**Verdict:** Opt-in for developer machines with `TODO_ENABLE_ST_EMBEDDER=1`.
+**Verdict:** Kept as a hidden `st` backend -- selectable by exact name
+(`--embedder st`) for developers who install it, but not advertised or in the
+default set. Raises at selection time if the package is absent.
 
 ## Recommendation
 
-| Environment | Embedder | Env vars |
-|-------------|----------|----------|
-| CI / agents / default | `hash` | (none) |
-| Developer semantic search | `sentence_transformers` | `TODO_ENABLE_ST_EMBEDDER=1`, `TODO_EMBEDDER=sentence_transformers` |
-| macOS 14+ semantic search | `apple` (NLContextualEmbedding sidecar) | `TODO_ENABLE_APPLE_EMBEDDER=1`, `TODO_EMBEDDER=apple` (after `make apple-embedder`) |
+| Environment | Embedder(s) | How |
+|-------------|-------------|-----|
+| CI / agents | `hash` | `search --embedder hash` (hermetic, no downloads) |
+| Default (this machine) | `hash,apple` | `search` with no `--embedder` |
+| Developer paraphrase search | `st` | `pip install sentence-transformers`, `search --embedder st` |
 
-## Storage and search
+## Storage, selection, population, and ranking
 
-Vectors are stored as float blobs in `embeddings(ticket_id, field_path,
-embedder, vector)`. On ticket write, `_apply_embeddings_to_ticket()` sets
-`Summary["hash"]` / `Body["hash"]` (or the active embedder name) and syncs
-sqlite rows.
+Vectors are stored as packed-float blobs in `embeddings(ticket_id, field_path,
+embedder, vector)`, keyed by the producing embedder's `fingerprint()`. A copy is
+also stamped into the ticket JSON (`Summary[<fingerprint>]`) for `read` display;
+search reads only the table.
+
+**Selection.** There is no embedder env var. `search --embedder` takes a comma
+list; the default is every non-hidden embedder (`hash,apple` here). `todo.py
+embedders` lists them. Requesting an unavailable embedder (including via the
+default) errors -- pick one explicitly.
+
+**Population is lazy.** Only `cheap` embedders (`hash`) are computed on write.
+When a raw field changes its stored vectors are cleared for all embedders
+(`--no-clear` keeps them, for trivial edits); expensive embedders are then
+backfilled on demand the first time a `search` uses them (skipped under
+`--dry-run`). A ticket still missing a vector just does not contribute to that
+embedder's ranking.
+
+**Ranking is reciprocal rank fusion.** Each chosen embedder and a lexical
+overlap ranker independently rank the tickets; scores fuse as `sum 1/(k+rank)`
+(`_RRF_K=60`). RRF is scale-free, so Apple's high cosine baseline cannot swamp
+hash. (Tunable; not load-bearing.)
 
 ### In-DB vector search (sqlite-vec): deferred
 
@@ -99,13 +120,16 @@ extension (`vec0`) was evaluated and intentionally **not** adopted for now:
 Store the vector as a plain packed-float array and rank in Python. Revisit an
 in-DB `vec0` search path only when the index grows enough to justify it.
 
-## Configuration summary
+## Usage summary
 
 ```text
-TODO_EMBEDDER=hash                    # default
-TODO_ENABLE_ST_EMBEDDER=1             # expose sentence_transformers in help
-TODO_EMBEDDER=sentence_transformers   # opt-in ML backend
-TODO_ENABLE_APPLE_EMBEDDER=1          # expose the macOS apple backend in help
-TODO_EMBEDDER=apple                   # opt-in macOS NLContextualEmbedding sidecar
-TODO_APPLE_NLCE_BIN=/path/to/nlce-embed  # override the sidecar binary location
+todo.py embedders                       # list selectable (non-hidden) embedders
+todo.py search QUERY                     # default embedders (hash,apple here)
+todo.py search QUERY --embedder hash     # hermetic; hard 0-similarity cutoff
+todo.py search QUERY --embedder hash,apple --dry-run   # rank existing vectors only
+todo.py search QUERY --embedder st       # hidden backend, by exact name
+todo.py set --summary "..." --no-clear   # keep vectors despite a trivial raw edit
+
+TODO_APPLE_NLCE_BIN=/path/to/nlce-embed  # override the apple sidecar binary path
+make apple-embedder                      # build the sidecar (macOS 14+, swiftc)
 ```

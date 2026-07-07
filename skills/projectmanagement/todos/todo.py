@@ -138,11 +138,20 @@ def branch_exists(root: Path, name: str) -> bool:
 
 
 def normalize_todo_schema(todo: JsonDict) -> JsonDict:
-    """Migrate legacy field names (Chunks, Subtickets) to WorkItems, Subtodos."""
+    """Migrate legacy field names (Chunks, Subtickets) to WorkItems, Subtodos.
+
+    Also migrates the singular ``Parent`` dict to a ``Parent`` list of
+    ``{Id, Branch}`` refs. Element 0 is the structural (fork) parent used for the
+    log diff base and merge; later entries are context-only references added by
+    ``init --parent``.
+    """
     if "Chunks" in todo and "WorkItems" not in todo:
         todo["WorkItems"] = todo.pop("Chunks")
     if "Subtickets" in todo and "Subtodos" not in todo:
         todo["Subtodos"] = todo.pop("Subtickets")
+    parent = todo.get("Parent")
+    if isinstance(parent, dict):
+        todo["Parent"] = [parent]
     return todo
 
 
@@ -216,69 +225,118 @@ def read_todo_required(root: Path) -> JsonDict:
     return todo
 
 
-def write_todo_worktree(root: Path, todo: JsonDict) -> None:
-    """Persist ticket to sqlite (default) or legacy TODO.json."""
+# (Summary/Body field name, its stored field_path) pairs we embed.
+_EMBED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("Summary", "Summary.raw"),
+    ("Body", "Body.raw"),
+)
+
+
+def _is_vector(value: Any) -> bool:
+    """True for an embedding-like list: >2 numbers, no bools."""
+    return (
+        isinstance(value, list)
+        and len(value) > 2
+        and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in value)
+    )
+
+
+def _raw_of(todo: Optional[JsonDict], field_name: str) -> Optional[str]:
+    """Return a non-empty ``todo[field_name]['raw']`` string, else None."""
+    if not isinstance(todo, dict):
+        return None
+    obj = todo.get(field_name)
+    if isinstance(obj, dict):
+        raw = obj.get("raw")
+        if isinstance(raw, str) and raw.strip():
+            return raw
+    return None
+
+
+def _changed_raw_fields(
+    old: Optional[JsonDict], new: JsonDict
+) -> List[tuple[str, str]]:
+    """Return the (field_name, field_path) pairs whose raw text differs."""
+    changed: List[tuple[str, str]] = []
+    for field_name, field_path in _EMBED_FIELDS:
+        if _raw_of(new, field_name) != _raw_of(old, field_name):
+            changed.append((field_name, field_path))
+    return changed
+
+
+def _strip_field_vectors(todo: JsonDict, field_name: str) -> None:
+    """Drop stamped embedding vectors from a Summary/Body field in place."""
+    obj = todo.get(field_name)
+    if isinstance(obj, dict):
+        for key in [k for k, v in obj.items() if k != "raw" and _is_vector(v)]:
+            del obj[key]
+
+
+def _cheap_embedding_rows(
+    todo: JsonDict, existing: set
+) -> List[tuple[str, str, List[float]]]:
+    """Stamp missing cheap vectors into the ticket JSON; return rows to store.
+
+    ``existing`` is the set of ``(field_path, fingerprint)`` already in the db.
+    Stamps ``todo`` in place so ``put_ticket`` serializes the vectors; the caller
+    must ``put_embedding`` the returned rows *after* ``put_ticket`` (the FK needs
+    the ticket row first). Degrades to fewer/no rows if a cheap embedder fails,
+    so a broken embedder never blocks the save.
+    """
+    rows: List[tuple[str, str, List[float]]] = []
+    try:
+        embedders = todo_embed.cheap_embedders()
+    except (ValueError, RuntimeError):
+        return rows
+    for embedder in embedders:
+        try:
+            fingerprint = embedder.fingerprint()
+        except (ValueError, RuntimeError):
+            continue
+        for field_name, field_path in _EMBED_FIELDS:
+            raw = _raw_of(todo, field_name)
+            if raw is None or (field_path, fingerprint) in existing:
+                continue
+            try:
+                vec = embedder.embed(raw)
+            except (ValueError, RuntimeError):
+                continue
+            todo[field_name][fingerprint] = vec
+            rows.append((field_path, fingerprint, vec))
+    return rows
+
+
+def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -> None:
+    """Persist ticket to sqlite (default) or legacy TODO.json.
+
+    On sqlite: when a raw field changed, its stored vectors are cleared (all
+    embedders) so stale expensive vectors do not linger -- unless ``no_clear``,
+    which keeps them (for semantically trivial edits). Cheap embedders are then
+    re-populated eagerly; expensive ones are left for lazy backfill at search.
+    """
     normalize_todo_schema(todo)
     todo["update_dt"] = utc_now()
     branch = str(todo.get("Branch") or current_branch(root) or "")
     if not branch:
         raise TodoError("todo missing Branch")
     if use_sqlite():
-        embedding_rows = _compute_embeddings_on_ticket(todo)
+        ticket_id = str(todo["Id"])
         with todo_db.connection() as conn:
+            old = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), branch)
+            if not no_clear:
+                for field_name, field_path in _changed_raw_fields(old, todo):
+                    _strip_field_vectors(todo, field_name)
+                    todo_db.clear_embeddings(conn, ticket_id, field_path)
+            existing = todo_db.existing_embeddings(conn, ticket_id)
+            rows = _cheap_embedding_rows(todo, existing)
             todo_db.put_ticket(conn, repo_key(root), branch, todo)
-            for field_path, embedder_name, vec in embedding_rows:
-                todo_db.put_embedding(
-                    conn, str(todo["Id"]), field_path, embedder_name, vec
-                )
+            for field_path, fingerprint, vec in rows:
+                todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
         return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
     tmp.write_text(json.dumps(todo, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
-
-
-def _compute_embeddings_on_ticket(
-    todo: JsonDict,
-) -> List[tuple[str, str, List[float]]]:
-    """Compute embedder keys on ticket; return rows for put_embedding after put_ticket."""
-    if not use_sqlite():
-        return []
-    try:
-        embedder = todo_embed.get_embedder()
-    except ValueError:
-        return []
-    ticket_id = str(todo.get("Id", ""))
-    if not ticket_id:
-        return []
-    rows: List[tuple[str, str, List[float]]] = []
-    summary = todo.get("Summary")
-    if isinstance(summary, dict) and summary.get("raw"):
-        vec = embedder.embed(str(summary["raw"]))
-        summary[embedder.fingerprint()] = vec
-        rows.append(("Summary.raw", embedder.fingerprint(), vec))
-    body = todo.get("Body")
-    if isinstance(body, dict) and body.get("raw"):
-        vec = embedder.embed(str(body["raw"]))
-        body[embedder.fingerprint()] = vec
-        rows.append(("Body.raw", embedder.fingerprint(), vec))
-    return rows
-
-
-def _apply_embeddings_to_ticket(todo: JsonDict) -> None:
-    """Re-index embeddings for an existing ticket already stored in sqlite."""
-    rows = _compute_embeddings_on_ticket(todo)
-    if not rows:
-        return
-    ticket_id = str(todo.get("Id", ""))
-    with todo_db.connection() as conn:
-        for field_path, embedder_name, vec in rows:
-            todo_db.put_embedding(conn, ticket_id, field_path, embedder_name, vec)
-
-
-def index_ticket_embeddings(todo: JsonDict) -> None:
-    """Re-index embeddings for an existing ticket (alias for _apply_embeddings_to_ticket)."""
-    _apply_embeddings_to_ticket(todo)
 
 
 def commit_todo(root: Path, message: str) -> None:
@@ -421,7 +479,7 @@ def build_ticket_skeleton(
     ac: str,
     *,
     path_from_root: Optional[str] = None,
-    parent: Optional[JsonDict] = None,
+    parent: Optional[List[JsonDict]] = None,
     work_items: Optional[List[JsonDict]] = None,
     agent_type: Optional[str] = None,
     session_id: Optional[str] = None,
@@ -687,18 +745,52 @@ def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
     return normalize_todo_schema(parsed)
 
 
-def search_tickets(root: Path, query: str, *, limit: int = 20) -> List[JsonDict]:
-    """Rank tickets by vector similarity plus lexical overlap."""
-    embedder = todo_embed.get_embedder()
-    query_vec = embedder.embed(query)
+# Reciprocal-rank-fusion constant; larger flattens the contribution curve.
+_RRF_K = 60
+
+
+def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
+    """Reciprocal rank fusion: sum 1/(k+rank) across rankers, scale-free."""
+    fused: Dict[str, float] = {}
+    for scores in rankings:
+        ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        for rank, (tid, _score) in enumerate(ordered, start=1):
+            fused[tid] = fused.get(tid, 0.0) + 1.0 / (_RRF_K + rank)
+    return fused
+
+
+def search_tickets(
+    root: Path,
+    query: str,
+    *,
+    limit: int = 20,
+    embedder_names: Optional[Sequence[str]] = None,
+    dry_run: bool = False,
+) -> List[JsonDict]:
+    """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
+
+    ``embedder_names`` defaults to every non-hidden embedder. A requested
+    embedder that cannot be instantiated or run raises ``TodoError`` (choose
+    ``--embedder`` explicitly). Unless ``dry_run``, vectors missing for a chosen
+    embedder are computed and stored (lazy backfill) before ranking; a ticket
+    still missing a vector simply does not contribute to that ranker.
+    """
+    names = list(embedder_names) if embedder_names else todo_embed.default_embedder_names()
+    embedders: List[tuple[str, todo_embed.Embedder]] = []
+    for name in names:
+        try:
+            embedders.append((name, todo_embed.get_embedder(name)))
+        except (ValueError, RuntimeError) as exc:
+            raise TodoError(
+                f"embedder {name!r} unavailable: {exc}; "
+                f"choose --embedder explicitly (e.g. --embedder hash)"
+            ) from exc
+
     query_tokens = set(query.lower().split())
-    scored: List[tuple[float, JsonDict]] = []
     with todo_db.connection() as conn:
         rows = conn.execute("SELECT data FROM tickets").fetchall()
-        embeddings = {
-            (tid, field): vec
-            for tid, field, vec in todo_db.all_embeddings(conn, embedder.fingerprint())
-        }
+        tickets: Dict[str, JsonDict] = {}
+        raws: Dict[str, Dict[str, str]] = {}
         for row in rows:
             parsed: Any = json.loads(str(row["data"]))
             if not isinstance(parsed, dict):
@@ -706,29 +798,110 @@ def search_tickets(root: Path, query: str, *, limit: int = 20) -> List[JsonDict]
             ticket_id = str(parsed.get("Id", ""))
             if not ticket_id:
                 continue
-            best = 0.0
-            for field in ("Summary.raw", "Body.raw"):
-                vec = embeddings.get((ticket_id, field))
-                if vec is not None:
-                    best = max(best, todo_embed.cosine_similarity(query_vec, vec))
-            summary = ""
-            body = ""
-            summary_obj = parsed.get("Summary")
-            body_obj = parsed.get("Body")
-            if isinstance(summary_obj, dict):
-                summary = str(summary_obj.get("raw", ""))
-            if isinstance(body_obj, dict):
-                body = str(body_obj.get("raw", ""))
-            text = f"{summary} {body}".lower()
+            tickets[ticket_id] = parsed
+            raws[ticket_id] = {
+                field_path: raw
+                for field_name, field_path in _EMBED_FIELDS
+                if (raw := _raw_of(parsed, field_name)) is not None
+            }
+
+        rankings: List[Dict[str, float]] = []
+        for name, embedder in embedders:
+            fingerprint = embedder.fingerprint()
+            try:
+                query_vec = embedder.embed(query)
+            except (ValueError, RuntimeError) as exc:
+                raise TodoError(f"embedder {name!r} failed: {exc}") from exc
+            stored = {
+                (tid, field): vec
+                for tid, field, vec in todo_db.all_embeddings(conn, fingerprint)
+            }
+            if not dry_run:
+                for tid, field_raws in raws.items():
+                    for field_path, raw in field_raws.items():
+                        if (tid, field_path) in stored:
+                            continue
+                        try:
+                            vec = embedder.embed(raw)
+                        except (ValueError, RuntimeError) as exc:
+                            raise TodoError(f"embedder {name!r} failed: {exc}") from exc
+                        todo_db.put_embedding(conn, tid, field_path, fingerprint, vec)
+                        stored[(tid, field_path)] = vec
+            scores: Dict[str, float] = {}
+            for tid in tickets:
+                best = 0.0
+                for field_path in ("Summary.raw", "Body.raw"):
+                    vec = stored.get((tid, field_path))
+                    if vec is not None:
+                        best = max(best, todo_embed.cosine_similarity(query_vec, vec))
+                if best > 0.0:
+                    scores[tid] = best
+            rankings.append(scores)
+
+        lexical: Dict[str, float] = {}
+        for tid in tickets:
+            text = " ".join(raws[tid].values()).lower()
+            score = 0.0
             if query.lower() in text:
-                best += 0.5
+                score += 1.0
             for token in query_tokens:
                 if token and token in text:
-                    best += 0.1
-            if best > 0.0:
-                scored.append((best, parsed))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [ticket for _score, ticket in scored[:limit]]
+                    score += 0.1
+            if score > 0.0:
+                lexical[tid] = score
+        rankings.append(lexical)
+
+    fused = _rrf_fuse(rankings)
+    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+    return [tickets[tid] for tid, _score in ranked[:limit]]
+
+
+def _prompt_section(todo: JsonDict) -> str:
+    """Render one todo as a titled Summary/Body block for the prompt chain."""
+    tid = str(todo.get("Id", ""))[:8]
+    summary_obj = todo.get("Summary")
+    summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
+    body_obj = todo.get("Body")
+    body = body_obj.get("raw", "") if isinstance(body_obj, dict) else ""
+    header = f"===== {summary} [{tid}] =====".strip()
+    return f"{header}\n{body}".rstrip()
+
+
+def build_prompt_chain(root: Path, selector: str) -> str:
+    """Concatenate a todo and its parent chain into one startup prompt.
+
+    Walks the ``Parent`` list up (context references included), depth-first, so
+    the farthest ancestors' 'why' comes first and the target's own body is last.
+    De-duplicates shared ancestors, is cycle-safe, and notes any parent that
+    cannot be resolved in this db rather than dropping it silently. Read-only:
+    parents are resolved from the db with no branch checkout.
+    """
+    _loc, target = resolve_ticket_by_selector(root, selector)
+    sections: List[str] = []
+    seen: set[str] = set()
+
+    def visit(todo: JsonDict) -> None:
+        tid = str(todo.get("Id", ""))
+        if tid and tid in seen:
+            return
+        if tid:
+            seen.add(tid)
+        for ref in todo.get("Parent") or []:
+            if not isinstance(ref, dict):
+                continue
+            parent_id = str(ref.get("Id", ""))
+            if not parent_id:
+                continue
+            try:
+                _pl, parent = resolve_ticket_by_id(root, parent_id)
+            except TodoError:
+                sections.append(f"===== [parent {parent_id[:8]} not found] =====")
+                continue
+            visit(parent)
+        sections.append(_prompt_section(todo))
+
+    visit(target)
+    return "\n\n".join(sections)
 
 
 def load_json_file(path: Path) -> JsonDict:
@@ -863,6 +1036,7 @@ def apply_ticket_path(
     *,
     stay: bool = False,
     no_commit: bool = False,
+    no_clear: bool = False,
 ) -> Any:
     """Set *jsonpath* to an already-parsed *value* on a selected ticket."""
     origin_branch = current_branch(root)
@@ -875,7 +1049,7 @@ def apply_ticket_path(
     try:
         todo = read_todo_required(root)
         set_at_path(todo, jsonpath, value)
-        write_todo_worktree(root, todo)
+        write_todo_worktree(root, todo, no_clear=no_clear)
         if not no_commit:
             commit_todo(root, f"chore(todo): update {jsonpath}")
         return get_at_path(todo, jsonpath)
@@ -1434,7 +1608,11 @@ class InitCommand(TodoSubCommand):
         "Init starts a new branch-bound TODO. It mints or accepts an Id, derives or accepts "
         "the branch name, writes the initial TODO.json skeleton, and commits it by default. It "
         "refuses to create a second TODO.json on a branch that already has one. It can optionally "
-        "return to the parent branch after creating the todo branch."
+        "return to the parent branch after creating the todo branch. Pass --parent <id> "
+        "(repeatable) to record parent/context todos on this one; the reference is one-way "
+        "(the parent is left untouched and unaware), so a fresh agent can walk up via "
+        "'todo.py prompt <id>' to see WHY. For the full bidirectional subtodo lifecycle "
+        "(parent lists the child, merge bookkeeping), use add-subtodo from the parent branch."
     )
 
     @classmethod
@@ -1446,6 +1624,12 @@ class InitCommand(TodoSubCommand):
         parser.add_argument("--id", help="use pre-minted Id instead of minting")
         parser.add_argument("--branch", help="override Branch name")
         parser.add_argument("--path-from-root", help="Scope.path_from_root")
+        parser.add_argument(
+            "--parent",
+            action="append",
+            metavar="PARENT_ID",
+            help="parent/context todo Id (repeatable); one-way reference for context",
+        )
         parser.add_argument("--agent-type", help="agent type that created this todo (e.g. claude, cursor)")
         parser.add_argument("--session-id", help="agent session id that created this todo")
         parser.add_argument("--no-commit", action="store_true", help="skip git commit")
@@ -1468,6 +1652,14 @@ class InitCommand(TodoSubCommand):
 
         agent_type = self.agent_type or os.environ.get("TODO_AGENT_TYPE")
         session_id = self.session_id or os.environ.get("TODO_SESSION_ID")
+        parents: Optional[List[JsonDict]] = None
+        if self.parent:
+            parents = []
+            for parent_id in self.parent:
+                _loc, ptodo = resolve_ticket_by_id(root, parent_id)
+                parents.append(
+                    {"Id": str(ptodo["Id"]), "Branch": str(ptodo.get("Branch", ""))}
+                )
         ticket = build_ticket_skeleton(
             root,
             ticket_id,
@@ -1476,6 +1668,7 @@ class InitCommand(TodoSubCommand):
             self.body or "",
             self.ac or "",
             path_from_root=self.path_from_root,
+            parent=parents,
             agent_type=agent_type,
             session_id=session_id,
         )
@@ -1538,7 +1731,7 @@ class AddSubtodoCommand(TodoSubCommand):
                 self.body or "",
                 self.ac or "",
                 path_from_root=self.path_from_root,
-                parent={"Id": parent["Id"], "Branch": parent_branch},
+                parent=[{"Id": parent["Id"], "Branch": parent_branch}],
                 work_items=[],
             )
 
@@ -1548,7 +1741,7 @@ class AddSubtodoCommand(TodoSubCommand):
         raw_summary = child_spec.get("Summary", {}).get("raw", "child")
         child_branch = str(child_spec.get("Branch") or kebab_branch_name(child_id, raw_summary))
         child_spec["Branch"] = child_branch
-        child_spec["Parent"] = {"Id": parent["Id"], "Branch": parent_branch}
+        child_spec["Parent"] = [{"Id": parent["Id"], "Branch": parent_branch}]
         scope = dict(child_spec.get("Scope") or {})
         scope["branch"] = child_branch
         scope.setdefault("path_to_project", str(root))
@@ -1646,6 +1839,12 @@ class SetCommand(TodoSubCommand):
         parser.add_argument("--body")
         parser.add_argument("--ac")
         parser.add_argument("--no-commit", action="store_true")
+        parser.add_argument(
+            "--no-clear",
+            action="store_true",
+            help="keep existing embedding vectors even though raw text changed "
+            "(for semantically trivial edits)",
+        )
 
     def do(self) -> int:
         """Patch Summary/Body/AC on the current branch."""
@@ -1663,7 +1862,7 @@ class SetCommand(TodoSubCommand):
             changed = True
         if not changed:
             raise TodoError("pass at least one of --summary, --body, --ac")
-        write_todo_worktree(root, todo)
+        write_todo_worktree(root, todo, no_clear=self.no_clear)
         if not self.no_commit:
             commit_todo(root, "chore(todo): update ticket fields")
         return 0
@@ -1946,6 +2145,12 @@ class SetJsonPathCommand(TodoSubCommand):
             help="remain on the target branch after the write (default: return to previous branch)",
         )
         parser.add_argument("--no-commit", action="store_true")
+        parser.add_argument(
+            "--no-clear",
+            action="store_true",
+            help="keep existing embedding vectors even if this changes Summary.raw/"
+            "Body.raw (for semantically trivial edits)",
+        )
 
     def do(self) -> int:
         """Set a JSON path from a file or stdin."""
@@ -1970,6 +2175,7 @@ class SetJsonPathCommand(TodoSubCommand):
             value,
             stay=self.stay,
             no_commit=self.no_commit,
+            no_clear=self.no_clear,
         )
         print_json_value(updated)
         return 0
@@ -2171,9 +2377,10 @@ def _ticket_commits(repo: Path, ticket: JsonDict, timestamps: bool = False) -> L
     if not branch or not branch_exists(repo, branch):
         return []
     base: Optional[str] = None
-    parent = ticket.get("Parent")
-    if isinstance(parent, dict) and parent.get("Branch"):
-        base = str(parent["Branch"])
+    parents = ticket.get("Parent") or []
+    primary = parents[0] if isinstance(parents, list) and parents else None
+    if isinstance(primary, dict) and primary.get("Branch"):
+        base = str(primary["Branch"])
     else:
         for cand in ("dev", "main", "master"):
             if branch_exists(repo, cand):
@@ -2449,8 +2656,12 @@ class SearchCommand(TodoSubCommand):
     command_names = ("search",)
     doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
-        "Search ranks todos by embedding similarity to QUERY plus lexical overlap. "
-        "Uses the configured embedder (default hash; set $TODO_EMBEDDER)."
+        "Search ranks todos by reciprocal-rank fusion over one or more embedders "
+        "plus lexical overlap. --embedder takes a comma list (default: all "
+        "non-hidden embedders; see the 'embedders' command). A requested embedder "
+        "that is unavailable errors -- pick one explicitly. Missing vectors are "
+        "backfilled and stored before ranking unless --dry-run; a ticket with no "
+        "vector for an embedder just does not contribute to that embedder's rank."
     )
 
     @classmethod
@@ -2458,16 +2669,83 @@ class SearchCommand(TodoSubCommand):
         """Register search arguments."""
         parser.add_argument("query", help="search phrase or keywords")
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
+        parser.add_argument(
+            "--embedder",
+            help="comma list of embedders (default: all non-hidden, e.g. hash,apple)",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="rank against existing vectors only; do not backfill/store any",
+        )
 
     def do(self) -> int:
         """Print ranked ticket search hits."""
         root = self.root()
-        hits = search_tickets(root, self.query, limit=self.limit)
+        names: Optional[List[str]] = None
+        if self.embedder:
+            names = [part.strip() for part in self.embedder.split(",") if part.strip()]
+        hits = search_tickets(
+            root, self.query, limit=self.limit, embedder_names=names, dry_run=self.dry_run
+        )
         for ticket in hits:
             tid = str(ticket.get("Id", ""))[:8]
             summary_obj = ticket.get("Summary")
             summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
             print(f"{tid}  {summary}")
+        return 0
+
+
+class EmbeddersCommand(TodoSubCommand):
+    command_names = ("embedders",)
+    doc_short: ClassVar[str] = "List selectable embedders"
+    doc_long: ClassVar[str] = (
+        "Embedders lists the embedders selectable via 'search --embedder'. The "
+        "listed (non-hidden) set is also the default when --embedder is omitted. "
+        "'cheap' embedders are auto-populated on every write; the rest are "
+        "backfilled lazily at search time. Hidden test/opt-in embedders (e.g. st) "
+        "are usable by exact name but not listed."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """No arguments."""
+
+    def do(self) -> int:
+        """Print one line per non-hidden embedder: name and cost."""
+        for key, cheap, hidden in todo_embed.list_embedders():
+            if hidden:
+                continue
+            print(f"{key}\t{'cheap' if cheap else 'expensive'}")
+        return 0
+
+
+class PromptCommand(TodoSubCommand):
+    command_names = ("prompt",)
+    doc_short: ClassVar[str] = "Print a todo + its parent chain as one startup prompt"
+    doc_long: ClassVar[str] = (
+        "Prompt concatenates the Summary/Body of a todo and its Parent chain "
+        "(context references from init --parent included), farthest ancestors "
+        "first and the target last, so a fresh agent with zero context reads WHY "
+        "down to WHAT before starting. Read-only: it resolves parents from the db "
+        "without checking out branches. Selector is self/curr or a 4+ hex Id "
+        "prefix (default self)."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register prompt arguments."""
+        parser.add_argument(
+            "selector",
+            nargs="?",
+            default="self",
+            help="todo selector: self, curr, or 4+ hex Id prefix (default self)",
+        )
+
+    def do(self) -> int:
+        """Print the parent-chain startup prompt for the selected todo."""
+        root = self.root()
+        print(build_prompt_chain(root, self.selector))
         return 0
 
 
@@ -2532,6 +2810,8 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     DoctorCommand,
     ImportJsonCommand,
     SearchCommand,
+    EmbeddersCommand,
+    PromptCommand,
 )
 
 
