@@ -198,12 +198,12 @@ the `todo.py` interface.
 | `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
 | `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--parent <id>` (repeatable) records a one-way parent/context reference on the new todo (leaves the parent untouched; use `add-subtodo` for the tracked, mergeable lifecycle). `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
-| `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default |
-| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor |
+| `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default. `--actual-summary=...` records how the work actually panned out into `ActualSummary` (used later as the merge message) |
+| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
 | `todo.py set --summary=... --body=... --ac=...` | implemented | Patch `Summary.raw`, `Body.raw`, and/or `AC` on the current branch's todo |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` |
-| `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6) |
-| `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, and whether the todo is done |
+| `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
+| `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, whether the todo is done, and a `next` object -- the deterministic mechanical command to advance the loop (`{action, command}`), including the finish sequence when done. `next` is a mechanism hint, not policy; a plain task defaults to `work-item-done` but may instead be split or turned into a subtodo per the dispatch table |
 | `todo.py work-item-insert --summary=...` | implemented | Insert a not-done `task` at the cursor so it becomes current, pushing the frontier down (used to explode a step into finer steps); appends when there is no open item |
 | `todo.py work-item-replace --summary=...` | implemented | Rewrite the cursor task's freetext summary, leaving it not-done |
 | `todo.py work-item-delete` | implemented | Delete the cursor (not-done) work item |
@@ -431,9 +431,11 @@ Where the ticket applies. Set at least one locator.
 | `Summary` | object | `{ "raw": "<human title>" }`. Optional embedding keys may be added later for recall (vector format deferred). |
 | `Body` | object | `{ "raw": "<description>" }`. Same optional-embedding pattern. |
 | `AC` | string | Acceptance criteria, concrete enough to agree on "done". |
+| `ActualSummary` | string (optional) | How the work actually panned out (vs the planned `Summary`). Written at finish via `set-state done --actual-summary=...`; when this todo is later merged into a parent, `merge-subtodo` reuses it as the merge commit subject and the parent's `merge_subtodo` work item summary, falling back to `Summary.raw` when absent. |
 
 `Summary.raw` and `Body.raw` are always present; embedding keys are optional
 enrichments, omitted on first write and backfilled later if ever.
+`ActualSummary` is optional and omitted until the work is done.
 
 ### WorkItems: invariants and the cursor
 
@@ -444,9 +446,19 @@ typed **done** kinds, each produced by the command that performs that work:
 | kind | fields | produced by |
 | --- | --- | --- |
 | `task` | `summary`, `done:false` | `work-item-add` / `work-item-insert` (not done) |
-| `code` | `summary`, `sha`, `done:true` | `work-item-done` (local coding) |
+| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` (local coding) |
 | `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` (no sha) | `add-subtodo` |
+
+`summary` is the high-level step description (carried over from the cursor task). `message`
+on a `code` item is the **full commit message** recorded at `sha` (from `work-item-done`'s
+`-m`, or the existing HEAD commit's message on a clean tree). This makes the WorkItems trail
+**self-describing**: walking the nodes alone answers "what did each step change -- were tests
+added?" without resolving shas to git. So `-m` MUST state the concrete outcome (files/tests
+added, with paths), not a vague label -- it is the durable per-step ledger entry, distinct from
+the task `summary`. Note `work-item-done` completes the **cursor** (first not-done item), so its
+message attaches to whatever item is at the cursor -- complete items in cursor order or the
+message lands on the wrong node.
 
 The **cursor** is the first not-done item (derived, not stored). Work proceeds
 by completing the cursor and advancing; the cursor index never decreases though
@@ -606,9 +618,16 @@ unit** (see `frequentcommits`).
 **Poll.** Ask the tool what to do next, then act, then poll again:
 
 ```bash
-todo.py work-item-read      # the cursor: the first not-done item, or null when done
+todo.py work-item-read      # the cursor + a `next` hint, or the finish action when done
 todo.py is-done             # exit 0 when nothing is left, 1 otherwise
 ```
+
+`work-item-read` emits a `next` object -- `{action, command}` -- naming the
+deterministic mechanical command to advance the loop (e.g. `work-item-done`, or
+the finish sequence when `is_done`). It is a mechanism hint the tool can compute
+from the cursor; the rows below are the authoritative dispatch, and you still
+override `next` when policy says a plain task should become a subtodo or be
+split.
 
 The cursor only moves forward. Each row below advances it by recording a typed
 done item -- the tool guarantees the shape and captures the sha:
@@ -620,23 +639,38 @@ done item -- the tool guarantees the shape and captures the sha:
 | local coding | make the change, then `todo.py work-item-done` (dirty tree commits it, message = `-m` or the item summary; clean tree records HEAD) | `code` (+ HEAD sha) |
 | too coarse | `todo.py work-item-insert --summary=...` to split it, then re-poll | new task at the cursor |
 | blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set-state userneeded --note=...` and **come back and poll later** | -- |
+| empty (`is_done == true`) | run `todo.py doctor` (must be `ok`); read the done items (`todo.py jq self '.WorkItems'`) and **synthesize a 1-3 sentence ActualSummary of what actually landed**; then `todo.py set-state done --actual-summary="..."` | `done` (State) |
 
 "Come back and ask again later" is a first-class outcome: when the next item is
 a barrier, wait/poll rather than forcing progress.
 
-**Finish.** When `is-done`, the last item is a `code` or `merge` commit
-(invariant #6), so `todo.py last-sha` is the branch's last commit. Run `todo.py
-doctor` (must be `ok`), then `todo.py set-state done`. A parent only finishes
-after every subtodo shows `merged` (see Recursive completion).
+**Finish (the `is_done == true` branch of the loop).** When `is-done`, the last
+item is a `code` or `merge` commit (invariant #6), so `todo.py last-sha` is the
+branch's last commit. This is a directed sequence, not an optional coda:
+
+1. Run `todo.py doctor`; it must be `ok` before finishing.
+2. Read the completed WorkItems -- `todo.py jq self '.WorkItems'` -- and
+   **synthesize a 1-3 sentence ActualSummary of what actually landed**: how the
+   work panned out versus the planned `Summary`, noting any pivots, descoped
+   items, or surprises. This is the retrospective, not a restatement of the plan.
+3. `todo.py set-state done --actual-summary="<that synthesis>"`.
+
+The `--actual-summary` is not optional here: it is the merge message the
+parent's `merge-subtodo` reuses (falling back to `Summary.raw` only when a child
+skipped this step). A parent only finishes after every subtodo shows `merged`
+(see Recursive completion).
 
 Each todo -- parent or child -- runs this same loop on its own branch. Split
 into child todos when the Body is too big for one clean run **or** when
 independent research domains would overload a single context (see
 Context-scoped subtodos); keep sequential small steps as parent WorkItems.
 
-We are iteratively moving process weight into the tool. Today the agent reads
-the cursor and picks the matching command; over time `work-item-read` will
-classify the next action more directly.
+We are iteratively moving process weight into the tool. `work-item-read` now
+emits a `next` hint that classifies the mechanical next command directly (the
+finish sequence, or the primitive named by a WorkItem's `execution` block,
+defaulting a plain task to `work-item-done`). The tool emits only mechanism as
+structured data; policy -- when to split a task or spin off a subtodo -- stays
+in this skill's dispatch table, so the two do not drift.
 
 ## Minimal skeleton
 

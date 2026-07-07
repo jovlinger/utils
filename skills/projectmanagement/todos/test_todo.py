@@ -468,6 +468,20 @@ class StateTests(TodoCase):
             {"merged": {"merged_into": "parent-branch"}},
         )
 
+    def test_set_state_done_records_actual_summary(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo(
+            "set-state", "done", "--actual-summary=rewrote the parser instead of patching it"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", "self", "ActualSummary")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.stdout.strip(), "rewrote the parser instead of patching it")
+        # doctor accepts the new whitelisted field
+        doc = self.todo("doctor", "self")
+        self.assertEqual(doc.returncode, 0, doc.stdout)
+
 
 class WaitTests(TodoCase):
     def test_wait_for_done_succeeds_immediately(self) -> None:
@@ -527,6 +541,38 @@ class WaitTests(TodoCase):
             json.loads(child_proc.stdout),
             {"merged": {"merged_into": "parent-branch"}},
         )
+
+    def test_merge_subtodo_uses_child_actual_summary(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        init = self.todo("init", "--summary=parent feature")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        parent_branch = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+        child_id = self.mint()
+        add = self.todo(
+            "add-subtodo", f"--id={child_id}", f"--branch={child_id[:8]}-child", "--summary=planned title"
+        )
+        self.assertEqual(add.returncode, 0, add.stderr)
+        self._git("checkout", f"{child_id[:8]}-child")
+        # child finishes and records how it actually panned out
+        done = self.todo("set-state", "done", "--actual-summary=actually landed via a rewrite")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self._git("checkout", parent_branch)
+
+        merge = self.todo("merge-subtodo", child_id[:8])
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+
+        # parent's merge_subtodo work item carries the ActualSummary, not the plan
+        parent = self.read_self()
+        merge_items = [
+            wi for wi in parent["WorkItems"] if wi.get("kind") == "merge_subtodo"
+        ]
+        self.assertEqual(len(merge_items), 1, parent["WorkItems"])
+        self.assertIn("actually landed via a rewrite", merge_items[0]["summary"])
+        self.assertNotIn("planned title", merge_items[0]["summary"])
+        # and the parent-branch merge commit subject too
+        subject = self._git("log", "-1", "--format=%s").stdout.strip()
+        self.assertIn("actually landed via a rewrite", subject)
 
 
 class DoctorTests(TodoCase):
@@ -1071,6 +1117,29 @@ class WorkItemModelUnitTests(unittest.TestCase):
         self.assertTrue(todo.is_done(done_todo))
         self.assertTrue(todo.is_done({"WorkItems": []}))
 
+    def test_next_action_finish_when_done(self) -> None:
+        done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
+        nxt = todo.next_action(done_todo)
+        self.assertEqual(nxt["action"], "finish")
+        self.assertIn("set-state done", nxt["command"])
+        self.assertIn("actual-summary", nxt["command"])
+
+    def test_next_action_defaults_plain_task_to_work_item_done(self) -> None:
+        t = {"WorkItems": [{"kind": "task", "summary": "do X", "done": False}]}
+        self.assertEqual(todo.next_action(t)["action"], "work-item-done")
+
+    def test_next_action_follows_execution_primitive(self) -> None:
+        add = {"WorkItems": [{"done": False, "execution": {"primitive": "add-subtodo"}}]}
+        self.assertEqual(todo.next_action(add)["action"], "add-subtodo")
+        barrier = {
+            "WorkItems": [
+                {"done": False, "execution": {"mode": "barrier", "wait_for": ["abcd1234", "ef567890"]}}
+            ]
+        }
+        nxt = todo.next_action(barrier)
+        self.assertEqual(nxt["action"], "wait-and-merge")
+        self.assertIn("abcd1234", nxt["command"])
+
     def test_last_sha(self) -> None:
         self.assertEqual(todo.last_sha({"WorkItems": [{"sha": "deadbeef"}]}), "deadbeef")
         self.assertIsNone(todo.last_sha({"WorkItems": [{"kind": "task", "done": False}]}))
@@ -1187,6 +1256,7 @@ class WorkItemInvariantTests(TodoCase):
         read = json.loads(self.todo("work-item-read").stdout)
         self.assertEqual(read["index"], 0)
         self.assertEqual(read["item"]["summary"], "B")
+        self.assertEqual(read["next"]["action"], "work-item-done")  # open plain task
         self.todo("work-item-replace", "--summary=B2")
         self.assertEqual(self.read_self()["WorkItems"][0]["summary"], "B2")
         self.todo("work-item-delete")

@@ -579,6 +579,42 @@ def is_done(todo: JsonDict) -> bool:
     return cursor_index(todo) is None
 
 
+def next_action(todo: JsonDict) -> JsonDict:
+    """Deterministic next mechanical step for the cursor, where the tool can tell.
+
+    Mechanism only: it maps the cursor item's execution hints (or the empty
+    cursor) to the exact command that advances the loop. It does NOT make policy
+    calls -- whether a plain task should instead become a subtodo, or be split
+    because it is too coarse -- which stay with the agent and the skill's
+    dispatch table. A plain freetext task with no execution hints defaults to
+    work-item-done, the common local-coding completion.
+    """
+    index = cursor_index(todo)
+    if index is None:
+        return {
+            "action": "finish",
+            "command": 'todo.py set-state done --actual-summary="..."',
+            "note": "run doctor first (must be ok); synthesize ActualSummary from the done WorkItems",
+        }
+    item = todo["WorkItems"][index]
+    execution = item.get("execution") if isinstance(item, dict) else None
+    execution = execution if isinstance(execution, dict) else {}
+    primitive = execution.get("primitive")
+    wait_for = [w[:8] for w in (execution.get("wait_for") or []) if isinstance(w, str)]
+    subtodo_id = execution.get("subtodo_id")
+    child = subtodo_id[:8] if isinstance(subtodo_id, str) and subtodo_id else "<child-id>"
+    ids = " ".join(wait_for) or "<child-id>..."
+    if primitive == "add-subtodo":
+        return {"action": "add-subtodo", "command": "todo.py add-subtodo --summary=..."}
+    if primitive in (WORKITEM_MERGE_SUBTODO, "merge-subtodo"):
+        return {"action": "merge-subtodo", "command": f"todo.py merge-subtodo {child}"}
+    if primitive == "wait-and-merge" or (wait_for and execution.get("mode") == "barrier"):
+        return {"action": "wait-and-merge", "command": f"todo.py wait-and-merge {ids}"}
+    if primitive == "wait-for" or wait_for:
+        return {"action": "wait-for", "command": f"todo.py wait-for {ids}"}
+    return {"action": "work-item-done", "command": "todo.py work-item-done"}
+
+
 def last_sha(todo: JsonDict) -> Optional[str]:
     """Sha of the last work item -- the last branch commit (invariant #6), if any."""
     items = todo.get("WorkItems") or []
@@ -588,9 +624,16 @@ def last_sha(todo: JsonDict) -> Optional[str]:
     return sha if isinstance(sha, str) and sha else None
 
 
-def code_workitem(sha: str, summary: str = "") -> JsonDict:
-    """Build a done 'code' work item."""
-    return {"kind": WORKITEM_CODE, "summary": summary, "sha": sha, "done": True}
+def code_workitem(sha: str, summary: str = "", message: str = "") -> JsonDict:
+    """Build a done 'code' work item.
+
+    `summary` is the high-level step description (carries over from the cursor task).
+    `message` is the full commit message recorded at `sha`, so the WorkItems trail is
+    self-describing (what actually changed -- e.g. tests added) without resolving shas."""
+    item = {"kind": WORKITEM_CODE, "summary": summary, "sha": sha, "done": True}
+    if message:
+        item["message"] = message
+    return item
 
 
 def start_subtodo_workitem(subtodo_id: str, summary: str = "") -> JsonDict:
@@ -1113,9 +1156,17 @@ def merge_subtodo(
     write_todo_worktree(root, child_worktree)
     commit_todo(root, f"chore(todo): merged into {merge_target}")
 
+    # Prefer the child's ActualSummary (how the work actually panned out) over
+    # its planned Summary for the merge message and work item node; fall back to
+    # Summary.raw for children that never recorded one.
     child_summary = ""
     if isinstance(child.get("Summary"), dict):
         child_summary = str(child["Summary"].get("raw", ""))
+    child_actual = str(child.get("ActualSummary") or "").strip()
+    merge_message = child_actual or child_summary
+    merge_subject = f"merge subtodo {child_id[:8]}"
+    if merge_message:
+        merge_subject += f": {_summary_snippet(merge_message)}"
 
     run_git(root, "checkout", parent_branch)
     parent = read_todo_required(root)
@@ -1124,13 +1175,11 @@ def merge_subtodo(
     # Marker commit first, then record its sha on the parent's cursor item as a
     # typed merge_subtodo done item. Keeping the workitem sha == HEAD upholds
     # "the last workitem is the last commit to the branch" (#6).
-    commit_todo(root, f"chore(todo): subtodo {child_id[:8]} merged")
+    commit_todo(root, f"chore(todo): {merge_subject}")
     merge_sha = head_sha(root) or ""
     index = mark_cursor_done(parent, merge_subtodo_workitem(child_id, merge_sha, summary=""))
     if not parent["WorkItems"][index].get("summary"):
-        parent["WorkItems"][index]["summary"] = (
-            f"merge subtodo {child_id[:8]}: {_summary_snippet(child_summary)}"
-        )
+        parent["WorkItems"][index]["summary"] = merge_subject
     write_todo_worktree(root, parent)
     return {"child": child_id, "State": "merged", "merged_into": merge_target, "sha": merge_sha}
 
@@ -1167,6 +1216,7 @@ def wait_for_state(
 ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "AC",
+        "ActualSummary",
         "Agent",
         "BaseSha",
         "Body",
@@ -1837,8 +1887,11 @@ class SetStateCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Set-state replaces the current todo's State object with one of the supported workflow "
         "states. State-specific metadata such as owner, note, last commit, or merged-into can be "
-        "recorded with the transition. The command updates TODO.json and commits the change by "
-        "default. It prints the new State object for confirmation."
+        "recorded with the transition. --actual-summary records how the work actually panned out "
+        "(vs the planned Summary); when this todo is later merged into a parent, that text becomes "
+        "the merge commit subject and the parent's merge_subtodo work item summary. The command "
+        "updates TODO.json and commits the change by default. It prints the new State object for "
+        "confirmation."
     )
 
     @classmethod
@@ -1853,6 +1906,11 @@ class SetStateCommand(TodoSubCommand):
         parser.add_argument("--last-commit", help="last commit message for done/merged")
         parser.add_argument("--merged-into", help="parent branch name for merged")
         parser.add_argument("--owner", help="owner for working")
+        parser.add_argument(
+            "--actual-summary",
+            help="ActualSummary: how the work actually panned out; reused as the merge "
+            "message when this todo is merged into its parent",
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -1867,6 +1925,8 @@ class SetStateCommand(TodoSubCommand):
             merged_into=self.merged_into,
             owner=self.owner,
         )
+        if self.actual_summary is not None:
+            todo["ActualSummary"] = self.actual_summary
         write_todo_worktree(root, todo)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): state -> {self.state}")
@@ -1994,11 +2054,19 @@ class WorkItemDoneCommand(TodoSubCommand):
                     "commit your work or pass the current HEAD"
                 )
             sha = head
-        item = code_workitem(str(sha), summary=self.summary or "")
+        # Capture the full commit message recorded at `sha` so the WorkItem node itself
+        # says what changed (e.g. which test files were added), not just the task summary.
+        commit_message = run_git(root, "log", "-1", "--format=%B", str(sha), check=False).stdout.strip()
+        item = code_workitem(str(sha), summary=self.summary or "", message=commit_message)
         index = mark_cursor_done(todo, item)
         write_todo_worktree(root, todo)
         summary = todo["WorkItems"][index].get("summary", "")
-        print(json.dumps({"index": index, "kind": WORKITEM_CODE, "sha": sha, "summary": summary}, indent=2))
+        print(
+            json.dumps(
+                {"index": index, "kind": WORKITEM_CODE, "sha": sha, "summary": summary, "message": commit_message},
+                indent=2,
+            )
+        )
         return 0
 
 
@@ -2008,7 +2076,10 @@ class WorkItemReadCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Work-item-read prints the current work item -- the cursor, which is the first not-done "
         "item -- with its index, plus whether the todo is done. Index is null when there is no "
-        "open item."
+        "open item. It also emits a 'next' object: the deterministic mechanical command to advance "
+        "the loop ({action, command}), including the finish sequence when the todo is done. 'next' "
+        "is a mechanism hint, not policy -- a plain task defaults to work-item-done, but the agent "
+        "may instead split it or turn it into a subtodo per the skill's dispatch table."
     )
 
     @classmethod
@@ -2024,7 +2095,17 @@ class WorkItemReadCommand(TodoSubCommand):
         index = cursor_index(todo)
         items = todo.get("WorkItems") or []
         item = items[index] if index is not None else None
-        print(json.dumps({"index": index, "item": item, "is_done": is_done(todo)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "index": index,
+                    "item": item,
+                    "is_done": is_done(todo),
+                    "next": next_action(todo),
+                },
+                indent=2,
+            )
+        )
         return 0
 
 
