@@ -1337,5 +1337,26 @@ class WorkItemInvariantTests(TodoCase):
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
 
+class BaseDirRepoDirTests(TodoCase):
+    def test_basedir_prints_resolved_todo_dir(self) -> None:
+        self.todo("init", "--summary=seed the db")  # ensure the db dir is materialized
+        proc = self.todo("basedir")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(Path(proc.stdout.strip()), self._db_dir.resolve())
+
+    def test_repodir_prints_ticket_repo(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.todo("init", "--summary=a todo")
+        proc = self.todo("repodir", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(Path(proc.stdout.strip()).resolve(), self.repo.resolve())
+
+    def test_repodir_unknown_id_errors(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        proc = self.todo("repodir", "deadbeef")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no todo found", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

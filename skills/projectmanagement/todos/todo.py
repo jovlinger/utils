@@ -2971,11 +2971,59 @@ class LsCommand(TodoSubCommand):
         return 0
 
 
+class BaseDirCommand(TodoSubCommand):
+    command_names = ("basedir",)
+    doc_short: ClassVar[str] = "Print the todo base directory"
+    doc_long: ClassVar[str] = (
+        "Basedir prints the resolved todo base directory for this invocation -- where "
+        "config.json, the ticket store (json files or sqlite.db), and worktrees live. "
+        "Resolution order: $TODO_DIR, $(gitroot)/.todo, $HOME/.todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Basedir takes no arguments."""
+
+    def do(self) -> int:
+        """Print the resolved todo base directory."""
+        print(todo_db.todo_dir())
+        return 0
+
+
+class RepoDirCommand(TodoSubCommand):
+    command_names = ("repodir",)
+    doc_short: ClassVar[str] = "Print the repo directory a todo lives in"
+    doc_long: ClassVar[str] = (
+        "Repodir prints the repo directory for the selected todo -- its own "
+        "Scope.path_to_project when set, else the current gitroot. Selector is self/curr "
+        "or a 4+ hex Id prefix (default self)."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register repodir arguments."""
+        parser.add_argument(
+            "selector",
+            nargs="?",
+            default="self",
+            help="todo selector: self, curr, or 4+ hex Id prefix (default: self)",
+        )
+
+    def do(self) -> int:
+        """Print the repo directory for the selected todo."""
+        root = self.root()
+        _, ticket = resolve_ticket_by_selector(root, self.selector)
+        print(_ticket_repo(ticket, root))
+        return 0
+
+
 COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     MintCommand,
     LogCommand,
     WebCommand,
     LsCommand,
+    BaseDirCommand,
+    RepoDirCommand,
     ReadCommand,
     GetJsonPathCommand,
     JqCommand,
