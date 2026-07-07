@@ -1211,8 +1211,7 @@ class WorkItemModelUnitTests(unittest.TestCase):
 
 
 class MissingRepoCwdTests(unittest.TestCase):
-    """A subtodo can record a repo path (Scope.path_to_project) from another
-    machine that is absent here; git calls must not crash on the missing cwd."""
+    """git calls against an absent/foreign cwd must fail cleanly, not crash."""
 
     MISSING = Path("/no/such/repo/todo-missing-cwd")
 

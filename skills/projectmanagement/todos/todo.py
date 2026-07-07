@@ -72,9 +72,8 @@ def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedP
             check=False,
         )
     except OSError as exc:
-        # *root* may name a repo path recorded on another machine that does not
-        # exist here (e.g. a subtodo's Scope.path_to_project). Treat an
-        # unreachable working directory as a normal git failure.
+        # *root* may be an unreachable working directory; treat it as a normal
+        # git failure rather than crashing.
         result = subprocess.CompletedProcess(
             ["git", *args], returncode=1, stdout="", stderr=str(exc)
         )
@@ -153,6 +152,11 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
     parent = todo.get("Parent")
     if isinstance(parent, dict):
         todo["Parent"] = [parent]
+    # Absolute project paths are machine-specific and no longer stored: the repo
+    # name identifies the repo and CWD is the concrete location on this machine.
+    scope = todo.get("Scope")
+    if isinstance(scope, dict):
+        scope.pop("path_to_project", None)
     return todo
 
 
@@ -521,7 +525,6 @@ def build_ticket_skeleton(
     """Construct a fresh TODO.json object."""
     now = utc_now()
     scope: JsonDict = {
-        "path_to_project": str(root),
         "branch": branch,
     }
     remote = git_url_for_repo(root)
@@ -794,7 +797,7 @@ def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = 
         raise TodoError("ticket missing Branch")
     ticket["Branch"] = branch_name
     scope = dict(ticket.get("Scope") or {})
-    scope.setdefault("path_to_project", str(root))
+    scope.pop("path_to_project", None)
     scope["branch"] = branch_name
     remote = git_url_for_repo(root)
     if remote:
@@ -1888,7 +1891,7 @@ class AddSubtodoCommand(TodoSubCommand):
         child_spec["Parent"] = [{"Id": parent["Id"], "Branch": parent_branch}]
         scope = dict(child_spec.get("Scope") or {})
         scope["branch"] = child_branch
-        scope.setdefault("path_to_project", str(root))
+        scope.pop("path_to_project", None)
         remote = git_url_for_repo(root)
         if remote:
             scope.setdefault("git_url", remote)
@@ -2520,14 +2523,6 @@ def _entry_as_ticket(entry: JsonDict) -> JsonDict:
     }
 
 
-def _ticket_repo(ticket: JsonDict, default: Path) -> Path:
-    """Repo a ticket (and its subtodo tree) lives in -- Scope.path_to_project, else *default*."""
-    scope = ticket.get("Scope")
-    if isinstance(scope, dict) and scope.get("path_to_project"):
-        return Path(str(scope["path_to_project"]))
-    return default
-
-
 def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
     """Load a full child ticket via the Subtodos entry's Branch (O(1), no ref scan); fall back
     to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot)."""
@@ -2711,7 +2706,7 @@ class LogCommand(TodoSubCommand):
         seen: set[str] = set()
         for ticket in roots:
             render_ticket_graph(
-                _ticket_repo(ticket, root), ticket, [], lines, seen, self.verbose, self.timestamps
+                root, ticket, [], lines, seen, self.verbose, self.timestamps
             )
         if self.max_count is not None:
             lines = lines[: self.max_count]
@@ -2761,15 +2756,14 @@ class WebCommand(TodoSubCommand):
         def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
             """Resolve an ?id= selector to (repo_root, todo) for the viewer.
 
-            The repo for a todo's diffs is the todo's own repo (Scope), else the
-            current directory; git failures render as 'diff unavailable'.
+            The concrete repo is always the CWD; git failures for a todo whose
+            commits are not present here render as 'diff unavailable'.
             """
             try:
                 ticket = resolve_ticket_by_selector(root, selector)[1]
             except TodoError as exc:
                 raise todo_web.TodoWebError(str(exc)) from exc
-            candidate = _ticket_repo(ticket, root)
-            return (candidate if candidate.is_dir() else root), ticket
+            return root, ticket
 
         def list_todos() -> List[JsonDict]:
             """Every todo in the store -- no repo scoping, no filtering."""
@@ -2994,8 +2988,9 @@ class RepoDirCommand(TodoSubCommand):
     command_names = ("repodir",)
     doc_short: ClassVar[str] = "Print the repo directory a todo lives in"
     doc_long: ClassVar[str] = (
-        "Repodir prints the repo directory for the selected todo -- its own "
-        "Scope.path_to_project when set, else the current gitroot. Selector is self/curr "
+        "Repodir prints the concrete repo directory for the selected todo on this machine: "
+        "the current gitroot. Absolute paths are never stored -- the todo's repo name only "
+        "identifies the repo (and warns if the CWD is a different one). Selector is self/curr "
         "or a 4+ hex Id prefix (default self)."
     )
 
@@ -3010,10 +3005,10 @@ class RepoDirCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Print the repo directory for the selected todo."""
+        """Print the concrete repo directory (CWD) for the selected todo."""
         root = self.root()
-        _, ticket = resolve_ticket_by_selector(root, self.selector)
-        print(_ticket_repo(ticket, root))
+        resolve_ticket_by_selector(root, self.selector)  # validates id; warns on repo mismatch
+        print(root)
         return 0
 
 

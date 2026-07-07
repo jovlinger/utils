@@ -122,8 +122,9 @@ class JsonDirTodoStore(TodoStore):
         for todo in self._all():
             if str(todo.get("Id") or "").startswith(query):
                 scope = todo.get("Scope")
-                repo = str(scope.get("path_to_project") or "") if isinstance(scope, dict) else ""
-                out.append((repo, str(todo.get("Branch") or ""), todo))
+                url = scope.get("git_url") if isinstance(scope, dict) else None
+                repo = todo_db.repo_identity_from_url(url) if isinstance(url, str) and url else ""
+                out.append((repo or "", str(todo.get("Branch") or ""), todo))
         return out
 
     def list_all(self) -> List[JsonDict]:
