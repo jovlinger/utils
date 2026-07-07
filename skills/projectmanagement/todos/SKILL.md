@@ -576,8 +576,11 @@ parallel-checkout use case, keep worktree creation/listing manual.
 - Wait sanity: a parent is not waiting on itself, a missing child, or a child in
   an impossible terminal state.
 - Subtodo merge completeness: every `Subtodos[]` entry should be `merged` (or
-  waived by user) before parent `done`; flag children still `init`, `working`, or
-  `done` but not merge-bookkept on the parent.
+  waived by user) before parent `done`. Any child not `merged` (including one
+  spawned via `start_subtodo` that terminated `userneeded`/`stopped`) is a soft
+  **warning** while the parent is still open, and a hard **finding** once the
+  parent is `done`/`merged` -- a spawn without a merge cannot survive parent
+  completion.
 - WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
   `code`/`merge_subtodo` item carries a sha; a done todo does not end in
   `start_subtodo`.

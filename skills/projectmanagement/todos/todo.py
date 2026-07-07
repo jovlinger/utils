@@ -1230,6 +1230,34 @@ def workitem_findings(todo: JsonDict) -> List[str]:
     return findings
 
 
+TERMINAL_PARENT_STATES = ("done", "merged")
+
+
+def unmerged_subtodos(todo: JsonDict) -> List[str]:
+    """Describe each Subtodos entry not yet 'merged' on the parent record.
+
+    Merge state is bookkept locally on the parent's Subtodos[].State (set by
+    merge-subtodo), so this needs no child branch: it catches a child spawned
+    via start_subtodo and never merged, including one that terminated in
+    userneeded/stopped. Returns one label per unmerged child; the caller
+    decides severity from the parent's own state.
+    """
+    subtodos = todo.get("Subtodos")
+    if not isinstance(subtodos, list):
+        return []
+    labels: List[str] = []
+    for index, entry in enumerate(subtodos):
+        if not isinstance(entry, dict):
+            continue
+        state = entry.get("State")
+        if state == "merged":
+            continue
+        child_id = entry.get("Id")
+        short = child_id[:8] if isinstance(child_id, str) and child_id else "?"
+        labels.append(f"Subtodos.{index}.Id {short} is {state or 'unset'}, not merged")
+    return labels
+
+
 def doctor_findings(root: Path, selector: str) -> List[str]:
     """Return hard doctor findings for the selected todo (shape invariants)."""
     _, todo = resolve_ticket_by_selector(root, selector)
@@ -1264,6 +1292,16 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
                 child_id = entry.get("Id")
                 if not isinstance(child_id, str) or not child_id:
                     findings.append(f"Subtodos.{index}.Id must be a string")
+    # A done/merged parent must not leave any spawned subtodo unmerged
+    # (parent synthesis last). While the parent is still working this is a soft
+    # warning instead -- see doctor_warnings.
+    parent_state = current_state_name(todo)
+    if parent_state in TERMINAL_PARENT_STATES:
+        for label in unmerged_subtodos(todo):
+            findings.append(
+                f"parent is {parent_state} but {label} "
+                "(all subtodos must merge before the parent finishes)"
+            )
     findings.extend(workitem_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     return findings
@@ -1303,6 +1341,11 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                     resolve_ticket_by_selector(root, sub[:8])
                 except TodoError:
                     warnings.append(f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here")
+    # Surface unmerged subtodos while the parent is still open; once the parent
+    # is done/merged this escalates to a hard finding (see doctor_findings).
+    if current_state_name(todo) not in TERMINAL_PARENT_STATES:
+        for label in unmerged_subtodos(todo):
+            warnings.append(f"{label} (merge or waive before marking the parent done)")
     return warnings
 
 

@@ -546,6 +546,58 @@ class DoctorTests(TodoCase):
         self.assertFalse(payload["ok"])
         self.assertIn("unknown top-level fields: Surprise", payload["findings"])
 
+    def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
+        tid = self.mint()
+        child = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-parent",
+            tid,
+            extra={"Subtodos": [{"Id": child, "Branch": "c", "State": "working"}]},
+        )
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(
+            any(child[:8] in w and "not merged" in w for w in payload["warnings"]),
+            payload["warnings"],
+        )
+
+    def test_doctor_fails_unmerged_subtodo_when_parent_done(self) -> None:
+        tid = self.mint()
+        child = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-parent",
+            tid,
+            extra={
+                "State": {"done": {}},
+                "Subtodos": [{"Id": child, "Branch": "c", "State": "done"}],
+            },
+        )
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any(child[:8] in f and "must merge" in f for f in payload["findings"]),
+            payload["findings"],
+        )
+
+    def test_doctor_passes_when_all_subtodos_merged_and_parent_done(self) -> None:
+        tid = self.mint()
+        child = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-parent",
+            tid,
+            extra={
+                "State": {"done": {}},
+                "Subtodos": [{"Id": child, "Branch": "c", "State": "merged"}],
+            },
+        )
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
     def test_doctor_finds_wait_dependency_cycle(self) -> None:
         first_id = self.mint()
         second_id = self.mint()
