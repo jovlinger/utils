@@ -1092,17 +1092,30 @@ class WorkItemInvariantTests(TodoCase):
         self._init()
         self.assertRegex(self.read_self()["BaseSha"], r"\A[0-9a-f]{40}\Z")
 
-    def test_code_workitem_dirty_requires_message_and_commits(self) -> None:
+    def test_code_workitem_dirty_commits_with_message(self) -> None:
         self._init()
         self.todo("work-item-add", "--summary=code it")
         (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
-        self.assertEqual(self.todo("work-item-done").returncode, 1)  # dirty, no -m
         proc = self.todo("work-item-done", "-m", "feat: f")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         item = self.read_self()["WorkItems"][0]
         self.assertEqual(item["kind"], "code")
         self.assertTrue(item["done"])
         self.assertEqual(item["sha"], self._head())
+        self.assertEqual(self._git("log", "-1", "--format=%s").stdout.strip(), "feat: f")
+
+    def test_code_workitem_dirty_no_message_commits_with_summary(self) -> None:
+        self._init()
+        self.todo("work-item-add", "--summary=code it")
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        proc = self.todo("work-item-done")  # dirty, no -m: auto-commit
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_self()["WorkItems"][0]
+        self.assertTrue(item["done"])
+        self.assertEqual(item["sha"], self._head())
+        # post-condition: branch is fully committed
+        self.assertEqual(self._git("status", "--porcelain").stdout.strip(), "")
+        self.assertEqual(self._git("log", "-1", "--format=%s").stdout.strip(), "code it")
 
     def test_code_workitem_clean_sha_mismatch_exits_1(self) -> None:
         self._init()

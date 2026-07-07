@@ -565,6 +565,15 @@ def cursor_index(todo: JsonDict) -> Optional[int]:
     return None
 
 
+def cursor_summary(todo: JsonDict) -> str:
+    """Summary text of the cursor work item, or '' when there is no open item."""
+    index = cursor_index(todo)
+    if index is None:
+        return ""
+    item = todo["WorkItems"][index]
+    return str(item.get("summary") or "") if isinstance(item, dict) else ""
+
+
 def is_done(todo: JsonDict) -> bool:
     """A todo is done when it has no not-yet-done work items (invariant #7)."""
     return cursor_index(todo) is None
@@ -1901,33 +1910,36 @@ class WorkItemDoneCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Complete cursor work item as code"
     doc_long: ClassVar[str] = (
         "Work-item-done completes the current (cursor) work item as a typed 'code' item and "
-        "advances the cursor. If the working tree has uncommitted changes it requires -m and "
-        "commits them (git add -A), recording the new HEAD sha. If the tree is clean it records "
-        "the branch's most recent commit, or a --sha that must match HEAD (mismatch exits 1). It "
-        "does not add a bookkeeping commit, so the recorded sha stays the branch HEAD (invariant "
-        "#6). --summary overrides the item's high-level description (defaults to the cursor task's "
-        "summary)."
+        "advances the cursor. Its post-condition is a fully committed branch. If the tree is clean "
+        "it records the branch's most recent commit, or a --sha that must match HEAD (mismatch "
+        "exits 1). If the tree is dirty it commits all updates and new files (git add -A) and "
+        "records the new HEAD sha; the commit message is -m when given, else the work item's "
+        "summary. It adds no bookkeeping commit, so the recorded sha stays the branch HEAD "
+        "(invariant #6). --summary overrides the item's high-level description (defaults to the "
+        "cursor task's summary)."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
-        parser.add_argument("-m", "--message", help="commit message (required when the tree is dirty)")
+        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
         parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
         parser.add_argument("--summary", help="override the work item's high-level description")
 
     def do(self) -> int:
-        """Complete the cursor work item as code (invariant #1)."""
+        """Complete the cursor work item as code (invariant #1).
+
+        Post-condition: the branch is fully committed. A clean tree records the
+        current HEAD; a dirty tree commits all updates and new files first."""
         root = self.root()
         todo = read_todo_required(root)
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
         if dirty:
             if self.sha:
                 raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
-            if not self.message:
-                raise TodoError("uncommitted changes present: -m/--message is required")
+            message = self.message or self.summary or cursor_summary(todo) or "work-item-done"
             run_git(root, "add", "-A")
-            run_git(root, "commit", "-m", self.message)
+            run_git(root, "commit", "-m", message)
             sha = head_sha(root)
         else:
             head = head_sha(root)

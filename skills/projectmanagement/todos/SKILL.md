@@ -202,7 +202,7 @@ the `todo.py` interface.
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor |
 | `todo.py set --summary=... --body=... --ac=...` | implemented | Patch `Summary.raw`, `Body.raw`, and/or `AC` on the current branch's todo |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` |
-| `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Dirty tree: `-m` required, commits `git add -A`, records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6) |
+| `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6) |
 | `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, and whether the todo is done |
 | `todo.py work-item-insert --summary=...` | implemented | Insert a not-done `task` at the cursor so it becomes current, pushing the frontier down (used to explode a step into finer steps); appends when there is no open item |
 | `todo.py work-item-replace --summary=...` | implemented | Rewrite the cursor task's freetext summary, leaving it not-done |
@@ -614,7 +614,7 @@ done item -- the tool guarantees the shape and captures the sha:
 |------------------------|----|--------------|
 | a subtodo to start | `todo.py add-subtodo --summary=...` (on the parent) | `start_subtodo` (+ child branch & `BaseSha`) |
 | a subtodo to land | git-merge the child, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` (+ merge sha) |
-| local coding | make the change, then `todo.py work-item-done -m "..."` (dirty tree commits it) or `work-item-done` (already committed) | `code` (+ HEAD sha) |
+| local coding | make the change, then `todo.py work-item-done` (dirty tree commits it, message = `-m` or the item summary; clean tree records HEAD) | `code` (+ HEAD sha) |
 | too coarse | `todo.py work-item-insert --summary=...` to split it, then re-poll | new task at the cursor |
 | blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set-state userneeded --note=...` and **come back and poll later** | -- |
 
