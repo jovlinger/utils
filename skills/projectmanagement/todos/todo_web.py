@@ -1,4 +1,16 @@
-"""Web viewer for completed todo commit and ticket graphs."""
+"""Web viewer for todo tickets: a labeled representation with a movable split.
+
+Above the split: the todo itself -- Id, Summary, Body, Work items (horizontal
+boxes), Subtodos (horizontal boxes). Clicking a work item shows its full commit
+message (below-fold left) and full diff (below-fold right) and highlights any
+subtodo it references. Clicking a subtodo highlights the work items that
+reference it and shows a read-only rendition of that subtodo below the fold.
+
+Opened with an ``?id=`` query the viewer shows that todo; opened bare it shows a
+search box over every discoverable todo (empty query lists them all). All
+below-fold content is pre-computed and embedded in the page, so a dumped page is
+a complete self-contained artifact.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +23,12 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 JsonDict = Dict[str, Any]
+
+_DONE_KINDS = frozenset({"code", "merge_subtodo", "start_subtodo"})
 
 _DEBUG_COUNTER: int = 0
 
@@ -51,15 +65,7 @@ def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedP
         check=False,
     )
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    out_bytes = len(result.stdout.encode("utf-8", errors="replace"))
-    err_bytes = len(result.stderr.encode("utf-8", errors="replace"))
-    _debug(
-        f"done {cmd} rc={result.returncode} elapsed_ms={elapsed_ms} "
-        f"stdout_bytes={out_bytes} stderr_bytes={err_bytes}",
-        phase="git",
-    )
-    if elapsed_ms >= 1000:
-        _debug(f"SLOW git ({elapsed_ms}ms): {cmd}", phase="git.slow")
+    _debug(f"done {cmd} rc={result.returncode} elapsed_ms={elapsed_ms}", phase="git")
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         _debug(f"git failed: {detail}", phase="git.error")
@@ -68,7 +74,7 @@ def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 
 
 def normalize_todo(todo: JsonDict) -> JsonDict:
-    """Normalize legacy todo fields for graph walking."""
+    """Normalize legacy todo fields for rendering."""
     if "Chunks" in todo and "WorkItems" not in todo:
         todo["WorkItems"] = todo.pop("Chunks")
     if "Subtickets" in todo and "Subtodos" not in todo:
@@ -79,6 +85,8 @@ def normalize_todo(todo: JsonDict) -> JsonDict:
 def current_state_name(todo: JsonDict) -> Optional[str]:
     """Return the single State key, if present."""
     state = todo.get("State")
+    if isinstance(state, str):
+        return state or None
     if not isinstance(state, dict) or len(state) != 1:
         return None
     return next(iter(state.keys()))
@@ -89,46 +97,14 @@ def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
     _debug(f"read_todo_at_ref ref={ref!r}")
     result = run_git(root, "show", f"{ref}:TODO.json", check=False)
     if result.returncode != 0:
-        _debug(f"read_todo_at_ref missing ref={ref!r}")
         return None
     try:
         parsed = json.loads(result.stdout)
     except json.JSONDecodeError:
-        _debug(f"read_todo_at_ref invalid json ref={ref!r}")
         return None
     if not isinstance(parsed, dict):
-        _debug(f"read_todo_at_ref not a dict ref={ref!r}")
         return None
-    todo_id = str(parsed.get("Id") or "")[:8]
-    _debug(f"read_todo_at_ref ok ref={ref!r} id={todo_id}")
     return normalize_todo(parsed)
-
-
-def branch_exists(root: Path, name: str) -> bool:
-    """Return True when a local branch exists."""
-    _debug(f"branch_exists name={name!r}")
-    result = run_git(root, "show-ref", "--verify", "--quiet", f"refs/heads/{name}", check=False)
-    exists = result.returncode == 0
-    _debug(f"branch_exists name={name!r} exists={exists}")
-    return exists
-
-
-def default_base_branch(root: Path, ticket: JsonDict) -> Optional[str]:
-    """Choose the base branch for a ticket's commit walk."""
-    ticket_id = str(ticket.get("Id") or "")[:8]
-    _debug(f"default_base_branch ticket={ticket_id}")
-    parent = ticket.get("Parent")
-    if isinstance(parent, dict) and parent.get("Branch"):
-        branch = str(parent["Branch"])
-        if branch_exists(root, branch):
-            _debug(f"default_base_branch ticket={ticket_id} chose parent={branch!r}")
-            return branch
-    for candidate in ("dev", "main", "master"):
-        if branch_exists(root, candidate):
-            _debug(f"default_base_branch ticket={ticket_id} chose fallback={candidate!r}")
-            return candidate
-    _debug(f"default_base_branch ticket={ticket_id} found none")
-    return None
 
 
 def github_repo_url(remote_url: Optional[str]) -> Optional[str]:
@@ -155,108 +131,26 @@ def repo_origin(root: Path) -> Optional[str]:
     return result.stdout.strip() or None
 
 
-def branch_commits(root: Path, ticket: JsonDict) -> List[JsonDict]:
-    """Return chronological commits that belong to a ticket branch."""
-    branch = str(ticket.get("Branch") or "")
-    ticket_id = str(ticket.get("Id") or "")[:8]
-    _debug(f"branch_commits ticket={ticket_id} branch={branch!r}")
-    if not branch or not branch_exists(root, branch):
-        _debug(f"branch_commits ticket={ticket_id} skip: missing branch")
-        return []
-    base = default_base_branch(root, ticket)
-    if not base:
-        _debug(f"branch_commits ticket={ticket_id} skip: no base branch")
-        return []
-    range_spec = f"{base}..{branch}"
-    _debug(f"branch_commits ticket={ticket_id} log range={range_spec!r}")
-    result = run_git(
-        root,
-        "log",
-        "--reverse",
-        "--format=%H%x00%h%x00%s",
-        range_spec,
-        check=False,
-    )
-    if result.returncode != 0:
-        _debug(f"branch_commits ticket={ticket_id} git log failed rc={result.returncode}")
-        return []
-    commits: List[JsonDict] = []
-    for line in result.stdout.splitlines():
-        parts = line.split("\x00", 2)
-        if len(parts) != 3:
-            continue
-        commits.append({"hash": parts[0], "short": parts[1], "subject": parts[2]})
-    _debug(f"branch_commits ticket={ticket_id} count={len(commits)}")
-    return commits
-
-
 def load_child_ticket(root: Path, entry: JsonDict) -> JsonDict:
     """Load a child ticket from its branch, or fall back to the Subtodos snapshot."""
     entry_id = str(entry.get("Id") or "")
-    child_id = entry_id[:8]
     branch = str(entry.get("Branch") or "")
-    _debug(f"load_child_ticket id={child_id} branch={branch!r}")
     if branch:
         child = read_todo_at_ref(root, branch)
-        if child is not None:
-            loaded_id = str(child.get("Id") or "")
-            if loaded_id == entry_id:
-                subtodos = len(list(child.get("Subtodos") or []))
-                _debug(
-                    f"load_child_ticket id={child_id} loaded from branch subtodos={subtodos}"
-                )
-                return child
-            _debug(
-                f"load_child_ticket id={child_id} branch file has id={loaded_id[:8]} "
-                f"using snapshot fallback",
-            )
-    _debug(f"load_child_ticket id={child_id} using snapshot fallback")
+        if child is not None and str(child.get("Id") or "") == entry_id:
+            return child
     return {
         "Id": entry_id,
         "Branch": branch,
         "Summary": {"raw": entry.get("Summary", "")},
         "State": {str(entry.get("State", "init")): {}},
+        "WorkItems": [],
         "Subtodos": [],
     }
 
 
-def lane_node(root: Path, ticket: JsonDict, *, depth: int, has_children: bool) -> JsonDict:
-    """Build one timeline lane from a todo: its metadata plus branch commits."""
-    summary = ticket.get("Summary")
-    return {
-        "id": str(ticket.get("Id") or ""),
-        "branch": str(ticket.get("Branch") or ""),
-        "summary": summary.get("raw", "") if isinstance(summary, dict) else "",
-        "state": current_state_name(ticket) or "?",
-        "depth": depth,
-        "repo": str(root),
-        "has_children": has_children,
-        "commits": branch_commits(root, ticket),
-    }
-
-
-def build_lanes(root: Path, ticket: JsonDict) -> List[JsonDict]:
-    """Build one level of side-by-side lanes: the root todo then each direct subtodo.
-
-    Deeper nesting is not expanded inline; a subtodo that has its own subtodos is
-    flagged so the viewer can offer a re-root link to open it as a new top level.
-    """
-    ticket_id = str(ticket.get("Id") or "")
-    _debug(f"build_lanes root id={ticket_id[:8]}", phase="lanes")
-    lanes = [lane_node(root, ticket, depth=0, has_children=False)]
-    for entry in list(ticket.get("Subtodos") or []):
-        if not isinstance(entry, dict):
-            continue
-        child = load_child_ticket(root, entry)
-        has_children = bool(list(child.get("Subtodos") or []))
-        lanes.append(lane_node(root, child, depth=1, has_children=has_children))
-    _debug(f"build_lanes root id={ticket_id[:8]} lanes={len(lanes)}", phase="lanes")
-    return lanes
-
-
 def commit_message(root: Path, commit_hash: str) -> str:
     """Return the full commit message (subject + body) for one commit."""
-    _debug(f"commit_message commit={commit_hash}")
     result = run_git(root, "show", "-s", "--format=%B", commit_hash, check=False)
     if result.returncode != 0:
         return "[commit message unavailable]\n"
@@ -265,319 +159,427 @@ def commit_message(root: Path, commit_hash: str) -> str:
 
 def diff_unified(root: Path, commit_hash: str) -> str:
     """Return a unified patch for one commit."""
-    _debug(f"diff_unified commit={commit_hash}")
-    started = time.monotonic()
-    result = run_git(root, "show", "--format=", "--patch", "--find-renames", commit_hash)
-    patch_bytes = len(result.stdout.encode("utf-8", errors="replace"))
-    _debug(
-        f"diff_unified commit={commit_hash} patch_bytes={patch_bytes} "
-        f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
-        phase="diff",
-    )
-    return result.stdout
-
-
-def changed_files(root: Path, commit_hash: str) -> List[str]:
-    """Return files changed by one commit."""
-    _debug(f"changed_files commit={commit_hash}")
     result = run_git(
-        root,
-        "diff-tree",
-        "--no-commit-id",
-        "--name-only",
-        "-r",
-        commit_hash,
-        check=False,
+        root, "show", "--format=", "--patch", "--find-renames", commit_hash, check=False
     )
     if result.returncode != 0:
-        _debug(f"changed_files commit={commit_hash} failed rc={result.returncode}")
-        return []
-    paths = [line for line in result.stdout.splitlines() if line.strip()]
-    _debug(f"changed_files commit={commit_hash} count={len(paths)}")
-    return paths
-
-
-def blob_at(root: Path, commitish: str, path: str) -> str:
-    """Return file contents at commitish:path, or a placeholder for missing blobs."""
-    _debug(f"blob_at commitish={commitish!r} path={path!r}")
-    result = run_git(root, "show", f"{commitish}:{path}", check=False)
-    if result.returncode != 0:
-        _debug(f"blob_at missing commitish={commitish!r} path={path!r}")
-        return "[file absent]\n"
+        return "[diff unavailable]\n"
     return result.stdout
 
 
-def diff_prepost(root: Path, commit_hash: str) -> str:
-    """Render pre/post file contents for one commit."""
-    _debug(f"diff_prepost commit={commit_hash}")
-    started = time.monotonic()
-    parts: List[str] = []
-    for path in changed_files(root, commit_hash):
-        before = blob_at(root, f"{commit_hash}^", path)
-        after = blob_at(root, commit_hash, path)
-        parts.append(
-            '<section class="file-pair">'
-            f"<h3>{html.escape(path)}</h3>"
-            '<div class="split">'
-            f'<pre><code>{html.escape(before)}</code></pre>'
-            f'<pre><code>{html.escape(after)}</code></pre>'
-            "</div>"
-            "</section>"
-        )
-    html_out = "\n".join(parts) if parts else "<p>No file-level diff available.</p>"
-    _debug(
-        f"diff_prepost commit={commit_hash} sections={len(parts)} "
-        f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
-        phase="diff",
-    )
-    return html_out
+# --- todo field extraction -------------------------------------------------
 
 
-def work_item_shas(ticket: JsonDict) -> List[str]:
-    """Return every commit sha recorded on the ticket's WorkItems, in order."""
-    shas: List[str] = []
-    items = ticket.get("WorkItems") or []
+def _raw_field(todo: JsonDict, key: str) -> str:
+    """Return the ``.raw`` text of a Summary/Body-shaped field, tolerating strings."""
+    value = todo.get(key)
+    if isinstance(value, dict):
+        return str(value.get("raw") or "")
+    return str(value or "")
+
+
+def _summary_text(todo: JsonDict) -> str:
+    return _raw_field(todo, "Summary")
+
+
+def _body_text(todo: JsonDict) -> str:
+    return _raw_field(todo, "Body")
+
+
+def _state_text(todo: JsonDict) -> str:
+    return current_state_name(todo) or "?"
+
+
+def _workitems_view(todo: JsonDict) -> List[JsonDict]:
+    """Light per-work-item dicts for box rendering (no git reads)."""
+    out: List[JsonDict] = []
+    items = todo.get("WorkItems") or []
     if not isinstance(items, list):
-        return shas
-    for item in items:
+        return out
+    for idx, item in enumerate(items):
         if not isinstance(item, dict):
             continue
+        kind = str(item.get("kind") or ("code" if item.get("done") else "task"))
         sha = item.get("sha")
-        if isinstance(sha, str) and sha:
-            shas.append(sha)
-        # tolerate the legacy commits-list shape
-        for legacy in item.get("commits") or []:
-            if isinstance(legacy, str) and legacy:
-                shas.append(legacy)
-    return shas
+        sha = sha if isinstance(sha, str) and sha else ""
+        done = bool(item.get("done")) or kind in _DONE_KINDS
+        out.append(
+            {
+                "idx": idx,
+                "kind": kind,
+                "summary": str(item.get("summary") or ""),
+                "done": done,
+                "sha": sha,
+                "short": sha[:8] if sha else "",
+                "subtodo": str(item.get("subtodo_id") or ""),
+            }
+        )
+    return out
 
 
-def render_page(
-    root: Path,
-    ticket: JsonDict,
-    *,
-    selected_commit: Optional[str] = None,
-    mode: str = "unified",
-) -> str:
-    """Render the timeline (top) plus info/diff (bottom) HTML viewer."""
-    ticket_id = str(ticket.get("Id") or "")
-    started = time.monotonic()
-    _debug(
-        f"render_page enter root={root} ticket={ticket_id[:8]} "
-        f"selected_commit={selected_commit!r} mode={mode!r}",
-        phase="render",
+def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
+    """Light per-subtodo dicts, each carrying the loaded child for read-only render."""
+    out: List[JsonDict] = []
+    for entry in todo.get("Subtodos") or []:
+        if not isinstance(entry, dict):
+            continue
+        child = normalize_todo(load_child_ticket(root, entry))
+        cid = str(child.get("Id") or entry.get("Id") or "")
+        out.append(
+            {
+                "id": cid,
+                "short": cid[:8],
+                "summary": _summary_text(child) or str(entry.get("Summary") or ""),
+                "state": _state_text(child),
+                "child": child,
+            }
+        )
+    return out
+
+
+# --- HTML rendering --------------------------------------------------------
+
+
+def _wi_box(item: JsonDict, *, interactive: bool) -> str:
+    """Render one work-item box, clickable (interactive) or static."""
+    classes = ["wi"]
+    if not interactive:
+        classes.append("static")
+    if item["done"]:
+        classes.append("done")
+    attrs = ""
+    if interactive:
+        attrs = f' data-idx="{item["idx"]}" data-subtodo="{html.escape(item["subtodo"])}"'
+    sha_html = f'<div class="wi-sha">{html.escape(item["short"])}</div>' if item["short"] else ""
+    mark = "[x]" if item["done"] else "[ ]"
+    return (
+        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
+        f'<div class="wi-sum">{html.escape(item["summary"] or "(no summary)")}</div>'
+        f"{sha_html}"
+        "</div>"
     )
-    if mode not in {"unified", "prepost"}:
-        raise TodoWebError("mode must be unified or prepost")
-    lanes = build_lanes(root, ticket)
-    allowed = {commit["hash"] for lane in lanes for commit in lane["commits"]}
-    allowed |= set(work_item_shas(ticket))
-    commit = selected_commit or None
-    if commit and commit not in allowed:
-        raise TodoWebError(f"commit {commit!r} is not part of this todo")
+
+
+def _st_box(sub: JsonDict, *, interactive: bool) -> str:
+    """Render one subtodo box, clickable (interactive) or static."""
+    classes = ["st"] if interactive else ["st", "static"]
+    attrs = f' data-st="{html.escape(sub["id"])}"' if interactive else ""
+    return (
+        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="st-id mono">{html.escape(sub["short"] or "?")}</div>'
+        f'<div class="st-sum">{html.escape(sub["summary"] or "(no summary)")}</div>'
+        f'<div class="st-state">{html.escape(sub["state"])}</div>'
+        "</div>"
+    )
+
+
+def _parents_view(todo: JsonDict) -> List[JsonDict]:
+    """Light per-parent dicts from the Parent field (a list of {Id, Branch})."""
+    out: List[JsonDict] = []
+    parents = todo.get("Parent")
+    if isinstance(parents, dict):  # tolerate legacy single-parent shape
+        parents = [parents]
+    if not isinstance(parents, list):
+        return out
+    for entry in parents:
+        if not isinstance(entry, dict):
+            continue
+        pid = str(entry.get("Id") or "")
+        if pid:
+            out.append({"id": pid, "short": pid[:8], "branch": str(entry.get("Branch") or "")})
+    return out
+
+
+def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
+    """Render the parent links (clickable when interactive, plain text otherwise)."""
+    if not parents:
+        return ""
+    chips: List[str] = []
+    for p in parents:
+        label = html.escape(p["short"])
+        branch = f' {html.escape(p["branch"])}' if p["branch"] else ""
+        if interactive:
+            chips.append(f'<a class="parent mono" href="/?id={html.escape(p["id"])}">{label}</a>{branch}')
+        else:
+            chips.append(f'<span class="parent mono">{label}</span>{branch}')
+    return (
+        f'<section class="part"><h2>Parent</h2>'
+        f'<div class="row parents">{" ".join(chips)}</div></section>'
+    )
+
+
+def _sections_html(
+    todo: JsonDict,
+    witems: List[JsonDict],
+    stodos: List[JsonDict],
+    *,
+    interactive: bool,
+) -> str:
+    """Render the labeled todo representation: Id, Parent, Summary, Body, work items, subtodos."""
+    tid = str(todo.get("Id") or "")
+    summary = _summary_text(todo)
+    body = _body_text(todo)
+    parents_html = _parents_html(_parents_view(todo), interactive=interactive)
+    wi_boxes = "".join(_wi_box(w, interactive=interactive) for w in witems)
+    st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
+    wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
+    st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
+    return (
+        f'<section class="part"><h2>Id</h2>'
+        f'<div class="val mono">{html.escape(tid or "?")}</div>'
+        f' <span class="state-tag">{html.escape(_state_text(todo))}</span></section>'
+        f"{parents_html}"
+        f'<section class="part"><h2>Summary</h2>'
+        f'<div class="val">{html.escape(summary or "(no summary)")}</div></section>'
+        f'<section class="part"><h2>Body</h2>'
+        f'<pre class="val body">{html.escape(body)}</pre></section>'
+        f"<section class=\"part\"><h2>Work items</h2>{wi_row}</section>"
+        f"<section class=\"part\"><h2>Subtodos</h2>{st_row}</section>"
+    )
+
+
+def _static_repr_html(root: Path, child: JsonDict) -> str:
+    """Read-only rendition of a subtodo, mirroring the parent layout, no links."""
+    child = normalize_todo(child)
+    witems = _workitems_view(child)
+    stodos = _subtodos_view(root, child)
+    return (
+        '<div class="static-repr">'
+        f"{_sections_html(child, witems, stodos, interactive=False)}"
+        "</div>"
+    )
+
+
+def _page_data(root: Path, todo: JsonDict, witems: List[JsonDict], stodos: List[JsonDict]) -> JsonDict:
+    """Assemble the embedded JSON: per-work-item message/diff and per-subtodo repr HTML."""
     github = github_repo_url(repo_origin(root))
-    root_sel = ticket_id or "self"
-    if commit:
-        info_html = _commit_info(root, commit, mode, root_sel, github)
-    else:
-        info_html = _root_info(root, ticket, root_sel, mode)
-    page = _html_shell(root, ticket, lanes, commit, root_sel, mode, info_html)
+    data: JsonDict = {"id": str(todo.get("Id") or ""), "workitems": [], "subtodos": {}}
+    for w in witems:
+        sha = w["sha"]
+        data["workitems"].append(
+            {
+                "idx": w["idx"],
+                "kind": w["kind"],
+                "short": w["short"],
+                "subtodo": w["subtodo"],
+                "message": commit_message(root, sha) if sha else "",
+                "diff": diff_unified(root, sha) if sha else "",
+                "github": f"{github}/commit/{sha}" if github and sha else "",
+            }
+        )
+    for s in stodos:
+        data["subtodos"][s["id"]] = {"reprHtml": _static_repr_html(root, s["child"])}
+    return data
+
+
+def _embed_json(data: JsonDict) -> str:
+    """Serialize *data* for safe inlining inside a <script> element."""
+    return (
+        json.dumps(data)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
+_STYLE = """<style>
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         color: #17202a; display: flex; flex-direction: column; height: 100vh; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { padding: 8px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; flex: 0 0 auto; }
+  header .title { font-weight: 700; }
+  header .meta { color: #57606a; font-size: 12px; overflow-wrap: anywhere; }
+  #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; }
+  #divider { flex: 0 0 auto; height: 7px; background: #d8dee4; cursor: row-resize; }
+  #divider:hover { background: #8c959f; }
+  #fold { flex: 1 1 auto; overflow: auto; padding: 12px 16px; background: #fff; }
+  .part { margin: 10px 0; }
+  .part h2 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+             color: #57606a; }
+  .val { overflow-wrap: anywhere; }
+  .val.body { background: #f6f8fa; padding: 10px; border-radius: 6px; white-space: pre-wrap;
+              margin: 0; max-height: 20vh; overflow: auto; }
+  .state-tag { font-size: 12px; color: #57606a; }
+  .none { color: #8c959f; font-size: 12px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .wi, .st { border: 1px solid #d8dee4; border-radius: 6px; padding: 8px; width: 200px;
+             background: #fff; }
+  .wi { cursor: pointer; }
+  .wi.static, .st.static { cursor: default; }
+  .wi.done { background: #f6f8fa; }
+  .wi-kind { font-size: 11px; color: #57606a; }
+  .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
+  .wi-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+            color: #0969da; }
+  .st { cursor: pointer; }
+  .st-id { font-size: 12px; color: #0969da; }
+  .st-state { font-size: 11px; color: #57606a; }
+  .wi.active, .st.active { border-color: #0969da; box-shadow: 0 0 0 2px #ddf4ff; }
+  .wi.hi, .st.hi { border-color: #bf8700; box-shadow: 0 0 0 2px #fff8c5; }
+  .fold.split-fold { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
+  .fold-msg pre { background: #f6f8fa; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
+  .diff-code { background: #0d1117; color: #e6edf3; border-radius: 6px; padding: 12px; overflow: auto; }
+  .diff-code a { color: #79c0ff; }
+  .fold pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .static-repr .wi, .static-repr .st { width: 180px; }
+  .hint { color: #57606a; }
+  .search-box { width: 100%; padding: 8px; font-size: 15px; box-sizing: border-box;
+                border: 1px solid #d8dee4; border-radius: 6px; }
+  .results { list-style: none; margin: 12px 0 0; padding: 0; }
+  .results li { padding: 8px; border-bottom: 1px solid #eaeef2; }
+  .results .r-state { color: #57606a; font-size: 12px; }
+</style>"""
+
+
+_TODO_SCRIPT = """<script>
+const DATA = __DATA__;
+const fold = document.getElementById('fold');
+const topPane = document.getElementById('top');
+const divider = document.getElementById('divider');
+
+function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function clearHi(){
+  document.querySelectorAll('.wi,.st').forEach(function(el){ el.classList.remove('hi','active'); });
+}
+
+document.querySelectorAll('#top .wi').forEach(function(el){
+  el.addEventListener('click', function(){
+    clearHi(); el.classList.add('active');
+    var sub = el.getAttribute('data-subtodo');
+    if (sub) {
+      document.querySelectorAll('#top .st[data-st="'+sub+'"]').forEach(function(s){ s.classList.add('hi'); });
+    }
+    var wi = DATA.workitems[parseInt(el.getAttribute('data-idx'), 10)] || {};
+    var head = esc(wi.short || wi.kind || 'work item');
+    if (wi.github) { head = '<a href="'+wi.github+'">'+head+'</a>'; }
+    fold.className = 'fold split-fold';
+    fold.innerHTML =
+      '<div class="fold-msg"><h3>'+head+'</h3><pre><code>'+esc(wi.message || '(no commit)')+'</code></pre></div>' +
+      '<div class="fold-diff diff-code"><pre><code>'+esc(wi.diff || 'no diff')+'</code></pre></div>';
+  });
+});
+
+document.querySelectorAll('#top .st').forEach(function(el){
+  el.addEventListener('click', function(){
+    clearHi(); el.classList.add('active');
+    var id = el.getAttribute('data-st');
+    document.querySelectorAll('#top .wi[data-subtodo="'+id+'"]').forEach(function(w){ w.classList.add('hi'); });
+    var entry = DATA.subtodos[id];
+    fold.className = 'fold';
+    fold.innerHTML = entry ? entry.reprHtml : '<p class="hint">No subtodo detail.</p>';
+  });
+});
+
+var dragging = false;
+divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
+window.addEventListener('mousemove', function(e){
+  if (!dragging) return;
+  var h = e.clientY - topPane.getBoundingClientRect().top;
+  if (h > 60 && h < window.innerHeight - 60) { topPane.style.height = h + 'px'; }
+});
+window.addEventListener('mouseup', function(){ dragging = false; document.body.style.userSelect = ''; });
+</script>"""
+
+
+def render_todo_page(root: Path, todo: JsonDict) -> str:
+    """Render the single-todo viewer: representation on top, message/diff below."""
+    todo = normalize_todo(todo)
+    tid = str(todo.get("Id") or "")
+    started = time.monotonic()
+    _debug(f"render_todo_page id={tid[:8]}", phase="render")
+    witems = _workitems_view(todo)
+    stodos = _subtodos_view(root, todo)
+    data = _page_data(root, todo, witems, stodos)
+    top_html = _sections_html(todo, witems, stodos, interactive=True)
+    title = html.escape(_summary_text(todo) or "todo")
+    script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data))
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  {_STYLE}
+</head>
+<body>
+  <header>
+    <div class="title">{title}</div>
+    <div class="meta mono">{html.escape(tid)} &middot; {html.escape(str(root))}</div>
+  </header>
+  <div id="top">{top_html}</div>
+  <div id="divider"></div>
+  <div id="fold" class="fold"><p class="hint">Click a work item to see its message and diff. Click a subtodo to view it. Drag the bar to resize.</p></div>
+  {script}
+</body>
+</html>
+"""
     _debug(
-        f"render_page exit ticket={ticket_id[:8]} html_bytes={len(page.encode('utf-8'))} "
+        f"render_todo_page exit id={tid[:8]} bytes={len(page.encode('utf-8'))} "
         f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
         phase="render",
     )
     return page
 
 
-def _reroot_href(target_id: str) -> str:
-    """Link that re-displays *target_id* as the top-level timeline root."""
-    return html.escape(f"/?root={target_id}#top")
+_SEARCH_SCRIPT = """<script>
+const TODOS = __DATA__;
+const q = document.getElementById('q');
+const results = document.getElementById('results');
+function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function render(){
+  var needle = q.value.trim().toLowerCase();
+  var rows = TODOS.filter(function(t){
+    if (!needle) return true;
+    return (t.id + ' ' + t.summary).toLowerCase().indexOf(needle) !== -1;
+  }).map(function(t){
+    return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
+           '<span class="mono">'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+
+           '</a> <span class="r-state">'+esc(t.state)+'</span></li>';
+  });
+  results.innerHTML = rows.length ? rows.join('') : '<li class="hint">no matches</li>';
+}
+q.addEventListener('input', render);
+render();
+</script>"""
 
 
-def _commit_href(root_sel: str, commit_hash: str, mode: str) -> str:
-    """Link that keeps the current root but selects *commit_hash* in the info pane."""
-    return html.escape(f"/?root={root_sel}&commit={commit_hash}&mode={mode}#info")
-
-
-def _lane_html(
-    root: Path,
-    lane: JsonDict,
-    root_sel: str,
-    mode: str,
-    selected_commit: Optional[str],
-) -> str:
-    """Render one side-by-side lane: header plus its commits stacked oldest-first."""
-    is_root = int(lane["depth"]) == 0
-    lane_id = str(lane["id"])
-    expand = ""
-    if lane["has_children"]:
-        expand = (
-            f'<a class="expand" title="open this subtodo as its own timeline" '
-            f'href="{_reroot_href(lane_id)}">(+)</a>'
+def render_search_page(root: Path, todos: List[JsonDict]) -> str:
+    """Render the search landing page listing every discoverable todo."""
+    _debug(f"render_search_page count={len(todos)}", phase="render")
+    rows: List[JsonDict] = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        tid = str(todo.get("Id") or "")
+        rows.append(
+            {
+                "id": tid,
+                "short": tid[:8],
+                "summary": _summary_text(normalize_todo(todo)),
+                "state": _state_text(todo),
+            }
         )
-    id_link = (
-        f'<a href="{_reroot_href(lane_id)}">{html.escape(lane_id[:8] or "?")}</a>'
-        if lane_id
-        else "?"
-    )
-    parts: List[str] = [
-        f'<div class="lane{" root" if is_root else ""}">',
-        '<div class="lane-head">',
-        expand,
-        f'<div class="lane-title">{html.escape(lane["summary"] or "(no summary)")}</div>',
-        f'<div class="meta">todo {id_link} &middot; {html.escape(lane["branch"] or "-")} '
-        f'&middot; {html.escape(lane["state"])}</div>',
-        "</div>",
-        '<ol class="commits">',
-    ]
-    for commit in lane["commits"]:
-        selected = " selected" if commit["hash"] == selected_commit else ""
-        href = _commit_href(root_sel, commit["hash"], mode)
-        parts.append(
-            f'<li class="commit{selected}"><a href="{href}">'
-            f'{html.escape(commit["short"])} {html.escape(commit["subject"])}</a></li>'
-        )
-    if not lane["commits"]:
-        parts.append('<li class="commit empty">no commits</li>')
-    parts.append("</ol></div>")
-    return "".join(parts)
-
-
-def _root_info(root: Path, ticket: JsonDict, root_sel: str, mode: str) -> str:
-    """Default bottom-pane content: root metadata and the WorkItems plan."""
-    items = ticket.get("WorkItems") or []
-    rows: List[str] = []
-    if isinstance(items, list):
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                continue
-            done = bool(item.get("done"))
-            mark = "[x]" if done else "[ ]"
-            kind = html.escape(str(item.get("kind", "")))
-            kind_html = f' <span class="kind">{kind}</span>' if kind else ""
-            summary = html.escape(str(item.get("summary", "")))
-            item_shas = [item["sha"]] if isinstance(item.get("sha"), str) and item.get("sha") else []
-            item_shas += [s for s in (item.get("commits") or []) if isinstance(s, str) and s]
-            sha_links = " ".join(
-                f'<a href="{_commit_href(root_sel, sha, mode)}">{html.escape(sha[:8])}</a>'
-                for sha in item_shas
-            )
-            sha_html = f' <span class="shas">{sha_links}</span>' if sha_links else ""
-            rows.append(f'<li>{mark}{kind_html} {summary}{sha_html}</li>')
-    plan = f'<ol class="workitems">{"".join(rows)}</ol>' if rows else "<p>No work items.</p>"
-    return (
-        '<div class="info-body">'
-        "<h2>More info</h2>"
-        '<div class="meta">Click any commit above to see its message and diff here. '
-        "Click a todo Id or (+) to open that todo as its own timeline.</div>"
-        f"<h3>Work plan</h3>{plan}"
-        "</div>"
-    )
-
-
-def _commit_info(
-    root: Path,
-    commit: str,
-    mode: str,
-    root_sel: str,
-    github: Optional[str],
-) -> str:
-    """Bottom-pane content for a selected commit: message (left), diff (right)."""
-    message = html.escape(commit_message(root, commit))
-    if mode == "unified":
-        diff_inner = f"<pre><code>{html.escape(diff_unified(root, commit))}</code></pre>"
-    else:
-        diff_inner = diff_prepost(root, commit)
-    mode_toggle = (
-        f'<a href="{_commit_href(root_sel, commit, "unified")}">unified</a> &middot; '
-        f'<a href="{_commit_href(root_sel, commit, "prepost")}">pre/post</a>'
-    )
-    github_link = ""
-    if github:
-        gh_href = html.escape(f"{github}/commit/{commit}")
-        github_link = f' &middot; <a href="{gh_href}">GitHub</a>'
-    return (
-        '<div class="info-split">'
-        '<div class="commit-msg">'
-        f"<h3>{html.escape(commit[:8])}</h3>"
-        f"<pre><code>{message}</code></pre>"
-        "</div>"
-        '<div class="commit-diff diff-code">'
-        f'<div class="diff-bar">{mode_toggle}{github_link}</div>'
-        f"{diff_inner}"
-        "</div>"
-        "</div>"
-    )
-
-
-def _html_shell(
-    root: Path,
-    ticket: JsonDict,
-    lanes: Sequence[JsonDict],
-    selected_commit: Optional[str],
-    root_sel: str,
-    mode: str,
-    info_html: str,
-) -> str:
-    """Assemble the timeline (top) and info (bottom) panes."""
-    title = html.escape(ticket.get("Summary", {}).get("raw", "todo timeline"))
-    ticket_id = str(ticket.get("Id") or "")
-    lane_html = "".join(
-        _lane_html(root, lane, root_sel, mode, selected_commit) for lane in lanes
-    )
+    rows.sort(key=lambda r: r["summary"].lower())
+    script = _SEARCH_SCRIPT.replace("__DATA__", _embed_json(rows))
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>{title}</title>
-  <style>
-    body {{ margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; color: #17202a; }}
-    header {{ padding: 10px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; }}
-    a {{ color: #0969da; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    .meta {{ color: #57606a; font-size: 12px; overflow-wrap: anywhere; }}
-    #top {{ height: 45vh; overflow: auto; border-bottom: 3px solid #d8dee4; }}
-    #info {{ height: 47vh; overflow: auto; padding: 12px 16px; }}
-    .axis {{ padding: 6px 16px 0; color: #57606a; font-size: 12px; }}
-    .lanes {{ display: flex; gap: 10px; align-items: flex-start; padding: 8px 16px 16px; }}
-    .lane {{ flex: 0 0 240px; width: 240px; border: 1px solid #d8dee4; border-radius: 6px;
-             background: #fff; }}
-    .lane.root {{ border-color: #8c959f; background: #f6f8fa; }}
-    .lane-head {{ position: relative; padding: 8px; border-bottom: 1px solid #eaeef2; }}
-    .lane-title {{ font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }}
-    .expand {{ position: absolute; top: 6px; right: 8px; font-weight: 700; }}
-    .commits {{ list-style: none; margin: 0; padding: 6px; }}
-    .commit {{ padding: 4px 6px; border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }}
-    .commit.selected {{ background: #ddf4ff; }}
-    .commit.empty {{ color: #8c959f; }}
-    .workitems {{ margin: 6px 0 0; padding-left: 20px; }}
-    .workitems .shas a {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-    .info-split {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }}
-    .commit-msg pre {{ background: #f6f8fa; padding: 12px; border-radius: 6px; }}
-    .diff-code {{ background: #0d1117; color: #e6edf3; border-radius: 6px; padding: 12px; }}
-    .diff-code a {{ color: #79c0ff; }}
-    .diff-bar {{ margin-bottom: 8px; }}
-    pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }}
-    .split {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
-    .file-pair {{ margin-bottom: 16px; }}
-    .file-pair h3 {{ color: #e6edf3; }}
-  </style>
+  <title>todos</title>
+  {_STYLE}
 </head>
 <body>
-  <header id="top">
-    <strong><a href="{_reroot_href(ticket_id or "self")}">{title}</a></strong>
-    <div class="meta">root {html.escape(ticket_id)} &middot; repo {html.escape(str(root))}</div>
+  <header><div class="title">Todos</div>
+    <div class="meta">{html.escape(str(root))} &middot; {len(rows)} todos</div>
   </header>
-  <section id="top-pane">
-    <div class="axis">time flows down &darr; &middot; lanes are parallel subtodos</div>
-    <div id="lanes-scroll" style="max-height: 40vh; overflow: auto;">
-      <div class="lanes">{lane_html}</div>
-    </div>
-  </section>
-  <section id="info">
-    {info_html}
-  </section>
+  <div id="top">
+    <input id="q" class="search-box" type="text" placeholder="search todos by id or summary" autofocus>
+    <ul id="results" class="results"></ul>
+  </div>
+  {script}
 </body>
 </html>
 """
@@ -585,49 +587,36 @@ def _html_shell(
 
 def serve(
     root: Path,
-    ticket: JsonDict,
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
-    resolver: Optional[Callable[[str], JsonDict]] = None,
+    initial_id: Optional[str] = None,
+    resolver: Callable[[str], "tuple[Path, JsonDict]"],
+    lister: Callable[[], List[JsonDict]],
 ) -> str:
-    """Start the todo web viewer and serve until interrupted.
+    """Start the viewer and serve until interrupted.
 
-    *resolver* maps a todo selector (from the ?root= query param) to a ticket so
-    that todo-Id links can re-root the timeline on another todo. When omitted,
-    every request renders the ticket passed here.
+    ``?id=<selector>`` renders that todo via *resolver*, which returns the
+    ``(repo_root, todo)`` pair (the repo is where that todo's diffs come from).
+    A bare path renders the search page over *lister()*. *initial_id* only
+    shapes the printed URL so the browser opens straight onto that todo.
     """
-    ticket_id = str(ticket.get("Id") or "")[:8]
-    subtodos = len(list(ticket.get("Subtodos") or []))
-    _debug(
-        f"serve starting host={host} port={port} root={root} ticket={ticket_id} "
-        f"subtodos={subtodos} debug={_debug_enabled()} log={bool(os.environ.get('TODO_WEB_LOG'))}",
-        phase="serve",
-    )
+    _debug(f"serve host={host} port={port} root={root} initial_id={initial_id}", phase="serve")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            started = time.monotonic()
             parsed = urlparse(self.path)
-            _debug(
-                f"GET path={self.path!r} client={self.client_address[0]}:{self.client_address[1]}",
-                phase="http",
-            )
             if parsed.path not in {"/", "/index.html"}:
-                _debug(f"GET 404 path={parsed.path!r}", phase="http")
                 self.send_error(404)
                 return
-            params = parse_qs(parsed.query)
-            commit = params.get("commit", [None])[0]
-            mode = params.get("mode", ["unified"])[0]
-            root_sel = params.get("root", [None])[0]
+            todo_id = parse_qs(parsed.query).get("id", [None])[0]
             try:
-                target = ticket
-                if root_sel and resolver is not None:
-                    target = resolver(root_sel)
-                payload = render_page(root, target, selected_commit=commit, mode=mode)
+                if todo_id:
+                    todo_root, todo = resolver(todo_id)
+                    payload = render_todo_page(todo_root, todo)
+                else:
+                    payload = render_search_page(root, lister())
             except TodoWebError as exc:
-                _debug(f"GET 400 error={exc}", phase="http")
                 self.send_error(400, str(exc))
                 return
             encoded = payload.encode("utf-8")
@@ -636,26 +625,15 @@ def serve(
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
-            _debug(
-                f"GET 200 bytes={len(encoded)} elapsed_ms={int((time.monotonic() - started) * 1000)} "
-                f"commit={commit!r} mode={mode!r}",
-                phase="http",
-            )
 
         def log_message(self, format: str, *args: object) -> None:
             if os.environ.get("TODO_WEB_LOG") or _debug_enabled():
                 super().log_message(format, *args)
 
     server = ThreadingHTTPServer((host, port), Handler)
-    url = f"http://{host}:{server.server_port}/"
+    base = f"http://{host}:{server.server_port}/"
+    url = f"{base}?id={initial_id}" if initial_id else base
     print(url, flush=True)
-    if _debug_enabled():
-        print(
-            "todo_web: TODO_WEB_DEBUG=1 (stderr traces on). "
-            "Set TODO_WEB_LOG=1 for access-log style lines.",
-            file=sys.stderr,
-            flush=True,
-        )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

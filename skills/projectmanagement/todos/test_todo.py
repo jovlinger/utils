@@ -945,93 +945,108 @@ class ImportJsonTests(TodoCase):
 
 
 class WebViewerTests(TodoCase):
-    def test_web_dump_html_renders_done_todo_graph_and_diff(self) -> None:
+    def test_web_dump_html_renders_done_todo_with_message_and_diff(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
         init = self.todo("init", "--summary=Viewer parent")
         self.assertEqual(init.returncode, 0, init.stderr)
+        self.todo("work-item-add", "--summary=add evidence")
         (self.repo / "app.txt").write_text("before\n", encoding="utf-8")
-        self._git("add", "app.txt")
-        self._git("commit", "-qm", "add app evidence")
-        app_hash = self._git("rev-parse", "HEAD").stdout.strip()
-        done = self.todo("set-state", "done")
+        done = self.todo("work-item-done", "-m", "add app evidence")
         self.assertEqual(done.returncode, 0, done.stderr)
+        sha = self.read_self()["WorkItems"][0]["sha"]
 
-        proc = self.todo("web", "--dump-html", "--commit", app_hash, "self")
+        proc = self.todo("web", "--dump-html", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Viewer parent", proc.stdout)
-        self.assertIn("add app evidence", proc.stdout)
-        self.assertIn(app_hash, proc.stdout)
-        self.assertIn(str(self.repo), proc.stdout)
-        self.assertIn("+before", proc.stdout)
-        self.assertIn("https://github.com/jovlinger/utils/commit/" + app_hash, proc.stdout)
-
-    def test_web_dump_html_ignores_parent_todo_on_child_branch(self) -> None:
-        self._git("commit", "--allow-empty", "-qm", "seed")
-        parent_id = self.mint()
-        child_id = self.mint()
-        parent_branch = f"{parent_id[:8]}-parent"
-        child_branch = f"{child_id[:8]}-child"
-        self._git("checkout", "-q", "-b", parent_branch)
-        parent = {
-            "Id": parent_id,
-            "Branch": parent_branch,
-            "State": {"init": {}},
-            "Summary": {"raw": "parent viewer"},
-            "Subtodos": [
-                {
-                    "Id": child_id,
-                    "Branch": child_branch,
-                    "State": "init",
-                    "Summary": "child viewer",
-                }
-            ],
-        }
-        (self.repo / "TODO.json").write_text(json.dumps(parent), encoding="utf-8")
-        self._git("add", "TODO.json")
-        self._git("commit", "-qm", "parent todo")
-
-        # Child branch inherits parent TODO.json (common mistake); viewer must not loop.
-        self._git("checkout", "-q", "-b", child_branch)
-
-        proc = self.todo("web", "--dump-html", parent_id[:8])
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("parent viewer", proc.stdout)
-        self.assertIn("child viewer", proc.stdout)
-        # One root lane (parent) plus one subtodo lane (child), no deeper recursion.
-        self.assertEqual(proc.stdout.count('class="lane-title"'), 2)
+        out = proc.stdout
+        self.assertIn("Viewer parent", out)  # summary section
+        self.assertIn('class="wi', out)  # a clickable work-item box
+        self.assertIn(sha[:8], out)  # short sha shown on the box
+        self.assertIn("add app evidence", out)  # commit message embedded for the fold
+        self.assertIn("+before", out)  # unified diff embedded for the fold
+        self.assertIn("https://github.com/jovlinger/utils/commit/" + sha, out)
+        self.assertIn(str(self.repo), out)
 
     def test_web_dump_html_renders_open_todo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         init = self.todo("init", "--summary=Open viewer")
         self.assertEqual(init.returncode, 0, init.stderr)
+        self.todo("work-item-add", "--summary=do the thing")
         proc = self.todo("web", "--dump-html", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Open viewer", proc.stdout)
-        self.assertIn('class="lane root"', proc.stdout)
-        self.assertIn("&middot; init</div>", proc.stdout)
-        # No commit selected: the bottom pane shows the default "more info" view.
-        self.assertIn("More info", proc.stdout)
+        out = proc.stdout
+        self.assertIn("Open viewer", out)
+        self.assertIn("Work items", out)  # labeled section
+        self.assertIn("do the thing", out)  # not-done work item box
+        self.assertIn("state-tag", out)
+        self.assertIn("Click a work item", out)  # default fold hint
 
-    def test_web_dump_html_links_work_item_commits_and_reroot(self) -> None:
+    def test_web_dump_html_links_subtodo_to_referencing_work_item(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Track commits")
+        init = self.todo("init", "--summary=Parent viewer")
         self.assertEqual(init.returncode, 0, init.stderr)
-        add = self.todo("work-item-add", "--summary=do the thing")
+        parent_id = json.loads(init.stdout)["Id"]
+        add = self.todo("add-subtodo", "--summary=child viewer")
         self.assertEqual(add.returncode, 0, add.stderr)
-        done = self.todo("work-item-done")
-        self.assertEqual(done.returncode, 0, done.stderr)
+        parent = json.loads(self.todo("read", parent_id[:8]).stdout)
+        child_id = parent["Subtodos"][0]["Id"]
 
-        ticket = self.read_self()
-        sha = ticket["WorkItems"][0]["sha"]
-
-        proc = self.todo("web", "--dump-html", "self")
+        proc = self.todo("web", "--dump-html", parent_id[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        # Recorded work-item sha renders as a clickable commit link in the info pane.
-        self.assertIn("commit=" + sha, proc.stdout)
-        self.assertIn(sha[:8], proc.stdout)
-        # Every todo Id is a re-root link (openable as a new top-level timeline).
-        self.assertIn("/?root=" + ticket["Id"], proc.stdout)
+        out = proc.stdout
+        self.assertIn("Parent viewer", out)
+        self.assertIn("child viewer", out)  # subtodo box + embedded read-only repr
+        # The subtodo box carries the full id; the start_subtodo work item references it.
+        self.assertIn(f'data-st="{child_id}"', out)
+        self.assertIn(f'data-subtodo="{child_id}"', out)
+
+    def test_web_dump_html_no_selector_shows_search_page(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        alpha = self.mint()
+        beta = self.mint()
+        self.write_ticket(f"{alpha[:8]}-a", alpha, summary="Alpha todo")
+        self.write_ticket(f"{beta[:8]}-b", beta, summary="Beta todo")
+
+        proc = self.todo("web", "--dump-html")  # no selector -> search landing page
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertIn("search todos by id or summary", out)  # search box placeholder
+        self.assertIn("Alpha todo", out)
+        self.assertIn("Beta todo", out)
+        self.assertIn(alpha, out)  # ids embedded for client-side links
+
+    def test_web_dump_html_shows_parent_link(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        init = self.todo("init", "--summary=Parent feature")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        parent_id = json.loads(init.stdout)["Id"]
+        add = self.todo("add-subtodo", "--summary=child one")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        child_id = json.loads(self.todo("read", parent_id[:8]).stdout)["Subtodos"][0]["Id"]
+
+        proc = self.todo("web", "--dump-html", child_id[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertIn("<h2>Parent</h2>", out)
+        self.assertIn(f'href="/?id={parent_id}"', out)  # parent link navigates to the parent todo
+
+    def test_web_worktree_todo_collapses_to_repo(self) -> None:
+        # A shared origin gives main checkout and worktree the same repo identity,
+        # so a todo born in a worktree is discoverable from the main checkout.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        wt = Path(tempfile.mkdtemp(prefix="todo-wt-"))
+        self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
+        self._git("worktree", "add", "-q", str(wt), "-b", "wt-branch")
+
+        init = self.todo("init", "--summary=born in worktree", cwd=wt)
+        self.assertEqual(init.returncode, 0, init.stderr)
+        tid = json.loads(init.stdout)["Id"]
+
+        proc = self.todo("web", "--dump-html")  # search page, scoped to the MAIN checkout
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("born in worktree", proc.stdout)
+        self.assertIn(tid, proc.stdout)
 
 
 class ReadFormattingUnitTests(unittest.TestCase):
@@ -1064,6 +1079,28 @@ class ReadFormattingUnitTests(unittest.TestCase):
             todo.elide_embedding_vectors({"Summary": {"raw": "s", "hash": [1, 2, 3, 4]}}),
             {"Summary": {"raw": "s", "hash": [1, 4]}},
         )
+
+
+class RepoIdentityUnitTests(unittest.TestCase):
+    """Pure-function tests for the stable repo identity derivation."""
+
+    def test_url_shapes_canonicalize_to_same_identity(self) -> None:
+        want = "github.com/jovlinger/utils"
+        self.assertEqual(todo.repo_identity_from_url("https://github.com/jovlinger/utils.git"), want)
+        self.assertEqual(todo.repo_identity_from_url("https://github.com/jovlinger/utils"), want)
+        self.assertEqual(todo.repo_identity_from_url("git@github.com:jovlinger/utils.git"), want)
+        self.assertEqual(todo.repo_identity_from_url("ssh://git@github.com/jovlinger/utils.git"), want)
+
+    def test_host_is_lowercased_and_owner_preserved(self) -> None:
+        self.assertEqual(
+            todo.repo_identity_from_url("git@GitHub.com:easternlabs/opportunity.git"),
+            "github.com/easternlabs/opportunity",
+        )
+
+    def test_unidentifiable_urls_return_none(self) -> None:
+        self.assertIsNone(todo.repo_identity_from_url(""))
+        self.assertIsNone(todo.repo_identity_from_url("   "))
+        self.assertIsNone(todo.repo_identity_from_url("not a url"))
 
 
 class SetJsonPathTests(TodoCase):

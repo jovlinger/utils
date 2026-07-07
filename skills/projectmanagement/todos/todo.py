@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
 import todo_db
+import todo_store
 import todo_embed
 import todo_web
 
@@ -160,18 +161,38 @@ def use_sqlite() -> bool:
     return os.environ.get(LEGACY_JSON_ENV) != "1"
 
 
+# Canonical repo identity lives in todo_db so the schema migration can reuse it.
+repo_identity_from_url = todo_db.repo_identity_from_url
+
+
+_REPO_KEY_CACHE: Dict[str, str] = {}
+
+
 def repo_key(root: Path) -> str:
-    """Canonical repo path string for sqlite keys."""
-    return str(root.resolve())
+    """Stable repo identity for sqlite keys.
+
+    Derived from the origin remote (``host/owner/name``) so it survives moving
+    the db between machines/users and collapses git worktrees (which share the
+    origin) onto their repo. Falls back to the gitroot basename when there is no
+    identifiable origin remote. Cached per resolved root for the process, since
+    it shells out to git.
+    """
+    resolved = str(root.resolve())
+    cached = _REPO_KEY_CACHE.get(resolved)
+    if cached is not None:
+        return cached
+    url = git_url_for_repo(root)
+    key = (repo_identity_from_url(url) if url else None) or Path(resolved).name
+    _REPO_KEY_CACHE[resolved] = key
+    return key
 
 
 def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
     """Return parsed ticket from sqlite or legacy git ref TODO.json."""
     if use_sqlite():
-        with todo_db.connection() as conn:
-            ticket = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), ref)
-            if ticket is not None:
-                return normalize_todo_schema(ticket)
+        ticket = todo_store.get_store().get(repo_key(root), ref)
+        if ticket is not None:
+            return normalize_todo_schema(ticket)
     try:
         show: subprocess.CompletedProcess[str] = subprocess.run(
             ["git", "show", f"{ref}:TODO.json"],
@@ -198,10 +219,9 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
     """Return parsed ticket for the current branch from sqlite or legacy file."""
     branch = current_branch(root)
     if branch and use_sqlite():
-        with todo_db.connection() as conn:
-            ticket = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), branch)
-            if ticket is not None:
-                return normalize_todo_schema(ticket)
+        ticket = todo_store.get_store().get(repo_key(root), branch)
+        if ticket is not None:
+            return normalize_todo_schema(ticket)
     path: Path = root / "TODO.json"
     if not path.is_file():
         return None
@@ -269,6 +289,18 @@ def _strip_field_vectors(todo: JsonDict, field_name: str) -> None:
             del obj[key]
 
 
+def _json_embeddings_present(todo: JsonDict) -> set:
+    """(field_path, fingerprint) pairs already stamped into the ticket JSON."""
+    present: set = set()
+    for field_name, field_path in _EMBED_FIELDS:
+        obj = todo.get(field_name)
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key != "raw" and _is_vector(value):
+                    present.add((field_path, key))
+    return present
+
+
 def _cheap_embedding_rows(
     todo: JsonDict, existing: set
 ) -> List[tuple[str, str, List[float]]]:
@@ -318,17 +350,22 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
         raise TodoError("todo missing Branch")
     if use_sqlite():
         ticket_id = str(todo["Id"])
-        with todo_db.connection() as conn:
-            old = todo_db.get_ticket_by_repo_branch(conn, repo_key(root), branch)
-            if not no_clear:
-                for field_name, field_path in _changed_raw_fields(old, todo):
-                    _strip_field_vectors(todo, field_name)
+        store = todo_store.get_store()
+        old = store.get(repo_key(root), branch)
+        changed = [] if no_clear else list(_changed_raw_fields(old, todo))
+        for field_name, _field_path in changed:
+            _strip_field_vectors(todo, field_name)
+        # Embeddings live in the todo JSON: stamp missing cheap vectors here (any
+        # backend) so the store serializes them. The sqlite embeddings table is
+        # only a derived search index, mirrored when the store keeps one.
+        rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
+        store.put(repo_key(root), branch, todo)
+        if store.has_vector_index:
+            with todo_db.connection() as conn:
+                for _field_name, field_path in changed:
                     todo_db.clear_embeddings(conn, ticket_id, field_path)
-            existing = todo_db.existing_embeddings(conn, ticket_id)
-            rows = _cheap_embedding_rows(todo, existing)
-            todo_db.put_ticket(conn, repo_key(root), branch, todo)
-            for field_path, fingerprint, vec in rows:
-                todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
+                for field_path, fingerprint, vec in rows:
+                    todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
         return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
@@ -678,13 +715,12 @@ def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
     seen_ids: set[str] = set()
 
     if use_sqlite():
-        with todo_db.connection() as conn:
-            for repo_path, branch, todo in todo_db.find_tickets_by_id_prefix(conn, query):
-                ticket_id = str(todo.get("Id", ""))
-                if ticket_id and ticket_id not in seen_ids:
-                    loc = f"{repo_path}:{branch}" if repo_path != repo_key(root) else branch
-                    matches.append((loc, todo))
-                    seen_ids.add(ticket_id)
+        for repo_path, branch, todo in todo_store.get_store().find_by_id_prefix(query):
+            ticket_id = str(todo.get("Id", ""))
+            if ticket_id and ticket_id not in seen_ids:
+                loc = f"{repo_path}:{branch}" if repo_path != repo_key(root) else branch
+                matches.append((loc, todo))
+                seen_ids.add(ticket_id)
         if matches:
             return matches
 
@@ -722,6 +758,15 @@ def resolve_ticket_by_id(root: Path, query: str) -> tuple[str, JsonDict]:
     if len(matches) > 1:
         locations: str = ", ".join(loc for loc, _ in matches)
         raise TodoError(f"ambiguous id {query!r}; matches on: {locations}")
+    loc, ticket = matches[0]
+    # Complain when the resolved todo lives in a different repo than the CWD.
+    current = repo_key(root)
+    other = loc.rsplit(":", 1)[0]
+    if ":" in loc and other not in {"worktree", current} and "/" in other:
+        print(
+            f"todo: {query!r} lives in {other}, not the current repo {current}",
+            file=sys.stderr,
+        )
     return matches[0]
 
 
@@ -2681,12 +2726,15 @@ class LogCommand(TodoSubCommand):
 
 class WebCommand(TodoSubCommand):
     command_names = ("web",)
-    doc_short: ClassVar[str] = "Serve todo postmortem viewer"
+    doc_short: ClassVar[str] = "Serve todo viewer"
     doc_long: ClassVar[str] = (
-        "Web serves a two-pane viewer for a todo graph. The top pane walks "
-        "the root todo, subtodos, and their branch commits. The bottom pane shows the selected "
-        "commit diff in unified or pre/post form. It can be used during active work or as a "
-        "postmortem review after the branch effort finishes."
+        "Web serves a viewer for a todo. Above a movable split it shows the todo's Id, Summary, "
+        "Body, work items (horizontal boxes) and subtodos (horizontal boxes). Clicking a work "
+        "item shows its full commit message and diff below the split and highlights any subtodo "
+        "it references; clicking a subtodo highlights the work items that reference it and shows "
+        "a read-only rendition below the split. With a selector (self, curr, or 4+ hex Id prefix) "
+        "the printed URL opens straight onto that todo; without one the page is a search over "
+        "every discoverable todo (empty query lists all)."
     )
 
     @classmethod
@@ -2695,18 +2743,11 @@ class WebCommand(TodoSubCommand):
         parser.add_argument(
             "selector",
             nargs="?",
-            default="self",
-            help="root todo selector: self, curr, or 4+ hex Id prefix (default: self)",
+            default=None,
+            help="todo selector: self, curr, or 4+ hex Id prefix (default: search page)",
         )
         parser.add_argument("--host", default="127.0.0.1", help="bind host")
         parser.add_argument("--port", type=int, default=8765, help="bind port")
-        parser.add_argument("--commit", help="selected commit hash")
-        parser.add_argument(
-            "--mode",
-            choices=("unified", "prepost"),
-            default="unified",
-            help="initial diff mode",
-        )
         parser.add_argument(
             "--dump-html",
             action="store_true",
@@ -2714,37 +2755,48 @@ class WebCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Serve or print the todo postmortem web viewer."""
+        """Serve or print the todo web viewer."""
         root = self.root()
-        _, ticket = resolve_ticket_by_selector(root, self.selector)
-        ticket_id = str(ticket.get("Id") or "")[:8]
-        if os.environ.get("TODO_WEB_DEBUG"):
-            print(
-                f"todo.py web: root={root} selector={self.selector!r} ticket={ticket_id} "
-                f"dump_html={self.dump_html} host={self.host} port={self.port}",
-                file=sys.stderr,
-                flush=True,
-            )
+
+        def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
+            """Resolve an ?id= selector to (repo_root, todo) for the viewer.
+
+            The repo for a todo's diffs is the todo's own repo (Scope), else the
+            current directory; git failures render as 'diff unavailable'.
+            """
+            try:
+                ticket = resolve_ticket_by_selector(root, selector)[1]
+            except TodoError as exc:
+                raise todo_web.TodoWebError(str(exc)) from exc
+            candidate = _ticket_repo(ticket, root)
+            return (candidate if candidate.is_dir() else root), ticket
+
+        def list_todos() -> List[JsonDict]:
+            """Every todo in the store -- no repo scoping, no filtering."""
+            if not use_sqlite():
+                return list(discover_all_tickets(root).values())
+            return [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
+
+        initial_id: Optional[str] = None
+        if self.selector is not None:
+            _, ticket = resolve_ticket_by_selector(root, self.selector)
+            initial_id = str(ticket.get("Id") or "") or None
+
         try:
             if self.dump_html:
-                print(
-                    todo_web.render_page(
-                        root,
-                        ticket,
-                        selected_commit=self.commit,
-                        mode=self.mode,
-                    )
-                )
+                if initial_id is not None:
+                    todo_root, ticket = resolve_todo(initial_id)
+                    print(todo_web.render_todo_page(todo_root, ticket))
+                else:
+                    print(todo_web.render_search_page(root, list_todos()))
             else:
-                def resolve_root(selector: str) -> JsonDict:
-                    """Re-root the viewer on another todo for ?root= links."""
-                    try:
-                        return resolve_ticket_by_selector(root, selector)[1]
-                    except TodoError as exc:
-                        raise todo_web.TodoWebError(str(exc)) from exc
-
                 todo_web.serve(
-                    root, ticket, host=self.host, port=self.port, resolver=resolve_root
+                    root,
+                    host=self.host,
+                    port=self.port,
+                    initial_id=initial_id,
+                    resolver=resolve_todo,
+                    lister=list_todos,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
@@ -2905,14 +2957,17 @@ class LsCommand(TodoSubCommand):
     def do(self) -> int:
         """Print '<id>  <summary>' for every known todo."""
         if not use_sqlite():
-            raise TodoError("ls requires sqlite storage (unset TODO_USE_JSON)")
-        with todo_db.connection() as conn:
-            rows = todo_db.list_tickets(conn)
+            raise TodoError("ls requires the db store (unset TODO_USE_JSON)")
+        rows = []
+        for todo in todo_store.get_store().list_all():
+            summary = todo.get("Summary")
+            summary = summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
+            rows.append({"id": str(todo.get("Id", "")), "summary": summary,
+                         "update_dt": str(todo.get("update_dt", ""))})
         if self.by_time:
-            rows.sort(key=lambda row: str(row.get("update_dt", "")), reverse=True)
+            rows.sort(key=lambda row: row["update_dt"], reverse=True)
         for row in rows:
-            tid = str(row.get("id", ""))[:8]
-            print(f"{tid}  {row.get('summary', '')}")
+            print(f"{row['id'][:8]}  {row['summary']}")
         return 0
 
 

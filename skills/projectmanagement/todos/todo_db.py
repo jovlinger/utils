@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import struct
 import subprocess
@@ -14,8 +15,30 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
 _RESOLVED_TODO_DIR: Optional[Path] = None
+
+
+def repo_identity_from_url(url: str) -> Optional[str]:
+    """Canonical ``host/owner/name`` identity from a git remote URL, or None.
+
+    Normalizes the common shapes (``https://host/o/n(.git)``,
+    ``git@host:o/n(.git)``, ``ssh://git@host/o/n``) to one stable string so the
+    same repo resolves identically across machines, users, and worktrees. Lives
+    here (not in todo.py) so the schema migration can reuse it.
+    """
+    u = url.strip().removesuffix(".git")
+    if not u:
+        return None
+    match = re.match(r"\A[\w.+-]+@([^:/]+):(.+)\Z", u)  # scp-like: git@host:owner/name
+    if not match:
+        match = re.match(r"\A[a-zA-Z][\w+.-]*://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)\Z", u)
+    if not match:
+        return None
+    host, path = match.group(1), match.group(2).strip("/")
+    if not path:
+        return None
+    return f"{host.lower()}/{path}"
 
 
 class TodoDbError(Exception):
@@ -163,11 +186,34 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
     if current < 2:
         conn.execute("DROP TABLE IF EXISTS catalog")
+    if current < 3:
+        _normalize_repo_identities(conn)
     if current < SCHEMA_VERSION:
         if row is None:
             conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
         else:
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+
+def _normalize_repo_identities(conn: sqlite3.Connection) -> None:
+    """Rewrite each ticket's ``repo_path`` from an absolute path to the stable
+    ``host/owner/name`` identity, derived from the ticket's own
+    ``Scope.git_url``. Path-based keys were machine/user/worktree specific and
+    broke repo-scoped lookups when the db moved; the remote URL is stable. Rows
+    without a usable ``git_url`` (e.g. local-only repos) are left untouched.
+    """
+    for row in conn.execute("SELECT id, repo_path, data FROM tickets").fetchall():
+        try:
+            data = json.loads(str(row["data"]))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        scope = data.get("Scope") if isinstance(data, dict) else None
+        url = scope.get("git_url") if isinstance(scope, dict) else None
+        identity = repo_identity_from_url(url) if isinstance(url, str) and url else None
+        if identity and identity != row["repo_path"]:
+            conn.execute(
+                "UPDATE tickets SET repo_path = ? WHERE id = ?", (identity, row["id"])
+            )
 
 
 def pack_vector(values: Sequence[float]) -> bytes:
