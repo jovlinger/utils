@@ -3005,6 +3005,60 @@ class ImportJsonCommand(TodoSubCommand):
         return 0
 
 
+class _ColumnAction(argparse.Action):
+    """Append a display column key to the shared 'columns' list in CLI order.
+
+    Each -s/-t/-tc/-tu flag records its column key as it is encountered on the
+    command line, so the selected columns render leftmost in argument order.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):  # type: ignore[override]
+        columns = list(getattr(namespace, self.dest, None) or [])
+        columns.append(self.const)
+        setattr(namespace, self.dest, columns)
+
+
+def _add_column_args(parser: argparse.ArgumentParser) -> None:
+    """Register the -s/-t/-tc/-tu display-column flags on *parser*.
+
+    -s -> State, -t/-tc -> create time, -tu -> update time. Repeatable; the
+    columns render leftmost in the order the flags are given.
+    """
+    parser.add_argument(
+        "-s", dest="columns", const="state", nargs=0, action=_ColumnAction,
+        help="show State column",
+    )
+    parser.add_argument(
+        "-t", "-tc", dest="columns", const="ctime", nargs=0, action=_ColumnAction,
+        help="show create-time column",
+    )
+    parser.add_argument(
+        "-tu", dest="columns", const="utime", nargs=0, action=_ColumnAction,
+        help="show update-time column",
+    )
+
+
+def _column_value(todo: JsonDict, key: str) -> str:
+    """String value for a display-column *key* on *todo*."""
+    if key == "state":
+        return current_state_name(todo) or ""
+    if key == "ctime":
+        return str(todo.get("create_dt", "") or "")
+    if key == "utime":
+        return str(todo.get("update_dt", "") or "")
+    return ""
+
+
+def _format_todo_line(todo: JsonDict, columns: Sequence[str]) -> str:
+    """'<cols>  <id[:8]>  <summary>' with selected columns leftmost, in order."""
+    summary = todo.get("Summary")
+    summary = summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
+    fields = [_column_value(todo, key) for key in columns]
+    fields.append(str(todo.get("Id", ""))[:8])
+    fields.append(summary)
+    return "  ".join(fields)
+
+
 class SearchCommand(TodoSubCommand):
     command_names = ("search",)
     doc_short: ClassVar[str] = "Vector search todos"
@@ -3014,7 +3068,9 @@ class SearchCommand(TodoSubCommand):
         "non-hidden embedders; see the 'embedders' command). A requested embedder "
         "that is unavailable errors -- pick one explicitly. Missing vectors are "
         "backfilled and stored before ranking unless --dry-run; a ticket with no "
-        "vector for an embedder just does not contribute to that embedder's rank."
+        "vector for an embedder just does not contribute to that embedder's rank. "
+        "-s/-t/-tc/-tu add State/create-time/update-time columns (leftmost, in flag "
+        "order); results stay in relevance-rank order."
     )
 
     @classmethod
@@ -3031,6 +3087,7 @@ class SearchCommand(TodoSubCommand):
             action="store_true",
             help="rank against existing vectors only; do not backfill/store any",
         )
+        _add_column_args(parser)
 
     def do(self) -> int:
         """Print ranked ticket search hits."""
@@ -3041,11 +3098,9 @@ class SearchCommand(TodoSubCommand):
         hits = search_tickets(
             root, self.query, limit=self.limit, embedder_names=names, dry_run=self.dry_run
         )
+        columns = self.columns or []
         for ticket in hits:
-            tid = str(ticket.get("Id", ""))[:8]
-            summary_obj = ticket.get("Summary")
-            summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
-            print(f"{tid}  {summary}")
+            print(_format_todo_line(ticket, columns))
         return 0
 
 
@@ -3107,35 +3162,28 @@ class LsCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
         "Ls prints one line per todo known to the resolved todo directory, as '<id[0:8]>  "
-        "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. Default "
-        "order is insertion order; -t sorts by last-update time, most recent first, like shell "
-        "ls -t."
+        "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. -s adds a "
+        "State column, -t/-tc a create-time column, -tu an update-time column; selected columns "
+        "print leftmost in the order the flags are given. With any column flag the rows sort "
+        "ascending by the leftmost selected column (oldest first for times); otherwise insertion "
+        "order."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ls arguments."""
-        parser.add_argument(
-            "-t",
-            dest="by_time",
-            action="store_true",
-            help="sort by last-update time, most recent first",
-        )
+        _add_column_args(parser)
 
     def do(self) -> int:
-        """Print '<id>  <summary>' for every known todo."""
+        """Print '<cols>  <id>  <summary>' for every known todo."""
         if not use_sqlite():
             raise TodoError("ls requires the db store (unset TODO_USE_JSON)")
-        rows = []
-        for todo in todo_store.get_store().list_all():
-            summary = todo.get("Summary")
-            summary = summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
-            rows.append({"id": str(todo.get("Id", "")), "summary": summary,
-                         "update_dt": str(todo.get("update_dt", ""))})
-        if self.by_time:
-            rows.sort(key=lambda row: row["update_dt"], reverse=True)
-        for row in rows:
-            print(f"{row['id'][:8]}  {row['summary']}")
+        columns = self.columns or []
+        rows = list(todo_store.get_store().list_all())
+        if columns:
+            rows.sort(key=lambda todo: _column_value(todo, columns[0]))
+        for todo in rows:
+            print(_format_todo_line(todo, columns))
         return 0
 
 
