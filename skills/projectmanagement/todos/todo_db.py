@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 3
+SCHEMA_VERSION: int = 4
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -51,11 +51,17 @@ def reset_todo_dir() -> None:
     _RESOLVED_TODO_DIR = None
 
 
-def _optional_git_root(start: Optional[Path] = None) -> Optional[Path]:
-    """Return git toplevel for *start*, or None when not in a repo."""
+def main_checkout_root(start: Optional[Path] = None) -> Optional[Path]:
+    """Return the repo's MAIN checkout root for *start*, or None when not in a repo.
+
+    Anchored on the repo's primary working tree, NOT the current linked worktree,
+    so every worktree of a repo shares ONE todo store in the core checkout.
+    ``git worktree list`` always lists the main worktree first. (Bare / no-checkout
+    hosting is out of scope.)
+    """
     cwd: Path = start or Path.cwd()
     result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
+        ["git", "worktree", "list", "--porcelain"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -63,7 +69,10 @@ def _optional_git_root(start: Optional[Path] = None) -> Optional[Path]:
     )
     if result.returncode != 0:
         return None
-    return Path(result.stdout.strip())
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree ") :].strip())
+    return None
 
 
 def _home_todo_dir() -> Path:
@@ -95,16 +104,17 @@ def _default_todo_dir(git_root: Optional[Path]) -> Path:
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     """Resolve the todo directory once per process.
 
-    Search order: ``$TODO_DIR``, ``$(gitroot)/.todo/``, ``$HOME/.todo/``.
-    The first candidate containing ``sqlite.db`` wins; otherwise the default
-    create location is the first entry in that list that applies (``$TODO_DIR``,
-    else repo-local ``.todo``, else home). All paths (db, worktrees)
-    live under the chosen directory for the rest of the call.
+    Search order: ``$TODO_DIR``, ``<main-checkout-root>/.todo/``, ``$HOME/.todo/``.
+    The repo anchor is the MAIN checkout root (not the current worktree), so all
+    worktrees of a repo share one store. The first candidate containing
+    ``sqlite.db`` wins; otherwise the default create location is the first entry in
+    that list that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
+    All paths (db, worktrees) live under the chosen directory for the rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:
         return _RESOLVED_TODO_DIR
-    root = git_root if git_root is not None else _optional_git_root()
+    root = git_root if git_root is not None else main_checkout_root()
     for candidate in _todo_dir_candidates(root):
         db_file = candidate / "sqlite.db"
         if db_file.is_file():
@@ -188,6 +198,18 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE IF EXISTS catalog")
     if current < 3:
         _normalize_repo_identities(conn)
+    if current < 4:
+        # Per-TODO advisory locks: one row per held ticket, carrying the holder
+        # pid and an expiry so a crashed holder's lock becomes stealable.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS locks (
+                ticket_id TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL,
+                expires_at REAL NOT NULL
+            )
+            """
+        )
     if current < SCHEMA_VERSION:
         if row is None:
             conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))

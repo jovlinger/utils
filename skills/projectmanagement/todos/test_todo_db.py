@@ -8,6 +8,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -140,7 +141,8 @@ class RepoIdentityMigrationTest(unittest.TestCase):
             "github.com/jovlinger/utils",
         )
         self.assertEqual(
-            conn.execute("SELECT version FROM schema_version").fetchone()["version"], 3
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"],
+            todo_db.SCHEMA_VERSION,
         )
         conn.close()
 
@@ -217,6 +219,168 @@ class JsonDirStoreTest(unittest.TestCase):
                 base = todo_db.todo_dir()
                 self.assertEqual(todo_db.db_path(), base / "sqlite.db")
                 self.assertEqual(todo_db.worktrees_dir(), base / "worktrees")
+
+
+class TodoStorageDsnTest(unittest.TestCase):
+    """The todo_storage DSN in config.json and its back-compat fallbacks."""
+
+    def tearDown(self) -> None:
+        todo_store.reset_store()
+        todo_db.reset_todo_dir()
+
+    def _store_for_config(self, base: Path, config: dict) -> todo_store.TodoStore:
+        (base / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        with unittest.mock.patch.object(todo_db, "todo_dir", return_value=base):
+            todo_store.reset_store()
+            return todo_store.get_store()
+
+    def test_sqlite_dsn_substitutes_todobasedir(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            store = self._store_for_config(
+                base, {"todo_storage": "sqlite://$TODOBASEDIR/sqlite.db"}
+            )
+            self.assertIsInstance(store, todo_store.SqliteTodoStore)
+            self.assertEqual(store.db_path, base / "sqlite.db")
+
+    def test_file_dsn_substitutes_braced_todobasedir(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            store = self._store_for_config(
+                base, {"todo_storage": "file://${TODOBASEDIR}/tickets"}
+            )
+            self.assertIsInstance(store, todo_store.JsonDirTodoStore)
+            self.assertEqual(store.dir, base / "tickets")
+
+    def test_dsn_takes_precedence_over_legacy_store_key(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            store = self._store_for_config(
+                base, {"todo_storage": "file://$TODOBASEDIR/t", "store": "sqlite"}
+            )
+            self.assertIsInstance(store, todo_store.JsonDirTodoStore)
+
+    def test_legacy_keys_still_honored_without_dsn(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            store = self._store_for_config(base, {"store": "json"})
+            self.assertIsInstance(store, todo_store.JsonDirTodoStore)
+            self.assertEqual(store.dir, base / "tickets")
+
+    def test_lock_timings_read_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            store = self._store_for_config(
+                base,
+                {"todo_storage": "sqlite://$TODOBASEDIR/sqlite.db", "lock_grace": 3, "lock_ttl": 2},
+            )
+            self.assertEqual((store._grace, store._ttl), (3.0, 2.0))
+
+    def test_bad_dsn_shapes_raise(self) -> None:
+        for bad in ("no-scheme-here", "mysql://whatever"):
+            with tempfile.TemporaryDirectory() as d:
+                base = Path(d)
+                with self.assertRaises(todo_store.TodoStoreError):
+                    self._store_for_config(base, {"todo_storage": bad})
+
+
+class PerTodoLockTest(unittest.TestCase):
+    """Per-TODO advisory locking on both backends."""
+
+    TID = "a" * 64
+    OTHER_TID = "b" * 64
+    FOREIGN_PID = 2147480000  # a pid this test process cannot be
+
+    def tearDown(self) -> None:
+        todo_store.reset_store()
+        todo_db.reset_todo_dir()
+
+    # -- sqlite backend ----------------------------------------------------
+
+    def _sqlite_store(self, base: Path, **kw: float) -> todo_store.SqliteTodoStore:
+        return todo_store.SqliteTodoStore(db_path=base / "sqlite.db", grace=0.3, ttl=100.0, **kw)
+
+    def _sqlite_insert_lock(self, db: Path, ticket_id: str, expires_at: float) -> None:
+        with todo_db.connection(db) as conn:
+            conn.execute(
+                "INSERT INTO locks(ticket_id, pid, expires_at) VALUES (?, ?, ?)",
+                (ticket_id, self.FOREIGN_PID, expires_at),
+            )
+
+    def test_sqlite_lock_roundtrip_and_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._sqlite_store(Path(d))
+            db = store.db_path
+            with store.lock(self.TID):
+                row = None
+                with todo_db.connection(db) as conn:
+                    row = conn.execute(
+                        "SELECT pid FROM locks WHERE ticket_id = ?", (self.TID,)
+                    ).fetchone()
+                self.assertEqual(int(row["pid"]), os.getpid())
+            with todo_db.connection(db) as conn:  # released on exit
+                self.assertIsNone(
+                    conn.execute(
+                        "SELECT 1 FROM locks WHERE ticket_id = ?", (self.TID,)
+                    ).fetchone()
+                )
+
+    def test_sqlite_foreign_holder_blocks_then_times_out(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._sqlite_store(Path(d))
+            self._sqlite_insert_lock(store.db_path, self.TID, time.time() + 100)
+            self.assertFalse(store._try_acquire(self.TID, 100.0))
+            with self.assertRaises(todo_store.LockTimeout):
+                with store.lock(self.TID):
+                    pass
+
+    def test_sqlite_expired_lock_is_stolen(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._sqlite_store(Path(d))
+            self._sqlite_insert_lock(store.db_path, self.TID, time.time() - 1)
+            with store.lock(self.TID):  # steals the dead holder's lock
+                pass
+
+    def test_sqlite_force_unlock_all(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._sqlite_store(Path(d))
+            self._sqlite_insert_lock(store.db_path, self.TID, time.time() + 100)
+            self._sqlite_insert_lock(store.db_path, self.OTHER_TID, time.time() + 100)
+            self.assertEqual(store.force_unlock_all(), 2)
+            self.assertTrue(store._try_acquire(self.TID, 100.0))
+
+    # -- file backend ------------------------------------------------------
+
+    def _file_store(self, base: Path) -> todo_store.JsonDirTodoStore:
+        return todo_store.JsonDirTodoStore(base, grace=0.3, ttl=100.0)
+
+    def test_file_lock_exclusion_and_release(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._file_store(Path(d))
+            self.assertTrue(store._try_acquire(self.TID, 100.0))
+            self.assertFalse(store._try_acquire(self.TID, 100.0))  # already held
+            store._release(self.TID)
+            self.assertTrue(store._try_acquire(self.TID, 100.0))  # free again
+            store._release(self.TID)
+
+    def test_file_foreign_holder_times_out_then_steals_when_expired(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._file_store(Path(d))
+            lock_path = store._lock_path(self.TID)
+            lock_path.write_text(f"{self.FOREIGN_PID} {time.time() + 100}", encoding="ascii")
+            with self.assertRaises(todo_store.LockTimeout):
+                with store.lock(self.TID):
+                    pass
+            lock_path.write_text(f"{self.FOREIGN_PID} {time.time() - 1}", encoding="ascii")
+            with store.lock(self.TID):  # expired -> stolen
+                pass
+
+    def test_file_force_unlock_all(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            store = self._file_store(Path(d))
+            store._try_acquire(self.TID, 100.0)
+            store._try_acquire(self.OTHER_TID, 100.0)
+            self.assertEqual(store.force_unlock_all(), 2)
 
 
 if __name__ == "__main__":

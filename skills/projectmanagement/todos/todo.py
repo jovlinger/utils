@@ -363,13 +363,19 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
         # backend) so the store serializes them. The sqlite embeddings table is
         # only a derived search index, mirrored when the store keeps one.
         rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
-        store.put(repo_key(root), branch, todo)
-        if store.has_vector_index:
-            with todo_db.connection() as conn:
-                for _field_name, field_path in changed:
-                    todo_db.clear_embeddings(conn, ticket_id, field_path)
-                for field_path, fingerprint, vec in rows:
-                    todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
+        # Lock only the write: the read + embedding computation above run
+        # unlocked; the per-TODO lock is held just long enough to persist this
+        # one ticket (and mirror its vectors) so concurrent writers of the same
+        # ticket cannot interleave. The mirror uses the store's own db so a
+        # relocated (DSN) sqlite file is never split-brained against the default.
+        with store.lock(ticket_id):
+            store.put(repo_key(root), branch, todo)
+            if store.has_vector_index:
+                with todo_db.connection(getattr(store, "db_path", None)) as conn:
+                    for _field_name, field_path in changed:
+                        todo_db.clear_embeddings(conn, ticket_id, field_path)
+                    for field_path, fingerprint, vec in rows:
+                        todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
         return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
@@ -2587,7 +2593,8 @@ class DoctorCommand(TodoSubCommand):
         "references, and wait-graph sanity -- and repairs parent back-links: for each of the "
         "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
         "Subtodos (best-effort, same-repo, sqlite only). Repair runs by default; pass --dry-run to "
-        "audit and report intended repairs without writing. Pass --all to sweep the whole corpus "
+        "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
+        "lock left by a crashed writer (reported as 'unlocked'). Pass --all to sweep the whole corpus "
         "instead of a single selector. Exit 1 when any hard finding is present."
     )
 
@@ -2615,6 +2622,12 @@ class DoctorCommand(TodoSubCommand):
     def do(self) -> int:
         """Audit (and unless --dry-run, repair) one todo or the whole corpus."""
         root = self.root()
+        # Clearing stale per-TODO locks is part of repair: a crashed writer can
+        # leave a lock behind, so doctor drops them all (recovery escape hatch).
+        # --dry-run only reports; it never mutates.
+        unlocked = 0
+        if not self.dry_run and use_sqlite():
+            unlocked = todo_store.get_store().force_unlock_all()
         if self.sweep_all:
             if not use_sqlite():
                 raise TodoError("--all requires the db store (unset TODO_USE_JSON)")
@@ -2623,7 +2636,13 @@ class DoctorCommand(TodoSubCommand):
             ok = all(r["ok"] for r in results)
             print(
                 json.dumps(
-                    {"ok": ok, "dry_run": self.dry_run, "audited": len(results), "results": results},
+                    {
+                        "ok": ok,
+                        "dry_run": self.dry_run,
+                        "unlocked": unlocked,
+                        "audited": len(results),
+                        "results": results,
+                    },
                     indent=2,
                 )
             )
@@ -2634,6 +2653,7 @@ class DoctorCommand(TodoSubCommand):
                 {
                     "ok": result["ok"],
                     "dry_run": self.dry_run,
+                    "unlocked": unlocked,
                     "findings": result["findings"],
                     "warnings": result["warnings"],
                     "repairs": result["repairs"],
@@ -3125,7 +3145,9 @@ class BaseDirCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Basedir prints the resolved todo base directory for this invocation -- where "
         "config.json, the ticket store (json files or sqlite.db), and worktrees live. "
-        "Resolution order: $TODO_DIR, $(gitroot)/.todo, $HOME/.todo."
+        "Resolution order: $TODO_DIR, <main-checkout-root>/.todo, $HOME/.todo. The repo "
+        "anchor is the repo's MAIN checkout root, not the current worktree, so all "
+        "worktrees of a repo share one store."
     )
 
     @classmethod
@@ -3143,9 +3165,9 @@ class RepoDirCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Print the repo directory a todo lives in"
     doc_long: ClassVar[str] = (
         "Repodir prints the concrete repo directory for the selected todo on this machine: "
-        "the current gitroot. Absolute paths are never stored -- the todo's repo name only "
-        "identifies the repo (and warns if the CWD is a different one). Selector is self/curr "
-        "or a 4+ hex Id prefix (default self)."
+        "the repo's MAIN checkout root (not the current worktree). Absolute paths are never "
+        "stored -- the todo's repo name only identifies the repo (and warns if the CWD is a "
+        "different one). Selector is self/curr or a 4+ hex Id prefix (default self)."
     )
 
     @classmethod
@@ -3159,10 +3181,10 @@ class RepoDirCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Print the concrete repo directory (CWD) for the selected todo."""
+        """Print the repo's main checkout root for the selected todo."""
         root = self.root()
         resolve_ticket_by_selector(root, self.selector)  # validates id; warns on repo mismatch
-        print(root)
+        print(todo_db.main_checkout_root() or root)
         return 0
 
 
@@ -3202,15 +3224,16 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
 
 TOP_LEVEL_EPILOG = """\
 Repo & todo identity:
-  gitroot      `git rev-parse --show-toplevel`: the local clone dir.
-  repo root    the local directory where a repo is checked out (= gitroot). A
-               repo can be cloned many times on one or many machines, so the
-               same todo may exist in several checkouts; the repo root says
-               WHICH checkout a branch lives in.
+  gitroot      `git rev-parse --show-toplevel`: the CURRENT working tree (a
+               linked worktree when in one). Used for git operations.
+  main checkout root
+               the repo's PRIMARY working tree (first `git worktree list` entry).
+               The STORAGE anchor: the todo store lives at <it>/.todo/, so all
+               worktrees of a repo share one store. Git ops still use gitroot.
   TODO branch  a git repo branch that carries a todo in sqlite.
-  todo dir     resolved once per invocation: $TODO_DIR, else gitroot/.todo, else
-               ~/.todo (first with sqlite.db wins; same dir for db and
-               worktrees).
+  todo dir     resolved once per invocation: $TODO_DIR, else
+               <main-checkout-root>/.todo, else ~/.todo (first with sqlite.db
+               wins; same dir for db and worktrees).
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted
                fallback for todos written on dev/master).
@@ -3253,6 +3276,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         command: TodoSubCommand = args.command_cls(args)
         return int(command.do())
+    except todo_store.LockTimeout as exc:
+        # EX_TEMPFAIL: transient per-TODO lock contention. The caller should
+        # retry rather than treat this as a hard failure.
+        print(f"todo.py: ERETRY: {exc}", file=sys.stderr)
+        return 75
+    except todo_store.TodoStoreError as exc:
+        print(f"todo.py: {exc}", file=sys.stderr)
+        return 1
     except TodoError as exc:
         print(f"todo.py: {exc}", file=sys.stderr)
         return 1

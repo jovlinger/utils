@@ -19,7 +19,12 @@ branch. One branch carries **zero or one** ticket in sqlite (default ~/.todo/sql
 
 ## Definitions
 
-- **`gitroot`:** `git rev-parse --show-toplevel` -- the local clone directory.
+- **`gitroot`:** `git rev-parse --show-toplevel` -- the current working tree
+  (a linked worktree, when you are in one). Used for git *operations*.
+- **`main checkout root`:** the repo's PRIMARY working tree (first entry of
+  `git worktree list`). This is the **storage anchor** -- the todo store lives at
+  `<main-checkout-root>/.todo/`, so all worktrees of a repo share one store. Git
+  ops still run in `gitroot` (the current worktree); only the store anchors here.
 - **CWD is a TODO branch:** the current directory is in a git repo and its
   `gitroot` holds a `TODO.json`.
 - **Repo root:** the local directory where a repo is checked out (e.g.
@@ -86,6 +91,34 @@ the parent is an incomplete call -- same as forgetting to await a promise.
 - Landing all code on the parent branch while child branches stay `init`.
 - Marking children `done` from the parent checkout without working the child branch.
 - Marking parent `done` when `todo.py jq self '.Subtodos[].State'` still shows `init` or `done` (unmerged).
+
+### Working subtodos: sequential stack order is the default
+
+When told to "work" a todo with subtodos, **default to working them sequentially,
+in one context, in stack order -- do NOT fan out parallel subagents.** The tool
+exists so a single agent can work a subtodo stack one frame at a time while the
+**todo record (not the chat) holds the durable state**, keeping your context
+small. `execution.mode: "parallel"` means children *may* run concurrently, not
+that you *should* fan out. Spawn parallel subagents ONLY when the user explicitly
+asks, or for genuinely independent context-heavy fact-finding domains (see
+Context-scoped subtodos). When unsure, work sequentially.
+
+Between subtodos, use Claude Code's **`/rewind`** to shed the finished subtodo's
+context before starting the next:
+
+1. Work the top subtodo to `done` and `merge-subtodo` it on the parent. Its
+   result is now durable in git + the todo record.
+2. **`/rewind` the conversation** (conversation, not code) back to before that
+   subtodo's context was loaded. The chat forgets the subtodo; the todo remembers
+   it. Committed work is untouched -- `/rewind` never rewrites git history.
+3. Reload the next frame with `todo.py prompt <id>` / `todo.py read` and work it
+   the same way.
+
+This works because the todo IS the memory: each subtodo's WHY (its `Parent` chain
+via `prompt`) and WHAT (its committed `WorkItems` trail) reconstruct from the
+record, so dropping the chat context loses nothing. A deep stack is thus worked
+frame-by-frame with a clean context at each frame, instead of one bloated window
+or an uncontrolled parallel fan-out.
 
 ### Parent linkage and startup context (`prompt`)
 
@@ -159,15 +192,21 @@ that are **deferred** and listed at the bottom.
 
 ## Storage (sqlite default)
 
-Todo directory resolution (once per `todo.py` invocation; no mixing paths):
+Todo directory resolution (once per `todo.py` invocation; no mixing paths). The
+repo anchor is the repo's **MAIN checkout root** -- the primary working tree, NOT
+the current linked worktree -- so every worktree of a repo shares ONE store in the
+core checkout. (`git worktree list` lists the main worktree first; bare/no-checkout
+hosting is out of scope.)
 
 1. `$TODO_DIR` when set and it contains `sqlite.db`
-2. `$(gitroot)/.todo/` when that contains `sqlite.db`
+2. `<main-checkout-root>/.todo/` when that contains `sqlite.db`
 3. `$HOME/.todo/` when that contains `sqlite.db`
 
 If none exist, create under the first applicable default: `$TODO_DIR`, else
-`$(gitroot)/.todo/`, else `$HOME/.todo/`. Db and worktrees both live under the
-chosen directory.
+`<main-checkout-root>/.todo/`, else `$HOME/.todo/`. Db and worktrees both live
+under the chosen directory. Note: the storage anchor is the main checkout root;
+git *operations* (branch create/checkout/commit) still happen in the current
+worktree.
 
 | Item | Location | Notes |
 |------|----------|-------|
@@ -267,7 +306,7 @@ downstream behavior.
 
 | Rule | Value |
 |------|-------|
-| Storage | ~/.todo/sqlite.db by (repo_path, branch) |
+| Storage | `<main-checkout-root>/.todo/sqlite.db` by (repo_path, branch); repo_path is the main checkout, not a worktree |
 | Per branch | 0 or 1 ticket |
 | Legacy file | TODO.json -- import only; doctor warns |
 | Conflict | If `TODO.json` already exists on the branch, **resume or finish** it; do not create a second ticket, rename, or use subdirs |
@@ -290,6 +329,25 @@ create and delete them freely, and never treat a worktree path as where a todo
 sqlite directly); use `git worktree list` only to locate a branch's current
 checkout when one exists.
 
+### Subtodo worktree lifecycle (open on entry, tear down on last commit)
+
+A **subtodo is worked in its own dedicated git worktree**, so parent and siblings
+never share a checkout:
+
+- **On entry** (an agent begins working a subtodo -- typically `set-state
+  working`): create a fresh worktree for the subtodo's branch under the placement
+  convention below (`git worktree add <todo-dir>/worktrees/<repo-path>/<branch>
+  <branch>`) and `cd` into it. Reuse an existing worktree for that branch if
+  `git worktree list` already shows one; never move it.
+- **On last commit** (the subtodo's final commit is in -- `is-done` is true and its
+  `set-state done` commit has landed): tear the worktree down (`cd` out, then
+  `git worktree remove <path>`). Teardown removes only the *checkout*; the branch
+  and its commits survive for the parent's `merge-subtodo`. If the tree is dirty,
+  the subtodo is not actually done -- finish or surface it before removing.
+
+The branch is the durable asset; the worktree is scratch space that exists only
+for the span from entry to last commit.
+
 A todo's working tree may live in a dedicated git worktree rather than the main
 checkout. **Existing worktrees are found with `git worktree list` and are never
 moved.** Only *new* worktrees follow the placement convention below; the path is
@@ -302,7 +360,7 @@ leaf:
 ```
 <todo-dir>/worktrees/<repo-path>/<branch>
 # e.g. ~/.todo/worktrees/github.com/jovlinger/util/my-branch
-#      $(gitroot)/.todo/worktrees/github.com/jovlinger/configfiles/todo-webui
+#      <main-checkout-root>/.todo/worktrees/github.com/jovlinger/configfiles/todo-webui
 ```
 
 - `<repo-path>` mirrors the repo's canonical path (host/org/repo) as real nested
