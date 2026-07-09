@@ -348,6 +348,23 @@ never share a checkout:
 The branch is the durable asset; the worktree is scratch space that exists only
 for the span from entry to last commit.
 
+**Branch retirement (the delete gate).** Tearing down a *worktree* is always safe
+-- it removes only a checkout; the branch and its commits survive. DELETING a
+branch is gated on **handoff to its PARENT / upstream branch -- NOT on reaching
+`dev`/`master`.** A branch is retireable once its work has landed upstream:
+
+- a **subtodo** hands off to its **parent todo's branch** (via `merge-subtodo` --
+  a git merge of the child);
+- a **top-level todo** hands off to whatever upstream branch it fed -- the branch
+  the work was handed to (e.g. a diagnosis todo whose fixes were cherry-picked
+  onto a feature branch).
+
+The handoff can be a git merge OR a cherry-pick / equivalent-content absorption --
+what matters is that the WORK is upstream, not git-ancestry. Once handed off, the
+branch is disposable scaffold; delete it (`git branch -D`, since a cherry-pick
+handoff won't register as "merged"). Do **not** gate deletion on the work reaching
+`dev` -- that is often many merges upstream and is not this branch's concern.
+
 A todo's working tree may live in a dedicated git worktree rather than the main
 checkout. **Existing worktrees are found with `git worktree list` and are never
 moved.** Only *new* worktrees follow the placement convention below; the path is
