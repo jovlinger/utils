@@ -1077,7 +1077,7 @@ class WebViewerTests(TodoCase):
         proc = self.todo("web", "--dump-html")  # no selector -> search landing page
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
-        self.assertIn("search todos by id or summary", out)  # search box placeholder
+        self.assertIn("search todos (vector search)", out)  # search box placeholder
         self.assertIn("Alpha todo", out)
         self.assertIn("Beta todo", out)
         self.assertIn(alpha, out)  # ids embedded for client-side links

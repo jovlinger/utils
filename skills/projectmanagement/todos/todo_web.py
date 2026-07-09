@@ -432,6 +432,7 @@ _STYLE = """<style>
   .results { list-style: none; margin: 12px 0 0; padding: 0; }
   .results li { padding: 8px; border-bottom: 1px solid #eaeef2; }
   .results .r-state { color: #57606a; font-size: 12px; }
+  .results .r-utime { color: #8b949e; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; }
 </style>"""
 
 
@@ -525,44 +526,35 @@ def render_todo_page(root: Path, todo: JsonDict) -> str:
 
 
 _SEARCH_SCRIPT = """<script>
-const TODOS = __DATA__;
-const q = document.getElementById('q');
 const results = document.getElementById('results');
+const q = document.getElementById('q');
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function render(){
-  var needle = q.value.trim().toLowerCase();
-  var rows = TODOS.filter(function(t){
-    if (!needle) return true;
-    return (t.id + ' ' + t.summary).toLowerCase().indexOf(needle) !== -1;
-  }).map(function(t){
-    return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
-           '<span class="mono">'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+
-           '</a> <span class="r-state">'+esc(t.state)+'</span></li>';
-  });
-  results.innerHTML = rows.length ? rows.join('') : '<li class="hint">no matches</li>';
+function row(t){
+  return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
+         '<span class="mono">'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+'</a> ' +
+         '<span class="r-utime">'+esc(t.utime)+'</span> <span class="r-state">'+esc(t.state)+'</span></li>';
 }
-q.addEventListener('input', render);
-render();
+function paint(rows){ results.innerHTML = rows.length ? rows.map(row).join('') : '<li class="hint">no matches</li>'; }
+paint(__DATA__);
+var timer = null;
+q.addEventListener('input', function(){
+  clearTimeout(timer);
+  timer = setTimeout(function(){
+    fetch('/search?q='+encodeURIComponent(q.value)).then(function(r){ return r.json(); }).then(paint).catch(function(){});
+  }, 200);
+});
 </script>"""
 
 
-def render_search_page(root: Path, todos: List[JsonDict]) -> str:
-    """Render the search landing page listing every discoverable todo."""
-    _debug(f"render_search_page count={len(todos)}", phase="render")
-    rows: List[JsonDict] = []
-    for todo in todos:
-        if not isinstance(todo, dict):
-            continue
-        tid = str(todo.get("Id") or "")
-        rows.append(
-            {
-                "id": tid,
-                "short": tid[:8],
-                "summary": _summary_text(normalize_todo(todo)),
-                "state": _state_text(todo),
-            }
-        )
-    rows.sort(key=lambda r: r["summary"].lower())
+def render_search_page(root: Path, rows: List[JsonDict]) -> str:
+    """Render the search landing page over *rows* (structured todo rows).
+
+    *rows* is the initial (empty-query) result set; the search box then calls
+    ``/search?q=`` for live vector-search results. Row rendering happens in one
+    place -- the JS template -- from the structured fields provided by the
+    caller, so the page does not re-derive summary/state/time itself.
+    """
+    _debug(f"render_search_page count={len(rows)}", phase="render")
     script = _SEARCH_SCRIPT.replace("__DATA__", _embed_json(rows))
     return f"""<!doctype html>
 <html lang="en">
@@ -573,10 +565,10 @@ def render_search_page(root: Path, todos: List[JsonDict]) -> str:
 </head>
 <body>
   <header><div class="title">Todos</div>
-    <div class="meta">{html.escape(str(root))} &middot; {len(rows)} todos</div>
+    <div class="meta">{html.escape(str(root))} &middot; vector search &middot; {len(rows)} todos</div>
   </header>
   <div id="top">
-    <input id="q" class="search-box" type="text" placeholder="search todos by id or summary" autofocus>
+    <input id="q" class="search-box" type="text" placeholder="search todos (vector search)" autofocus>
     <ul id="results" class="results"></ul>
   </div>
   {script}
@@ -592,20 +584,33 @@ def serve(
     port: int = 8765,
     initial_id: Optional[str] = None,
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
-    lister: Callable[[], List[JsonDict]],
+    searcher: Callable[[str], List[JsonDict]],
 ) -> str:
     """Start the viewer and serve until interrupted.
 
     ``?id=<selector>`` renders that todo via *resolver*, which returns the
     ``(repo_root, todo)`` pair (the repo is where that todo's diffs come from).
-    A bare path renders the search page over *lister()*. *initial_id* only
-    shapes the printed URL so the browser opens straight onto that todo.
+    A bare path renders the search page, whose box calls ``/search?q=`` -> a
+    JSON list of rows from *searcher(query)* (an empty query lists all todos).
+    *initial_id* only shapes the printed URL so the browser opens straight onto
+    that todo.
     """
     _debug(f"serve host={host} port={port} root={root} initial_id={initial_id}", phase="serve")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             parsed = urlparse(self.path)
+            if parsed.path == "/search":
+                query = parse_qs(parsed.query).get("q", [""])[0]
+                try:
+                    rows = searcher(query)
+                except TodoWebError as exc:
+                    self.send_error(400, str(exc))
+                    return
+                self._respond(
+                    json.dumps(rows).encode("utf-8"), "application/json; charset=utf-8"
+                )
+                return
             if parsed.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
@@ -615,16 +620,18 @@ def serve(
                     todo_root, todo = resolver(todo_id)
                     payload = render_todo_page(todo_root, todo)
                 else:
-                    payload = render_search_page(root, lister())
+                    payload = render_search_page(root, searcher(""))
             except TodoWebError as exc:
                 self.send_error(400, str(exc))
                 return
-            encoded = payload.encode("utf-8")
+            self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _respond(self, body: bytes, content_type: str) -> None:
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(encoded)
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
             if os.environ.get("TODO_WEB_LOG") or _debug_enabled():

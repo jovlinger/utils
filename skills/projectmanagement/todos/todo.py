@@ -2902,8 +2902,9 @@ class WebCommand(TodoSubCommand):
         "item shows its full commit message and diff below the split and highlights any subtodo "
         "it references; clicking a subtodo highlights the work items that reference it and shows "
         "a read-only rendition below the split. With a selector (self, curr, or 4+ hex Id prefix) "
-        "the printed URL opens straight onto that todo; without one the page is a search over "
-        "every discoverable todo (empty query lists all)."
+        "the printed URL opens straight onto that todo; without one the page is a vector search "
+        "(the same ranking as 'todo search') over every todo, showing update-time and State "
+        "columns, with an empty query listing all."
     )
 
     @classmethod
@@ -2945,6 +2946,20 @@ class WebCommand(TodoSubCommand):
                 return list(discover_all_tickets(root).values())
             return [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
 
+        def search_rows(query: str) -> List[JsonDict]:
+            """Structured rows for the viewer's search box.
+
+            A non-empty query runs the same vector search as `todo search`
+            (rank order preserved); an empty query lists every todo. Rows carry
+            state/update-time so the page can render the -tu/-s columns.
+            """
+            if query.strip():
+                try:
+                    return run_search(root, query)
+                except TodoError as exc:
+                    raise todo_web.TodoWebError(str(exc)) from exc
+            return [todo_row(todo) for todo in list_todos()]
+
         initial_id: Optional[str] = None
         if self.selector is not None:
             _, ticket = resolve_ticket_by_selector(root, self.selector)
@@ -2956,7 +2971,7 @@ class WebCommand(TodoSubCommand):
                     todo_root, ticket = resolve_todo(initial_id)
                     print(todo_web.render_todo_page(todo_root, ticket))
                 else:
-                    print(todo_web.render_search_page(root, list_todos()))
+                    print(todo_web.render_search_page(root, search_rows("")))
             else:
                 todo_web.serve(
                     root,
@@ -2964,7 +2979,7 @@ class WebCommand(TodoSubCommand):
                     port=self.port,
                     initial_id=initial_id,
                     resolver=resolve_todo,
-                    lister=list_todos,
+                    searcher=search_rows,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
@@ -3049,14 +3064,51 @@ def _column_value(todo: JsonDict, key: str) -> str:
     return ""
 
 
-def _format_todo_line(todo: JsonDict, columns: Sequence[str]) -> str:
-    """'<cols>  <id[:8]>  <summary>' with selected columns leftmost, in order."""
+def todo_row(todo: JsonDict) -> JsonDict:
+    """Structured, JSON-serializable summary of a todo for ls/search/web.
+
+    The single place list-style field extraction happens; callers (CLI line
+    formatting, the web viewer's templates) render from these named fields
+    rather than re-reading the raw todo, so there is one source of truth.
+    """
+    full = str(todo.get("Id", ""))
     summary = todo.get("Summary")
     summary = summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
-    fields = [_column_value(todo, key) for key in columns]
-    fields.append(str(todo.get("Id", ""))[:8])
-    fields.append(summary)
+    return {
+        "id": full,
+        "short": full[:8],
+        "summary": summary,
+        "state": _column_value(todo, "state"),
+        "ctime": _column_value(todo, "ctime"),
+        "utime": _column_value(todo, "utime"),
+    }
+
+
+def _format_row_line(row: JsonDict, columns: Sequence[str]) -> str:
+    """'<cols>  <id[:8]>  <summary>' with selected columns leftmost, in order."""
+    fields = [str(row.get(key, "")) for key in columns]
+    fields.append(str(row.get("short", "")))
+    fields.append(str(row.get("summary", "")))
     return "  ".join(fields)
+
+
+def run_search(
+    root: Path,
+    query: str,
+    *,
+    limit: int = 20,
+    embedder_names: Optional[Sequence[str]] = None,
+    dry_run: bool = False,
+) -> List[JsonDict]:
+    """Ranked search as structured rows (relevance-rank order preserved).
+
+    Shared by the 'search' subcommand and the web viewer so both go through the
+    same vector-search backend without duplicating it.
+    """
+    hits = search_tickets(
+        root, query, limit=limit, embedder_names=embedder_names, dry_run=dry_run
+    )
+    return [todo_row(todo) for todo in hits]
 
 
 class SearchCommand(TodoSubCommand):
@@ -3095,12 +3147,12 @@ class SearchCommand(TodoSubCommand):
         names: Optional[List[str]] = None
         if self.embedder:
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
-        hits = search_tickets(
+        rows = run_search(
             root, self.query, limit=self.limit, embedder_names=names, dry_run=self.dry_run
         )
         columns = self.columns or []
-        for ticket in hits:
-            print(_format_todo_line(ticket, columns))
+        for row in rows:
+            print(_format_row_line(row, columns))
         return 0
 
 
@@ -3179,11 +3231,11 @@ class LsCommand(TodoSubCommand):
         if not use_sqlite():
             raise TodoError("ls requires the db store (unset TODO_USE_JSON)")
         columns = self.columns or []
-        rows = list(todo_store.get_store().list_all())
+        rows = [todo_row(todo) for todo in todo_store.get_store().list_all()]
         if columns:
-            rows.sort(key=lambda todo: _column_value(todo, columns[0]))
-        for todo in rows:
-            print(_format_todo_line(todo, columns))
+            rows.sort(key=lambda row: str(row.get(columns[0], "")))
+        for row in rows:
+            print(_format_row_line(row, columns))
         return 0
 
 
