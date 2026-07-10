@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 4
+SCHEMA_VERSION: int = 5
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -210,6 +210,21 @@ def migrate(conn: sqlite3.Connection) -> None:
             )
             """
         )
+    if current < 5:
+        # Soft-delete tombstone: a row moved here (verbatim, minus the embeddings
+        # that cascade away) is removed from `tickets` but retained for manual
+        # recovery. No recovery command exists yet -- restore by hand if needed.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_tickets (
+                id TEXT PRIMARY KEY,
+                repo_path TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                data TEXT NOT NULL,
+                update_dt TEXT NOT NULL
+            )
+            """
+        )
     if current < SCHEMA_VERSION:
         if row is None:
             conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -266,6 +281,27 @@ def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: Js
         """,
         (ticket_id, repo_path, branch, payload, update_dt),
     )
+
+
+def hard_delete_ticket(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Permanently delete a ticket row; its embeddings cascade away. True if a
+    row was removed."""
+    cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    return cur.rowcount > 0
+
+
+def soft_delete_ticket(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Move a ticket row to `deleted_tickets` (verbatim) and drop it from
+    `tickets`; its embeddings cascade away. True if a row was moved."""
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO deleted_tickets(id, repo_path, branch, data, update_dt)
+        SELECT id, repo_path, branch, data, update_dt FROM tickets WHERE id = ?
+        """,
+        (ticket_id,),
+    )
+    cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    return cur.rowcount > 0
 
 
 def get_ticket_by_repo_branch(

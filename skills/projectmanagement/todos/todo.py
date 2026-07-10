@@ -3288,6 +3288,82 @@ class RepoDirCommand(TodoSubCommand):
         return 0
 
 
+class ExportToFileCommand(TodoSubCommand):
+    command_names = ("export-to-file",)
+    doc_short: ClassVar[str] = "Export todos to <basedir>/storage/<id>.json"
+    doc_long: ClassVar[str] = (
+        "Export-to-file writes each selected todo as a round-trippable '<id>.json' "
+        "(the same object shape import-json reads) into <basedir>/storage/. --basedir "
+        "defaults to the resolved todo base directory. Give one or more 4+ hex Id "
+        "prefixes, or the meta id ALL to export every todo in the store. With --remove, "
+        "each todo is removed from the store after its file is written: --remove=hard "
+        "permanently deletes it (embeddings cascade away); --remove or --remove=soft "
+        "(default) keeps a recoverable tombstone -- a deleted_tickets row in the sqlite "
+        "store, or an '<id>.deleted' file in a json-dir store. There is no recovery "
+        "command yet; restore by hand if needed."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register export-to-file arguments."""
+        parser.add_argument(
+            "ids", nargs="+", help="4+ hex Id prefixes, or the meta id ALL for every todo"
+        )
+        parser.add_argument(
+            "--basedir",
+            help="base dir for output (default: todo basedir); files go to <basedir>/storage/",
+        )
+        parser.add_argument(
+            "--remove",
+            nargs="?",
+            const="soft",
+            choices=("soft", "hard"),
+            default=None,
+            help="remove each todo from the store after export: soft (default) tombstones, hard deletes",
+        )
+
+    @staticmethod
+    def _resolve(store: "todo_store.TodoStore", selector: str) -> JsonDict:
+        """Resolve one id-prefix selector to a single todo in *store*."""
+        todos = [match[2] for match in store.find_by_id_prefix(selector)]
+        if not todos:
+            raise TodoError(f"no todo matches {selector!r}")
+        if len(todos) > 1:
+            shorts = ", ".join(sorted({str(t.get("Id", ""))[:8] for t in todos}))
+            raise TodoError(f"ambiguous selector {selector!r}: {shorts}")
+        return todos[0]
+
+    def do(self) -> int:
+        """Export selected todos to files, optionally removing them from the store."""
+        store = todo_store.get_store()
+        base = Path(self.basedir) if self.basedir else todo_db.todo_dir()
+        out_dir = base / "storage"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        if any(sel == "ALL" for sel in self.ids):
+            todos = store.list_all()
+        else:
+            todos = [self._resolve(store, sel) for sel in self.ids]
+
+        exported = 0
+        for todo in todos:
+            tid = str(todo.get("Id") or "")
+            if not tid:
+                raise TodoError("todo missing Id; cannot export")
+            path = out_dir / f"{tid}.json"
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            tmp.replace(path)
+            note = ""
+            if self.remove is not None:
+                removed = store.delete(todo, hard=(self.remove == "hard"))
+                note = f"  (removed: {self.remove})" if removed else "  (not in store)"
+            print(f"{tid[:8]}  {path}{note}")
+            exported += 1
+        print(f"exported {exported} todo(s) to {out_dir}")
+        return 0
+
+
 COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     MintCommand,
     LogCommand,
@@ -3316,6 +3392,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     WaitAndMergeCommand,
     DoctorCommand,
     ImportJsonCommand,
+    ExportToFileCommand,
     SearchCommand,
     EmbeddersCommand,
     PromptCommand,

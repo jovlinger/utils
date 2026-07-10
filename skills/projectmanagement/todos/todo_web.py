@@ -309,6 +309,35 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
     )
 
 
+# Top-level fields with their own rich rendering above; everything else is
+# surfaced generically by _meta_html. Embedding vectors are not top-level (they
+# live inside Summary/Body as .hash and only .raw is rendered), so nothing
+# opaque reaches the generic path.
+_DEDICATED_FIELDS = frozenset(
+    {"Id", "Summary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
+)
+
+
+def _meta_html(todo: JsonDict) -> str:
+    """Render remaining non-opaque top-level fields (Branch, create/update time,
+    AC, Scope, and any future field) as labeled rows -- one source of truth for
+    'show everything the todo carries'."""
+    rows: List[str] = []
+    for key, value in todo.items():
+        if key in _DEDICATED_FIELDS:
+            continue
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
+        else:
+            rendered = f'<div class="val">{html.escape(str(value))}</div>'
+        rows.append(f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}')
+    if not rows:
+        return ""
+    return f'<section class="part"><h2>Fields</h2>{"".join(rows)}</section>'
+
+
 def _sections_html(
     todo: JsonDict,
     witems: List[JsonDict],
@@ -316,7 +345,8 @@ def _sections_html(
     *,
     interactive: bool,
 ) -> str:
-    """Render the labeled todo representation: Id, Parent, Summary, Body, work items, subtodos."""
+    """Render the labeled todo representation: Id, Parent, Summary, Body, work
+    items, subtodos, and remaining non-opaque fields."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
@@ -336,6 +366,7 @@ def _sections_html(
         f'<pre class="val body">{html.escape(body)}</pre></section>'
         f"<section class=\"part\"><h2>Work items</h2>{wi_row}</section>"
         f"<section class=\"part\"><h2>Subtodos</h2>{st_row}</section>"
+        f"{_meta_html(todo)}"
     )
 
 
@@ -400,6 +431,7 @@ _STYLE = """<style>
   .part { margin: 10px 0; }
   .part h2 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
              color: #57606a; }
+  .part h3.meta-key { margin: 8px 0 2px; font-size: 12px; color: #57606a; font-weight: 600; }
   .val { overflow-wrap: anywhere; }
   .val.body { background: #f6f8fa; padding: 10px; border-radius: 6px; white-space: pre-wrap;
               margin: 0; max-height: 20vh; overflow: auto; }

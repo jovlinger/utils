@@ -91,6 +91,12 @@ class TodoStore(ABC):
     def list_all(self) -> List[JsonDict]:
         """Return every ticket in the store, unscoped."""
 
+    @abstractmethod
+    def delete(self, todo: JsonDict, *, hard: bool) -> bool:
+        """Remove *todo* from the store. ``hard`` permanently deletes it; a soft
+        delete keeps a recoverable tombstone (no recovery tool exists yet).
+        Returns True if the todo was present and removed."""
+
     # -- per-TODO advisory locking -----------------------------------------
 
     @abstractmethod
@@ -163,6 +169,13 @@ class SqliteTodoStore(TodoStore):
             if isinstance(parsed, dict) and parsed.get("Id"):
                 todos.append(parsed)
         return todos
+
+    def delete(self, todo: JsonDict, *, hard: bool) -> bool:
+        ticket_id = str(todo["Id"])
+        with todo_db.connection(self.db_path) as conn:
+            if hard:
+                return todo_db.hard_delete_ticket(conn, ticket_id)
+            return todo_db.soft_delete_ticket(conn, ticket_id)
 
     def _try_acquire(self, ticket_id: str, ttl: float) -> bool:
         now = time.time()
@@ -246,6 +259,17 @@ class JsonDirTodoStore(TodoStore):
 
     def list_all(self) -> List[JsonDict]:
         return self._all()
+
+    def delete(self, todo: JsonDict, *, hard: bool) -> bool:
+        path = self._path(str(todo["Id"]))
+        if not path.exists():
+            return False
+        if hard:
+            path.unlink()
+        else:
+            # soft delete: <id>.json -> <id>.deleted (kept for manual recovery)
+            path.replace(path.with_suffix(".deleted"))
+        return True
 
     def _lock_path(self, ticket_id: str) -> Path:
         return self.dir / f"{ticket_id}.lock"
