@@ -75,12 +75,6 @@ Internet-facing Flask rendezvous: zones POST state and receive commands; the con
 
 Zone firmware and deploy: shared Python in `common/`, hardware backends (Pi Zero 2 W, Pico2W, ESP32-S3), per-room `zones/`, and `install/` dispatch. Host tests via `make -C thermo/onboard test`.
 
-### thermo/priv
-
-thermo/priv
-
-Gitignored secrets and private env overrides (zone keys, OAuth client secret, SSH host keys, per-device `.env`). Never commit contents here.
-
 ### thermo/scribble
 
 thermo/scribble
