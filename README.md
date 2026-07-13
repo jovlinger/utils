@@ -56,3 +56,11 @@ manage healthz
 ```
 
 Scripts can source **`lib/venv-resolve.sh`** to pick the nearest `.venv`, `venv`, or legacy `env` marker and fail with the right setup hint. Empty marker directories keep the intended venv root in git with only `README.md`; generated venv contents stay untracked.
+
+## License
+
+Copyright (c) 2010-2026 Johan Ovlinger
+
+This repository is licensed under the MIT License -- see [LICENSE](LICENSE).
+Unless a file or subdirectory states otherwise, the MIT License applies to
+all files in this repository.
