@@ -5,6 +5,7 @@ Layout:
 - `common/` -- shared Python (twoway, deployment metadata, heatpump IR).
 - `hardware/pizero2w/` -- Pi Zero 2 W Docker images and compose deploy.
 - `hardware/pico2w/` -- Pico2W Rust firmware.
+- `hardware/esp32s3/` -- ESP32-S3 Rust firmware (host-testable; ESP-IDF bring-up in progress).
 - `zones/<zone>/` -- per-room `zone.env` and Makefile (`kitchen`, `office`, `bedroom`).
 - `install/` -- deploy dispatcher used by zone Makefiles.
 
@@ -47,5 +48,9 @@ in BOOTSEL. See [`hardware/pico2w/README.md`](hardware/pico2w/README.md).
 Legacy wrapper (still works): `./deploy-room.sh pico2w office-pico2w.env`
 
 Pi Zero 2 W: [`hardware/pizero2w/README.md`](hardware/pizero2w/README.md).
+
+ESP32-S3: [`hardware/esp32s3/README.md`](hardware/esp32s3/README.md) (bookmark:
+[`hardware/esp32s3/BOOKMARK.md`](hardware/esp32s3/BOOKMARK.md)).
+
 Committed room templates also remain under [`../config/`](../config/README.md);
 canonical deploy envs live in `zones/<zone>/zone.env`.

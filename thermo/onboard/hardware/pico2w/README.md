@@ -2,6 +2,8 @@
 
 Rust target for the Pico2W thermostat controller.
 
+In-progress HAT work: [`hat/BOOKMARK.md`](hat/BOOKMARK.md).
+
 The firmware binary `ledw_status` runs the fused onboard controller loop:
 
 - `pico2w_aht20_ir` hardware profile.

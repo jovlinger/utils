@@ -1,7 +1,9 @@
 Home Thermostat IR with Raspberry Pi and Anavi IR hat
 =====================================================
 
-(Preminimary before moving this to separate repo)
+(Preliminary before moving this to separate repo)
+
+Active work state: [`BOOKMARK.md`](BOOKMARK.md). Backlog: [`TODO.md`](TODO.md).
 
 ### TL;DR
 

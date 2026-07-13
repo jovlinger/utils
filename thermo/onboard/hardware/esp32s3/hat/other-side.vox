@@ -12,6 +12,8 @@
 # Legend: X=solid substrate, *=ESP32-S3 header pad, .=empty/air, a-z=embossed labels.
 # This first file captures only host-board pads; no module pads or traces yet.
 
+# up == the protrusion
+
 layer base (7, 13, 24)
        XXXXXXXXXXXXX
 GND    X*XXXXXXXXX*X 3V3
@@ -45,17 +47,17 @@ alias G -> | = GND
 
 layer trace (7, 13, 24)
        .............
-GND    .*--┐.up..... 3V3
-GPIO43 ....|side┌-*. 3V3
+GND    .*--┐.up.┌-*. 3V3
+GPIO43 ....|side|... 3V3
 GPIO44 ....|....|... RST
 GPIO1  ....└-┐┌-┘... GPIO4
 GPIO2  ......||..... GPIO5
 GPIO42 ......OOO--*. GPIO6  IR RX target .c8= GPIO6, .c7 = 3V3  .c6 = GND
 GPIO41 ......||..... GPIO7
 GPIO40 ......GV..... GPIO15
-GPIO39 ......||..... GPIO16  
+GPIO39 ......||..... GPIO16
 GPIO38 ......OOO--*. GPIO17  IR TX target .c8= GPIO17  .c7 = 3V3, .c6 = GND
-GPIO37 ......||..... GPIO18                                               
+GPIO37 ......||..... GPIO18
 GPIO36 .*---┐||..... GPIO8
 GPIO35 .*--OOOO..... GPIO3 AHT20 target .c7 = 3V3, .c6 = GND, .c5 = GPIO36 (SCL) .c4 = GPIO35 (SDA)
 GPIO0  ............. GPIO46
