@@ -1,7 +1,7 @@
 # utils/ — umbrella make targets for the whole tree.
 #
 #   make binlinks   — refresh PATH-visible symlinks under binlinks/
-#   make index      -- rebuild INDEX.md from **/.blurb.md
+#   make index      -- rebuild README.md from **/.www/blurb.md
 #   make test       — fast tests in every immediate subdir with a Makefile
 #   make all-tests  — full suites (docker, e2e, integration) where defined
 #
