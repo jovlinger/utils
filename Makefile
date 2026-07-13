@@ -1,6 +1,7 @@
 # utils/ — umbrella make targets for the whole tree.
 #
 #   make binlinks   — refresh PATH-visible symlinks under binlinks/
+#   make index      -- rebuild INDEX.md from **/.blurb.md
 #   make test       — fast tests in every immediate subdir with a Makefile
 #   make all-tests  — full suites (docker, e2e, integration) where defined
 #
@@ -19,7 +20,10 @@ BINLINKS_DIR := $(BIN_ROOT)/binlinks
 # Immediate child dirs that contain a Makefile (not binlinks/ itself).
 MAKE_SUBDIRS := $(filter-out binlinks,$(patsubst %/Makefile,%,$(wildcard */Makefile)))
 
-.PHONY: binlinks binlinks-root test all-tests
+.PHONY: binlinks binlinks-root index test all-tests
+
+index:
+	@./lib/build-index.py
 
 binlinks: binlinks-root
 	@set -e; \

@@ -1,0 +1,1 @@
+Branch-bound task tickets via the `todo` CLI (on PATH through binlinks): one ticket per git branch, stored in `~/.todo/sqlite.db` by default. Full workflow and schema in [`SKILL.md`](skills/projectmanagement/todos/SKILL.md).
