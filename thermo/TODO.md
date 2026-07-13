@@ -1,5 +1,7 @@
 # Thermo TODO
 
+(for visitors: This file predates the todo skill; this would normally live in the .todo repository)
+
 Living backlog for work **not started** or only lightly scoped. In-progress state:
 [`BOOKMARK.md`](BOOKMARK.md). Stable reference: per-directory `README.md`.
 

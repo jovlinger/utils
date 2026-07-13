@@ -1,5 +1,9 @@
 # Thermo bookmark
 
+(for visitors: I use a convention that "BOOKMARK.md" captures frozen agent context. 
+This file is written when work must be stopped for a longer period, 
+and will be read-in and then deleted when work resumes.)
+
 Short-term state for active work. Read this at session start. Long backlog lives in
 [`TODO.md`](TODO.md); stable reference in per-tree `README.md` files.
 
