@@ -101,23 +101,33 @@ def _default_todo_dir(git_root: Optional[Path]) -> Path:
     return _home_todo_dir()
 
 
+def _candidate_is_populated(candidate: Path) -> bool:
+    """True when *candidate* already holds a todo store worth selecting.
+
+    A directory with ``sqlite.db`` (sqlite backend) or ``config.json`` (explicit
+    backend choice, e.g. file:// storage) counts. An empty ``.todo`` does not,
+    so search can fall through to a home store that still has a db.
+    """
+    return (candidate / "sqlite.db").is_file() or (candidate / "config.json").is_file()
+
+
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     """Resolve the todo directory once per process.
 
     Search order: ``$TODO_DIR``, ``<main-checkout-root>/.todo/``, ``$HOME/.todo/``.
     The repo anchor is the MAIN checkout root (not the current worktree), so all
-    worktrees of a repo share one store. The first candidate containing
-    ``sqlite.db`` wins; otherwise the default create location is the first entry in
-    that list that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
-    All paths (db, worktrees) live under the chosen directory for the rest of the call.
+    worktrees of a repo share one store. The first candidate that already holds
+    a store (``sqlite.db`` or ``config.json``) wins; otherwise the default create
+    location is the first entry in that list that applies (``$TODO_DIR``, else
+    main-checkout ``.todo``, else home). All paths (db, worktrees, storage)
+    live under the chosen directory for the rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:
         return _RESOLVED_TODO_DIR
     root = git_root if git_root is not None else main_checkout_root()
     for candidate in _todo_dir_candidates(root):
-        db_file = candidate / "sqlite.db"
-        if db_file.is_file():
+        if _candidate_is_populated(candidate):
             _RESOLVED_TODO_DIR = candidate.resolve()
             return _RESOLVED_TODO_DIR
     _RESOLVED_TODO_DIR = _default_todo_dir(root).resolve()

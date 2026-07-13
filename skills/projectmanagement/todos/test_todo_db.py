@@ -75,18 +75,24 @@ class TodoDirResolutionTest(unittest.TestCase):
                     resolved = todo_db.resolve_todo_dir(repo_path)
                     self.assertEqual(resolved, (repo_path / ".todo").resolve())
 
-    def test_home_fallback_when_only_home_has_db(self) -> None:
+    def test_repo_config_json_preferred_over_home_db(self) -> None:
+        """File-store repos pin via config.json even after sqlite.db is removed."""
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
             repo_path = Path(repo)
             home_path = Path(home)
             _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                '{"todo_storage": "file://$TODOBASEDIR/storage"}\n',
+                encoding="utf-8",
+            )
             _touch_sqlite_db(home_path / ".todo")
             with unittest.mock.patch.dict(os.environ, {"HOME": str(home_path)}, clear=False):
                 env = os.environ.copy()
                 env.pop("TODO_DIR", None)
                 with unittest.mock.patch.dict(os.environ, env, clear=True):
                     resolved = todo_db.resolve_todo_dir(repo_path)
-                    self.assertEqual(resolved, (home_path / ".todo").resolve())
+                    self.assertEqual(resolved, (repo_path / ".todo").resolve())
 
     def test_default_create_location_is_repo_local(self) -> None:
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
