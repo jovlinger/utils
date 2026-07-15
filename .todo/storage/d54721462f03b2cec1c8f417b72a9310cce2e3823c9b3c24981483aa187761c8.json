@@ -1,5 +1,6 @@
 {
   "AC": "Search e2e passes in make test.",
+  "BaseSha": "5c04212c66972011246c867a95df20d7aa68f8bb",
   "Body": {
     "hash": [
       0.0,
@@ -142,7 +143,8 @@
   "Scope": {
     "branch": "d5472146-test-search-e2e",
     "git_url": "git@github.com:jovlinger/utils.git",
-    "path_from_root": "skills/projectmanagement/todos"
+    "path_from_root": "skills/projectmanagement/todos",
+    "path_to_project": "/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding"
   },
   "State": {
     "merged": {
@@ -284,5 +286,5 @@
   },
   "WorkItems": [],
   "create_dt": "2026-07-04T22:34:04Z",
-  "update_dt": "2026-07-05T03:06:59Z"
+  "update_dt": "2026-07-06T22:20:59Z"
 }

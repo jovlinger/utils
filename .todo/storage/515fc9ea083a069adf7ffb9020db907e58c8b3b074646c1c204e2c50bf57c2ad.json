@@ -1,5 +1,6 @@
 {
   "AC": "make test green in todos subproject.",
+  "BaseSha": "bd89386d119cada1b8caf8f979193caf7b902274",
   "Body": {
     "hash": [
       0.0,
@@ -142,7 +143,8 @@
   "Scope": {
     "branch": "515fc9ea-test-sqlite-storage-sui",
     "git_url": "git@github.com:jovlinger/utils.git",
-    "path_from_root": "skills/projectmanagement/todos"
+    "path_from_root": "skills/projectmanagement/todos",
+    "path_to_project": "/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding"
   },
   "State": {
     "merged": {
@@ -284,5 +286,5 @@
   },
   "WorkItems": [],
   "create_dt": "2026-07-04T22:34:02Z",
-  "update_dt": "2026-07-05T03:06:58Z"
+  "update_dt": "2026-07-06T22:20:58Z"
 }

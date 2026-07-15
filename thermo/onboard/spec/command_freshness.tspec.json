@@ -1,0 +1,33 @@
+{
+  "$tsl": "1.0",
+  "kind": "command_freshness",
+  "name": "controller_command_freshness",
+  "source": "thermo/onboard/hardware/pico2w/src/protocol.rs command_is_new tests",
+  "rule": "response_created_dt is fresh only when non-empty and lexicographically strictly greater than last_applied_created_dt",
+  "cases": [
+    {
+      "name": "newer_created_dt_is_fresh",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_created_dt": "2026-05-25T10:01:00.000000",
+      "expected_is_new": true
+    },
+    {
+      "name": "stale_created_dt_is_not_fresh",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_created_dt": "2026-05-25T09:59:00.000000",
+      "expected_is_new": false
+    },
+    {
+      "name": "empty_created_dt_is_not_fresh",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_created_dt": "",
+      "expected_is_new": false
+    },
+    {
+      "name": "missing_created_dt_is_not_fresh",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_created_dt": null,
+      "expected_is_new": false
+    }
+  ]
+}

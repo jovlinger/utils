@@ -1,5 +1,6 @@
 {
   "AC": "Fast tests default; real embedder gated.",
+  "BaseSha": "632cd5f92905e42f6b7627f1f5648a9bc4067806",
   "Body": {
     "hash": [
       0.0,
@@ -142,7 +143,8 @@
   "Scope": {
     "branch": "faea8de9-test-embedder-suite",
     "git_url": "git@github.com:jovlinger/utils.git",
-    "path_from_root": "skills/projectmanagement/todos"
+    "path_from_root": "skills/projectmanagement/todos",
+    "path_to_project": "/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding"
   },
   "State": {
     "merged": {
@@ -284,5 +286,5 @@
   },
   "WorkItems": [],
   "create_dt": "2026-07-04T22:34:03Z",
-  "update_dt": "2026-07-05T03:06:58Z"
+  "update_dt": "2026-07-06T22:20:58Z"
 }

@@ -1,0 +1,15 @@
+{
+  "$tsl": "1.0",
+  "kind": "profile",
+  "zone_name": "office",
+  "backend": "pico2w",
+  "hardware_profile": "pico2w_aht20_ir",
+  "note": "Reference profile for conformance; Pico uses GP pins not ESP GPIO numbers.",
+  "gpio": {
+    "ir_tx": 10,
+    "aht20_sda": 28,
+    "aht20_scl": 27
+  },
+  "dhcp_hostname_pattern": "pico-{zone_name}",
+  "ir_protocol": "midea24_coolix"
+}

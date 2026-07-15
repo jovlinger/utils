@@ -1,0 +1,36 @@
+{
+  "$tsl": "1.0",
+  "kind": "manifest",
+  "name": "thermo-onboard-controller",
+  "description": "One true runtime spec for zone onboard fused controller (sensor POST + IR).",
+  "documents": [
+    {"path": "controller.tspec.json", "kind": "controller", "required": true},
+    {"path": "tsl-schema.tspec.json", "kind": "tsl_schema", "required": true},
+    {"path": "command_freshness.tspec.json", "kind": "command_freshness", "required": true},
+    {"path": "dmz/request.tspec.json", "kind": "dmz_request", "required": true},
+    {"path": "dmz/golden_cold_start.tspec.json", "kind": "dmz_golden", "required": true},
+    {"path": "dmz/golden_command_freshness.tspec.json", "kind": "dmz_golden", "required": true},
+    {"path": "auth/vectors.tspec.json", "kind": "auth_vectors", "required": true},
+    {"path": "ir/midea24_coolix.tspec.json", "kind": "ir_protocol", "required": true},
+    {"path": "profiles/esp32s3_office.tspec.json", "kind": "profile", "required": true},
+    {"path": "profiles/pico2w_office.tspec.json", "kind": "profile", "required": false}
+  ],
+  "translation_targets": [
+    {
+      "id": "esp32s3",
+      "language": "toit",
+      "jaguar_device": "esp32s3-office",
+      "jaguar_container": "thermo-esp32s3",
+      "profile": "profiles/esp32s3_office.tspec.json",
+      "implementer_instructions": "AGENT_IMPLEMENT_TOIT.md",
+      "grader_instructions": "AGENT_GRADE.md"
+    },
+    {
+      "id": "pico2w",
+      "language": "rust",
+      "profile": "profiles/pico2w_office.tspec.json",
+      "note": "Reference translation; must match TSL goldens."
+    }
+  ],
+  "reference_oracle_until_conformance_tests": "thermo/onboard/hardware/pico2w/src/"
+}
