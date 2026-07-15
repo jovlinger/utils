@@ -1,10 +1,14 @@
 """Web viewer for todo tickets: a labeled representation with a movable split.
 
-Above the split: the todo itself -- Id, Summary, Body, Work items (horizontal
-boxes), Subtodos (horizontal boxes). Clicking a work item shows its full commit
-message (below-fold left) and full diff (below-fold right) and highlights any
-subtodo it references. Clicking a subtodo highlights the work items that
-reference it and shows a read-only rendition of that subtodo below the fold.
+Above the split: the todo itself -- Id, Parent (horizontal boxes), Summary,
+Body, Work items (horizontal boxes), Subtodos (horizontal boxes). Every box has
+one click model: clicking the box opens the target in the fold below (a work
+item shows its commit message + diff; a subtodo or parent shows a read-only
+rendition), and clicking the box's underlined id/sha is a plain hyperlink (same
+window, or a new tab on cmd/ctrl/middle-click) that navigates to that todo's
+page (subtodo/parent) or the github commit (work item). A work-item box also
+highlights any subtodo it references, and a subtodo box highlights the work
+items that reference it.
 
 Opened with an ``?id=`` query the viewer shows that todo; opened bare it shows a
 search box over every discoverable todo (empty query lists them all). All
@@ -240,8 +244,13 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
 # --- HTML rendering --------------------------------------------------------
 
 
-def _wi_box(item: JsonDict, *, interactive: bool) -> str:
-    """Render one work-item box, clickable (interactive) or static."""
+def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
+    """Render one work-item box: the box opens the commit message/diff in the
+    fold, the underlined short sha is a plain hyperlink to the github commit.
+
+    *github* is the repo web URL base (empty when unknown); the sha link is only
+    rendered on interactive boxes that carry both a sha and a known github URL.
+    """
     classes = ["wi"]
     if not interactive:
         classes.append("static")
@@ -250,7 +259,13 @@ def _wi_box(item: JsonDict, *, interactive: bool) -> str:
     attrs = ""
     if interactive:
         attrs = f' data-idx="{item["idx"]}" data-subtodo="{html.escape(item["subtodo"])}"'
-    sha_html = f'<div class="wi-sha">{html.escape(item["short"])}</div>' if item["short"] else ""
+    if not item["short"]:
+        sha_html = ""
+    elif interactive and github and item["sha"]:
+        href = f'{html.escape(github)}/commit/{html.escape(item["sha"])}'
+        sha_html = f'<a class="wi-sha idlink" href="{href}">{html.escape(item["short"])}</a>'
+    else:
+        sha_html = f'<div class="wi-sha">{html.escape(item["short"])}</div>'
     mark = "[x]" if item["done"] else "[ ]"
     return (
         f'<div class="{" ".join(classes)}"{attrs}>'
@@ -262,20 +277,30 @@ def _wi_box(item: JsonDict, *, interactive: bool) -> str:
 
 
 def _st_box(sub: JsonDict, *, interactive: bool) -> str:
-    """Render one subtodo box, clickable (interactive) or static."""
+    """Render one subtodo box: the box opens the subtodo in the fold, the
+    underlined id is a plain hyperlink to that todo's own page."""
     classes = ["st"] if interactive else ["st", "static"]
-    attrs = f' data-st="{html.escape(sub["id"])}"' if interactive else ""
+    if interactive:
+        attrs = f' data-st="{html.escape(sub["id"])}"'
+        id_html = (
+            f'<a class="st-id mono idlink" href="/?id={html.escape(sub["id"])}">'
+            f'{html.escape(sub["short"] or "?")}</a>'
+        )
+    else:
+        attrs = ""
+        id_html = f'<div class="st-id mono">{html.escape(sub["short"] or "?")}</div>'
     return (
         f'<div class="{" ".join(classes)}"{attrs}>'
-        f'<div class="st-id mono">{html.escape(sub["short"] or "?")}</div>'
+        f"{id_html}"
         f'<div class="st-sum">{html.escape(sub["summary"] or "(no summary)")}</div>'
         f'<div class="st-state">{html.escape(sub["state"])}</div>'
         "</div>"
     )
 
 
-def _parents_view(todo: JsonDict) -> List[JsonDict]:
-    """Light per-parent dicts from the Parent field (a list of {Id, Branch})."""
+def _parents_view(root: Path, todo: JsonDict) -> List[JsonDict]:
+    """Per-parent dicts from the Parent field (a list of {Id, Branch}), each
+    carrying the loaded parent so the fold can show a read-only repr."""
     out: List[JsonDict] = []
     parents = todo.get("Parent")
     if isinstance(parents, dict):  # tolerate legacy single-parent shape
@@ -286,26 +311,54 @@ def _parents_view(todo: JsonDict) -> List[JsonDict]:
         if not isinstance(entry, dict):
             continue
         pid = str(entry.get("Id") or "")
-        if pid:
-            out.append({"id": pid, "short": pid[:8], "branch": str(entry.get("Branch") or "")})
+        if not pid:
+            continue
+        child = normalize_todo(load_child_ticket(root, entry))
+        out.append(
+            {
+                "id": pid,
+                "short": pid[:8],
+                "branch": str(entry.get("Branch") or ""),
+                "summary": _summary_text(child) or str(entry.get("Summary") or ""),
+                "state": _state_text(child),
+                "child": child,
+            }
+        )
     return out
 
 
+def _parent_box(p: JsonDict, *, interactive: bool) -> str:
+    """Render one parent box, mirroring a subtodo box: the box opens the parent
+    in the fold, the underlined id is a plain hyperlink to that todo's page."""
+    classes = ["st"] if interactive else ["st", "static"]
+    if interactive:
+        attrs = f' data-parent="{html.escape(p["id"])}"'
+        id_html = (
+            f'<a class="st-id mono idlink" href="/?id={html.escape(p["id"])}">'
+            f'{html.escape(p["short"] or "?")}</a>'
+        )
+    else:
+        attrs = ""
+        id_html = f'<div class="st-id mono">{html.escape(p["short"] or "?")}</div>'
+    branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
+    return (
+        f'<div class="{" ".join(classes)}"{attrs}>'
+        f"{id_html}"
+        f'<div class="st-sum">{html.escape(p["summary"] or "(no summary)")}</div>'
+        f'<div class="st-state">{html.escape(p["state"])}</div>'
+        f"{branch}"
+        "</div>"
+    )
+
+
 def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
-    """Render the parent links (clickable when interactive, plain text otherwise)."""
+    """Render the Parent section as boxes (same click model as subtodos)."""
     if not parents:
         return ""
-    chips: List[str] = []
-    for p in parents:
-        label = html.escape(p["short"])
-        branch = f' {html.escape(p["branch"])}' if p["branch"] else ""
-        if interactive:
-            chips.append(f'<a class="parent mono" href="/?id={html.escape(p["id"])}">{label}</a>{branch}')
-        else:
-            chips.append(f'<span class="parent mono">{label}</span>{branch}')
+    boxes = "".join(_parent_box(p, interactive=interactive) for p in parents)
     return (
         f'<section class="part"><h2>Parent</h2>'
-        f'<div class="row parents">{" ".join(chips)}</div></section>'
+        f'<div class="row">{boxes}</div></section>'
     )
 
 
@@ -342,16 +395,18 @@ def _sections_html(
     todo: JsonDict,
     witems: List[JsonDict],
     stodos: List[JsonDict],
+    parents: List[JsonDict],
     *,
     interactive: bool,
+    github: str = "",
 ) -> str:
     """Render the labeled todo representation: Id, Parent, Summary, Body, work
     items, subtodos, and remaining non-opaque fields."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
-    parents_html = _parents_html(_parents_view(todo), interactive=interactive)
-    wi_boxes = "".join(_wi_box(w, interactive=interactive) for w in witems)
+    parents_html = _parents_html(parents, interactive=interactive)
+    wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
     st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
@@ -370,22 +425,36 @@ def _sections_html(
     )
 
 
-def _static_repr_html(root: Path, child: JsonDict) -> str:
-    """Read-only rendition of a subtodo, mirroring the parent layout, no links."""
+def _static_repr_html(root: Path, child: JsonDict, github: str = "") -> str:
+    """Read-only rendition of a subtodo/parent, mirroring the layout, no links."""
     child = normalize_todo(child)
     witems = _workitems_view(child)
     stodos = _subtodos_view(root, child)
+    parents = _parents_view(root, child)
     return (
         '<div class="static-repr">'
-        f"{_sections_html(child, witems, stodos, interactive=False)}"
+        f"{_sections_html(child, witems, stodos, parents, interactive=False, github=github)}"
         "</div>"
     )
 
 
-def _page_data(root: Path, todo: JsonDict, witems: List[JsonDict], stodos: List[JsonDict]) -> JsonDict:
-    """Assemble the embedded JSON: per-work-item message/diff and per-subtodo repr HTML."""
-    github = github_repo_url(repo_origin(root))
-    data: JsonDict = {"id": str(todo.get("Id") or ""), "workitems": [], "subtodos": {}}
+def _page_data(
+    root: Path,
+    todo: JsonDict,
+    witems: List[JsonDict],
+    stodos: List[JsonDict],
+    parents: List[JsonDict],
+    github: Optional[str],
+) -> JsonDict:
+    """Assemble the embedded JSON: per-work-item message/diff and per-subtodo /
+    per-parent repr HTML."""
+    github = github or ""
+    data: JsonDict = {
+        "id": str(todo.get("Id") or ""),
+        "workitems": [],
+        "subtodos": {},
+        "parents": {},
+    }
     for w in witems:
         sha = w["sha"]
         data["workitems"].append(
@@ -400,7 +469,9 @@ def _page_data(root: Path, todo: JsonDict, witems: List[JsonDict], stodos: List[
             }
         )
     for s in stodos:
-        data["subtodos"][s["id"]] = {"reprHtml": _static_repr_html(root, s["child"])}
+        data["subtodos"][s["id"]] = {"reprHtml": _static_repr_html(root, s["child"], github)}
+    for p in parents:
+        data["parents"][p["id"]] = {"reprHtml": _static_repr_html(root, p["child"], github)}
     return data
 
 
@@ -449,6 +520,7 @@ _STYLE = """<style>
             color: #0969da; }
   .st { cursor: pointer; }
   .st-id { font-size: 12px; color: #0969da; }
+  a.idlink { text-decoration: underline; cursor: pointer; }
   .st-state { font-size: 11px; color: #57606a; }
   .wi.active, .st.active { border-color: #0969da; box-shadow: 0 0 0 2px #ddf4ff; }
   .wi.hi, .st.hi { border-color: #bf8700; box-shadow: 0 0 0 2px #fff8c5; }
@@ -496,7 +568,7 @@ document.querySelectorAll('#top .wi').forEach(function(el){
   });
 });
 
-document.querySelectorAll('#top .st').forEach(function(el){
+document.querySelectorAll('#top .st[data-st]').forEach(function(el){
   el.addEventListener('click', function(){
     clearHi(); el.classList.add('active');
     var id = el.getAttribute('data-st');
@@ -505,6 +577,22 @@ document.querySelectorAll('#top .st').forEach(function(el){
     fold.className = 'fold';
     fold.innerHTML = entry ? entry.reprHtml : '<p class="hint">No subtodo detail.</p>';
   });
+});
+
+document.querySelectorAll('#top .st[data-parent]').forEach(function(el){
+  el.addEventListener('click', function(){
+    clearHi(); el.classList.add('active');
+    var entry = (DATA.parents || {})[el.getAttribute('data-parent')];
+    fold.className = 'fold';
+    fold.innerHTML = entry ? entry.reprHtml : '<p class="hint">No parent detail.</p>';
+  });
+});
+
+// Clicking the underlined id/sha is a plain hyperlink: let the browser open it
+// (same window, or a new tab on cmd/ctrl/middle-click) without also swapping
+// the fold via the enclosing box's click handler.
+document.querySelectorAll('#top .idlink').forEach(function(a){
+  a.addEventListener('click', function(e){ e.stopPropagation(); });
 });
 
 var dragging = false;
@@ -526,8 +614,12 @@ def render_todo_page(root: Path, todo: JsonDict) -> str:
     _debug(f"render_todo_page id={tid[:8]}", phase="render")
     witems = _workitems_view(todo)
     stodos = _subtodos_view(root, todo)
-    data = _page_data(root, todo, witems, stodos)
-    top_html = _sections_html(todo, witems, stodos, interactive=True)
+    parents = _parents_view(root, todo)
+    github = github_repo_url(repo_origin(root))
+    data = _page_data(root, todo, witems, stodos, parents, github)
+    top_html = _sections_html(
+        todo, witems, stodos, parents, interactive=True, github=github or ""
+    )
     title = html.escape(_summary_text(todo) or "todo")
     script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data))
     page = f"""<!doctype html>
