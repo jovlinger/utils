@@ -1,0 +1,33 @@
+{
+  "$tsl": "1.0",
+  "kind": "dmz_request",
+  "method": "POST",
+  "path_template": "/zone/{zone_name}/sensors",
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Zone-Signature": {
+      "encoding": "base64_standard",
+      "not_url_safe": true,
+      "signature_byte_length": 64,
+      "encoded_length": 88
+    },
+    "X-Zone-Timestamp": {
+      "format": "unix_epoch_seconds_string"
+    },
+    "X-Zone-Name": {
+      "value": "{zone_name}"
+    }
+  },
+  "signing": {
+    "algorithm": "ed25519",
+    "payload_template": "{method}\\n{path}\\n{epoch_seconds}\\n{body_sha256_hex_lowercase}",
+    "body_hash": "sha256_hex_lowercase",
+    "key_formats_accepted": ["raw_32_byte_seed", "pkcs8_der_with_0x0420_prefix"]
+  },
+  "response_parse": {
+    "command_path": "command",
+    "created_dt_path": "command.created_dt",
+    "command_json_extraction": "full_command_object_when_starts_with_brace",
+    "server_time_utc_path": "server_time_utc"
+  }
+}

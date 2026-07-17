@@ -12,10 +12,10 @@ make binlinks
 
 | command | target |
 |---------|--------|
-| `ingest` | `shadup/ingest.sh` — album ingest with rw/ro remount |
-| `postingest` | `shadup/postingest` — metadata scan, tag import, and tag mirror refresh |
-| `shadup` | `shadup/shadup` — content-addressed store CLI |
-| `importtags` | `shadup/importtags` — import metatool sidecar tags into shadup DB |
-| `todo` | `skills/projectmanagement/todos/todo.py` — branch-bound todo ticket CLI |
+| `ingest` | `shadup/ingest.sh` -- album ingest with rw/ro remount |
+| `postingest` | `shadup/postingest` -- metadata scan, tag import, and tag mirror refresh |
+| `shadup` | `shadup/shadup` -- content-addressed store CLI |
+| `importtags` | `shadup/importtags` -- import metatool sidecar tags into shadup DB |
+| `todo` | `skills/projectmanagement/todos/todo.py` -- branch-bound todo ticket CLI |
 
-Do not symlink `ingest.py` here; `ingest` runs the shell wrapper only.
+Agent notes (e.g. do not symlink `ingest.py`): [`AGENTS.md`](AGENTS.md).

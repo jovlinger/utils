@@ -19,3 +19,11 @@ hardware/*/install/.deploy-metadata.env
 .pytest_cache/
 hardware/*/target/
 
+# Discarded/superseded hardware implementations kept locally for reference only.
+hardware/*/OBSOLETE/
+
+# Custom Toit envelope build tree (submodule + local artifacts).
+hardware/esp32s3/envelope/toit/
+hardware/esp32s3/envelope/build/
+hardware/esp32s3/envelope/out/
+

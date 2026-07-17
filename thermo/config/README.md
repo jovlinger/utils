@@ -2,36 +2,14 @@
 
 Use **committed room env files** (`*.env`) for deploy specs and **templates** (`*.env.sample`) for examples. Put secrets and private local overrides under `thermo/priv/`.
 
+How agents must select env files (`THERMO_ENV_FILE`, not `ENV`) and deploy shortcuts:
+[`AGENTS.md`](AGENTS.md).
+
 ## Selecting a file: `THERMO_ENV_FILE`
 
 Set **`THERMO_ENV_FILE`** to a path **relative to `thermo/`** or an absolute path. The shared loader is `source-thermo-env.sh` (sourced by deploy scripts and `thermo/test/Makefile`).
 
 We use **`THERMO_ENV_FILE`**, not `ENV`, because **`ENV` is already the app runtime** (Flask / tests: `DOCKERTEST`, `TEST`, ...).
-
-Examples:
-
-```bash
-# Host pytest (defaults in repo)
-export THERMO_ENV_FILE=config/test.env.sample
-make -C thermo/test test-local
-
-# Deploy an onboard room target
-make -C thermo/onboard/zones/kitchen deploy
-```
-
-Hardware-local deploy shortcuts are also available:
-
-```bash
-cd thermo/onboard/hardware/pico2w
-./deploy.sh office-pico2w.env
-
-cd thermo/onboard/hardware/pizero2w
-./deploy.sh kitchen.env
-```
-
-The Pico2W shortcut flashes and requires the board in BOOTSEL mode. The Pi Zero
-2 W shortcut reads `ONBOARD_DEPLOY_HOST`; it SSHes when run from another machine
-and deploys locally when already on the target host.
 
 Multiple units in one house: keep **`config/kitchen.env`**, **`config/bedroom.env`**, each with its own `ZONE_NAME`, deploy backend, destination host, and runtime overrides; pick the file when deploying that room.
 

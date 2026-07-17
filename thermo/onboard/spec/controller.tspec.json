@@ -1,0 +1,51 @@
+{
+  "$tsl": "1.0",
+  "kind": "controller",
+  "name": "fused_onboard_controller",
+  "description": "Single loop: NTP -> read sensor -> build POST -> sign -> long-poll DMZ -> parse command -> maybe IR -> repeat.",
+  "startup": {
+    "require_ntp_before_first_post": true,
+    "min_acceptable_year": 2024,
+    "sensor_boot_required_default": false,
+    "sensor_fallback_celsius": 21.0,
+    "sensor_fallback_humidity_percent": 50.0
+  },
+  "poll_loop": {
+    "post_timeout_seconds": 600,
+    "network_error_backoff_seconds": 5,
+    "last_applied_created_dt_initial": "",
+    "command_freshness": {
+      "rule": "lexicographic_strict",
+      "description": "Apply command only if response.command.created_dt is non-empty and strictly greater than last_applied_created_dt (string compare, ISO-8601 shaped).",
+      "empty_created_dt": "ignore",
+      "null_command": "ignore"
+    },
+    "body_rules": {
+      "cold_start_omit_command_field": true,
+      "after_ir_include_command_echo": true,
+      "sensor_decimals": 1,
+      "optional_fields": ["network", "logs"],
+      "required_fields_cold_start": ["sensors", "deployment"]
+    }
+  },
+  "on_ir_command_applied": {
+    "transmit_protocol_frames": true,
+    "update_last_applied_created_dt": true,
+    "next_post_includes_command_json": true
+  },
+  "status_led_semantics": {
+    "optional": true,
+    "patterns": {
+      "poll_start": 1,
+      "before_ir_send": 2,
+      "startup_config": 3,
+      "error": 4
+    },
+    "log_only_allowed": true
+  },
+  "local_http": {
+    "optional": true,
+    "port": 5000,
+    "endpoints": ["/healthz", "/logs"]
+  }
+}

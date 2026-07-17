@@ -4,20 +4,8 @@
 
 ---
 
-## Development setup (Python)
-
-Per repo convention (see [utils/README.md](../README.md)): each util sub-project has its own virtualenv in an `env` directory, git-ignored. For esp32 (e.g. volctrl):
-
-```bash
-cd esp32
-python3 -m venv env
-echo env >> .gitignore   # if not already ignored
-source env/bin/activate
-pip install volctrl/requirements.txt
-python -m volctrl discover
-```
-
----
+Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
+root [`AGENTS.md`](../AGENTS.md)).
 
 ## Progress summary
 
@@ -61,9 +49,6 @@ python -m volctrl discover
 
 - **Q: Development methodology — attach and iterate?**  
   **A:** Yes. Connect via Type-C USB; no simulator. Use Arduino IDE or ESP-IDF (VS Code/CLion). Board appears as COM/serial port; flash with esptool or IDE upload.
-
-- **Q: Easiest way to incorporate Cursor (AI coding agent) into the iteration cycle? CLI tools?**  
-  **A:** Work in Cursor with the ESP32 repo open: edit code, ask Cursor to run build/flash/monitor (PlatformIO CLI or `pio run -t upload && pio device monitor`). Cursor can trigger terminal commands (with your approval). No separate “Cursor CLI” for the agent; the loop is: edit in Cursor → run `pio run -t upload` (or Arduino/IDF equivalent) in the integrated terminal → test on device → repeat. Add a rule or short doc in the repo (e.g. “run `pio run -t upload` to flash”) so the agent knows the exact commands.
 
 - **Q: How to attach / upload?**  
   **A:** Type-C plug **orientation** selects which MCU is connected (CH445P switch): one way = ESP32-S3, other = ESP32. For ESP32-S3: hold **BOOT**, power on to enter download mode, then flash. Flashing: esptool (`esptool.py --chip esp32s3 --port COMx write_flash 0x0 firmware.bin`) or Arduino/PlatformIO/ESP-IDF flash button.

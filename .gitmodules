@@ -1,0 +1,4 @@
+[submodule "thermo/onboard/hardware/esp32s3/envelope"]
+	path = thermo/onboard/hardware/esp32s3/envelope
+	url = ../thermo-esp32s3-envelope
+	branch = main
