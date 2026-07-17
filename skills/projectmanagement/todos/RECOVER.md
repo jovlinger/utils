@@ -68,7 +68,7 @@ finds back into the record instead of only displaying them.
 - **This is the sanctioned exception to "done items are immutable history."**
   Recovery repairs the done prefix on purpose. Everywhere else, leave done items
   alone.
-- **Route every write through `todo.py`** (`set-json-path`, `set-state`). Do not
+- **Route every write through `todo.py`** (`set-json-path`, `set --state`). Do not
   hand-edit `TODO.json`, sqlite, or git objects. Reads that must inspect real
   commits use raw `git` (that is what this runbook does); the ticket itself is
   still only touched via the CLI.

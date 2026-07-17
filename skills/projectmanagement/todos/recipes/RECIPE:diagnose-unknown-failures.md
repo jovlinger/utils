@@ -45,7 +45,7 @@ Then the normal todo loop runs itself out:
    `git merge`, the fixes never reach the parent branch even though the graph shows
    `merged`. Order the merges to avoid conflicts on any shared file.
 7. Record the real code-landing (`work-item-add` + `work-item-done` so the last
-   work item's sha == branch HEAD, invariant #6), then `todo.py set-state done
+   work item's sha == branch HEAD, invariant #6), then `todo.py set --state done
    --actual-summary=...`.
 
 # Mechanics notes (validated against todo.py)
@@ -69,7 +69,7 @@ Then the normal todo loop runs itself out:
 - **Cross-subtodo communication (note-to-parent):** a subtodo that COMPLETES but has
   a soft concern (impedance, a shared-file warning, "I lacked context about the
   user's motivations", a design call it made anyway) does NOT halt with
-  `userneeded`. It finishes and appends the concern to its `set-state done
+  `userneeded`. It finishes and appends the concern to its `set --state done
   --actual-summary` as a trailing `# note-to-parent: ...` section; `merge-subtodo`
   reuses ActualSummary as the merge message, so the note surfaces to the parent
   there. Reserve `userneeded`/`stopped` for HARD blocks only. (Codify a dedicated
@@ -87,7 +87,7 @@ Then the normal todo loop runs itself out:
 cd <repo>                      # todo.py takes repo from $(gitroot); no --repo flag
 todo.py init --summary="Diagnose <batch>" --body="<whole raw failure dump>" --ac="..."
 todo.py work-item-add --summary="DiagnoseAndSpawn: cluster failures, spawn a subtodo per issue, wait-and-merge"
-todo.py set-state working
+todo.py set --state working
 # --- work DiagnoseAndSpawn ---
 todo.py work-item-add --summary="Fix: <issue 1>"      # one per distinct issue
 todo.py work-item-add --summary="Fix: <issue N>"
@@ -97,5 +97,5 @@ todo.py work-item-done -m "diagnosed N issues; queued subtodos + barrier"
 todo.py add-subtodo --summary="Fix: <issue 1>"        # -> child branch; launch a subagent on it
 ...                                                    # repeat to issue N
 todo.py wait-and-merge <child-id-1> ... <child-id-N>  # barrier: poll to done, merge each
-todo.py set-state done --actual-summary="..."
+todo.py set --state done --actual-summary="..."
 ```

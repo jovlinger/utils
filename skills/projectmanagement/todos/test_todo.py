@@ -131,6 +131,69 @@ class MintTests(TodoCase):
             shutil.rmtree(nongit, ignore_errors=True)
 
 
+class MintSetInitFlowTests(TodoCase):
+    """The two-phase flow: mint (pre-init) -> set --id -> init (promote)."""
+
+    def _branch_exists(self, name: str) -> bool:
+        return bool(self._git("branch", "--list", name).stdout.strip())
+
+    def _read_id(self, tid: str) -> Dict[str, Any]:
+        proc = self.todo("read", tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_mint_creates_pre_init_record(self) -> None:
+        tid = self.mint()
+        rec = self._read_id(tid)
+        self.assertEqual(list(rec["State"].keys()), ["pre-init"])
+        self.assertEqual(rec["Branch"], tid[:8])  # placeholder until set
+        # mint must not create a git branch
+        self.assertFalse(self._branch_exists(tid[:8]))
+
+    def test_set_by_id_fills_fields_and_finalizes_branch(self) -> None:
+        tid = self.mint()
+        proc = self.todo("set", "--id", tid, "--summary", "persist the local db")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rec = self._read_id(tid)
+        self.assertEqual(rec["Summary"]["raw"], "persist the local db")
+        self.assertEqual(list(rec["State"].keys()), ["pre-init"])  # still collecting
+        self.assertTrue(rec["Branch"].startswith(f"{tid[:8]}-"))
+        self.assertIn("persist", rec["Branch"])
+        # set --id must not create a git branch (sqlite-only)
+        self.assertFalse(self._branch_exists(rec["Branch"]))
+
+    def test_init_promotes_pre_init_to_branch(self) -> None:
+        # An initial commit so the parent branch is born (--stay-on-parent can
+        # check it back out). Real repos always have history here.
+        self._git("commit", "--allow-empty", "-qm", "root")
+        tid = self.mint()
+        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        branch = self._read_id(tid)["Branch"]
+        proc = self.todo("init", "--id", tid, "--stay-on-parent")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self._branch_exists(branch))
+        rec = self._read_id(tid)
+        self.assertEqual(list(rec["State"].keys()), ["init"])
+        self.assertEqual(rec["Branch"], branch)
+
+    def test_init_fresh_create_still_works(self) -> None:
+        proc = self.todo("init", "--summary", "one shot fresh todo")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertTrue(self._branch_exists(out["Branch"]))
+        self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["init"])
+
+    def test_ensure_worktree_is_stub(self) -> None:
+        tid = self.mint()
+        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        proc = self.todo("ensure_worktree", tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertFalse(out["created"])
+        self.assertTrue(out["stub"])
+        self.assertIn("worktrees", out["worktree"])
+
+
 class ReadTests(TodoCase):
     def test_read_committed_by_8hex_prefix(self) -> None:
         tid = self.mint()
@@ -183,13 +246,15 @@ class ReadTests(TodoCase):
         keys = list(elided.keys())
         self.assertEqual(keys[:3], ["Id", "Summary", "Body"])
         self.assertEqual(keys[-1], "WorkItems")
-        # Embedding vector under Summary is elided to [first, last].
-        self.assertEqual(len(elided["Summary"]["hash"]), 2)
+        # Embedding under Summary is a list-of-arrays (one vector per chunk);
+        # each chunk vector is elided to its first two elements.
+        self.assertEqual(len(elided["Summary"]["hash"]), 1)
+        self.assertEqual(len(elided["Summary"]["hash"][0]), 2)
 
         proc = self.todo("read", "self", "-v")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         full = json.loads(proc.stdout)
-        self.assertGreater(len(full["Summary"]["hash"]), 2)
+        self.assertGreater(len(full["Summary"]["hash"][0]), 2)
 
     def test_longer_prefix_disambiguates(self) -> None:
         self.write_ticket("abcd0001-a", "abcd0001" + "f" * 56)
@@ -277,6 +342,53 @@ class InitTests(TodoCase):
         proc2 = self.todo("init", "--summary=Two")
         self.assertEqual(proc2.returncode, 1)
         self.assertIn("already exists", proc2.stderr)
+
+    def test_init_then_set_state_in_one_call(self) -> None:
+        """init accepts set's args and applies them; --state lands post-init."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        proc = self.todo("init", "--summary=Groom me", "--state=pre")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
+        self.assertEqual(ticket["State"], {"pre": {}})
+
+    def test_init_noninteractive_EDIT_creates_nothing(self) -> None:
+        """A non-tty EDIT value aborts with exit 1 and leaves no todo/branch."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        head_before = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        proc = self.todo("init", "--summary=EDIT")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("interactive terminal", proc.stderr)
+        # no branch switched to / created, no ticket in the store
+        self.assertEqual(
+            self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), head_before
+        )
+        self.assertEqual(self.todo("ls").stdout.strip(), "")
+
+
+class SetStateViaSetTests(TodoCase):
+    def test_set_state_flag_replaces_set_state_subcommand(self) -> None:
+        """`set --state` transitions State; the old `set-state` subcommand is gone."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        branch = json.loads(self.todo("init", "--summary=Do it").stdout)["Branch"]
+        self._git("checkout", "-q", branch)
+        proc = self.todo("set", "--state", "working", "--owner=agent")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["State"], {"working": {"owner": "agent"}})
+        # the removed subcommand must not resolve anymore
+        gone = self.todo("set-state", "done")
+        self.assertNotEqual(gone.returncode, 0)
+
+
+class RmTests(TodoCase):
+    def test_rm_soft_deletes_from_store(self) -> None:
+        """`todo rm` tombstones the todo; it is no longer readable by id."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        payload = json.loads(self.todo("init", "--summary=Delete me").stdout)
+        tid = payload["Id"]
+        rm = self.todo("rm", tid[:8])
+        self.assertEqual(rm.returncode, 0, rm.stderr)
+        self.assertIn("removed: soft", rm.stdout)
+        self.assertNotEqual(self.todo("read", tid[:8]).returncode, 0)
 
 
 class AddSubtodoTests(TodoCase):
@@ -450,7 +562,7 @@ class StateTests(TodoCase):
     def test_set_state_done_then_merged(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
-        proc = self.todo("set-state", "done", "--last-commit=finish child")
+        proc = self.todo("set", "--state", "done", "--last-commit=finish child")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -459,7 +571,7 @@ class StateTests(TodoCase):
             {"done": {"last_commit": "finish child"}},
         )
 
-        proc3 = self.todo("set-state", "merged", "--merged-into=parent-branch")
+        proc3 = self.todo("set", "--state", "merged", "--merged-into=parent-branch")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
         proc4 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc4.returncode, 0, proc4.stderr)
@@ -472,7 +584,7 @@ class StateTests(TodoCase):
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
         proc = self.todo(
-            "set-state", "done", "--actual-summary=rewrote the parser instead of patching it"
+            "set", "--state", "done", "--actual-summary=rewrote the parser instead of patching it"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         got = self.todo("get-json-path", "self", "ActualSummary")
@@ -487,7 +599,7 @@ class WaitTests(TodoCase):
     def test_wait_for_done_succeeds_immediately(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-done", tid)
-        proc = self.todo("set-state", "done")
+        proc = self.todo("set", "--state", "done")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("wait-for", tid[:8], "--timeout=0", "--interval=0")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -526,7 +638,7 @@ class WaitTests(TodoCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self._git("checkout", f"{child_id[:8]}-child")
-        proc2 = self.todo("set-state", "done")
+        proc2 = self.todo("set", "--state", "done")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self._git("checkout", "parent-branch")
 
@@ -555,7 +667,7 @@ class WaitTests(TodoCase):
         self.assertEqual(add.returncode, 0, add.stderr)
         self._git("checkout", f"{child_id[:8]}-child")
         # child finishes and records how it actually panned out
-        done = self.todo("set-state", "done", "--actual-summary=actually landed via a rewrite")
+        done = self.todo("set", "--state", "done", "--actual-summary=actually landed via a rewrite")
         self.assertEqual(done.returncode, 0, done.stderr)
         self._git("checkout", parent_branch)
 
@@ -810,6 +922,18 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("mock", {emb for _t, _f, emb in self._emb_rows()})
 
+    def test_read_shows_expensive_embedder_backfilled_by_search(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
+        before = json.loads(self.todo("read", tid[:8]).stdout)
+        self.assertNotIn("mock", before["Summary"])
+        proc = self.todo("search", "alpha", "--embedder", "mock")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # mock is written only to the sqlite index (never inline at save time);
+        # read must merge it in from there, elided like any other embedder.
+        after = json.loads(self.todo("read", tid[:8]).stdout)
+        self.assertEqual(len(after["Summary"]["mock"][0]), 2)
+
     def test_search_unknown_embedder_errors(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha")
@@ -868,7 +992,7 @@ class ParentPromptTests(TodoCase):
         self._git("checkout", base)
         self._init("child", body="task", parents=[parent_id[:8]])
         self._git("checkout", f"{parent_id[:8]}-parent")
-        self.assertEqual(self.todo("set-state", "done").returncode, 0)
+        self.assertEqual(self.todo("set", "--state", "done").returncode, 0)
         doc = self.todo("doctor", "self")
         self.assertEqual(doc.returncode, 0, doc.stdout)
         self.assertTrue(json.loads(doc.stdout)["ok"])
@@ -1134,7 +1258,7 @@ class ReadFormattingUnitTests(unittest.TestCase):
         self.assertEqual(list(ordered["Summary"].keys()), ["raw", "hash"])
 
     def test_elide_shortens_numeric_vectors(self) -> None:
-        self.assertEqual(todo.elide_embedding_vectors([0.1, 0.2, 0.3, 0.9]), [0.1, 0.9])
+        self.assertEqual(todo.elide_embedding_vectors([0.1, 0.2, 0.3, 0.9]), [0.1, 0.2])
 
     def test_elide_leaves_short_and_non_numeric_lists(self) -> None:
         self.assertEqual(todo.elide_embedding_vectors([1, 2]), [1, 2])
@@ -1144,7 +1268,7 @@ class ReadFormattingUnitTests(unittest.TestCase):
     def test_elide_recurses_into_nested_dicts(self) -> None:
         self.assertEqual(
             todo.elide_embedding_vectors({"Summary": {"raw": "s", "hash": [1, 2, 3, 4]}}),
-            {"Summary": {"raw": "s", "hash": [1, 4]}},
+            {"Summary": {"raw": "s", "hash": [1, 2]}},
         )
 
 
@@ -1225,7 +1349,7 @@ class WorkItemModelUnitTests(unittest.TestCase):
         done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
         nxt = todo.next_action(done_todo)
         self.assertEqual(nxt["action"], "finish")
-        self.assertIn("set-state done", nxt["command"])
+        self.assertIn("set --state done", nxt["command"])
         self.assertIn("actual-summary", nxt["command"])
 
     def test_next_action_defaults_plain_task_to_work_item_done(self) -> None:

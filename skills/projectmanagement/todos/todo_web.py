@@ -246,7 +246,10 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
 
 def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     """Render one work-item box: the box opens the commit message/diff in the
-    fold, the underlined short sha is a plain hyperlink to the github commit.
+    fold. Any git sha is shown as ``sha:<short>`` (a github hyperlink on
+    interactive boxes) and any referenced subtodo as ``todo:<short>`` (a
+    hyperlink to that todo's page) -- start_subtodo carries only the todo,
+    merge_subtodo carries both, so the labels keep the two hex ids apart.
 
     *github* is the repo web URL base (empty when unknown); the sha link is only
     rendered on interactive boxes that carry both a sha and a known github URL.
@@ -259,19 +262,30 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     attrs = ""
     if interactive:
         attrs = f' data-idx="{item["idx"]}" data-subtodo="{html.escape(item["subtodo"])}"'
+    if not item["subtodo"]:
+        todo_html = ""
+    elif interactive:
+        todo_html = (
+            f'<a class="wi-sub mono idlink" href="/?id={html.escape(item["subtodo"])}">'
+            f'todo:{html.escape(item["subtodo"][:8])}</a>'
+        )
+    else:
+        todo_html = f'<div class="wi-sub mono">todo:{html.escape(item["subtodo"][:8])}</div>'
     if not item["short"]:
         sha_html = ""
     elif interactive and github and item["sha"]:
         href = f'{html.escape(github)}/commit/{html.escape(item["sha"])}'
-        sha_html = f'<a class="wi-sha idlink" href="{href}">{html.escape(item["short"])}</a>'
+        sha_html = f'<a class="wi-sha idlink" href="{href}">sha:{html.escape(item["short"])}</a>'
     else:
-        sha_html = f'<div class="wi-sha">{html.escape(item["short"])}</div>'
+        sha_html = f'<div class="wi-sha">sha:{html.escape(item["short"])}</div>'
+    # merge_subtodo carries both; the inline anchors would otherwise abut.
+    sep = "&nbsp;&nbsp;" if todo_html and sha_html else ""
     mark = "[x]" if item["done"] else "[ ]"
     return (
         f'<div class="{" ".join(classes)}"{attrs}>'
         f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
         f'<div class="wi-sum">{html.escape(item["summary"] or "(no summary)")}</div>'
-        f"{sha_html}"
+        f"{todo_html}{sep}{sha_html}"
         "</div>"
     )
 
@@ -284,11 +298,11 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
         attrs = f' data-st="{html.escape(sub["id"])}"'
         id_html = (
             f'<a class="st-id mono idlink" href="/?id={html.escape(sub["id"])}">'
-            f'{html.escape(sub["short"] or "?")}</a>'
+            f'todo:{html.escape(sub["short"] or "?")}</a>'
         )
     else:
         attrs = ""
-        id_html = f'<div class="st-id mono">{html.escape(sub["short"] or "?")}</div>'
+        id_html = f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
     return (
         f'<div class="{" ".join(classes)}"{attrs}>'
         f"{id_html}"
@@ -335,11 +349,11 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
         attrs = f' data-parent="{html.escape(p["id"])}"'
         id_html = (
             f'<a class="st-id mono idlink" href="/?id={html.escape(p["id"])}">'
-            f'{html.escape(p["short"] or "?")}</a>'
+            f'todo:{html.escape(p["short"] or "?")}</a>'
         )
     else:
         attrs = ""
-        id_html = f'<div class="st-id mono">{html.escape(p["short"] or "?")}</div>'
+        id_html = f'<div class="st-id mono">todo:{html.escape(p["short"] or "?")}</div>'
     branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
     return (
         f'<div class="{" ".join(classes)}"{attrs}>'
@@ -496,6 +510,8 @@ _STYLE = """<style>
   header .title { font-weight: 700; }
   header .meta { color: #57606a; font-size: 12px; overflow-wrap: anywhere; }
   #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; }
+  /* Search page has no fold/preview: results fill below the header and scroll here. */
+  body.search #top { height: auto; flex: 1 1 auto; }
   #divider { flex: 0 0 auto; height: 7px; background: #d8dee4; cursor: row-resize; }
   #divider:hover { background: #8c959f; }
   #fold { flex: 1 1 auto; overflow: auto; padding: 12px 16px; background: #fff; }
@@ -518,6 +534,7 @@ _STYLE = """<style>
   .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
   .wi-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
             color: #0969da; }
+  .wi-sub { font-size: 12px; color: #0969da; }
   .st { cursor: pointer; }
   .st-id { font-size: 12px; color: #0969da; }
   a.idlink { text-decoration: underline; cursor: pointer; }
@@ -559,7 +576,7 @@ document.querySelectorAll('#top .wi').forEach(function(el){
       document.querySelectorAll('#top .st[data-st="'+sub+'"]').forEach(function(s){ s.classList.add('hi'); });
     }
     var wi = DATA.workitems[parseInt(el.getAttribute('data-idx'), 10)] || {};
-    var head = esc(wi.short || wi.kind || 'work item');
+    var head = wi.short ? ('sha:'+esc(wi.short)) : esc(wi.kind || 'work item');
     if (wi.github) { head = '<a href="'+wi.github+'">'+head+'</a>'; }
     fold.className = 'fold split-fold';
     fold.innerHTML =
@@ -632,7 +649,7 @@ def render_todo_page(root: Path, todo: JsonDict) -> str:
 <body>
   <header>
     <div class="title">{title}</div>
-    <div class="meta mono">{html.escape(tid)} &middot; {html.escape(str(root))}</div>
+    <div class="meta mono">todo:{html.escape(tid)} &middot; {html.escape(str(root))}</div>
   </header>
   <div id="top">{top_html}</div>
   <div id="divider"></div>
@@ -655,7 +672,7 @@ const q = document.getElementById('q');
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function row(t){
   return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
-         '<span class="mono">'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+'</a> ' +
+         '<span class="mono">todo:'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+'</a> ' +
          '<span class="r-utime">'+esc(t.utime)+'</span> <span class="r-state">'+esc(t.state)+'</span></li>';
 }
 function paint(rows){ results.innerHTML = rows.length ? rows.map(row).join('') : '<li class="hint">no matches</li>'; }
@@ -687,7 +704,7 @@ def render_search_page(root: Path, rows: List[JsonDict]) -> str:
   <title>todos</title>
   {_STYLE}
 </head>
-<body>
+<body class="search">
   <header><div class="title">Todos</div>
     <div class="meta">{html.escape(str(root))} &middot; vector search &middot; {len(rows)} todos</div>
   </header>
