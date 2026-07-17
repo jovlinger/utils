@@ -1,5 +1,7 @@
 {
   "AC": "tag command prints {embedder:{tag:score}} top-k per embedder, recomputed each run; candidate domain = 1/2/3-grams mined from corpus; per-embedder cosine top-k; tags not persisted durably; refresh fn shared by search and tag; tests cover mining, per-embedder top-k, non-persistence",
+  "ActualSummary": "Shipped `tag`: zero-shot semantic tagging, printing {embedder: {tag: score}},\ntop-k per embedder (-k, default 3), recomputed each run, never persisted.\nCandidate domain = 1/2/3 n-phrases mined corpus-wide, so a todo can get a\nphrase it never uses. Added n-phrase chunking (one vector per window) to the\nembed write path. Extracted shared _refresh_embeddings/_load_corpus/\n_resolve_embedders and made them read corpus + vectors through the store\n(inline vectors, backend-agnostic), so search AND tag now work on the\nJSON-directory backend, not just sqlite. Wired doctor to refresh corpus\nembeddings (backfill-empty, trust-existing, tolerant of an unavailable\nbackend). 150 tests pass, including JSON-backend tag and doctor-refresh\ncoverage. Kept it simple per the plan: no hubness correction, no linguistic\npruning (noted as future work).",
+  "BaseSha": "8337e085e1bc0b27f818739cfc500e3185152f7e",
   "Body": {
     "hash": [
       [
@@ -142,7 +144,7 @@
     "git_url": "https://github.com/jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -279,6 +281,71 @@
     ],
     "raw": "Zero-shot semantic tagging: top-level tags field {embedder:{tag:score}}"
   },
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): lock end test for zero-shot tag command (WI1)",
+      "sha": "7c0febd9a2dd23a1a535061ba7a2123c12631538",
+      "summary": "END TEST: tag command emits {embedder:{tag:score}} top-k per embedder over a seeded corpus (skip until impl)"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): n-phrase splitter (phrases + 1..3 windows) (WI2)",
+      "sha": "c86482a44f50f3f8670ad47dc197d4a4a237f6dd",
+      "summary": "n-phrase splitter: split raw into phrases (sentence/heading/blank-line separators) + 1,2,3 n-phrase windows; unit tests"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): embed one vector per n-phrase window (chunking) (WI3)",
+      "sha": "13618d57167000b6c42ae338abf4f93752115cd6",
+      "summary": "chunk embed write path: store per-nphrase-window chunk vectors (replace whole-field single chunk) in cheap-embed + search backfill; test"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "refactor(todo): extract shared _refresh_embeddings/_load_corpus/_resolve_embedders (WI4)",
+      "sha": "968803edb597e39c6e0b0a36649b88ddc26fb9bf",
+      "summary": "extract shared refresh_embeddings(); search uses it; recompute only empty vectors; unit test"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): mine 1..3 n-phrase tag candidates from corpus (WI5)",
+      "sha": "4377b85dd871f1cdc5ca5fd62e6326f68ea642ab",
+      "summary": "candidate mining: union of 1,2,3 n-phrases across corpus (Summary+Body), deduped, no pruning; unit test"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): tagging core (per-embedder chunk-max cosine top-k) (WI6)",
+      "sha": "c6e8821af11e2678f89583e88407c5f59b59eb6c",
+      "summary": "tagging core: per embedder embed candidates, chunk-max cosine vs each todo, top-k; ephemeral tags {embedder:{tag:score}}; unit test"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): add tag command (zero-shot semantic tags, top-k per embedder) (WI7)",
+      "sha": "d97acf573b41a4fa088629829d4e1fde470c0603",
+      "summary": "tag CLI command (selector, --embedder default all, -k=3) -> refresh + tag, print; not persisted; end test passes"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "refactor(todo): read corpus+vectors through the store (inline, backend-agnostic); search+tag work on JSON backend (WI8)",
+      "sha": "0717349ed9f51a843e3f48dede0054e2863ac5d6",
+      "summary": "store-abstract corpus/refresh: read via store.list_all() + inline vectors (assemble same todo dict on any backend); backfill persists inline via store.put; search+tag both work on JSON backend; JSON-backend tag test; adjust index-detail search test"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): doctor refreshes corpus embeddings (backfill-empty, tolerant); SKILL docs (WI8)",
+      "sha": "b383d078513469fd87275f0366ea72b188a573c5",
+      "summary": "doctor wiring for tag/refresh; SKILL.md command-table + embedders docs; tests"
+    }
+  ],
   "create_dt": "2026-07-17T15:41:17Z",
-  "update_dt": "2026-07-17T15:42:01Z"
+  "update_dt": "2026-07-17T19:10:36Z"
 }
