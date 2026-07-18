@@ -291,8 +291,10 @@
       "summary": "Survey FLAC tree + cue/spec/meta sources; draft skill outline"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Ship SKILL.md body for correct-flac-names (rules + workflow).\n\nCovers P0 sanitize table, gather/resolve/rename loop, shadup _tags refresh,\nand pointers into musicology + shadup sanitize helpers.",
+      "sha": "345954b24d0a39107df65936dd1ac7fbd35ce3d6",
       "summary": "Write skills/.../SKILL.md with VFAT/Samba rules, conflict resolution, genre conventions"
     },
     {
