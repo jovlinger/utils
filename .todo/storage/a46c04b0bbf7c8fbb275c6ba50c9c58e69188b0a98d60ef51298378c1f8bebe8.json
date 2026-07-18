@@ -340,11 +340,18 @@
       "summary": "Example: Pogues best-ofs \u2014 strip misplaced VA"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Homogeneous dirs strip leading The; musicscan retries with/without The.\n\nSkill: never The / , The in dirname artist; catalog name stays in .meta.*.\nmusicology (sibling bin): artist_lookup_variants + scan retry; Pogues/Pixies examples updated.",
+      "sha": "f786db45088a470ba879890af4c1856145166fbf",
+      "summary": "Homogeneous dirs: strip leading The; musicscan retries with/without The"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Homogeneous dirs: strip leading The; musicscan retries with/without The"
+      "summary": "Dry-run correct-flac-names on flac/files \u2192 /tmp action log"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:45:24Z"
+  "update_dt": "2026-07-18T19:48:27Z"
 }
