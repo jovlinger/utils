@@ -291,8 +291,10 @@
       "summary": "Inventory provider tag/genre domains + raw JSON extraction paths"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Add groom-musicology-tags skill with VFAT-safe type;value schema.\n\nSKILL.md defines types artist/album/year/genre/collection, semicolon separator\n(not colon/pipe), slug rules, workflow, and mechanistic eval contract.",
+      "sha": "8fdd8dfb8a6d7bf648412785eb204889b91b1c4b",
       "summary": "Write skill + canonical type;value schema (VFAT-safe)"
     },
     {
