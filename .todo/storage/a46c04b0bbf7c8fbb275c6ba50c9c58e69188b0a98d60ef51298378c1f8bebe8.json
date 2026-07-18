@@ -284,8 +284,10 @@
   },
   "WorkItems": [
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Add correct-flac-names skill grounded in FLAC store and musicology.\n\nDocuments VFAT/Samba sanitization (esp. ':'), candidate sources (cue, SPECS,\n.meta.* sidecars, metatool export-json), conflict rules, and genre naming\nconventions. Paths: /mnt/sdb2/music/flac/files and ../bin/musicology.",
+      "sha": "47e2d26c69b5335b138a777b68e226c136927d55",
       "summary": "Survey FLAC tree + cue/spec/meta sources; draft skill outline"
     },
     {
@@ -300,5 +302,5 @@
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T07:02:31Z"
+  "update_dt": "2026-07-18T07:03:32Z"
 }
