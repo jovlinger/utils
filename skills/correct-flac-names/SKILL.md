@@ -99,31 +99,30 @@ Artist - Album
 01. Track Title.flac
 ```
 
-- One primary artist. Prefer the **canonical catalog spelling** of the artist
-  in the dirname (whatever MusicBrainz/Discogs return as `metadata.artist`),
-  not a speculative `The X` / `X, The` reshuffle. Forms are **not** always
-  equivalent for discovery — especially Discogs (see experiments below). When
-  renaming, take the artist string from `.meta.combined.json` (else johan /
-  online), then VFAT-sanitize; do not invent `The` / `, The` variants.
-- **Target shapes (should converge):** `Pixies - Doolittle`,
-  `The Pogues - Rum Sodomy & the Lash`. Bare vs `The` / `, The` input dirnames
-  must end up as that single canonical form — not left as three spellings in
-  the tree.
+- One primary artist. **Homogeneous dirname artist:** never start the artist
+  segment with `The`, and never store `Artist, The`. Strip both to the bare
+  form (`The Pogues` → `Pogues`, `Pogues, The` → `Pogues`). Album *titles* may
+  still start with `The` (`… - The Wall`, `… - The Rest of the Best`).
+- Provider canonical names (often with `The`) belong in `.meta.*.json`
+  (`metadata.artist`), **not** in the album directory name.
+  `musicscan` retries lookups with and without `The`
+  (`audio.artist_lookup_variants`) so bare dirnames still match catalogs.
+- **Target shapes:** `Pixies - Doolittle`, `Pogues - Rum Sodomy & the Lash`.
+  Bare / `The` / `, The` inputs must converge on the stripped form.
 - Guest features / collaborators on a main-artist album stay under that artist
   (`Artist - Album`). Do **not** prefix `VA -` (see Collections).
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
   codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
-  txt/cue — not the dirname.
+  txt/cue — not the dirname. Then apply `The`-strip + VFAT sanitize.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
 
-#### Experiment: `The` / `, The` vs bare artist
+#### Experiment: `The` / `, The` vs bare artist (pre-homogeneous)
 
-Same method for both: copy album to `/tmp` (dereference flacs, strip
-`.meta.*`), run
+Same method: `/tmp` copy, dereference flacs,
 `musicscan --provider musicbrainz --provider discogs --provider lastfm --force`
-on three dirname variants.
+on three dirname variants **before** musicscan learned to retry `The`.
 
-**Pixies — Doolittle** (canonical artist: **Pixies**, no `The`):
+**Pixies — Doolittle** (catalog: **Pixies**):
 
 | Dirname | musicbrainz | discogs | lastfm |
 |---------|:-----------:|:-------:|:------:|
@@ -131,7 +130,7 @@ on three dirname variants.
 | `The Pixies - Doolittle` | match → Pixies | **no match** | match → Pixies |
 | `Pixies, The - Doolittle` | match → Pixies | **no match** | match → Pixies |
 
-**The Pogues — Rum Sodomy & the Lash** (canonical artist: **The Pogues**):
+**The Pogues — Rum Sodomy & the Lash** (catalog: **The Pogues**):
 
 | Dirname | musicbrainz | discogs | lastfm |
 |---------|:-----------:|:-------:|:------:|
@@ -139,12 +138,9 @@ on three dirname variants.
 | `The Pogues - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
 | `Pogues, The - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
 
-**Conclusion:** do **not** assume bare / `The` / `, The` are interchangeable
-for *lookup*, but renames must still **converge** on one dirname. Pixies →
-`Pixies - Doolittle` (Discogs only accepts bare; MB/Last.fm canonicalize there).
-Pogues → `The Pogues - Rum Sodomy & the Lash` (all three match; providers
-canonicalize with `The`). Prefer the canonical provider spelling; when unsure,
-probe with `musicscan` before renaming.
+**Policy (now):** dirnames always use the stripped artist (`Pixies`, `Pogues`).
+Catalog spelling with `The` stays in sidecars. `musicscan` must try with and
+without `The` so Discogs/MB keep matching after the strip.
 
 ### Collections / VA / series
 
@@ -163,12 +159,16 @@ Do **not** use `VA -` when a main artist brings in guests or collaborators
 (features, duets, “with …”). Those stay filed under the main artist:
 `Artist - Album` (e.g. Pixies / The Pogues albums — never `VA - Pixies - …`).
 
-Same for **single-artist “best of” / anthology** releases: keep the artist,
-not `VA`. Live example — one already correct, one wrong:
+Same for **single-artist “best of” / anthology** releases: keep the artist
+(stripped), not `VA`. Live example:
 
-- `The Pogues - The Rest of the Best` → keep
-- `VA - The Best of The Pogues` → `The Pogues - The Best of The Pogues`
-  (MusicBrainz artist is already `The Pogues`; strip the misplaced `VA -`)
+| On disk now | Homogeneous target |
+|-------------|--------------------|
+| `The Pogues - The Rest of the Best` | `Pogues - The Rest of the Best` |
+| `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` |
+
+(MusicBrainz artist is `The Pogues` — store that in sidecars; strip `The` /
+misplaced `VA -` from the dirname. Album title may keep leading `The`.)
 
 - Keep series tokens that aid browsing; drop ripper noise (`-GP-FLAC`,
   `[FLAC]`, bare `flac` suffixes) unless needed to disambiguate editions.
@@ -241,8 +241,11 @@ collisions.
 
 ## Related code
 
-- `../bin/musicology/` — `scan.py`, `metatool.py`, `audio.py` (`parse_album_dirname`,
-  `parse_track_filename`), providers, sidecars
+- `../bin/musicology/` — `scan.py` (`_lookup_with_artist_variants`),
+  `audio.py` (`strip_dirname_artist_the`, `artist_lookup_variants`,
+  `parse_album_dirname`, `parse_track_filename`), `metatool.py`, providers,
+  sidecars
+- `../bin/musicology/fix_johan_colon_tags.py` — legacy `:` in tags
 - `shadup/shadup.py` — `_sanitize_tag_mirror_segment`, `tag_mirror_relpath`,
   `refresh-extracted-tags` (note: `:` in tags is treated as a **namespace**
   separator for mirrors; album *values* still need VFAT sanitize)

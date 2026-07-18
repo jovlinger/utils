@@ -110,13 +110,15 @@ Same method: `/tmp` copy, dereference flacs,
 | `The Pogues - Rum Sodomy & the Lash` | ✓ → The Pogues | ✓ → The Pogues | ✓ → The Pogues |
 | `Pogues, The - Rum Sodomy & the Lash` | ✓ → The Pogues | ✓ → The Pogues | ✓ → The Pogues |
 
-Forms are **not** always equivalent for *lookup* (Pixies/Discogs). Renames
-must still **converge**:
+Forms are **not** always equivalent for *lookup* without retries
+(Pixies/Discogs). **Dirname policy:** always strip leading `The` / trailing
+`, The` from the artist segment. Catalog spelling (may include `The`) stays in
+`.meta.*.json`. `musicscan` retries with/without `The`.
 
-| Artist | Canonical dirname |
-|--------|-------------------|
+| Artist (catalog) | Homogeneous dirname |
+|------------------|---------------------|
 | Pixies | `Pixies - Doolittle` |
-| The Pogues | `The Pogues - Rum Sodomy & the Lash` |
+| The Pogues | `Pogues - Rum Sodomy & the Lash` |
 
 No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
 
@@ -127,20 +129,18 @@ No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
 `VA -` = multi-artist compilation / anthology with no single primary artist
 (e.g. `VA - Verve Remixed- The First Ladies 2013`, `VA - DJ-Kicks- DJ Cam`).
 
-Main artist + guests/collaborators → still `Artist - Album` (Pixies, The
-Pogues, …). Do not refile those under `VA -`.
+Main artist + guests/collaborators → still `Artist - Album` (Pixies, Pogues,
+…). Do not refile those under `VA -`.
 
 **Pogues best-ofs (live inconsistency):** both are single-artist compilations;
-neither should be `VA -`.
+neither should be `VA -`. Strip artist `The` as usual.
 
-| On disk now | Should be |
+| On disk now | Homogeneous target |
 |-------------|-----------|
-| `The Pogues - The Rest of the Best` | keep (already correct) |
-| `VA - The Best of The Pogues` | `The Pogues - The Best of The Pogues` |
+| `The Pogues - The Rest of the Best` | `Pogues - The Rest of the Best` |
+| `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` |
 
-MusicBrainz already says artist `The Pogues` for the Best of; the `VA -`
-prefix is a dirname mistake (local/discogs guess). Prefer MB/combined canonical
-artist over a `VA` local guess when the release is a main-artist anthology.
+MusicBrainz artist remains `The Pogues` in sidecars; dirname uses `Pogues`.
 
 ---
 

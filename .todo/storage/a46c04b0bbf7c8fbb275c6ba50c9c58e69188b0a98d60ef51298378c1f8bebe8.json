@@ -333,11 +333,18 @@
       "summary": "Clarify VA only for true collections; Pixies/Pogues as canonical rename targets"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Example: Pogues best-ofs \u2014 strip misplaced VA.\n\nThe Rest of the Best stays under The Pogues; VA - The Best of The Pogues\nrenames to The Pogues - The Best of The Pogues (single-artist anthology \u2260 VA).",
+      "sha": "35632efa227b1be2749e9206070042c43f4b51c4",
+      "summary": "Example: Pogues best-ofs \u2014 strip misplaced VA"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Example: Pogues best-ofs \u2014 strip misplaced VA"
+      "summary": "Homogeneous dirs: strip leading The; musicscan retries with/without The"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:42:07Z"
+  "update_dt": "2026-07-18T19:45:24Z"
 }
