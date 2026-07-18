@@ -98,12 +98,32 @@ Artist - Album
 01. Track Title.flac
 ```
 
-- One primary artist; `The X` may be stored as `X, The` in meta but dirname
-  usually keeps natural order (`The Cure - Disintegration`).
+- One primary artist. Prefer the **bare catalog form** of the name in the
+  dirname (e.g. `Pixies - Doolittle`), not `The Pixies - …` or `Pixies, The - …`.
+  MusicBrainz and Last.fm usually still match the `The` / `, The` variants and
+  return the canonical artist; **Discogs often does not** (see experiment
+  below). Meta may still say `X, The`; for on-disk paths prefer what providers
+  accept as a search key.
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
   codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
   txt/cue — not the dirname.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
+
+#### Experiment: `The` / `, The` vs bare artist (Pixies — Doolittle)
+
+Copied `Pixies - Doolittle` to `/tmp`, dereferenced flacs, ran
+`musicscan --provider musicbrainz --provider discogs --provider lastfm --force`
+on three dirname variants (same tracks):
+
+| Dirname | musicbrainz | discogs | lastfm |
+|---------|:-----------:|:-------:|:------:|
+| `Pixies - Doolittle` | match → Pixies | match → Pixies | match → Pixies |
+| `The Pixies - Doolittle` | match → Pixies | **no match** | match → Pixies |
+| `Pixies, The - Doolittle` | match → Pixies | **no match** | match → Pixies |
+
+**Conclusion:** forms are **not** equal for discovery. Prefer bare `Pixies - …`
+(and similarly drop leading `The` / trailing `, The` in dirnames when renaming)
+so Discogs keeps working; MB/Last.fm already normalize.
 
 ### Collections / VA / series
 

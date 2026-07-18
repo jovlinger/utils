@@ -89,6 +89,22 @@ here).
 
 ---
 
+## `The` / `, The` artist forms (provider discovery)
+
+Album used: `Pixies - Doolittle` (copy under `/tmp`, fresh
+`musicscan --provider musicbrainz --provider discogs --provider lastfm --force`).
+
+| Dirname | MB | Discogs | Last.fm |
+|---------|----|---------|---------|
+| `Pixies - Doolittle` | ✓ → Pixies | ✓ → Pixies | ✓ → Pixies |
+| `The Pixies - Doolittle` | ✓ → Pixies | ✗ | ✓ → Pixies |
+| `Pixies, The - Doolittle` | ✓ → Pixies | ✗ | ✓ → Pixies |
+
+Prefer bare `Pixies - …` in the dirname so Discogs still matches. Details in
+`SKILL.md` (Pop / rock experiment).
+
+---
+
 ## Series already sanitized in-tree
 
 Existing pattern to match:

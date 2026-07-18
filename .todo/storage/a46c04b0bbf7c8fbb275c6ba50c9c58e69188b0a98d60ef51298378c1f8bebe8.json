@@ -305,11 +305,18 @@
       "summary": "Add examples + reference for cue/spec/meta paths under /mnt/sdb2/music/flac/files"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Prefer sidecar order: combined, johan, online providers, then txt/cue.\n\nSKILL.md and examples.md now walk .meta.*.json in that priority; Avalon wins\nfrom combined, Verve from johan. Cue/SPECS no longer outrank filled higher tiers.",
+      "sha": "f5bf2caf2e7c68fb93b67ec5fe2efe9a45ba532c",
+      "summary": "Prefer meta source order: combined, johan, online providers, then txt/cue"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Prefer meta source order: combined, johan, online providers, then txt/cue"
+      "summary": "Document The-artist dirname experiment (Pixies) for musicscan providers"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:21:25Z"
+  "update_dt": "2026-07-18T19:37:48Z"
 }
