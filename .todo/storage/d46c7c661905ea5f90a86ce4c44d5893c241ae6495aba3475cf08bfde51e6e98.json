@@ -1,5 +1,6 @@
 {
   "AC": "Artifacts under skills/groom-musicology-tags that: (1) inventory tag/genre domains per provider from live .meta.*.json under /mnt/sdb2/music/flac/files; (2) define canonical types artist, album, year, genre, collection as type;value (VFAT-safe; no ':' or '|'); (3) per-provider synonym maps raw -> canonical; (4) document JSON paths for deterministic album-field extraction per provider; (5) usable by a later mechanistic evaluator without further LLM invention.",
+  "ActualSummary": "Shipped skills/groom-musicology-tags: live inventory of discogs/musicbrainz/lastfm/johan tag domains, VFAT-safe type;value schema (semicolon), per-provider synonym maps, extraction-paths.md, and scan/build scripts for mechanistic evaluation.",
   "BaseSha": "66d10d039a7857db498f25c27451f3f7e9441146",
   "Body": {
     "hash": [
@@ -143,9 +144,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "working": {
-      "owner": "agent"
-    }
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -298,11 +297,13 @@
       "summary": "Write skill + canonical type;value schema (VFAT-safe)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Author per-provider synonym maps from inventory.\n\nsynonyms/{discogs,musicbrainz,lastfm,johan}.json plus build_synonym_maps.py;\nVFAT-asserted map values; years/collections/noise classified.",
+      "sha": "b6e43e7b4f9bf82e42659b4050b22186fb7dfa0d",
       "summary": "Author per-provider synonym maps from inventory"
     }
   ],
   "create_dt": "2026-07-18T06:26:50Z",
-  "update_dt": "2026-07-18T14:07:22Z"
+  "update_dt": "2026-07-18T14:07:27Z"
 }
