@@ -163,6 +163,13 @@ Do **not** use `VA -` when a main artist brings in guests or collaborators
 (features, duets, “with …”). Those stay filed under the main artist:
 `Artist - Album` (e.g. Pixies / The Pogues albums — never `VA - Pixies - …`).
 
+Same for **single-artist “best of” / anthology** releases: keep the artist,
+not `VA`. Live example — one already correct, one wrong:
+
+- `The Pogues - The Rest of the Best` → keep
+- `VA - The Best of The Pogues` → `The Pogues - The Best of The Pogues`
+  (MusicBrainz artist is already `The Pogues`; strip the misplaced `VA -`)
+
 - Keep series tokens that aid browsing; drop ripper noise (`-GP-FLAC`,
   `[FLAC]`, bare `flac` suffixes) unless needed to disambiguate editions.
 - Tree convention: short `VA`, not MusicBrainz `Various Artists`, in the

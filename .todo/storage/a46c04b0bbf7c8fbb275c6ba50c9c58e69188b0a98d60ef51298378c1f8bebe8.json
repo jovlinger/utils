@@ -326,11 +326,18 @@
       "summary": "Document Pogues The-artist dirname experiment alongside Pixies"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Clarify VA only for true collections; Pixies/Pogues as canonical rename targets.\n\nBare/The/,The variants must converge (Pixies - Doolittle; The Pogues - Rum\u2026).\nVA reserved for multi-artist comps; main artist + collaborators stay under Artist - Album.",
+      "sha": "21afa89492c53866792fa7ef878e66ed4ee72b5d",
+      "summary": "Clarify VA only for true collections; Pixies/Pogues as canonical rename targets"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Clarify VA only for true collections; Pixies/Pogues as canonical rename targets"
+      "summary": "Example: Pogues best-ofs \u2014 strip misplaced VA"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:40:57Z"
+  "update_dt": "2026-07-18T19:42:07Z"
 }

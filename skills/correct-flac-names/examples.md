@@ -130,6 +130,18 @@ No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
 Main artist + guests/collaborators → still `Artist - Album` (Pixies, The
 Pogues, …). Do not refile those under `VA -`.
 
+**Pogues best-ofs (live inconsistency):** both are single-artist compilations;
+neither should be `VA -`.
+
+| On disk now | Should be |
+|-------------|-----------|
+| `The Pogues - The Rest of the Best` | keep (already correct) |
+| `VA - The Best of The Pogues` | `The Pogues - The Best of The Pogues` |
+
+MusicBrainz already says artist `The Pogues` for the Best of; the `VA -`
+prefix is a dirname mistake (local/discogs guess). Prefer MB/combined canonical
+artist over a `VA` local guess when the release is a main-artist anthology.
+
 ---
 
 ## Series already sanitized in-tree
