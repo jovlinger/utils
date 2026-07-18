@@ -98,22 +98,25 @@ Artist - Album
 01. Track Title.flac
 ```
 
-- One primary artist. Prefer the **bare catalog form** of the name in the
-  dirname (e.g. `Pixies - Doolittle`), not `The Pixies - …` or `Pixies, The - …`.
-  MusicBrainz and Last.fm usually still match the `The` / `, The` variants and
-  return the canonical artist; **Discogs often does not** (see experiment
-  below). Meta may still say `X, The`; for on-disk paths prefer what providers
-  accept as a search key.
+- One primary artist. Prefer the **canonical catalog spelling** of the artist
+  in the dirname (whatever MusicBrainz/Discogs return as `metadata.artist`),
+  not a speculative `The X` / `X, The` reshuffle. Forms are **not** always
+  equivalent for discovery — especially Discogs (see experiments below). When
+  renaming, take the artist string from `.meta.combined.json` (else johan /
+  online), then VFAT-sanitize; do not invent `The` / `, The` variants.
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
   codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
   txt/cue — not the dirname.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
 
-#### Experiment: `The` / `, The` vs bare artist (Pixies — Doolittle)
+#### Experiment: `The` / `, The` vs bare artist
 
-Copied `Pixies - Doolittle` to `/tmp`, dereferenced flacs, ran
+Same method for both: copy album to `/tmp` (dereference flacs, strip
+`.meta.*`), run
 `musicscan --provider musicbrainz --provider discogs --provider lastfm --force`
-on three dirname variants (same tracks):
+on three dirname variants.
+
+**Pixies — Doolittle** (canonical artist: **Pixies**, no `The`):
 
 | Dirname | musicbrainz | discogs | lastfm |
 |---------|:-----------:|:-------:|:------:|
@@ -121,9 +124,18 @@ on three dirname variants (same tracks):
 | `The Pixies - Doolittle` | match → Pixies | **no match** | match → Pixies |
 | `Pixies, The - Doolittle` | match → Pixies | **no match** | match → Pixies |
 
-**Conclusion:** forms are **not** equal for discovery. Prefer bare `Pixies - …`
-(and similarly drop leading `The` / trailing `, The` in dirnames when renaming)
-so Discogs keeps working; MB/Last.fm already normalize.
+**The Pogues — Rum Sodomy & the Lash** (canonical artist: **The Pogues**):
+
+| Dirname | musicbrainz | discogs | lastfm |
+|---------|:-----------:|:-------:|:------:|
+| `Pogues - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
+| `The Pogues - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
+| `Pogues, The - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
+
+**Conclusion:** do **not** assume bare / `The` / `, The` are interchangeable.
+Pixies: Discogs only accepts the bare form. Pogues: all three match and
+providers canonicalize to `The Pogues`. Prefer the canonical provider spelling
+in the dirname; when unsure, probe with `musicscan` before renaming.
 
 ### Collections / VA / series
 

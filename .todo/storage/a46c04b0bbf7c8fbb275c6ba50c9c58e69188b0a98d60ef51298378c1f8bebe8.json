@@ -312,11 +312,18 @@
       "summary": "Prefer meta source order: combined, johan, online providers, then txt/cue"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Document Pixies dirname experiment: bare vs The vs , The for musicscan.\n\nDiscogs matches only Pixies - Doolittle; MusicBrainz and Last.fm match all three\nand canonicalize to Pixies. Prefer bare artist in rename skill.",
+      "sha": "f7794d56ded9ce5331e2610d9749b7f931599a61",
+      "summary": "Document The-artist dirname experiment (Pixies) for musicscan providers"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Document The-artist dirname experiment (Pixies) for musicscan providers"
+      "summary": "Document Pogues The-artist dirname experiment alongside Pixies"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:37:48Z"
+  "update_dt": "2026-07-18T19:40:26Z"
 }
