@@ -319,11 +319,18 @@
       "summary": "Document The-artist dirname experiment (Pixies) for musicscan providers"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Document Pogues dirname experiment alongside Pixies.\n\nAll three forms (Pogues / The Pogues / Pogues, The) match MB, Discogs, and\nLast.fm and canonicalize to The Pogues \u2014 unlike Pixies where Discogs rejects\nThe / , The. Skill now prefers canonical provider spelling, not blind bare-The.",
+      "sha": "f0232c8a04a52bffc020311f487ce9c67816475a",
+      "summary": "Document Pogues The-artist dirname experiment alongside Pixies"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Document Pogues The-artist dirname experiment alongside Pixies"
+      "summary": "Clarify VA only for true collections; Pixies/Pogues as canonical rename targets"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:40:26Z"
+  "update_dt": "2026-07-18T19:40:57Z"
 }

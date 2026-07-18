@@ -89,7 +89,8 @@ When choosing the semantic name:
 ## Naming conventions by kind
 
 Detect kind from genres/tags, cue performer layout, or dirname cues
-(`VA -`, `Various`, `Verve Jazzclub`, composer-first classical).
+(`VA -` / `Various` only when it is a true multi-artist collection;
+`Verve Jazzclub`; composer-first classical). Guest features ≠ VA.
 
 ### Pop / rock (default)
 
@@ -104,6 +105,12 @@ Artist - Album
   equivalent for discovery — especially Discogs (see experiments below). When
   renaming, take the artist string from `.meta.combined.json` (else johan /
   online), then VFAT-sanitize; do not invent `The` / `, The` variants.
+- **Target shapes (should converge):** `Pixies - Doolittle`,
+  `The Pogues - Rum Sodomy & the Lash`. Bare vs `The` / `, The` input dirnames
+  must end up as that single canonical form — not left as three spellings in
+  the tree.
+- Guest features / collaborators on a main-artist album stay under that artist
+  (`Artist - Album`). Do **not** prefix `VA -` (see Collections).
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
   codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
   txt/cue — not the dirname.
@@ -132,10 +139,12 @@ on three dirname variants.
 | `The Pogues - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
 | `Pogues, The - Rum Sodomy & the Lash` | match → The Pogues | match → The Pogues | match → The Pogues |
 
-**Conclusion:** do **not** assume bare / `The` / `, The` are interchangeable.
-Pixies: Discogs only accepts the bare form. Pogues: all three match and
-providers canonicalize to `The Pogues`. Prefer the canonical provider spelling
-in the dirname; when unsure, probe with `musicscan` before renaming.
+**Conclusion:** do **not** assume bare / `The` / `, The` are interchangeable
+for *lookup*, but renames must still **converge** on one dirname. Pixies →
+`Pixies - Doolittle` (Discogs only accepts bare; MB/Last.fm canonicalize there).
+Pogues → `The Pogues - Rum Sodomy & the Lash` (all three match; providers
+canonicalize with `The`). Prefer the canonical provider spelling; when unsure,
+probe with `musicscan` before renaming.
 
 ### Collections / VA / series
 
@@ -144,11 +153,20 @@ VA - Series - Title
 YYYY - Series - Artist - Title
 ```
 
+Use **`VA -` only for true collections / compilations** — multi-artist
+anthologies where there is no single primary artist (soundtracks with many
+acts, label samplers, `DJ-Kicks` curated comps, `Verve Remixed`, etc.).
 Examples already in the tree: `VA - DJ-Kicks- DJ Cam`,
 `1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56`.
 
+Do **not** use `VA -` when a main artist brings in guests or collaborators
+(features, duets, “with …”). Those stay filed under the main artist:
+`Artist - Album` (e.g. Pixies / The Pogues albums — never `VA - Pixies - …`).
+
 - Keep series tokens that aid browsing; drop ripper noise (`-GP-FLAC`,
   `[FLAC]`, bare `flac` suffixes) unless needed to disambiguate editions.
+- Tree convention: short `VA`, not MusicBrainz `Various Artists`, in the
+  dirname (still VFAT-sanitize the title).
 
 ### Classical
 

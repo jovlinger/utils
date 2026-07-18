@@ -91,8 +91,10 @@ here).
 
 ## `The` / `, The` artist forms (provider discovery)
 
-Album used: `Pixies - Doolittle` (copy under `/tmp`, fresh
-`musicscan --provider musicbrainz --provider discogs --provider lastfm --force`).
+Same method: `/tmp` copy, dereference flacs,
+`musicscan --provider musicbrainz --provider discogs --provider lastfm --force`.
+
+**Pixies — Doolittle** (canonical: Pixies):
 
 | Dirname | MB | Discogs | Last.fm |
 |---------|----|---------|---------|
@@ -100,8 +102,33 @@ Album used: `Pixies - Doolittle` (copy under `/tmp`, fresh
 | `The Pixies - Doolittle` | ✓ → Pixies | ✗ | ✓ → Pixies |
 | `Pixies, The - Doolittle` | ✓ → Pixies | ✗ | ✓ → Pixies |
 
-Prefer bare `Pixies - …` in the dirname so Discogs still matches. Details in
-`SKILL.md` (Pop / rock experiment).
+**The Pogues — Rum Sodomy & the Lash** (canonical: The Pogues):
+
+| Dirname | MB | Discogs | Last.fm |
+|---------|----|---------|---------|
+| `Pogues - Rum Sodomy & the Lash` | ✓ → The Pogues | ✓ → The Pogues | ✓ → The Pogues |
+| `The Pogues - Rum Sodomy & the Lash` | ✓ → The Pogues | ✓ → The Pogues | ✓ → The Pogues |
+| `Pogues, The - Rum Sodomy & the Lash` | ✓ → The Pogues | ✓ → The Pogues | ✓ → The Pogues |
+
+Forms are **not** always equivalent for *lookup* (Pixies/Discogs). Renames
+must still **converge**:
+
+| Artist | Canonical dirname |
+|--------|-------------------|
+| Pixies | `Pixies - Doolittle` |
+| The Pogues | `The Pogues - Rum Sodomy & the Lash` |
+
+No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
+
+---
+
+## VA only for true collections
+
+`VA -` = multi-artist compilation / anthology with no single primary artist
+(e.g. `VA - Verve Remixed- The First Ladies 2013`, `VA - DJ-Kicks- DJ Cam`).
+
+Main artist + guests/collaborators → still `Artist - Album` (Pixies, The
+Pogues, …). Do not refile those under `VA -`.
 
 ---
 
