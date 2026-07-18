@@ -48,41 +48,42 @@ Tag namespaces in shadup/musicology use `;` (not `:`): `artist;name`,
 
 ## Data sources (gather candidates)
 
-For each album directory, collect title/artist/track candidates from:
+For each album directory, read **`.meta.*.json` sidecars in this order** (first
+non-empty artist/album/track wins; do not let a lower tier override a higher
+one):
 
-1. **Cue sheets** — `*.cue` / `*.CUE` in the album dir or under `SPECS/`.
-   - Album: top-level `TITLE` / `PERFORMER`
-   - Tracks: per-`TRACK` `TITLE`, `PERFORMER`, and `FILE "…"` basenames
-2. **SPECS** — directory often holding the rip cue plus info dumps (SACD rips).
-   Prefer the `.cue` inside; treat `*iNFO*.txt` as secondary hints only.
-3. **Musicology sidecars** — `.meta.<provider>.json` next to the album
-   (`musicbrainz`, `discogs`, `lastfm`, `johan`, …).
+1. **`.meta.combined.json`** — preferred. Schema 2 uses `meta.artist` /
+   `meta.album` (and `meta_sources` for provenance). If missing or thin, fall
+   through. Refresh with `metatool --provider=ALL export-json <album>` when you
+   need a fresh merge.
+2. **`.meta.johan.json`** — local curated / override.
    - `metadata.artist` / `metadata.album` / `metadata.tracks[].title`
-   - `local.artist_guess` / `local.album_guess` / `local.tracks[].title_guess`
-4. **Merged export** — from utils root, with musicology on `PATH` (or via
-   `../bin/binlinks/metatool`):
+   - else `local.artist_guess` / `local.album_guess` / `local.tracks[].title_guess`
+3. **Online providers** — `.meta.musicbrainz.json`, `.meta.discogs.json`,
+   `.meta.lastfm.json`, … (any remote provider sidecar). Same
+   `metadata.*` / `local.*` fields; when several online files disagree among
+   themselves, most-common then least-verbose.
+4. **`.meta.txt.json`**, then **`.meta.cue.json`** — last among sidecars
+   (parsed SPECS/info and cue). Only use when tiers 1–3 have no usable value.
 
-   ```bash
-   metatool --provider=ALL export-json "/mnt/sdb2/music/flac/files/<album>"
-   ```
+Also gather (never outrank a filled higher-tier sidecar for the *semantic*
+name; useful for track `FILE` basenames and as a last resort):
 
-   Merge policy already in metatool: **shortest** non-empty `artist` / `album`
-   among sidecars; tag/genre are unions. Prefer that for the album string when
-   providers disagree on verbosity.
-5. **Embedded tags** — mutagen/`metatool set-auto` heuristics if sidecars are thin.
-6. **Current dirname / filenames** — always a candidate; often already partially
-   sanitized.
+- **Cue sheets** — `*.cue` / `*.CUE` in the album dir or under `SPECS/`
+  (`TITLE` / `PERFORMER` / per-track / `FILE "…"`).
+- **SPECS** — rip dumps; prefer the `.cue` inside; `*iNFO*.txt` is secondary.
+- **Embedded tags** — mutagen / `metatool set-auto` if sidecars are thin.
+- **Current dirname / filenames** — always a candidate; often partially sanitized.
 
 ## Conflict resolution
 
-When candidates disagree:
+When choosing the semantic name:
 
-1. **Most common** identical string across sources (after light normalize:
-   collapse whitespace, Unicode NFKC).
-2. Else **least verbose** (shortest), matching `metatool` export-json.
-3. Prefer a cue / MusicBrainz title over a noisy dirname (`…[24bit…]`, `-GP-FLAC`,
-   Usenet/scene dotted forms like `Roxy.Music.Avalon.1982.UIGY-….SACD.DSD`)
-   when building the *semantic* name, then apply VFAT sanitize.
+1. Walk the **sidecar priority** above; stop at the first tier with a usable
+   artist/album (and tracks when renaming files).
+2. Within the same tier only: **most common**, else **least verbose**.
+3. Prefer any filled sidecar over a noisy dirname (`…[24bit…]`, `-GP-FLAC`,
+   Usenet/scene dotted forms like `Roxy.Music.Avalon.1982.UIGY-….SACD.DSD`).
 4. Never pick a candidate that fails P0 after sanitize.
 
 ## Naming conventions by kind
@@ -100,7 +101,8 @@ Artist - Album
 - One primary artist; `The X` may be stored as `X, The` in meta but dirname
   usually keeps natural order (`The Cure - Disintegration`).
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
-  codec tokens). Cue/`SPECS` + `.meta.cue.json` usually win over the dirname.
+  codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
+  txt/cue — not the dirname.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
 
 ### Collections / VA / series

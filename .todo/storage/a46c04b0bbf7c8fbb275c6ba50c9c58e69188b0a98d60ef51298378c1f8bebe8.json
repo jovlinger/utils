@@ -298,11 +298,18 @@
       "summary": "Write skills/.../SKILL.md with VFAT/Samba rules, conflict resolution, genre conventions"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Ground examples.md in live store paths: Verve colon offender and Roxy Music Avalon usenet rip.\n\nAdds cue/SPECS/.meta path reference table; notes Avalon siblings and optional track cleanup. SKILL.md calls out dotted scene dirnames under conflict rules and pop/rock convention.",
+      "sha": "e92d7f674909b3038d14c545decc7e45524f68b3",
+      "summary": "Add examples + reference for cue/spec/meta paths under /mnt/sdb2/music/flac/files"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Add examples + reference for cue/spec/meta paths under /mnt/sdb2/music/flac/files"
+      "summary": "Prefer meta source order: combined, johan, online providers, then txt/cue"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:13:18Z"
+  "update_dt": "2026-07-18T19:21:25Z"
 }

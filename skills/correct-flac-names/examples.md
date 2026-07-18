@@ -3,16 +3,24 @@
 Store root used below: `/mnt/sdb2/music/flac/files/`. Musicology:
 `../bin/musicology` (utils sibling).
 
-Path shapes to look for under an album dir:
+## Sidecar priority (authoritative)
+
+Walk in order; first non-empty artist/album wins:
+
+| Order | Path | Notes |
+|------:|------|-------|
+| 1 | `.meta.combined.json` | Prefer; schema 2: `meta.artist` / `meta.album` |
+| 2 | `.meta.johan.json` | Local curated; `metadata.*` else `local.*_guess` |
+| 3 | `.meta.<online>.json` | musicbrainz, discogs, lastfm, … |
+| 4 | `.meta.txt.json`, then `.meta.cue.json` | Last among sidecars |
+
+Also present (supporting, not outranking a filled higher tier):
 
 | Path | Role |
 |------|------|
-| `SPECS/*.cue` | Rip cue (SACD / scene); primary TITLE/PERFORMER |
+| `SPECS/*.cue` | Raw cue; track `FILE` basenames |
 | `SPECS/*iNFO*.txt`, `SPECS/*.txt` | Secondary hints only |
-| `.meta.cue.json` / `.meta.txt.json` | Often already parsed from SPECS |
-| `.meta.musicbrainz.json` etc. | Provider sidecars |
-| `.meta.combined.json` | Merged export (may be thin) |
-| Track symlinks / `*.flac` / `*.dsf` | Current filenames (always a candidate) |
+| Track symlinks / `*.flac` / `*.dsf` | Current filenames |
 
 Skip `_tags/` and `data/` when surveying.
 
@@ -22,23 +30,19 @@ Skip `_tags/` and `data/` when surveying.
 
 **Before:** `VA - Verve Remixed: The First Ladies 2013`
 
-Live offender under the store root (illegal `:` for Samba/VFAT).
+Live offender (illegal `:` for Samba/VFAT).
 
-Sources (as of survey):
+Sidecar walk:
 
-| Source | Artist | Album |
-|--------|--------|-------|
-| dirname | VA | Verve Remixed: The First Ladies (+ year `2013`) |
-| `.meta.musicbrainz.json` `metadata` | Various Artists | Verve Remixed: The First Ladies |
-| `.meta.{discogs,lastfm,johan}.json` `local` | VA | Verve Remixed: The First Ladies |
-| cue | (none in album dir) | — |
+| Tier | Source | Artist | Album |
+|------|--------|--------|-------|
+| 1 | `.meta.combined.json` | (missing) | — |
+| 2 | `.meta.johan.json` `local` | VA | Verve Remixed: The First Ladies |
+| 3 | musicbrainz `metadata` | Various Artists | Verve Remixed: The First Ladies |
+| 3 | discogs/lastfm `local` | VA | Verve Remixed: The First Ladies |
 
-Tracks are still scene-style
-(`01-ella_fitzgerald-too_darn_hot_(rac_mix).flac`) — optional follow-up;
-dirname P0 comes first.
-
-Resolution: keep tree convention `VA` (not MusicBrainz `Various Artists`);
-keep year suffix; VFAT-sanitize `:` → `-` (match in-tree `DJ-Kicks-` form).
+**Wins at tier 2 (johan):** `VA` / `Verve Remixed: The First Ladies`. Keep year
+suffix from dirname; VFAT-sanitize `:` → `-`.
 
 **After (dir):** `VA - Verve Remixed- The First Ladies 2013`
 
@@ -46,6 +50,9 @@ keep year suffix; VFAT-sanitize `:` → `-` (match in-tree `DJ-Kicks-` form).
 DIR  VA - Verve Remixed: The First Ladies 2013
   ->  VA - Verve Remixed- The First Ladies 2013
 ```
+
+Tracks may still be scene-style (`01-ella_fitzgerald-….flac`) — optional
+follow-up after dirname P0.
 
 ---
 
@@ -56,23 +63,17 @@ DIR  VA - Verve Remixed: The First Ladies 2013
 Usenet/scene naming: dots for spaces, catalog + format tokens glued on.
 VFAT-safe already, but **incorrect** vs pop/rock convention.
 
-Sources:
+Sidecar walk:
 
-| Source | Artist | Album |
-|--------|--------|-------|
-| dirname | (dotted blob) | — |
-| `SPECS/…Avalon….cue` | Roxy Music | Avalon |
-| `.meta.cue.json` / `.meta.txt.json` | Roxy Music | Avalon |
-| musicbrainz / discogs / lastfm | (empty) | — |
+| Tier | Source | Artist | Album |
+|------|--------|--------|-------|
+| 1 | `.meta.combined.json` `meta` | Roxy Music | Avalon |
+| 2+ | (not needed) | — | — |
 
-Cue also has `FILE "Roxy Music - Avalon.dff"` — good target shape.
-Tracks on disk are already humanish (`01 Roxy Music more than this.dsf`) but
-titles are un-titlecased; optional cleanup after the album dir.
+`meta_sources` may show provenance (`cue` / agree); still treat **combined** as
+the winner. Drop rip noise (`UIGY-9672`, `SHM-SACD`, `DSD`); year optional.
 
-Resolution: cue/meta agree on `Roxy Music` / `Avalon`; drop rip noise
-(`UIGY-9672`, `SHM-SACD`, `DSD`); year optional if useful for browsing.
-
-**After (dir):** `Roxy Music - Avalon` (or `Roxy Music - Avalon (1982)` if year kept)
+**After (dir):** `Roxy Music - Avalon` (or `Roxy Music - Avalon (1982)`)
 
 ```text
 DIR  Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD
@@ -81,6 +82,10 @@ DIR  Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD
 
 Same pattern for siblings:
 `Roxy.Music.Siren.1975.…`, `Roxy.Music.Country.Life.1974.…`, etc.
+
+Only if combined were empty would you fall through to johan → online →
+`.meta.txt.json` / `.meta.cue.json` (those last two also say Roxy Music / Avalon
+here).
 
 ---
 
@@ -100,9 +105,9 @@ form already used on disk; do not reintroduce `:`.
 
 Album: `1973 - Verve Jazzclub - Verve Records Jazz Box [10LP]`
 
-Cue top-level `TITLE "Verve Records Jazz Box"`; per-track different
-`PERFORMER`s. Kind = collection/VA. Keep year + series prefix from dirname;
-track files follow cue `FILE` / `TITLE` after sanitize.
+Use sidecar priority first; raw cue is for track `FILE` / multi-performer layout
+when higher tiers lack tracks. Kind = collection/VA. Keep year + series prefix
+from dirname when browsing tokens help.
 
 ---
 
@@ -117,7 +122,8 @@ Sanitize `:` → `-`; keep composer-forward dirname convention.
 
 ## SPECS rip (generic)
 
-Same class as Avalon: dotted scene dirname + `SPECS/*.cue`, e.g.
+Same class as Avalon: dotted scene dirname. Prefer `.meta.combined.json` when
+present; else walk johan → online → txt/cue. Example shape:
 `Miles.Davis.Kind.Of.Blue.2001.HYBRiD.2.0.CS-64935.SACD.DSD` →
 `Miles Davis - Kind of Blue` (edition token only if needed to disambiguate).
 
