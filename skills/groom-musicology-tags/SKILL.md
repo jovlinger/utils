@@ -102,10 +102,16 @@ Given one album directory:
 3. Replace each raw string via that provider's map (unmapped → skip or log).
 4. Union canonical `type;value` strings across providers.
 5. Emit only VFAT-safe segments (assert no `:|<>\"/\\?*`).
+6. Write the result to **`.meta.combined.json`** (`tags: [...]`). Parents of
+   multi-CD / nested album dirs also get a combined file that is the set-union
+   of their children's combined tags.
 
 Conflict policy for the **same type** with different values: keep all values
 (set union) unless a later consumer asks for a single winner (then prefer
 `johan` > shortest slug > lexicographic).
+
+Runtime path: `postingest` (scan → combine → `importtags` reads only
+`.meta.combined.json` → `shadup refresh-extracted-tags`).
 
 ## Related
 
