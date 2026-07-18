@@ -80,7 +80,8 @@ When candidates disagree:
 1. **Most common** identical string across sources (after light normalize:
    collapse whitespace, Unicode NFKC).
 2. Else **least verbose** (shortest), matching `metatool` export-json.
-3. Prefer a cue / MusicBrainz title over a noisy dirname (`…[24bit…]`, `-GP-FLAC`)
+3. Prefer a cue / MusicBrainz title over a noisy dirname (`…[24bit…]`, `-GP-FLAC`,
+   Usenet/scene dotted forms like `Roxy.Music.Avalon.1982.UIGY-….SACD.DSD`)
    when building the *semantic* name, then apply VFAT sanitize.
 4. Never pick a candidate that fails P0 after sanitize.
 
@@ -98,6 +99,8 @@ Artist - Album
 
 - One primary artist; `The X` may be stored as `X, The` in meta but dirname
   usually keeps natural order (`The Cure - Disintegration`).
+- Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
+  codec tokens). Cue/`SPECS` + `.meta.cue.json` usually win over the dirname.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
 
 ### Collections / VA / series
