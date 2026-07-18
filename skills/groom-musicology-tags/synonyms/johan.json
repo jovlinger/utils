@@ -1,0 +1,42 @@
+{
+  "provider": "johan",
+  "separator": ";",
+  "types": [
+    "artist",
+    "album",
+    "year",
+    "genre",
+    "collection"
+  ],
+  "value_slug": "lowercase alphanumeric only (strip spaces/punct)",
+  "field_roles": {
+    "metadata.genres": "Hand labels, already compact -> genre;*",
+    "metadata.tags": "Hand labels -> classify",
+    "metadata.artist": "often already slugged -> artist;value",
+    "metadata.album": "direct -> album;slug(value)",
+    "metadata.year": "direct -> year;value"
+  },
+  "map": {
+    "abstract": "genre;abstract",
+    "bigbandjazz": "genre;bigbandjazz",
+    "blues": "genre;blues",
+    "broadway": "genre;broadway",
+    "classical": "genre;classical",
+    "cubanjazz": "genre;cubanjazz",
+    "downtempo": "genre;downtempo",
+    "drumnbass": "genre;drumnbass",
+    "electronic": "genre;electronic",
+    "jazz": "genre;jazz",
+    "malesinger": "genre;malesinger",
+    "noise": "genre;noise",
+    "remixjazz": "genre;remixjazz",
+    "rock": "genre;rock",
+    "rocknroll": "genre;rocknroll",
+    "scandinivia": "collection;scandinavia",
+    "soundtrack": "genre;soundtrack",
+    "tribute": "genre;tribute",
+    "trip-hop": "genre;triphop",
+    "turntable": "genre;turntable"
+  },
+  "dropped": []
+}

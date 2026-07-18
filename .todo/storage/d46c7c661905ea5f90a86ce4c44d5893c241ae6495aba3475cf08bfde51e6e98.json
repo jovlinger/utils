@@ -1,5 +1,6 @@
 {
-  "AC": "",
+  "AC": "Artifacts under skills/groom-musicology-tags that: (1) inventory tag/genre domains per provider from live .meta.*.json under /mnt/sdb2/music/flac/files; (2) define canonical types artist, album, year, genre, collection as type;value (VFAT-safe; no ':' or '|'); (3) per-provider synonym maps raw -> canonical; (4) document JSON paths for deterministic album-field extraction per provider; (5) usable by a later mechanistic evaluator without further LLM invention.",
+  "BaseSha": "66d10d039a7857db498f25c27451f3f7e9441146",
   "Body": {
     "hash": [
       [
@@ -142,7 +143,9 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "working": {
+      "owner": "agent"
+    }
   },
   "Summary": {
     "hash": [
@@ -279,6 +282,23 @@
     ],
     "raw": "Groom musicology tags"
   },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Inventory provider tag/genre domains + raw JSON extraction paths"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Write skill + canonical type;value schema (VFAT-safe)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Author per-provider synonym maps from inventory"
+    }
+  ],
   "create_dt": "2026-07-18T06:26:50Z",
-  "update_dt": "2026-07-18T06:46:33Z"
+  "update_dt": "2026-07-18T14:06:07Z"
 }
