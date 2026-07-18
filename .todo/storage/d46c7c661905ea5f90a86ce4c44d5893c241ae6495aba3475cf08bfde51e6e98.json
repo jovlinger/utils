@@ -284,8 +284,10 @@
   },
   "WorkItems": [
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Inventory provider tag domains and document extraction paths.\n\nAdded inventory/*.tsv from live .meta.*.json, extraction-paths.md for sidecar\nand raw API JSON paths (musicbrainz/discogs/lastfm/johan), and scan_inventory.py.",
+      "sha": "71824eb83ec50eeb06dce2f2614f673ec9eae81a",
       "summary": "Inventory provider tag/genre domains + raw JSON extraction paths"
     },
     {
@@ -300,5 +302,5 @@
     }
   ],
   "create_dt": "2026-07-18T06:26:50Z",
-  "update_dt": "2026-07-18T14:06:07Z"
+  "update_dt": "2026-07-18T14:07:22Z"
 }
