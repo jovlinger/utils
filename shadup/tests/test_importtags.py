@@ -26,7 +26,7 @@ def _db_tags_for_path(
             """
             SELECT shasum, root_rel, dirpath, filename
             FROM stored_files
-            WHERE deleted = 0
+            WHERE deleted = 0 AND end IS NULL
             """
         ).fetchall()
     shasum: str | None = None
