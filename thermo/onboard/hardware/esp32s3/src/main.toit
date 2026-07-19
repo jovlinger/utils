@@ -135,8 +135,8 @@ build-dmz-body pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
   // Keep the debug body small -- full log rings blow RAM during long-poll.
   body := json.encode {
     "sensors": {
-      "temp_centigrade": 21.0,
-      "humid_percent": 50.0,
+      "temp_centigrade": 1.0,
+      "humid_percent": 1.0,
     },
     "deployment": {
       "zone_name": ZONE-NAME,
@@ -177,53 +177,53 @@ dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin network/net.Interfa
   timestamp := headers["timestamp"]
   zone-name := headers["zone_name"]
 
-  socket := network.tcp-connect secrets.DMZ-HOST secrets.DMZ-PORT
-  try:
-    request-head := "POST $(secrets.DMZ-PATH) HTTP/1.1\r\n"
-        + "Host: $(secrets.DMZ-HOST):$(secrets.DMZ-PORT)\r\n"
-        + "Content-Type: application/json\r\n"
-        + "Content-Length: $body.size\r\n"
-        + "Connection: close\r\n"
-        + "X-Zone-Signature: $signature\r\n"
-        + "X-Zone-Timestamp: $timestamp\r\n"
-        + "X-Zone-Name: $zone-name\r\n"
-        + "\r\n"
-    socket.out.write request-head
-    socket.out.write body
-
-    response/string := ""
-    exception := catch:
-      with-timeout max-wait:
+  // Cap connect + write + response so a hung DNS/TCP path cannot wedge :5000.
+  response/string := ""
+  exception := catch:
+    with-timeout max-wait:
+      socket := network.tcp-connect secrets.DMZ-HOST secrets.DMZ-PORT
+      try:
+        request-head := "POST $(secrets.DMZ-PATH) HTTP/1.1\r\n"
+            + "Host: $(secrets.DMZ-HOST):$(secrets.DMZ-PORT)\r\n"
+            + "Content-Type: application/json\r\n"
+            + "Content-Length: $body.size\r\n"
+            + "Connection: close\r\n"
+            + "X-Zone-Signature: $signature\r\n"
+            + "X-Zone-Timestamp: $timestamp\r\n"
+            + "X-Zone-Name: $zone-name\r\n"
+            + "\r\n"
+        socket.out.write request-head
+        socket.out.write body
         response = read-http-response socket
-    if exception:
-      logs.add "dmz ping wait timeout=$(max-wait) epoch=$epoch (likely long-poll hold)"
-      return {
-        "ok": false,
-        "status": 0,
-        "timed_out": true,
-        "timestamp_sent": "$epoch",
-        "dmz_host": secrets.DMZ-HOST,
-        "dmz_path": secrets.DMZ-PATH,
-        "body_excerpt": "timeout waiting for DMZ response (signed request sent)",
-      }
-
-    status := parse-status-code response
-    body-text := response-body response
-    excerpt := slice-prefix body-text 400
-    logs.add "dmz ping status=$status body=$(slice-prefix excerpt 120)"
-    if status == 401 and epoch < MIN-CREDIBLE-EPOCH:
-      logs.add "dmz ping likely clock-skew: epoch=$epoch (need NTP)"
+      finally:
+        socket.close
+  if exception:
+    logs.add "dmz ping wait timeout=$(max-wait) epoch=$epoch err=$exception"
     return {
-      "ok": status == 200,
-      "status": status,
-      "timed_out": false,
+      "ok": false,
+      "status": 0,
+      "timed_out": true,
       "timestamp_sent": "$epoch",
       "dmz_host": secrets.DMZ-HOST,
       "dmz_path": secrets.DMZ-PATH,
-      "body_excerpt": excerpt,
+      "body_excerpt": "timeout during DMZ connect/send/wait (signed headers ready)",
     }
-  finally:
-    socket.close
+
+  status := parse-status-code response
+  body-text := response-body response
+  excerpt := slice-prefix body-text 400
+  logs.add "dmz ping status=$status body=$(slice-prefix excerpt 120)"
+  if status == 401 and epoch < MIN-CREDIBLE-EPOCH:
+    logs.add "dmz ping likely clock-skew: epoch=$epoch (need NTP)"
+  return {
+    "ok": status == 200,
+    "status": status,
+    "timed_out": false,
+    "timestamp_sent": "$epoch",
+    "dmz_host": secrets.DMZ-HOST,
+    "dmz_path": secrets.DMZ-PATH,
+    "body_excerpt": excerpt,
+  }
 
 handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin network/net.Interface -> none:
   exception := catch --trace:
