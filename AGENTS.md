@@ -8,6 +8,12 @@ multiple-choice prompts to re-confirm an already-stated task. Ask only when a
 required decision cannot be resolved from the request, the code, or sensible
 defaults.
 
+## Git commits
+
+Never add `Co-authored-by:` (or any co-author / Cursor attribution trailer) to
+commit messages. Commits are authored by the human operator only; hooks may
+reject messages that include these trailers.
+
 ## Prefer tools over ad-hoc Python
 
 Do not pipe through `python` / `python3 -c` for menial edits or bookkeeping.

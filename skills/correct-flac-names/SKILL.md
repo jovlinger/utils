@@ -59,9 +59,6 @@ one):
 2. **`.meta.johan.json`** — local curated / override.
    - `metadata.artist` / `metadata.album` / `metadata.tracks[].title`
    - else `local.artist_guess` / `local.album_guess` / `local.tracks[].title_guess`
-   - After a rename, set top-level **`original-album-name`** to the previous
-     album directory basename (create the sidecar if missing). Do this once per
-     rename; if the key already exists, leave it (keep the first/original value).
 3. **Online providers** — `.meta.musicbrainz.json`, `.meta.discogs.json`,
    `.meta.lastfm.json`, … (any remote provider sidecar). Same
    `metadata.*` / `local.*` fields; when several online files disagree among
@@ -264,8 +261,8 @@ Correct FLAC names:
 - [ ] Harmonize multi-disc album strings within each set
 - [ ] Strip The /, The on artist; VFAT-sanitize every segment
 - [ ] Resolve target collisions with DUP / DUP DUP / …
-- [ ] Emit rename plan (dir + files); dry-run first
-- [ ] Apply renames; set .meta.johan.json original-album-name; refresh _tags
+- [ ] Emit rename plan (dir + files); dry-run with `shadup mv --dry-run` first
+- [ ] Apply dir renames with `shadup mv`; refresh _tags
 ```
 
 ### 1. Find offenders
@@ -287,12 +284,36 @@ FILE <old>           ->  <new>
 CUE  update FILE "…" lines if track files rename
 ```
 
-Keep renames on the same filesystem (`mv` / rename) so shadup content-addressed
-blobs under `data/` stay valid; only the symlink tree under `files/` moves.
+Apply directory renames with **`shadup mv`**, not bare `mv`. It renames on disk
+(same filesystem; blobs under `data/` unchanged) and updates `stored_files` path
+history (`end` on old rows, `start` on new). Track symlink renames inside an
+album use the same command with file paths.
+
+Paths are **relative to `files/`** (stored path prefix), e.g. album basenames at
+the top level or `Album/track.flac` for a single file. Run from the store's
+`files/` directory so shadir/DB discovery works, or pass `--shadir` explicitly.
+
+```bash
+FILES=/mnt/sdb2/music/flac/files
+cd "$FILES"
+
+# Rehearse one album dir rename (prints disk + DB plan, no changes)
+shadup mv --dry-run "Old Name" "New Name"
+
+# Apply
+shadup mv "Old Name" "New Name"
+
+# Track file inside an album (optional follow-up)
+shadup mv "New Name/01-old.flac" "New Name/01. Track Title.flac"
+```
+
+Sidecars (`.meta.*.json`, cue sheets) move with the directory on disk; edit cue
+`FILE "…"` lines manually when track basenames change. Do not use plain `mv` for
+anything indexed in `stored_files` — the DB would drift from disk.
 
 ### 3. Apply carefully
 
-- Prefer dry-run listing first.
+- Prefer `shadup mv --dry-run` before each batch (or mirror the plan in a log).
 - **Collision:** if the target basename already exists (or another planned
   rename claims it), do **not** overwrite. Append ` DUP` to the target name and
   retry; if still taken, append another ` DUP` (repeat until free):
@@ -305,15 +326,9 @@ blobs under `data/` stay valid; only the symlink tree under `files/` moves.
 
   Call the chosen name out in the action log. Never clobber an existing album
   dir.
-- For **each** directory that is actually renamed, update
-  `.meta.johan.json` in the **new** directory:
-
-  ```json
-  "original-album-name": "<basename before rename>"
-  ```
-
-  Create a minimal johan sidecar if none exists. If `original-album-name` is
-  already set, do not overwrite it (preserve the earliest name).
+- **Rename provenance:** `shadup mv` end-dates the old `stored_files` rows and
+  opens new ones with `start=now()`. Prior album dirnames live in the shadup DB
+  — do **not** write `original-album-name` into `.meta.johan.json` (obsolete).
 - After album renames that affect tag mirrors: run shadup
   `refresh-extracted-tags` so `_tags/` no longer points at stale basenames.
 - Do not “fix” names by writing illegal characters into `_tags/` either;
@@ -322,8 +337,7 @@ blobs under `data/` stay valid; only the symlink tree under `files/` moves.
 ### 4. Report
 
 Summarize: albums scanned, illegal names found, renames proposed/applied
-(including any `DUP` suffixes), `original-album-name` writes, sources that won,
-and any skipped deferrals.
+(including any `DUP` suffixes), sources that won, and any skipped deferrals.
 
 ## Related code
 
@@ -332,9 +346,10 @@ and any skipped deferrals.
   `parse_album_dirname`, `parse_track_filename`), `metatool.py`, providers,
   sidecars
 - `../bin/musicology/fix_johan_colon_tags.py` — legacy `:` in tags
-- `shadup/shadup.py` — `_sanitize_tag_mirror_segment`, `tag_mirror_relpath`,
-  `refresh-extracted-tags` (note: `:` in tags is treated as a **namespace**
-  separator for mirrors; album *values* still need VFAT sanitize)
+- `shadup/shadup.py` — `mv` (disk rename + `stored_files` start/end history),
+  `_sanitize_tag_mirror_segment`, `tag_mirror_relpath`, `refresh-extracted-tags`
+  (note: `:` in tags is treated as a **namespace** separator for mirrors; album
+  *values* still need VFAT sanitize)
 - `shadup/importtags.py` — uses `;` as artist/album tag separator for path safety
 
 ## Examples

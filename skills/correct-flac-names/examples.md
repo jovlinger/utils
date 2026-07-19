@@ -51,8 +51,20 @@ DIR  VA - Verve Remixed: The First Ladies 2013
   ->  VA - Verve Remixed- The First Ladies 2013
 ```
 
+Apply from `files/` (not bare `mv`):
+
+```bash
+cd /mnt/sdb2/music/flac/files
+shadup mv --dry-run \
+  "VA - Verve Remixed: The First Ladies 2013" \
+  "VA - Verve Remixed- The First Ladies 2013"
+shadup mv \
+  "VA - Verve Remixed: The First Ladies 2013" \
+  "VA - Verve Remixed- The First Ladies 2013"
+```
+
 Tracks may still be scene-style (`01-ella_fitzgerald-….flac`) — optional
-follow-up after dirname P0.
+follow-up after dirname P0 (per-track renames also use `shadup mv`).
 
 ---
 
@@ -78,6 +90,11 @@ the winner. Drop rip noise (`UIGY-9672`, `SHM-SACD`, `DSD`); year optional.
 ```text
 DIR  Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD
   ->  Roxy Music - Avalon
+```
+
+```bash
+cd /mnt/sdb2/music/flac/files
+shadup mv "Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD" "Roxy Music - Avalon"
 ```
 
 Same pattern for siblings:
@@ -145,13 +162,11 @@ Multi-disc pair — same album string, one disc-marker style:
 If the target exists, append ` DUP` (again if needed): `Album`, `Album DUP`,
 `Album DUP DUP`. Never overwrite.
 
-## Provenance in `.meta.johan.json`
+## Rename provenance (shadup DB)
 
-On each applied rename, set (once) in the johan sidecar:
-
-```json
-"original-album-name": "The Doors - 2013 - Infinite [2013 US Analogue Productions CAPP DOORS SA SACD]"
-```
+Prior album directory names are recorded by **`shadup mv`** in `stored_files`:
+old path rows get `end=now()`, new rows get `start=now()`. Do not write
+`original-album-name` into `.meta.johan.json` — that sidecar field is obsolete.
 
 ---
 
@@ -219,5 +234,6 @@ present; else walk johan → online → txt/cue. Example shape:
 
 `_tags/album/DJ-Kicks: DJ Cam` can still contain `:` even when the real album
 dir uses `-`. Fixing album dirs does not by itself rewrite tag strings; after
-renames run `shadup refresh-extracted-tags`, and prefer `;`-namespaced tags
-without `:` in values when grooming metadata (related: musicology tag grooming).
+album dir renames (`shadup mv`) run `shadup refresh-extracted-tags`, and prefer
+`;`-namespaced tags (e.g. `artist;name`) without `:` in values when grooming
+metadata (related: musicology tag grooming).

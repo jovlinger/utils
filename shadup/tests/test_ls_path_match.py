@@ -77,6 +77,7 @@ def test_list_children_tail_query(tmp_path: Path) -> None:
                 "01 - track.flac",
             ),
         )
+        _sh.upgrade_stored_files_schema(conn)
     with sqlite3.connect(db) as conn:
         rows = list_children(conn, ["VA - Example/01 - track.flac"], False, False)
     assert len(rows) == 1
