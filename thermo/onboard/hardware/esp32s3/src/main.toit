@@ -1,12 +1,14 @@
-// Minimal office onboard debug server.
-// No encryption, no third-party packages: stdlib net + gpio only.
-// Serves /healthz and /logs on TCP port 5000 for direct LAN access.
+// Office onboard debug server: local /healthz /logs /gpio /ir/ping /dmz/ping.
+// Ed25519 via custom-envelope C service (auth.toit). Midea IR via ir.toit.
 
 import encoding.json
 import gpio
 import net
 import net.tcp
-import rmt
+
+import .auth
+import .ir as irlib
+import .secrets as secrets
 
 ZONE-NAME ::= "office"
 BACKEND ::= "esp32s3"
@@ -20,6 +22,8 @@ HTTP-PORT ::= 5000
 LOG-CAPACITY ::= 32
 
 boot-us_ := Time.monotonic-us
+auth-ed25519-ready_/bool := false
+dmz-signer_/Ed25519Signer? := null
 
 class LogRing:
   lines_/List := []
@@ -42,7 +46,6 @@ class LogRing:
 
 read-request socket/tcp.Socket -> string?:
   buf := #[]
-  // Read until we have the request line + headers end, or give up.
   while buf.size < 2048:
     chunk := socket.in.read
     if not chunk: break
@@ -51,13 +54,11 @@ read-request socket/tcp.Socket -> string?:
     if text.contains "\r\n\r\n" or text.contains "\n\n":
       return text
     if text.contains "\n":
-      // Have at least the request line.
       return text
   if buf.size == 0: return null
   return buf.to-string-non-throwing
 
 request-path text/string -> string:
-  // "GET /healthz HTTP/1.1\r\n..."
   first-nl := text.index-of "\n"
   line := first-nl >= 0 ? (text[..first-nl].trim --right "\r") : text
   parts := line.split " "
@@ -77,18 +78,129 @@ send-json socket/tcp.Socket status/int body-bytes/ByteArray -> none:
   socket.out.write body-bytes
   socket.out.close
 
-send-ir-ping logs/LogRing -> none:
-  // Short ~38 kHz burst on IR TX for direct bench testing (not a full Midea frame).
-  pin := gpio.Pin IR-TX-GPIO
-  channel := rmt.Out pin --resolution=1_000_000
-  // ~13 us high / 13 us low ~= 38 kHz; 80 edges ~= 1 ms burst.
-  pulse := rmt.Signals 80
-  for i := 0; i < 80; i++:
-    pulse.set i --level=(i % 2 == 0 ? 1 : 0) --period=13
-  channel.write pulse --done-level=0
-  channel.close
-  pin.close
-  logs.add "ir ping gpio$IR-TX-GPIO 38kHz ~1ms"
+/**
+Send Midea power-on FAN F5 (hi) via RMT on IR TX.
+Returns list of hex frame strings transmitted.
+*/
+send-ir-fan-hi logs/LogRing -> List:
+  command := irlib.HeatpumpCommand --power --mode="FAN" --fan="F5" --temp-c=24
+  frames := irlib.transmit-midea IR-TX-GPIO command
+  hexes := []
+  frames.do: | frame/ByteArray |
+    hexes.add (irlib.hex-frame frame)
+  logs.add "ir midea power=on mode=FAN fan=F5 frames=$(hexes.size)"
+  return hexes
+
+slice-prefix text/string max/int -> string:
+  if text.size <= max: return text
+  return text[..max]
+
+read-http-response socket/tcp.Socket -> string:
+  buf := #[]
+  while chunk := socket.in.read:
+    buf += chunk
+    if buf.size > 65536:
+      // Keep memory bounded: this endpoint is for debug, not bulk transfer.
+      break
+  return buf.to-string-non-throwing
+
+parse-status-code response/string -> int:
+  first-nl := response.index-of "\n"
+  line := first-nl >= 0 ? (response[..first-nl].trim --right "\r") : response
+  parts := line.split " "
+  if parts.size < 2: return 0
+  // status token is e.g. "200"
+  token := parts[1]
+  out := 0
+  token.do: | ch/int |
+    if ch < '0' or ch > '9': return 0
+    out = out * 10 + (ch - '0')
+  return out
+
+response-body response/string -> string:
+  p := response.index-of "\r\n\r\n"
+  if p >= 0: return response[p + 4..]
+  q := response.index-of "\n\n"
+  if q >= 0: return response[q + 2..]
+  return response
+
+build-dmz-body logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
+  body := json.encode {
+    "sensors": {
+      "temp_centigrade": 21.0,
+      "humid_percent": 50.0,
+    },
+    "deployment": {
+      "zone_name": ZONE-NAME,
+      "hardware_profile": HARDWARE-PROFILE,
+      "send_behavior": "ir_heatpump",
+      "report_behavior": "sensor_readings",
+      "sensor_driver": "aht20",
+      "ir_transport": "esp32s3_rmt",
+      "ir_device": "gpio$IR-TX-GPIO",
+      "ir_protocol": IR-PROTOCOL,
+      "backend": BACKEND,
+      "status_led_driver": "log_only",
+    },
+    "network": {
+      "local_ip": "192.168.88.73",
+      "onboard_url": "http://192.168.88.73:$HTTP-PORT",
+    },
+    "logs": {
+      "lines": logs.newest-first,
+    },
+    "debug_gpio": {
+      "pullup_gpio": DEBUG-PULLUP-GPIO,
+      "pulldown_gpio": DEBUG-PULLDOWN-GPIO,
+      "pullup_level": pin-up.get,
+      "pulldown_level": pin-down.get,
+    },
+  }
+  return body
+
+dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> Map:
+  if not dmz-signer_:
+    throw "dmz signer unavailable"
+  body := build-dmz-body logs pin-up pin-down
+  epoch := Time.now.s-since-epoch
+  headers := dmz-signer_.sign-headers "POST" secrets.DMZ-PATH body ZONE-NAME epoch
+  signature := headers["signature_b64"]
+  timestamp := headers["timestamp"]
+  zone-name := headers["zone_name"]
+
+  network := net.open
+  socket := network.tcp-connect secrets.DMZ-HOST secrets.DMZ-PORT
+  try:
+    request-head := "POST $(secrets.DMZ-PATH) HTTP/1.1\r\n"
+        + "Host: $(secrets.DMZ-HOST):$(secrets.DMZ-PORT)\r\n"
+        + "Content-Type: application/json\r\n"
+        + "Content-Length: $body.size\r\n"
+        + "Connection: close\r\n"
+        + "X-Zone-Signature: $signature\r\n"
+        + "X-Zone-Timestamp: $timestamp\r\n"
+        + "X-Zone-Name: $zone-name\r\n"
+        + "\r\n"
+    socket.out.write request-head
+    socket.out.write body
+    socket.out.close
+
+    response := read-http-response socket
+    status := parse-status-code response
+    body-text := response-body response
+    excerpt := slice-prefix body-text 400
+    logs.add "dmz ping status=$status body=$(slice-prefix excerpt 120)"
+    if status == 401 and epoch < 1_700_000_000:
+      logs.add "dmz ping likely clock-skew: epoch=$epoch (need NTP)"
+    return {
+      "ok": status == 200,
+      "status": status,
+      "timestamp_sent": "$epoch",
+      "dmz_host": secrets.DMZ-HOST,
+      "dmz_path": secrets.DMZ-PATH,
+      "body_excerpt": excerpt,
+    }
+  finally:
+    socket.close
 
 handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
   try:
@@ -122,7 +234,9 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
         },
         "esp32s3": {
           "uptime_seconds": uptime-s,
+          "epoch_seconds": Time.now.s-since-epoch,
           "wifi_ready": true,
+          "auth_ed25519_ready": auth-ed25519-ready_,
           "debug_pullup_gpio": DEBUG-PULLUP-GPIO,
           "debug_pulldown_gpio": DEBUG-PULLDOWN-GPIO,
           "debug_pullup_level": pin-up.get,
@@ -152,14 +266,24 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
       }
       send-json socket 200 body
     else if path == "/ir/ping":
-      send-ir-ping logs
+      hexes := send-ir-fan-hi logs
       body := json.encode {
         "ok": true,
-        "action": "ir_ping",
+        "action": "ir_midea_fan_hi",
         "gpio": IR-TX-GPIO,
-        "note": "short 38kHz burst; not a full midea frame",
+        "protocol": IR-PROTOCOL,
+        "command": {
+          "power": true,
+          "mode": "FAN",
+          "fan": "F5",
+          "temp_c": 24,
+        },
+        "frames_hex": hexes,
       }
       send-json socket 200 body
+    else if path == "/dmz/ping":
+      result := dmz-ping-once logs pin-up pin-down
+      send-json socket 200 (json.encode result)
     else:
       body := json.encode {"ok": false, "error": "not_found", "path": path}
       send-json socket 404 body
@@ -169,6 +293,12 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
 main:
   logs := LogRing
   logs.add "thermo-esp32s3 debug boot"
+
+  // Encryption library (Monocypher Ed25519 via custom envelope).
+  dmz-signer_ = Ed25519Signer secrets.ZONE-SEED
+  auth-ed25519-ready_ = true
+  logs.add "auth ed25519 ready"
+
   pin-up := gpio.Pin.in DEBUG-PULLUP-GPIO --pull-up
   pin-down := gpio.Pin.in DEBUG-PULLDOWN-GPIO --pull-down
   logs.add "gpio pullup=$DEBUG-PULLUP-GPIO pulldown=$DEBUG-PULLDOWN-GPIO"
@@ -176,7 +306,7 @@ main:
   network := net.open
   server := network.tcp-listen HTTP-PORT
   logs.add "listen :$HTTP-PORT"
-  print "esp32s3-office listening http://0.0.0.0:$HTTP-PORT/healthz|/logs|/gpio"
+  print "esp32s3-office listening :$HTTP-PORT healthz|logs|gpio|ir/ping|dmz/ping"
 
   while true:
     socket := server.accept
