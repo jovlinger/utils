@@ -292,8 +292,10 @@
       "summary": "Commit /dmz/ping + secrets deploy path + Midea IR (main/ir/deploy/gitignore)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Fixed office pico2w assertions to esp32s3 in test_deployment_config.py and test_make_deploy.py",
+      "sha": "643f5a51f59adc7ca4bc9208646294f8c77f83e8",
       "summary": "Fix office zone tests expecting pico2w (now esp32s3)"
     },
     {
@@ -303,5 +305,5 @@
     }
   ],
   "create_dt": "2026-07-14T16:47:44Z",
-  "update_dt": "2026-07-19T04:16:21Z"
+  "update_dt": "2026-07-19T04:16:28Z"
 }
