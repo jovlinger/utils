@@ -7,8 +7,8 @@
     "require_ntp_before_first_post": true,
     "min_acceptable_year": 2024,
     "sensor_boot_required_default": false,
-    "sensor_fallback_celsius": 21.0,
-    "sensor_fallback_humidity_percent": 50.0
+    "sensor_fallback_celsius": 1.0,
+    "sensor_fallback_humidity_percent": 1.0
   },
   "poll_loop": {
     "post_timeout_seconds": 600,

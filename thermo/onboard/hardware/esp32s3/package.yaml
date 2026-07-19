@@ -1,2 +1,6 @@
 name: thermo_esp32s3
 description: Thermo office zone onboard controller for ESP32-S3 (Toit/Jaguar).
+dependencies:
+  ntp:
+    url: github.com/toitlang/pkg-ntp
+    version: ^1.1.0

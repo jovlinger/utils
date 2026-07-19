@@ -11,9 +11,10 @@ pub enum SensorSource {
     Fallback,
 }
 
+// Implausible fixed values so a missing sensor is obvious in graphs/UI.
 pub const FALLBACK_SENSOR_READING: SensorReading = SensorReading {
-    temp_centigrade: 21.0,
-    humid_percent: 50.0,
+    temp_centigrade: 1.0,
+    humid_percent: 1.0,
     source: SensorSource::Fallback,
 };
 

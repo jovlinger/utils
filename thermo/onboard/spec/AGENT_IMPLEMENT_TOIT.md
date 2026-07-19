@@ -28,7 +28,7 @@ for the esp32s3_office profile. Suggested modules (match PLAN section 2):
 - `config.toit` -- constants from profile + priv env (no secrets in git)
 - `auth.toit` -- must pass `auth/vectors.tspec.json` (M2 gate)
 - `protocol.toit` -- cold-start body must match `dmz/golden_cold_start.tspec.json` exactly
-- `sensor.toit` -- AHT20 on GPIO8/9, fallback 21.0/50.0
+- `sensor.toit` -- AHT20 on GPIO8/9, fallback 1.0/1.0
 - `ir.toit` -- RMT + golden frames from TSL
 - `main.toit` -- poll loop per `controller.tspec.json`
 
