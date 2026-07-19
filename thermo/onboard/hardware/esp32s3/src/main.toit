@@ -1,10 +1,13 @@
 // Office onboard debug server: local /healthz /logs /gpio /ir/ping /dmz/ping.
 // Ed25519 via custom-envelope C service (auth.toit). Midea IR via ir.toit.
+// NTP via pkg-ntp so X-Zone-Timestamp is a real wall clock.
 
 import encoding.json
+import esp32 show adjust-real-time-clock
 import gpio
 import net
 import net.tcp
+import ntp
 
 import .auth
 import .ir as irlib
@@ -20,9 +23,13 @@ DEBUG-PULLUP-GPIO ::= 4
 DEBUG-PULLDOWN-GPIO ::= 5
 HTTP-PORT ::= 5000
 LOG-CAPACITY ::= 32
+// Believable wall clock for Ed25519 zone timestamps (DMZ rejects skew).
+MIN-CREDIBLE-EPOCH ::= 1_700_000_000
+NTP-ATTEMPTS ::= 5
 
 boot-us_ := Time.monotonic-us
 auth-ed25519-ready_/bool := false
+ntp-ok_/bool := false
 dmz-signer_/Ed25519Signer? := null
 
 class LogRing:
@@ -236,6 +243,7 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
           "uptime_seconds": uptime-s,
           "epoch_seconds": Time.now.s-since-epoch,
           "wifi_ready": true,
+          "ntp_ok": ntp-ok_,
           "auth_ed25519_ready": auth-ed25519-ready_,
           "debug_pullup_gpio": DEBUG-PULLUP-GPIO,
           "debug_pulldown_gpio": DEBUG-PULLDOWN-GPIO,
@@ -290,6 +298,30 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
   finally:
     socket.close
 
+/**
+Sync wall clock via NTP when epoch is not yet credible.
+Returns true when Time.now is past MIN-CREDIBLE-EPOCH.
+*/
+sync-ntp logs/LogRing --network/net.Interface -> bool:
+  epoch := Time.now.s-since-epoch
+  if epoch >= MIN-CREDIBLE-EPOCH:
+    logs.add "ntp already credible epoch=$epoch"
+    return true
+  for attempt := 1; attempt <= NTP-ATTEMPTS; attempt++:
+    logs.add "ntp sync attempt $attempt/$NTP-ATTEMPTS"
+    result := ntp.synchronize --network=network
+    if result:
+      adjust-real-time-clock result.adjustment
+      epoch = Time.now.s-since-epoch
+      logs.add "ntp adjusted epoch=$epoch accuracy=$(result.accuracy)"
+      if epoch >= MIN-CREDIBLE-EPOCH:
+        return true
+    else:
+      logs.add "ntp sync failed attempt=$attempt"
+    sleep (Duration --s=2)
+  logs.add "ntp give up epoch=$(Time.now.s-since-epoch)"
+  return false
+
 main:
   logs := LogRing
   logs.add "thermo-esp32s3 debug boot"
@@ -304,6 +336,8 @@ main:
   logs.add "gpio pullup=$DEBUG-PULLUP-GPIO pulldown=$DEBUG-PULLDOWN-GPIO"
 
   network := net.open
+  ntp-ok_ = sync-ntp logs --network=network
+
   server := network.tcp-listen HTTP-PORT
   logs.add "listen :$HTTP-PORT"
   print "esp32s3-office listening :$HTTP-PORT healthz|logs|gpio|ir/ping|dmz/ping"

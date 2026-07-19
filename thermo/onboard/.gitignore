@@ -27,4 +27,5 @@ hardware/esp32s3/envelope/toit/
 hardware/esp32s3/envelope/build/
 hardware/esp32s3/envelope/out/
 hardware/esp32s3/src/secrets.toit
+hardware/esp32s3/.packages/
 
