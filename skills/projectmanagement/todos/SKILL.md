@@ -313,7 +313,9 @@ downstream behavior.
 
 | Rule | Value |
 |------|-------|
-| Storage | `<main-checkout-root>/.todo/sqlite.db` by (repo_path, branch); repo_path is the main checkout, not a worktree |
+| Storage | `<main-checkout-root>/.todo/` (sqlite and/or `storage/*.json`); repo_path is the main checkout, not a worktree |
+| Main checkout branch | Always `master` (or `main`/`dev` if that is the repo's default) while any todo is being worked |
+| Todo code checkout | **Exclusive worktree** for the todo's branch -- never `git checkout` the todo branch in the main checkout |
 | Per branch | 0 or 1 ticket |
 | Legacy file | TODO.json -- import only; doctor warns |
 | Conflict | If `TODO.json` already exists on the branch, **resume or finish** it; do not create a second ticket, rename, or use subdirs |
@@ -321,36 +323,84 @@ downstream behavior.
 Typical pairing: create the branch when you open the ticket; set `Branch` and
 `Scope.branch` at that point (the branch may exist only locally until pushed).
 
-**Lifetime:** `TODO.json` lives with the branch. Cleanup, archival, and
+**Lifecycle:** `TODO.json` lives with the branch. Cleanup, archival, and
 post-`done` moves are out of scope -- do not delete or relocate the file as part
 of this workflow unless the user explicitly asks.
+
+### Why main stays on master (storage vs code)
+
+`.todo/storage` (and related exports) are **versioned in the main checkout**. If
+you check out a todo branch *in that tree*, every ticket-storage churn becomes a
+commit (or dirty path) on the *todo* branch. That couples unrelated tickets into
+feature-branch history and makes merges fight over `.todo/storage/*`.
+
+Wanted shape today (separate longer-term storage versioning may come later):
+
+- **Main checkout** stays on `master` and is where storage is committed when we
+  intentionally version tickets.
+- **Todo branch** is checked out **only** as a linked worktree; code and
+  branch-local commits live there; do not land storage-only noise on that branch.
 
 ## Worktree placement
 
 **Worktrees are ephemeral. The durable asset is the repo and the TODO's
-branch.** The `TODO.json` lives on the branch, the branch lives in the repo (and
-is pushed to the remote) -- that pair is the identity and the thing that
-survives. A worktree is just a disposable checkout used to work that branch;
-create and delete them freely, and never treat a worktree path as where a todo
-"lives." Find todos by repo + branch (`todo.py ls` / `todo.py read <id>` query
-sqlite directly); use `git worktree list` only to locate a branch's current
-checkout when one exists.
+branch.** The ticket record lives in the shared store; the code branch lives in
+the repo (and is pushed to the remote) -- that pair is the identity. A worktree
+is a disposable checkout used to work that branch; create and delete them
+freely, and never treat a worktree path as where a todo "lives." Find todos by
+repo + branch (`todo.py ls` / `todo.py read <id>`); use `git worktree list` only
+to locate a branch's current checkout when one exists.
 
-### Subtodo worktree lifecycle (open on entry, tear down on last commit)
+### Hard rule: work todos only in worktrees
 
-A **subtodo is worked in its own dedicated git worktree**, so parent and siblings
-never share a checkout:
+**Every working todo (top-level or subtodo) is checked out exclusively into a
+dedicated git worktree.** Do **not** `git checkout <todo-branch>` in the main
+repodir.
 
-- **On entry** (an agent begins working a subtodo -- typically `set --state
-  working`): create a fresh worktree for the subtodo's branch under the placement
+Before any code or ticket work on a todo (`set --state working`,
+`work-item-done`, edits under the repo, etc.), **verify both**:
+
+1. **Main checkout is on `master`** (or the repo default). From the main
+   checkout root (first path in `git worktree list`):
+   `git -C <main-checkout-root> branch --show-current` must be `master`.
+2. **CWD is a linked worktree of the todo's branch**, not the main checkout:
+   `git rev-parse --show-toplevel` ≠ `<main-checkout-root>`, and
+   `git branch --show-current` is the todo's `Branch`.
+
+If either check fails: stop. Create/reuse the worktree (below), `cd` into it,
+put the main checkout back on `master` if needed, then re-verify. Do not proceed
+while the main tree is on the todo branch.
+
+```bash
+# Main checkout (storage anchor) must stay on master
+MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+git -C "$MAIN" branch --show-current   # expect: master
+
+# Work happens only in a linked worktree of the todo branch
+git rev-parse --show-toplevel          # must NOT equal $MAIN
+git branch --show-current              # expect: <todo Branch>
+```
+
+`todo.py init --stay-on-parent` creates the branch without leaving you on it in
+the main tree -- prefer that when filing from the main checkout, then
+`git worktree add` and work there.
+
+### Todo / subtodo worktree lifecycle (open on entry, tear down on last commit)
+
+A **todo is worked in its own dedicated git worktree**, so the main checkout
+(and parent/siblings) never share that checkout:
+
+- **On entry** (an agent begins working a todo -- typically `set --state
+  working`): create a fresh worktree for the todo's branch under the placement
   convention below (`git worktree add <todo-dir>/worktrees/<repo-path>/<branch>
   <branch>`) and `cd` into it. Reuse an existing worktree for that branch if
-  `git worktree list` already shows one; never move it.
-- **On last commit** (the subtodo's final commit is in -- `is-done` is true and its
+  `git worktree list` already shows one; never move it. Confirm the main
+  checkout is still on `master` before continuing.
+- **On last commit** (the todo's final commit is in -- `is-done` is true and its
   `set --state done` commit has landed): tear the worktree down (`cd` out, then
   `git worktree remove <path>`). Teardown removes only the *checkout*; the branch
-  and its commits survive for the parent's `merge-subtodo`. If the tree is dirty,
-  the subtodo is not actually done -- finish or surface it before removing.
+  and its commits survive for merge/handoff. If the tree is dirty, the todo is
+  not actually done -- finish or surface it before removing.
 
 The branch is the durable asset; the worktree is scratch space that exists only
 for the span from entry to last commit.
@@ -372,11 +422,9 @@ branch is disposable scaffold; delete it (`git branch -D`, since a cherry-pick
 handoff won't register as "merged"). Do **not** gate deletion on the work reaching
 `dev` -- that is often many merges upstream and is not this branch's concern.
 
-A todo's working tree may live in a dedicated git worktree rather than the main
-checkout. **Existing worktrees are found with `git worktree list` and are never
-moved.** Only *new* worktrees follow the placement convention below; the path is
-never passed on the command line -- it is a creation convention, not a lookup
-key.
+**Existing worktrees are found with `git worktree list` and are never moved.**
+Only *new* worktrees follow the placement convention below; the path is never
+passed on the command line -- it is a creation convention, not a lookup key.
 
 New worktrees go under todo_db.worktrees_dir() (`<todo-dir>/worktrees/`), nested by the repo's full path with the branch as the
 leaf:
@@ -402,10 +450,22 @@ and discovery relies on `git worktree list`.
 
 ## Before you start
 
+**Gate (working an existing todo):** verify main-on-master + CWD-is-todo-worktree
+(see **Hard rule: work todos only in worktrees**). Do not edit code or advance
+WorkItems until both hold.
+
 ```bash
-git rev-parse --show-toplevel        # confirm repo root; cwd should be here
+# --- verify layout (required before working a todo) ---
+MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+git -C "$MAIN" branch --show-current          # must be master
+test "$(git rev-parse --show-toplevel)" != "$MAIN"   # must be in a linked worktree
+git branch --show-current                     # must be the todo Branch
+
+# --- then ---
+git rev-parse --show-toplevel        # confirm worktree root; cwd should be here
 todo.py init --summary="..."         # refuses if current branch already has a ticket
 todo.py init --summary="..." --parent <id>   # hang a new todo off an existing one for context
+todo.py init --id <id> --stay-on-parent      # promote without parking main on the todo branch
 todo.py read <known-id-prefix>        # load a known ticket; do not read TODO.json directly
 todo.py read self                     # current-branch lookup
 todo.py prompt self                   # WHY->WHAT startup context: self + its Parent chain
@@ -745,9 +805,12 @@ its lifetime matches the branch's (invariant #4).
 **Create (two phases).** "Make a todo" = `todo.py mint` (creates a `pre-init`
 record + Id, no branch) then `todo.py set --id <id> --summary=... --body=...
 --ac=...` to fill it in while collecting data. "Work the todo" (when the design
-is ready) = `todo.py init --id <id>`, which creates the branch, records `BaseSha`
-(invariant #5), and moves it to `init`. See **Two-phase lifecycle** under
-**Id minting**. (`init --summary=...` still one-shot-creates for backward compat.)
+is ready) = `todo.py init --id <id>` (prefer `--stay-on-parent` from the main
+checkout), which creates the branch, records `BaseSha` (invariant #5), and moves
+it to `init`. Then `git worktree add` the todo branch and **verify**
+main-on-master + CWD-in-worktree before any code work. See **Hard rule: work
+todos only in worktrees** and **Two-phase lifecycle** under **Id minting**.
+(`init --summary=...` still one-shot-creates for backward compat.)
 Plan the work as WorkItems with `work-item-add --summary=...`; keep the **head of
 the list small enough to be one trackable unit** (see `frequentcommits`).
 

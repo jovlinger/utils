@@ -1,5 +1,5 @@
 #!/usr/bin/env venv-run
-"""Import metatool ``export-json`` metadata as shadup tags on one file per album dir."""
+"""Import ``.meta.combined.json`` tags into shadup on one file per album dir."""
 
 from __future__ import annotations
 
@@ -14,10 +14,15 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+_MOD_DIR = Path(__file__).resolve().parent
+if str(_MOD_DIR) not in sys.path:
+    sys.path.insert(0, str(_MOD_DIR))
+
+from meta_combine import COMBINED_NAME, read_combined_tags
+
 # Must match ``META_KEY_SHADIR`` in ``shadup.py`` (store directory path in ``meta``).
 _META_SHADIR_KEY = "shadir"
 
-_MOD_DIR = Path(__file__).resolve().parent
 _shadup_mod: Any | None = None
 
 
@@ -174,15 +179,15 @@ def pick_target_file(
     return stored[0]
 
 
-# Separator for synthetic tags derived from export-json artist/album fields.
-# Must be valid in directory names on Windows and POSIX (not ``:`` ``|`` ``\``
-# ``/`` ``?`` ``*`` ``<`` ``>`` ``"``). Semicolon is rare in titles and works
-# on both platforms.
+# Separator for typed tags (``type;value``). Must be VFAT/Samba-safe (not ``:``).
 _ART_ALB_SEP = ";"
 
 
 def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
-    """Union of namespaced ``tag;…``, ``genre;…``, ``artist;…``, ``album;…`` tags."""
+    """Legacy helper: flat export-json ``tag``/``genre``/artist/album → typed tags.
+
+    Prefer ``.meta.combined.json`` via :func:`read_combined_tags` for new imports.
+    """
     out: list[str] = []
     seen: set[str] = set()
     for key, prefix in (("tag", "tag"), ("genre", "genre")):
@@ -209,24 +214,6 @@ def build_tags_from_export(obj: dict[str, Any]) -> list[str]:
             seen.add(t)
             out.append(t)
     return out
-
-
-def _run_metatool_export_json(
-    metatool: str, provider: str, album_dir: str
-) -> dict[str, Any]:
-    cmd: list[str] = [metatool, f"--provider={provider}", "export-json", album_dir]
-    proc = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise SystemExit(
-            f"metatool failed ({proc.returncode}): {' '.join(cmd)}\n"
-            f"{proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return json.loads(proc.stdout)
 
 
 def _shadup_argv(shadup_cli: str | None) -> list[str]:
@@ -342,20 +329,15 @@ def _run_shadup(
         )
 
 
-def _default_metatool() -> str:
-    return os.environ.get("METATOOL", "metatool")
-
-
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
-            "Per directory: run metatool export-json, then shadup tag-add on the "
-            "earliest stored file (symlink into the sha store). Fails if the album "
-            "has no such file. Use --dryrun to print DB effects without writing. "
-            "Quiet mode: one dot per album on a single line (flush per dot); use "
-            "--debug for one line per album instead. Pass many DIRs in one run "
-            "(e.g. importtags … ./*/) so dots stay on one line—do not wrap importtags "
-            "in a shell loop one album per process."
+            "Per directory: read ``.meta.combined.json`` (canonical type;value "
+            "tags), then shadup tag-add on the earliest stored file (symlink into "
+            "the sha store). Skips dirs with no combined file or no store target. "
+            "Use --dryrun to print DB effects without writing. Quiet mode: one "
+            "dot per album; --debug for one line per album. Pass many DIRs in one "
+            "run so dots stay on one line."
         )
     )
     p.add_argument(
@@ -384,16 +366,6 @@ def main(argv: list[str] | None = None) -> int:
         "--dryrun",
         action="store_true",
         help="Print tag-clear / tag-add and resulting tags; do not change the database",
-    )
-    p.add_argument(
-        "--provider",
-        default=os.environ.get("IMPORTTAGS_PROVIDER", "ALL"),
-        help="metatool --provider (default: ALL or $IMPORTTAGS_PROVIDER)",
-    )
-    p.add_argument(
-        "--metatool",
-        default=_default_metatool(),
-        help="metatool executable (default: $METATOOL or metatool)",
     )
     p.add_argument(
         "--shadup",
@@ -441,17 +413,21 @@ def main(argv: list[str] | None = None) -> int:
         album_dir = os.path.abspath(os.path.expanduser(raw))
         if not os.path.isdir(album_dir):
             continue
+        combined = Path(album_dir) / COMBINED_NAME
+        if not combined.is_file():
+            continue
         try:
-            payload = _run_metatool_export_json(args.metatool, args.provider, album_dir)
-        except json.JSONDecodeError as e:
-            raise SystemExit(f"invalid JSON from metatool for {album_dir}: {e}") from e
-        tags = build_tags_from_export(payload)
+            tags = read_combined_tags(Path(album_dir))
+        except (OSError, json.JSONDecodeError) as e:
+            raise SystemExit(f"invalid {COMBINED_NAME} for {album_dir}: {e}") from e
         if not tags:
             continue
         try:
             target = pick_target_file(album_dir, shadir_opt, db_path=db_opt)
         except ImportTagsError as e:
-            raise SystemExit(f"importtags: {e}") from e
+            # Box-set parents often have a combined file but no audio/store target.
+            print(f"importtags: skip {album_dir}: {e}", file=sys.stderr)
+            continue
         try:
             rel = os.path.relpath(target, cwd)
         except ValueError:

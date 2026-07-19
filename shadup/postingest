@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Post-ingest metadata scan, tag import, and shadup tag mirror refresh."""
+"""Post-ingest: musicscan → .meta.combined.json → importtags → tag mirror refresh.
+
+Discovers every directory that contains audio (including nested), plus parents
+of those dirs (multi-CD boxes get a set-union combined). Rebuilds
+``.meta.combined.json`` when inputs are newer (or ``--force``).
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,11 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+import meta_combine as combine
 
 HOME = Path.home()
 STORE_ROOT = Path(os.environ.get("POSTINGEST_STORE_ROOT", "/mnt/sdb2/music/flac"))
@@ -21,10 +31,10 @@ SHADUP_DB = Path(
 JOVLINGER_BIN = HOME / "github.com" / "jovlinger" / "bin"
 JOVLINGER_UTILS = HOME / "github.com" / "jovlinger" / "utils"
 MUSICSCAN = JOVLINGER_BIN / "binlinks" / "musicscan"
-METATOOL = JOVLINGER_BIN / "binlinks" / "metatool"
 IMPORTTAGS = JOVLINGER_UTILS / "shadup" / "importtags"
 SHADUP = JOVLINGER_UTILS / "shadup" / "shadup"
 REMOUNT = JOVLINGER_BIN / "with-ro-remounted-rw.sh"
+SYNONYMS_DIR = JOVLINGER_UTILS / "skills" / "groom-musicology-tags" / "synonyms"
 
 KNOWN_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
 AUDIO_EXTS = {
@@ -72,6 +82,7 @@ def parse_provider_csv(values: Sequence[str] | None) -> list[str]:
 
 
 def configured_default_providers() -> list[str]:
+    """Working providers: musicbrainz plus others that have credentials."""
     env_spec = os.environ.get("POSTINGEST_PROVIDERS")
     if env_spec:
         return parse_provider_csv([env_spec])
@@ -104,7 +115,7 @@ def validate_providers(providers: Sequence[str]) -> list[str]:
     return out
 
 
-def looks_like_album_dir(path: Path) -> bool:
+def has_audio(path: Path) -> bool:
     try:
         for child in path.iterdir():
             if child.is_file() and child.suffix.lower() in AUDIO_EXTS:
@@ -114,52 +125,59 @@ def looks_like_album_dir(path: Path) -> bool:
     return False
 
 
-def iter_album_dirs(root: Path) -> Iterable[Path]:
+def iter_dirs(root: Path) -> Iterable[Path]:
     for dirpath, dirnames, _filenames in os.walk(root):
-        dirnames.sort()
-        if Path(dirpath).name == "_tags":
+        path = Path(dirpath)
+        if path.name == "_tags" or path.name.startswith("."):
             dirnames[:] = []
             continue
-        if looks_like_album_dir(Path(dirpath)):
-            dirnames[:] = []
-            yield Path(dirpath)
+        dirnames[:] = sorted(
+            d for d in dirnames if not d.startswith(".") and d != "_tags"
+        )
+        yield path
 
 
-def has_non_johan_meta(path: Path) -> bool:
-    try:
-        children = list(path.iterdir())
-    except OSError:
-        return False
+def discover_units(roots: Sequence[Path]) -> tuple[list[Path], dict[Path, list[Path]]]:
+    """Return (audio_albums, parent_to_audio_children).
 
-    for child in children:
-        if not child.is_file():
-            continue
-        name = child.name
-        if name == ".meta.json":
-            return True
-        if not (name.startswith(".meta.") and name.endswith(".json")):
-            continue
-        provider = name[len(".meta.") : -len(".json")]
-        if provider != "johan":
-            return True
-    return False
+    *audio_albums*: every dir that directly contains audio.
+    *parent_to_audio_children*: parents that have one or more audio-album
+    children (multi-CD boxes and junk nesting). Parents need not have audio.
+    Never treats the store ``files/`` root as a union parent (that would merge
+    the whole library).
+    """
+    resolved_roots = [r.expanduser().resolve() for r in roots]
+    files_root = FILES_ROOT.expanduser().resolve()
 
-
-def find_new_album_dirs(roots: Sequence[Path]) -> list[Path]:
-    albums: list[Path] = []
-    seen: set[Path] = set()
-    for root in roots:
-        root = root.expanduser().resolve()
+    audio: list[Path] = []
+    audio_set: set[Path] = set()
+    for root in resolved_roots:
         if not root.is_dir():
             raise SystemExit(f"not a directory: {root}")
-        for album in iter_album_dirs(root):
-            resolved = album.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            if not has_non_johan_meta(resolved):
-                albums.append(resolved)
-    return sorted(albums, key=lambda p: str(p))
+        for path in iter_dirs(root):
+            if has_audio(path):
+                resolved = path.resolve()
+                if resolved not in audio_set:
+                    audio_set.add(resolved)
+                    audio.append(resolved)
+
+    parent_map: dict[Path, list[Path]] = {}
+    for album in audio:
+        parent = album.parent.resolve()
+        if parent == files_root:
+            continue
+        under_root = any(
+            parent == rr or rr in parent.parents for rr in resolved_roots
+        )
+        if not under_root:
+            continue
+        parent_map.setdefault(parent, []).append(album)
+
+    for parent, children in parent_map.items():
+        parent_map[parent] = sorted(set(children), key=lambda p: str(p))
+
+    audio.sort(key=lambda p: str(p))
+    return audio, parent_map
 
 
 def run(cmd: Sequence[str], *, cwd: Path | None = None) -> None:
@@ -168,7 +186,7 @@ def run(cmd: Sequence[str], *, cwd: Path | None = None) -> None:
 
 
 def ensure_commands() -> None:
-    missing = [p for p in (MUSICSCAN, METATOOL, IMPORTTAGS, SHADUP) if not p.exists()]
+    missing = [p for p in (MUSICSCAN, IMPORTTAGS, SHADUP) if not p.exists()]
     if missing:
         raise SystemExit("missing command(s): " + ", ".join(str(p) for p in missing))
 
@@ -186,14 +204,21 @@ def maybe_reexec_under_remount(argv: Sequence[str], *, dry_run: bool) -> None:
     env = command_env()
     env["POSTINGEST_IN_REMOUNT"] = "1"
     log(f"remounting {os.environ.get('SHASRV_MNT', '/mnt/sdb2')} read-write for metadata updates")
-    os.execvpe(str(REMOUNT), [str(REMOUNT), sys.executable, str(Path(__file__).resolve()), *argv], env)
+    os.execvpe(
+        str(REMOUNT),
+        [str(REMOUNT), sys.executable, str(Path(__file__).resolve()), *argv],
+        env,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Find post-ingest album dirs with no non-johan .meta sidecar, run "
-            "musicology, import all sidecar tags into shadup, and refresh files/_tags."
+            "For album dirs under the store: run musicology (working providers), "
+            "write .meta.combined.json (synonym-normalized type;value tags), "
+            "importtags from that file, and refresh files/_tags. Parents of "
+            "multi-CD / nested albums get a set-union combined. Skips work when "
+            "combined is newer than inputs unless --force."
         )
     )
     parser.add_argument(
@@ -201,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         type=Path,
         default=[FILES_ROOT],
-        help=f"Stored music roots to scan for album dirs (default: {FILES_ROOT})",
+        help=f"Stored music roots to scan (default: {FILES_ROOT})",
     )
     parser.add_argument(
         "--provider",
@@ -216,6 +241,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--all-known-providers",
         action="store_true",
         help="Use every known musicscan provider: musicbrainz, discogs, lastfm.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Ignore mtimes; rescan providers and rebuild every combined file.",
     )
     parser.add_argument(
         "--dry-run",
@@ -249,7 +279,109 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not run shadup refresh-extracted-tags after importing tags.",
     )
+    parser.add_argument(
+        "--skip-import",
+        action="store_true",
+        help="Only scan/combine; do not run importtags or refresh.",
+    )
+    parser.add_argument(
+        "--synonyms-dir",
+        type=Path,
+        default=SYNONYMS_DIR,
+        help=f"Synonym map directory (default: {SYNONYMS_DIR})",
+    )
     return parser
+
+
+def process_audio_album(
+    album: Path,
+    *,
+    providers: Sequence[str],
+    force: bool,
+    dry_run: bool,
+    include_raw: bool,
+    verbose: int,
+    synonyms_dir: Path,
+    child_audio: Sequence[Path],
+) -> bool:
+    """Scan + combine one audio-bearing album. Returns True if combined written/needed."""
+    stale = force or combine.combined_is_stale(
+        album, audio_exts=AUDIO_EXTS, child_dirs=child_audio
+    )
+    if not stale and not force:
+        # Still ensure provider sidecars exist for assert-all-working.
+        missing = [
+            p for p in providers if not (album / f".meta.{p}.json").is_file()
+        ]
+        if not missing:
+            return False
+
+    scan_needed = force or any(
+        not (album / f".meta.{p}.json").is_file() for p in providers
+    )
+    if scan_needed or force:
+        scan_cmd = [str(MUSICSCAN)]
+        for provider in providers:
+            scan_cmd.extend(["--provider", provider])
+        if force:
+            scan_cmd.append("--force")
+        if include_raw:
+            scan_cmd.append("--include-raw")
+        if verbose:
+            scan_cmd.append("-" + ("v" * verbose))
+        if dry_run:
+            scan_cmd.append("--dry-run")
+        scan_cmd.append(str(album))
+        if dry_run:
+            log(f"would scan: {album}")
+        else:
+            try:
+                run(scan_cmd)
+            except subprocess.CalledProcessError as exc:
+                log(f"musicscan failed for {album} ({exc.returncode}); continuing")
+
+    if dry_run:
+        log(f"would ensure empty sidecars + combine: {album}")
+        return True
+
+    combine.ensure_empty_sidecars(album, providers, dry_run=False)
+    base = combine.combine_from_providers(
+        album,
+        synonyms_dir=synonyms_dir,
+        providers=list(providers) + ["johan"],
+    )
+    if child_audio:
+        doc = combine.combine_union_children(
+            album, child_audio, base_tags=base.get("tags") or []
+        )
+    else:
+        doc = base
+    combine.write_combined(album, doc)
+    return True
+
+
+def process_parent_union(
+    parent: Path,
+    children: Sequence[Path],
+    *,
+    force: bool,
+    dry_run: bool,
+) -> bool:
+    """Write parent combined as set-union of children (no musicscan)."""
+    if has_audio(parent):
+        # Handled in process_audio_album with child_audio.
+        return False
+    stale = force or combine.combined_is_stale(
+        parent, audio_exts=AUDIO_EXTS, child_dirs=children
+    )
+    if not stale:
+        return False
+    if dry_run:
+        log(f"would union-combine parent: {parent} <- {len(children)} children")
+        return True
+    doc = combine.combine_union_children(parent, children)
+    combine.write_combined(parent, doc)
+    return True
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -261,31 +393,67 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     providers = validate_providers(selected)
 
-    maybe_reexec_under_remount(sys.argv[1:], dry_run=args.dry_run)
+    maybe_reexec_under_remount(sys.argv[1:] if argv is None else argv, dry_run=args.dry_run)
     ensure_commands()
 
-    albums = find_new_album_dirs(args.roots)
-    if not albums:
-        log("no new album directories found")
+    audio_albums, parent_map = discover_units(args.roots)
+    if not audio_albums and not parent_map:
+        log("no album directories found")
         return 0
 
     log(f"selected providers: {', '.join(providers)}")
-    log(f"new album directories: {len(albums)}")
-    if args.dry_run:
-        for album in albums:
-            print(album)
+    log(f"audio album dirs: {len(audio_albums)}")
+    log(f"parent union dirs: {len(parent_map)}")
 
-    scan_cmd = [str(MUSICSCAN)]
-    for provider in providers:
-        scan_cmd.extend(["--provider", provider])
-    if args.include_raw:
-        scan_cmd.append("--include-raw")
-    if args.verbose:
-        scan_cmd.append("-" + ("v" * args.verbose))
+    # Deepest first so children combine before parent unions.
+    audio_sorted = sorted(audio_albums, key=lambda p: (-len(p.parts), str(p)))
+    touched: list[Path] = []
+
+    for album in audio_sorted:
+        children = parent_map.get(album, [])
+        if process_audio_album(
+            album,
+            providers=providers,
+            force=args.force,
+            dry_run=args.dry_run,
+            include_raw=args.include_raw,
+            verbose=args.verbose,
+            synonyms_dir=args.synonyms_dir,
+            child_audio=children,
+        ):
+            touched.append(album)
+
+    # Parents without their own audio (classic multi-CD box).
+    for parent, children in sorted(parent_map.items(), key=lambda kv: (-len(kv[0].parts), str(kv[0]))):
+        if process_parent_union(
+            parent,
+            children,
+            force=args.force,
+            dry_run=args.dry_run,
+        ):
+            touched.append(parent)
+
     if args.dry_run:
-        scan_cmd.append("--dry-run")
-    scan_cmd.extend(str(album) for album in albums)
-    run(scan_cmd)
+        for path in touched:
+            print(path)
+        return 0
+
+    if args.skip_import:
+        log("skipping importtags / refresh")
+        return 0
+
+    # Import every unit that has a combined file (importtags skips dirs with no
+    # store target, e.g. box parents with no audio).
+    import_dirs = sorted(
+        {
+            *(p for p in audio_albums if (p / combine.COMBINED_NAME).is_file()),
+            *(p for p in parent_map if (p / combine.COMBINED_NAME).is_file()),
+        },
+        key=lambda p: str(p),
+    )
+    if not import_dirs:
+        log("no .meta.combined.json files to import")
+        return 0
 
     import_cmd = [
         str(IMPORTTAGS),
@@ -293,10 +461,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(SHADUP_DB),
         "--shadir",
         str(STORE_ROOT),
-        "--provider",
-        "ALL",
-        "--metatool",
-        str(METATOOL),
     ]
     if args.reset:
         import_cmd.append("--reset")
@@ -304,12 +468,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         import_cmd.append("--debug")
     elif args.verbose:
         import_cmd.append("--verbose")
-    if args.dry_run:
-        import_cmd.append("--dryrun")
-    import_cmd.extend(str(album) for album in albums)
+    import_cmd.extend(str(p) for p in import_dirs)
     run(import_cmd, cwd=FILES_ROOT)
 
-    if args.skip_refresh or args.dry_run:
+    if args.skip_refresh:
         log("skipping shadup refresh-extracted-tags")
         return 0
 

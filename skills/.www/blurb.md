@@ -1,1 +1,1 @@
-Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/todos`), FLAC/Samba rename playbooks (`correct-flac-names`), thermo update playbooks, vox circuit validation, and related SKILL.md packages.
+Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/todos`), FLAC/Samba rename playbooks (`correct-flac-names`), musicology tag grooming (`groom-musicology-tags`), thermo update playbooks, vox circuit validation, and related SKILL.md packages.
