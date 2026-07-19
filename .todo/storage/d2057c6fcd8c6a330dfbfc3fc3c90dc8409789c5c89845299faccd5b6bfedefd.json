@@ -289,11 +289,18 @@
       "summary": "Add stored_files start/end columns + in-place schema upgrade"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "shadup: add mv with path history and active-only unique index\n\nRename on disk; end-date old rows, insert new with start=now(). Partial\nunique index on active paths; tests in test_mv.py.",
+      "sha": "080df597ad3f3e9a221ce404b4775d3aabf28bdc",
+      "summary": "Implement shadup mv (disk rename + path history rows)"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Implement shadup mv (disk rename + path history rows)"
+      "summary": "Merge d205 branch to master and pause (reconcile deferred)"
     }
   ],
   "create_dt": "2026-07-19T03:51:53Z",
-  "update_dt": "2026-07-19T16:26:50Z"
+  "update_dt": "2026-07-19T16:28:55Z"
 }
