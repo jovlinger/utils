@@ -332,8 +332,10 @@
       "summary": "merge subtodo 973a00da: Committed /dmz/ping Ed25519 path (main.toit/auth/secrets ..."
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Added pkg-ntp + boot sync-ntp (ntp_ok/epoch in healthz); package.yaml/lock committed, .packages gitignored",
+      "sha": "53cc1c25c2a476c2fbd23366a9bd7b57a5c15909",
       "summary": "Install pkg-ntp and sync RTC at boot (expose ntp_ok/epoch in healthz)"
     },
     {
@@ -343,5 +345,5 @@
     }
   ],
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-19T04:19:01Z"
+  "update_dt": "2026-07-19T04:20:33Z"
 }

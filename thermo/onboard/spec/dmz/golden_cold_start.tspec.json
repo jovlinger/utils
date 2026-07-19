@@ -5,8 +5,8 @@
   "source": "thermo/onboard/hardware/esp32s3/PLAN.md section 3 + zone.env",
   "zone_name": "office",
   "reading": {
-    "temp_centigrade": 21.0,
-    "humid_percent": 50.0
+    "temp_centigrade": 1.0,
+    "humid_percent": 1.0
   },
   "last_applied_command_json": null,
   "include_network": false,
@@ -23,6 +23,6 @@
     "backend": "esp32s3",
     "status_led_driver": "log_only"
   },
-  "expected_body_json": "{\"sensors\":{\"temp_centigrade\":21.0,\"humid_percent\":50.0},\"deployment\":{\"hardware_profile\":\"esp32s3_aht20_ir\",\"zone_name\":\"office\",\"send_behavior\":\"ir_heatpump\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"aht20\",\"ir_transport\":\"esp32s3_rmt\",\"ir_device\":\"gpio17\",\"ir_protocol\":\"midea24_coolix\",\"backend\":\"esp32s3\",\"status_led_driver\":\"log_only\"}}",
+  "expected_body_json": "{\"sensors\":{\"temp_centigrade\":1.0,\"humid_percent\":1.0},\"deployment\":{\"hardware_profile\":\"esp32s3_aht20_ir\",\"zone_name\":\"office\",\"send_behavior\":\"ir_heatpump\",\"report_behavior\":\"sensor_readings\",\"sensor_driver\":\"aht20\",\"ir_transport\":\"esp32s3_rmt\",\"ir_device\":\"gpio17\",\"ir_protocol\":\"midea24_coolix\",\"backend\":\"esp32s3\",\"status_led_driver\":\"log_only\"}}",
   "must_not_contain_substrings": ["\"command\""]
 }
