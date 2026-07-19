@@ -131,7 +131,8 @@ response-body response/string -> string:
   if q >= 0: return response[q + 2..]
   return response
 
-build-dmz-body logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
+build-dmz-body pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
+  // Keep the debug body small -- full log rings blow RAM during long-poll.
   body := json.encode {
     "sensors": {
       "temp_centigrade": 21.0,
@@ -153,9 +154,6 @@ build-dmz-body logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
       "local_ip": "192.168.88.73",
       "onboard_url": "http://192.168.88.73:$HTTP-PORT",
     },
-    "logs": {
-      "lines": logs.newest-first,
-    },
     "debug_gpio": {
       "pullup_gpio": DEBUG-PULLUP-GPIO,
       "pulldown_gpio": DEBUG-PULLDOWN-GPIO,
@@ -165,17 +163,20 @@ build-dmz-body logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> ByteArray:
   }
   return body
 
-dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> Map:
+/**
+One signed POST to DMZ sensors. Caps wait so the debug HTTP server is not wedged
+by the long-poll hold; timeout after send usually means DMZ accepted the signature.
+*/
+dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin network/net.Interface --max-wait/Duration=(Duration --s=45) -> Map:
   if not dmz-signer_:
     throw "dmz signer unavailable"
-  body := build-dmz-body logs pin-up pin-down
+  body := build-dmz-body pin-up pin-down
   epoch := Time.now.s-since-epoch
   headers := dmz-signer_.sign-headers "POST" secrets.DMZ-PATH body ZONE-NAME epoch
   signature := headers["signature_b64"]
   timestamp := headers["timestamp"]
   zone-name := headers["zone_name"]
 
-  network := net.open
   socket := network.tcp-connect secrets.DMZ-HOST secrets.DMZ-PORT
   try:
     request-head := "POST $(secrets.DMZ-PATH) HTTP/1.1\r\n"
@@ -189,18 +190,33 @@ dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> Map:
         + "\r\n"
     socket.out.write request-head
     socket.out.write body
-    socket.out.close
 
-    response := read-http-response socket
+    response/string := ""
+    exception := catch:
+      with-timeout max-wait:
+        response = read-http-response socket
+    if exception:
+      logs.add "dmz ping wait timeout=$(max-wait) epoch=$epoch (likely long-poll hold)"
+      return {
+        "ok": false,
+        "status": 0,
+        "timed_out": true,
+        "timestamp_sent": "$epoch",
+        "dmz_host": secrets.DMZ-HOST,
+        "dmz_path": secrets.DMZ-PATH,
+        "body_excerpt": "timeout waiting for DMZ response (signed request sent)",
+      }
+
     status := parse-status-code response
     body-text := response-body response
     excerpt := slice-prefix body-text 400
     logs.add "dmz ping status=$status body=$(slice-prefix excerpt 120)"
-    if status == 401 and epoch < 1_700_000_000:
+    if status == 401 and epoch < MIN-CREDIBLE-EPOCH:
       logs.add "dmz ping likely clock-skew: epoch=$epoch (need NTP)"
     return {
       "ok": status == 200,
       "status": status,
+      "timed_out": false,
       "timestamp_sent": "$epoch",
       "dmz_host": secrets.DMZ-HOST,
       "dmz_path": secrets.DMZ-PATH,
@@ -209,8 +225,8 @@ dmz-ping-once logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> Map:
   finally:
     socket.close
 
-handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
-  try:
+handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin network/net.Interface -> none:
+  exception := catch --trace:
     text := read-request socket
     if not text:
       logs.add "empty request"
@@ -290,12 +306,15 @@ handle socket/tcp.Socket logs/LogRing pin-up/gpio.Pin pin-down/gpio.Pin -> none:
       }
       send-json socket 200 body
     else if path == "/dmz/ping":
-      result := dmz-ping-once logs pin-up pin-down
+      result := dmz-ping-once logs pin-up pin-down network
       send-json socket 200 (json.encode result)
     else:
       body := json.encode {"ok": false, "error": "not_found", "path": path}
       send-json socket 404 body
-  finally:
+  if exception:
+    logs.add "handler error: $exception"
+    catch: socket.close
+  else:
     socket.close
 
 /**
@@ -346,4 +365,5 @@ main:
     socket := server.accept
     if not socket:
       continue
-    handle socket logs pin-up pin-down
+    task::
+      handle socket logs pin-up pin-down network
