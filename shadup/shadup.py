@@ -462,6 +462,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Audit and repair stored_files rows (canonical root, dedupe paths)",
+    )
+    p_doctor.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report planned repairs without writing",
+    )
+
     p_tadd = sub.add_parser(
         "tag-add", help="Add tags to a stored file identified by path"
     )
@@ -723,6 +733,41 @@ def get_shadir(conn: sqlite3.Connection) -> str:
     return expand_path(raw)
 
 
+def canonical_files_root(shadir: str) -> str:
+    """Return ``${meta.shadir}/files`` — the sole valid ``stored_files.root``."""
+    return os.path.normpath(os.path.join(os.path.abspath(shadir), "files"))
+
+
+def _blank_dirpath(dirpath: str) -> str:
+    return "" if dirpath in (".", "") else dirpath
+
+
+def canonical_stored_path_parts(
+    shadir: str,
+    root: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+) -> tuple[str, str, str, str] | None:
+    """Normalize a row to canonical ``(root, root_rel, dirpath, filename)`` under ``files/``.
+
+    Returns None when *root* is not under the store's ``files/`` tree.
+    """
+    files_root = canonical_files_root(shadir)
+    root_abs = os.path.abspath(root)
+    dp = _blank_dirpath(dirpath)
+
+    if root_abs == files_root:
+        return files_root, "", dp, filename
+
+    if is_under_dir(root_abs, files_root) and root_abs != files_root:
+        prefix = os.path.relpath(root_abs, files_root)
+        new_dp = os.path.normpath(os.path.join(prefix, dp)) if dp else prefix
+        return files_root, "", new_dp, filename
+
+    return None
+
+
 def sync_shadir(
     conn: sqlite3.Connection, cli_shadir: str | None, cwd: str
 ) -> str:
@@ -836,6 +881,67 @@ def _end_date_active_row(
     )
 
 
+def _end_active_rows_at_path(
+    conn: sqlite3.Connection,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    when: str | None = None,
+    except_shasum: str | None = None,
+) -> int:
+    """End-date every active row at a stored path (optionally except one shasum)."""
+    now = when or rfc3339_now()
+    if except_shasum is None:
+        cur = conn.execute(
+            f"""
+            UPDATE stored_files
+            SET end = ?
+            WHERE root_rel = ? AND dirpath = ? AND filename = ?
+              AND {_ACTIVE_STORED_FILES_WHERE}
+            """,
+            (now, root_rel, dirpath, filename),
+        )
+    else:
+        cur = conn.execute(
+            f"""
+            UPDATE stored_files
+            SET end = ?
+            WHERE root_rel = ? AND dirpath = ? AND filename = ?
+              AND shasum <> ?
+              AND {_ACTIVE_STORED_FILES_WHERE}
+            """,
+            (now, root_rel, dirpath, filename, except_shasum),
+        )
+    return cur.rowcount
+
+
+def _dup_stored_filename(filename: str) -> str:
+    base, ext = os.path.splitext(filename)
+    return f"{base} DUP{ext}"
+
+
+def _unique_active_filename(
+    conn: sqlite3.Connection,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+) -> str:
+    """Return *filename*, or ``name DUP.ext`` (repeat) until no active collision."""
+    candidate = filename
+    while conn.execute(
+        f"""
+        SELECT 1 FROM stored_files
+        WHERE root_rel = ? AND dirpath = ? AND filename = ?
+          AND {_ACTIVE_STORED_FILES_WHERE}
+        LIMIT 1
+        """,
+        (root_rel, dirpath, candidate),
+    ).fetchone():
+        candidate = _dup_stored_filename(candidate)
+    return candidate
+
+
 def _insert_active_stored_row(
     conn: sqlite3.Connection,
     shasum: str,
@@ -932,8 +1038,22 @@ def _upsert_active_stored_file(
     root_rel: str,
     rel_dir: str,
     filename: str,
+    *,
+    shadir: str | None = None,
 ) -> None:
     """Insert or reactivate a stored_files row (start=now on insert, end=NULL)."""
+    if shadir is not None:
+        canonical = canonical_stored_path_parts(
+            shadir, abs_root, root_rel, rel_dir, filename
+        )
+        if canonical is not None:
+            abs_root, root_rel, rel_dir, filename = canonical
+        else:
+            files_root = canonical_files_root(shadir)
+            if os.path.abspath(abs_root) != files_root:
+                raise SystemExit(
+                    f"store: root {abs_root!r} is not under {files_root!r}"
+                )
     now = rfc3339_now()
     conn.execute(
         """
@@ -946,10 +1066,10 @@ def _upsert_active_stored_file(
     conn.execute(
         """
         UPDATE stored_files
-        SET deleted = 0, end = NULL
+        SET deleted = 0, end = NULL, root = ?
         WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
         """,
-        (digest, root_rel, rel_dir, filename),
+        (abs_root, digest, root_rel, rel_dir, filename),
     )
 
 
@@ -1929,6 +2049,8 @@ def _set_fixed_link_in_db(
     root_rel: str,
     rel_dir: str,
     filename: str,
+    *,
+    shadir: str,
 ) -> None:
     conn.execute(
         f"""
@@ -1940,7 +2062,7 @@ def _set_fixed_link_in_db(
         (root_rel, rel_dir, filename, digest),
     )
     _upsert_active_stored_file(
-        conn, digest, abs_root, root_rel, rel_dir, filename
+        conn, digest, abs_root, root_rel, rel_dir, filename, shadir=shadir
     )
 
 
@@ -2035,7 +2157,9 @@ def handle_fixlinks(
 
             os.unlink(link_path)
             os.symlink(os.path.abspath(canonical_target), link_path)
-            _set_fixed_link_in_db(conn, digest, db_root, root_rel, rel_dir, filename)
+            _set_fixed_link_in_db(
+                conn, digest, db_root, root_rel, rel_dir, filename, shadir=shadir
+            )
             fixed += 1
             out("fixed {path} -> {target}", 1, path=link_path, target=canonical_target)
 
@@ -2064,11 +2188,13 @@ def _record_stored_file(
     filename: str,
     dest: str,
     existed_already: bool,
+    *,
+    shadir: str,
 ) -> None:
     verb = "linked" if existed_already else "stored"
     out("{verb} {path} -> {dest}", 1, verb=verb, path=filename, dest=dest)
     _upsert_active_stored_file(
-        conn, digest, abs_root, root_rel, rel_dir, filename
+        conn, digest, abs_root, root_rel, rel_dir, filename, shadir=shadir
     )
 
 
@@ -2106,6 +2232,7 @@ def handle_store(
                 filename,
                 dest,
                 existed_already,
+                shadir=shadir,
             )
             if existed_already:
                 skipped_bytes += size
@@ -2136,6 +2263,7 @@ def handle_store(
                 filename,
                 dest,
                 existed_already,
+                shadir=shadir,
             )
             if existed_already:
                 skipped_bytes += size
@@ -2523,7 +2651,7 @@ def handle_mv(
 
     if not os.path.lexists(old_abs):
         raise SystemExit(f"mv: source not found on disk: {old_abs}")
-    if os.path.lexists(new_abs):
+    if directory_mv and os.path.lexists(new_abs):
         raise SystemExit(f"mv: target already exists: {new_abs}")
 
     when = rfc3339_now()
@@ -2563,6 +2691,14 @@ def handle_mv(
         _end_date_active_row(
             conn, shasum, root_rel, dirpath, filename, when=when
         )
+        _end_active_rows_at_path(
+            conn,
+            root_rel,
+            new_dirpath,
+            new_filename,
+            when=when,
+            except_shasum=shasum,
+        )
         _insert_active_stored_row(
             conn,
             shasum,
@@ -2573,6 +2709,196 @@ def handle_mv(
             start=when,
         )
     out("mv updated rows: {count}", 0, count=len(matched))
+
+
+def handle_doctor(
+    conn: sqlite3.Connection,
+    shadir: str,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Normalize ``stored_files.root`` to ``${shadir}/files`` and dedupe active paths."""
+    files_root = canonical_files_root(shadir)
+    when = rfc3339_now()
+    raw_rows = conn.execute(
+        f"""
+        SELECT rowid, shasum, root, root_rel, dirpath, filename, start
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        ORDER BY rowid
+        """
+    ).fetchall()
+
+    planned: list[dict] = []
+    unfixable = 0
+    for rowid, shasum, root, root_rel, dirpath, filename, start in raw_rows:
+        canonical = canonical_stored_path_parts(
+            shadir, root, root_rel, dirpath, filename
+        )
+        if canonical is None:
+            unfixable += 1
+            out(
+                "doctor unfixable root={root} path={dirpath}/{filename}",
+                1,
+                root=root,
+                dirpath=dirpath,
+                filename=filename,
+            )
+            continue
+        nroot, nrr, ndp, nfn = canonical
+        planned.append(
+            {
+                "rowid": rowid,
+                "shasum": shasum,
+                "root": nroot,
+                "root_rel": nrr,
+                "dirpath": ndp,
+                "filename": nfn,
+                "start": start or PATH_EFFECTIVE_EPOCH,
+                "orig_root": root,
+                "orig_root_rel": root_rel,
+                "orig_dirpath": dirpath,
+                "orig_filename": filename,
+            }
+        )
+
+    # Drop duplicate rows for the same canonical path + shasum (keep earliest start).
+    by_sha_path: dict[tuple, list[dict]] = {}
+    for item in planned:
+        key = (
+            item["root"],
+            item["root_rel"],
+            item["dirpath"],
+            item["filename"],
+            item["shasum"],
+        )
+        by_sha_path.setdefault(key, []).append(item)
+
+    survivors: list[dict] = []
+    end_rowids: list[int] = []
+    for group in by_sha_path.values():
+        group.sort(key=lambda x: (x["start"], x["rowid"]))
+        survivors.append(group[0])
+        for dup in group[1:]:
+            end_rowids.append(dup["rowid"])
+            out(
+                "doctor end duplicate rowid={rowid} sha={sha}",
+                1,
+                rowid=dup["rowid"],
+                sha=dup["shasum"][:8],
+            )
+
+    # Resolve different shas at the same canonical path (DUP newer; else smaller sha).
+    by_path: dict[tuple, list[dict]] = {}
+    for item in survivors:
+        key = (item["root"], item["root_rel"], item["dirpath"], item["filename"])
+        by_path.setdefault(key, []).append(item)
+
+    updates: dict[int, dict] = {
+        item["rowid"]: {
+            "root": item["root"],
+            "root_rel": item["root_rel"],
+            "dirpath": item["dirpath"],
+            "filename": item["filename"],
+        }
+        for item in survivors
+    }
+
+    for path_key, group in by_path.items():
+        if len(group) <= 1:
+            continue
+        group.sort(key=lambda x: (x["start"], x["shasum"]))
+        _root, _rr, dp, fn = path_key
+        reserved = {fn}
+        for loser in group[1:]:
+            candidate = _dup_stored_filename(fn)
+            while candidate in reserved or conn.execute(
+                f"""
+                SELECT 1 FROM stored_files
+                WHERE root_rel = ? AND dirpath = ? AND filename = ?
+                  AND {_ACTIVE_STORED_FILES_WHERE}
+                  AND rowid <> ?
+                LIMIT 1
+                """,
+                (_rr, dp, candidate, loser["rowid"]),
+            ).fetchone():
+                candidate = _dup_stored_filename(candidate)
+            reserved.add(candidate)
+            updates[loser["rowid"]]["filename"] = candidate
+            out(
+                "doctor DUP sha={sha} {dirpath}/{old} -> {new}",
+                1,
+                sha=loser["shasum"][:8],
+                dirpath=dp,
+                old=fn,
+                new=candidate,
+            )
+
+    fixups = 0
+    for rowid in end_rowids:
+        fixups += 1
+        if dry_run:
+            continue
+        row = conn.execute(
+            """
+            SELECT shasum, root_rel, dirpath, filename
+            FROM stored_files WHERE rowid = ?
+            """,
+            (rowid,),
+        ).fetchone()
+        if row:
+            _end_date_active_row(conn, row[0], row[1], row[2], row[3], when=when)
+
+    for item in survivors:
+        target = updates[item["rowid"]]
+        changed = (
+            item["orig_root"] != target["root"]
+            or item["orig_root_rel"] != target["root_rel"]
+            or item["orig_dirpath"] != target["dirpath"]
+            or item["orig_filename"] != target["filename"]
+        )
+        if not changed:
+            continue
+        fixups += 1
+        out(
+            "doctor normalize rowid={rowid} {old_root} -> {new_root} "
+            "{old_dirpath}/{old_filename} -> {new_dirpath}/{new_filename}",
+            1,
+            rowid=item["rowid"],
+            old_root=item["orig_root"],
+            new_root=target["root"],
+            old_dirpath=item["orig_dirpath"],
+            old_filename=item["orig_filename"],
+            new_dirpath=target["dirpath"],
+            new_filename=target["filename"],
+        )
+        if dry_run:
+            continue
+        conn.execute(
+            """
+            UPDATE stored_files
+            SET root = ?, root_rel = ?, dirpath = ?, filename = ?
+            WHERE rowid = ?
+            """,
+            (
+                target["root"],
+                target["root_rel"],
+                target["dirpath"],
+                target["filename"],
+                item["rowid"],
+            ),
+        )
+
+    out(
+        "doctor fixups={fixups} unfixable={unfixable} files_root={files_root}",
+        0,
+        fixups=fixups,
+        unfixable=unfixable,
+        files_root=files_root,
+    )
+    if dry_run:
+        out("doctor dry-run: no changes written", 0)
+    return 1 if unfixable else 0
 
 
 def handle_reindex_files(
@@ -2627,7 +2953,7 @@ def handle_reindex_files(
             if rel_dir == ".":
                 rel_dir = ""
             _upsert_active_stored_file(
-                conn, digest, abs_files_root, root_rel, rel_dir, name
+                conn, digest, abs_files_root, root_rel, rel_dir, name, shadir=shadir
             )
             indexed += 1
     out("reindexed symlinks scanned: {count}", 0, count=scanned)
@@ -2804,6 +3130,8 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     if action == "mv":
         handle_mv(conn, args.old, args.new, shadir, dry_run=args.dry_run)
         return 0
+    if action == "doctor":
+        return handle_doctor(conn, shadir, dry_run=args.dry_run)
     if action == "reindex-files":
         if args.dir is None:
             resolved = resolve_files_root_abs(conn, shadir)
