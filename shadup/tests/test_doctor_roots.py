@@ -174,8 +174,12 @@ def test_doctor_dry_run_samples_row_actions(tmp_path: Path) -> None:
         ],
     )
     assert "doctor sample 4/4 fixup rows (ratio=1.0)" in result.stdout
-    assert "normalize " in result.stdout
-    assert "end duplicate " in result.stdout
+    assert "normalize (" in result.stdout
+    assert " -> (" in result.stdout
+    assert "end duplicate sha=" in result.stdout
+    assert "before=(" in result.stdout
+    assert "after=(" in result.stdout
+    assert "end=NULL" in result.stdout
     assert "doctor rowid=" in result.stdout
     assert "doctor dry-run: no changes written" in result.stdout
     # No apply: both roots still present.

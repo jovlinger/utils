@@ -2738,6 +2738,11 @@ def _doctor_sample_rowids(rowids: list[int], ratio: float) -> set[int]:
     return set(random.sample(rowids, k))
 
 
+def _doctor_rdf(root: str, dirpath: str, filename: str) -> str:
+    """Format ``(root, dirpath, filename)`` for doctor action lines."""
+    return f"({root!r}, {dirpath!r}, {filename!r})"
+
+
 def handle_doctor(
     conn: sqlite3.Connection,
     shadir: str,
@@ -2809,11 +2814,19 @@ def handle_doctor(
     end_rowids: list[int] = []
     for group in by_sha_path.values():
         group.sort(key=lambda x: (x["start"], x["rowid"]))
-        survivors.append(group[0])
+        keep = group[0]
+        survivors.append(keep)
         for dup in group[1:]:
             end_rowids.append(dup["rowid"])
+            before = _doctor_rdf(
+                dup["orig_root"], dup["orig_dirpath"], dup["orig_filename"]
+            )
+            after = _doctor_rdf(dup["root"], dup["dirpath"], dup["filename"])
             actions_by_rowid[dup["rowid"]].append(
-                f"end duplicate sha={dup['shasum'][:8]}"
+                f"end duplicate sha={dup['shasum'][:8]} "
+                f"before={before} end=NULL "
+                f"after={after} end={when} "
+                f"(kept rowid={keep['rowid']})"
             )
 
     # Resolve different shas at the same canonical path (DUP newer; else smaller sha).
@@ -2883,12 +2896,13 @@ def handle_doctor(
         if not changed:
             continue
         fixups += 1
-        actions_by_rowid[item["rowid"]].append(
-            "normalize "
-            f"{item['orig_root']} -> {target['root']} "
-            f"{item['orig_dirpath']}/{item['orig_filename']} -> "
-            f"{target['dirpath']}/{target['filename']}"
+        before = _doctor_rdf(
+            item["orig_root"], item["orig_dirpath"], item["orig_filename"]
         )
+        after = _doctor_rdf(
+            target["root"], target["dirpath"], target["filename"]
+        )
+        actions_by_rowid[item["rowid"]].append(f"normalize {before} -> {after}")
         if dry_run:
             continue
         conn.execute(
