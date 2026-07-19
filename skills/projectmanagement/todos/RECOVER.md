@@ -290,10 +290,7 @@ The branches associated with a todo are its own `Branch` plus every
 ```bash
 TODO=skills/projectmanagement/todos/todo.py
 
-# sanctioned form (todo.py owns the read, shells out to jq):
-"$TODO" jq <id> '[.Branch] + [.Subtodos[]?.Branch] | map(select(. != null and . != "")) | unique'
-
-# equivalent pipe form:
+# sanctioned: todo.py owns the read; system jq filters stdout
 "$TODO" read <id> | jq '[.Branch] + [.Subtodos[]?.Branch] | map(select(. != null and . != "")) | unique'
 ```
 

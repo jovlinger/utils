@@ -1,5 +1,6 @@
 {
   "AC": "Skill under skills/ that: (1) documents Samba/VFAT-safe rename rules with ':' sanitized; (2) gathers candidate names from cue/spec + musicology provider data; (3) resolves conflicts via most-common then least-verbose; (4) picks genre-appropriate conventions (collections / classical / pop-rock); (5) produces a rename plan for dirs and files. Agent can apply the skill when asked to correct FLAC directory names.",
+  "ActualSummary": "Shipped skills/correct-flac-names: VFAT/Samba-safe renames, meta priority (combined\u2192johan\u2192online\u2192txt/cue), homogeneous The-stripped artist dirs with musicscan The-variants (in sibling bin), VA only for true comps, title denoise (year/encoding/edition out of dirname), multi-disc harmonize, collision DUP suffixes, and original-album-name in .meta.johan.json as stopgap until shadup path start/end (d2057c6f). Dry-ran plans to /tmp only; no flac/files renames applied.",
   "BaseSha": "66d10d039a7857db498f25c27451f3f7e9441146",
   "Body": {
     "hash": [
@@ -366,8 +367,18 @@
       "message": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json.\n\nOn target clash append DUP (repeat until free). Each applied rename writes\noriginal-album-name once into .meta.johan.json (create sidecar if needed).",
       "sha": "a439bbc623a7a0b2ca4420e0327a1ac93fd930c0",
       "summary": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Drop todo.py jq; document todo read | jq instead"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Drop todo.py jq; document todo read | jq instead"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-19T03:36:38Z"
+  "update_dt": "2026-07-19T04:05:15Z"
 }

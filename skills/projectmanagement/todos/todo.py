@@ -2062,42 +2062,6 @@ class GetJsonPathCommand(TodoSubCommand):
         return 0
 
 
-class JqCommand(TodoSubCommand):
-    command_names = ("jq",)
-    doc_short: ClassVar[str] = "Run jq against todo"
-    doc_long: ClassVar[str] = (
-        "Jq locates a todo by selector, feeds the normalized todo JSON to the jq binary, and "
-        "prints jq's stdout. This keeps all TODO.json access behind todo.py while preserving jq "
-        "filter behavior."
-    )
-
-    @classmethod
-    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """Register jq arguments."""
-        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
-        parser.add_argument("filter", help="jq filter to run against the selected todo")
-
-    def do(self) -> int:
-        """Run jq over a selected ticket."""
-        root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
-        payload = json.dumps(todo)
-        try:
-            result = subprocess.run(
-                ["jq", self.filter],
-                input=payload,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError as exc:
-            raise TodoError("jq binary not found") from exc
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
-            raise TodoError(f"jq failed: {detail}")
-        sys.stdout.write(result.stdout)
-        return 0
-
 
 class InitCommand(TodoSubCommand):
     command_names = ("init",)
@@ -3801,7 +3765,6 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     RepoDirCommand,
     ReadCommand,
     GetJsonPathCommand,
-    JqCommand,
     InitCommand,
     EnsureWorktreeCommand,
     AddSubtodoCommand,
