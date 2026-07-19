@@ -80,17 +80,18 @@ the parent is an incomplete call -- same as forgetting to await a promise.
 **Normal loop:**
 
 1. Parent `working`; file subtodos with `add-subtodo` (each records a `start_subtodo` item and advances the parent cursor).
-2. Per child (often one subagent each): on the child branch run the lifecycle loop (`set-state working`, poll and work items to `is-done`, `set-state done`).
+2. Per child (often one subagent each): on the child branch run the lifecycle loop (`set --state working`, poll and work items to `is-done`, `set --state done`).
 3. Parent: `wait-for` / `wait-and-merge` (or `merge-subtodo` each) until every child is `merged` on the parent record.
-4. Parent works any remaining synthesis WorkItems to `is-done`, then `set-state done`.
+4. Parent works any remaining synthesis WorkItems to `is-done`, then `set --state done`.
 
-**Surfacing blockers:** If a child cannot finish without the user, `set-state userneeded --note=...` on that child, then set parent `userneeded` with which child blocked. Never leave a child in `init`/`working` indefinitely without escalating.
+**Surfacing blockers:** If a child cannot finish without the user, `set --state userneeded --note=...` on that child, then set parent `userneeded` with which child blocked. Never leave a child in `init`/`working` indefinitely without escalating.
 
 **Anti-patterns (do not do this):**
 
 - Landing all code on the parent branch while child branches stay `init`.
 - Marking children `done` from the parent checkout without working the child branch.
-- Marking parent `done` when `todo.py jq self '.Subtodos[].State'` still shows `init` or `done` (unmerged).
+- Marking parent `done` when `todo.py read self | jq -r '.Subtodos[].State'`
+  still shows `init` or `done` (unmerged).
 
 ### Working subtodos: sequential stack order is the default
 
@@ -211,7 +212,7 @@ worktree.
 | Item | Location | Notes |
 |------|----------|-------|
 | Tickets | `<todo-dir>/sqlite.db` | One row per (repo_path, branch); `todo.py ls` lists them |
-| Embeddings | sqlite embeddings table | Cheap (hash) on write; others backfilled on search |
+| Embeddings | sqlite embeddings table | Cheap (hash) stamped in ticket JSON on write; others backfilled on search. `read` merges every embedder found in the table into its output regardless of which path wrote it, elided to its first two elements |
 | Worktrees | `<todo-dir>/worktrees/` | Nested by repo path |
 | Legacy JSON | git TODO.json | Import only: todo.py import-json |
 
@@ -228,14 +229,15 @@ to size, sequence, and refine work into WorkItems -- lives in `frequentcommits`.
 Do not push sizing or sequencing rules into the tool.
 
 All `TODO.json` access goes through this CLI, even if the requested operation is
-"just print it" or "check whether it exists." Do not use `cat`, `jq`,
-`ReadFile`, `git show`, shell tests, or ad hoc JSON parsing against `TODO.json`
-directly. Treat `TODO.json` as a temporary storage implementation hidden behind
-the `todo.py` interface.
+"just print it" or "check whether it exists." Do not use `cat`, bare `jq` on
+`TODO.json`, `ReadFile`, `git show`, shell tests, or ad hoc JSON parsing against
+`TODO.json` directly. Treat `TODO.json` as a temporary storage implementation
+hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine:
+`todo.py read <id> | jq '...'`.
 
 | Command | Status | Behavior |
 |---------|--------|----------|
-| `todo.py mint` | implemented | Mint a fresh ticket `Id` (uuid1 -> SHA-256 of its raw bytes), collision-checked across the repo; print the 64-hex Id |
+| `todo.py mint` | implemented | Mint a fresh ticket `Id` (uuid1 -> SHA-256 of its raw bytes), collision-checked across the repo, AND create its record: state `pre-init` (collecting data), placeholder `Branch` (`Id[0:8]`), **no git branch, no commit** (sqlite-only). Prints the 64-hex Id. Fill it via `set --id`; `init` when ready to work |
 | `todo.py read <selector>` | implemented | Locate the branch (or worktree) whose `TODO.json` matches `<selector>` and print the ticket JSON. Id selectors are any **4+ hex unambiguous prefix**, or the full digest. `curr`/`self` resolve to the checked-out branch's todo, even when the branch name does not contain the Id. Resolution scans the sqlite `tickets` table directly (cross-repo, no catalog); it falls back to a current-repo ref scan only when sqlite has no hit. Local-first: remote fetch is feature-flagged off (`FETCH_ENABLED`) |
 | `todo.py search <query>` | implemented | Vector + lexical ticket search (-n limit); `--embedder` comma list (default all non-hidden), `--dry-run` |
 | `todo.py prompt [<selector>]` | implemented | Concatenate a todo and its `Parent` chain (Summary/Body) into one startup prompt, farthest ancestor first, target last -- zero-context agent reads WHY down to WHAT. Read-only; default `self` |
@@ -244,12 +246,12 @@ the `todo.py` interface.
 | `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
-| `todo.py jq <selector> <jq-filter>` | implemented | Read-only jq-compatible projection. Shells out to `jq` internally unless/until a 100% compatible Python jq library is chosen. This keeps callers behind `todo.py` while preserving jq filter semantics. |
-| `todo.py init --summary=...` | implemented | Mint Id (or `--id`), create local branch, write ticket to sqlite, empty commit. Captures the branch's initial sha into `BaseSha` (invariant #5). Refuses when current branch already has a ticket. `--parent <id>` (repeatable) records a parent/context reference on the new todo and writes a follow-only `INFO` back-link into each parent's `Subtodos` (bidirectional but no merge obligation; use `add-subtodo` for the tracked, mergeable lifecycle). `--agent-type` / `--session-id` (or `$TODO_AGENT_TYPE` / `$TODO_SESSION_ID`) record the creating agent in the ticket's `Agent` field |
+| `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `pre-init` todo): create the local branch from its `set`-finalized `Branch`, move it to state `init`, capture `BaseSha` (invariant #5), commit. **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--parent <id>` (repeatable) records a parent/context reference and writes a follow-only `INFO` back-link into each parent's `Subtodos`. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set). `--stay-on-parent` returns to the previous branch after creating the todo branch |
+| `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or `self`/`curr` (default `self`) |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
-| `todo.py set-state <state>` | implemented | Sugar for setting `State` to a single-key object plus path triggers. Valid states are `init`, `working`, `done`, `merged`, `userneeded`, `stopped`; commit by default. `--actual-summary=...` records how the work actually panned out into `ActualSummary` (used later as the merge message) |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set --summary=... --body=... --ac=...` | implemented | Patch `Summary.raw`, `Body.raw`, and/or `AC` on the current branch's todo |
+| `todo.py set [--id <id>] [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary` and/or transition `State` (requires at least one field). Targets the current branch's todo by default; `--id <prefix>` targets another todo (typically a `pre-init` todo from `mint`) and is sqlite-only (no commit, since it has no branch of its own). For a `pre-init` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `pre`, `pre-init`, `init`, `working`, `done`, `merged`, `userneeded`, `stopped`. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). Current-branch edits commit by default. |
+| `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` |
 | `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
 | `todo.py work-item-read [<selector>]` | implemented | Print the cursor work item (first not-done), its index, whether the todo is done, and a `next` object -- the deterministic mechanical command to advance the loop (`{action, command}`), including the finish sequence when done. `next` is a mechanism hint, not policy; a plain task defaults to `work-item-done` but may instead be split or turned into a subtodo per the dispatch table |
@@ -295,10 +297,15 @@ The lowest-level API should be:
 | `read <selector>` | Print the whole todo. |
 | `get-json-path <selector> <path>` | Print one internal dot-path value as JSON. |
 | `set-json-path <selector> <path> [--file <path>]` | Set one internal dot-path value from JSON on stdin or `--file`. |
-| `jq <selector> <filter>` | Run a jq filter against the selected todo and print the result. |
+
+Filter/project with the system `jq` on `read` stdout (not a `todo.py` subcommand):
+
+```bash
+todo.py read <selector> | jq '...'
+```
 
 Higher-level commands are special syntax for these primitives, plus triggers.
-Triggers fire by changed path, not by command name, so `set-state done` and
+Triggers fire by changed path, not by command name, so `set --state done` and
 `set-json-path self State` (with `{"done": {}}` on stdin) share the same
 downstream behavior.
 
@@ -334,13 +341,13 @@ checkout when one exists.
 A **subtodo is worked in its own dedicated git worktree**, so parent and siblings
 never share a checkout:
 
-- **On entry** (an agent begins working a subtodo -- typically `set-state
+- **On entry** (an agent begins working a subtodo -- typically `set --state
   working`): create a fresh worktree for the subtodo's branch under the placement
   convention below (`git worktree add <todo-dir>/worktrees/<repo-path>/<branch>
   <branch>`) and `cd` into it. Reuse an existing worktree for that branch if
   `git worktree list` already shows one; never move it.
 - **On last commit** (the subtodo's final commit is in -- `is-done` is true and its
-  `set-state done` commit has landed): tear the worktree down (`cd` out, then
+  `set --state done` commit has landed): tear the worktree down (`cd` out, then
   `git worktree remove <path>`). Teardown removes only the *checkout*; the branch
   and its commits survive for the parent's `merge-subtodo`. If the tree is dirty,
   the subtodo is not actually done -- finish or surface it before removing.
@@ -413,10 +420,11 @@ or use `read self` / `read curr` to load the current branch's ticket.
   read and write. The CLI owns parsing, validation, normalization, timestamps,
   branch checkout, and commits.
 - **Never** read field values by eyeballing JSON pasted into chat, direct file
-  reads, `cat`, `jq`, `git show`, or shell tests. Even read-only stdout display
-  is `todo.py read <id-prefix>`.
+  reads, `cat`, bare `jq`/`git show` on `TODO.json`, or shell tests. Even
+  read-only stdout display is `todo.py read <id-prefix>` (optionally piped to
+  `jq` for filters).
 - **Never** hand-edit an existing `TODO.json` in the model context. Use `todo.py
-  set`, `todo.py set-state`, work-item commands, `add-subtodo`, `merge-subtodo`,
+  set` (fields and/or `--state`), work-item commands, `add-subtodo`, `merge-subtodo`,
   or `todo.py set-json-path <id> <jsonpath>` (value as JSON on stdin or `--file`).
 - Temporary seed JSON files passed to `--from-json` or `set-json-path --file` are
   inputs to the CLI, not direct `TODO.json` access. They may be authored as
@@ -429,8 +437,8 @@ todo.py read 8f3a2c1d
 # read one field
 todo.py get-json-path self Summary.raw
 
-# jq-compatible read projection (todo.py shells out to jq internally)
-todo.py jq self '.Id, (.State | keys[0]), .Summary.raw'
+# project/filter with system jq (not a todo.py subcommand)
+todo.py read self | jq '.Id, (.State | keys[0]), .Summary.raw'
 
 # patch simple fields on the current branch
 todo.py set --ac="new criteria"
@@ -439,7 +447,7 @@ todo.py set --ac="new criteria"
 printf '%s' '"new body"' | todo.py set-json-path 8f3a2c1d Body.raw
 
 # transition state; todo.py updates update_dt and commits by default
-todo.py set-state working --owner=agent
+todo.py set --state working --owner=agent
 ```
 
 ## Id minting
@@ -452,9 +460,45 @@ search -- do not hand-roll it:
 
 ```bash
 TODO=skills/projectmanagement/todos/todo.py
-ID=$("$TODO" mint)        # collision-checked across the repo
+ID=$("$TODO" mint)        # collision-checked across the repo; ALSO creates the record
 # branch prefix is ${ID:0:8}
 ```
+
+### Two-phase lifecycle: "make a todo" (mint + set) vs "work the todo" (init)
+
+Creation is split into a data-collection phase and a work phase:
+
+- **Make a todo** = `mint` then `set --id`. `mint` creates a record in state
+  `pre-init` (still collecting data), with **no git branch** and no commit
+  (sqlite-only). `set --id <id>` fills its fields; while `pre-init`, changing
+  `--summary` also finalizes the `Branch` label. Do this whenever the user says
+  "make a todo" -- it does NOT touch git or switch branches.
+- **Work the todo** = `init`. Run it when the user signals the design is ready
+  and it is time to WORK the todo (often implicit, explicit when they say "work
+  the todo"). `init --id <id>` PROMOTES the `pre-init` record: it creates the git
+  branch (from the `set`-finalized `Branch`) and moves it to state `init` (ready
+  to work, started or not). No `--summary` needed -- it is already on the record.
+
+```bash
+TODO=skills/projectmanagement/todos/todo.py
+# make a todo (design phase; no branch created):
+ID=$("$TODO" mint)                                   # -> pre-init record + Id
+"$TODO" set --id "$ID" --summary="..." --body="..." --ac="..."
+"$TODO" set --id "$ID" --body="...more..."           # iterate freely while pre-init
+
+# later, when ready to work it:
+"$TODO" init --id "$ID"                              # promote: branch + state=init
+# add --stay-on-parent to file/promote from a shared checkout without switching onto
+# the new branch.
+```
+
+State meaning: `pre-init` = created, still collecting data, branchless;
+`init` = has a branch, ready to work (started or not).
+
+`init --summary=...` with no existing record still works as a one-shot fresh
+create (mint + branch in one call) for backward compatibility, but the two-phase
+`mint` + `set` + `init` flow above is the default. `set` **without** `--id` still
+targets the current branch's todo and commits.
 
 Store the full `Id`; the source UUID is ephemeral entropy. `mint` regens on the
 (rare) 8-hex prefix clash, and its local branch+worktree search can widen to a
@@ -516,7 +560,7 @@ Where the ticket applies. Set at least one locator.
 | `Summary` | object | `{ "raw": "<human title>" }`. Optional embedding keys may be added later for recall (vector format deferred). |
 | `Body` | object | `{ "raw": "<description>" }`. Same optional-embedding pattern. |
 | `AC` | string | Acceptance criteria, concrete enough to agree on "done". |
-| `ActualSummary` | string (optional) | How the work actually panned out (vs the planned `Summary`). Written at finish via `set-state done --actual-summary=...`; when this todo is later merged into a parent, `merge-subtodo` reuses it as the merge commit subject and the parent's `merge_subtodo` work item summary, falling back to `Summary.raw` when absent. |
+| `ActualSummary` | string (optional) | How the work actually panned out (vs the planned `Summary`). Written at finish via `set --state done --actual-summary=...`; when this todo is later merged into a parent, `merge-subtodo` reuses it as the merge commit subject and the parent's `merge_subtodo` work item summary, falling back to `Summary.raw` when absent. |
 
 `Summary.raw` and `Body.raw` are always present; embedding keys are optional
 enrichments, omitted on first write and backfilled later if ever.
@@ -612,13 +656,13 @@ show what is actually missing.
 
 `wait-for` and `wait-and-merge` are coordination primitives for parent/child
 todos. The parent waits on child state transitions; the child signals by calling
-`set-state` through the normal CLI.
+`set --state` through the normal CLI.
 
 Initial implementation:
 
 1. Parent records a barrier WorkItem with `execution.primitive =
    "wait-and-merge"` and `wait_for` child Ids.
-2. Child runs its lifecycle loop to `is-done` and reaches `set-state done`.
+2. Child runs its lifecycle loop to `is-done` and reaches `set --state done`.
 3. Parent `todo.py wait-for <child>...` polls `todo.py get-json-path <child> State`
    until every child reaches `done`.
 4. Parent `todo.py wait-and-merge <child>...` runs `merge-subtodo` for each done
@@ -633,7 +677,7 @@ Possible later signal channels:
 - **Named files in `/tmp`:** possible semaphore implementation, but process-local
   and non-portable across machines. Do not choose this before git polling fails
   in real use.
-- **Git hooks:** too magical for v1. Avoid coupling child `set-state` to
+- **Git hooks:** too magical for v1. Avoid coupling child `set --state` to
   repository hooks unless there is a concrete repeated need.
 
 ### Editing the work plan
@@ -698,11 +742,14 @@ weight**: the agent does not track "where am I" in its head -- it polls the tool
 for the next work item and acts on what it gets back. One todo == one branch;
 its lifetime matches the branch's (invariant #4).
 
-**Create.** On the intended branch, `todo.py init --summary=... --body=...
---ac=...` mints the Id, creates the branch, records `BaseSha` (invariant #5),
-and stores the ticket. Plan the work as WorkItems with `work-item-add
---summary=...`; keep the **head of the list small enough to be one trackable
-unit** (see `frequentcommits`).
+**Create (two phases).** "Make a todo" = `todo.py mint` (creates a `pre-init`
+record + Id, no branch) then `todo.py set --id <id> --summary=... --body=...
+--ac=...` to fill it in while collecting data. "Work the todo" (when the design
+is ready) = `todo.py init --id <id>`, which creates the branch, records `BaseSha`
+(invariant #5), and moves it to `init`. See **Two-phase lifecycle** under
+**Id minting**. (`init --summary=...` still one-shot-creates for backward compat.)
+Plan the work as WorkItems with `work-item-add --summary=...`; keep the **head of
+the list small enough to be one trackable unit** (see `frequentcommits`).
 
 **Poll.** Ask the tool what to do next, then act, then poll again:
 
@@ -727,8 +774,8 @@ done item -- the tool guarantees the shape and captures the sha:
 | a subtodo to land | git-merge the child, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` (+ merge sha) |
 | local coding | make the change, then `todo.py work-item-done` (dirty tree commits it, message = `-m` or the item summary; clean tree records HEAD) | `code` (+ HEAD sha) |
 | too coarse | `todo.py work-item-insert --summary=...` to split it, then re-poll | new task at the cursor |
-| blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set-state userneeded --note=...` and **come back and poll later** | -- |
-| empty (`is_done == true`) | run `todo.py doctor` (must be `ok`); read the done items (`todo.py jq self '.WorkItems'`) and **synthesize a 1-3 sentence ActualSummary of what actually landed**; then `todo.py set-state done --actual-summary="..."` | `done` (State) |
+| blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set --state userneeded --note=...` and **come back and poll later** | -- |
+| empty (`is_done == true`) | run `todo.py doctor` (must be `ok`); read the done items (`todo.py read self | jq '.WorkItems'`) and **synthesize a 1-3 sentence ActualSummary of what actually landed**; then `todo.py set --state done --actual-summary="..."` | `done` (State) |
 
 "Come back and ask again later" is a first-class outcome: when the next item is
 a barrier, wait/poll rather than forcing progress.
@@ -738,11 +785,11 @@ item is a `code` or `merge` commit (invariant #6), so `todo.py last-sha` is the
 branch's last commit. This is a directed sequence, not an optional coda:
 
 1. Run `todo.py doctor`; it must be `ok` before finishing.
-2. Read the completed WorkItems -- `todo.py jq self '.WorkItems'` -- and
+2. Read the completed WorkItems -- `todo.py read self | jq '.WorkItems'` -- and
    **synthesize a 1-3 sentence ActualSummary of what actually landed**: how the
    work panned out versus the planned `Summary`, noting any pivots, descoped
    items, or surprises. This is the retrospective, not a restatement of the plan.
-3. `todo.py set-state done --actual-summary="<that synthesis>"`.
+3. `todo.py set --state done --actual-summary="<that synthesis>"`.
 
 The `--actual-summary` is not optional here: it is the merge message the
 parent's `merge-subtodo` reuses (falling back to `Summary.raw` only when a child

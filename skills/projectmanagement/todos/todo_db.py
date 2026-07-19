@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 5
+SCHEMA_VERSION: int = 6
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -235,6 +235,13 @@ def migrate(conn: sqlite3.Connection) -> None:
             )
             """
         )
+    if current < 6:
+        # Embedding blob format changed from a single array to a list-of-arrays
+        # (one vector per chunk). Old single-vector blobs are unreadable under
+        # the new framing, and embeddings are a derived cache (hash repopulates
+        # on the next write, expensive embedders backfill on the next search),
+        # so drop them and let them rebuild rather than rewrap in place.
+        conn.execute("DELETE FROM embeddings")
     if current < SCHEMA_VERSION:
         if row is None:
             conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -263,15 +270,29 @@ def _normalize_repo_identities(conn: sqlite3.Connection) -> None:
             )
 
 
-def pack_vector(values: Sequence[float]) -> bytes:
-    """Pack floats into a little-endian blob."""
-    return struct.pack(f"<{len(values)}f", *values)
+def pack_vectors(vectors: Sequence[Sequence[float]]) -> bytes:
+    """Pack a list of equal-length float vectors into one little-endian blob.
+
+    Framing is a ``<count><dim>`` uint32 header followed by ``count * dim``
+    float32 values, vectors row-major. All vectors share one dimension -- they
+    come from a single embedder, whose output width is fixed -- so a ragged list
+    is a programming error. An empty list packs to a ``0, 0`` header.
+    """
+    count = len(vectors)
+    dim = len(vectors[0]) if count else 0
+    flat: List[float] = []
+    for vec in vectors:
+        if len(vec) != dim:
+            raise TodoDbError(f"cannot pack ragged vectors: expected dim {dim}, got {len(vec)}")
+        flat.extend(vec)
+    return struct.pack(f"<2I{len(flat)}f", count, dim, *flat)
 
 
-def unpack_vector(blob: bytes) -> List[float]:
-    """Unpack a little-endian float blob."""
-    count = len(blob) // 4
-    return list(struct.unpack(f"<{count}f", blob))
+def unpack_vectors(blob: bytes) -> List[List[float]]:
+    """Unpack a blob written by ``pack_vectors`` into its list of float vectors."""
+    count, dim = struct.unpack_from("<2I", blob, 0)
+    flat = struct.unpack_from(f"<{count * dim}f", blob, 8)
+    return [list(flat[i * dim : (i + 1) * dim]) for i in range(count)]
 
 
 def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: JsonDict) -> None:
@@ -375,9 +396,9 @@ def put_embedding(
     ticket_id: str,
     field_path: str,
     embedder: str,
-    vector: Sequence[float],
+    vectors: Sequence[Sequence[float]],
 ) -> None:
-    """Store or replace an embedding vector."""
+    """Store or replace a field's embedding: one vector per chunk (list-of-arrays)."""
     conn.execute(
         """
         INSERT INTO embeddings(ticket_id, field_path, embedder, vector)
@@ -385,7 +406,7 @@ def put_embedding(
         ON CONFLICT(ticket_id, field_path, embedder) DO UPDATE SET
             vector=excluded.vector
         """,
-        (ticket_id, field_path, embedder, pack_vector(vector)),
+        (ticket_id, field_path, embedder, pack_vectors(vectors)),
     )
 
 
@@ -413,15 +434,34 @@ def existing_embeddings(conn: sqlite3.Connection, ticket_id: str) -> set:
 
 def all_embeddings(
     conn: sqlite3.Connection, embedder: str
-) -> List[Tuple[str, str, List[float]]]:
-    """Return (ticket_id, field_path, vector) for an embedder."""
+) -> List[Tuple[str, str, List[List[float]]]]:
+    """Return (ticket_id, field_path, chunk_vectors) for an embedder."""
     rows = conn.execute(
         "SELECT ticket_id, field_path, vector FROM embeddings WHERE embedder = ?",
         (embedder,),
     ).fetchall()
-    result: List[Tuple[str, str, List[float]]] = []
+    result: List[Tuple[str, str, List[List[float]]]] = []
     for row in rows:
-        result.append((str(row["ticket_id"]), str(row["field_path"]), unpack_vector(bytes(row["vector"]))))
+        result.append((str(row["ticket_id"]), str(row["field_path"]), unpack_vectors(bytes(row["vector"]))))
+    return result
+
+
+def embeddings_for_ticket(
+    conn: sqlite3.Connection, ticket_id: str
+) -> List[Tuple[str, str, List[List[float]]]]:
+    """Return (field_path, embedder, chunk_vectors) for every embedder stored for a ticket.
+
+    Symmetric to ``all_embeddings`` (which scopes by embedder across tickets);
+    this scopes by ticket across embedders, so callers can display every vector
+    a ticket has -- cheap or expensive, wherever it was written -- in one query.
+    """
+    rows = conn.execute(
+        "SELECT field_path, embedder, vector FROM embeddings WHERE ticket_id = ?",
+        (ticket_id,),
+    ).fetchall()
+    result: List[Tuple[str, str, List[List[float]]]] = []
+    for row in rows:
+        result.append((str(row["field_path"]), str(row["embedder"]), unpack_vectors(bytes(row["vector"]))))
     return result
 
 

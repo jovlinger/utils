@@ -68,7 +68,7 @@ finds back into the record instead of only displaying them.
 - **This is the sanctioned exception to "done items are immutable history."**
   Recovery repairs the done prefix on purpose. Everywhere else, leave done items
   alone.
-- **Route every write through `todo.py`** (`set-json-path`, `set-state`). Do not
+- **Route every write through `todo.py`** (`set-json-path`, `set --state`). Do not
   hand-edit `TODO.json`, sqlite, or git objects. Reads that must inspect real
   commits use raw `git` (that is what this runbook does); the ticket itself is
   still only touched via the CLI.
@@ -290,10 +290,7 @@ The branches associated with a todo are its own `Branch` plus every
 ```bash
 TODO=skills/projectmanagement/todos/todo.py
 
-# sanctioned form (todo.py owns the read, shells out to jq):
-"$TODO" jq <id> '[.Branch] + [.Subtodos[]?.Branch] | map(select(. != null and . != "")) | unique'
-
-# equivalent pipe form:
+# sanctioned: todo.py owns the read; system jq filters stdout
 "$TODO" read <id> | jq '[.Branch] + [.Subtodos[]?.Branch] | map(select(. != null and . != "")) | unique'
 ```
 
