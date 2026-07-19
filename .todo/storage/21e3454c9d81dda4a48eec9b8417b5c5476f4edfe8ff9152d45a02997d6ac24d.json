@@ -146,7 +146,7 @@
     "path_from_root": "thermo/onboard/hardware/esp32s3"
   },
   "State": {
-    "done": {}
+    "working": {}
   },
   "Subtodos": [
     {
@@ -326,5 +326,5 @@
     }
   ],
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-14T16:57:10Z"
+  "update_dt": "2026-07-19T04:17:38Z"
 }
