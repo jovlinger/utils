@@ -1,28 +1,27 @@
 """Data-access layer for todo tickets: a swappable store in front of storage.
 
 Ticket persistence goes through a `TodoStore` so the backend can be retargeted.
-The backend is chosen by ``<todo_dir>/config.json``, defaulting to
-``DEFAULT_STORE`` when the file is absent or unreadable. The preferred key is a
-DSN string under ``todo_storage``:
+The backend is chosen **only** by ``<todo_dir>/config.json`` via the
+``todo_storage`` DSN:
 
   {"todo_storage": "sqlite://$TODOBASEDIR/sqlite.db"}  -> SqliteTodoStore
-  {"todo_storage": "file://$TODOBASEDIR/tickets"}      -> JsonDirTodoStore
+  {"todo_storage": "file://$TODOBASEDIR/storage"}      -> JsonDirTodoStore
 
 The path part is shell-expanded: ``$TODOBASEDIR`` / ``${TODOBASEDIR}`` resolve
 to ``todo basedir`` (the resolved ``.todo`` dir), ``~`` and other ``$VAR`` are
-expanded too. The legacy flat keys are still honored when ``todo_storage`` is
-absent:
+expanded too.
 
-  {"store": "sqlite"}                      -> SqliteTodoStore
-  {"store": "json"}                        -> JsonDirTodoStore at <todo_dir>/tickets
-  {"store": "json", "tickets_dir": "..."}  -> JsonDirTodoStore at that dir
+If ``config.json`` is missing, one is created from the on-disk layout (first
+match wins): ``sqlite.db`` -> sqlite DSN, ``storage/`` -> file DSN, else the
+default sqlite DSN. Legacy flat keys (``store`` / ``tickets_dir``) are migrated
+into a DSN when ``todo_storage`` is absent so every basedir ends with an
+explicit ``todo_storage``.
 
 Each todo is one ``<ID>.json`` file on the JSON backend. Embeddings live inside
 the ticket JSON (stamped per field), so both backends carry them. The sqlite
 ``embeddings`` table is only a derived search index -- ``has_vector_index`` marks
 the store that maintains it (sqlite); the JSON backend reports False, so the
-write path skips the index mirror and vector search yields nothing there until
-JSON-native search lands.
+write path skips the index mirror.
 
 Concurrency: each store exposes ``lock(ticket_id)``, a per-TODO advisory lock
 (sqlite ``locks`` row or a ``<ID>.lock`` sidecar file), carrying the holder pid
@@ -48,12 +47,42 @@ import todo_db
 
 JsonDict = Dict[str, Any]
 
-DEFAULT_STORE = "sqlite"
+DEFAULT_SQLITE_DSN = "sqlite://$TODOBASEDIR/sqlite.db"
+DEFAULT_STORAGE_DSN = "file://$TODOBASEDIR/storage"
 
 # Advisory-lock timings (seconds), overridable via config.json.
 DEFAULT_LOCK_GRACE = 30.0  # how long an acquirer polls before giving up (ERETRY)
 DEFAULT_LOCK_TTL = 15.0  # how long a held lock stays valid before it is stealable
 _POLL_INTERVAL = 0.1
+
+# Ticket JSON field name -> embeddings-table field_path (shared by both backends).
+_EMBED_FIELD_PATHS: Tuple[Tuple[str, str], ...] = (
+    ("Summary", "Summary.raw"),
+    ("Body", "Body.raw"),
+)
+
+
+def _inline_embeddings(todo: JsonDict) -> List[Tuple[str, str, List[List[float]]]]:
+    """Collect ``(field_path, embedder, chunks)`` stamped into a ticket's JSON."""
+    out: List[Tuple[str, str, List[List[float]]]] = []
+    for field_name, field_path in _EMBED_FIELD_PATHS:
+        obj = todo.get(field_name)
+        if not isinstance(obj, dict):
+            continue
+        for key, val in obj.items():
+            if key == "raw" or not isinstance(val, list) or not val:
+                continue
+            if isinstance(val[0], list):
+                out.append((field_path, str(key), val))  # type: ignore[arg-type]
+    return out
+
+
+def _repo_from_todo(todo: JsonDict) -> str:
+    scope = todo.get("Scope")
+    url = scope.get("git_url") if isinstance(scope, dict) else None
+    if isinstance(url, str) and url:
+        return todo_db.repo_identity_from_url(url) or ""
+    return ""
 
 
 class TodoStoreError(Exception):
@@ -67,8 +96,8 @@ class LockTimeout(Exception):
 class TodoStore(ABC):
     """Abstract ticket store. Repo/branch identify a ticket; Id is its key."""
 
-    # Whether this store maintains the sqlite embeddings search index. The
-    # embedding vectors themselves live in the ticket JSON on every backend.
+    # Whether this store maintains a derived embeddings search index (sqlite).
+    # Vectors themselves live in the ticket JSON on every backend.
     has_vector_index: bool = False
 
     def __init__(self, *, grace: float = DEFAULT_LOCK_GRACE, ttl: float = DEFAULT_LOCK_TTL) -> None:
@@ -92,10 +121,42 @@ class TodoStore(ABC):
         """Return every ticket in the store, unscoped."""
 
     @abstractmethod
+    def list_located(self) -> List[Tuple[str, str, JsonDict]]:
+        """Return ``(repo, branch, todo)`` for every ticket in the store."""
+
+    @abstractmethod
     def delete(self, todo: JsonDict, *, hard: bool) -> bool:
         """Remove *todo* from the store. ``hard`` permanently deletes it; a soft
         delete keeps a recoverable tombstone (no recovery tool exists yet).
         Returns True if the todo was present and removed."""
+
+    # -- embeddings (ticket JSON on every backend; derived index when available) --
+
+    @abstractmethod
+    def embeddings_for_ticket(
+        self, ticket_id: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        """Return ``(field_path, embedder, chunks)`` for one ticket."""
+
+    @abstractmethod
+    def all_embeddings(
+        self, embedder: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        """Return ``(ticket_id, field_path, chunks)`` for one embedder across tickets."""
+
+    @abstractmethod
+    def put_embedding(
+        self,
+        ticket_id: str,
+        field_path: str,
+        embedder: str,
+        vectors: List[List[float]],
+    ) -> None:
+        """Persist a vector for the derived index (no-op when there is no index)."""
+
+    @abstractmethod
+    def clear_embeddings(self, ticket_id: str, field_path: Optional[str] = None) -> None:
+        """Clear derived-index vectors for a ticket (no-op when there is no index)."""
 
     # -- per-TODO advisory locking -----------------------------------------
 
@@ -161,14 +222,19 @@ class SqliteTodoStore(TodoStore):
             return todo_db.find_tickets_by_id_prefix(conn, query)
 
     def list_all(self) -> List[JsonDict]:
+        return [todo for _repo, _branch, todo in self.list_located()]
+
+    def list_located(self) -> List[Tuple[str, str, JsonDict]]:
         with todo_db.connection(self.db_path) as conn:
-            rows = conn.execute("SELECT data FROM tickets ORDER BY rowid").fetchall()
-        todos: List[JsonDict] = []
+            rows = conn.execute(
+                "SELECT repo_path, branch, data FROM tickets ORDER BY rowid"
+            ).fetchall()
+        out: List[Tuple[str, str, JsonDict]] = []
         for row in rows:
             parsed = json.loads(str(row["data"]))
             if isinstance(parsed, dict) and parsed.get("Id"):
-                todos.append(parsed)
-        return todos
+                out.append((str(row["repo_path"]), str(row["branch"]), parsed))
+        return out
 
     def delete(self, todo: JsonDict, *, hard: bool) -> bool:
         ticket_id = str(todo["Id"])
@@ -176,6 +242,32 @@ class SqliteTodoStore(TodoStore):
             if hard:
                 return todo_db.hard_delete_ticket(conn, ticket_id)
             return todo_db.soft_delete_ticket(conn, ticket_id)
+
+    def embeddings_for_ticket(
+        self, ticket_id: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        with todo_db.connection(self.db_path) as conn:
+            return todo_db.embeddings_for_ticket(conn, ticket_id)
+
+    def all_embeddings(
+        self, embedder: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        with todo_db.connection(self.db_path) as conn:
+            return todo_db.all_embeddings(conn, embedder)
+
+    def put_embedding(
+        self,
+        ticket_id: str,
+        field_path: str,
+        embedder: str,
+        vectors: List[List[float]],
+    ) -> None:
+        with todo_db.connection(self.db_path) as conn:
+            todo_db.put_embedding(conn, ticket_id, field_path, embedder, vectors)
+
+    def clear_embeddings(self, ticket_id: str, field_path: Optional[str] = None) -> None:
+        with todo_db.connection(self.db_path) as conn:
+            todo_db.clear_embeddings(conn, ticket_id, field_path)
 
     def _try_acquire(self, ticket_id: str, ttl: float) -> bool:
         now = time.time()
@@ -251,14 +343,17 @@ class JsonDirTodoStore(TodoStore):
         out: List[Tuple[str, str, JsonDict]] = []
         for todo in self._all():
             if str(todo.get("Id") or "").startswith(query):
-                scope = todo.get("Scope")
-                url = scope.get("git_url") if isinstance(scope, dict) else None
-                repo = todo_db.repo_identity_from_url(url) if isinstance(url, str) and url else ""
-                out.append((repo or "", str(todo.get("Branch") or ""), todo))
+                out.append((_repo_from_todo(todo), str(todo.get("Branch") or ""), todo))
         return out
 
     def list_all(self) -> List[JsonDict]:
         return self._all()
+
+    def list_located(self) -> List[Tuple[str, str, JsonDict]]:
+        return [
+            (_repo_from_todo(todo), str(todo.get("Branch") or ""), todo)
+            for todo in self._all()
+        ]
 
     def delete(self, todo: JsonDict, *, hard: bool) -> bool:
         path = self._path(str(todo["Id"]))
@@ -270,6 +365,38 @@ class JsonDirTodoStore(TodoStore):
             # soft delete: <id>.json -> <id>.deleted (kept for manual recovery)
             path.replace(path.with_suffix(".deleted"))
         return True
+
+    def embeddings_for_ticket(
+        self, ticket_id: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        todo = self._load(self._path(ticket_id))
+        return _inline_embeddings(todo) if todo else []
+
+    def all_embeddings(
+        self, embedder: str
+    ) -> List[Tuple[str, str, List[List[float]]]]:
+        out: List[Tuple[str, str, List[List[float]]]] = []
+        for todo in self._all():
+            tid = str(todo.get("Id") or "")
+            if not tid:
+                continue
+            for field_path, name, chunks in _inline_embeddings(todo):
+                if name == embedder:
+                    out.append((tid, field_path, chunks))
+        return out
+
+    def put_embedding(
+        self,
+        ticket_id: str,
+        field_path: str,
+        embedder: str,
+        vectors: List[List[float]],
+    ) -> None:
+        # Vectors live in the ticket JSON and are written by put(); no derived index.
+        return None
+
+    def clear_embeddings(self, ticket_id: str, field_path: Optional[str] = None) -> None:
+        return None
 
     def _lock_path(self, ticket_id: str) -> Path:
         return self.dir / f"{ticket_id}.lock"
@@ -324,13 +451,21 @@ class JsonDirTodoStore(TodoStore):
         return count
 
 
-def _load_config() -> JsonDict:
+def _load_config(base: Path) -> JsonDict:
     """Read ``<todo_dir>/config.json``; empty dict when absent or unreadable."""
     try:
-        parsed = json.loads((todo_db.todo_dir() / "config.json").read_text(encoding="utf-8"))
+        parsed = json.loads((base / "config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _write_config(base: Path, config: JsonDict) -> None:
+    """Persist ``config.json`` under *base* (creates the directory if needed)."""
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _float_config(config: JsonDict, key: str, default: float) -> float:
@@ -341,20 +476,42 @@ def _float_config(config: JsonDict, key: str, default: float) -> float:
         return default
 
 
-def _expand_todo_base(path: str) -> str:
+def _expand_todo_base(path: str, base: Path) -> str:
     """Expand ``$TODOBASEDIR`` (the resolved todo dir), ``~`` and other env vars."""
-    base = str(todo_db.todo_dir())
-    substituted = path.replace("${TODOBASEDIR}", base).replace("$TODOBASEDIR", base)
+    base_s = str(base)
+    substituted = path.replace("${TODOBASEDIR}", base_s).replace("$TODOBASEDIR", base_s)
     return os.path.expanduser(os.path.expandvars(substituted))
 
 
-def _store_from_dsn(dsn: str, *, grace: float, ttl: float) -> TodoStore:
+def _infer_storage_dsn(base: Path, config: JsonDict) -> str:
+    """Resolve a todo_storage DSN from config keys or on-disk layout."""
+    dsn = config.get("todo_storage")
+    if isinstance(dsn, str) and dsn.strip():
+        return dsn.strip()
+    # Legacy flat keys (promoted to a DSN the next time config is written).
+    kind = str(config.get("store", "")).strip().lower()
+    if kind == "json":
+        tickets_dir = config.get("tickets_dir")
+        if isinstance(tickets_dir, str) and tickets_dir.strip():
+            return f"file://{tickets_dir.strip()}"
+        return "file://$TODOBASEDIR/tickets"
+    if kind == "sqlite":
+        return DEFAULT_SQLITE_DSN
+    # Layout detection when config is absent or has no usable storage key.
+    if (base / "sqlite.db").is_file():
+        return DEFAULT_SQLITE_DSN
+    if (base / "storage").is_dir():
+        return DEFAULT_STORAGE_DSN
+    return DEFAULT_SQLITE_DSN
+
+
+def _store_from_dsn(dsn: str, base: Path, *, grace: float, ttl: float) -> TodoStore:
     """Build a store from a ``scheme://path`` todo_storage DSN."""
     scheme, sep, rest = dsn.partition("://")
     if not sep:
         raise TodoStoreError(f"invalid todo_storage DSN (expected scheme://path): {dsn!r}")
     scheme = scheme.strip().lower()
-    target = Path(_expand_todo_base(rest))
+    target = Path(_expand_todo_base(rest, base))
     if scheme == "sqlite":
         return SqliteTodoStore(db_path=target, grace=grace, ttl=ttl)
     if scheme == "file":
@@ -366,25 +523,26 @@ _STORE: Optional[TodoStore] = None
 
 
 def get_store() -> TodoStore:
-    """Return the process-wide ticket store, chosen from ``<todo_dir>/config.json``."""
+    """Return the process-wide ticket store, chosen only from ``config.json``.
+
+    Missing ``todo_storage`` is filled in (and written) from legacy keys or the
+    on-disk layout (``sqlite.db``, else ``storage/``, else sqlite default).
+    """
     global _STORE
     if _STORE is not None:
         return _STORE
-    config = _load_config()
+    base = todo_db.todo_dir()
+    config = _load_config(base)
+    dsn = _infer_storage_dsn(base, config)
+    if config.get("todo_storage") != dsn:
+        # Config missing or lacked an explicit DSN -- persist the resolved one.
+        written = {k: v for k, v in config.items() if k not in ("store", "tickets_dir")}
+        written["todo_storage"] = dsn
+        _write_config(base, written)
+        config = written
     grace = _float_config(config, "lock_grace", DEFAULT_LOCK_GRACE)
     ttl = _float_config(config, "lock_ttl", DEFAULT_LOCK_TTL)
-    dsn = config.get("todo_storage")
-    if isinstance(dsn, str) and dsn.strip():
-        _STORE = _store_from_dsn(dsn, grace=grace, ttl=ttl)
-        return _STORE
-    # Back-compat: the pre-DSN flat keys, honored only when todo_storage is absent.
-    kind = str(config.get("store", DEFAULT_STORE)).strip().lower()
-    if kind == "json":
-        tickets_dir = config.get("tickets_dir")
-        directory = Path(tickets_dir) if tickets_dir else (todo_db.todo_dir() / "tickets")
-        _STORE = JsonDirTodoStore(directory, grace=grace, ttl=ttl)
-    else:
-        _STORE = SqliteTodoStore(grace=grace, ttl=ttl)
+    _STORE = _store_from_dsn(dsn, base, grace=grace, ttl=ttl)
     return _STORE
 
 
