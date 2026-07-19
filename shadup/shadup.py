@@ -441,6 +441,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files and directories starting with '.' (default: true)",
     )
 
+    p_mv = sub.add_parser(
+        "mv",
+        help="Rename a stored path on disk and record start/end history in the DB",
+    )
+    p_mv.add_argument("old", metavar="OLD", help="Current stored path (file or directory prefix)")
+    p_mv.add_argument("new", metavar="NEW", help="New stored path")
+    p_mv.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned renames and DB updates without applying",
+    )
+
     sub.add_parser(
         "check",
         help=(
@@ -758,7 +770,159 @@ def upgrade_stored_files_schema(conn: sqlite3.Connection) -> bool:
     if "end" not in cols:
         conn.execute("ALTER TABLE stored_files ADD COLUMN end TEXT DEFAULT NULL")
         changed = True
+    if upgrade_stored_files_unique_index(conn):
+        changed = True
     return changed
+
+
+def upgrade_stored_files_unique_index(conn: sqlite3.Connection) -> bool:
+    """Replace full path unique index with one scoped to active rows only."""
+    indexes = {
+        row[1] for row in conn.execute("PRAGMA index_list(stored_files)")
+    }
+    if "stored_files_unique_active_rel" in indexes:
+        return False
+    if "stored_files_unique_rel" in indexes:
+        conn.execute("DROP INDEX stored_files_unique_rel")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_active_rel
+        ON stored_files(shasum, root_rel, dirpath, filename)
+        WHERE deleted = 0 AND end IS NULL
+        """
+    )
+    return True
+
+
+def _stored_path_from_parts(root_rel: str, dirpath: str, filename: str) -> str:
+    parts = [p for p in (root_rel, dirpath, filename) if p]
+    return os.path.normpath(os.path.join(*parts)) if parts else ""
+
+
+def _physical_path_from_parts(root: str, dirpath: str, filename: str) -> str:
+    return os.path.normpath(os.path.join(os.path.abspath(root), dirpath, filename))
+
+
+def _fetch_active_stored_rows(
+    conn: sqlite3.Connection,
+) -> list[tuple[str, str, str, str, str]]:
+    return conn.execute(
+        f"""
+        SELECT shasum, root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        """
+    ).fetchall()
+
+
+def _end_date_active_row(
+    conn: sqlite3.Connection,
+    shasum: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    when: str | None = None,
+) -> None:
+    now = when or rfc3339_now()
+    conn.execute(
+        f"""
+        UPDATE stored_files
+        SET end = ?
+        WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+          AND {_ACTIVE_STORED_FILES_WHERE}
+        """,
+        (now, shasum, root_rel, dirpath, filename),
+    )
+
+
+def _insert_active_stored_row(
+    conn: sqlite3.Connection,
+    shasum: str,
+    root: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    start: str | None = None,
+) -> None:
+    now = start or rfc3339_now()
+    conn.execute(
+        """
+        INSERT INTO stored_files
+        (shasum, root, root_rel, dirpath, filename, deleted, start, end)
+        VALUES (?, ?, ?, ?, ?, 0, ?, NULL)
+        """,
+        (shasum, root, root_rel, dirpath, filename, now),
+    )
+
+
+def _split_stored_under_root_rel(root_rel: str, stored: str) -> tuple[str, str]:
+    """Return ``(dirpath, filename)`` for *stored* given fixed *root_rel*."""
+    st = os.path.normpath(stored)
+    rr = os.path.normpath(root_rel) if root_rel else ""
+    if rr and (st == rr or st.startswith(rr + os.sep)):
+        tail = "" if st == rr else st[len(rr) + 1 :]
+    else:
+        tail = st
+    if not tail:
+        return "", ""
+    if os.sep not in tail:
+        return "", tail
+    return os.path.dirname(tail), os.path.basename(tail)
+
+
+def _replace_stored_prefix(stored: str, old_prefix: str, new_prefix: str) -> str:
+    old_n = os.path.normpath(old_prefix)
+    new_n = os.path.normpath(new_prefix)
+    st = os.path.normpath(stored)
+    if st == old_n:
+        return new_n
+    sep = old_n + os.sep
+    if st.startswith(sep):
+        return os.path.normpath(new_n + st[len(old_n) :])
+    raise SystemExit(f"mv: stored path {stored!r} not under {old_prefix!r}")
+
+
+def _select_mv_rows(
+    rows: list[tuple[str, str, str, str, str]], old_query: str
+) -> tuple[list[tuple[str, str, str, str, str]], bool]:
+    """Return ``(matching rows, directory_mv)`` for a stored-path *old_query*."""
+    old_n = os.path.normpath(old_query)
+    prefix_matches = [
+        row
+        for row in rows
+        if (
+            (stored := _stored_path_from_parts(row[2], row[3], row[4])) == old_n
+            or stored.startswith(old_n + os.sep)
+        )
+    ]
+    if prefix_matches:
+        if len(prefix_matches) == 1:
+            stored = _stored_path_from_parts(
+                prefix_matches[0][2], prefix_matches[0][3], prefix_matches[0][4]
+            )
+            return prefix_matches, stored != old_n
+        return prefix_matches, True
+    exact = [
+        row
+        for row in rows
+        if _stored_path_from_parts(row[2], row[3], row[4]) == old_n
+    ]
+    if exact:
+        return exact, False
+    tail = [
+        row
+        for row in rows
+        if path_matches_ls_query(
+            _stored_path_from_parts(row[2], row[3], row[4]), old_n
+        )
+    ]
+    if not tail:
+        return [], False
+    if len(tail) == 1:
+        return tail, False
+    return tail, True
 
 
 def _upsert_active_stored_file(
@@ -814,10 +978,12 @@ def init_db_schema(conn: sqlite3.Connection) -> None:
         """
     )
     upgrade_stored_files_schema(conn)
+    upgrade_stored_files_unique_index(conn)
     conn.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_rel
+        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_active_rel
         ON stored_files(shasum, root_rel, dirpath, filename)
+        WHERE deleted = 0 AND end IS NULL
         """
     )
     conn.execute(
@@ -2321,6 +2487,94 @@ def handle_rmhash(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> 
     out("deleted entries: {deleted}", 0, deleted=deleted)
 
 
+def handle_mv(
+    conn: sqlite3.Connection,
+    old_arg: str,
+    new_arg: str,
+    shadir: str,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Rename on disk and close/open ``stored_files`` rows with end/start timestamps."""
+    active = _fetch_active_stored_rows(conn)
+    matched, directory_mv = _select_mv_rows(active, old_arg)
+    if not matched:
+        raise SystemExit(f"mv: no active stored path matches {old_arg!r}")
+
+    roots = {os.path.abspath(row[1]) for row in matched}
+    if len(roots) != 1:
+        raise SystemExit("mv: matched rows span multiple store roots")
+    root = matched[0][1]
+    root_abs = os.path.abspath(root)
+    old_prefix = os.path.normpath(old_arg)
+    new_prefix = os.path.normpath(new_arg)
+
+    if directory_mv:
+        old_abs = os.path.join(root_abs, old_prefix)
+        new_abs = os.path.join(root_abs, new_prefix)
+    else:
+        row = matched[0]
+        old_abs = _physical_path_from_parts(root, row[3], row[4])
+        new_stored = _replace_stored_prefix(
+            _stored_path_from_parts(row[2], row[3], row[4]), old_prefix, new_prefix
+        )
+        new_dirpath, new_filename = _split_stored_under_root_rel(row[2], new_stored)
+        new_abs = _physical_path_from_parts(root, new_dirpath, new_filename)
+
+    if not os.path.lexists(old_abs):
+        raise SystemExit(f"mv: source not found on disk: {old_abs}")
+    if os.path.lexists(new_abs):
+        raise SystemExit(f"mv: target already exists: {new_abs}")
+
+    when = rfc3339_now()
+    out(
+        "mv {old} -> {new} ({n} row(s), dir={directory})",
+        1,
+        old=old_abs,
+        new=new_abs,
+        n=len(matched),
+        directory=directory_mv,
+    )
+    if dry_run:
+        for row in matched:
+            stored = _stored_path_from_parts(row[2], row[3], row[4])
+            new_stored = _replace_stored_prefix(stored, old_prefix, new_prefix)
+            new_dirpath, new_filename = _split_stored_under_root_rel(row[2], new_stored)
+            out(
+                "dry-run db {stored} -> {new_stored}",
+                1,
+                stored=stored,
+                new_stored=new_stored,
+            )
+            out(
+                "dry-run row dirpath={dirpath} filename={filename}",
+                2,
+                dirpath=new_dirpath,
+                filename=new_filename,
+            )
+        return
+
+    os.rename(old_abs, new_abs)
+    for row in matched:
+        shasum, store_root, root_rel, dirpath, filename = row
+        stored = _stored_path_from_parts(root_rel, dirpath, filename)
+        new_stored = _replace_stored_prefix(stored, old_prefix, new_prefix)
+        new_dirpath, new_filename = _split_stored_under_root_rel(root_rel, new_stored)
+        _end_date_active_row(
+            conn, shasum, root_rel, dirpath, filename, when=when
+        )
+        _insert_active_stored_row(
+            conn,
+            shasum,
+            store_root,
+            root_rel,
+            new_dirpath,
+            new_filename,
+            start=when,
+        )
+    out("mv updated rows: {count}", 0, count=len(matched))
+
+
 def handle_reindex_files(
     conn: sqlite3.Connection, shadir: str, files_root: str, skip_dotfiles: bool
 ) -> None:
@@ -2546,6 +2800,9 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             recursive=args.recursive,
             paranoia=args.paranoia,
         )
+        return 0
+    if action == "mv":
+        handle_mv(conn, args.old, args.new, shadir, dry_run=args.dry_run)
         return 0
     if action == "reindex-files":
         if args.dir is None:
