@@ -1,6 +1,6 @@
 {
   "AC": "1. GET http://<esp32-office-ip>:5000/healthz returns wellformed, sensible JSON (alive, zone/backend identity, uptime or similar).\n2. GET http://<esp32-office-ip>:5000/logs returns wellformed, sensible JSON (recent log lines from the onboard app).\n3. Endpoints work without DMZ; curl from LAN succeeds.\n4. (Stretch before timebox end) GPIO pull samples and IR send path reachable somehow for direct local exercise.",
-  "ActualSummary": "Local :5000 /healthz /logs /gpio /ir/ping shipped and verified on esp32s3-office. Merged 973a: signed /dmz/ping + secrets deploy + Midea IR; board curls OK with 401 clock-skew until NTP.",
+  "ActualSummary": "Local :5000 endpoints + merged 973a /dmz/ping. Added pkg-ntp boot sync (ntp_ok); board epoch credible; signed DMZ long-poll accepted (timed_out after 45s, no 401); concurrent handlers.",
   "Agent": {
     "type": "cursor"
   },
@@ -146,7 +146,7 @@
     "path_from_root": "thermo/onboard/hardware/esp32s3"
   },
   "State": {
-    "working": {}
+    "done": {}
   },
   "Subtodos": [
     {
@@ -339,11 +339,13 @@
       "summary": "Install pkg-ntp and sync RTC at boot (expose ntp_ok/epoch in healthz)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Deployed NTP build; healthz ntp_ok=true epoch~1.78e9; /dmz/ping returns timed_out after signed send (no 401); healthz stays up",
+      "sha": "9a10f2279099406613fa597880aca400df09c211",
       "summary": "Deploy and curl-verify /dmz/ping auth succeeds (or epoch >= 1.7e9 with clear status)"
     }
   ],
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-19T04:20:33Z"
+  "update_dt": "2026-07-19T04:39:47Z"
 }
