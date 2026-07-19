@@ -124,6 +124,24 @@ No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
 
 ---
 
+## Denoise dirname titles (not The-strip alone)
+
+Year and encoding do **not** stay in the folder name; year → tag.
+
+| Wrong (partial fix) | Right |
+|---------------------|-------|
+| `Psychedelic Furs - Forever Now (flac, 1982)` | `Psychedelic Furs - Forever Now` |
+| `Album Leaf - [1999] An Orchestrated Rise To Fall [Flac]` | `Album Leaf - An Orchestrated Rise To Fall` |
+| `Doors - 2013 - Infinite [2013 US Analogue Productions … SACD]` | `Doors - Infinite` |
+
+Multi-disc pair — same album string, one disc-marker style:
+
+| Wrong | Right |
+|-------|-------|
+| `Beatles - The Beatles - 1967-1970 (CD1)` / `… (The Blue Album), Disc 2 of 2` | `Beatles - The Beatles 1967-1970 (The Blue Album) CD1` / `… CD2` |
+
+---
+
 ## VA only for true collections
 
 `VA -` = multi-artist compilation / anthology with no single primary artist

@@ -347,11 +347,18 @@
       "summary": "Homogeneous dirs: strip leading The; musicscan retries with/without The"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Dry-run correct-flac-names on flac/files \u2192 /tmp action log (no renames).\n\n78 planned DIR moves in /tmp/correct-flac-names-actions.txt and annotated\n/tmp/correct-flac-names-dryrun.log; tree untouched.",
+      "sha": "cd45bcce4e3ffd7edd9d8fe81496058468d083cf",
+      "summary": "Dry-run correct-flac-names on flac/files \u2192 /tmp action log"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Dry-run correct-flac-names on flac/files \u2192 /tmp action log"
+      "summary": "Skill: strip year/encoding/edition noise from dirnames; consistent multi-disc names"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-18T19:48:27Z"
+  "update_dt": "2026-07-19T03:24:30Z"
 }

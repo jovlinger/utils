@@ -113,8 +113,63 @@ Artist - Album
   (`Artist - Album`). Do **not** prefix `VA -` (see Collections).
 - Rewrite Usenet/scene dotted rip dirs to `Artist - Album` (drop catalog /
   codec tokens). Prefer `.meta.combined.json`, then johan, then online, then
-  txt/cue — not the dirname. Then apply `The`-strip + VFAT sanitize.
+  txt/cue — not the dirname. Then apply `The`-strip + title denoise + VFAT
+  sanitize.
 - Track: zero-padded number, `.` or ` - ` separator, title, original extension.
+
+#### What does **not** belong in the dirname title
+
+The album directory is `Artist - Album` (optionally `Disc N` for multi-disc).
+Everything else is tags, sidecars, or basename noise — **strip it from the
+dirname**. Do not preserve encoding, years, labels, or remaster tokens “for
+browsing” inside the folder name.
+
+| Drop from dirname | Where it goes instead |
+|-------------------|------------------------|
+| Encoding / container (`flac`, `Flac`, `FLAC`, `dsf`, `SACD`, `DSD`, …) | implied by files; not in title |
+| Release / rip year (`1982`, `(flac, 1982)`, `[1999]`, leading `2013 -`) | **year tag** / sidecar `year` (e.g. musicology / embedded tags) |
+| Label, catalog, remaster, bit-depth, “Analogue Productions”, `CAPP …`, `US … SA` | edition metadata in sidecars — not the path |
+| Ripper junk (`-GP-FLAC`, `[24bit…]`, bare `(flac)`) | drop |
+
+**Anti-patterns → targets (do not stop at The-strip alone):**
+
+```text
+Psychedelic Furs, The - Forever Now (flac, 1982)
+  ->  Psychedelic Furs - Forever Now
+      # year 1982 → year tag; drop (flac, …)
+
+The Album Leaf - [1999] An Orchestrated Rise To Fall [Flac]
+  ->  Album Leaf - An Orchestrated Rise To Fall
+      # [1999] → year tag; drop [Flac]
+
+The Doors - 2013 - Infinite [2013 US Analogue Productions CAPP DOORS SA SACD]
+  ->  Doors - Infinite
+      # 2013 → year tag; drop entire edition bracket
+```
+
+Wrong dry-run (The-strip only, noise left in place) is **incorrect** — keep
+going until the title is just the album name.
+
+#### Multi-disc sets: one elegant album string
+
+Discs of the **same** release must share one album title spelling; only the
+disc marker differs (`CD1` / `CD2`, or `Disc 1 of 2` / `Disc 2 of 2` — pick
+**one** convention per set and apply it to every disc). Prefer the canonical
+provider album title (Blue Album, etc.); do not leave mismatched punctuation
+or duplicate “The Beatles” in the title side.
+
+```text
+# wrong — pair does not rhyme
+The Beatles - The Beatles - 1967-1970 (CD1)
+The Beatles - The Beatles 1967-1970 (The Blue Album), Disc 2 of 2
+
+# right — same album string, consistent disc marker
+Beatles - The Beatles 1967-1970 (The Blue Album) CD1
+Beatles - The Beatles 1967-1970 (The Blue Album) CD2
+```
+
+(Exact disc-suffix style may follow an existing tidy peer in the tree; the
+requirement is **consistency within the set**, not inventing a third form.)
 
 #### Experiment: `The` / `, The` vs bare artist (pre-homogeneous)
 
@@ -171,7 +226,8 @@ Same for **single-artist “best of” / anthology** releases: keep the artist
 misplaced `VA -` from the dirname. Album title may keep leading `The`.)
 
 - Keep series tokens that aid browsing; drop ripper noise (`-GP-FLAC`,
-  `[FLAC]`, bare `flac` suffixes) unless needed to disambiguate editions.
+  `[FLAC]`, bare `flac` suffixes), years-in-title, and edition brackets — same
+  denoise rules as pop/rock (year → tag).
 - Tree convention: short `VA`, not MusicBrainz `Various Artists`, in the
   dirname (still VFAT-sanitize the title).
 
@@ -186,8 +242,12 @@ Examples: `Giacomo Puccini - Puccini- Greatest Hits`,
 `Erich Leinsdorf - … - Puccini- Turandot [BMG, Disc 1]`.
 
 - Prefer composer-forward names; sanitize `Composer: Work` → `Composer- Work`.
-- Multi-disc: keep `Disc N` in the album dir (or `CD1/` children if already structured).
-
+- Multi-disc: keep a **consistent** disc marker in the album dir (or `CD1/`
+  children if already structured). Same denoise rules: no encoding/year/label
+  brackets in the title (year → tag).
+- Classical label/`Disc N` in brackets is allowed only when it is the **disc
+  identity** for a box (and consistent across the set) — not remaster marketing
+  text.
 ## Workflow
 
 Copy and track:
@@ -197,7 +257,9 @@ Correct FLAC names:
 - [ ] Scope albums (paths or find illegal chars)
 - [ ] Gather candidates (cue / SPECS / .meta.* / export-json)
 - [ ] Resolve conflicts + pick convention
-- [ ] VFAT-sanitize every segment
+- [ ] Denoise title (drop encoding/year/edition brackets; year → tag)
+- [ ] Harmonize multi-disc album strings within each set
+- [ ] Strip The /, The on artist; VFAT-sanitize every segment
 - [ ] Emit rename plan (dir + files); dry-run first
 - [ ] Apply renames; refresh _tags if using shadup mirrors
 ```
