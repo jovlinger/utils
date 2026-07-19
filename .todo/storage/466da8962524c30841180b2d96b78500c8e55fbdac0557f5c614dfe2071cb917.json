@@ -296,11 +296,18 @@
       "summary": "Implement doctor root normalization + SHA DUP; enforce canonical root on store/reindex"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "mv end-dates destination occupant; targeted pytest green",
+      "sha": "ae82c5ffcdfda62f04ae5762bee81002d5a34215",
+      "summary": "Update mv DB overwrite semantics; make tests pass"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Update mv DB overwrite semantics; make tests pass"
+      "summary": "doctor -v=ratio sampled action dump (default 0.01)"
     }
   ],
   "create_dt": "2026-07-19T17:02:11Z",
-  "update_dt": "2026-07-19T17:36:25Z"
+  "update_dt": "2026-07-19T17:42:45Z"
 }
