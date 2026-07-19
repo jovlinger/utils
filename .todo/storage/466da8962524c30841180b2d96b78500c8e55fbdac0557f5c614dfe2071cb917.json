@@ -1,5 +1,6 @@
 {
   "AC": "Recreating test fails before the fix and passes after. doctor (+ store) enforce root == meta.shadir/files; doctor fixups are idempotent, apply across DBs, and announce when they run. SHA path collisions in doctor/ingest use DUP (newer; else smaller SHA). shadup mv a b: end a, end old b if any, insert b with a.sha start=NOW end=NULL (no DUP). Roxy.Music rename can resume afterward.",
+  "ActualSummary": "Added shadup doctor to normalize stored_files.root to ${meta.shadir}/files, end-date same-SHA path dupes, DUP different-SHA collisions, and enforce the canonical root on store/reindex. Sampled -v=RATIO action dump (default 0.01) with full (r,d,f) tuples. mv now end-dates any prior occupant of the destination path. Recreating tests cover dual-root failure then doctor recovery.",
   "BaseSha": "f5ed6ecf36cb238db229ecff9121421551c784c7",
   "Body": {
     "hash": [
@@ -143,7 +144,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "init": {}
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -310,11 +311,13 @@
       "summary": "doctor -v=ratio sampled action dump (default 0.01)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "doctor sample lines show (r,d,f)->(r,d,f) and end-duplicate before/after",
+      "sha": "221530300524e40c21a721a78a34ecdc5f1ae819",
       "summary": "doctor action lines: full RDF tuples + end-duplicate before/after"
     }
   ],
   "create_dt": "2026-07-19T17:02:11Z",
-  "update_dt": "2026-07-19T17:47:16Z"
+  "update_dt": "2026-07-19T17:50:44Z"
 }
