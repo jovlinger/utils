@@ -282,8 +282,10 @@
   },
   "WorkItems": [
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Add test_doctor_roots: dual-root mv failure, doctor fix, canonical store root",
+      "sha": "3eb7964a4042eb71a93b5563cd5557deb627e1b1",
       "summary": "Add recreating test: dual-root blocks mv; doctor fixes; mv works"
     },
     {
@@ -298,5 +300,5 @@
     }
   ],
   "create_dt": "2026-07-19T17:02:11Z",
-  "update_dt": "2026-07-19T17:29:37Z"
+  "update_dt": "2026-07-19T17:36:25Z"
 }
