@@ -354,11 +354,18 @@
       "summary": "Dry-run correct-flac-names on flac/files \u2192 /tmp action log"
     },
     {
+      "done": true,
+      "kind": "code",
+      "message": "Skill: strip year/encoding/edition noise from dirnames; consistent multi-disc names.\n\nDirname is Artist - Album only; year goes to tags. Document anti-patterns\n(Furs/Album Leaf/Doors) and Beatles Blue Album disc pairing.",
+      "sha": "93e42746d7ecfc2e0b41e2ccd074996a247c11b5",
+      "summary": "Skill: strip year/encoding/edition noise from dirnames; consistent multi-disc names"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Skill: strip year/encoding/edition noise from dirnames; consistent multi-disc names"
+      "summary": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-19T03:24:30Z"
+  "update_dt": "2026-07-19T03:36:17Z"
 }

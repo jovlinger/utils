@@ -59,6 +59,9 @@ one):
 2. **`.meta.johan.json`** — local curated / override.
    - `metadata.artist` / `metadata.album` / `metadata.tracks[].title`
    - else `local.artist_guess` / `local.album_guess` / `local.tracks[].title_guess`
+   - After a rename, set top-level **`original-album-name`** to the previous
+     album directory basename (create the sidecar if missing). Do this once per
+     rename; if the key already exists, leave it (keep the first/original value).
 3. **Online providers** — `.meta.musicbrainz.json`, `.meta.discogs.json`,
    `.meta.lastfm.json`, … (any remote provider sidecar). Same
    `metadata.*` / `local.*` fields; when several online files disagree among
@@ -260,8 +263,9 @@ Correct FLAC names:
 - [ ] Denoise title (drop encoding/year/edition brackets; year → tag)
 - [ ] Harmonize multi-disc album strings within each set
 - [ ] Strip The /, The on artist; VFAT-sanitize every segment
+- [ ] Resolve target collisions with DUP / DUP DUP / …
 - [ ] Emit rename plan (dir + files); dry-run first
-- [ ] Apply renames; refresh _tags if using shadup mirrors
+- [ ] Apply renames; set .meta.johan.json original-album-name; refresh _tags
 ```
 
 ### 1. Find offenders
@@ -289,7 +293,27 @@ blobs under `data/` stay valid; only the symlink tree under `files/` moves.
 ### 3. Apply carefully
 
 - Prefer dry-run listing first.
-- Collision: if target exists, stop and report (do not overwrite).
+- **Collision:** if the target basename already exists (or another planned
+  rename claims it), do **not** overwrite. Append ` DUP` to the target name and
+  retry; if still taken, append another ` DUP` (repeat until free):
+
+  ```text
+  Artist - Album
+  Artist - Album DUP
+  Artist - Album DUP DUP
+  ```
+
+  Call the chosen name out in the action log. Never clobber an existing album
+  dir.
+- For **each** directory that is actually renamed, update
+  `.meta.johan.json` in the **new** directory:
+
+  ```json
+  "original-album-name": "<basename before rename>"
+  ```
+
+  Create a minimal johan sidecar if none exists. If `original-album-name` is
+  already set, do not overwrite it (preserve the earliest name).
 - After album renames that affect tag mirrors: run shadup
   `refresh-extracted-tags` so `_tags/` no longer points at stale basenames.
 - Do not “fix” names by writing illegal characters into `_tags/` either;
@@ -297,9 +321,9 @@ blobs under `data/` stay valid; only the symlink tree under `files/` moves.
 
 ### 4. Report
 
-Summarize: albums scanned, illegal names found, renames proposed/applied,
-sources that won (e.g. “musicbrainz album + cue tracks”), and any skipped
-collisions.
+Summarize: albums scanned, illegal names found, renames proposed/applied
+(including any `DUP` suffixes), `original-album-name` writes, sources that won,
+and any skipped deferrals.
 
 ## Related code
 

@@ -140,6 +140,19 @@ Multi-disc pair — same album string, one disc-marker style:
 |-------|-------|
 | `Beatles - The Beatles - 1967-1970 (CD1)` / `… (The Blue Album), Disc 2 of 2` | `Beatles - The Beatles 1967-1970 (The Blue Album) CD1` / `… CD2` |
 
+## Collisions → `DUP`
+
+If the target exists, append ` DUP` (again if needed): `Album`, `Album DUP`,
+`Album DUP DUP`. Never overwrite.
+
+## Provenance in `.meta.johan.json`
+
+On each applied rename, set (once) in the johan sidecar:
+
+```json
+"original-album-name": "The Doors - 2013 - Infinite [2013 US Analogue Productions CAPP DOORS SA SACD]"
+```
+
 ---
 
 ## VA only for true collections
