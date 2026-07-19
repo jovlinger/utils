@@ -289,8 +289,10 @@
       "summary": "Add recreating test: dual-root blocks mv; doctor fixes; mv works"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Implement shadup doctor, canonical_files_root, store/reindex enforcement",
+      "sha": "1a4c6f2989242ebb6e2dcb6ede5a3e2c6436162a",
       "summary": "Implement doctor root normalization + SHA DUP; enforce canonical root on store/reindex"
     },
     {
