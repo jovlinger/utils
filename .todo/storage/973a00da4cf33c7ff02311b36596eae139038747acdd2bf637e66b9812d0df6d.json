@@ -285,9 +285,16 @@
   },
   "WorkItems": [
     {
+      "done": true,
+      "kind": "code",
+      "message": "Committed /dmz/ping + secrets deploy path + Midea IR (main.toit, ir.toit, deploy.sh, gitignore) at 647ac7e",
+      "sha": "cd7117ca4686e0239287d735c9c7301191566399",
+      "summary": "Commit /dmz/ping + secrets deploy path + Midea IR (main/ir/deploy/gitignore)"
+    },
+    {
       "done": false,
       "kind": "task",
-      "summary": "Commit /dmz/ping + secrets deploy path + Midea IR (main/ir/deploy/gitignore)"
+      "summary": "Fix office zone tests expecting pico2w (now esp32s3)"
     },
     {
       "done": false,
@@ -296,5 +303,5 @@
     }
   ],
   "create_dt": "2026-07-14T16:47:44Z",
-  "update_dt": "2026-07-19T04:14:54Z"
+  "update_dt": "2026-07-19T04:16:21Z"
 }
