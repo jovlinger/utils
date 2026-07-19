@@ -413,6 +413,6 @@ def test_zone_build_scopes_to_deploy_backend() -> None:
     assert "ONBOARD_BUILD_BACKEND=pizero2w" in kitchen_out.stdout
     assert "hardware/pizero2w" in kitchen_out.stdout
     assert "hardware/pico2w" not in kitchen_out.stdout
-    assert "ONBOARD_BUILD_BACKEND=pico2w" in office_out.stdout
-    assert "hardware/pico2w" in office_out.stdout
+    assert "ONBOARD_BUILD_BACKEND=esp32s3" in office_out.stdout
+    assert "hardware/esp32s3" in office_out.stdout
     assert "hardware/pizero2w" not in office_out.stdout
