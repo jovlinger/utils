@@ -144,9 +144,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "working": {
-      "owner": "agent"
-    }
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -367,18 +365,8 @@
       "message": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json.\n\nOn target clash append DUP (repeat until free). Each applied rename writes\noriginal-album-name once into .meta.johan.json (create sidecar if needed).",
       "sha": "a439bbc623a7a0b2ca4420e0327a1ac93fd930c0",
       "summary": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json"
-    },
-    {
-      "done": false,
-      "kind": "task",
-      "summary": "Drop todo.py jq; document todo read | jq instead"
-    },
-    {
-      "done": false,
-      "kind": "task",
-      "summary": "Drop todo.py jq; document todo read | jq instead"
     }
   ],
   "create_dt": "2026-07-18T06:46:44Z",
-  "update_dt": "2026-07-19T04:05:15Z"
+  "update_dt": "2026-07-19T13:41:54Z"
 }

@@ -934,6 +934,51 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("mock", {emb for _t, _f, emb in self._emb_rows()})
 
+    def test_search_reports_embedding_refresh_progress_to_stderr(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="alpha beta gamma",
+            body="a second field to embed",
+        )
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE ticket_write_audit (ticket_id TEXT);
+                CREATE TRIGGER audit_ticket_update AFTER UPDATE ON tickets
+                BEGIN
+                    INSERT INTO ticket_write_audit(ticket_id) VALUES (NEW.id);
+                END;
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        proc = self.todo("search", "alpha", "--embedder", "mock")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stderr, "refreshing embeddings..Done\n")
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            stored_todo = json.loads(
+                conn.execute("SELECT data FROM tickets WHERE id = ?", (tid,)).fetchone()[0]
+            )
+            writes = conn.execute(
+                "SELECT COUNT(*) FROM ticket_write_audit WHERE ticket_id = ?", (tid,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIn("mock", stored_todo["Summary"])
+        self.assertIn("mock", stored_todo["Body"])
+        self.assertEqual(writes, 1)
+
+        # A fully populated index needs no refresh and emits no progress line.
+        again = self.todo("search", "alpha", "--embedder", "mock")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(again.stderr, "")
+
     def test_read_shows_expensive_embedder_backfilled_by_search(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")

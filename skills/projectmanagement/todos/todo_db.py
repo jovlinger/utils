@@ -92,7 +92,7 @@ def _todo_dir_candidates(git_root: Optional[Path]) -> List[Path]:
 
 
 def _default_todo_dir(git_root: Optional[Path]) -> Path:
-    """Directory to create when no sqlite.db exists in any candidate."""
+    """Directory to create when no populated store exists in any candidate."""
     todo_dir_env = os.environ.get("TODO_DIR")
     if todo_dir_env:
         return Path(todo_dir_env)
@@ -104,11 +104,15 @@ def _default_todo_dir(git_root: Optional[Path]) -> Path:
 def _candidate_is_populated(candidate: Path) -> bool:
     """True when *candidate* already holds a todo store worth selecting.
 
-    A directory with ``sqlite.db`` (sqlite backend) or ``config.json`` (explicit
-    backend choice, e.g. file:// storage) counts. An empty ``.todo`` does not,
-    so search can fall through to a home store that still has a db.
+    A directory with ``config.json``, ``sqlite.db``, or a ``storage/`` directory
+    (JSON-file backend) counts. An empty ``.todo`` does not, so search can fall
+    through to a home store that still has data.
     """
-    return (candidate / "sqlite.db").is_file() or (candidate / "config.json").is_file()
+    return (
+        (candidate / "config.json").is_file()
+        or (candidate / "sqlite.db").is_file()
+        or (candidate / "storage").is_dir()
+    )
 
 
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
@@ -117,10 +121,10 @@ def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     Search order: ``$TODO_DIR``, ``<main-checkout-root>/.todo/``, ``$HOME/.todo/``.
     The repo anchor is the MAIN checkout root (not the current worktree), so all
     worktrees of a repo share one store. The first candidate that already holds
-    a store (``sqlite.db`` or ``config.json``) wins; otherwise the default create
-    location is the first entry in that list that applies (``$TODO_DIR``, else
-    main-checkout ``.todo``, else home). All paths (db, worktrees, storage)
-    live under the chosen directory for the rest of the call.
+    a store (``config.json``, ``sqlite.db``, or ``storage/``) wins; otherwise the
+    default create location is the first entry in that list that applies
+    (``$TODO_DIR``, else main-checkout ``.todo``, else home). All paths (db,
+    worktrees, storage) live under the chosen directory for the rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:

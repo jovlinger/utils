@@ -427,21 +427,23 @@ _FIELD_NAME_BY_PATH: Dict[str, str] = dict((path, name) for name, path in _EMBED
 def _merge_stored_embeddings(todo: JsonDict) -> None:
     """Stamp every embeddings-table vector for this ticket into its Summary/Body dicts.
 
-    Cheap embedders are already inline (written at save time); expensive ones are
-    written only to the sqlite index by search's lazy backfill. Read merges both
-    sources so every embedder that has ever been computed for this ticket shows up,
-    regardless of which path wrote it. A store without the index (has_vector_index
-    False) simply yields no rows here, so this is a no-op on that backend.
+    Embedders are normally inline already: cheap vectors are written during a
+    regular save and expensive vectors during search's lazy backfill. Merging the
+    derived sqlite index keeps reads compatible with tickets written before lazy
+    backfill also persisted the complete TODO. A store without the index
+    (has_vector_index False) simply yields no rows here, so this is a no-op there.
     """
     ticket_id = str(todo.get("Id", ""))
     if not ticket_id:
         return
-    with todo_db.connection() as conn:
-        for field_path, embedder, vector in todo_db.embeddings_for_ticket(conn, ticket_id):
-            field_name = _FIELD_NAME_BY_PATH.get(field_path)
-            obj = todo.get(field_name) if field_name else None
-            if isinstance(obj, dict):
-                obj[embedder] = vector
+    store = todo_store.get_store()
+    if not store.has_vector_index:
+        return
+    for field_path, embedder, vector in store.embeddings_for_ticket(ticket_id):
+        field_name = _FIELD_NAME_BY_PATH.get(field_path)
+        obj = todo.get(field_name) if field_name else None
+        if isinstance(obj, dict):
+            obj[embedder] = vector
 
 
 def _cheap_embedding_rows(
@@ -496,27 +498,25 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
     if use_sqlite():
         ticket_id = str(todo["Id"])
         store = todo_store.get_store()
-        old = store.get(repo_key(root), branch)
-        changed = [] if no_clear else list(_changed_raw_fields(old, todo))
-        for field_name, _field_path in changed:
-            _strip_field_vectors(todo, field_name)
-        # Embeddings live in the todo JSON: stamp missing cheap vectors here (any
-        # backend) so the store serializes them. The sqlite embeddings table is
-        # only a derived search index, mirrored when the store keeps one.
-        rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
-        # Lock only the write: the read + embedding computation above run
-        # unlocked; the per-TODO lock is held just long enough to persist this
-        # one ticket (and mirror its vectors) so concurrent writers of the same
-        # ticket cannot interleave. The mirror uses the store's own db so a
-        # relocated (DSN) sqlite file is never split-brained against the default.
+        repo = repo_key(root)
+        # Lock the complete read/calculate/write operation for this TODO. This
+        # prevents a concurrent writer from changing raw text while its vectors
+        # are being calculated, and lets us persist the fully embedded TODO once.
         with store.lock(ticket_id):
-            store.put(repo_key(root), branch, todo)
+            old = store.get(repo, branch)
+            changed = [] if no_clear else list(_changed_raw_fields(old, todo))
+            for field_name, _field_path in changed:
+                _strip_field_vectors(todo, field_name)
+            # Embeddings live in the todo JSON: calculate every missing cheap
+            # vector before the single ticket write. The sqlite embeddings table
+            # is only a derived search index, mirrored afterward when available.
+            rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
+            store.put(repo, branch, todo)
             if store.has_vector_index:
-                with todo_db.connection(getattr(store, "db_path", None)) as conn:
-                    for _field_name, field_path in changed:
-                        todo_db.clear_embeddings(conn, ticket_id, field_path)
-                    for field_path, fingerprint, vec in rows:
-                        todo_db.put_embedding(conn, ticket_id, field_path, fingerprint, vec)
+                for _field_name, field_path in changed:
+                    store.clear_embeddings(ticket_id, field_path)
+                for field_path, fingerprint, vec in rows:
+                    store.put_embedding(ticket_id, field_path, fingerprint, vec)
         return
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
@@ -1098,72 +1098,132 @@ def search_tickets(
             ) from exc
 
     query_tokens = set(query.lower().split())
-    with todo_db.connection() as conn:
-        rows = conn.execute("SELECT data FROM tickets").fetchall()
-        tickets: Dict[str, JsonDict] = {}
-        raws: Dict[str, Dict[str, str]] = {}
-        for row in rows:
-            parsed: Any = json.loads(str(row["data"]))
-            if not isinstance(parsed, dict):
-                continue
-            ticket_id = str(parsed.get("Id", ""))
-            if not ticket_id:
-                continue
-            if states is not None and (current_state_name(parsed) or "") not in states:
-                continue
-            tickets[ticket_id] = parsed
-            raws[ticket_id] = {
-                field_path: raw
-                for field_name, field_path in _EMBED_FIELDS
-                if (raw := _raw_of(parsed, field_name)) is not None
-            }
+    store = todo_store.get_store()
+    tickets: Dict[str, JsonDict] = {}
+    raws: Dict[str, Dict[str, str]] = {}
+    locations: Dict[str, tuple[str, str]] = {}
+    for repo_path, branch, parsed in store.list_located():
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if states is not None and (current_state_name(parsed) or "") not in states:
+            continue
+        tickets[ticket_id] = parsed
+        locations[ticket_id] = (repo_path, branch)
+        raws[ticket_id] = {
+            field_path: raw
+            for field_name, field_path in _EMBED_FIELDS
+            if (raw := _raw_of(parsed, field_name)) is not None
+        }
 
-        rankings: List[Dict[str, float]] = []
-        for name, embedder in embedders:
+    prepared: List[tuple[str, todo_embed.Embedder, str, List[float]]] = []
+    stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
+    for name, embedder in embedders:
+        try:
             fingerprint = embedder.fingerprint()
-            try:
-                query_vec = embedder.embed(query)
-            except (ValueError, RuntimeError) as exc:
-                raise TodoError(f"embedder {name!r} failed: {exc}") from exc
-            stored = {
-                (tid, field): vec
-                for tid, field, vec in todo_db.all_embeddings(conn, fingerprint)
-            }
-            if not dry_run:
-                for tid, field_raws in raws.items():
-                    for field_path, raw in field_raws.items():
-                        if (tid, field_path) in stored:
+            query_vec = embedder.embed(query)
+        except (ValueError, RuntimeError) as exc:
+            raise TodoError(f"embedder {name!r} failed: {exc}") from exc
+        prepared.append((name, embedder, fingerprint, query_vec))
+        stored_by_fingerprint[fingerprint] = {
+            (tid, field): vec for tid, field, vec in store.all_embeddings(fingerprint)
+        }
+
+    refreshing_embeddings = False
+    if not dry_run:
+        for tid, field_raws in list(raws.items()):
+            needs_refresh = any(
+                (tid, field_path) not in stored_by_fingerprint[fingerprint]
+                for _name, _embedder, fingerprint, _query_vec in prepared
+                for field_path in field_raws
+            )
+            if not needs_refresh:
+                continue
+
+            repo, branch = locations[tid]
+            with store.lock(tid):
+                # Re-read after taking the lock. Every selected embedding for
+                # this TODO is then calculated from one stable snapshot,
+                # stamped into that snapshot, and persisted with one put.
+                latest = store.get(repo, branch)
+                if latest is None:
+                    continue
+                latest_raws = {
+                    field_path: raw
+                    for field_name, field_path in _EMBED_FIELDS
+                    if (raw := _raw_of(latest, field_name)) is not None
+                }
+                indexed = {
+                    (field_path, fingerprint): chunks
+                    for field_path, fingerprint, chunks in store.embeddings_for_ticket(tid)
+                }
+                new_rows: List[tuple[str, str, List[List[float]]]] = []
+                for name, embedder, fingerprint, _query_vec in prepared:
+                    for field_name, field_path in _EMBED_FIELDS:
+                        raw = latest_raws.get(field_path)
+                        if raw is None:
                             continue
+                        chunks = indexed.get((field_path, fingerprint))
+                        if chunks is not None:
+                            latest[field_name][fingerprint] = chunks
+                            stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
+                            continue
+                        if not refreshing_embeddings:
+                            print(
+                                "refreshing embeddings",
+                                end="",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            refreshing_embeddings = True
                         try:
                             vec = embedder.embed(raw)
                         except (ValueError, RuntimeError) as exc:
                             raise TodoError(f"embedder {name!r} failed: {exc}") from exc
+                        print(".", end="", file=sys.stderr, flush=True)
                         chunks = [vec]
-                        todo_db.put_embedding(conn, tid, field_path, fingerprint, chunks)
-                        stored[(tid, field_path)] = chunks
-            scores: Dict[str, float] = {}
-            for tid in tickets:
-                best = 0.0
-                for field_path in ("Summary.raw", "Body.raw"):
-                    chunks = stored.get((tid, field_path)) or []
-                    for chunk in chunks:
-                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
-                if best > 0.0:
-                    scores[tid] = best
-            rankings.append(scores)
+                        latest[field_name][fingerprint] = chunks
+                        indexed[(field_path, fingerprint)] = chunks
+                        stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
+                        new_rows.append((field_path, fingerprint, chunks))
 
-        lexical: Dict[str, float] = {}
+                if not new_rows:
+                    continue
+                store.put(repo, branch, latest)
+                for field_path, fingerprint, chunks in new_rows:
+                    store.put_embedding(tid, field_path, fingerprint, chunks)
+                tickets[tid] = latest
+                raws[tid] = latest_raws
+
+    rankings: List[Dict[str, float]] = []
+    for _name, _embedder, fingerprint, query_vec in prepared:
+        stored = stored_by_fingerprint[fingerprint]
+        scores: Dict[str, float] = {}
         for tid in tickets:
-            text = " ".join(raws[tid].values()).lower()
-            score = 0.0
-            if query.lower() in text:
-                score += 1.0
-            for token in query_tokens:
-                if token and token in text:
-                    score += 0.1
-            if score > 0.0:
-                lexical[tid] = score
-        rankings.append(lexical)
+            best = 0.0
+            for field_path in ("Summary.raw", "Body.raw"):
+                chunks = stored.get((tid, field_path)) or []
+                for chunk in chunks:
+                    best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
+            if best > 0.0:
+                scores[tid] = best
+        rankings.append(scores)
+
+    lexical: Dict[str, float] = {}
+    for tid in tickets:
+        text = " ".join(raws[tid].values()).lower()
+        score = 0.0
+        if query.lower() in text:
+            score += 1.0
+        for token in query_tokens:
+            if token and token in text:
+                score += 0.1
+        if score > 0.0:
+            lexical[tid] = score
+    rankings.append(lexical)
+
+    if refreshing_embeddings:
+        print("Done", file=sys.stderr, flush=True)
 
     fused = _rrf_fuse(rankings)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
@@ -3074,9 +3134,8 @@ def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
             return todo
     cid = str(entry.get("Id", ""))
     if len(cid) >= 4 and use_sqlite():
-        with todo_db.connection() as conn:
-            for _repo_path, _branch, todo in todo_db.find_tickets_by_id_prefix(conn, cid[:8]):
-                return todo
+        for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(cid[:8]):
+            return todo
     return None
 
 
@@ -3152,17 +3211,16 @@ def render_ticket_graph(
 
 
 def discover_all_tickets(root: Path) -> Dict[str, JsonDict]:
-    """Map Id -> ticket for every discoverable ticket in sqlite or git refs."""
+    """Map Id -> ticket for every discoverable ticket in the store or git refs."""
     tickets: Dict[str, JsonDict] = {}
     if use_sqlite():
-        with todo_db.connection() as conn:
-            rows = conn.execute(
-                "SELECT data FROM tickets WHERE repo_path = ?", (repo_key(root),)
-            ).fetchall()
-            for row in rows:
-                parsed: Any = json.loads(str(row["data"]))
-                if isinstance(parsed, dict) and parsed.get("Id"):
-                    tickets[str(parsed["Id"])] = normalize_todo_schema(parsed)
+        repo = repo_key(root)
+        for repo_path, _branch, parsed in todo_store.get_store().list_located():
+            if repo_path and repo_path != repo:
+                continue
+            tid = str(parsed.get("Id", ""))
+            if tid:
+                tickets[tid] = normalize_todo_schema(parsed)
         if tickets:
             return tickets
     worktree = read_todo_worktree(root)
