@@ -146,7 +146,7 @@
     "path_from_root": "thermo/onboard/hardware/esp32s3"
   },
   "State": {
-    "done": {}
+    "working": {}
   },
   "Subtodos": [
     {
@@ -330,8 +330,18 @@
       "sha": "bdbd8fa6b7db4909ccf8c4f35539d0113ec8e082",
       "subtodo_id": "973a00da4cf33c7ff02311b36596eae139038747acdd2bf637e66b9812d0df6d",
       "summary": "merge subtodo 973a00da: Committed /dmz/ping Ed25519 path (main.toit/auth/secrets ..."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Install pkg-ntp and sync RTC at boot (expose ntp_ok/epoch in healthz)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Deploy and curl-verify /dmz/ping auth succeeds (or epoch >= 1.7e9 with clear status)"
     }
   ],
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-19T04:17:47Z"
+  "update_dt": "2026-07-19T04:19:01Z"
 }
