@@ -1,0 +1,170 @@
+{
+  "provider": "musicbrainz",
+  "separator": ";",
+  "types": [
+    "artist",
+    "album",
+    "year",
+    "genre",
+    "collection"
+  ],
+  "value_slug": "lowercase alphanumeric only (strip spaces/punct)",
+  "field_roles": {
+    "metadata.genres": "MB genre-list (often empty in this corpus)",
+    "metadata.tags": "MB tag-list (crowd) -> mostly genre;*; some noise/artist/year",
+    "metadata.artist": "direct -> artist;slug(value)",
+    "metadata.album": "direct -> album;slug(value)",
+    "metadata.year": "often ISO date; take YYYY -> year;YYYY"
+  },
+  "map": {
+    "90s": "year;90s",
+    "afrobeat": "genre;afrobeat",
+    "alternative": "genre;alternative",
+    "alternative rock": "genre;alternativerock",
+    "ambient": "genre;ambient",
+    "ambient electronic": "genre;ambientelectronic",
+    "americana": "genre;americana",
+    "avant-garde": "genre;avantgarde",
+    "baroque": "genre;baroque",
+    "bassline": "genre;bassline",
+    "blues rock": "genre;bluesrock",
+    "breakbeat": "genre;breakbeat",
+    "breaks": "genre;breaks",
+    "celtic punk": "genre;celticpunk",
+    "chill out": "genre;chillout",
+    "classic rock": "genre;classicrock",
+    "classical": "genre;classical",
+    "dance": "genre;dance",
+    "deep house": "genre;deephouse",
+    "down tempo": "genre;downtempo",
+    "downtempo": "genre;downtempo",
+    "dream pop": "genre;dreampop",
+    "drum and bass": "genre;drumandbass",
+    "easy listening": "genre;easylistening",
+    "electro": "genre;electro",
+    "electronic": "genre;electronic",
+    "electronic rock": "genre;electronicrock",
+    "electronica": "genre;electronica",
+    "experimental": "genre;experimental",
+    "folk": "genre;folk",
+    "folk rock": "genre;folkrock",
+    "funk": "genre;funk",
+    "funk rock": "genre;funkrock",
+    "future funk": "genre;futurefunk",
+    "future jazz": "genre;futurejazz",
+    "goth": "genre;goth",
+    "hard rock": "genre;hardrock",
+    "hard techno": "genre;hardtechno",
+    "hip hop": "genre;hiphop",
+    "house": "genre;house",
+    "indie": "genre;indie",
+    "instrumental": "genre;instrumental",
+    "jam band": "genre;jamband",
+    "jazz": "genre;jazz",
+    "jazz fusion": "genre;jazzfusion",
+    "jazz-rock": "genre;jazzrock",
+    "latin": "genre;latin",
+    "lo-fi": "genre;lofi",
+    "lounge": "genre;lounge",
+    "michael nyman": "artist;michaelnyman",
+    "new wave": "genre;newwave",
+    "nu jazz": "genre;nujazz",
+    "opera": "genre;opera",
+    "orchestral": "genre;orchestral",
+    "pachanga": "genre;pachanga",
+    "pop": "genre;pop",
+    "pop rock": "genre;poprock",
+    "post-rock": "genre;postrock",
+    "progressive house": "genre;progressivehouse",
+    "progressive rock": "genre;progressiverock",
+    "psychedelic rock": "genre;psychedelicrock",
+    "rock": "genre;rock",
+    "schranz": "genre;schranz",
+    "sketch comedy": "genre;sketchcomedy",
+    "southern rock": "genre;southernrock",
+    "synth-pop": "genre;synthpop",
+    "tech house": "genre;techhouse",
+    "trip hop": "genre;triphop",
+    "trip‐hop": "genre;triphop",
+    "turntablism": "genre;turntablism",
+    "u2": "artist;u2",
+    "world & country": "genre;worldcountry"
+  },
+  "dropped": [
+    {
+      "raw": "isrc",
+      "field": "tag",
+      "count": 3
+    },
+    {
+      "raw": "interesting booklet",
+      "field": "tag",
+      "count": 2
+    },
+    {
+      "raw": "reissue",
+      "field": "tag",
+      "count": 2
+    },
+    {
+      "raw": "vendu",
+      "field": "tag",
+      "count": 2
+    },
+    {
+      "raw": "4x4",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "added/2017/01/02",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "animated cover art",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "bedroom",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "bonus track",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "bulgaria",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "fidget",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "hi-res",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "miami beach",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "no isrc",
+      "field": "tag",
+      "count": 1
+    },
+    {
+      "raw": "private/0994201a-0030-4a94-9e93-e9a38f7e289a",
+      "field": "tag",
+      "count": 1
+    }
+  ]
+}

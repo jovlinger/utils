@@ -1,4 +1,4 @@
-"""Tests for ``importtags`` (metatool export-json -> shadup tag-add)."""
+"""Tests for ``importtags`` (``.meta.combined.json`` → shadup tag-add)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import os
 import sqlite3
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -60,10 +59,26 @@ def _run_shadup(
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
 
 
+def _write_combined(album: Path, tags: list[str]) -> None:
+    (album / ".meta.combined.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "directory": str(album),
+                "kind": "providers",
+                "providers": [],
+                "tags": tags,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _run_importtags(
     cwd: Path,
     shadir: Path,
-    metatool: str | Path,
     first_album: Path,
     *rest_albums,
     reset: bool = False,
@@ -83,8 +98,6 @@ def _run_importtags(
         "importtags",
         "--shadir",
         str(shadir),
-        "--metatool",
-        str(metatool),
     ]
     if db is not None:
         cmd.extend(["--db", str(db)])
@@ -98,12 +111,16 @@ def _run_importtags(
         cmd.append("--debug")
     cmd.append(str(first_album))
     cmd.extend(str(a) for a in rest_albums)
-    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
+    return subprocess.run(
+        cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env
+    )
 
 
 def _load_importtags():
     from importlib.util import module_from_spec, spec_from_file_location
 
+    # Ensure sibling meta_combine is importable.
+    sys.path.insert(0, str(IMPORTTAGS_PKG))
     spec = spec_from_file_location(
         "importtags_mod", IMPORTTAGS_PKG / "importtags.py"
     )
@@ -119,84 +136,25 @@ def test_pick_target_errors_when_no_symlink_into_store(tmp_path: Path) -> None:
     album.mkdir()
     shadir = tmp_path / "store"
     shadir.mkdir()
-    (album / "readme.txt").write_bytes(b"r")
-    (album / "z.flac").write_bytes(b"a")
-    with pytest.raises(mod.ImportTagsError, match="no symlink into sha store"):
+    (album / "local.flac").write_bytes(b"x")
+    with pytest.raises(mod.ImportTagsError):
         mod.pick_target_file(str(album), str(shadir))
 
 
-def test_pick_target_errors_when_shadir_not_resolvable(tmp_path: Path) -> None:
+def test_pick_target_prefers_symlink_into_data(tmp_path: Path) -> None:
     mod = _load_importtags()
-    album = tmp_path / "only_album"
-    album.mkdir()
-    (album / "t.flac").write_bytes(b"x")
-    with pytest.raises(mod.ImportTagsError, match="resolve sha store"):
-        mod.pick_target_file(str(album), None)
-
-
-def test_pick_target_prefers_first_lexicographic_audio_symlink(tmp_path: Path) -> None:
-    """Audio symlinks first; then basename order. Ignores symlink mtime."""
-    mod = _load_importtags()
-
     shadir = tmp_path / "store"
-    digest = "aa" * 32
-    blob = shadir / "data" / digest[:2] / digest
-    blob.parent.mkdir(parents=True)
+    (shadir / "data" / "ab").mkdir(parents=True)
+    blob = shadir / "data" / "ab" / ("ab" * 32)
     blob.write_bytes(b"x")
-
-    album = tmp_path / "al"
+    album = tmp_path / "album"
     album.mkdir()
-    zebra = album / "zebra.flac"
-    a_flac = album / "a.flac"
-    zebra.symlink_to(blob)
-    a_flac.symlink_to(blob)
-    os.utime(zebra, (100, 100), follow_symlinks=False)
-    os.utime(a_flac, (900, 900), follow_symlinks=False)
-
-    assert mod.pick_target_file(str(album), str(shadir)) == str(a_flac)
-
-
-def test_pick_target_prefers_audio_over_non_audio_symlink(tmp_path: Path) -> None:
-    mod = _load_importtags()
-
-    shadir = tmp_path / "store"
-    digest = "dd" * 32
-    blob = shadir / "data" / digest[:2] / digest
-    blob.parent.mkdir(parents=True)
-    blob.write_bytes(b"x")
-
-    album = tmp_path / "al"
-    album.mkdir()
-    aaa_txt = album / "aaa.txt"
-    zzz_flac = album / "zzz.flac"
-    aaa_txt.symlink_to(blob)
-    zzz_flac.symlink_to(blob)
-
-    assert mod.pick_target_file(str(album), str(shadir)) == str(zzz_flac)
-
-
-def test_pick_target_descends_subdirs_when_top_level_is_directories_only(
-    tmp_path: Path,
-) -> None:
-    """Album root may contain only subfolders (discs); symlinks live underneath."""
-    mod = _load_importtags()
-
-    shadir = tmp_path / "store"
-    digest = "bb" * 32
-    blob = shadir / "data" / digest[:2] / digest
-    blob.parent.mkdir(parents=True)
-    blob.write_bytes(b"y")
-
-    album = tmp_path / "Frank Album"
-    disc = album / "Frank Album 1,2"
-    disc.mkdir(parents=True)
-    track = disc / "01.flac"
+    track = album / "t.flac"
     track.symlink_to(blob)
-
     assert mod.pick_target_file(str(album), str(shadir)) == str(track)
 
 
-def test_pick_target_reads_shadir_from_db_meta_without_dot_shadir_on_disk(
+def test_pick_target_uses_db_meta_shadir_when_no_dot_shadir(
     tmp_path: Path,
 ) -> None:
     """When only meta knows the store root (no ``.shadir`` dir for discovery)."""
@@ -230,15 +188,7 @@ def test_pick_target_reads_shadir_from_db_meta_without_dot_shadir_on_disk(
 
 
 def test_build_tags_unions_and_prefixes() -> None:
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    spec = spec_from_file_location(
-        "importtags_mod", IMPORTTAGS_PKG / "importtags.py"
-    )
-    assert spec and spec.loader
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
+    mod = _load_importtags()
     payload = {
         "tag": ["live", "dup"],
         "genre": ["Rock", "dup"],
@@ -262,21 +212,13 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"audio\n")
+    _write_combined(
+        album, ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+    )
 
     _run_shadup(tmp_path, shadir, ["store", "work"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["im"], "genre": ["gr"], "artist": "A1", "album": "B2"}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album)
+    r = _run_importtags(tmp_path, shadir, album)
     assert r.returncode == 0, r.stderr
     assert r.stdout == ".\n"
 
@@ -293,22 +235,14 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"audio\n")
+    _write_combined(
+        album, ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+    )
 
     _run_shadup(tmp_path, shadir, ["store", "work"], db=custom_db)
     assert custom_db.is_file()
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["im"], "genre": ["gr"], "artist": "A1", "album": "B2"}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, db=custom_db)
+    r = _run_importtags(tmp_path, shadir, album, db=custom_db)
     assert r.returncode == 0, r.stderr
     assert r.stdout == ".\n"
 
@@ -323,22 +257,12 @@ def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"audio\n")
+    _write_combined(album, ["tag;new"])
 
     _run_shadup(tmp_path, shadir, ["store", "work"])
     _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "old"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["new"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, reset=True)
+    r = _run_importtags(tmp_path, shadir, album, reset=True)
     assert r.returncode == 0, r.stderr
     assert r.stdout == ".\n"
     assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["tag;new"]
@@ -349,15 +273,29 @@ def test_importtags_skips_nondir(tmp_path: Path) -> None:
     shadir.mkdir()
     f = tmp_path / "notadir"
     f.write_text("x")
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text("#!/bin/sh\nexit 99\n")
-    os.chmod(fake_mt, 0o755)
-    r = _run_importtags(tmp_path, shadir, fake_mt, f, check=False)
+    r = _run_importtags(tmp_path, shadir, f, check=False)
     assert r.returncode == 0
     assert r.stdout == ""
 
 
-def test_importtags_skips_empty_export(tmp_path: Path) -> None:
+def test_importtags_skips_empty_combined(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, [])
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "keep"])
+
+    r = _run_importtags(tmp_path, shadir, album)
+    assert r.returncode == 0
+    assert r.stdout == ""
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["keep"]
+
+
+def test_importtags_skips_missing_combined(tmp_path: Path) -> None:
     shadir = tmp_path / "store"
     shadir.mkdir()
     work = tmp_path / "work"
@@ -365,22 +303,9 @@ def test_importtags_skips_empty_export(tmp_path: Path) -> None:
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"a\n")
     _run_shadup(tmp_path, shadir, ["store", "work"])
-    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "keep"])
-
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": [], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-    r = _run_importtags(tmp_path, shadir, fake_mt, album)
+    r = _run_importtags(tmp_path, shadir, album)
     assert r.returncode == 0
     assert r.stdout == ""
-    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["keep"]
 
 
 def test_importtags_verbose_prints_plan_and_result(tmp_path: Path) -> None:
@@ -390,20 +315,10 @@ def test_importtags_verbose_prints_plan_and_result(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, ["tag;x"])
     _run_shadup(tmp_path, shadir, ["store", "work"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["x"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, verbose=True)
+    r = _run_importtags(tmp_path, shadir, album, verbose=True)
     assert r.returncode == 0, r.stderr
     assert "[import]" in r.stdout
     assert "tag-add:" in r.stdout
@@ -417,25 +332,15 @@ def test_importtags_debug_prints_one_line_per_album(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, ["tag;x", "tag;y"])
     _run_shadup(tmp_path, shadir, ["store", "work"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["x", "y"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, debug=True)
+    r = _run_importtags(tmp_path, shadir, album, debug=True)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip().startswith("[import]")
     assert "\t" in r.stdout
     assert "2 tags" in r.stdout
-    assert ".\n" not in r.stdout  # quiet progress dots, not extension dots in path
+    assert ".\n" not in r.stdout
 
 
 def test_importtags_two_albums_one_process_dots_one_line(tmp_path: Path) -> None:
@@ -449,20 +354,11 @@ def test_importtags_two_albums_one_process_dots_one_line(tmp_path: Path) -> None
     a2.mkdir(parents=True)
     (a1 / "t.flac").write_bytes(b"a\n")
     (a2 / "u.flac").write_bytes(b"b\n")
+    _write_combined(a1, ["tag;t"])
+    _write_combined(a2, ["tag;t"])
     _run_shadup(tmp_path, shadir, ["store", "work"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["t"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, a1, a2)
+    r = _run_importtags(tmp_path, shadir, a1, a2)
     assert r.returncode == 0, r.stderr
     assert r.stdout == "..\n"
 
@@ -474,22 +370,12 @@ def test_importtags_dryrun_does_not_touch_db(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, ["tag;x"])
     _run_shadup(tmp_path, shadir, ["store", "work"])
     _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "prior"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["x"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
     before = _db_tags_for_path(shadir, "work/disc/t.flac")
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True)
+    r = _run_importtags(tmp_path, shadir, album, dryrun=True)
     assert r.returncode == 0, r.stderr
     assert "[dry-run]" in r.stdout
     assert "would tag-add" in r.stdout
@@ -504,21 +390,11 @@ def test_importtags_dryrun_reset_shows_tag_clear(tmp_path: Path) -> None:
     album = work / "disc"
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, ["tag;new"])
     _run_shadup(tmp_path, shadir, ["store", "work"])
     _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "old"])
 
-    fake_mt = tmp_path / "fake-metatool"
-    fake_mt.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' '{"tag": ["new"], "genre": [], "artist": null, "album": null}'
-            """
-        )
-    )
-    os.chmod(fake_mt, 0o755)
-
-    r = _run_importtags(tmp_path, shadir, fake_mt, album, dryrun=True, reset=True)
+    r = _run_importtags(tmp_path, shadir, album, dryrun=True, reset=True)
     assert r.returncode == 0, r.stderr
     assert "would tag-clear" in r.stdout
     assert '"old"' in r.stdout
