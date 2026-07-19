@@ -1,5 +1,6 @@
 {
   "AC": "1. GET http://<esp32-office-ip>:5000/healthz returns wellformed, sensible JSON (alive, zone/backend identity, uptime or similar).\n2. GET http://<esp32-office-ip>:5000/logs returns wellformed, sensible JSON (recent log lines from the onboard app).\n3. Endpoints work without DMZ; curl from LAN succeeds.\n4. (Stretch before timebox end) GPIO pull samples and IR send path reachable somehow for direct local exercise.",
+  "ActualSummary": "Jaguar identify showed only heartbeat; shipped minimal stdlib HTTP on :5000. AC met: GET /healthz and /logs return wellformed JSON with office/esp32s3 deployment. Stretch: /gpio (pullup4/pulldown5) and GET /ir/ping (38kHz RMT on GPIO17). Deployed as container thermo-esp32s3 on esp32s3-office 192.168.88.73.",
   "Agent": {
     "type": "cursor"
   },
@@ -145,8 +146,16 @@
     "path_from_root": "thermo/onboard/hardware/esp32s3"
   },
   "State": {
-    "working": {}
+    "done": {}
   },
+  "Subtodos": [
+    {
+      "Branch": "973a00da-esp32-dmz-ping-signed",
+      "Id": "973a00da4cf33c7ff02311b36596eae139038747acdd2bf637e66b9812d0df6d",
+      "State": "init",
+      "Summary": "ESP32 /dmz/ping: signed one-shot DMZ sensor long-poll + log response"
+    }
+  ],
   "Summary": {
     "hash": [
       0.0,
@@ -303,11 +312,19 @@
       "summary": "Deploy to esp32s3-office and curl-verify AC"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "timebox progress",
+      "sha": "fd87ac977c8011a4eb50245cf86bcb20b158d75b",
       "summary": "Stretch: GPIO pull samples + IR send path for direct commands"
+    },
+    {
+      "done": true,
+      "kind": "start_subtodo",
+      "subtodo_id": "973a00da4cf33c7ff02311b36596eae139038747acdd2bf637e66b9812d0df6d",
+      "summary": "start subtodo 973a00da: ESP32 /dmz/ping: signed one-shot DMZ sensor long-poll + l..."
     }
   ],
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-14T16:38:19Z"
+  "update_dt": "2026-07-14T16:57:10Z"
 }
