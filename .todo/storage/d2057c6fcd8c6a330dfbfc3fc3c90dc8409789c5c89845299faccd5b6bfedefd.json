@@ -1,5 +1,6 @@
 {
   "AC": "Doc or short design note covering: proposed schema for path start/end (or equivalent), how mv writes end+start, how reconcile discovers dead/new paths, migration for existing single-path rows, and that shadup path history supersedes `.meta.johan.json` original-album-name as rename history (no need to keep abusing johan sidecars once start/end exists). Then file follow-up work items / subtodos for implementing shadup mv and reconcile.",
+  "BaseSha": "434d588fe8a236d1cfe4828a86a9a733be5e37d8",
   "Body": {
     "hash": [
       [
@@ -142,7 +143,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "init": {}
   },
   "Summary": {
     "hash": [
@@ -279,6 +280,13 @@
     ],
     "raw": "Research shadup path history (start/end) for renames"
   },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "summary": "Add stored_files start/end columns + in-place schema upgrade"
+    }
+  ],
   "create_dt": "2026-07-19T03:51:53Z",
-  "update_dt": "2026-07-19T03:54:28Z"
+  "update_dt": "2026-07-19T16:19:43Z"
 }
