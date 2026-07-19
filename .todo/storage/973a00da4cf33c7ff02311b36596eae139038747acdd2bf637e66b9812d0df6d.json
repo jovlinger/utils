@@ -148,7 +148,9 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "done": {}
+    "merged": {
+      "merged_into": "21e3454c-esp32-office-local-heal"
+    }
   },
   "Summary": {
     "hash": [
@@ -307,5 +309,5 @@
     }
   ],
   "create_dt": "2026-07-14T16:47:44Z",
-  "update_dt": "2026-07-19T04:16:54Z"
+  "update_dt": "2026-07-19T04:17:42Z"
 }
