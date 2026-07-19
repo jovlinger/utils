@@ -533,12 +533,24 @@ class PathTests(TodoCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout), None)
 
-    def test_jq_projects_ticket_through_binary(self) -> None:
+    def test_jq_subcommand_removed_use_read_pipe(self) -> None:
+        """Filtering is `todo read | jq`, not a todo.py jq subcommand."""
+        tid = self.mint()
+        self.write_ticket("jq-pipe-branch", tid, summary="jq summary")
+        gone = self.todo("jq", "self", ".Summary.raw")
+        self.assertNotEqual(gone.returncode, 0, gone.stdout + gone.stderr)
+        self.assertIn("invalid choice: 'jq'", gone.stderr)
         if shutil.which("jq") is None:
             self.skipTest("jq binary is not installed")
-        tid = self.mint()
-        self.write_ticket("jq-current-branch", tid, summary="jq summary")
-        proc = self.todo("jq", "self", ".Summary.raw")
+        read = self.todo("read", "self")
+        self.assertEqual(read.returncode, 0, read.stderr)
+        proc = subprocess.run(
+            ["jq", ".Summary.raw"],
+            input=read.stdout,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout), "jq summary")
 
