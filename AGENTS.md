@@ -8,6 +8,20 @@ multiple-choice prompts to re-confirm an already-stated task. Ask only when a
 required decision cannot be resolved from the request, the code, or sensible
 defaults.
 
+## P1: after two failures, ask
+
+If the same concrete step fails twice (missing tool/path, wrong flags, empty
+or unexpected result you cannot explain from evidence already in hand), **stop**.
+Do not burn tokens on a third approach, broader fishing, or speculative
+workarounds. Ask the user the smallest question that unblocks, then wait.
+
+## P2: background offers only for long work
+
+Offer (or ask approval for) backgrounding only when the remaining work is a long
+computation or a long wait. Creating a todo, a small edit, a dry-run plan, or
+any similarly quick step stays in the foreground — do not prompt about
+backgrounding those.
+
 ## Git commits
 
 Never add `Co-authored-by:` (or any co-author / Cursor attribution trailer) to
@@ -106,6 +120,28 @@ Scripts can source `lib/venv-resolve.sh` to pick the nearest `.venv`, `venv`, or
 - Run tests in the foreground with the tool's `block_until_ms` sized for the expected runtime.
 - Do not wrap tests in a background `sleep N; kill -0 $PID; wait $PID` timeout. That pattern can miss completed tests because unreaped exited children still answer `kill -0`.
 - If a shell timeout is needed and `timeout`/`gtimeout` is unavailable, poll with `kill -0` in short intervals and `wait` as soon as the process exits, preserving the test command's exit code.
+
+## CLI permissions (Cursor agent in screen / terminal)
+
+Cursor CLI has a known bug: if `.cursor/cli.json` contains a `permissions`
+section, its `allow` list **replaces** (does not merge with) `allow` entries in
+`~/.cursor/cli-config.json`. The UI still writes new grants to the global file,
+so they never take effect until the same entry exists in `.cursor/cli.json`.
+
+This repo keeps portable, machine-independent rules in `.cursor/cli.json`:
+
+- `Write(**)` and `Read(**)` — workspace-relative; works on Linux, macOS, etc.
+- Broad `Shell(...)` patterns plus repo-relative paths (`./binlinks/todo`, …)
+- Extra portable `Shell(...)` entries synced from global config (absolute paths
+  are skipped so the committed file works on any host)
+
+After approving a new shell command globally, refresh the project file:
+
+```bash
+./lib/sync-cli-permissions.py
+```
+
+Temporary workaround for a single session: `cursor agent --disable-project-configs`.
 
 ## Repo index and AGENTS split
 
