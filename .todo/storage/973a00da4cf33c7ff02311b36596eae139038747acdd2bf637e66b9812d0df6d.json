@@ -1,6 +1,6 @@
 {
   "AC": "1. GET/POST http://esp32s3-office:5000/dmz/ping performs one signed DMZ sensors POST.\n2. Onboard logs include DMZ status and a useful excerpt of the response body.\n3. Endpoint JSON reports ok/status/body_excerpt (or clear error if sign/time/network fails).\n4. No unsigned POSTs; uses auth.toit Ed25519 path.",
-  "ActualSummary": "Implemented /dmz/ping on ESP32 debug server: one signed POST to DMZ using auth.toit + generated secrets seed, with status/body excerpt logged and returned. /healthz now exposes epoch_seconds and auth_ed25519_ready; logs diagnose clock skew. Current board epoch is unsynced (~359k), so /dmz/ping returns 401 invalid signature with clear clock-skew note until NTP sync is added.",
+  "ActualSummary": "Committed /dmz/ping Ed25519 path (main.toit/auth/secrets deploy), Midea IR TX, and office test fixes. Deployed to esp32s3-office; /dmz/ping returns status/body_excerpt and logs DMZ response. Live DMZ auth still 401 until board NTP (epoch ~745k).",
   "BaseSha": "5dac629d013a758143b64a00717cc36ca023717b",
   "Body": {
     "hash": [
@@ -148,7 +148,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "working": {}
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -299,11 +299,13 @@
       "summary": "Fix office zone tests expecting pico2w (now esp32s3)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "Deployed thermo-esp32s3 via zones/office; curl /dmz/ping returns ok:false status:401 body_excerpt invalid signature + clock-skew log (epoch unsynced); healthz auth_ed25519_ready true",
+      "sha": "ce65cb6f29c3253299caf882d82ef805a3a62028",
       "summary": "Deploy to esp32s3-office and curl-verify /dmz/ping AC (signed path + logs)"
     }
   ],
   "create_dt": "2026-07-14T16:47:44Z",
-  "update_dt": "2026-07-19T04:16:28Z"
+  "update_dt": "2026-07-19T04:16:54Z"
 }
