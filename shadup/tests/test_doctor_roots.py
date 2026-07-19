@@ -155,6 +155,41 @@ def test_doctor_end_dates_duplicate_sha_path(tmp_path: Path) -> None:
     assert ended == 1
 
 
+def test_doctor_dry_run_samples_row_actions(tmp_path: Path) -> None:
+    store, files, data, db = _layout(tmp_path)
+    album = "Album"
+    _store_album(tmp_path, files, data, db, album, {"a.flac": b"x", "b.flac": b"y"})
+    _insert_album_as_root_rows(db, files, album)
+
+    result = _run(
+        files,
+        [
+            "--shadir",
+            str(store),
+            "--db",
+            str(db),
+            "doctor",
+            "--dry-run",
+            "-v=1",
+        ],
+    )
+    assert "doctor sample 4/4 fixup rows (ratio=1.0)" in result.stdout
+    assert "normalize " in result.stdout
+    assert "end duplicate " in result.stdout
+    assert "doctor rowid=" in result.stdout
+    assert "doctor dry-run: no changes written" in result.stdout
+    # No apply: both roots still present.
+    with sqlite3.connect(db) as conn:
+        roots = {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT root FROM stored_files WHERE deleted = 0 AND end IS NULL"
+            )
+        }
+    assert str(files) in roots
+    assert any(r.endswith(album) for r in roots)
+
+
 def test_store_from_album_dir_uses_canonical_files_root(tmp_path: Path) -> None:
     store, files, data, db = _layout(tmp_path)
     album = files / "Artist - Album"

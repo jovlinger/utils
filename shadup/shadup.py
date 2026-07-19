@@ -7,10 +7,12 @@ import csv
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import sqlite3
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Callable, Iterator, TypeVar
 
@@ -470,6 +472,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Report planned repairs without writing",
+    )
+    p_doctor.add_argument(
+        "-v",
+        "--verbose-ratio",
+        dest="verbose_ratio",
+        type=float,
+        default=0.01,
+        metavar="RATIO",
+        help=(
+            "Fraction of fixup rows to print in detail (default: 0.01). "
+            "Selected rows show every planned action for that row."
+        ),
     )
 
     p_tadd = sub.add_parser(
@@ -2711,11 +2725,25 @@ def handle_mv(
     out("mv updated rows: {count}", 0, count=len(matched))
 
 
+def _doctor_sample_rowids(rowids: list[int], ratio: float) -> set[int]:
+    """Return a random subset of *rowids* sized ``round(n * ratio)`` (clamped)."""
+    n = len(rowids)
+    if n == 0 or ratio <= 0:
+        return set()
+    if ratio >= 1:
+        return set(rowids)
+    k = min(n, int(round(n * ratio)))
+    if k <= 0:
+        return set()
+    return set(random.sample(rowids, k))
+
+
 def handle_doctor(
     conn: sqlite3.Connection,
     shadir: str,
     *,
     dry_run: bool = False,
+    verbose_ratio: float = 0.01,
 ) -> int:
     """Normalize ``stored_files.root`` to ``${shadir}/files`` and dedupe active paths."""
     files_root = canonical_files_root(shadir)
@@ -2731,15 +2759,18 @@ def handle_doctor(
 
     planned: list[dict] = []
     unfixable = 0
+    actions_by_rowid: dict[int, list[str]] = defaultdict(list)
     for rowid, shasum, root, root_rel, dirpath, filename, start in raw_rows:
         canonical = canonical_stored_path_parts(
             shadir, root, root_rel, dirpath, filename
         )
         if canonical is None:
             unfixable += 1
+            # Always surface unfixable rows (errors), not sampled.
             out(
                 "doctor unfixable root={root} path={dirpath}/{filename}",
-                1,
+                0,
+                kind="data",
                 root=root,
                 dirpath=dirpath,
                 filename=filename,
@@ -2781,11 +2812,8 @@ def handle_doctor(
         survivors.append(group[0])
         for dup in group[1:]:
             end_rowids.append(dup["rowid"])
-            out(
-                "doctor end duplicate rowid={rowid} sha={sha}",
-                1,
-                rowid=dup["rowid"],
-                sha=dup["shasum"][:8],
+            actions_by_rowid[dup["rowid"]].append(
+                f"end duplicate sha={dup['shasum'][:8]}"
             )
 
     # Resolve different shas at the same canonical path (DUP newer; else smaller sha).
@@ -2825,13 +2853,8 @@ def handle_doctor(
                 candidate = _dup_stored_filename(candidate)
             reserved.add(candidate)
             updates[loser["rowid"]]["filename"] = candidate
-            out(
-                "doctor DUP sha={sha} {dirpath}/{old} -> {new}",
-                1,
-                sha=loser["shasum"][:8],
-                dirpath=dp,
-                old=fn,
-                new=candidate,
+            actions_by_rowid[loser["rowid"]].append(
+                f"DUP sha={loser['shasum'][:8]} {dp}/{fn} -> {candidate}"
             )
 
     fixups = 0
@@ -2860,17 +2883,11 @@ def handle_doctor(
         if not changed:
             continue
         fixups += 1
-        out(
-            "doctor normalize rowid={rowid} {old_root} -> {new_root} "
-            "{old_dirpath}/{old_filename} -> {new_dirpath}/{new_filename}",
-            1,
-            rowid=item["rowid"],
-            old_root=item["orig_root"],
-            new_root=target["root"],
-            old_dirpath=item["orig_dirpath"],
-            old_filename=item["orig_filename"],
-            new_dirpath=target["dirpath"],
-            new_filename=target["filename"],
+        actions_by_rowid[item["rowid"]].append(
+            "normalize "
+            f"{item['orig_root']} -> {target['root']} "
+            f"{item['orig_dirpath']}/{item['orig_filename']} -> "
+            f"{target['dirpath']}/{target['filename']}"
         )
         if dry_run:
             continue
@@ -2889,15 +2906,31 @@ def handle_doctor(
             ),
         )
 
+    touched = sorted(actions_by_rowid)
+    selected = _doctor_sample_rowids(touched, verbose_ratio)
+    out(
+        "doctor sample {shown}/{touched} fixup rows (ratio={ratio})",
+        0,
+        kind="data",
+        shown=len(selected),
+        touched=len(touched),
+        ratio=verbose_ratio,
+    )
+    for rowid in sorted(selected):
+        out("doctor rowid={rowid}", 0, kind="data", rowid=rowid)
+        for action in actions_by_rowid[rowid]:
+            out("  {action}", 0, kind="data", action=action)
+
     out(
         "doctor fixups={fixups} unfixable={unfixable} files_root={files_root}",
         0,
+        kind="data",
         fixups=fixups,
         unfixable=unfixable,
         files_root=files_root,
     )
     if dry_run:
-        out("doctor dry-run: no changes written", 0)
+        out("doctor dry-run: no changes written", 0, kind="data")
     return 1 if unfixable else 0
 
 
@@ -3131,7 +3164,12 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
         handle_mv(conn, args.old, args.new, shadir, dry_run=args.dry_run)
         return 0
     if action == "doctor":
-        return handle_doctor(conn, shadir, dry_run=args.dry_run)
+        return handle_doctor(
+            conn,
+            shadir,
+            dry_run=args.dry_run,
+            verbose_ratio=args.verbose_ratio,
+        )
     if action == "reindex-files":
         if args.dir is None:
             resolved = resolve_files_root_abs(conn, shadir)
