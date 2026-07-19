@@ -34,7 +34,7 @@ Do not skip a check. If a check fails, stop and fix it before continuing.
 1. **M3** -- `config.toit`, `protocol.toit`, NTP sync, signed long-poll POST to DMZ;
    verify `manage zones office` shows `backend: esp32s3`
 2. **M4** -- `ir.toit`: RMT 38 kHz on GPIO17, Midea/Coolix frames, apply fresh commands
-3. **M5** -- `sensor.toit`: AHT20 on GPIO8/9, fallback 21.0 C / 50.0 %
+3. **M5** -- `sensor.toit`: AHT20 on GPIO8/9, fallback 1.0 C / 1.0 %
 4. **M6** -- `led.toit` (optional): WS2812 status patterns
 5. **M7** -- `health.toit` (optional): local `/healthz` and `/logs` on port 5000
 6. **M8** -- `install/deploy.sh`, git-ignored `src/secrets.toit`, container autostart
@@ -123,7 +123,7 @@ binary there is `src/bin/ledw_status.rs`; the logic modules are:
 | `src/config.rs` | zone/DMZ/pin config, env overrides | `src/config.toit` (M3) |
 | `src/auth.rs` | SHA-256 of body, Ed25519 sign, headers | `src/auth.toit` (M2) |
 | `src/protocol.rs` | build sensor POST JSON, parse command, freshness | `src/protocol.toit` (M3) |
-| `src/sensors.rs` + `src/aht20.rs` | AHT20 read, fallback 21.0 C / 50.0 % | `src/sensor.toit` (M5) |
+| `src/sensors.rs` + `src/aht20.rs` | AHT20 read, fallback 1.0 C / 1.0 % | `src/sensor.toit` (M5) |
 | `src/ir.rs` | Midea/Coolix frame build + timing | `src/ir.toit` (M4) |
 | `src/health.rs` | `/healthz` and `/logs` JSON bodies | `src/health.toit` (M7, optional) |
 | `src/led.rs` | status blink patterns | `src/led.toit` (M6, optional) |
@@ -169,7 +169,7 @@ Request body JSON (build it exactly in this field order; the DMZ is tolerant of
 order but match the Pico for parity). Temperatures use one decimal place:
 
 ```json
-{"sensors":{"temp_centigrade":21.0,"humid_percent":50.0},
+{"sensors":{"temp_centigrade":1.0,"humid_percent":1.0},
  "deployment":{"hardware_profile":"esp32s3_aht20_ir","zone_name":"office",
    "send_behavior":"ir_heatpump","report_behavior":"sensor_readings",
    "sensor_driver":"aht20","ir_transport":"esp32s3_rmt","ir_device":"gpio17",
@@ -351,7 +351,7 @@ jag pkg install ntp
 jag pkg install http
 ```
 
-Loop: NTP sync -> build body (fallback sensor values 21.0/50.0 for now) -> sign
+Loop: NTP sync -> build body (fallback sensor values 1.0/1.0 for now) -> sign
 (M2) -> POST with 600 s timeout -> parse -> log outcome -> repeat. Backoff 5 s on
 network error.
 
@@ -374,7 +374,7 @@ Verify the AC responds, or capture the waveform.
 
 Implement `src/sensor.toit`: I2C on SDA=8, SCL=9, addr 0x38. Read temp/humidity
 and use them in the body. On read failure with sensor-not-required, fall back to
-21.0 C / 50.0 % and keep polling (log the failure).
+1.0 C / 1.0 % and keep polling (log the failure).
 
 Check M5: real readings appear in the POST body; unplugging the sensor falls back
 without crashing.

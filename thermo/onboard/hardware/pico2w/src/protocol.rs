@@ -299,8 +299,8 @@ mod tests {
     fn builds_nested_dmz_post_body() {
         let config = DeviceConfig::kitchen_pico2w();
         let reading = SensorReading {
-            temp_centigrade: 21.0,
-            humid_percent: 50.0,
+            temp_centigrade: 1.0,
+            humid_percent: 1.0,
             source: SensorSource::Fallback,
         };
 
@@ -321,8 +321,8 @@ mod tests {
     fn builds_post_body_with_network_metadata() {
         let config = DeviceConfig::kitchen_pico2w();
         let reading = SensorReading {
-            temp_centigrade: 21.0,
-            humid_percent: 50.0,
+            temp_centigrade: 1.0,
+            humid_percent: 1.0,
             source: SensorSource::Fallback,
         };
 
@@ -368,8 +368,8 @@ mod tests {
     fn builds_post_body_with_logs() {
         let config = DeviceConfig::kitchen_pico2w();
         let reading = SensorReading {
-            temp_centigrade: 21.0,
-            humid_percent: 50.0,
+            temp_centigrade: 1.0,
+            humid_percent: 1.0,
             source: SensorSource::Fallback,
         };
 
