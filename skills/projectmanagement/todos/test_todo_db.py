@@ -121,6 +121,39 @@ class TodoDirResolutionTest(unittest.TestCase):
                     resolved = todo_db.resolve_todo_dir(repo_path)
                     self.assertEqual(resolved, (repo_path / ".todo").resolve())
 
+    def test_intermediate_ancestor_store_found_by_walk(self) -> None:
+        """A .todo between the repo root and $HOME wins over the home fallback."""
+        with tempfile.TemporaryDirectory() as home:
+            home_path = Path(home)
+            group_dir = home_path / "group"  # ancestor between repo root and home
+            repo_path = group_dir / "repo"
+            repo_path.mkdir(parents=True)
+            _init_git_repo(repo_path)
+            _touch_sqlite_db(group_dir / ".todo")  # populated intermediate ancestor
+            _touch_sqlite_db(home_path / ".todo")  # would-be fallback
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["HOME"] = str(home_path)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (group_dir / ".todo").resolve())
+
+    def test_walk_stops_at_home_ignores_stores_above(self) -> None:
+        """A .todo above $HOME is never selected; the walk stops at $HOME."""
+        with tempfile.TemporaryDirectory() as top:
+            top_path = Path(top)
+            home_path = top_path / "home"
+            repo_path = home_path / "repo"
+            repo_path.mkdir(parents=True)
+            _init_git_repo(repo_path)
+            _touch_sqlite_db(top_path / ".todo")  # above $HOME -- must be ignored
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["HOME"] = str(home_path)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (repo_path / ".todo").resolve())
+
 
 class RepoIdentityMigrationTest(unittest.TestCase):
     """repo_identity_from_url() and the v3 repo_path normalization migration."""

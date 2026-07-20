@@ -3843,9 +3843,10 @@ class BaseDirCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Basedir prints the resolved todo base directory for this invocation -- where "
         "config.json, the ticket store (json files or sqlite.db), and worktrees live. "
-        "Resolution order: $TODO_DIR, <main-checkout-root>/.todo, $HOME/.todo. The repo "
-        "anchor is the repo's MAIN checkout root, not the current worktree, so all "
-        "worktrees of a repo share one store."
+        "Resolution order: $TODO_DIR, then .todo at each level from "
+        "<main-checkout-root> up to and including $HOME (the walk stops at $HOME), "
+        "then $HOME/.todo. The repo anchor is the repo's MAIN checkout root, not the "
+        "current worktree, so all worktrees of a repo share one store."
     )
 
     @classmethod
@@ -4006,9 +4007,9 @@ Repo & todo identity:
                The STORAGE anchor: the todo store lives at <it>/.todo/, so all
                worktrees of a repo share one store. Git ops still use gitroot.
   TODO branch  a git repo branch that carries a todo in sqlite.
-  todo dir     resolved once per invocation: $TODO_DIR, else
-               <main-checkout-root>/.todo, else ~/.todo (first with sqlite.db
-               wins; same dir for db and worktrees).
+  todo dir     resolved once per invocation: $TODO_DIR, else .todo walked from
+               <main-checkout-root> up to and including ~ (stops at ~), else
+               ~/.todo (first with sqlite.db wins; same dir for db and worktrees).
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted
                fallback for todos written on dev/master).

@@ -79,15 +79,40 @@ def _home_todo_dir() -> Path:
     return Path.home() / HOME_TODO_DIR_NAME
 
 
+def _ancestors_within_home(start: Path) -> List[Path]:
+    """*start* and its ancestors up to and including $HOME, closest-first.
+
+    The walk stays inside the $HOME subtree and never rises above it. When
+    *start* is not under $HOME (unusual), only *start* itself is returned; the
+    caller still appends $HOME/.todo as the universal fallback.
+    """
+    home = Path.home()
+    dirs: List[Path] = [start]
+    if home in start.parents:
+        current = start
+        while current != home:
+            current = current.parent
+            dirs.append(current)
+    return dirs
+
+
 def _todo_dir_candidates(git_root: Optional[Path]) -> List[Path]:
-    """Ordered todo directory candidates for one CLI invocation."""
+    """Ordered todo directory candidates for one CLI invocation.
+
+    ``$TODO_DIR`` (verbatim) first, then ``.todo`` at each level from the repo's
+    main-checkout root upward to and including $HOME, then $HOME/.todo as the
+    final fallback. The walk stops at $HOME and never goes above it, so a store
+    at any ancestor between the repo and home is found before falling through.
+    """
     candidates: List[Path] = []
     todo_dir_env = os.environ.get("TODO_DIR")
     if todo_dir_env:
         candidates.append(Path(todo_dir_env))
     if git_root is not None:
-        candidates.append(git_root / HOME_TODO_DIR_NAME)
-    candidates.append(_home_todo_dir())
+        candidates.extend(d / HOME_TODO_DIR_NAME for d in _ancestors_within_home(git_root))
+    home_todo = _home_todo_dir()
+    if home_todo not in candidates:
+        candidates.append(home_todo)
     return candidates
 
 
@@ -118,13 +143,15 @@ def _candidate_is_populated(candidate: Path) -> bool:
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     """Resolve the todo directory once per process.
 
-    Search order: ``$TODO_DIR``, ``<main-checkout-root>/.todo/``, ``$HOME/.todo/``.
-    The repo anchor is the MAIN checkout root (not the current worktree), so all
-    worktrees of a repo share one store. The first candidate that already holds
-    a store (``config.json``, ``sqlite.db``, or ``storage/``) wins; otherwise the
-    default create location is the first entry in that list that applies
-    (``$TODO_DIR``, else main-checkout ``.todo``, else home). All paths (db,
-    worktrees, storage) live under the chosen directory for the rest of the call.
+    Search order: ``$TODO_DIR``, then ``.todo`` at each level from the
+    ``<main-checkout-root>`` upward to and including ``$HOME`` (the walk stops at
+    ``$HOME``), then ``$HOME/.todo``. The repo anchor is the MAIN checkout root
+    (not the current worktree), so all worktrees of a repo share one store. The
+    first candidate that already holds a store (``config.json``, ``sqlite.db``,
+    or ``storage/``) wins; otherwise the default create location is the first
+    entry that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
+    All paths (db, worktrees, storage) live under the chosen directory for the
+    rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:
