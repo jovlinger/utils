@@ -130,15 +130,19 @@ recover WHY it is doing the work. The link is the child's `Parent` field -- a
 - `add-subtodo` sets it (element 0 = the structural/fork parent) and also
   registers the child on the parent side (`Subtodos`) as a **tracked, mergeable**
   subtodo -- the full merge-bookkeeping lifecycle.
-- `todo.py init --parent <id>` (repeatable) records the child's `Parent` ref
-  **and** writes a follow-only **INFO back-link** into the parent's `Subtodos`
-  (`State: "INFO"`), so the link is navigable both ways (HATEOAS) without the
-  parent taking on any merge obligation. Use it to hang a fresh todo off an
-  existing one (even an old, unrelated todo) for context. The INFO link is *not*
-  a tracked subtodo: it is excluded from merge-completeness, the child sets it
-  once at creation and never updates it, and `doctor` refreshes its best-effort
-  `Summary` when sweeping. For a real subtodo the parent must merge, use
-  `add-subtodo` instead.
+- `todo.py set --parent <id>` (repeatable) is a **make-it-so** write of that
+  list: the child's `Parent` becomes exactly the listed refs (order preserved,
+  blanks skipped; bare `--parent=` clears). It also syncs follow-only **INFO
+  back-links** into each desired parent's `Subtodos` (`State: "INFO"`) and
+  **removes** INFO back-links from former parents that are no longer listed, so
+  links stay navigable both ways (HATEOAS) without any merge obligation.
+  Tracked/mergeable `Subtodos` rows (from `add-subtodo`) are never removed.
+  Use it to hang a todo off an existing one (even an old, done, or unrelated
+  todo) for context/bookkeeping -- typically after the parent is finished, not
+  while working it. The INFO link is *not* a tracked subtodo: it is excluded
+  from merge-completeness, and `doctor` refreshes its best-effort `Summary`
+  when sweeping. For a real subtodo the parent must merge, use `add-subtodo`
+  instead.
 
 INFO back-links are best-effort and same-repo (a write keys by the current
 repo). A child created before this behavior, or one whose parent lives in
@@ -246,11 +250,11 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
-| `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `pre-init` todo): create the local branch from its `set`-finalized `Branch`, move it to state `init`, capture `BaseSha` (invariant #5), commit. **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--parent <id>` (repeatable) records a parent/context reference and writes a follow-only `INFO` back-link into each parent's `Subtodos`. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set). `--stay-on-parent` returns to the previous branch after creating the todo branch |
+| `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `pre-init` todo): create the local branch from its `set`-finalized `Branch`, move it to state `init`, capture `BaseSha` (invariant #5), commit. **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set) except `--parent` (use `set --parent` after). `--stay-on-parent` returns to the previous branch after creating the todo branch |
 | `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or `self`/`curr` (default `self`) |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
 | `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set [--id <id>] [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary` and/or transition `State` (requires at least one field). Targets the current branch's todo by default; `--id <prefix>` targets another todo (typically a `pre-init` todo from `mint`) and is sqlite-only (no commit, since it has no branch of its own). For a `pre-init` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `pre`, `pre-init`, `init`, `working`, `done`, `merged`, `userneeded`, `stopped`. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). Current-branch edits commit by default. |
+| `todo.py set [--id <id>] [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary` and/or transition `State` (requires at least one field). Targets the current branch's todo by default; `--id <prefix>` targets another todo (typically a `pre-init` todo from `mint`) and is sqlite-only (no commit, since it has no branch of its own). For a `pre-init` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `pre`, `pre-init`, `init`, `working`, `done`, `merged`, `userneeded`, `stopped`. `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). Current-branch edits commit by default. |
 | `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` |
 | `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
@@ -464,7 +468,7 @@ git branch --show-current                     # must be the todo Branch
 # --- then ---
 git rev-parse --show-toplevel        # confirm worktree root; cwd should be here
 todo.py init --summary="..."         # refuses if current branch already has a ticket
-todo.py init --summary="..." --parent <id>   # hang a new todo off an existing one for context
+todo.py set --parent <id>            # hang this todo off an existing one (INFO back-link)
 todo.py init --id <id> --stay-on-parent      # promote without parking main on the todo branch
 todo.py read <known-id-prefix>        # load a known ticket; do not read TODO.json directly
 todo.py read self                     # current-branch lookup

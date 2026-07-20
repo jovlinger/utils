@@ -8,6 +8,24 @@ multiple-choice prompts to re-confirm an already-stated task. Ask only when a
 required decision cannot be resolved from the request, the code, or sensible
 defaults.
 
+### P0: no inane or duplicative confirmations
+
+Do **not** AskQuestion (or chat) to re-ask something the user already stated,
+implied, or that a sensible default already settles. No proceed/stop cards,
+"want me to...?", "OK to continue?", or other acknowledgment theater.
+
+Examples of banned confirmations: work/continue a named todo; fix / implement /
+commit when they already ordered it; re-offer a choice they just made.
+
+Ask only when a **required decision** cannot be resolved from the request, the
+code, or sensible defaults -- then prefer one short clarifier over a
+multiple-choice card.
+
+You **should** ask before risky or hard-to-undo modifications (force push,
+destructive reset, mass delete, prod deploy, broad irreversible data rewrite,
+and similar). That is not confirmation theater: name the risk in one line and
+wait. If the user already ordered that exact risky step, do not re-confirm.
+
 ## P1: after two failures, ask
 
 If the same concrete step fails twice (missing tool/path, wrong flags, empty
