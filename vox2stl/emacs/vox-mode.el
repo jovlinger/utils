@@ -110,11 +110,18 @@
   (interactive)
   (vox-mode--run-voxtool "mirror" t))
 
+;;;###autoload
+(defun vox-mode-reheader ()
+  "Rewrite layer height_rows to match data rows via `voxtool.py reheader'."
+  (interactive)
+  (vox-mode--run-voxtool "reheader" t))
+
 (defvar vox-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'vox-mode-check)
     (define-key map (kbd "C-c C-o") #'vox-mode-correct)
     (define-key map (kbd "C-c C-m") #'vox-mode-mirror)
+    (define-key map (kbd "C-c C-h") #'vox-mode-reheader)
     map)
   "Keymap for `vox-mode'.")
 
@@ -124,9 +131,10 @@
 
 Commands:
 \\<vox-mode-map>
-\\[vox-mode-check]   Run `voxtool.py check' on the visited file.
-\\[vox-mode-correct] Run `voxtool.py correct' (save, rewrite, revert).
-\\[vox-mode-mirror]  Run `voxtool.py mirror' (save, rewrite, revert)."
+\\[vox-mode-check]    Run `voxtool.py check' on the visited file.
+\\[vox-mode-correct]  Run `voxtool.py correct' (save, rewrite, revert).
+\\[vox-mode-mirror]   Run `voxtool.py mirror' (save, rewrite, revert).
+\\[vox-mode-reheader] Run `voxtool.py reheader' (save, rewrite, revert)."
   :syntax-table vox-mode-syntax-table
   (setq-local comment-start "# ")
   (setq-local comment-start-skip "#+\\s-*")
