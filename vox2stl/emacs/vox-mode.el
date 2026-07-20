@@ -128,6 +128,18 @@
   (interactive)
   (vox-mode--run-voxtool-args '("sync-pads" "--from=base" "--to=trace") t))
 
+;;;###autoload
+(defun vox-mode-indent ()
+  "Increase horizontal_offset by 1 via `voxtool.py indent --delta 1'."
+  (interactive)
+  (vox-mode--run-voxtool-args '("indent" "--delta" "1") t))
+
+;;;###autoload
+(defun vox-mode-outdent ()
+  "Decrease horizontal_offset by 1 via `voxtool.py indent --delta -1'."
+  (interactive)
+  (vox-mode--run-voxtool-args '("indent" "--delta" "-1") t))
+
 (defun vox-mode--run-voxtool-args (args &optional revert-after)
   "Save buffer, run voxtool.py with ARGS; REVERT-AFTER reloads if rewritten."
   (let* ((path (vox-mode--require-file-buffer))
@@ -159,6 +171,8 @@
     (define-key map (kbd "C-c C-h") #'vox-mode-reheader)
     (define-key map (kbd "C-c C-t") #'vox-mode-sync-pads-from-trace)
     (define-key map (kbd "C-c C-b") #'vox-mode-sync-pads-from-base)
+    (define-key map (kbd "C-c C-i") #'vox-mode-indent)
+    (define-key map (kbd "C-c C-u") #'vox-mode-outdent)
     map)
   "Keymap for `vox-mode'.")
 
@@ -173,7 +187,9 @@ Commands:
 \\[vox-mode-mirror]              Run `voxtool.py mirror' (save, rewrite, revert).
 \\[vox-mode-reheader]            Run `voxtool.py reheader' (save, rewrite, revert).
 \\[vox-mode-sync-pads-from-trace] Upsert pads trace -> base.
-\\[vox-mode-sync-pads-from-base]  Upsert pads base -> trace."
+\\[vox-mode-sync-pads-from-base]  Upsert pads base -> trace.
+\\[vox-mode-indent]              Indent design window (+1 offset).
+\\[vox-mode-outdent]             Outdent design window (-1 offset)."
   :syntax-table vox-mode-syntax-table
   (setq-local comment-start "# ")
   (setq-local comment-start-skip "#+\\s-*")
