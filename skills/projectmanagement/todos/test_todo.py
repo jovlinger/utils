@@ -40,6 +40,9 @@ class TodoCase(unittest.TestCase):
     def setUp(self) -> None:
         self.repo: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))
         self._db_dir: Path = Path(tempfile.mkdtemp(prefix="todo-db-"))
+        # Mark TODO_DIR populated so resolve_todo_dir does not fall through to
+        # $HOME/.todo when that store already exists.
+        (self._db_dir / "config.json").write_text("{}\n", encoding="utf-8")
         self._env: Dict[str, str] = {
             **ENV,
             "TODO_DIR": str(self._db_dir),
@@ -512,6 +515,16 @@ class PathTests(TodoCase):
         proc = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout), {"init": {}})
+
+    def test_get_json_path_no_such_path_reports_worked_missing_options(self) -> None:
+        tid = self.mint()
+        self.write_ticket("missing-path-branch", tid, summary="have summary")
+        proc = self.todo("get-json-path", "self", "Summary.bogus")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        err = proc.stderr
+        self.assertIn("path Summary no such field bogus.", err)
+        self.assertIn("available:", err)
+        self.assertIn("raw", err)
 
     def test_set_json_path_updates_current_branch(self) -> None:
         tid = self.mint()
@@ -1011,25 +1024,30 @@ class ParentPromptTests(TodoCase):
     def _base_branch(self) -> str:
         return self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
-    def _init(self, summary: str, body: str = "", parents: Optional[list] = None) -> str:
-        args = ["init", f"--summary={summary}", f"--body={body}"]
-        for parent in parents or []:
+    def _init(self, summary: str, body: str = "") -> str:
+        proc = self.todo("init", f"--summary={summary}", f"--body={body}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)["Id"]
+
+    def _set_parents(self, *parents: str) -> None:
+        args = ["set"]
+        for parent in parents:
             args += ["--parent", parent]
         proc = self.todo(*args)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        return json.loads(proc.stdout)["Id"]
 
     def _read(self, sel: str) -> Dict[str, Any]:
         proc = self.todo("read", sel)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
 
-    def test_init_parent_inserts_info_backlink(self) -> None:
+    def test_set_parent_inserts_info_backlink(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent", body="why we are here")
         self._git("checkout", base)
-        child_id = self._init("child", body="do the thing", parents=[parent_id[:8]])
+        child_id = self._init("child", body="do the thing")
+        self._set_parents(parent_id[:8])
         # Child records the parent ref...
         child = self._read(child_id[:8])
         self.assertEqual([p["Id"] for p in child["Parent"]], [parent_id])
@@ -1041,13 +1059,50 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(subtodos[0]["State"], "INFO")
         self.assertEqual(subtodos[0]["Summary"], "child")
 
+    def test_set_parent_make_it_so_replaces_and_drops_old_info(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        a_id = self._init("alpha", body="a")
+        self._git("checkout", base)
+        b_id = self._init("beta", body="b")
+        self._git("checkout", base)
+        child_id = self._init("child", body="c")
+        self._set_parents(a_id[:8])
+        self.assertEqual(
+            [p["Id"] for p in self._read(child_id[:8])["Parent"]], [a_id]
+        )
+        self.assertEqual(self._read(a_id[:8])["Subtodos"][0]["State"], "INFO")
+
+        # Make-it-so to B alone: A loses INFO, B gains it.
+        self._set_parents(b_id[:8])
+        child = self._read(child_id[:8])
+        self.assertEqual([p["Id"] for p in child["Parent"]], [b_id])
+        self.assertEqual(self._read(a_id[:8]).get("Subtodos", []), [])
+        b = self._read(b_id[:8])
+        self.assertEqual(len(b["Subtodos"]), 1)
+        self.assertEqual(b["Subtodos"][0]["Id"], child_id)
+        self.assertEqual(b["Subtodos"][0]["State"], "INFO")
+
+    def test_set_parent_blank_clears(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent", body="ctx")
+        self._git("checkout", base)
+        child_id = self._init("child", body="task")
+        self._set_parents(parent_id[:8])
+        clear = self.todo("set", "--parent=")
+        self.assertEqual(clear.returncode, 0, clear.stderr)
+        self.assertEqual(self._read(child_id[:8]).get("Parent", []), [])
+        self.assertEqual(self._read(parent_id[:8]).get("Subtodos", []), [])
+
     def test_info_backlink_excluded_from_merge_completeness(self) -> None:
         # A parent with only an INFO back-link can go done without a hard finding.
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
-        self._init("child", body="task", parents=[parent_id[:8]])
+        self._init("child", body="task")
+        self._set_parents(parent_id[:8])
         self._git("checkout", f"{parent_id[:8]}-parent")
         self.assertEqual(self.todo("set", "--state", "done").returncode, 0)
         doc = self.todo("doctor", "self")
@@ -1068,7 +1123,8 @@ class ParentPromptTests(TodoCase):
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
-        child_id = self._init("child", body="task", parents=[parent_id[:8]])
+        child_id = self._init("child", body="task")
+        self._set_parents(parent_id[:8])
         self._strip_subtodos(parent_id)
 
         # --dry-run reports the intended repair but does not write it
@@ -1092,7 +1148,8 @@ class ParentPromptTests(TodoCase):
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
-        self._init("child", body="task", parents=[parent_id[:8]])
+        self._init("child", body="task")
+        self._set_parents(parent_id[:8])
         self._strip_subtodos(parent_id)
 
         proc = self.todo("doctor", "--all")
@@ -1104,25 +1161,30 @@ class ParentPromptTests(TodoCase):
         parent = self._read(parent_id[:8])
         self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
 
-    def test_init_accepts_multiple_parents(self) -> None:
+    def test_set_accepts_multiple_parents(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         a_id = self._init("alpha", body="a")
         self._git("checkout", base)
         b_id = self._init("beta", body="b")
         self._git("checkout", base)
-        child_id = self._init("child", body="c", parents=[a_id[:8], b_id[:8]])
+        child_id = self._init("child", body="c")
+        self._set_parents(a_id[:8], b_id[:8])
         child = self._read(child_id[:8])
         self.assertEqual({p["Id"] for p in child["Parent"]}, {a_id, b_id})
+        self.assertEqual(self._read(a_id[:8])["Subtodos"][0]["State"], "INFO")
+        self.assertEqual(self._read(b_id[:8])["Subtodos"][0]["State"], "INFO")
 
     def test_prompt_concatenates_chain_root_first(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         gp_id = self._init("grandparent", body="GP-WHY")
         self._git("checkout", base)
-        parent_id = self._init("parent", body="PARENT-WHY", parents=[gp_id[:8]])
+        parent_id = self._init("parent", body="PARENT-WHY")
+        self._set_parents(gp_id[:8])
         self._git("checkout", base)
-        child_id = self._init("child", body="CHILD-TASK", parents=[parent_id[:8]])
+        child_id = self._init("child", body="CHILD-TASK")
+        self._set_parents(parent_id[:8])
         proc = self.todo("prompt", child_id[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
@@ -1165,6 +1227,29 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("parent why", proc.stdout)
         self.assertIn("child body", proc.stdout)
+
+    def test_set_parent_does_not_remove_tracked_subtodo(self) -> None:
+        # add-subtodo leaves a mergeable Subtodos row; set --parent elsewhere
+        # must not strip that tracked entry from the structural parent.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        parent_id = self._init("parent feature", body="parent why")
+        add = self.todo("add-subtodo", "--summary=child one", "--body=child body")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        add_out = json.loads(add.stdout)
+        child_id = add_out["Id"]
+        child_branch = add_out["Branch"]
+        self._git("checkout", base)
+        other_id = self._init("other ctx", body="ctx")
+        self._git("checkout", child_branch)
+        self._set_parents(other_id[:8])
+        parent = self._read(parent_id[:8])
+        self.assertEqual(len(parent["Subtodos"]), 1)
+        self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
+        self.assertNotEqual(parent["Subtodos"][0]["State"], "INFO")
+        other = self._read(other_id[:8])
+        self.assertEqual(other["Subtodos"][0]["State"], "INFO")
+        self.assertEqual(other["Subtodos"][0]["Id"], child_id)
 
 
 class ImportJsonTests(TodoCase):
@@ -1351,6 +1436,47 @@ class RepoIdentityUnitTests(unittest.TestCase):
         self.assertIsNone(todo.repo_identity_from_url("not a url"))
 
 
+class JsonPathUnitTests(unittest.TestCase):
+    """Unit tests for get_at_path / set_at_path error detail."""
+
+    def test_get_at_path_missing_nested_field(self) -> None:
+        root: Dict[str, Any] = {"Summary": {"raw": "hi", "hash": []}}
+        with self.assertRaises(todo.TodoError) as ctx:
+            todo.get_at_path(root, "Summary.bogus")
+        msg = str(ctx.exception)
+        self.assertEqual(
+            msg,
+            "path Summary no such field bogus. available: hash,raw",
+        )
+
+    def test_get_at_path_missing_root_field(self) -> None:
+        root: Dict[str, Any] = {"Id": "abc", "State": {"init": {}}}
+        with self.assertRaises(todo.TodoError) as ctx:
+            todo.get_at_path(root, "Nope")
+        msg = str(ctx.exception)
+        self.assertTrue(msg.startswith("path <root> no such field Nope. available:"))
+        self.assertIn("Id", msg)
+        self.assertIn("State", msg)
+
+    def test_get_at_path_list_index_oob(self) -> None:
+        root: Dict[str, Any] = {"WorkItems": [{"summary": "a"}, {"summary": "b"}]}
+        with self.assertRaises(todo.TodoError) as ctx:
+            todo.get_at_path(root, "WorkItems.9.summary")
+        self.assertEqual(
+            str(ctx.exception),
+            "path WorkItems no such field 9. available: 0,1",
+        )
+
+    def test_set_at_path_list_index_oob(self) -> None:
+        root: Dict[str, Any] = {"WorkItems": [{"summary": "a"}]}
+        with self.assertRaises(todo.TodoError) as ctx:
+            todo.set_at_path(root, "WorkItems.3.summary", "x")
+        self.assertEqual(
+            str(ctx.exception),
+            "path WorkItems no such field 3. available: 0",
+        )
+
+
 class SetJsonPathTests(TodoCase):
     def _stdin(self, args: list[str], text: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -1484,6 +1610,23 @@ class BacklinkUnitTests(unittest.TestCase):
         real: Dict[str, Any] = {"Subtodos": [{"Id": "c" * 64, "State": "working", "Summary": "x"}]}
         self.assertFalse(todo.upsert_info_backlink(real, self._child()))
         self.assertEqual(real["Subtodos"][0]["State"], "working")
+
+    def test_remove_info_backlink_only_drops_info(self) -> None:
+        parent: Dict[str, Any] = {
+            "Subtodos": [
+                {"Id": "c" * 64, "State": "INFO", "Summary": "x"},
+                {"Id": "d" * 64, "State": "working", "Summary": "y"},
+            ]
+        }
+        self.assertTrue(todo.remove_info_backlink(parent, "c" * 64))
+        self.assertEqual(len(parent["Subtodos"]), 1)
+        self.assertEqual(parent["Subtodos"][0]["Id"], "d" * 64)
+        # tracked entry for the same id is left alone
+        tracked: Dict[str, Any] = {
+            "Subtodos": [{"Id": "c" * 64, "State": "working", "Summary": "x"}]
+        }
+        self.assertFalse(todo.remove_info_backlink(tracked, "c" * 64))
+        self.assertEqual(tracked["Subtodos"][0]["State"], "working")
 
     def test_unmerged_subtodos_skips_info(self) -> None:
         parent = {"Subtodos": [{"Id": "a" * 64, "State": "INFO"}, {"Id": "b" * 64, "State": "working"}]}

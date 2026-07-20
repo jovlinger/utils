@@ -248,8 +248,8 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
 
     Also migrates the singular ``Parent`` dict to a ``Parent`` list of
     ``{Id, Branch}`` refs. Element 0 is the structural (fork) parent used for the
-    log diff base and merge; later entries are context-only references added by
-    ``init --parent``.
+    log diff base and merge; later entries are context-only references set by
+    ``set --parent`` (make-it-so).
     """
     if "Chunks" in todo and "WorkItems" not in todo:
         todo["WorkItems"] = todo.pop("Chunks")
@@ -659,13 +659,15 @@ def apply_set_fields(
     merged_into: Optional[str] = None,
     owner: Optional[str] = None,
     actual_summary: Optional[str] = None,
+    parent_touched: bool = False,
 ) -> Optional[str]:
     """Apply `set`-style edits to *todo* in memory (shared by `set` and `init`).
 
     Patches Summary/Body/AC/ActualSummary when given, and transitions State when
     *state* is given. Returns the new state name if State was changed, else None
     (the caller uses that to choose the commit message). Raises TodoError if no
-    field at all was supplied.
+    field at all was supplied. *parent_touched* counts as a field change when
+    the caller is applying ``set --parent`` separately (needs root for back-links).
     """
     changed = False
     if summary is not None:
@@ -684,8 +686,11 @@ def apply_set_fields(
         set_state(todo, state, note=note, last_commit=last_commit,
                   merged_into=merged_into, owner=owner)
         changed = True
-    if not changed:
-        raise TodoError("pass at least one of --summary, --body, --ac, --state, --actual-summary")
+    if not changed and not parent_touched:
+        raise TodoError(
+            "pass at least one of --summary, --body, --ac, --state, "
+            "--actual-summary, --parent"
+        )
     return state
 
 
@@ -1309,18 +1314,58 @@ def parse_jsonpath(path_str: str) -> List[Any]:
     return segments
 
 
+def format_jsonpath(keys: Sequence[Any]) -> str:
+    """Render path segments as a dotted path, or ``<root>`` when empty."""
+    if not keys:
+        return "<root>"
+    return ".".join(str(key) for key in keys)
+
+
+def available_path_options(node: Any) -> str:
+    """Comma-separated keys (dicts) or indices (lists) at *node*; empty otherwise."""
+    if isinstance(node, dict):
+        return ",".join(sorted(str(key) for key in node.keys()))
+    if isinstance(node, list):
+        return ",".join(str(index) for index in range(len(node)))
+    return ""
+
+
+def no_such_path_error(worked: Sequence[Any], missing: Any, current: Any) -> TodoError:
+    """Build a TodoError naming the path that worked, the missing field, and options."""
+    return TodoError(
+        f"path {format_jsonpath(worked)} no such field {missing}. "
+        f"available: {available_path_options(current)}"
+    )
+
+
+def resolve_path_segment(current: Any, key: Any, worked: Sequence[Any]) -> Any:
+    """Descend one path segment; raise TodoError with context on failure."""
+    if isinstance(key, int):
+        if not isinstance(current, list):
+            raise TodoError(
+                f"path {format_jsonpath(worked)} expected list at segment {key!r}; "
+                f"available: {available_path_options(current)}"
+            )
+        if key < 0 or key >= len(current):
+            raise no_such_path_error(worked, key, current)
+        return current[key]
+    if not isinstance(current, dict):
+        raise TodoError(
+            f"path {format_jsonpath(worked)} expected object at segment {key!r}; "
+            f"available: {available_path_options(current)}"
+        )
+    if key not in current:
+        raise no_such_path_error(worked, key, current)
+    return current[key]
+
+
 def get_at_path(root: JsonDict, path_str: str) -> Any:
     """Return the value at *path_str* within *root*."""
     current: Any = root
+    worked: List[Any] = []
     for key in parse_jsonpath(path_str):
-        if isinstance(key, int):
-            if not isinstance(current, list):
-                raise TodoError(f"expected list at segment {key!r}")
-            current = current[key]
-        else:
-            if not isinstance(current, dict):
-                raise TodoError(f"expected object at segment {key!r}")
-            current = current[key]
+        current = resolve_path_segment(current, key, worked)
+        worked.append(key)
     return current
 
 
@@ -1340,33 +1385,44 @@ def set_at_path(root: JsonDict, path_str: str, value: Any) -> None:
     """Set the value at *path_str* within *root*, creating missing object keys."""
     keys = parse_jsonpath(path_str)
     current: Any = root
+    worked: List[Any] = []
     for index, key in enumerate(keys[:-1]):
         next_key = keys[index + 1]
         if isinstance(key, int):
-            if not isinstance(current, list):
-                raise TodoError(f"expected list at segment {key!r}")
-            current = current[key]
+            current = resolve_path_segment(current, key, worked)
         else:
             if not isinstance(current, dict):
-                raise TodoError(f"expected object at segment {key!r}")
+                raise TodoError(
+                    f"path {format_jsonpath(worked)} expected object at segment {key!r}; "
+                    f"available: {available_path_options(current)}"
+                )
             nested = current.get(key)
             if not isinstance(nested, (dict, list)):
                 current[key] = [] if isinstance(next_key, int) else {}
                 nested = current[key]
             current = nested
+        worked.append(key)
     last = keys[-1]
     if isinstance(last, int):
         if not isinstance(current, list):
-            raise TodoError(f"expected list at final segment {last!r}")
+            raise TodoError(
+                f"path {format_jsonpath(worked)} expected list at final segment {last!r}; "
+                f"available: {available_path_options(current)}"
+            )
+        if last < 0 or last >= len(current):
+            raise no_such_path_error(worked, last, current)
         current[last] = value
     else:
         if not isinstance(current, dict):
-            raise TodoError(f"expected object at final segment {last!r}")
+            raise TodoError(
+                f"path {format_jsonpath(worked)} expected object at final segment {last!r}; "
+                f"available: {available_path_options(current)}"
+            )
         current[last] = value
 
 
 # Subtodos[].State for a child-declared informational back-link: a follow-only
-# link (HATEOAS) inserted by `init --parent` and repaired by `doctor`, distinct
+# link (HATEOAS) inserted by `set --parent` and repaired by `doctor`, distinct
 # from a tracked subtodo the parent must merge. Excluded from merge-completeness.
 SUBTODO_STATE_INFO = "INFO"
 
@@ -1423,6 +1479,102 @@ def upsert_info_backlink(parent: JsonDict, child: JsonDict) -> bool:
     subtodos.append(entry)
     parent["Subtodos"] = subtodos
     return True
+
+
+def remove_info_backlink(parent: JsonDict, child_id: str) -> bool:
+    """Drop an INFO Subtodos entry for *child_id* from *parent*.
+
+    Returns True when the parent changed. Leaves non-INFO (tracked/mergeable)
+    Subtodos entries alone -- those belong to add-subtodo, not set --parent.
+    """
+    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
+    kept: List[JsonDict] = []
+    changed = False
+    for entry in subtodos:
+        if (
+            isinstance(entry, dict)
+            and entry.get("Id") == child_id
+            and entry.get("State") == SUBTODO_STATE_INFO
+        ):
+            changed = True
+            continue
+        kept.append(entry)
+    if changed:
+        parent["Subtodos"] = kept
+    return changed
+
+
+def resolve_parent_refs(root: Path, parent_ids: Sequence[str]) -> List[JsonDict]:
+    """Resolve ``set --parent`` selectors to ordered ``{Id, Branch}`` refs.
+
+    Blank tokens are skipped (so ``--parent=`` alone yields an empty desired
+    list and clears Parent). Duplicate Ids keep the first occurrence.
+    """
+    refs: List[JsonDict] = []
+    seen: set = set()
+    for raw in parent_ids:
+        parent_id = raw.strip()
+        if not parent_id:
+            continue
+        _loc, ptodo = resolve_ticket_by_id(root, parent_id)
+        full_id = str(ptodo["Id"])
+        if full_id in seen:
+            continue
+        seen.add(full_id)
+        refs.append({"Id": full_id, "Branch": str(ptodo.get("Branch", ""))})
+    return refs
+
+
+def apply_parent_links(
+    root: Path,
+    child: JsonDict,
+    parent_ids: Sequence[str],
+    *,
+    dry_run: bool = False,
+) -> List[str]:
+    """Make-it-so: set *child*.Parent to *parent_ids* and sync INFO back-links.
+
+    Desired end-state replaces the child's Parent list. Former parents that
+    carried a follow-only INFO back-link to this child lose it; desired parents
+    gain (or refresh) one. Tracked/mergeable Subtodos rows are never removed.
+    Returns human descriptions of back-link changes. Child Parent is updated in
+    memory always; parent writes are skipped when *dry_run* or not sqlite.
+    """
+    child_id = str(child.get("Id") or "")
+    desired = resolve_parent_refs(root, parent_ids)
+    for ref in desired:
+        if ref["Id"] == child_id:
+            raise TodoError("a todo cannot be its own parent")
+
+    old_ids: set = set()
+    for ref in child.get("Parent") or []:
+        if isinstance(ref, dict):
+            oid = str(ref.get("Id") or "")
+            if oid:
+                old_ids.add(oid)
+    new_ids = {str(ref["Id"]) for ref in desired}
+    child["Parent"] = desired
+
+    changes: List[str] = []
+    if not use_sqlite():
+        return changes
+
+    current = repo_key(root)
+    for old_id in sorted(old_ids - new_ids):
+        try:
+            loc, parent = resolve_ticket_by_id(root, old_id)
+        except TodoError:
+            continue
+        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
+        if parent_repo and parent_repo not in ("worktree", current):
+            continue
+        if remove_info_backlink(parent, child_id):
+            changes.append(f"parent {old_id[:8]} -/ INFO back-link {child_id[:8]}")
+            if not dry_run:
+                write_todo_worktree(root, parent)
+
+    changes.extend(reestablish_backlinks(root, child, dry_run=dry_run))
+    return changes
 
 
 def reestablish_backlinks(root: Path, child: JsonDict, *, dry_run: bool = False) -> List[str]:
@@ -2135,9 +2287,8 @@ class InitCommand(TodoSubCommand):
         "with --summary and no existing record, it mints (or accepts --id), writes the initial "
         "skeleton, and creates the branch, all in one call (backward-compatible). It refuses to "
         "create a second todo on a branch that already has one, and can optionally return to the "
-        "parent branch (--stay-on-parent). Pass --parent <id> (repeatable) to record parent/context "
-        "todos; the child points at the parent (walk up via 'todo.py prompt <id>') and the parent "
-        "gets a follow-only INFO back-link. For the full subtodo lifecycle use add-subtodo."
+        "parent branch (--stay-on-parent). For parent/context links use `set --parent` after init "
+        "(or on any existing todo). For the full subtodo lifecycle use add-subtodo."
     )
 
     @classmethod
@@ -2158,12 +2309,6 @@ class InitCommand(TodoSubCommand):
         )
         parser.add_argument("--branch", help="override Branch name")
         parser.add_argument("--path-from-root", help="Scope.path_from_root")
-        parser.add_argument(
-            "--parent",
-            action="append",
-            metavar="PARENT_ID",
-            help="parent/context todo Id (repeatable); one-way reference for context",
-        )
         parser.add_argument("--agent-type", help="agent type that created this todo (e.g. claude, cursor)")
         parser.add_argument("--session-id", help="agent session id that created this todo")
         parser.add_argument("--no-commit", action="store_true", help="skip git commit")
@@ -2240,14 +2385,6 @@ class InitCommand(TodoSubCommand):
 
         agent_type = self.agent_type or os.environ.get("TODO_AGENT_TYPE")
         session_id = self.session_id or os.environ.get("TODO_SESSION_ID")
-        parents: Optional[List[JsonDict]] = None
-        if self.parent:
-            parents = []
-            for parent_id in self.parent:
-                _loc, ptodo = resolve_ticket_by_id(root, parent_id)
-                parents.append(
-                    {"Id": str(ptodo["Id"]), "Branch": str(ptodo.get("Branch", ""))}
-                )
         ticket = build_ticket_skeleton(
             root,
             ticket_id,
@@ -2256,7 +2393,6 @@ class InitCommand(TodoSubCommand):
             self.body or "",
             self.ac or "",
             path_from_root=self.path_from_root,
-            parent=parents,
             agent_type=agent_type,
             session_id=session_id,
         )
@@ -2269,9 +2405,6 @@ class InitCommand(TodoSubCommand):
         write_todo_worktree(root, ticket)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
-        # Make the --parent references bidirectional: give each parent a
-        # follow-only INFO back-link to this child (best-effort, same-repo).
-        reestablish_backlinks(root, ticket, dry_run=False)
         # init-then-set: apply any set-style State/ActualSummary passed to init
         # (Summary/Body/AC already went into the skeleton above).
         if self.state is not None or self.actual_summary is not None:
@@ -2444,13 +2577,17 @@ class SetCommand(TodoSubCommand):
         "branch's todo; pass --id <prefix> to target another todo by Id -- typically a `pre-init` "
         "todo from `mint` that has no branch yet. It updates Summary.raw, Body.raw, AC, "
         "ActualSummary, and/or the workflow State (--state, which replaces the removed `set-state` "
-        "subcommand; State metadata --note/--last-commit/--merged-into/--owner ride along). To "
-        "replace WorkItems or any other JSON path from a file or stdin, use set-json-path. The "
-        "command requires at least one field change. It commits the current-branch todo by default; "
-        "with --id it is sqlite-only (no commit), since a pre-init/other todo has no branch of its "
-        "own to commit on. For a `pre-init` todo, changing --summary also refreshes the Branch label "
-        "so `init` later creates a well-named branch. Any free-text value passed as EDIT is captured "
-        "from $VISUAL/$EDITOR/vi (interactive terminals only)."
+        "subcommand; State metadata --note/--last-commit/--merged-into/--owner ride along). "
+        "Pass --parent <id> (repeatable) as a make-it-so Parent list: the child's Parent becomes "
+        "exactly those refs, follow-only INFO back-links are added on desired parents, and INFO "
+        "back-links on former parents that are no longer listed are removed (tracked subtodos are "
+        "never removed). Blank `--parent=` clears Parent. To replace WorkItems or any other JSON "
+        "path from a file or stdin, use set-json-path. The command requires at least one field "
+        "change. It commits the current-branch todo by default; with --id it is sqlite-only (no "
+        "commit), since a pre-init/other todo has no branch of its own to commit on. For a "
+        "`pre-init` todo, changing --summary also refreshes the Branch label so `init` later "
+        "creates a well-named branch. Any free-text value passed as EDIT is captured from "
+        "$VISUAL/$EDITOR/vi (interactive terminals only)."
     )
     edit_fields = ("summary", "body", "ac", "note", "actual_summary")
 
@@ -2466,6 +2603,13 @@ class SetCommand(TodoSubCommand):
         parser.add_argument("--body")
         parser.add_argument("--ac")
         add_state_set_arguments(parser)
+        parser.add_argument(
+            "--parent",
+            action="append",
+            metavar="PARENT_ID",
+            help="make-it-so Parent list (repeatable Id prefixes); blank --parent= clears; "
+            "syncs follow-only INFO back-links on parents",
+        )
         parser.add_argument("--no-commit", action="store_true")
         parser.add_argument(
             "--no-clear",
@@ -2475,7 +2619,7 @@ class SetCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Patch Summary/Body/AC/ActualSummary and/or State on a todo.
+        """Patch Summary/Body/AC/ActualSummary/Parent and/or State on a todo.
 
         Targets the current branch's todo, or the --id todo when given. A --id
         (pre-init/branchless) todo is written sqlite-only: committing would land
@@ -2488,6 +2632,7 @@ class SetCommand(TodoSubCommand):
         else:
             todo = read_todo_required(root)
         self.resolve_edit_fields(str(todo.get("Id", "") or "current"))
+        parent_touched = self.parent is not None
         state = apply_set_fields(
             todo,
             summary=self.summary,
@@ -2499,7 +2644,10 @@ class SetCommand(TodoSubCommand):
             merged_into=self.merged_into,
             owner=self.owner,
             actual_summary=self.actual_summary,
+            parent_touched=parent_touched,
         )
+        if parent_touched:
+            apply_parent_links(root, todo, self.parent)
         # While still collecting data (pre-init), keep the Branch label in sync
         # with the summary so `init` creates a well-named branch later.
         if self.summary is not None and current_state_name(todo) == "pre-init":
@@ -2997,7 +3145,7 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
 
     Repair walks the audited todo's `Parent` refs and re-establishes a
     follow-only INFO back-link on each parent -- healing links that were
-    one-way (legacy `init --parent`) or lost, and refreshing INFO summaries.
+    one-way (legacy links) or lost, and refreshing INFO summaries.
     """
     _loc, todo = resolve_ticket_by_selector(root, selector)
     findings = doctor_findings(root, selector)
@@ -3635,7 +3783,7 @@ class PromptCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Print a todo + its parent chain as one startup prompt"
     doc_long: ClassVar[str] = (
         "Prompt concatenates the Summary/Body of a todo and its Parent chain "
-        "(context references from init --parent included), farthest ancestors "
+        "(context references from set --parent included), farthest ancestors "
         "first and the target last, so a fresh agent with zero context reads WHY "
         "down to WHAT before starting. Read-only: it resolves parents from the db "
         "without checking out branches. Selector is self/curr or a 4+ hex Id "
