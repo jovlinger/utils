@@ -2,19 +2,32 @@
 
 ;; Install (from a checkout of this repo):
 ;;   (load "/ABSOLUTE/PATH/TO/utils/vox2stl/emacs/vox-mode.el")
-;; Or add the emacs/ directory to load-path and (require 'vox-mode).
+;; Or add that emacs/ directory to `load-path` and (require 'vox-mode).
 ;; Files matching \\.vox\\' open in vox-mode via auto-mode-alist.
+;;
+;; voxtool.py is resolved next to this file: ../voxtool.py (the vox2stl/ tree).
+;; Transform commands save the buffer, run the tool on `buffer-file-name`, then
+;; revert when the tool rewrites the file (correct / mirror).
 
 ;;; Commentary:
 ;; Thin Emacs major mode for hand-editing HAT .vox files. Font-lock and
-;; navigation live here; legality-preserving transforms should shell out to
-;; vox2stl/voxtool.py (see sibling wrappers added in later work items).
+;; navigation live here; legality-preserving transforms shell out to
+;; vox2stl/voxtool.py via `call-process`.
 
 ;;; Code:
 
 (defgroup vox-mode nil
   "Editing support for HAT .vox layer files."
   :group 'languages)
+
+(defcustom vox-mode-python-command "python3"
+  "Python interpreter used to run `voxtool.py'."
+  :type 'string
+  :group 'vox-mode)
+
+(defconst vox-mode--directory
+  (file-name-directory (or load-file-name buffer-file-name))
+  "Directory containing this `vox-mode.el' file.")
 
 (defvar vox-mode-syntax-table
   (let ((table (make-syntax-table)))
@@ -46,9 +59,74 @@
     ("[.]", 0 font-lock-comment-face))
   "Font-lock keywords for `vox-mode'.")
 
+(defun vox-mode--voxtool ()
+  "Absolute path to sibling `voxtool.py' under vox2stl/."
+  (expand-file-name "../voxtool.py" vox-mode--directory))
+(defun vox-mode--require-file-buffer ()
+  "Return `buffer-file-name', or signal a user error if unset."
+  (unless buffer-file-name
+    (user-error "vox-mode: buffer is not visiting a file"))
+  buffer-file-name)
+
+(defun vox-mode--run-voxtool (subcommand &optional revert-after)
+  "Save buffer, run voxtool.py SUBCOMMAND on it; REVERT-AFTER reloads if rewritten."
+  (let* ((path (vox-mode--require-file-buffer))
+         (tool (vox-mode--voxtool))
+         (buf (get-buffer-create "*voxtool*")))
+    (unless (file-executable-p tool)
+      ;; Still runnable via python even when the +x bit is missing.
+      (unless (file-readable-p tool)
+        (user-error "vox-mode: cannot find voxtool.py at %s" tool)))
+    (when (buffer-modified-p)
+      (save-buffer))
+    (with-current-buffer buf
+      (erase-buffer))
+    (let ((status (call-process vox-mode-python-command nil buf t
+                                tool subcommand path)))
+      (when (and revert-after (zerop status))
+        (revert-buffer t t t))
+      (when (not (zerop status))
+        (display-buffer buf)
+        (user-error "vox-mode: voxtool.py %s failed (exit %s); see *voxtool*"
+                    subcommand status))
+      (message "vox-mode: voxtool.py %s ok" subcommand)
+      status)))
+
+;;;###autoload
+(defun vox-mode-check ()
+  "Validate the current .vox file with `voxtool.py check'."
+  (interactive)
+  (vox-mode--run-voxtool "check" nil))
+
+;;;###autoload
+(defun vox-mode-correct ()
+  "Normalize shorthand in the current .vox file with `voxtool.py correct'."
+  (interactive)
+  (vox-mode--run-voxtool "correct" t))
+
+;;;###autoload
+(defun vox-mode-mirror ()
+  "Mirror the current .vox file in place with `voxtool.py mirror'."
+  (interactive)
+  (vox-mode--run-voxtool "mirror" t))
+
+(defvar vox-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'vox-mode-check)
+    (define-key map (kbd "C-c C-o") #'vox-mode-correct)
+    (define-key map (kbd "C-c C-m") #'vox-mode-mirror)
+    map)
+  "Keymap for `vox-mode'.")
+
 ;;;###autoload
 (define-derived-mode vox-mode prog-mode "Vox"
-  "Major mode for editing HAT .vox layer design files."
+  "Major mode for editing HAT .vox layer design files.
+
+Commands:
+\\<vox-mode-map>
+\\[vox-mode-check]   Run `voxtool.py check' on the visited file.
+\\[vox-mode-correct] Run `voxtool.py correct' (save, rewrite, revert).
+\\[vox-mode-mirror]  Run `voxtool.py mirror' (save, rewrite, revert)."
   :syntax-table vox-mode-syntax-table
   (setq-local comment-start "# ")
   (setq-local comment-start-skip "#+\\s-*")
