@@ -130,12 +130,28 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
     return layers
 
 
-def rewrite_layer_header_height(line: str, new_height: int) -> str:
-    """Rewrite height_rows on a layer header line; preserve argument form."""
+def rewrite_layer_header_fields(
+    line: str,
+    *,
+    new_height: Optional[int] = None,
+    new_offset: Optional[int] = None,
+) -> str:
+    """Rewrite selected layer header fields; preserve argument form."""
     parsed = parse_layer_header(line)
     if parsed is None:
         raise ValueError(f"not a layer header: {line!r}")
-    if parsed.height == new_height:
+    if new_height is None and new_offset is None:
+        return line
+    if new_height is not None and parsed.height == new_height and new_offset is None:
+        return line
+    if new_offset is not None and parsed.offset == new_offset and new_height is None:
+        return line
+    if (
+        new_height is not None
+        and new_offset is not None
+        and parsed.height == new_height
+        and parsed.offset == new_offset
+    ):
         return line
     match = LAYER_HEADER_RE.match(line)
     if match is None:
@@ -152,19 +168,93 @@ def rewrite_layer_header_height(line: str, new_height: int) -> str:
             raw_key, _raw_value = part.split("=", 1)
             key_token = raw_key.strip()
             canonical = LAYER_KEY_ALIASES.get(key_token, key_token)
-            if canonical == "height_rows":
+            if canonical == "height_rows" and new_height is not None:
                 parts.append(f"{key_token}={new_height}")
+            elif canonical == "horizontal_offset" and new_offset is not None:
+                parts.append(f"{key_token}={new_offset}")
             else:
                 parts.append(part)
         else:
             if positional_index >= len(LAYER_POSITIONAL_KEYS):
                 raise ValueError(f"unexpected positional in layer header: {line!r}")
-            if LAYER_POSITIONAL_KEYS[positional_index] == "height_rows":
+            key = LAYER_POSITIONAL_KEYS[positional_index]
+            if key == "height_rows" and new_height is not None:
                 parts.append(str(new_height))
+            elif key == "horizontal_offset" and new_offset is not None:
+                parts.append(str(new_offset))
             else:
                 parts.append(part)
             positional_index += 1
     return f"layer {name} ({', '.join(parts)})"
+
+
+def rewrite_layer_header_height(line: str, new_height: int) -> str:
+    return rewrite_layer_header_fields(line, new_height=new_height)
+
+
+def indent_row_margin(row: str, offset: int, width: int, delta: int) -> str:
+    """Shift a layer row's design window by changing the left margin width."""
+    end = offset + width
+    padded = row.ljust(end)
+    left = padded[:offset]
+    design = padded[offset:end]
+    right = row[end:] if len(row) > end else ""
+    new_offset = offset + delta
+    if new_offset < 0:
+        raise ValueError(f"indent delta {delta} would make horizontal_offset negative")
+    label = left.rstrip()
+    if len(label) > new_offset:
+        raise ValueError(
+            f"left label {label!r} does not fit in offset {new_offset}"
+        )
+    if delta >= 0:
+        new_left = left + (" " * delta)
+    else:
+        remove = -delta
+        if not left.endswith(" " * remove):
+            raise ValueError(
+                f"cannot outdent by {remove}: left margin {left!r} lacks trailing spaces"
+            )
+        new_left = left[:-remove]
+    return f"{new_left}{design}{right}"
+
+
+def indent_vox_text(text: str, delta: int) -> str:
+    """Adjust horizontal_offset by delta on every layer; shift row left margins."""
+    if delta == 0:
+        return text
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = find_layer_specs(lines)
+    if not layers:
+        raise ValueError("no layers found")
+
+    reference = layers[0]
+    for layer in layers[1:]:
+        if layer.offset != reference.offset or layer.width != reference.width:
+            raise ValueError(
+                f"cross-layer geometry mismatch: layer {layer.name!r} has "
+                f"({layer.offset}, {layer.width}); expected "
+                f"({reference.offset}, {reference.width}) from {reference.name!r}"
+            )
+
+    new_offset = reference.offset + delta
+    if new_offset < 0:
+        raise ValueError(f"indent delta {delta} would make horizontal_offset negative")
+
+    for layer in layers:
+        if layer.header_index < 0:
+            raise ValueError(f"layer {layer.name!r} missing header index")
+        lines[layer.header_index] = rewrite_layer_header_fields(
+            lines[layer.header_index], new_offset=new_offset
+        )
+        for row_index in layer.row_indexes:
+            lines[row_index] = indent_row_margin(
+                lines[row_index], layer.offset, layer.width, delta
+            )
+
+    return "".join(line + ending for line, ending in zip(lines, endings))
 
 
 def reheader_vox_text(text: str) -> str:
@@ -474,6 +564,20 @@ def run_sync_pads(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_indent(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(
+            args.vox_path,
+            args.out,
+            "indented",
+            lambda text: indent_vox_text(text, args.delta),
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_stl(args: argparse.Namespace) -> int:
     try:
         return _vox2stl.run_from_args(args)
@@ -534,6 +638,20 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     sync_pads.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
     sync_pads.set_defaults(func=run_sync_pads)
+
+    indent = subparsers.add_parser(
+        "indent",
+        help="shift horizontal_offset and left margins by --delta (negative outdents)",
+    )
+    indent.add_argument("vox_path", metavar="filepath", type=Path)
+    indent.add_argument(
+        "--delta",
+        type=int,
+        required=True,
+        help="columns to add to horizontal_offset (use a negative value to outdent)",
+    )
+    indent.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    indent.set_defaults(func=run_indent)
 
     stl = subparsers.add_parser("stl", help="generate ASCII STL geometry from a .vox file")
     _vox2stl.add_cli_arguments(stl)
