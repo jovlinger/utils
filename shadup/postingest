@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Post-ingest: musicscan → .meta.combined.json → importtags → tag mirror refresh.
 
-Discovers every directory that contains audio (including nested), plus parents
-of those dirs (multi-CD boxes get a set-union combined). Rebuilds
-``.meta.combined.json`` when inputs are newer (or ``--force``).
+Discovers every directory that contains audio (including nested). Parents of
+**homogeneous multi-disc** children (CD1/CD2, Disc 1, Vol. 01, …) are treated
+as a **collection**: musicscan the parent, then write ``.meta.combined.json`` as
+provider tags ∪ set-union of children’s combined. Heterogeneous boxes (distinct
+albums under one folder, e.g. Doors Infinite) scan children only — no parent
+scan/union. Rebuilds combined when inputs are newer (or ``--force``).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +58,23 @@ AUDIO_EXTS = {
     ".dsf",
     ".dff",
 }
+
+# Child dirnames that mark a homogeneous multi-disc split of one release.
+_DISC_DIR_RE = re.compile(
+    r"""(?ix)
+    (?:^|[\s_\-\[\(])
+    (?:
+        cd\s*[-_]?\s*\d+
+      | disc\s*[-_]?\s*\d+
+      | disk\s*[-_]?\s*\d+
+      | disc\s*[-_]?\s*[a-z]
+      | disk\s*[-_]?\s*[a-z]
+      | vol\.?\s*[-_]?\s*\d+
+      | volume\s*[-_]?\s*\d+
+    )
+    (?:$|[\s_\-\]\)\,])
+    """
+)
 
 
 def log(message: str) -> None:
@@ -137,14 +158,27 @@ def iter_dirs(root: Path) -> Iterable[Path]:
         yield path
 
 
+def is_disc_like_dirname(name: str) -> bool:
+    """True if *name* looks like a disc/volume folder of one multi-disc release."""
+    return bool(_DISC_DIR_RE.search(name.strip()))
+
+
+def is_homogeneous_multidisc(children: Sequence[Path]) -> bool:
+    """True when *children* are all disc-like folders of one release (need ≥2)."""
+    if len(children) < 2:
+        return False
+    return all(is_disc_like_dirname(child.name) for child in children)
+
+
 def discover_units(roots: Sequence[Path]) -> tuple[list[Path], dict[Path, list[Path]]]:
     """Return (audio_albums, parent_to_audio_children).
 
-    *audio_albums*: every dir that directly contains audio.
-    *parent_to_audio_children*: parents that have one or more audio-album
-    children (multi-CD boxes and junk nesting). Parents need not have audio.
-    Never treats the store ``files/`` root as a union parent (that would merge
-    the whole library).
+    *audio_albums*: every dir that directly contains audio (nested included).
+    *parent_to_audio_children*: only **homogeneous multi-disc** parents
+    (all children disc-like: CD1/Disc 1/Vol. 01/…). Heterogeneous boxes
+    (distinct albums under one folder) are omitted from the map so children
+    are scanned alone without a polluted parent union.
+    Never treats the store ``files/`` root as a union parent.
     """
     resolved_roots = [r.expanduser().resolve() for r in roots]
     files_root = FILES_ROOT.expanduser().resolve()
@@ -161,7 +195,7 @@ def discover_units(roots: Sequence[Path]) -> tuple[list[Path], dict[Path, list[P
                     audio_set.add(resolved)
                     audio.append(resolved)
 
-    parent_map: dict[Path, list[Path]] = {}
+    candidates: dict[Path, list[Path]] = {}
     for album in audio:
         parent = album.parent.resolve()
         if parent == files_root:
@@ -171,10 +205,18 @@ def discover_units(roots: Sequence[Path]) -> tuple[list[Path], dict[Path, list[P
         )
         if not under_root:
             continue
-        parent_map.setdefault(parent, []).append(album)
+        candidates.setdefault(parent, []).append(album)
 
-    for parent, children in parent_map.items():
-        parent_map[parent] = sorted(set(children), key=lambda p: str(p))
+    parent_map: dict[Path, list[Path]] = {}
+    for parent, children in candidates.items():
+        children = sorted(set(children), key=lambda p: str(p))
+        if is_homogeneous_multidisc(children):
+            parent_map[parent] = children
+        else:
+            log(
+                f"skip parent union (heterogeneous box): {parent} "
+                f"({len(children)} audio children)"
+            )
 
     audio.sort(key=lambda p: str(p))
     return audio, parent_map
@@ -217,8 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
             "For album dirs under the store: run musicology (working providers), "
             "write .meta.combined.json (synonym-normalized type;value tags), "
             "importtags from that file, and refresh files/_tags. Parents of "
-            "multi-CD / nested albums get a set-union combined. Skips work when "
-            "combined is newer than inputs unless --force."
+            "homogeneous multi-disc sets (CD1/CD2/Vol. …) are musicscanned as a "
+            "collection then unioned with children; heterogeneous boxes scan "
+            "children only. Skips work when combined is newer than inputs unless "
+            "--force."
         )
     )
     parser.add_argument(
@@ -364,10 +408,14 @@ def process_parent_union(
     parent: Path,
     children: Sequence[Path],
     *,
+    providers: Sequence[str],
     force: bool,
     dry_run: bool,
+    include_raw: bool,
+    verbose: int,
+    synonyms_dir: Path,
 ) -> bool:
-    """Write parent combined as set-union of children (no musicscan)."""
+    """Musicscan parent as a collection, then union with children’s combined tags."""
     if has_audio(parent):
         # Handled in process_audio_album with child_audio.
         return False
@@ -376,10 +424,47 @@ def process_parent_union(
     )
     if not stale:
         return False
+
+    scan_needed = force or any(
+        not (parent / f".meta.{p}.json").is_file() for p in providers
+    )
+    if scan_needed or force:
+        scan_cmd = [str(MUSICSCAN)]
+        for provider in providers:
+            scan_cmd.extend(["--provider", provider])
+        if force:
+            scan_cmd.append("--force")
+        if include_raw:
+            scan_cmd.append("--include-raw")
+        if verbose:
+            scan_cmd.append("-" + ("v" * verbose))
+        if dry_run:
+            scan_cmd.append("--dry-run")
+        scan_cmd.append(str(parent))
+        if dry_run:
+            log(f"would scan collection parent: {parent}")
+        else:
+            try:
+                run(scan_cmd)
+            except subprocess.CalledProcessError as exc:
+                log(f"musicscan failed for {parent} ({exc.returncode}); continuing")
+
     if dry_run:
-        log(f"would union-combine parent: {parent} <- {len(children)} children")
+        log(
+            f"would ensure sidecars + union-combine parent: {parent} "
+            f"<- {len(children)} children"
+        )
         return True
-    doc = combine.combine_union_children(parent, children)
+
+    combine.ensure_empty_sidecars(parent, providers, dry_run=False)
+    base = combine.combine_from_providers(
+        parent,
+        synonyms_dir=synonyms_dir,
+        providers=list(providers) + ["johan"],
+    )
+    doc = combine.combine_union_children(
+        parent, children, base_tags=base.get("tags") or []
+    )
     combine.write_combined(parent, doc)
     return True
 
@@ -423,13 +508,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ):
             touched.append(album)
 
-    # Parents without their own audio (classic multi-CD box).
+    # Parents without their own audio (homogeneous multi-disc / collection box).
     for parent, children in sorted(parent_map.items(), key=lambda kv: (-len(kv[0].parts), str(kv[0]))):
         if process_parent_union(
             parent,
             children,
+            providers=providers,
             force=args.force,
             dry_run=args.dry_run,
+            include_raw=args.include_raw,
+            verbose=args.verbose,
+            synonyms_dir=args.synonyms_dir,
         ):
             touched.append(parent)
 

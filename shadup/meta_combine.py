@@ -288,7 +288,9 @@ def combine_union_children(
     return {
         "schema": COMBINED_SCHEMA,
         "directory": str(album_dir.resolve()),
-        "kind": "union-children" if not base_tags else "providers+union-children",
+        "kind": (
+            "providers+union-children" if base_tags is not None else "union-children"
+        ),
         "children": children_used,
         "tags": tags,
     }
