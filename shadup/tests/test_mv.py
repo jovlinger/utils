@@ -170,6 +170,50 @@ def test_mv_dry_run_leaves_disk_and_db_unchanged(tmp_path: Path) -> None:
     assert _all_rows(db) == before
 
 
+def test_lshash_d_includes_start_end_after_mv(tmp_path: Path) -> None:
+    import csv
+    import io
+
+    _store, files, data, db = _layout(tmp_path)
+    _store_album(tmp_path, files, data, db, "Album", {"a.flac": b"a"})
+    digest = _sha256(b"a")
+
+    _run(
+        files,
+        [
+            "--shadir",
+            str(tmp_path / "store"),
+            "--db",
+            str(db),
+            "mv",
+            "Album/a.flac",
+            "Album/renamed.flac",
+        ],
+    )
+
+    result = _run(
+        files,
+        [
+            "--shadir",
+            str(tmp_path / "store"),
+            "--db",
+            str(db),
+            "lshash",
+            "-d",
+            digest,
+        ],
+    )
+    rows = list(csv.reader(io.StringIO(result.stdout)))
+    assert len(rows) == 2
+    ended = [r for r in rows if r[5]]
+    active = [r for r in rows if not r[5]]
+    assert len(ended) == 1
+    assert len(active) == 1
+    assert ended[0][1].endswith("Album/a.flac")
+    assert active[0][1].endswith("Album/renamed.flac")
+    assert active[0][4] == ended[0][5]  # new start == old end
+
+
 def test_upgrade_replaces_full_unique_index(tmp_path: Path) -> None:
     db = tmp_path / "legacy.db"
     with sqlite3.connect(db) as conn:
