@@ -17,6 +17,7 @@ from constants import (
     LAYER_HEADER_RE,
     LAYER_KEY_ALIASES,
     LAYER_POSITIONAL_KEYS,
+    PAD_CHARS,
     correct_vox_shorthand_text,
     parse_layer_header,
 )
@@ -192,6 +193,51 @@ def reheader_vox_text(text: str) -> str:
             lines[layer.header_index], new_height
         )
 
+    return "".join(line + ending for line, ending in zip(lines, endings))
+
+
+def sync_pads_row(src_row: str, dst_row: str, offset: int, width: int) -> str:
+    """Upsert * / O from src design window into dst; leave non-pad src cells alone."""
+    end = offset + width
+    src_design = src_row.ljust(end)[offset:end]
+    padded_dst = dst_row.ljust(end)
+    left = padded_dst[:offset]
+    design = list(padded_dst[offset:end])
+    right = dst_row[end:] if len(dst_row) > end else ""
+    for col, char in enumerate(src_design):
+        if char in PAD_CHARS:
+            design[col] = char
+    return f"{left}{''.join(design)}{right}"
+
+
+def sync_pads_vox_text(text: str, from_layer: str, to_layer: str) -> str:
+    """Copy * / O cells from one layer's design window into another's (upsert only)."""
+    if from_layer == to_layer:
+        raise ValueError("--from and --to must name different layers")
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = {layer.name: layer for layer in find_layer_specs(lines)}
+    if from_layer not in layers:
+        raise ValueError(f"source layer {from_layer!r} not found")
+    if to_layer not in layers:
+        raise ValueError(f"destination layer {to_layer!r} not found")
+    source = layers[from_layer]
+    dest = layers[to_layer]
+    if source.offset != dest.offset or source.width != dest.width:
+        raise ValueError(
+            f"layers {from_layer!r} and {to_layer!r} disagree on geometry "
+            f"({source.offset}, {source.width}) vs ({dest.offset}, {dest.width})"
+        )
+    if len(source.row_indexes) != len(dest.row_indexes):
+        raise ValueError(
+            f"layers {from_layer!r} and {to_layer!r} disagree on row count "
+            f"({len(source.row_indexes)} vs {len(dest.row_indexes)})"
+        )
+    for src_index, dst_index in zip(source.row_indexes, dest.row_indexes):
+        lines[dst_index] = sync_pads_row(
+            lines[src_index], lines[dst_index], dest.offset, dest.width
+        )
     return "".join(line + ending for line, ending in zip(lines, endings))
 
 
@@ -414,6 +460,20 @@ def run_reheader(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_sync_pads(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(
+            args.vox_path,
+            args.out,
+            "sync-pads",
+            lambda text: sync_pads_vox_text(text, args.from_layer, args.to_layer),
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_stl(args: argparse.Namespace) -> int:
     try:
         return _vox2stl.run_from_args(args)
@@ -452,6 +512,28 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     reheader.add_argument("vox_path", metavar="filepath", type=Path)
     reheader.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
     reheader.set_defaults(func=run_reheader)
+
+    sync_pads = subparsers.add_parser(
+        "sync-pads",
+        help="upsert * / O pads from one layer design window into another",
+    )
+    sync_pads.add_argument("vox_path", metavar="filepath", type=Path)
+    sync_pads.add_argument(
+        "--from",
+        dest="from_layer",
+        required=True,
+        metavar="LAYER",
+        help="source layer name (typically base or trace)",
+    )
+    sync_pads.add_argument(
+        "--to",
+        dest="to_layer",
+        required=True,
+        metavar="LAYER",
+        help="destination layer name (typically base or trace)",
+    )
+    sync_pads.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    sync_pads.set_defaults(func=run_sync_pads)
 
     stl = subparsers.add_parser("stl", help="generate ASCII STL geometry from a .vox file")
     _vox2stl.add_cli_arguments(stl)
