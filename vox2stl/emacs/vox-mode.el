@@ -116,12 +116,49 @@
   (interactive)
   (vox-mode--run-voxtool "reheader" t))
 
+;;;###autoload
+(defun vox-mode-sync-pads-from-trace ()
+  "Upsert * / O from trace into base via `voxtool.py sync-pads'."
+  (interactive)
+  (vox-mode--run-voxtool-args '("sync-pads" "--from=trace" "--to=base") t))
+
+;;;###autoload
+(defun vox-mode-sync-pads-from-base ()
+  "Upsert * / O from base into trace via `voxtool.py sync-pads'."
+  (interactive)
+  (vox-mode--run-voxtool-args '("sync-pads" "--from=base" "--to=trace") t))
+
+(defun vox-mode--run-voxtool-args (args &optional revert-after)
+  "Save buffer, run voxtool.py with ARGS; REVERT-AFTER reloads if rewritten."
+  (let* ((path (vox-mode--require-file-buffer))
+         (tool (vox-mode--voxtool))
+         (buf (get-buffer-create "*voxtool*"))
+         (subcommand (car args)))
+    (unless (file-readable-p tool)
+      (user-error "vox-mode: cannot find voxtool.py at %s" tool))
+    (when (buffer-modified-p)
+      (save-buffer))
+    (with-current-buffer buf
+      (erase-buffer))
+    (let ((status (apply #'call-process vox-mode-python-command nil buf t
+                         tool (append args (list path)))))
+      (when (and revert-after (zerop status))
+        (revert-buffer t t t))
+      (when (not (zerop status))
+        (display-buffer buf)
+        (user-error "vox-mode: voxtool.py %s failed (exit %s); see *voxtool*"
+                    subcommand status))
+      (message "vox-mode: voxtool.py %s ok" subcommand)
+      status)))
+
 (defvar vox-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'vox-mode-check)
     (define-key map (kbd "C-c C-o") #'vox-mode-correct)
     (define-key map (kbd "C-c C-m") #'vox-mode-mirror)
     (define-key map (kbd "C-c C-h") #'vox-mode-reheader)
+    (define-key map (kbd "C-c C-t") #'vox-mode-sync-pads-from-trace)
+    (define-key map (kbd "C-c C-b") #'vox-mode-sync-pads-from-base)
     map)
   "Keymap for `vox-mode'.")
 
@@ -131,10 +168,12 @@
 
 Commands:
 \\<vox-mode-map>
-\\[vox-mode-check]    Run `voxtool.py check' on the visited file.
-\\[vox-mode-correct]  Run `voxtool.py correct' (save, rewrite, revert).
-\\[vox-mode-mirror]   Run `voxtool.py mirror' (save, rewrite, revert).
-\\[vox-mode-reheader] Run `voxtool.py reheader' (save, rewrite, revert)."
+\\[vox-mode-check]               Run `voxtool.py check' on the visited file.
+\\[vox-mode-correct]             Run `voxtool.py correct' (save, rewrite, revert).
+\\[vox-mode-mirror]              Run `voxtool.py mirror' (save, rewrite, revert).
+\\[vox-mode-reheader]            Run `voxtool.py reheader' (save, rewrite, revert).
+\\[vox-mode-sync-pads-from-trace] Upsert pads trace -> base.
+\\[vox-mode-sync-pads-from-base]  Upsert pads base -> trace."
   :syntax-table vox-mode-syntax-table
   (setq-local comment-start "# ")
   (setq-local comment-start-skip "#+\\s-*")
