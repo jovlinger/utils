@@ -13,7 +13,13 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import check_vox as _check_vox
 import vox2stl as _vox2stl
 from check_vox import *  # Re-export validator helpers for existing test coverage.
-from constants import correct_vox_shorthand_text
+from constants import (
+    LAYER_HEADER_RE,
+    LAYER_KEY_ALIASES,
+    LAYER_POSITIONAL_KEYS,
+    correct_vox_shorthand_text,
+    parse_layer_header,
+)
 
 GLYPH_MIRROR: Mapping[str, str] = {
     "\u250c": "\u2510",
@@ -47,6 +53,7 @@ class LayerSpec:
     offset: int
     width: int
     row_indexes: List[int]
+    header_index: int = -1
 
 
 @dataclass(frozen=True)
@@ -68,10 +75,12 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
     current_name: Optional[str] = None
     current_offset: Optional[int] = None
     current_width: Optional[int] = None
+    current_header_index: int = -1
     current_rows: List[int] = []
 
     def finish_layer() -> None:
-        nonlocal current_name, current_offset, current_width, current_rows
+        nonlocal current_name, current_offset, current_width, current_header_index
+        nonlocal current_rows
         if (
             current_name is not None
             and current_offset is not None
@@ -84,11 +93,13 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
                     offset=current_offset,
                     width=current_width,
                     row_indexes=list(current_rows),
+                    header_index=current_header_index,
                 )
             )
         current_name = None
         current_offset = None
         current_width = None
+        current_header_index = -1
         current_rows = []
 
     for line_index, line in enumerate(lines):
@@ -106,6 +117,7 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
             current_name = header.name
             current_offset = header.offset
             current_width = header.width
+            current_header_index = line_index
             continue
         if line.startswith("layer "):
             finish_layer()
@@ -115,6 +127,72 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
 
     finish_layer()
     return layers
+
+
+def rewrite_layer_header_height(line: str, new_height: int) -> str:
+    """Rewrite height_rows on a layer header line; preserve argument form."""
+    parsed = parse_layer_header(line)
+    if parsed is None:
+        raise ValueError(f"not a layer header: {line!r}")
+    if parsed.height == new_height:
+        return line
+    match = LAYER_HEADER_RE.match(line)
+    if match is None:
+        raise ValueError(f"not a layer header: {line!r}")
+    name = match.group(1)
+    body = match.group(2).strip()
+    parts: List[str] = []
+    positional_index = 0
+    for raw_part in body.split(","):
+        part = raw_part.strip()
+        if not part:
+            raise ValueError(f"empty argument in layer header: {line!r}")
+        if "=" in part:
+            raw_key, _raw_value = part.split("=", 1)
+            key_token = raw_key.strip()
+            canonical = LAYER_KEY_ALIASES.get(key_token, key_token)
+            if canonical == "height_rows":
+                parts.append(f"{key_token}={new_height}")
+            else:
+                parts.append(part)
+        else:
+            if positional_index >= len(LAYER_POSITIONAL_KEYS):
+                raise ValueError(f"unexpected positional in layer header: {line!r}")
+            if LAYER_POSITIONAL_KEYS[positional_index] == "height_rows":
+                parts.append(str(new_height))
+            else:
+                parts.append(part)
+            positional_index += 1
+    return f"layer {name} ({', '.join(parts)})"
+
+
+def reheader_vox_text(text: str) -> str:
+    """Set each layer header height_rows to the data row count (read_layers rules)."""
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = find_layer_specs(lines)
+    if not layers:
+        raise ValueError("no layers found")
+
+    reference = layers[0]
+    for layer in layers[1:]:
+        if layer.offset != reference.offset or layer.width != reference.width:
+            raise ValueError(
+                f"cross-layer geometry mismatch: layer {layer.name!r} has "
+                f"({layer.offset}, {layer.width}); expected "
+                f"({reference.offset}, {reference.width}) from {reference.name!r}"
+            )
+
+    for layer in layers:
+        if layer.header_index < 0:
+            raise ValueError(f"layer {layer.name!r} missing header index")
+        new_height = len(layer.row_indexes)
+        lines[layer.header_index] = rewrite_layer_header_height(
+            lines[layer.header_index], new_height
+        )
+
+    return "".join(line + ending for line, ending in zip(lines, endings))
 
 
 def mirror_chars(text: str) -> str:
@@ -327,6 +405,15 @@ def run_mirror(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_reheader(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(args.vox_path, args.out, "reheadered", reheader_vox_text)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_stl(args: argparse.Namespace) -> int:
     try:
         return _vox2stl.run_from_args(args)
@@ -357,6 +444,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     mirror.add_argument("vox_path", metavar="filepath", type=Path)
     mirror.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
     mirror.set_defaults(func=run_mirror)
+
+    reheader = subparsers.add_parser(
+        "reheader",
+        help="rewrite layer height_rows to match actual data row counts",
+    )
+    reheader.add_argument("vox_path", metavar="filepath", type=Path)
+    reheader.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    reheader.set_defaults(func=run_reheader)
 
     stl = subparsers.add_parser("stl", help="generate ASCII STL geometry from a .vox file")
     _vox2stl.add_cli_arguments(stl)
