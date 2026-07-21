@@ -660,14 +660,16 @@ def apply_set_fields(
     owner: Optional[str] = None,
     actual_summary: Optional[str] = None,
     parent_touched: bool = False,
+    tags_touched: bool = False,
 ) -> Optional[str]:
     """Apply `set`-style edits to *todo* in memory (shared by `set` and `init`).
 
     Patches Summary/Body/AC/ActualSummary when given, and transitions State when
     *state* is given. Returns the new state name if State was changed, else None
     (the caller uses that to choose the commit message). Raises TodoError if no
-    field at all was supplied. *parent_touched* counts as a field change when
-    the caller is applying ``set --parent`` separately (needs root for back-links).
+    field at all was supplied. *parent_touched*/*tags_touched* count as a field
+    change when the caller applies ``set --parent`` or ``set --tag/--untag``
+    separately (parent needs root for back-links; tags are applied in place).
     """
     changed = False
     if summary is not None:
@@ -686,12 +688,30 @@ def apply_set_fields(
         set_state(todo, state, note=note, last_commit=last_commit,
                   merged_into=merged_into, owner=owner)
         changed = True
-    if not changed and not parent_touched:
+    if not changed and not parent_touched and not tags_touched:
         raise TodoError(
             "pass at least one of --summary, --body, --ac, --state, "
-            "--actual-summary, --parent"
+            "--actual-summary, --parent, --tag, --untag"
         )
     return state
+
+
+def apply_tag_edits(
+    todo: JsonDict, add: Sequence[str], remove: Sequence[str]
+) -> None:
+    """Add/remove tags on ``todo['Tags']`` in place.
+
+    Tags are kept sorted and deduped; surrounding whitespace is stripped and
+    empty tags are ignored. When the result is empty the field is dropped rather
+    than left as ``[]`` (optional fields are absent, not empty -- see doctor).
+    """
+    current = {tag for tag in (todo.get("Tags") or []) if isinstance(tag, str)}
+    current |= {tag.strip() for tag in add if tag and tag.strip()}
+    current -= {tag.strip() for tag in remove if tag and tag.strip()}
+    if current:
+        todo["Tags"] = sorted(current)
+    else:
+        todo.pop("Tags", None)
 
 
 def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2617,6 +2637,18 @@ class SetCommand(TodoSubCommand):
             help="make-it-so Parent list (repeatable Id prefixes); blank --parent= clears; "
             "syncs follow-only INFO back-links on parents",
         )
+        parser.add_argument(
+            "--tag",
+            action="append",
+            metavar="TAG",
+            help="add a tag (repeatable); persisted on the todo, deduped and sorted",
+        )
+        parser.add_argument(
+            "--untag",
+            action="append",
+            metavar="TAG",
+            help="remove a tag (repeatable)",
+        )
         parser.add_argument("--no-commit", action="store_true")
         parser.add_argument(
             "--no-clear",
@@ -2640,6 +2672,7 @@ class SetCommand(TodoSubCommand):
             todo = read_todo_required(root)
         self.resolve_edit_fields(str(todo.get("Id", "") or "current"))
         parent_touched = self.parent is not None
+        tags_touched = bool(self.tag or self.untag)
         state = apply_set_fields(
             todo,
             summary=self.summary,
@@ -2652,9 +2685,12 @@ class SetCommand(TodoSubCommand):
             owner=self.owner,
             actual_summary=self.actual_summary,
             parent_touched=parent_touched,
+            tags_touched=tags_touched,
         )
         if parent_touched:
             apply_parent_links(root, todo, self.parent)
+        if tags_touched:
+            apply_tag_edits(todo, self.tag or [], self.untag or [])
         # While still collecting data (pre-init), keep the Branch label in sync
         # with the summary so `init` creates a well-named branch later.
         if self.summary is not None and current_state_name(todo) == "pre-init":

@@ -1799,6 +1799,27 @@ class BaseDirRepoDirTests(TodoCase):
 
 
 class TagTests(TodoCase):
+    def test_set_tag_adds_deduped_and_sorted(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid)
+        proc = self.todo("set", "--tag", "ui", "--tag", "billing", "--tag", "ui")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Tags"], ["billing", "ui"])
+
+    def test_set_tag_alone_is_a_valid_edit(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid)
+        proc = self.todo("set", "--tag", "solo")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Tags"], ["solo"])
+
+    def test_set_untag_removes_and_drops_empty_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid, extra={"Tags": ["ui"]})
+        proc = self.todo("set", "--untag", "ui")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Tags", self.read_self())  # emptied -> field dropped
+
     @unittest.skip("enable when persisted Tags land -- ticket 5da67f94")
     def test_persisted_tags_end_to_end(self) -> None:
         """set --tag/--untag persist across re-read; doctor accepts Tags; search --tag filters."""
