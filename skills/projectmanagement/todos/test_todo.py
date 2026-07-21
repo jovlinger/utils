@@ -1782,5 +1782,43 @@ class BaseDirRepoDirTests(TodoCase):
         self.assertIn("no todo found", proc.stderr)
 
 
+class TagTests(TodoCase):
+    @unittest.skip("enable when persisted Tags land -- ticket 5da67f94")
+    def test_persisted_tags_end_to_end(self) -> None:
+        """set --tag/--untag persist across re-read; doctor accepts Tags; search --tag filters."""
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid, summary="taggable ticket")
+
+        # --tag is repeatable; Tags is stored sorted + deduped.
+        proc = self.todo("set", "--tag", "ui", "--tag", "billing")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Tags"], ["billing", "ui"])
+
+        # A second set merges (a dup is idempotent, a new tag is added).
+        proc = self.todo("set", "--tag", "ui", "--tag", "api")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Tags"], ["api", "billing", "ui"])
+
+        # --untag removes.
+        proc = self.todo("set", "--untag", "billing")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_self()["Tags"], ["api", "ui"])
+
+        # doctor accepts a valid Tags list.
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
+        # search --tag keeps only todos whose Tags intersect the filter.
+        other = self.mint()
+        self.write_ticket(f"{other[:8]}-untagged", other, summary="taggable ticket")
+        proc = self.todo(
+            "search", "taggable ticket", "--embedder", "hash", "--tag", "ui"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertNotIn(other[:8], proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
