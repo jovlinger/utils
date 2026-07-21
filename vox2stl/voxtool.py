@@ -13,7 +13,14 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import check_vox as _check_vox
 import vox2stl as _vox2stl
 from check_vox import *  # Re-export validator helpers for existing test coverage.
-from constants import correct_vox_shorthand_text
+from constants import (
+    LAYER_HEADER_RE,
+    LAYER_KEY_ALIASES,
+    LAYER_POSITIONAL_KEYS,
+    PAD_CHARS,
+    correct_vox_shorthand_text,
+    parse_layer_header,
+)
 
 GLYPH_MIRROR: Mapping[str, str] = {
     "\u250c": "\u2510",
@@ -47,6 +54,7 @@ class LayerSpec:
     offset: int
     width: int
     row_indexes: List[int]
+    header_index: int = -1
 
 
 @dataclass(frozen=True)
@@ -68,10 +76,12 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
     current_name: Optional[str] = None
     current_offset: Optional[int] = None
     current_width: Optional[int] = None
+    current_header_index: int = -1
     current_rows: List[int] = []
 
     def finish_layer() -> None:
-        nonlocal current_name, current_offset, current_width, current_rows
+        nonlocal current_name, current_offset, current_width, current_header_index
+        nonlocal current_rows
         if (
             current_name is not None
             and current_offset is not None
@@ -84,11 +94,13 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
                     offset=current_offset,
                     width=current_width,
                     row_indexes=list(current_rows),
+                    header_index=current_header_index,
                 )
             )
         current_name = None
         current_offset = None
         current_width = None
+        current_header_index = -1
         current_rows = []
 
     for line_index, line in enumerate(lines):
@@ -106,6 +118,7 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
             current_name = header.name
             current_offset = header.offset
             current_width = header.width
+            current_header_index = line_index
             continue
         if line.startswith("layer "):
             finish_layer()
@@ -115,6 +128,207 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
 
     finish_layer()
     return layers
+
+
+def rewrite_layer_header_fields(
+    line: str,
+    *,
+    new_height: Optional[int] = None,
+    new_offset: Optional[int] = None,
+) -> str:
+    """Rewrite selected layer header fields; preserve argument form."""
+    parsed = parse_layer_header(line)
+    if parsed is None:
+        raise ValueError(f"not a layer header: {line!r}")
+    if new_height is None and new_offset is None:
+        return line
+    if new_height is not None and parsed.height == new_height and new_offset is None:
+        return line
+    if new_offset is not None and parsed.offset == new_offset and new_height is None:
+        return line
+    if (
+        new_height is not None
+        and new_offset is not None
+        and parsed.height == new_height
+        and parsed.offset == new_offset
+    ):
+        return line
+    match = LAYER_HEADER_RE.match(line)
+    if match is None:
+        raise ValueError(f"not a layer header: {line!r}")
+    name = match.group(1)
+    body = match.group(2).strip()
+    parts: List[str] = []
+    positional_index = 0
+    for raw_part in body.split(","):
+        part = raw_part.strip()
+        if not part:
+            raise ValueError(f"empty argument in layer header: {line!r}")
+        if "=" in part:
+            raw_key, _raw_value = part.split("=", 1)
+            key_token = raw_key.strip()
+            canonical = LAYER_KEY_ALIASES.get(key_token, key_token)
+            if canonical == "height_rows" and new_height is not None:
+                parts.append(f"{key_token}={new_height}")
+            elif canonical == "horizontal_offset" and new_offset is not None:
+                parts.append(f"{key_token}={new_offset}")
+            else:
+                parts.append(part)
+        else:
+            if positional_index >= len(LAYER_POSITIONAL_KEYS):
+                raise ValueError(f"unexpected positional in layer header: {line!r}")
+            key = LAYER_POSITIONAL_KEYS[positional_index]
+            if key == "height_rows" and new_height is not None:
+                parts.append(str(new_height))
+            elif key == "horizontal_offset" and new_offset is not None:
+                parts.append(str(new_offset))
+            else:
+                parts.append(part)
+            positional_index += 1
+    return f"layer {name} ({', '.join(parts)})"
+
+
+def rewrite_layer_header_height(line: str, new_height: int) -> str:
+    return rewrite_layer_header_fields(line, new_height=new_height)
+
+
+def indent_row_margin(row: str, offset: int, width: int, delta: int) -> str:
+    """Shift a layer row's design window by changing the left margin width."""
+    end = offset + width
+    padded = row.ljust(end)
+    left = padded[:offset]
+    design = padded[offset:end]
+    right = row[end:] if len(row) > end else ""
+    new_offset = offset + delta
+    if new_offset < 0:
+        raise ValueError(f"indent delta {delta} would make horizontal_offset negative")
+    label = left.rstrip()
+    if len(label) > new_offset:
+        raise ValueError(
+            f"left label {label!r} does not fit in offset {new_offset}"
+        )
+    if delta >= 0:
+        new_left = left + (" " * delta)
+    else:
+        remove = -delta
+        if not left.endswith(" " * remove):
+            raise ValueError(
+                f"cannot outdent by {remove}: left margin {left!r} lacks trailing spaces"
+            )
+        new_left = left[:-remove]
+    return f"{new_left}{design}{right}"
+
+
+def indent_vox_text(text: str, delta: int) -> str:
+    """Adjust horizontal_offset by delta on every layer; shift row left margins."""
+    if delta == 0:
+        return text
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = find_layer_specs(lines)
+    if not layers:
+        raise ValueError("no layers found")
+
+    reference = layers[0]
+    for layer in layers[1:]:
+        if layer.offset != reference.offset or layer.width != reference.width:
+            raise ValueError(
+                f"cross-layer geometry mismatch: layer {layer.name!r} has "
+                f"({layer.offset}, {layer.width}); expected "
+                f"({reference.offset}, {reference.width}) from {reference.name!r}"
+            )
+
+    new_offset = reference.offset + delta
+    if new_offset < 0:
+        raise ValueError(f"indent delta {delta} would make horizontal_offset negative")
+
+    for layer in layers:
+        if layer.header_index < 0:
+            raise ValueError(f"layer {layer.name!r} missing header index")
+        lines[layer.header_index] = rewrite_layer_header_fields(
+            lines[layer.header_index], new_offset=new_offset
+        )
+        for row_index in layer.row_indexes:
+            lines[row_index] = indent_row_margin(
+                lines[row_index], layer.offset, layer.width, delta
+            )
+
+    return "".join(line + ending for line, ending in zip(lines, endings))
+
+
+def reheader_vox_text(text: str) -> str:
+    """Set each layer header height_rows to the data row count (read_layers rules)."""
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = find_layer_specs(lines)
+    if not layers:
+        raise ValueError("no layers found")
+
+    reference = layers[0]
+    for layer in layers[1:]:
+        if layer.offset != reference.offset or layer.width != reference.width:
+            raise ValueError(
+                f"cross-layer geometry mismatch: layer {layer.name!r} has "
+                f"({layer.offset}, {layer.width}); expected "
+                f"({reference.offset}, {reference.width}) from {reference.name!r}"
+            )
+
+    for layer in layers:
+        if layer.header_index < 0:
+            raise ValueError(f"layer {layer.name!r} missing header index")
+        new_height = len(layer.row_indexes)
+        lines[layer.header_index] = rewrite_layer_header_height(
+            lines[layer.header_index], new_height
+        )
+
+    return "".join(line + ending for line, ending in zip(lines, endings))
+
+
+def sync_pads_row(src_row: str, dst_row: str, offset: int, width: int) -> str:
+    """Upsert * / O from src design window into dst; leave non-pad src cells alone."""
+    end = offset + width
+    src_design = src_row.ljust(end)[offset:end]
+    padded_dst = dst_row.ljust(end)
+    left = padded_dst[:offset]
+    design = list(padded_dst[offset:end])
+    right = dst_row[end:] if len(dst_row) > end else ""
+    for col, char in enumerate(src_design):
+        if char in PAD_CHARS:
+            design[col] = char
+    return f"{left}{''.join(design)}{right}"
+
+
+def sync_pads_vox_text(text: str, from_layer: str, to_layer: str) -> str:
+    """Copy * / O cells from one layer's design window into another's (upsert only)."""
+    if from_layer == to_layer:
+        raise ValueError("--from and --to must name different layers")
+    split_lines = [split_line_ending(raw_line) for raw_line in text.splitlines(keepends=True)]
+    lines = [line for line, _ in split_lines]
+    endings = [ending for _, ending in split_lines]
+    layers = {layer.name: layer for layer in find_layer_specs(lines)}
+    if from_layer not in layers:
+        raise ValueError(f"source layer {from_layer!r} not found")
+    if to_layer not in layers:
+        raise ValueError(f"destination layer {to_layer!r} not found")
+    source = layers[from_layer]
+    dest = layers[to_layer]
+    if source.offset != dest.offset or source.width != dest.width:
+        raise ValueError(
+            f"layers {from_layer!r} and {to_layer!r} disagree on geometry "
+            f"({source.offset}, {source.width}) vs ({dest.offset}, {dest.width})"
+        )
+    if len(source.row_indexes) != len(dest.row_indexes):
+        raise ValueError(
+            f"layers {from_layer!r} and {to_layer!r} disagree on row count "
+            f"({len(source.row_indexes)} vs {len(dest.row_indexes)})"
+        )
+    for src_index, dst_index in zip(source.row_indexes, dest.row_indexes):
+        lines[dst_index] = sync_pads_row(
+            lines[src_index], lines[dst_index], dest.offset, dest.width
+        )
+    return "".join(line + ending for line, ending in zip(lines, endings))
 
 
 def mirror_chars(text: str) -> str:
@@ -327,6 +541,43 @@ def run_mirror(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_reheader(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(args.vox_path, args.out, "reheadered", reheader_vox_text)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_sync_pads(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(
+            args.vox_path,
+            args.out,
+            "sync-pads",
+            lambda text: sync_pads_vox_text(text, args.from_layer, args.to_layer),
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_indent(args: argparse.Namespace) -> int:
+    try:
+        write_transformed_text(
+            args.vox_path,
+            args.out,
+            "indented",
+            lambda text: indent_vox_text(text, args.delta),
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_stl(args: argparse.Namespace) -> int:
     try:
         return _vox2stl.run_from_args(args)
@@ -357,6 +608,50 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     mirror.add_argument("vox_path", metavar="filepath", type=Path)
     mirror.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
     mirror.set_defaults(func=run_mirror)
+
+    reheader = subparsers.add_parser(
+        "reheader",
+        help="rewrite layer height_rows to match actual data row counts",
+    )
+    reheader.add_argument("vox_path", metavar="filepath", type=Path)
+    reheader.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    reheader.set_defaults(func=run_reheader)
+
+    sync_pads = subparsers.add_parser(
+        "sync-pads",
+        help="upsert * / O pads from one layer design window into another",
+    )
+    sync_pads.add_argument("vox_path", metavar="filepath", type=Path)
+    sync_pads.add_argument(
+        "--from",
+        dest="from_layer",
+        required=True,
+        metavar="LAYER",
+        help="source layer name (typically base or trace)",
+    )
+    sync_pads.add_argument(
+        "--to",
+        dest="to_layer",
+        required=True,
+        metavar="LAYER",
+        help="destination layer name (typically base or trace)",
+    )
+    sync_pads.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    sync_pads.set_defaults(func=run_sync_pads)
+
+    indent = subparsers.add_parser(
+        "indent",
+        help="shift horizontal_offset and left margins by --delta (negative outdents)",
+    )
+    indent.add_argument("vox_path", metavar="filepath", type=Path)
+    indent.add_argument(
+        "--delta",
+        type=int,
+        required=True,
+        help="columns to add to horizontal_offset (use a negative value to outdent)",
+    )
+    indent.add_argument("-out", "--out", type=Path, help="write to this path instead of in place")
+    indent.set_defaults(func=run_indent)
 
     stl = subparsers.add_parser("stl", help="generate ASCII STL geometry from a .vox file")
     _vox2stl.add_cli_arguments(stl)
