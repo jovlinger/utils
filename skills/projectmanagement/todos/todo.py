@@ -1793,6 +1793,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "State",
         "Subtodos",
         "Summary",
+        "Tags",
         "WorkItems",
         "create_dt",
         "update_dt",
@@ -1896,6 +1897,12 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
         not isinstance(summary, dict) or not isinstance(summary.get("raw"), str)
     ):
         findings.append("Summary.raw must be a string")
+    tags = todo.get("Tags")
+    if tags is not None and (
+        not isinstance(tags, list)
+        or not all(isinstance(tag, str) and tag for tag in tags)
+    ):
+        findings.append("Tags must be a list of non-empty strings")
     subtodos = todo.get("Subtodos")
     if subtodos is not None:
         if not isinstance(subtodos, list):

@@ -729,6 +729,22 @@ class DoctorTests(TodoCase):
         self.assertFalse(payload["ok"])
         self.assertIn("unknown top-level fields: Surprise", payload["findings"])
 
+    def test_doctor_accepts_valid_tags(self) -> None:
+        tid = self.mint()
+        self.write_ticket("doctor-tags-ok", tid, extra={"Tags": ["billing", "ui"]})
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
+    def test_doctor_fails_bad_tags_shape(self) -> None:
+        tid = self.mint()
+        self.write_ticket("doctor-tags-bad", tid, extra={"Tags": ["ok", "", 3]})
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("Tags must be a list of non-empty strings", payload["findings"])
+
     def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
         tid = self.mint()
         child = self.mint()
