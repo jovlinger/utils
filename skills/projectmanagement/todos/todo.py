@@ -1100,6 +1100,7 @@ def search_tickets(
     embedder_names: Optional[Sequence[str]] = None,
     dry_run: bool = False,
     states: Optional[frozenset] = None,
+    tags: Optional[frozenset] = None,
 ) -> List[JsonDict]:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
 
@@ -1109,7 +1110,8 @@ def search_tickets(
     embedder are computed and stored (lazy backfill) before ranking; a ticket
     still missing a vector simply does not contribute to that ranker. When
     ``states`` is given, only tickets whose current State is in that set are
-    considered (applied before ranking, so the limit counts matches only).
+    considered; ``tags`` likewise keeps only tickets whose ``Tags`` intersect it.
+    Both filters apply before ranking, so the limit counts matches only.
     """
     names = list(embedder_names) if embedder_names else todo_embed.default_embedder_names()
     embedders: List[tuple[str, todo_embed.Embedder]] = []
@@ -1132,6 +1134,10 @@ def search_tickets(
         if not ticket_id:
             continue
         if states is not None and (current_state_name(parsed) or "") not in states:
+            continue
+        if tags is not None and not (
+            {tag for tag in (parsed.get("Tags") or []) if isinstance(tag, str)} & tags
+        ):
             continue
         tickets[ticket_id] = parsed
         locations[ticket_id] = (repo_path, branch)
@@ -3721,6 +3727,7 @@ def run_search(
     embedder_names: Optional[Sequence[str]] = None,
     dry_run: bool = False,
     states: Optional[frozenset] = None,
+    tags: Optional[frozenset] = None,
 ) -> List[JsonDict]:
     """Ranked search as structured rows (relevance-rank order preserved).
 
@@ -3734,6 +3741,7 @@ def run_search(
         embedder_names=embedder_names,
         dry_run=dry_run,
         states=states,
+        tags=tags,
     )
     return [todo_row(todo) for todo in hits]
 
@@ -3774,6 +3782,10 @@ class SearchCommand(TodoSubCommand):
                 "run (init+working); e.g. run+stall or all-info"
             ),
         )
+        parser.add_argument(
+            "--tag",
+            help="restrict to todos tagged with any of these (comma list); e.g. ui,billing",
+        )
         _add_column_args(parser)
 
     def do(self) -> int:
@@ -3783,6 +3795,11 @@ class SearchCommand(TodoSubCommand):
         if self.embedder:
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
         states = parse_state_filter(self.state) if self.state else None
+        tags = (
+            frozenset(part.strip() for part in self.tag.split(",") if part.strip())
+            if self.tag
+            else None
+        )
         rows = run_search(
             root,
             self.query,
@@ -3790,6 +3807,7 @@ class SearchCommand(TodoSubCommand):
             embedder_names=names,
             dry_run=self.dry_run,
             states=states,
+            tags=tags,
         )
         columns = self.columns or []
         for row in rows:

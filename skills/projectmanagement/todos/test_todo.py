@@ -1820,7 +1820,20 @@ class TagTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Tags", self.read_self())  # emptied -> field dropped
 
-    @unittest.skip("enable when persisted Tags land -- ticket 5da67f94")
+    def test_search_tag_filters_to_tagged(self) -> None:
+        tagged = self.mint()
+        self.write_ticket(
+            f"{tagged[:8]}-a", tagged, summary="alpha beta gamma", extra={"Tags": ["ui"]}
+        )
+        untagged = self.mint()
+        self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
+        proc = self.todo(
+            "search", "alpha beta gamma", "--embedder", "hash", "--tag", "ui"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tagged[:8], proc.stdout)
+        self.assertNotIn(untagged[:8], proc.stdout)
+
     def test_persisted_tags_end_to_end(self) -> None:
         """set --tag/--untag persist across re-read; doctor accepts Tags; search --tag filters."""
         tid = self.mint()
