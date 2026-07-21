@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Post-ingest: musicscan → .meta.combined.json → importtags → tag mirror refresh.
+"""Post-ingest: musicscan (fixpoint ≤2n; may write .meta.johan.json on consensus)
+→ .meta.combined.json → importtags → tag mirror refresh.
 
 Discovers every directory that contains audio (including nested). Parents of
 **homogeneous multi-disc** children (CD1/CD2, Disc 1, Vol. 01, …) are treated
