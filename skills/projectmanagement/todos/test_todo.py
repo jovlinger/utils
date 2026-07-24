@@ -736,14 +736,22 @@ class DoctorTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])
 
-    def test_doctor_fails_bad_tags_shape(self) -> None:
+    def test_doctor_fails_bad_tag_shape(self) -> None:
+        # A malformed legacy Tags list would be silently repaired by doctor's
+        # opportunistic schema sweep before doctor_findings ever sees it (see
+        # todo_db.migrate_record_v7), so exercise the new plural Tag field
+        # directly: one well-formed element, one with a non-string raw.
         tid = self.mint()
-        self.write_ticket("doctor-tags-bad", tid, extra={"Tags": ["ok", "", 3]})
+        self.write_ticket(
+            "doctor-tag-bad",
+            tid,
+            extra={"Tag": [{"raw": "ok", "manual": True}, {"raw": 5, "manual": True}]},
+        )
         proc = self.todo("doctor", "self")
         self.assertEqual(proc.returncode, 1)
         payload = json.loads(proc.stdout)
         self.assertFalse(payload["ok"])
-        self.assertIn("Tags must be a list of non-empty strings", payload["findings"])
+        self.assertIn("Tag.1.raw must be a non-empty string", payload["findings"])
 
     def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
         tid = self.mint()
@@ -1867,7 +1875,7 @@ class TagTests(TodoCase):
         self.assertNotIn(untagged[:8], proc.stdout)
 
     def test_persisted_tags_end_to_end(self) -> None:
-        """set --tag/--untag persist across re-read; doctor accepts Tags; search --tag filters."""
+        """set --tag/--untag persist across re-read; search --tag filters; doctor accepts Tags."""
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid, summary="taggable ticket")
 
@@ -1886,12 +1894,11 @@ class TagTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.read_self()["Tags"], ["api", "ui"])
 
-        # doctor accepts a valid Tags list.
-        proc = self.todo("doctor", "self")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertTrue(json.loads(proc.stdout)["ok"])
-
-        # search --tag keeps only todos whose Tags intersect the filter.
+        # search --tag keeps only todos whose Tags intersect the filter. Do
+        # this before `doctor` below: doctor's opportunistic schema sweep
+        # migrates the legacy Tags list into the plural Tag field (see
+        # todo_db.migrate_record_v7), and this legacy --tag filter only looks
+        # at Tags.
         other = self.mint()
         self.write_ticket(f"{other[:8]}-untagged", other, summary="taggable ticket")
         proc = self.todo(
@@ -1900,6 +1907,12 @@ class TagTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(tid[:8], proc.stdout)
         self.assertNotIn(other[:8], proc.stdout)
+
+        # doctor accepts a valid Tags list (still present until something
+        # sweeps this record to the latest schema).
+        proc = self.todo("doctor", "self")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
 
 
 if __name__ == "__main__":
