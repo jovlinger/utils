@@ -1,8 +1,8 @@
 """End-to-end acceptance for 58e8: migrate-to-latest (unified schema migrator).
 
 FROZEN AC authored by the orchestrator. The implementor MUST NOT modify this
-file (it is the read-only oracle). It is skipped until the feature lands; the
-final WorkItem (WI6) removes the skip once migrate-to-latest is complete.
+file (it is the read-only oracle). It ran skipped during implementation; WI6
+enabled it once migrate-to-latest landed.
 
 Contract this pins (what the implementor must build):
   * todo_db.SCHEMA_VERSION -- the SINGLE schema version (table + record share it).
@@ -53,7 +53,6 @@ LEGACY_RECORD = {
 }
 
 
-@unittest.skip("until 58e8 migrate-to-latest lands; WI6 removes this skip")
 class MigrateToLatestEndTest(unittest.TestCase):
     """migrate-to-latest brings a below-latest store to SCHEMA_VERSION on both backends."""
 

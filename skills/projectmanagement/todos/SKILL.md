@@ -223,6 +223,33 @@ worktree.
 Set TODO_USE_JSON=1 for legacy file mode. Search embedders: `todo.py search
 --embedder` (comma list; default all non-hidden; see `todo.py embedders`).
 
+### Schema versioning and `migrate-to-latest`
+
+There is ONE schema version, `todo_db.SCHEMA_VERSION`, shared by the sqlite
+table shape and the record (ticket JSON) shape. Every schema change bumps it by
+one and registers its migration; a change that touches only one axis leaves the
+other a no-op. Two migration paths ride that single number:
+
+- **Table** migrations run automatically on every sqlite connect
+  (`todo_db.migrate`).
+- **Record** migrations are an ordered registry, `todo_db.RECORD_MIGRATIONS`
+  (version -> transform). `todo_db.migrate_record(todo)` applies every pending
+  step ascending and stamps `todo["_schema"]`. The shared v6 transform (legacy
+  field renames: `Chunks`->`WorkItems`, `Subtickets`->`Subtodos`, singular
+  `Parent` dict->list, strip `Scope.path_to_project`) is what
+  `normalize_todo_schema` delegates to on ordinary reads (without stamping).
+
+`todo.py migrate-to-latest` sweeps every record in the resolved store (both
+backends, via the store abstraction), migrates each, writes back the changed
+ones, and advances the store's `data_version` marker (a sqlite `data_version`
+table, or a `.data_version` sidecar for the file-dir backend) to
+`SCHEMA_VERSION`. It is idempotent (`--dry-run` reports counts without writing).
+`data_version` is DISTINCT from the table `schema_version`: it records how far
+the RECORDS have been swept, so a cheap startup check can warn (interactive
+terminals only) when the store is behind. To add a schema change: bump
+`SCHEMA_VERSION`, add any table DDL to `migrate`, add any record transform to
+`RECORD_MIGRATIONS` at the new version, then run `migrate-to-latest`.
+
 ## CLI (`todo.py`)
 
 AWS-style subcommands live beside this skill as
@@ -247,6 +274,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py prompt [<selector>]` | implemented | Concatenate a todo and its `Parent` chain (Summary/Body) into one startup prompt, farthest ancestor first, target last -- zero-context agent reads WHY down to WHAT. Read-only; default `self` |
 | `todo.py embedders` | implemented | List selectable search embedders (non-hidden) with cheap/expensive |
 | `todo.py import-json` | implemented | Migrate legacy JSON: --from-json PATH or --scan-refs |
+| `todo.py migrate-to-latest [--dry-run]` | implemented | Sweep every record in the resolved store to `todo_db.SCHEMA_VERSION` via `todo_db.migrate_record` (both backends), write back changed records, and advance the store's `data_version` marker. Idempotent; `--dry-run` reports scanned/would-migrate counts without writing. See "Schema versioning" above |
 | `todo.py ls [-t]` | implemented | Print `<id[0:8]>  <summary>` for every ticket in sqlite -- where-to-find-it only; use `read <id>` for content. Default order is insertion order; `-t` sorts by last-update time, most recent first, like shell `ls -t` |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Checks out the target branch for a non-self selector; `--stay` to remain; commits by default. The general way to replace `WorkItems` or seed a whole plan. |
