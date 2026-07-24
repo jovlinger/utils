@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 6
+SCHEMA_VERSION: int = 7
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -45,12 +45,44 @@ def migrate_record_v6(todo: JsonDict) -> JsonDict:
     return todo
 
 
+def migrate_record_v7(todo: JsonDict) -> JsonDict:
+    """Fold the legacy flat ``Tags`` (list of strings) into plural ``Tag`` elements.
+
+    Each legacy tag becomes ``{"raw": <downcased, stripped>, "manual": True}``
+    (a hand-set tag, same provenance as one added via ``tagadd``); duplicates
+    (after downcasing) collapse to one element, first-seen order kept. Merges
+    into any ``Tag`` elements already present rather than clobbering them, so
+    a record migrated more than once (or hand-seeded with both shapes) stays
+    additive. The old ``Tags`` key is always dropped. Registered in
+    ``RECORD_MIGRATIONS[7]``.
+    """
+    tags = todo.pop("Tags", None)
+    if not isinstance(tags, list):
+        return todo
+    existing = todo.get("Tag")
+    elements: List[JsonDict] = list(existing) if isinstance(existing, list) else []
+    seen_raws = {
+        e["raw"] for e in elements if isinstance(e, dict) and isinstance(e.get("raw"), str)
+    }
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        raw = tag.strip().lower()
+        if raw and raw not in seen_raws:
+            elements.append({"raw": raw, "manual": True})
+            seen_raws.add(raw)
+    if elements:
+        todo["Tag"] = elements
+    return todo
+
+
 # Record transform keyed by the SCHEMA_VERSION it produces. A version whose
 # change was table-only (see `migrate()`) registers no entry here -- a no-op
 # on the record axis. Keep this in ascending-version order for readability;
 # `migrate_record` sorts explicitly so declaration order does not matter.
 RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
     6: migrate_record_v6,
+    7: migrate_record_v7,
 }
 
 
