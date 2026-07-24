@@ -130,6 +130,19 @@ class TodoStore(ABC):
         delete keeps a recoverable tombstone (no recovery tool exists yet).
         Returns True if the todo was present and removed."""
 
+    # -- data version marker (how far RECORDS have been swept) --------------
+    # Distinct from the sqlite table's schema_version (which auto-applies on
+    # connect): this is the O(1) startup-check signal for whether the store's
+    # records themselves still need a migrate-to-latest sweep.
+
+    @abstractmethod
+    def get_data_version(self) -> int:
+        """Return how far this store's records have been swept (0 when unset)."""
+
+    @abstractmethod
+    def set_data_version(self, v: int) -> None:
+        """Persist the record-sweep marker."""
+
     # -- embeddings (ticket JSON on every backend; derived index when available) --
 
     @abstractmethod
@@ -242,6 +255,14 @@ class SqliteTodoStore(TodoStore):
             if hard:
                 return todo_db.hard_delete_ticket(conn, ticket_id)
             return todo_db.soft_delete_ticket(conn, ticket_id)
+
+    def get_data_version(self) -> int:
+        with todo_db.connection(self.db_path) as conn:
+            return todo_db.get_data_version(conn)
+
+    def set_data_version(self, v: int) -> None:
+        with todo_db.connection(self.db_path) as conn:
+            todo_db.set_data_version(conn, v)
 
     def embeddings_for_ticket(
         self, ticket_id: str
@@ -365,6 +386,24 @@ class JsonDirTodoStore(TodoStore):
             # soft delete: <id>.json -> <id>.deleted (kept for manual recovery)
             path.replace(path.with_suffix(".deleted"))
         return True
+
+    def _data_version_path(self) -> Path:
+        # A dot-file with no ".json" suffix: never matched by the *.json glob
+        # that _all() uses to enumerate tickets, so it can live in self.dir
+        # (the only location this backend knows) without being mistaken for one.
+        return self.dir / ".data_version"
+
+    def get_data_version(self) -> int:
+        try:
+            return int(self._data_version_path().read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def set_data_version(self, v: int) -> None:
+        path = self._data_version_path()
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(str(v), encoding="ascii")
+        tmp.replace(path)
 
     def embeddings_for_ticket(
         self, ticket_id: str
