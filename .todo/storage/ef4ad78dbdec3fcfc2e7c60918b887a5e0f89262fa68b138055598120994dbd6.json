@@ -662,6 +662,14 @@
   "State": {
     "done": {}
   },
+  "Subtodos": [
+    {
+      "Branch": "5da67f94-persisted-explicit-tags",
+      "Id": "5da67f94b1364b62e1ad55bbce85bae24d577b5362f5630eeda74b194c5655a1",
+      "State": "INFO",
+      "Summary": "Persisted explicit tags on todos (user-set, stored top-level field)"
+    }
+  ],
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
       [
@@ -1379,5 +1387,5 @@
     }
   ],
   "create_dt": "2026-07-17T15:41:17Z",
-  "update_dt": "2026-07-17T19:10:36Z"
+  "update_dt": "2026-07-24T17:19:19Z"
 }
