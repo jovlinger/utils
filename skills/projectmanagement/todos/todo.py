@@ -4125,10 +4125,12 @@ class _ColumnAction(argparse.Action):
 
 
 def _add_column_args(parser: argparse.ArgumentParser) -> None:
-    """Register the -s/-t/-tc/-tu display-column flags on *parser*.
+    """Register the -s/-t/-tc/-tu/-g display-column flags on *parser*.
 
-    -s -> State, -t/-tc -> create time, -tu -> update time. Repeatable; the
-    columns render leftmost in the order the flags are given.
+    -s -> State, -t/-tc -> create time, -tu -> update time, -g -> Tags.
+    Repeatable; the columns render leftmost in the order the flags are given.
+    Shared by ls and search so both take the same output selectors (ls is the
+    null-query case of search).
     """
     parser.add_argument(
         "-s", dest="columns", const="state", nargs=0, action=_ColumnAction,
@@ -4142,6 +4144,10 @@ def _add_column_args(parser: argparse.ArgumentParser) -> None:
         "-tu", dest="columns", const="utime", nargs=0, action=_ColumnAction,
         help="show update-time column",
     )
+    parser.add_argument(
+        "-g", dest="columns", const="tags", nargs=0, action=_ColumnAction,
+        help="show Tags column (comma-joined)",
+    )
 
 
 def _column_value(todo: JsonDict, key: str) -> str:
@@ -4152,6 +4158,14 @@ def _column_value(todo: JsonDict, key: str) -> str:
         return str(todo.get("create_dt", "") or "")
     if key == "utime":
         return str(todo.get("update_dt", "") or "")
+    if key == "tags":
+        tag = todo.get("Tag")
+        if isinstance(tag, list):
+            return ",".join(
+                e["raw"] for e in tag
+                if isinstance(e, dict) and isinstance(e.get("raw"), str)
+            )
+        return ""
     return ""
 
 
@@ -4172,15 +4186,29 @@ def todo_row(todo: JsonDict) -> JsonDict:
         "state": _column_value(todo, "state"),
         "ctime": _column_value(todo, "ctime"),
         "utime": _column_value(todo, "utime"),
+        "tags": _column_value(todo, "tags"),
     }
 
 
-def _format_row_line(row: JsonDict, columns: Sequence[str]) -> str:
-    """'<cols>  <id[:8]>  <summary>' with selected columns leftmost, in order."""
-    fields = [str(row.get(key, "")) for key in columns]
-    fields.append(str(row.get("short", "")))
-    fields.append(str(row.get("summary", "")))
-    return "  ".join(fields)
+def _format_rows(rows: Sequence[JsonDict], columns: Sequence[str]) -> List[str]:
+    """Render list rows uniformly for ls and search: selected columns leftmost
+    (in flag order), then the id, then the summary ALWAYS last.
+
+    Each column is right-padded to the width of its longest value UNDER 30 chars;
+    values >= 30 chars are left unpadded and do not widen the column, so a single
+    long field (typically the summary) never blows out alignment. Trailing pad on
+    the last column is trimmed.
+    """
+    keys: List[str] = [*columns, "short", "summary"]
+    widths: Dict[str, int] = {}
+    for key in keys:
+        vals = [str(row.get(key, "")) for row in rows]
+        widths[key] = max((len(v) for v in vals if len(v) < 30), default=0)
+    lines: List[str] = []
+    for row in rows:
+        fields = [str(row.get(key, "")).ljust(widths[key]) for key in keys]
+        lines.append("  ".join(fields).rstrip())
+    return lines
 
 
 def run_search(
@@ -4224,9 +4252,10 @@ class SearchCommand(TodoSubCommand):
         "requested embedder that is unavailable errors -- pick one explicitly. "
         "Missing vectors are backfilled and stored before ranking unless "
         "--dry-run; a ticket with no vector for an embedder just does not "
-        "contribute to that embedder's rank. -s/-t/-tc/-tu add "
-        "State/create-time/update-time columns (leftmost, in flag order); results "
-        "stay in relevance-rank order."
+        "contribute to that embedder's rank. -s/-t/-tc/-tu/-g add "
+        "State/create-time/update-time/Tags columns (leftmost, in flag order, summary "
+        "last, columns right-padded to their longest value under 30 chars -- the same "
+        "output selectors as ls); results stay in relevance-rank order."
     )
 
     @classmethod
@@ -4289,8 +4318,8 @@ class SearchCommand(TodoSubCommand):
             tags=tags,
         )
         columns = self.columns or []
-        for row in rows:
-            print(_format_row_line(row, columns))
+        for line in _format_rows(rows, columns):
+            print(line)
         return 0
 
 
@@ -4353,10 +4382,12 @@ class LsCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Ls prints one line per todo known to the resolved todo directory, as '<id[0:8]>  "
         "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. -s adds a "
-        "State column, -t/-tc a create-time column, -tu an update-time column; selected columns "
-        "print leftmost in the order the flags are given. With any column flag the rows sort "
-        "ascending by the leftmost selected column (oldest first for times); otherwise insertion "
-        "order."
+        "State column, -t/-tc a create-time column, -tu an update-time column, -g a Tags column; "
+        "selected columns print leftmost in the order the flags are given, summary always last, "
+        "and each column is right-padded to its longest value under 30 chars. With any column flag "
+        "the rows sort ascending by the leftmost selected column (oldest first for times); "
+        "otherwise insertion order. ls and search take the same output selectors (ls is the "
+        "null-query case of search)."
     )
 
     @classmethod
@@ -4372,8 +4403,8 @@ class LsCommand(TodoSubCommand):
         rows = [todo_row(todo) for todo in todo_store.get_store().list_all()]
         if columns:
             rows.sort(key=lambda row: str(row.get(columns[0], "")))
-        for row in rows:
-            print(_format_row_line(row, columns))
+        for line in _format_rows(rows, columns):
+            print(line)
         return 0
 
 

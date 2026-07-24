@@ -1,7 +1,7 @@
 """Frozen acceptance for ee1799aa: the plural, provenance-tracked Tag field.
 
 FROZEN AC authored by the orchestrator. The implementor MUST NOT modify this
-file (it is the read-only oracle). Skipped until the final WorkItem enables it.
+file (it is the read-only oracle). Enabled by the final WorkItem (WI7).
 
 Contract this pins (the parts testable without a git/store/CLI context; the
 write-path integration -- per-element embedding, clear-on-write, search ranking,
@@ -37,7 +37,6 @@ def _raws(todo_dict) -> list:
     return [e["raw"] for e in todo_dict.get("Tag", [])]
 
 
-@unittest.skip("until ee1799aa plural Tag lands; the final WorkItem removes this skip")
 class PluralTagEndTest(unittest.TestCase):
     def test_schema_bumped_to_7(self) -> None:
         self.assertEqual(todo_db.SCHEMA_VERSION, 7)
