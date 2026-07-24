@@ -135,7 +135,7 @@ class MintTests(TodoCase):
 
 
 class MintSetInitFlowTests(TodoCase):
-    """The two-phase flow: mint (pre-init) -> set --id -> init (promote)."""
+    """The two-phase flow: mint (groom) -> set --id -> init (promote)."""
 
     def _branch_exists(self, name: str) -> bool:
         return bool(self._git("branch", "--list", name).stdout.strip())
@@ -148,7 +148,7 @@ class MintSetInitFlowTests(TodoCase):
     def test_mint_creates_pre_init_record(self) -> None:
         tid = self.mint()
         rec = self._read_id(tid)
-        self.assertEqual(list(rec["State"].keys()), ["pre-init"])
+        self.assertEqual(list(rec["State"].keys()), ["groom"])
         self.assertEqual(rec["Branch"], tid[:8])  # placeholder until set
         # mint must not create a git branch
         self.assertFalse(self._branch_exists(tid[:8]))
@@ -159,7 +159,7 @@ class MintSetInitFlowTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         rec = self._read_id(tid)
         self.assertEqual(rec["Summary"]["raw"], "persist the local db")
-        self.assertEqual(list(rec["State"].keys()), ["pre-init"])  # still collecting
+        self.assertEqual(list(rec["State"].keys()), ["groom"])  # still collecting
         self.assertTrue(rec["Branch"].startswith(f"{tid[:8]}-"))
         self.assertIn("persist", rec["Branch"])
         # set --id must not create a git branch (sqlite-only)
@@ -176,7 +176,7 @@ class MintSetInitFlowTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(self._branch_exists(branch))
         rec = self._read_id(tid)
-        self.assertEqual(list(rec["State"].keys()), ["init"])
+        self.assertEqual(list(rec["State"].keys()), ["ready"])
         self.assertEqual(rec["Branch"], branch)
 
     def test_init_fresh_create_still_works(self) -> None:
@@ -184,7 +184,7 @@ class MintSetInitFlowTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
         self.assertTrue(self._branch_exists(out["Branch"]))
-        self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["init"])
+        self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["ready"])
 
     def test_ensure_worktree_is_stub(self) -> None:
         tid = self.mint()
@@ -331,7 +331,7 @@ class InitTests(TodoCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         ticket = json.loads(proc2.stdout)
         self.assertEqual(ticket["Summary"]["raw"], "Fix sensor")
-        self.assertEqual(ticket["State"], {"init": {}})
+        self.assertEqual(ticket["State"], {"ready": {}})
         self._git("checkout", branch)
         proc3 = self.todo("read", "self")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
@@ -349,10 +349,10 @@ class InitTests(TodoCase):
     def test_init_then_set_state_in_one_call(self) -> None:
         """init accepts set's args and applies them; --state lands post-init."""
         self._git("commit", "--allow-empty", "-qm", "seed")
-        proc = self.todo("init", "--summary=Groom me", "--state=pre")
+        proc = self.todo("init", "--summary=Groom me", "--state=groom")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
-        self.assertEqual(ticket["State"], {"pre": {}})
+        self.assertEqual(ticket["State"], {"groom": {}})
 
     def test_init_noninteractive_EDIT_creates_nothing(self) -> None:
         """A non-tty EDIT value aborts with exit 1 and leaves no todo/branch."""
@@ -514,7 +514,8 @@ class PathTests(TodoCase):
         self.write_ticket("state-branch", tid)
         proc = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), {"init": {}})
+        # write_ticket seeds the legacy "init" state; reads normalize it to "ready".
+        self.assertEqual(json.loads(proc.stdout), {"ready": {}})
 
     def test_get_json_path_no_such_path_reports_worked_missing_options(self) -> None:
         tid = self.mint()
@@ -1929,6 +1930,105 @@ class TagTests(TodoCase):
         proc = self.todo("doctor", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])
+
+
+class ParseStateFilterUnitTests(unittest.TestCase):
+    """todo.parse_state_filter: macro expansion and include/-exclude, left-to-right."""
+
+    def test_macro_expands_to_states(self) -> None:
+        self.assertEqual(todo.parse_state_filter("FINAL"), frozenset({"done", "merged"}))
+
+    def test_default_expr_hides_final(self) -> None:
+        result = todo.parse_state_filter(todo.DEFAULT_STATE_FILTER)
+        self.assertNotIn("done", result)
+        self.assertNotIn("merged", result)
+        self.assertIn("ready", result)
+        self.assertIn("working", result)
+
+    def test_exclude_single_state_left_to_right(self) -> None:
+        self.assertEqual(todo.parse_state_filter("ALL,-done"), todo.VALID_STATES - {"done"})
+
+    def test_union_of_macros(self) -> None:
+        self.assertEqual(
+            todo.parse_state_filter("WORKING+PAUSING"),
+            frozenset({"working", "waiting", "userneeded", "stopped"}),
+        )
+
+    def test_lowercase_state_name_matches(self) -> None:
+        self.assertEqual(todo.parse_state_filter("fact"), frozenset({"fact"}))
+
+    def test_unknown_term_raises(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            todo.parse_state_filter("BOGUS")
+
+
+class StateFilterTests(TodoCase):
+    """Default FINAL hiding plus the -s / --states model on ls."""
+
+    def _seed(self, state: str, name: str) -> str:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-{name}", tid, summary=name, extra={"State": {state: {}}}
+        )
+        return tid
+
+    def _set_default_filter(self, expr: str) -> None:
+        cfg_path = self._db_dir / "config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["default_state_filter"] = expr
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def test_ls_hides_final_by_default(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        merged = self._seed("merged", "charlie")
+        out = self.todo("ls").stdout
+        self.assertIn(ready[:8], out)
+        self.assertNotIn(done[:8], out)
+        self.assertNotIn(merged[:8], out)
+
+    def test_ls_dash_s_reveals_all_with_state_column(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        proc = self.todo("ls", "-s")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(done[:8], proc.stdout)
+        self.assertIn(ready[:8], proc.stdout)
+        # State column is rendered (summaries are alpha/bravo, so these are columns).
+        self.assertIn("done", proc.stdout)
+        self.assertIn("ready", proc.stdout)
+
+    def test_ls_states_final_only(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        out = self.todo("ls", "--states=FINAL").stdout
+        self.assertIn(done[:8], out)
+        self.assertNotIn(ready[:8], out)
+
+    def test_ls_states_exclude_expression(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        merged = self._seed("merged", "charlie")
+        out = self.todo("ls", "--states=ALL,-done").stdout
+        self.assertIn(ready[:8], out)
+        self.assertIn(merged[:8], out)
+        self.assertNotIn(done[:8], out)
+
+    def test_ls_unknown_state_term_errors(self) -> None:
+        self._seed("ready", "alpha")
+        proc = self.todo("ls", "--states=BOGUS")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("BOGUS", proc.stderr)
+
+    def test_ls_default_filter_overridden_by_config(self) -> None:
+        working = self._seed("working", "alpha")
+        ready = self._seed("ready", "bravo")
+        self._set_default_filter("WORKING")
+        out = self.todo("ls").stdout
+        self.assertIn(working[:8], out)
+        self.assertNotIn(ready[:8], out)
+        # -s still reveals everything regardless of the config default.
+        self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
 
 
 if __name__ == "__main__":

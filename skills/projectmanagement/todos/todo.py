@@ -37,40 +37,47 @@ FETCH_ENABLED: bool = False
 
 VALID_STATES = frozenset(
     {
-        "pre",  # a todo that is not yet workable
-        "pre-init",  # minted, still collecting data; no branch yet (see mint/set)
-        "init",  # rename to ready
+        "groom",  # minted, still collecting data / grooming; not yet workable (was pre/pre-init)
+        "ready",  # groomed and ready to work (was init)
         "working",
         "userneeded",
         "stopped",
         "done",
         "merged",
         "waiting",
-        "info",  # not meant to capture work, but statements or facts that can be searched
+        "fact",  # never worked; an informational anchor for vector-memory recall (was info)
         "N/a",
     }
 )
 STOPWORDS = frozenset({"a", "an", "the", "to", "from", "for", "and", "or", "in", "on", "of"})
 
-# Predefined named sets usable in a --state expression (see parse_state_filter).
-STATE_SET_ALIASES = {
-    "all": VALID_STATES,
-    "todo": VALID_STATES - {"N/a", "info"},
-    "stall": frozenset({"waiting", "userneeded"}),
-    "run": frozenset({"init", "working"}),
+# Uppercase macros usable in a --states expression (see parse_state_filter). They
+# expand to state sets, so a token is unambiguously a macro (UPPERCASE) or a state
+# name (lowercase). FINAL is the terminated set hidden by default.
+STATE_MACROS = {
+    "ALL": VALID_STATES,
+    "FINAL": frozenset({"done", "merged"}),
+    "PAUSING": frozenset({"waiting", "userneeded", "stopped"}),
+    "WORKING": frozenset({"working"}),
+    "UNSTARTED": frozenset({"groom", "ready"}),
+    "INFO": frozenset({"fact"}),
 }
+
+# Default --states expression when neither --states nor -s is given; overridable
+# per todo dir via config.json "default_state_filter". Hides terminated states.
+DEFAULT_STATE_FILTER = "ALL,-FINAL"
 
 
 def parse_state_filter(expr: str) -> frozenset:
-    """Resolve a --state expression to the set of acceptable state names.
+    """Resolve a --states expression to the set of acceptable state names.
 
-    Terms are individual state names (see VALID_STATES) or predefined set
-    aliases (see STATE_SET_ALIASES). Terms combine left-to-right with the
-    operators ``+`` (union) and ``-`` (difference), no spaces; a comma is a
-    synonym for ``+``. Examples: ``run+stall``, ``all-info``, ``todo,pre``.
-    Raises TodoError on an unknown term.
+    Terms are individual state names (lowercase; see VALID_STATES) or UPPERCASE
+    macros (see STATE_MACROS), expanded inline. Terms combine left-to-right with
+    the operators ``+`` (union) and ``-`` (difference), no spaces; a comma is a
+    synonym for ``+``. Examples: ``WORKING+PAUSING``, ``ALL,-done``, ``ALL,-FINAL``
+    (the default). Raises TodoError on an unknown term.
     """
-    # State names contain no +/-/, so splitting on those operators is unambiguous.
+    # State names/macros contain no +/-/, so splitting on those is unambiguous.
     normalized = expr.replace(",", "+")
     terms = re.findall(r"([+-]?)([^+-]+)", normalized)
     result: set = set()
@@ -78,20 +85,43 @@ def parse_state_filter(expr: str) -> frozenset:
         term = raw_term.strip()
         if not term:
             continue
-        if term in STATE_SET_ALIASES:
-            values = set(STATE_SET_ALIASES[term])
+        if term in STATE_MACROS:
+            values = set(STATE_MACROS[term])
         elif term in VALID_STATES:
             values = {term}
         else:
             raise TodoError(
                 f"unknown state term {term!r}; expected a state name or one of "
-                f"{', '.join(sorted(STATE_SET_ALIASES))}"
+                f"{', '.join(sorted(STATE_MACROS))}"
             )
         if op == "-":
             result -= values
         else:  # "" (leading term) or "+"
             result |= values
     return frozenset(result)
+
+
+def default_state_filter() -> str:
+    """The default --states expression: config.json 'default_state_filter' or ALL,-FINAL."""
+    return todo_store.config_value(
+        todo_db.todo_dir(), "default_state_filter", DEFAULT_STATE_FILTER
+    )
+
+
+def resolve_state_filter(states_arg: Optional[str], show_all: bool) -> frozenset:
+    """Effective ls/search state filter.
+
+    Precedence: an explicit ``--states`` expression, else ``-s`` (which means
+    ``ALL`` -- reveal everything), else the config.json default (``ALL,-FINAL``,
+    which hides the terminated FINAL states). Always returns a concrete set.
+    """
+    if states_arg:
+        expr = states_arg
+    elif show_all:
+        expr = "ALL"
+    else:
+        expr = default_state_filter()
+    return parse_state_filter(expr)
 
 
 class TodoError(Exception):
@@ -251,13 +281,21 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
     log diff base and merge; later entries are context-only references set by
     ``set --parent`` (make-it-so).
 
-    Delegates to ``todo_db.migrate_record_v6`` (the same transform registered
-    in ``todo_db.RECORD_MIGRATIONS`` for the migration sweep) so the rename
-    logic lives in exactly one place. Unlike ``todo_db.migrate_record``, this
-    does not stamp ``_schema`` -- ordinary reads/writes keep their existing
-    shape; only an explicit ``migrate-to-latest`` sweep version-stamps records.
+    Also folds legacy flat ``Tags`` into plural ``Tag`` elements (v7) and renames
+    legacy state keys to nouns (pre/pre-init -> groom, init -> ready, info ->
+    fact; v8) so old records read back with the current shape and vocabulary even
+    before a sweep.
+
+    Delegates to ``todo_db.migrate_record_v6``/``_v7``/``_v8`` (the same
+    transforms registered in ``todo_db.RECORD_MIGRATIONS`` for the migration
+    sweep) so the logic lives in exactly one place. Unlike
+    ``todo_db.migrate_record``, this does not stamp ``_schema`` -- ordinary
+    reads/writes keep their existing shape; only an explicit ``migrate-to-latest``
+    sweep version-stamps records.
     """
-    return todo_db.migrate_record_v6(todo)
+    todo = todo_db.migrate_record_v6(todo)
+    todo = todo_db.migrate_record_v7(todo)
+    return todo_db.migrate_record_v8(todo)
 
 
 def migrate_store(store: "todo_store.TodoStore", *, dry_run: bool = False) -> Dict[str, int]:
@@ -1093,7 +1131,7 @@ def build_ticket_skeleton(
         "Branch": branch,
         "create_dt": now,
         "update_dt": now,
-        "State": {"init": {}},
+        "State": {"ready": {}},
         "Scope": scope,
         "Summary": {"raw": summary},
         "Body": {"raw": body},
@@ -1361,7 +1399,7 @@ def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = 
     ticket["Scope"] = scope
     ticket.setdefault("create_dt", utc_now())
     ticket.setdefault("update_dt", utc_now())
-    ticket.setdefault("State", {"init": {}})
+    ticket.setdefault("State", {"ready": {}})
     write_todo_worktree(root, ticket)
     return ticket
 
@@ -1455,6 +1493,7 @@ def search_tickets(
     raws: Dict[str, Dict[str, str]] = {}
     locations: Dict[str, tuple[str, str]] = {}
     for repo_path, branch, parsed in store.list_located():
+        parsed = normalize_todo_schema(parsed)  # legacy state keys -> current nouns
         ticket_id = str(parsed.get("Id", ""))
         if not ticket_id:
             continue
@@ -1787,7 +1826,7 @@ def subtodo_entry_from_child(child: JsonDict) -> JsonDict:
         "Id": child["Id"],
         "Branch": child.get("Branch", ""),
         "Summary": child.get("Summary", {}).get("raw", ""),
-        "State": current_state_name(child) or "init",
+        "State": current_state_name(child) or "ready",
     }
 
 
@@ -2494,11 +2533,11 @@ class MintCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Mint creates a new TODO and prints its Id. It hashes a uuid1 value into the canonical "
         "64-character lowercase hex Id (collision-checked against existing todos), then materializes "
-        "a data-collection record for it: State `pre-init` (still collecting data), no git branch, "
-        "sqlite-only (no commit). Fill it in with `set --id <id>`; run `init` when it is ready to be "
-        "worked (that gives it a branch and moves it to `init`). Prints only the Id so callers can "
-        "capture it directly. Use `set --id`/`init` -- `set` alone (without --id) still targets the "
-        "current branch's todo."
+        "a data-collection record for it: State `groom` (still collecting data / grooming), no git "
+        "branch, sqlite-only (no commit). Fill it in with `set --id <id>`; run `init` when it is "
+        "ready to be worked (gives it a branch and moves it to `ready`). Prints only the Id so "
+        "callers can capture it directly. Use `set --id`/`init` -- `set` alone (without --id) still "
+        "targets the current branch's todo."
     )
 
     @classmethod
@@ -2506,9 +2545,9 @@ class MintCommand(TodoSubCommand):
         """Register mint arguments."""
 
     def do(self) -> int:
-        """Create a pre-init (data-collection) todo and print its Id.
+        """Create a groom (data-collection) todo and print its Id.
 
-        The record is sqlite-only: no git branch and no commit at pre-init. The
+        The record is sqlite-only: no git branch and no commit at groom. The
         Branch is a placeholder (Id[0:8]) until `set` finalizes it from the
         summary and `init` creates the actual branch.
         """
@@ -2516,7 +2555,7 @@ class MintCommand(TodoSubCommand):
         ticket_id = mint_id(root)
         branch = ticket_id[:8]  # placeholder key; `set` finalizes it from summary
         ticket = build_ticket_skeleton(root, ticket_id, branch, "", "", "")
-        set_state(ticket, "pre-init")
+        set_state(ticket, "groom")
         write_todo_worktree(root, ticket)
         print(ticket_id)
         return 0
@@ -2646,8 +2685,8 @@ class InitCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Init makes a todo branch-bound and ready to work -- run it when the design is ready and "
         "you are about to WORK the todo. Two modes: (1) PROMOTE -- with --id naming an existing "
-        "`pre-init` todo (created by `mint` and filled in with `set --id`), it creates the git "
-        "branch from that todo's finalized Branch label and moves it to state `init`; (2) FRESH -- "
+        "`groom` todo (created by `mint` and filled in with `set --id`), it creates the git branch "
+        "from that todo's finalized Branch label and moves it to state `ready`; (2) FRESH -- "
         "with --summary and no existing record, it mints (or accepts --id), writes the initial "
         "skeleton, and creates the branch, all in one call (backward-compatible). It refuses to "
         "create a second todo on a branch that already has one, and can optionally return to the "
@@ -2661,14 +2700,14 @@ class InitCommand(TodoSubCommand):
         parser.add_argument(
             "--summary",
             help="Summary.raw (required only when creating a fresh todo; a promoted "
-            "pre-init todo already has one)",
+            "groom todo already has one)",
         )
         parser.add_argument("--body", default="", help="Body.raw")
         parser.add_argument("--ac", default="", help="acceptance criteria")
         add_state_set_arguments(parser)
         parser.add_argument(
             "--id",
-            help="promote the existing pre-init todo with this Id prefix; if no such "
+            help="promote the existing groom todo with this Id prefix; if no such "
             "record exists, use it as the pre-minted Id for a fresh create",
         )
         parser.add_argument("--branch", help="override Branch name")
@@ -2683,7 +2722,7 @@ class InitCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Promote an existing pre-init todo, or create a fresh branch-bound todo.
+        """Promote an existing groom todo, or create a fresh branch-bound todo.
 
         TODO(later): the State -> `init` transition here should move to a
         `--set-status init` path that also calls `ensure_worktree` to materialize
@@ -2694,7 +2733,7 @@ class InitCommand(TodoSubCommand):
         if read_todo_worktree(root) is not None:
             raise TodoError("todo already exists on current branch; resume it instead of init")
 
-        # PROMOTE mode: --id names an existing (pre-init) record -> give it a
+        # PROMOTE mode: --id names an existing (groom) record -> give it a
         # branch and move it to `init`, reusing the Branch `set` finalized.
         if self.id:
             existing = find_todos_by_id(root, self.id)
@@ -2707,7 +2746,7 @@ class InitCommand(TodoSubCommand):
         return self._create_fresh(root)
 
     def _promote(self, root: Path, ticket: JsonDict) -> int:
-        """Give an existing pre-init todo a git branch and move it to `init`."""
+        """Give an existing groom todo a git branch and move it to `ready`."""
         ticket_id = str(ticket["Id"])
         branch = self.branch or str(ticket.get("Branch") or "") or kebab_branch_name(
             ticket_id, _raw_of(ticket, "Summary") or ""
@@ -2722,7 +2761,7 @@ class InitCommand(TodoSubCommand):
         ticket["Branch"] = branch
         if isinstance(ticket.get("Scope"), dict):
             ticket["Scope"]["branch"] = branch
-        set_state(ticket, "init")
+        set_state(ticket, "ready")
         write_todo_worktree(root, ticket)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
@@ -2736,7 +2775,7 @@ class InitCommand(TodoSubCommand):
         if not self.summary:
             raise TodoError(
                 "--summary is required to create a fresh todo "
-                "(or pass --id of an existing pre-init todo to promote it)"
+                "(or pass --id of an existing groom todo to promote it)"
             )
         ticket_id: str = self.id or mint_id(root)
         branch: str = self.branch or kebab_branch_name(ticket_id, self.summary)
@@ -2905,7 +2944,7 @@ class AddSubtodoCommand(TodoSubCommand):
         child_spec["Scope"] = scope
         if "create_dt" not in child_spec:
             child_spec["create_dt"] = utc_now()
-        child_spec.setdefault("State", {"init": {}})
+        child_spec.setdefault("State", {"ready": {}})
 
         if branch_exists(root, child_branch):
             raise TodoError(f"branch {child_branch!r} already exists")
@@ -2938,7 +2977,7 @@ class SetCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Patch todo fields / state"
     doc_long: ClassVar[str] = (
         "Set edits a todo's fields without changing branches. By default it targets the current "
-        "branch's todo; pass --id <prefix> to target another todo by Id -- typically a `pre-init` "
+        "branch's todo; pass --id <prefix> to target another todo by Id -- typically a `groom` "
         "todo from `mint` that has no branch yet. It updates Summary.raw, Body.raw, AC, "
         "ActualSummary, and/or the workflow State (--state, which replaces the removed `set-state` "
         "subcommand; State metadata --note/--last-commit/--merged-into/--owner ride along). "
@@ -2950,8 +2989,8 @@ class SetCommand(TodoSubCommand):
         "field's manual/automatic semantics. To replace WorkItems or any other JSON "
         "path from a file or stdin, use set-json-path. The command requires at least one field "
         "change. It commits the current-branch todo by default; with --id it is sqlite-only (no "
-        "commit), since a pre-init/other todo has no branch of its own to commit on. For a "
-        "`pre-init` todo, changing --summary also refreshes the Branch label so `init` later "
+        "commit), since a groom/other todo has no branch of its own to commit on. For a "
+        "`groom` todo, changing --summary also refreshes the Branch label so `init` later "
         "creates a well-named branch. Any free-text value passed as EDIT is captured from "
         "$VISUAL/$EDITOR/vi (interactive terminals only)."
     )
@@ -2963,7 +3002,7 @@ class SetCommand(TodoSubCommand):
         parser.add_argument(
             "--id",
             help="target a todo by Id prefix instead of the current branch "
-            "(e.g. a pre-init todo from `mint`)",
+            "(e.g. a groom todo from `mint`)",
         )
         parser.add_argument("--summary")
         parser.add_argument("--body")
@@ -3000,7 +3039,7 @@ class SetCommand(TodoSubCommand):
         """Patch Summary/Body/AC/ActualSummary/Parent and/or State on a todo.
 
         Targets the current branch's todo, or the --id todo when given. A --id
-        (pre-init/branchless) todo is written sqlite-only: committing would land
+        (groom/branchless) todo is written sqlite-only: committing would land
         an empty commit on whatever branch the caller happens to be on.
         """
         root = self.root()
@@ -3032,9 +3071,9 @@ class SetCommand(TodoSubCommand):
             apply_tag_add(todo, *self.tag)
         if self.untag:
             apply_tag_remove(todo, *self.untag)
-        # While still collecting data (pre-init), keep the Branch label in sync
+        # While still collecting data (groom), keep the Branch label in sync
         # with the summary so `init` creates a well-named branch later.
-        if self.summary is not None and current_state_name(todo) == "pre-init":
+        if self.summary is not None and current_state_name(todo) == "groom":
             new_branch = kebab_branch_name(str(todo["Id"]), self.summary)
             todo["Branch"] = new_branch
             if isinstance(todo.get("Scope"), dict):
@@ -3772,7 +3811,7 @@ def _entry_as_ticket(entry: JsonDict) -> JsonDict:
     return {
         "Id": entry.get("Id", ""),
         "Summary": {"raw": entry.get("Summary", "")},
-        "State": {str(entry.get("State", "init")): {}},
+        "State": {str(entry.get("State", "ready")): {}},
         "Subtodos": [],
     }
 
@@ -4134,7 +4173,7 @@ def _add_column_args(parser: argparse.ArgumentParser) -> None:
     """
     parser.add_argument(
         "-s", dest="columns", const="state", nargs=0, action=_ColumnAction,
-        help="show State column",
+        help="show State column (and, without --states, reveal all states incl. done/merged)",
     )
     parser.add_argument(
         "-t", "-tc", dest="columns", const="ctime", nargs=0, action=_ColumnAction,
@@ -4247,7 +4286,10 @@ class SearchCommand(TodoSubCommand):
         "plus lexical overlap. Multiple terms are searched google-style: each term "
         "is embedded and matched independently and the per-term scores add. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
-        "unquoted words (bh 791) match individually. --embedder takes a comma list "
+        "unquoted words (bh 791) match individually. Results hide FINAL (done, "
+        "merged) by default; pass -s to show all states or --states=<expr> (UPPERCASE "
+        "macros ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state "
+        "names) to filter. --embedder takes a comma list "
         "(default: all non-hidden embedders; see the 'embedders' command). A "
         "requested embedder that is unavailable errors -- pick one explicitly. "
         "Missing vectors are backfilled and stored before ranking unless "
@@ -4282,11 +4324,13 @@ class SearchCommand(TodoSubCommand):
             help="rank against existing vectors only; do not backfill/store any",
         )
         parser.add_argument(
-            "--state",
+            "--states",
+            metavar="EXPR",
             help=(
-                "restrict to states: a comma/+/- expression over state names or "
-                "the aliases all, todo (all-N/a-info), stall (waiting+userneeded), "
-                "run (init+working); e.g. run+stall or all-info"
+                "restrict to states: a comma/+/- expression over lowercase state "
+                "names and UPPERCASE macros (ALL, FINAL, PAUSING, WORKING, "
+                "UNSTARTED, INFO), left-to-right; e.g. WORKING+PAUSING or ALL,-done. "
+                "Default hides FINAL (done, merged); pass -s to show all states"
             ),
         )
         parser.add_argument(
@@ -4302,7 +4346,8 @@ class SearchCommand(TodoSubCommand):
         names: Optional[List[str]] = None
         if self.embedder:
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
-        states = parse_state_filter(self.state) if self.state else None
+        columns = self.columns or []
+        states = resolve_state_filter(self.states, "state" in columns)
         tags = (
             frozenset(part.strip().lower() for part in self.tag.split(",") if part.strip())
             if self.tag
@@ -4317,7 +4362,6 @@ class SearchCommand(TodoSubCommand):
             states=states,
             tags=tags,
         )
-        columns = self.columns or []
         for line in _format_rows(rows, columns):
             print(line)
         return 0
@@ -4381,26 +4425,49 @@ class LsCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
         "Ls prints one line per todo known to the resolved todo directory, as '<id[0:8]>  "
-        "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. -s adds a "
-        "State column, -t/-tc a create-time column, -tu an update-time column, -g a Tags column; "
-        "selected columns print leftmost in the order the flags are given, summary always last, "
-        "and each column is right-padded to its longest value under 30 chars. With any column flag "
-        "the rows sort ascending by the leftmost selected column (oldest first for times); "
-        "otherwise insertion order. ls and search take the same output selectors (ls is the "
-        "null-query case of search)."
+        "<summary>'. Where-to-find-it only; use 'read <id>' for full todo content. By default it "
+        "hides terminated states (done, merged) via the config.json default filter (ALL,-FINAL); "
+        "pass -s to show all states, or --states=<expr> to filter explicitly (UPPERCASE macros "
+        "ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state names, e.g. "
+        "WORKING+PAUSING or ALL,-done). -s adds a State column, -t/-tc a create-time column, -tu "
+        "an update-time column, -g a Tags column; selected columns print leftmost in the order "
+        "the flags are given, summary always last, and each column is right-padded to its longest "
+        "value under 30 chars. With any column flag the rows sort ascending by the leftmost "
+        "selected column (oldest first for times); otherwise insertion order. ls and search take "
+        "the same output selectors (ls is the null-query case of search)."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ls arguments."""
+        parser.add_argument(
+            "--states",
+            metavar="EXPR",
+            help=(
+                "restrict to states: a comma/+/- expression over lowercase state "
+                "names and UPPERCASE macros (ALL, FINAL, PAUSING, WORKING, "
+                "UNSTARTED, INFO); default hides FINAL (done, merged); -s shows all"
+            ),
+        )
         _add_column_args(parser)
 
     def do(self) -> int:
-        """Print '<cols>  <id>  <summary>' for every known todo."""
+        """Print '<cols>  <id>  <summary>' for todos matching the state filter.
+
+        Hides terminated (FINAL) states by default; -s reveals all, --states
+        filters explicitly (see resolve_state_filter).
+        """
         if not use_sqlite():
             raise TodoError("ls requires the db store (unset TODO_USE_JSON)")
         columns = self.columns or []
-        rows = [todo_row(todo) for todo in todo_store.get_store().list_all()]
+        # get_store() resolves the todo dir, which default_state_filter reads.
+        todos = [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
+        allowed = resolve_state_filter(self.states, "state" in columns)
+        rows = [
+            todo_row(todo)
+            for todo in todos
+            if (current_state_name(todo) or "") in allowed
+        ]
         if columns:
             rows.sort(key=lambda row: str(row.get(columns[0], "")))
         for line in _format_rows(rows, columns):

@@ -531,6 +531,12 @@ def _float_config(config: JsonDict, key: str, default: float) -> float:
         return default
 
 
+def config_value(base: Path, key: str, default: str) -> str:
+    """Read a non-empty string config *key* from ``<base>/config.json``, else *default*."""
+    value = _load_config(base).get(key)
+    return value if isinstance(value, str) and value.strip() else default
+
+
 def _expand_todo_base(path: str, base: Path) -> str:
     """Expand ``$TODOBASEDIR`` (the resolved todo dir), ``~`` and other env vars."""
     base_s = str(base)

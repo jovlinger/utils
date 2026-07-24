@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 7
+SCHEMA_VERSION: int = 8
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -76,6 +76,34 @@ def migrate_record_v7(todo: JsonDict) -> JsonDict:
     return todo
 
 
+# State-key renames introduced in schema v8: nouns over gerunds. Case-sensitive;
+# the uppercase Subtodos back-link marker "INFO" (a relationship link inserted by
+# `set --parent`, not a todo State) is deliberately absent so it is never touched.
+_STATE_RENAMES_V8: Dict[str, str] = {
+    "pre": "groom",
+    "pre-init": "groom",
+    "init": "ready",
+    "info": "fact",
+}
+
+
+def migrate_record_v8(todo: JsonDict) -> JsonDict:
+    """Rename state keys to nouns: pre/pre-init -> groom, init -> ready, info -> fact.
+
+    Rewrites only the todo's own single-key ``State`` object. The Subtodos
+    back-link marker ``State == "INFO"`` (the follow-only link `set --parent`
+    inserts, excluded from merge-completeness) is a relationship marker, not the
+    ``info`` state, and is case-distinct from it -- left untouched.
+    """
+    state = todo.get("State")
+    if isinstance(state, dict) and len(state) == 1:
+        ((key, value),) = state.items()
+        renamed = _STATE_RENAMES_V8.get(key)
+        if renamed is not None:
+            todo["State"] = {renamed: value}
+    return todo
+
+
 # Record transform keyed by the SCHEMA_VERSION it produces. A version whose
 # change was table-only (see `migrate()`) registers no entry here -- a no-op
 # on the record axis. Keep this in ascending-version order for readability;
@@ -83,6 +111,7 @@ def migrate_record_v7(todo: JsonDict) -> JsonDict:
 RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
     6: migrate_record_v6,
     7: migrate_record_v7,
+    8: migrate_record_v8,
 }
 
 

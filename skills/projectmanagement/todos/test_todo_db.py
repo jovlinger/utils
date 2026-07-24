@@ -551,6 +551,29 @@ class MigrateRecordTest(unittest.TestCase):
         self.assertEqual(result["_schema"], todo_db.SCHEMA_VERSION)
 
 
+class MigrateRecordV8Test(unittest.TestCase):
+    """Schema v8 state renames (nouns), preserving the INFO back-link marker."""
+
+    def test_state_keys_renamed_to_nouns(self) -> None:
+        for old, new in (("pre", "groom"), ("pre-init", "groom"),
+                         ("init", "ready"), ("info", "fact")):
+            out = todo_db.migrate_record_v8({"State": {old: {"note": "x"}}})
+            self.assertEqual(out["State"], {new: {"note": "x"}})
+
+    def test_current_state_untouched(self) -> None:
+        out = todo_db.migrate_record_v8({"State": {"working": {"owner": "a"}}})
+        self.assertEqual(out["State"], {"working": {"owner": "a"}})
+
+    def test_info_backlink_marker_is_not_a_state_and_survives(self) -> None:
+        # Subtodos rows carry State as a plain string; the uppercase "INFO"
+        # relationship marker (set --parent) must survive the info->fact rename.
+        out = todo_db.migrate_record_v8(
+            {"State": {"info": {}}, "Subtodos": [{"Id": "x", "State": "INFO"}]}
+        )
+        self.assertEqual(out["State"], {"fact": {}})
+        self.assertEqual(out["Subtodos"][0]["State"], "INFO")
+
+
 class DataVersionMarkerTest(unittest.TestCase):
     """get_data_version()/set_data_version() round-trip on both backends.
 

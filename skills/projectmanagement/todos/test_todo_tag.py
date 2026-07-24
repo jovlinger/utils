@@ -39,7 +39,9 @@ def _raws(todo_dict) -> list:
 
 class PluralTagEndTest(unittest.TestCase):
     def test_schema_bumped_to_7(self) -> None:
-        self.assertEqual(todo_db.SCHEMA_VERSION, 7)
+        # The plural-Tag migration is registered at v7; SCHEMA_VERSION may be
+        # higher (later migrations, e.g. the v8 state renames, build on top).
+        self.assertGreaterEqual(todo_db.SCHEMA_VERSION, 7)
         self.assertIn(7, todo_db.RECORD_MIGRATIONS)
 
     def test_migration_flat_tags_to_plural(self) -> None:

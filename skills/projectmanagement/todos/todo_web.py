@@ -147,7 +147,7 @@ def load_child_ticket(root: Path, entry: JsonDict) -> JsonDict:
         "Id": entry_id,
         "Branch": branch,
         "Summary": {"raw": entry.get("Summary", "")},
-        "State": {str(entry.get("State", "init")): {}},
+        "State": {str(entry.get("State", "ready")): {}},
         "WorkItems": [],
         "Subtodos": [],
     }
