@@ -3249,8 +3249,10 @@ class DoctorCommand(TodoSubCommand):
         "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
         "Subtodos (best-effort, same-repo, sqlite only). Repair runs by default; pass --dry-run to "
         "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
-        "lock left by a crashed writer (reported as 'unlocked'). Pass --all to sweep the whole corpus "
-        "instead of a single selector. Exit 1 when any hard finding is present."
+        "lock left by a crashed writer (reported as 'unlocked'). It also brings the store's records "
+        "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
+        "already current), reported as 'migrated'. Pass --all to sweep the whole corpus instead of a "
+        "single selector. Exit 1 when any hard finding is present."
     )
 
     @classmethod
@@ -3283,6 +3285,15 @@ class DoctorCommand(TodoSubCommand):
         unlocked = 0
         if not self.dry_run and use_sqlite():
             unlocked = todo_store.get_store().force_unlock_all()
+        # Opportunistic schema sweep: bringing the store's records up to the
+        # latest schema is maintenance, so doctor owns it -- not a bespoke command
+        # a human must remember. Cheap when current (one data_version read) and
+        # only sweeps when behind; --dry-run audits without mutating.
+        migrated = 0
+        if not self.dry_run:
+            store = todo_store.get_store()
+            if store.get_data_version() < todo_db.SCHEMA_VERSION:
+                migrated = migrate_store(store)["migrated"]
         if self.sweep_all:
             if not use_sqlite():
                 raise TodoError("--all requires the db store (unset TODO_USE_JSON)")
@@ -3295,6 +3306,7 @@ class DoctorCommand(TodoSubCommand):
                         "ok": ok,
                         "dry_run": self.dry_run,
                         "unlocked": unlocked,
+                        "migrated": migrated,
                         "audited": len(results),
                         "results": results,
                     },
@@ -3309,6 +3321,7 @@ class DoctorCommand(TodoSubCommand):
                     "ok": result["ok"],
                     "dry_run": self.dry_run,
                     "unlocked": unlocked,
+                    "migrated": migrated,
                     "findings": result["findings"],
                     "warnings": result["warnings"],
                     "repairs": result["repairs"],
@@ -4358,10 +4371,10 @@ def _warn_if_store_behind() -> None:
     """Print a one-line stderr warning when the store's records lag SCHEMA_VERSION.
 
     Cheap (one get_data_version() call), non-fatal (never raises, never blocks,
-    never auto-migrates -- run `migrate-to-latest` for that). Restricted to
-    interactive terminals: automation (agents, scripts, tests) drives todo.py
-    non-interactively and expects quiet, deterministic stderr, so this nudge is
-    for a human at a real terminal only.
+    never auto-migrates -- `doctor` sweeps opportunistically, so point there).
+    Restricted to interactive terminals: automation (agents, scripts, tests)
+    drives todo.py non-interactively and expects quiet, deterministic stderr, so
+    this nudge is for a human at a real terminal only.
     """
     if not sys.stderr.isatty():
         return
@@ -4372,7 +4385,7 @@ def _warn_if_store_behind() -> None:
     if current < todo_db.SCHEMA_VERSION:
         print(
             f"todo.py: warning: store data_version {current} is behind schema "
-            f"{todo_db.SCHEMA_VERSION}; run 'todo.py migrate-to-latest' to sweep records",
+            f"{todo_db.SCHEMA_VERSION}; run 'todo.py doctor' to sweep records",
             file=sys.stderr,
         )
 

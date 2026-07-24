@@ -245,10 +245,14 @@ ones, and advances the store's `data_version` marker (a sqlite `data_version`
 table, or a `.data_version` sidecar for the file-dir backend) to
 `SCHEMA_VERSION`. It is idempotent (`--dry-run` reports counts without writing).
 `data_version` is DISTINCT from the table `schema_version`: it records how far
-the RECORDS have been swept, so a cheap startup check can warn (interactive
-terminals only) when the store is behind. To add a schema change: bump
+the RECORDS have been swept. `doctor` owns the sweep: it runs `migrate-to-latest`
+opportunistically (a cheap no-op when already current, reported as `migrated`),
+so the sweep rides normal maintenance rather than a command a human must
+remember. The `migrate-to-latest` subcommand remains for an explicit or
+`--dry-run` sweep. A cheap startup check warns (interactive terminals only)
+`run 'todo.py doctor'` when the store is behind. To add a schema change: bump
 `SCHEMA_VERSION`, add any table DDL to `migrate`, add any record transform to
-`RECORD_MIGRATIONS` at the new version, then run `migrate-to-latest`.
+`RECORD_MIGRATIONS` at the new version -- `doctor` sweeps it in.
 
 ## CLI (`todo.py`)
 
