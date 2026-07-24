@@ -1838,32 +1838,53 @@ class BaseDirRepoDirTests(TodoCase):
         self.assertIn("no todo found", proc.stderr)
 
 
+def _tag_raws(todo_dict: Dict[str, Any]) -> list:
+    """``[e['raw'] for e in todo_dict.get('Tag', [])]`` -- plural-Tag test helper."""
+    return [e["raw"] for e in todo_dict.get("Tag", [])]
+
+
 class TagTests(TodoCase):
-    def test_set_tag_adds_deduped_and_sorted(self) -> None:
+    """set --tag/--untag and search --tag against the plural Tag field.
+
+    Adjusted for ee1799aa (WI6): `set --tag`/`--untag` now alias
+    `apply_tag_add`/`apply_tag_remove` and write the plural `Tag` field
+    (MANUAL elements) instead of the legacy flat `Tags` list of strings, and
+    `search --tag` filters on any Tag element's `raw` instead of `Tags`. These
+    cases were rewritten from their original legacy-`Tags` assertions to match
+    the new shape, keeping the same intent: set a tag, it persists, search
+    finds it.
+    """
+
+    def test_set_tag_adds_deduped(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid)
         proc = self.todo("set", "--tag", "ui", "--tag", "billing", "--tag", "ui")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Tags"], ["billing", "ui"])
+        self.assertEqual(sorted(_tag_raws(self.read_self())), ["billing", "ui"])
 
     def test_set_tag_alone_is_a_valid_edit(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid)
         proc = self.todo("set", "--tag", "solo")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Tags"], ["solo"])
+        self.assertEqual(_tag_raws(self.read_self()), ["solo"])
 
     def test_set_untag_removes_and_drops_empty_field(self) -> None:
         tid = self.mint()
-        self.write_ticket(f"{tid[:8]}-tags", tid, extra={"Tags": ["ui"]})
+        self.write_ticket(
+            f"{tid[:8]}-tags", tid, extra={"Tag": [{"raw": "ui", "manual": True}]}
+        )
         proc = self.todo("set", "--untag", "ui")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("Tags", self.read_self())  # emptied -> field dropped
+        self.assertNotIn("Tag", self.read_self())  # emptied -> field dropped
 
     def test_search_tag_filters_to_tagged(self) -> None:
         tagged = self.mint()
         self.write_ticket(
-            f"{tagged[:8]}-a", tagged, summary="alpha beta gamma", extra={"Tags": ["ui"]}
+            f"{tagged[:8]}-a",
+            tagged,
+            summary="alpha beta gamma",
+            extra={"Tag": [{"raw": "ui", "manual": True}]},
         )
         untagged = self.mint()
         self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
@@ -1875,30 +1896,26 @@ class TagTests(TodoCase):
         self.assertNotIn(untagged[:8], proc.stdout)
 
     def test_persisted_tags_end_to_end(self) -> None:
-        """set --tag/--untag persist across re-read; search --tag filters; doctor accepts Tags."""
+        """set --tag/--untag persist across re-read; search --tag filters; doctor accepts Tag."""
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid, summary="taggable ticket")
 
-        # --tag is repeatable; Tags is stored sorted + deduped.
+        # --tag is repeatable; Tag elements are deduped (insertion order, not sorted).
         proc = self.todo("set", "--tag", "ui", "--tag", "billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Tags"], ["billing", "ui"])
+        self.assertEqual(sorted(_tag_raws(self.read_self())), ["billing", "ui"])
 
         # A second set merges (a dup is idempotent, a new tag is added).
         proc = self.todo("set", "--tag", "ui", "--tag", "api")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Tags"], ["api", "billing", "ui"])
+        self.assertEqual(sorted(_tag_raws(self.read_self())), ["api", "billing", "ui"])
 
-        # --untag removes.
+        # --untag removes (manual only, but these are all manual).
         proc = self.todo("set", "--untag", "billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Tags"], ["api", "ui"])
+        self.assertEqual(sorted(_tag_raws(self.read_self())), ["api", "ui"])
 
-        # search --tag keeps only todos whose Tags intersect the filter. Do
-        # this before `doctor` below: doctor's opportunistic schema sweep
-        # migrates the legacy Tags list into the plural Tag field (see
-        # todo_db.migrate_record_v7), and this legacy --tag filter only looks
-        # at Tags.
+        # search --tag keeps only todos with a matching Tag element.
         other = self.mint()
         self.write_ticket(f"{other[:8]}-untagged", other, summary="taggable ticket")
         proc = self.todo(
@@ -1908,8 +1925,7 @@ class TagTests(TodoCase):
         self.assertIn(tid[:8], proc.stdout)
         self.assertNotIn(other[:8], proc.stdout)
 
-        # doctor accepts a valid Tags list (still present until something
-        # sweeps this record to the latest schema).
+        # doctor accepts a well-formed plural Tag field.
         proc = self.todo("doctor", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])

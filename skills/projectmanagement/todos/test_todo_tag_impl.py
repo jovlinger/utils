@@ -2,8 +2,11 @@
 """Implementor tests for the plural, provenance-tracked Tag field (ee1799aa).
 
 Covers what test_todo_tag.py (the frozen oracle) leaves to the implementor:
-per-element embedding on write, clear-on-write when a tag's raw changes, and
-search ranking picking up a Tag match. Also carries extra unit coverage for
+per-element embedding on write, clear-on-write when a tag's raw changes,
+search ranking picking up a Tag match, the ported zero-shot tag mining/scoring
+(_split_phrases/_nphrase_windows/_mine_tag_candidates/compute_auto_tags),
+cross-field invalidation of AUTOMATIC tags on a Summary/Body edit, and
+doctor's automatic-tag recompute. Also carries extra unit coverage for
 apply_tag_add/apply_tag_remove/tag_findings/migrate_record_v7 beyond the
 oracle's pinned cases (whitespace handling, merge-on-migrate, etc).
 
@@ -22,6 +25,7 @@ from typing import Any, Dict
 
 import todo
 import todo_db
+import todo_embed
 
 from test_todo import TODO_PY, TodoCase
 
@@ -313,6 +317,225 @@ class TagCliRoundTripTests(TodoCase):
         proc = self.todo("doctor", "self")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])
+
+
+class ComputeAutoTagsTests(unittest.TestCase):
+    """Unit coverage for todo.compute_auto_tags beyond the oracle's pinned case."""
+
+    def setUp(self) -> None:
+        self.embedder = todo_embed.get_embedder("hash")
+
+    def test_top_k_are_automatic_elements_whose_raw_is_a_candidate(self) -> None:
+        candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
+        elems = todo.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 2)
+        self.assertEqual(len(elems), 2)
+        self.assertTrue(all(e["manual"] is False for e in elems))
+        self.assertTrue(all(e["raw"] in candidates for e in elems))
+
+    def test_best_match_ranks_first(self) -> None:
+        candidates = ["alpha beta gamma", "totally unrelated words"]
+        elems = todo.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 1)
+        self.assertEqual(elems, [{"raw": "alpha beta gamma", "manual": False}])
+
+    def test_k_larger_than_candidate_pool_returns_all_of_them(self) -> None:
+        elems = todo.compute_auto_tags("one two", ["one", "two"], self.embedder, 5)
+        self.assertEqual(len(elems), 2)
+
+    def test_empty_candidates_returns_empty(self) -> None:
+        self.assertEqual(todo.compute_auto_tags("text", [], self.embedder, 3), [])
+
+    def test_tie_break_is_deterministic_by_candidate_text(self) -> None:
+        # "zulu alpha" and "alpha zulu" are the same bag of words, so the
+        # HashEmbedder scores them identically against "alpha zulu" -- a tie
+        # that must break on candidate text (ascending), not input order.
+        candidates = ["zulu alpha", "alpha zulu"]
+        elems = todo.compute_auto_tags("alpha zulu", candidates, self.embedder, 1)
+        self.assertEqual(elems[0]["raw"], "alpha zulu")
+
+
+class PhraseMiningTests(unittest.TestCase):
+    """Ported _split_phrases/_nphrase_windows/_mine_tag_candidates on small inputs."""
+
+    def test_split_phrases_splits_on_sentence_terminators_and_newlines(self) -> None:
+        text = "First sentence. Second one!\nThird line\n\nFourth."
+        self.assertEqual(
+            todo._split_phrases(text),
+            ["First sentence", "Second one", "Third line", "Fourth"],
+        )
+
+    def test_split_phrases_keeps_a_decimal_intact(self) -> None:
+        self.assertEqual(todo._split_phrases("version 3.5 released"), ["version 3.5 released"])
+
+    def test_nphrase_windows_covers_1_through_max_n_contiguous_windows(self) -> None:
+        self.assertEqual(
+            todo._nphrase_windows("one. two. three."),
+            ["one", "two", "three", "one two", "two three", "one two three"],
+        )
+
+    def test_nphrase_windows_respects_a_smaller_max_n(self) -> None:
+        self.assertEqual(
+            todo._nphrase_windows("a. b. c.", max_n=2),
+            ["a", "b", "c", "a b", "b c"],
+        )
+
+    def test_mine_tag_candidates_downcases_dedupes_first_seen_order(self) -> None:
+        raws = {
+            "t1": {"Summary.raw": "Alpha Beta. Gamma."},
+            "t2": {"Summary.raw": "gamma. Alpha beta."},
+        }
+        candidates = todo._mine_tag_candidates(raws)
+        self.assertEqual(candidates[0], "alpha beta")  # first-seen, downcased
+        self.assertIn("alpha beta gamma", candidates)
+        # t2 contributes no duplicate of the already-seen downcased phrases
+        self.assertEqual(candidates.count("gamma"), 1)
+        self.assertEqual(candidates.count("alpha beta"), 1)
+
+
+class CrossFieldTagInvalidationTests(TodoCase):
+    """Editing Summary/Body drops AUTOMATIC Tag elements; MANUAL ones survive."""
+
+    def test_editing_summary_drops_automatic_tags_keeps_manual(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="original summary",
+            extra={
+                "Tag": [
+                    {"raw": "manual one", "manual": True},
+                    {"raw": "auto one", "manual": False},
+                ]
+            },
+        )
+        proc = self.todo("set", "--summary", "a whole new summary")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket = self.read_self()
+        self.assertEqual(_raws(ticket), ["manual one"])
+        self.assertTrue(ticket["Tag"][0]["manual"])
+
+    def test_editing_body_drops_the_only_automatic_tag(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="s",
+            body="original body",
+            extra={"Tag": [{"raw": "auto one", "manual": False}]},
+        )
+        proc = self.todo("set", "--body", "a whole new body")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Tag", self.read_self())  # only element was automatic -> field dropped
+
+    def test_unrelated_field_edit_leaves_automatic_tags(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="s",
+            extra={"Tag": [{"raw": "auto one", "manual": False}]},
+        )
+        proc = self.todo("set", "--ac", "some acceptance criteria")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("auto one", _raws(self.read_self()))
+
+    def test_no_clear_preserves_automatic_tags_despite_summary_edit(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="original summary",
+            extra={"Tag": [{"raw": "auto one", "manual": False}]},
+        )
+        proc = self.todo("set", "--summary", "trivial rewording", "--no-clear")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("auto one", _raws(self.read_self()))
+
+
+class DoctorAutoTagRecomputeTests(TodoCase):
+    """doctor recomputes AUTOMATIC Tag elements when absent; trusts existing; keeps manual."""
+
+    def test_doctor_computes_automatic_tags_when_absent(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="alpha widgets. beta gadgets. gamma sprockets.",
+            extra={"Tag": [{"raw": "manual keep", "manual": True}]},
+        )
+        proc = self.todo("doctor", tid[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertGreater(payload["auto_tags"], 0)
+        ticket = self.read_self()
+        self.assertIn("manual keep", _raws(ticket))
+        auto = [e for e in ticket["Tag"] if e["manual"] is False]
+        self.assertTrue(auto)
+        self.assertEqual(payload["auto_tags"], len(auto))
+
+    def test_doctor_trusts_existing_automatic_tags(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="alpha widgets. beta gadgets. gamma sprockets.",
+            extra={"Tag": [{"raw": "already there", "manual": False}]},
+        )
+        proc = self.todo("doctor", tid[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["auto_tags"], 0)  # trusted as-is, not recomputed
+        self.assertEqual(_raws(self.read_self()), ["already there"])
+
+    def test_doctor_dry_run_does_not_persist_auto_tags(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a", tid, summary="alpha widgets. beta gadgets. gamma sprockets."
+        )
+        proc = self.todo("doctor", tid[:8], "--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Tag", self.read_self())
+
+
+class SetTagPluralShapeTests(TodoCase):
+    """set --tag/--untag write the plural Tag field; search --tag matches any element."""
+
+    def test_set_tag_writes_a_manual_plural_tag_element(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
+        proc = self.todo("set", "--tag", "Billing")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket = self.read_self()
+        self.assertEqual(_raws(ticket), ["billing"])  # downcased, like tagadd
+        self.assertTrue(ticket["Tag"][0]["manual"])
+
+    def test_set_untag_leaves_an_automatic_tag_of_the_same_name(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-a",
+            tid,
+            summary="x",
+            extra={"Tag": [{"raw": "shared", "manual": False}]},
+        )
+        proc = self.todo("set", "--untag", "shared")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("shared", _raws(self.read_self()))  # automatic: not set's to remove
+
+    def test_search_tag_matches_an_automatic_element_case_insensitively(self) -> None:
+        tagged = self.mint()
+        self.write_ticket(
+            f"{tagged[:8]}-a",
+            tagged,
+            summary="alpha beta gamma",
+            extra={"Tag": [{"raw": "ui", "manual": False}]},
+        )
+        untagged = self.mint()
+        self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
+        proc = self.todo(
+            "search", "alpha beta gamma", "--embedder", "hash", "--tag", "UI"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tagged[:8], proc.stdout)
+        self.assertNotIn(untagged[:8], proc.stdout)
 
 
 if __name__ == "__main__":
