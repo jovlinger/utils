@@ -63,7 +63,12 @@ _EMBED_FIELD_PATHS: Tuple[Tuple[str, str], ...] = (
 
 
 def _inline_embeddings(todo: JsonDict) -> List[Tuple[str, str, List[List[float]]]]:
-    """Collect ``(field_path, embedder, chunks)`` stamped into a ticket's JSON."""
+    """Collect ``(field_path, embedder, chunks)`` stamped into a ticket's JSON.
+
+    Covers the fixed Summary/Body dicts and, positionally, every ``Tag``
+    element (field_path ``Tag.<index>.raw``): the plural Tag field carries the
+    same per-embedder vector keys as Summary/Body, just once per list element.
+    """
     out: List[Tuple[str, str, List[List[float]]]] = []
     for field_name, field_path in _EMBED_FIELD_PATHS:
         obj = todo.get(field_name)
@@ -74,6 +79,17 @@ def _inline_embeddings(todo: JsonDict) -> List[Tuple[str, str, List[List[float]]
                 continue
             if isinstance(val[0], list):
                 out.append((field_path, str(key), val))  # type: ignore[arg-type]
+    tag = todo.get("Tag")
+    if isinstance(tag, list):
+        for index, element in enumerate(tag):
+            if not isinstance(element, dict):
+                continue
+            field_path = f"Tag.{index}.raw"
+            for key, val in element.items():
+                if key in ("raw", "manual") or not isinstance(val, list) or not val:
+                    continue
+                if isinstance(val[0], list):
+                    out.append((field_path, str(key), val))  # type: ignore[arg-type]
     return out
 
 

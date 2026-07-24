@@ -413,20 +413,91 @@ def _raw_of(todo: Optional[JsonDict], field_name: str) -> Optional[str]:
     return None
 
 
-def _changed_raw_fields(
-    old: Optional[JsonDict], new: JsonDict
-) -> List[tuple[str, str]]:
-    """Return the (field_name, field_path) pairs whose raw text differs."""
-    changed: List[tuple[str, str]] = []
+def _tag_field_path(index: int) -> str:
+    """Stored field_path for the Tag element at *index* (positional, like WorkItems.<i>)."""
+    return f"Tag.{index}.raw"
+
+
+def _embed_targets(todo: JsonDict) -> List[tuple[str, JsonDict, str]]:
+    """Return ``(field_path, container, raw)`` for every embeddable location.
+
+    Covers the fixed Summary/Body dicts and, positionally, every ``Tag``
+    element with a non-empty raw string. ``container`` is the dict the raw text
+    lives in -- embedder vectors are stamped onto it as extra keys alongside
+    ``raw`` (and, for a Tag element, ``manual``). This is the single place the
+    embedding machinery (cheap-embed-on-write, clear-on-write, search ranking)
+    learns that Tag is plural: every other helper below iterates this list
+    instead of assuming one dict per field.
+    """
+    targets: List[tuple[str, JsonDict, str]] = []
     for field_name, field_path in _EMBED_FIELDS:
-        if _raw_of(new, field_name) != _raw_of(old, field_name):
-            changed.append((field_name, field_path))
-    return changed
+        obj = todo.get(field_name)
+        if isinstance(obj, dict):
+            raw = obj.get("raw")
+            if isinstance(raw, str) and raw.strip():
+                targets.append((field_path, obj, raw))
+    tag = todo.get("Tag")
+    if isinstance(tag, list):
+        for index, element in enumerate(tag):
+            if isinstance(element, dict):
+                raw = element.get("raw")
+                if isinstance(raw, str) and raw.strip():
+                    targets.append((_tag_field_path(index), element, raw))
+    return targets
 
 
-def _strip_field_vectors(todo: JsonDict, field_name: str) -> None:
-    """Drop stamped embedding vectors from a Summary/Body field in place."""
-    obj = todo.get(field_name)
+def _raw_map(todo: Optional[JsonDict]) -> Dict[str, str]:
+    """``field_path -> raw`` for every embeddable location in *todo* (see ``_embed_targets``)."""
+    if not isinstance(todo, dict):
+        return {}
+    return {field_path: raw for field_path, _container, raw in _embed_targets(todo)}
+
+
+def _container_at(todo: JsonDict, field_path: str) -> Optional[JsonDict]:
+    """Return the dict backing *field_path* in *todo* right now, or None.
+
+    Unlike ``_embed_targets``, this does not require a non-empty raw -- it
+    resolves the location itself (``Summary``/``Body``, or the ``Tag`` element
+    at the path's index), so a caller can strip stale vectors even after the
+    raw text has been blanked out, or find nothing when a Tag element has since
+    been removed (a silent no-op, since there is nothing left to strip/stamp).
+    """
+    field_name = _FIELD_NAME_BY_PATH.get(field_path)
+    if field_name is not None:
+        obj = todo.get(field_name)
+        return obj if isinstance(obj, dict) else None
+    if field_path.startswith("Tag.") and field_path.endswith(".raw"):
+        try:
+            index = int(field_path[len("Tag.") : -len(".raw")])
+        except ValueError:
+            return None
+        tag = todo.get("Tag")
+        if isinstance(tag, list) and 0 <= index < len(tag) and isinstance(tag[index], dict):
+            return tag[index]
+    return None
+
+
+def _changed_raw_fields(old: Optional[JsonDict], new: JsonDict) -> List[str]:
+    """Return the field_paths (Summary/Body/Tag.<i>) whose raw text differs.
+
+    Tag elements are compared positionally: inserting/removing a tag shifts the
+    field_path of every later element, so a removal ahead of an unrelated tag
+    can flag it "changed" too (a harmless cheap re-embed; expensive vectors
+    re-backfill at the next search) -- see module notes on the plural Tag
+    embedding machinery.
+    """
+    old_map = _raw_map(old)
+    new_map = _raw_map(new)
+    return [
+        path
+        for path in sorted(set(old_map) | set(new_map))
+        if old_map.get(path) != new_map.get(path)
+    ]
+
+
+def _strip_vectors_at(todo: JsonDict, field_path: str) -> None:
+    """Drop stamped embedding vectors from the dict at *field_path*, in place."""
+    obj = _container_at(todo, field_path)
     if isinstance(obj, dict):
         for key in [k for k, v in obj.items() if k != "raw" and _is_vector(v)]:
             del obj[key]
@@ -441,6 +512,14 @@ def _json_embeddings_present(todo: JsonDict) -> set:
             for key, value in obj.items():
                 if key != "raw" and _is_vector(value):
                     present.add((field_path, key))
+    tag = todo.get("Tag")
+    if isinstance(tag, list):
+        for index, element in enumerate(tag):
+            if isinstance(element, dict):
+                field_path = _tag_field_path(index)
+                for key, value in element.items():
+                    if key not in ("raw", "manual") and _is_vector(value):
+                        present.add((field_path, key))
     return present
 
 
@@ -448,7 +527,7 @@ _FIELD_NAME_BY_PATH: Dict[str, str] = dict((path, name) for name, path in _EMBED
 
 
 def _merge_stored_embeddings(todo: JsonDict) -> None:
-    """Stamp every embeddings-table vector for this ticket into its Summary/Body dicts.
+    """Stamp every embeddings-table vector for this ticket into its Summary/Body/Tag dicts.
 
     Embedders are normally inline already: cheap vectors are written during a
     regular save and expensive vectors during search's lazy backfill. Merging the
@@ -463,8 +542,7 @@ def _merge_stored_embeddings(todo: JsonDict) -> None:
     if not store.has_vector_index:
         return
     for field_path, embedder, vector in store.embeddings_for_ticket(ticket_id):
-        field_name = _FIELD_NAME_BY_PATH.get(field_path)
-        obj = todo.get(field_name) if field_name else None
+        obj = _container_at(todo, field_path)
         if isinstance(obj, dict):
             obj[embedder] = vector
 
@@ -478,21 +556,22 @@ def _cheap_embedding_rows(
     Stamps ``todo`` in place so ``put_ticket`` serializes the vectors; the caller
     must ``put_embedding`` the returned rows *after* ``put_ticket`` (the FK needs
     the ticket row first). Degrades to fewer/no rows if a cheap embedder fails,
-    so a broken embedder never blocks the save.
+    so a broken embedder never blocks the save. Iterates ``_embed_targets``, so
+    every Tag element gets the same treatment as Summary/Body.
     """
     rows: List[tuple[str, str, List[float]]] = []
     try:
         embedders = todo_embed.cheap_embedders()
     except (ValueError, RuntimeError):
         return rows
+    targets = _embed_targets(todo)
     for embedder in embedders:
         try:
             fingerprint = embedder.fingerprint()
         except (ValueError, RuntimeError):
             continue
-        for field_name, field_path in _EMBED_FIELDS:
-            raw = _raw_of(todo, field_name)
-            if raw is None or (field_path, fingerprint) in existing:
+        for field_path, container, raw in targets:
+            if (field_path, fingerprint) in existing:
                 continue
             try:
                 vec = embedder.embed(raw)
@@ -500,7 +579,7 @@ def _cheap_embedding_rows(
                 continue
             # One vector per chunk; until chunking lands the whole field is one chunk.
             chunks = [vec]
-            todo[field_name][fingerprint] = chunks
+            container[fingerprint] = chunks
             rows.append((field_path, fingerprint, chunks))
     return rows
 
@@ -527,16 +606,16 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
         # are being calculated, and lets us persist the fully embedded TODO once.
         with store.lock(ticket_id):
             old = store.get(repo, branch)
-            changed = [] if no_clear else list(_changed_raw_fields(old, todo))
-            for field_name, _field_path in changed:
-                _strip_field_vectors(todo, field_name)
+            changed = [] if no_clear else _changed_raw_fields(old, todo)
+            for field_path in changed:
+                _strip_vectors_at(todo, field_path)
             # Embeddings live in the todo JSON: calculate every missing cheap
             # vector before the single ticket write. The sqlite embeddings table
             # is only a derived search index, mirrored afterward when available.
             rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
             store.put(repo, branch, todo)
             if store.has_vector_index:
-                for _field_name, field_path in changed:
+                for field_path in changed:
                     store.clear_embeddings(ticket_id, field_path)
                 for field_path, fingerprint, vec in rows:
                     store.put_embedding(ticket_id, field_path, fingerprint, vec)
@@ -735,6 +814,86 @@ def apply_tag_edits(
         todo["Tags"] = sorted(current)
     else:
         todo.pop("Tags", None)
+
+
+def _tag_elements(todo: JsonDict) -> List[JsonDict]:
+    """Return ``todo["Tag"]`` as a list, tolerating an absent or malformed field."""
+    tag = todo.get("Tag")
+    return list(tag) if isinstance(tag, list) else []
+
+
+def apply_tag_add(todo: JsonDict, *tags: str) -> None:
+    """Add MANUAL tags to the plural ``Tag`` list, in place.
+
+    Each tag is stripped and downcased; a tag already present (by that same
+    downcased text, regardless of which element added it) is a no-op, so
+    repeated ``tagadd`` calls stay idempotent. New elements are appended as
+    ``{"raw": <downcased>, "manual": True}``; existing elements (including any
+    automatic ones -- see ``compute_auto_tags``, batch B) are left untouched.
+    """
+    elements = _tag_elements(todo)
+    seen = {e["raw"] for e in elements if isinstance(e, dict) and isinstance(e.get("raw"), str)}
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        raw = tag.strip().lower()
+        if raw and raw not in seen:
+            elements.append({"raw": raw, "manual": True})
+            seen.add(raw)
+    if elements:
+        todo["Tag"] = elements
+
+
+def apply_tag_remove(todo: JsonDict, *tags: str) -> None:
+    """Remove MANUAL tags from the plural ``Tag`` list, in place.
+
+    Matches case-insensitively against each element's downcased ``raw``. Only
+    elements with ``manual: True`` are ever removed -- automatic tags (``manual:
+    False``, set by doctor's auto-tagging) are doctor's to manage, never a
+    human command's. Drops the whole ``Tag`` field once it is empty (optional
+    fields are absent, not ``[]`` -- see doctor).
+    """
+    targets = {tag.strip().lower() for tag in tags if isinstance(tag, str) and tag.strip()}
+    elements = _tag_elements(todo)
+    kept = [
+        e
+        for e in elements
+        if not (
+            isinstance(e, dict)
+            and e.get("manual") is True
+            and isinstance(e.get("raw"), str)
+            and e["raw"] in targets
+        )
+    ]
+    if kept:
+        todo["Tag"] = kept
+    else:
+        todo.pop("Tag", None)
+
+
+def tag_findings(todo: JsonDict) -> List[str]:
+    """Hard findings for the plural ``Tag`` field's shape.
+
+    ``Tag`` is optional; when present it must be a list whose every element is
+    an object with a non-empty string ``raw`` and a bool ``manual``. Wired into
+    ``doctor_findings``.
+    """
+    findings: List[str] = []
+    tag = todo.get("Tag")
+    if tag is None:
+        return findings
+    if not isinstance(tag, list):
+        return ["Tag must be a list"]
+    for index, element in enumerate(tag):
+        if not isinstance(element, dict):
+            findings.append(f"Tag.{index} must be an object")
+            continue
+        raw = element.get("raw")
+        if not isinstance(raw, str) or not raw:
+            findings.append(f"Tag.{index}.raw must be a non-empty string")
+        if not isinstance(element.get("manual"), bool):
+            findings.append(f"Tag.{index}.manual must be a bool")
+    return findings
 
 
 def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1167,11 +1326,7 @@ def search_tickets(
             continue
         tickets[ticket_id] = parsed
         locations[ticket_id] = (repo_path, branch)
-        raws[ticket_id] = {
-            field_path: raw
-            for field_name, field_path in _EMBED_FIELDS
-            if (raw := _raw_of(parsed, field_name)) is not None
-        }
+        raws[ticket_id] = _raw_map(parsed)
 
     prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
     stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
@@ -1205,24 +1360,19 @@ def search_tickets(
                 latest = store.get(repo, branch)
                 if latest is None:
                     continue
-                latest_raws = {
-                    field_path: raw
-                    for field_name, field_path in _EMBED_FIELDS
-                    if (raw := _raw_of(latest, field_name)) is not None
-                }
+                # (field_path, container, raw) for Summary/Body and every Tag
+                # element -- the same target list the write path stamps.
+                latest_targets = _embed_targets(latest)
                 indexed = {
                     (field_path, fingerprint): chunks
                     for field_path, fingerprint, chunks in store.embeddings_for_ticket(tid)
                 }
                 new_rows: List[tuple[str, str, List[List[float]]]] = []
                 for name, embedder, fingerprint, _term_vecs in prepared:
-                    for field_name, field_path in _EMBED_FIELDS:
-                        raw = latest_raws.get(field_path)
-                        if raw is None:
-                            continue
+                    for field_path, container, raw in latest_targets:
                         chunks = indexed.get((field_path, fingerprint))
                         if chunks is not None:
-                            latest[field_name][fingerprint] = chunks
+                            container[fingerprint] = chunks
                             stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
                             continue
                         if not refreshing_embeddings:
@@ -1239,7 +1389,7 @@ def search_tickets(
                             raise TodoError(f"embedder {name!r} failed: {exc}") from exc
                         print(".", end="", file=sys.stderr, flush=True)
                         chunks = [vec]
-                        latest[field_name][fingerprint] = chunks
+                        container[fingerprint] = chunks
                         indexed[(field_path, fingerprint)] = chunks
                         stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
                         new_rows.append((field_path, fingerprint, chunks))
@@ -1250,7 +1400,7 @@ def search_tickets(
                 for field_path, fingerprint, chunks in new_rows:
                     store.put_embedding(tid, field_path, fingerprint, chunks)
                 tickets[tid] = latest
-                raws[tid] = latest_raws
+                raws[tid] = {field_path: raw for field_path, _container, raw in latest_targets}
 
     rankings: List[Dict[str, float]] = []
     for _name, _embedder, fingerprint, term_vecs in prepared:
@@ -1259,7 +1409,10 @@ def search_tickets(
             scores: Dict[str, float] = {}
             for tid in tickets:
                 best = 0.0
-                for field_path in ("Summary.raw", "Body.raw"):
+                # Every embeddable field this ticket actually has (Summary, Body,
+                # and however many Tag elements) -- not a fixed pair, since Tag is
+                # plural and its count varies per ticket.
+                for field_path in raws.get(tid, {}):
                     chunks = stored.get((tid, field_path)) or []
                     for chunk in chunks:
                         best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
@@ -1849,6 +2002,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "State",
         "Subtodos",
         "Summary",
+        "Tag",
         "Tags",
         "WorkItems",
         "create_dt",
@@ -1983,6 +2137,7 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
                 "(all subtodos must merge before the parent finishes)"
             )
     findings.extend(workitem_findings(todo))
+    findings.extend(tag_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     return findings
 
@@ -2780,6 +2935,61 @@ class RmCommand(TodoSubCommand):
         kind = "hard" if self.hard else "soft"
         print(f"{tid[:8]}  ({'removed: ' + kind if removed else 'not in store'})")
         return 0 if removed else 1
+
+
+class TagAddCommand(TodoSubCommand):
+    command_names = ("tagadd",)
+    doc_short: ClassVar[str] = "Add manual tag(s)"
+    doc_long: ClassVar[str] = (
+        "Tagadd adds one or more tags (repeatable) to the current branch's todo's plural Tag "
+        "field as MANUAL elements: each is stripped, downcased, and deduped against any tag "
+        "already present (manual or automatic) -- a no-op for one already there. It writes and "
+        "commits the current-branch todo by default."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register tagadd arguments."""
+        parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to add")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Add one or more manual tags to the current todo."""
+        root = self.root()
+        todo = read_todo_required(root)
+        apply_tag_add(todo, *self.tags)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): tag +{', +'.join(self.tags)}")
+        return 0
+
+
+class TagRmCommand(TodoSubCommand):
+    command_names = ("tagrm",)
+    doc_short: ClassVar[str] = "Remove manual tag(s)"
+    doc_long: ClassVar[str] = (
+        "Tagrm removes one or more tags (repeatable, case-insensitive) from the current branch's "
+        "todo's plural Tag field. Only MANUAL elements are ever removed -- an automatic tag "
+        "(manual: False, set by doctor's auto-tagging) is left alone even if named here, since "
+        "those are doctor's to manage. The whole Tag field is dropped once it is empty. It writes "
+        "and commits the current-branch todo by default."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register tagrm arguments."""
+        parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to remove")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Remove one or more manual tags from the current todo."""
+        root = self.root()
+        todo = read_todo_required(root)
+        apply_tag_remove(todo, *self.tags)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): untag -{', -'.join(self.tags)}")
+        return 0
 
 
 class WorkItemAddCommand(TodoSubCommand):
@@ -4131,6 +4341,8 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     AddSubtodoCommand,
     SetCommand,
     RmCommand,
+    TagAddCommand,
+    TagRmCommand,
     WorkItemAddCommand,
     WorkItemDoneCommand,
     WorkItemReadCommand,
