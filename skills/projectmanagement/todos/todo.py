@@ -250,20 +250,43 @@ def normalize_todo_schema(todo: JsonDict) -> JsonDict:
     ``{Id, Branch}`` refs. Element 0 is the structural (fork) parent used for the
     log diff base and merge; later entries are context-only references set by
     ``set --parent`` (make-it-so).
+
+    Delegates to ``todo_db.migrate_record_v6`` (the same transform registered
+    in ``todo_db.RECORD_MIGRATIONS`` for the migration sweep) so the rename
+    logic lives in exactly one place. Unlike ``todo_db.migrate_record``, this
+    does not stamp ``_schema`` -- ordinary reads/writes keep their existing
+    shape; only an explicit ``migrate-to-latest`` sweep version-stamps records.
     """
-    if "Chunks" in todo and "WorkItems" not in todo:
-        todo["WorkItems"] = todo.pop("Chunks")
-    if "Subtickets" in todo and "Subtodos" not in todo:
-        todo["Subtodos"] = todo.pop("Subtickets")
-    parent = todo.get("Parent")
-    if isinstance(parent, dict):
-        todo["Parent"] = [parent]
-    # Absolute project paths are machine-specific and no longer stored: the repo
-    # name identifies the repo and CWD is the concrete location on this machine.
-    scope = todo.get("Scope")
-    if isinstance(scope, dict):
-        scope.pop("path_to_project", None)
-    return todo
+    return todo_db.migrate_record_v6(todo)
+
+
+def migrate_store(store: "todo_store.TodoStore", *, dry_run: bool = False) -> Dict[str, int]:
+    """Sweep *store* to ``todo_db.SCHEMA_VERSION`` and report a summary.
+
+    Table-level migrations apply as a side effect of the store's own storage
+    calls (sqlite runs ``todo_db.migrate()`` on every connect via
+    ``list_located()`` below; the file-dir backend has no table to migrate).
+    This then sweeps every record via ``list_located()``, runs
+    ``todo_db.migrate_record`` on a copy of each, and writes back the ones that
+    changed (a changed ``_schema`` -- i.e. a record that was below latest --
+    counts as changed, same as any renamed field). Unless *dry_run*, the
+    changed records are ``put`` back and the store's data version is advanced
+    to ``SCHEMA_VERSION``; ``dry_run`` reports the would-migrate count and
+    writes nothing (no put, no data-version bump).
+    """
+    located = store.list_located()
+    scanned = len(located)
+    migrated = 0
+    for repo, branch, record in located:
+        original = json.loads(json.dumps(record))
+        candidate = todo_db.migrate_record(json.loads(json.dumps(record)))
+        if candidate != original:
+            migrated += 1
+            if not dry_run:
+                store.put(repo, branch, candidate)
+    if not dry_run:
+        store.set_data_version(todo_db.SCHEMA_VERSION)
+    return {"scanned": scanned, "migrated": migrated}
 
 
 def use_sqlite() -> bool:
@@ -1823,6 +1846,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "WorkItems",
         "create_dt",
         "update_dt",
+        "_schema",  # stamped by todo_db.migrate_record on a migrate-to-latest sweep
     }
 )
 REQUIRED_TOP_LEVEL_FIELDS = frozenset({"Branch", "Id", "State", "Summary"})
@@ -4024,6 +4048,33 @@ class ExportToFileCommand(TodoSubCommand):
         return 0
 
 
+class MigrateToLatestCommand(TodoSubCommand):
+    command_names = ("migrate-to-latest",)
+    doc_short: ClassVar[str] = "Sweep the store's records to the latest schema"
+    doc_long: ClassVar[str] = (
+        "Migrate-to-latest sweeps every record in the resolved store, running "
+        "todo_db.migrate_record on each to fold in every pending RECORD_MIGRATIONS "
+        "step (renames, shape changes) and stamp _schema, then advances the "
+        "store's data_version marker to todo_db.SCHEMA_VERSION. Table-level "
+        "migrations (sqlite) apply automatically as a side effect of the sweep. "
+        "--dry-run reports the scanned/would-migrate counts without writing "
+        "anything (no put, no data_version bump)."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register migrate-to-latest arguments."""
+        parser.add_argument(
+            "--dry-run", action="store_true", help="report counts without writing"
+        )
+
+    def do(self) -> int:
+        """Sweep the resolved store to the latest schema and print a summary."""
+        report = migrate_store(todo_store.get_store(), dry_run=self.dry_run)
+        print(json.dumps(report, indent=2))
+        return 0
+
+
 COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     MintCommand,
     LogCommand,
@@ -4056,6 +4107,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     SearchCommand,
     EmbeddersCommand,
     PromptCommand,
+    MigrateToLatestCommand,
 )
 
 
@@ -4273,6 +4325,29 @@ def log_invocation(command: str, argv: Sequence[str], exit_code: int, dur_ms: in
         pass
 
 
+def _warn_if_store_behind() -> None:
+    """Print a one-line stderr warning when the store's records lag SCHEMA_VERSION.
+
+    Cheap (one get_data_version() call), non-fatal (never raises, never blocks,
+    never auto-migrates -- run `migrate-to-latest` for that). Restricted to
+    interactive terminals: automation (agents, scripts, tests) drives todo.py
+    non-interactively and expects quiet, deterministic stderr, so this nudge is
+    for a human at a real terminal only.
+    """
+    if not sys.stderr.isatty():
+        return
+    try:
+        current = todo_store.get_store().get_data_version()
+    except (todo_store.TodoStoreError, OSError):
+        return
+    if current < todo_db.SCHEMA_VERSION:
+        print(
+            f"todo.py: warning: store data_version {current} is behind schema "
+            f"{todo_db.SCHEMA_VERSION}; run 'todo.py migrate-to-latest' to sweep records",
+            file=sys.stderr,
+        )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Entry point."""
     parser: argparse.ArgumentParser = build_parser()
@@ -4282,6 +4357,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start: float = time.monotonic()
     exit_code: int = 1
     try:
+        _warn_if_store_behind()
         command: TodoSubCommand = args.command_cls(args)
         exit_code = int(command.do())
         return exit_code
