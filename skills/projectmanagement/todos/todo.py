@@ -1117,7 +1117,7 @@ def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
 
 def search_tickets(
     root: Path,
-    query: str,
+    terms: Sequence[str],
     *,
     limit: int = 20,
     embedder_names: Optional[Sequence[str]] = None,
@@ -1127,11 +1127,15 @@ def search_tickets(
 ) -> List[JsonDict]:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
 
-    ``embedder_names`` defaults to every non-hidden embedder. A requested
-    embedder that cannot be instantiated or run raises ``TodoError`` (choose
-    ``--embedder`` explicitly). Unless ``dry_run``, vectors missing for a chosen
-    embedder are computed and stored (lazy backfill) before ranking; a ticket
-    still missing a vector simply does not contribute to that ranker. When
+    ``terms`` is a list of independent search terms (google-style): each term is
+    embedded and matched on its own, contributing its own ranker to the fusion,
+    so their scores add. A term is the unit of embedding and matching -- a term
+    holding whitespace (a quoted phrase from the shell) is embedded/matched whole
+    rather than split. ``embedder_names`` defaults to every non-hidden embedder.
+    A requested embedder that cannot be instantiated or run raises ``TodoError``
+    (choose ``--embedder`` explicitly). Unless ``dry_run``, vectors missing for a
+    chosen embedder are computed and stored (lazy backfill) before ranking; a
+    ticket still missing a vector simply does not contribute to that ranker. When
     ``states`` is given, only tickets whose current State is in that set are
     considered; ``tags`` likewise keeps only tickets whose ``Tags`` intersect it.
     Both filters apply before ranking, so the limit counts matches only.
@@ -1147,7 +1151,6 @@ def search_tickets(
                 f"choose --embedder explicitly (e.g. --embedder hash)"
             ) from exc
 
-    query_tokens = set(query.lower().split())
     store = todo_store.get_store()
     tickets: Dict[str, JsonDict] = {}
     raws: Dict[str, Dict[str, str]] = {}
@@ -1170,15 +1173,15 @@ def search_tickets(
             if (raw := _raw_of(parsed, field_name)) is not None
         }
 
-    prepared: List[tuple[str, todo_embed.Embedder, str, List[float]]] = []
+    prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
     stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
     for name, embedder in embedders:
         try:
             fingerprint = embedder.fingerprint()
-            query_vec = embedder.embed(query)
+            term_vecs = [(term, embedder.embed(term)) for term in terms]
         except (ValueError, RuntimeError) as exc:
             raise TodoError(f"embedder {name!r} failed: {exc}") from exc
-        prepared.append((name, embedder, fingerprint, query_vec))
+        prepared.append((name, embedder, fingerprint, term_vecs))
         stored_by_fingerprint[fingerprint] = {
             (tid, field): vec for tid, field, vec in store.all_embeddings(fingerprint)
         }
@@ -1188,7 +1191,7 @@ def search_tickets(
         for tid, field_raws in list(raws.items()):
             needs_refresh = any(
                 (tid, field_path) not in stored_by_fingerprint[fingerprint]
-                for _name, _embedder, fingerprint, _query_vec in prepared
+                for _name, _embedder, fingerprint, _term_vecs in prepared
                 for field_path in field_raws
             )
             if not needs_refresh:
@@ -1212,7 +1215,7 @@ def search_tickets(
                     for field_path, fingerprint, chunks in store.embeddings_for_ticket(tid)
                 }
                 new_rows: List[tuple[str, str, List[List[float]]]] = []
-                for name, embedder, fingerprint, _query_vec in prepared:
+                for name, embedder, fingerprint, _term_vecs in prepared:
                     for field_name, field_path in _EMBED_FIELDS:
                         raw = latest_raws.get(field_path)
                         if raw is None:
@@ -1250,31 +1253,35 @@ def search_tickets(
                 raws[tid] = latest_raws
 
     rankings: List[Dict[str, float]] = []
-    for _name, _embedder, fingerprint, query_vec in prepared:
+    for _name, _embedder, fingerprint, term_vecs in prepared:
         stored = stored_by_fingerprint[fingerprint]
-        scores: Dict[str, float] = {}
-        for tid in tickets:
-            best = 0.0
-            for field_path in ("Summary.raw", "Body.raw"):
-                chunks = stored.get((tid, field_path)) or []
-                for chunk in chunks:
-                    best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
-            if best > 0.0:
-                scores[tid] = best
-        rankings.append(scores)
+        for _term, query_vec in term_vecs:
+            scores: Dict[str, float] = {}
+            for tid in tickets:
+                best = 0.0
+                for field_path in ("Summary.raw", "Body.raw"):
+                    chunks = stored.get((tid, field_path)) or []
+                    for chunk in chunks:
+                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
+                if best > 0.0:
+                    scores[tid] = best
+            rankings.append(scores)
 
-    lexical: Dict[str, float] = {}
-    for tid in tickets:
-        text = " ".join(raws[tid].values()).lower()
-        score = 0.0
-        if query.lower() in text:
-            score += 1.0
-        for token in query_tokens:
-            if token and token in text:
-                score += 0.1
-        if score > 0.0:
-            lexical[tid] = score
-    rankings.append(lexical)
+    text_by_tid = {tid: " ".join(raws[tid].values()).lower() for tid in tickets}
+    for term in terms:
+        term_lower = term.lower()
+        sub_tokens = {tok for tok in term_lower.split() if tok}
+        lexical: Dict[str, float] = {}
+        for tid, text in text_by_tid.items():
+            score = 0.0
+            if term_lower and term_lower in text:
+                score += 1.0
+            for token in sub_tokens:
+                if token in text:
+                    score += 0.1
+            if score > 0.0:
+                lexical[tid] = score
+        rankings.append(lexical)
 
     if refreshing_embeddings:
         print("Done", file=sys.stderr, flush=True)
@@ -3601,14 +3608,22 @@ class WebCommand(TodoSubCommand):
             """Structured rows for the viewer's search box.
 
             A non-empty query runs the same vector search as `todo search`
-            (rank order preserved); an empty query lists every todo. Rows carry
-            state/update-time so the page can render the -tu/-s columns.
+            (rank order preserved); an empty query lists every todo. The box has
+            no shell, so it is split with ``shlex`` -- a quoted phrase becomes one
+            term, mirroring the CLI (unbalanced quotes fall back to whitespace
+            splitting). Rows carry state/update-time so the page can render the
+            -tu/-s columns.
             """
             if query.strip():
                 try:
-                    return run_search(root, query)
-                except TodoError as exc:
-                    raise todo_web.TodoWebError(str(exc)) from exc
+                    terms = shlex.split(query)
+                except ValueError:
+                    terms = query.split()
+                if terms:
+                    try:
+                        return run_search(root, terms)
+                    except TodoError as exc:
+                        raise todo_web.TodoWebError(str(exc)) from exc
             return [todo_row(todo) for todo in list_todos()]
 
         initial_id: Optional[str] = None
@@ -3745,7 +3760,7 @@ def _format_row_line(row: JsonDict, columns: Sequence[str]) -> str:
 
 def run_search(
     root: Path,
-    query: str,
+    terms: Sequence[str],
     *,
     limit: int = 20,
     embedder_names: Optional[Sequence[str]] = None,
@@ -3756,11 +3771,12 @@ def run_search(
     """Ranked search as structured rows (relevance-rank order preserved).
 
     Shared by the 'search' subcommand and the web viewer so both go through the
-    same vector-search backend without duplicating it.
+    same vector-search backend without duplicating it. ``terms`` is the list of
+    google-style search terms (see ``search_tickets``).
     """
     hits = search_tickets(
         root,
-        query,
+        terms,
         limit=limit,
         embedder_names=embedder_names,
         dry_run=dry_run,
@@ -3775,19 +3791,32 @@ class SearchCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
         "Search ranks todos by reciprocal-rank fusion over one or more embedders "
-        "plus lexical overlap. --embedder takes a comma list (default: all "
-        "non-hidden embedders; see the 'embedders' command). A requested embedder "
-        "that is unavailable errors -- pick one explicitly. Missing vectors are "
-        "backfilled and stored before ranking unless --dry-run; a ticket with no "
-        "vector for an embedder just does not contribute to that embedder's rank. "
-        "-s/-t/-tc/-tu add State/create-time/update-time columns (leftmost, in flag "
-        "order); results stay in relevance-rank order."
+        "plus lexical overlap. Multiple terms are searched google-style: each term "
+        "is embedded and matched independently and the per-term scores add. A term "
+        'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
+        "unquoted words (bh 791) match individually. --embedder takes a comma list "
+        "(default: all non-hidden embedders; see the 'embedders' command). A "
+        "requested embedder that is unavailable errors -- pick one explicitly. "
+        "Missing vectors are backfilled and stored before ranking unless "
+        "--dry-run; a ticket with no vector for an embedder just does not "
+        "contribute to that embedder's rank. -s/-t/-tc/-tu add "
+        "State/create-time/update-time columns (leftmost, in flag order); results "
+        "stay in relevance-rank order."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register search arguments."""
-        parser.add_argument("query", help="search phrase or keywords")
+        parser.add_argument(
+            "query",
+            nargs="+",
+            metavar="TERM",
+            help=(
+                "one or more search terms (google-style): each is embedded and "
+                'matched on its own and the scores add. Quote a phrase ("bh 791") '
+                "to make it a single term; unquoted words (bh 791) match individually"
+            ),
+        )
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
         parser.add_argument(
             "--embedder",

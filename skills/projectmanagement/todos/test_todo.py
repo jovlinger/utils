@@ -909,6 +909,38 @@ class SearchTests(TodoCase):
         self.assertIn(oauth_id[:8], proc.stdout)
         self.assertNotIn(other_id[:8], proc.stdout)
 
+    def test_search_multiple_terms_match_each_doc_individually(self) -> None:
+        # Google-style: each space-separated term is its own matcher, so a doc
+        # matching only one term still surfaces (scores add across terms); a doc
+        # matching no term stays excluded by hash's hard 0-similarity cutoff.
+        alpha_id = self.mint()
+        beta_id = self.mint()
+        gamma_id = self.mint()
+        self.write_ticket(f"{alpha_id[:8]}-a", alpha_id, summary="alpha")
+        self.write_ticket(f"{beta_id[:8]}-b", beta_id, summary="beta")
+        self.write_ticket(f"{gamma_id[:8]}-g", gamma_id, summary="gamma")
+        proc = self.todo("search", "alpha", "beta", "--embedder", "hash")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(alpha_id[:8], proc.stdout)
+        self.assertIn(beta_id[:8], proc.stdout)
+        self.assertNotIn(gamma_id[:8], proc.stdout)
+
+    def test_search_quoted_phrase_is_one_unit(self) -> None:
+        # A single argv element (a quoted phrase) is the unit of matching: the
+        # doc holding the contiguous phrase outranks one holding the same words
+        # scattered, which per-term matching alone could not distinguish.
+        phrase_id = self.mint()
+        split_id = self.mint()
+        self.write_ticket(f"{phrase_id[:8]}-p", phrase_id, summary="alpha beta")
+        self.write_ticket(f"{split_id[:8]}-s", split_id, summary="beta gamma alpha")
+        proc = self.todo("search", "alpha beta", "--embedder", "hash")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertLess(
+            proc.stdout.index(phrase_id[:8]),
+            proc.stdout.index(split_id[:8]),
+            f"contiguous-phrase doc should rank first:\n{proc.stdout}",
+        )
+
     def test_cheap_embedder_autopopulated_on_write(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
