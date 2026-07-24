@@ -20031,6 +20031,14 @@
   "State": {
     "pre": {}
   },
+  "Subtodos": [
+    {
+      "Branch": "b1123cd9",
+      "Id": "b1123cd9f4edca02635dfa8ce9f2cd989b864ed7ead5422a94025b3076e54040",
+      "State": "INFO",
+      "Summary": "todo ls/search hide FINAL (done,merged) by default: -s/--states macro filter, state renames pre/pre-init->groom, init->ready, info->fact (+ fact state), config.json default, skill updates"
+    }
+  ],
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
       [
@@ -20683,5 +20691,5 @@
     "raw": "todo tool grooming: state renames (nouns), weighted/field-scoped search, state-filter terms, priority field, sort terms, stable web tab title"
   },
   "create_dt": "2026-07-16T13:59:30Z",
-  "update_dt": "2026-07-16T13:59:37Z"
+  "update_dt": "2026-07-24T21:52:41Z"
 }

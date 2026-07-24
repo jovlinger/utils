@@ -1,5 +1,6 @@
 {
   "AC": "",
+  "ActualSummary": "Tags are now a plural, provenance-tracked Tag field: a list of {raw, manual, per-embedder vectors}, each element embedded individually so tags rank in search. tagadd/tagrm (and set --tag/--untag aliases) manage downcased, deduped MANUAL tags; doctor recomputes AUTOMATIC zero-shot tags from Summary+Body via the ported ef4ad78d tagger (n-phrase mining + cosine top-k), trusting existing and dropping them when Summary/Body changes. SCHEMA_VERSION bumped to 7 with RECORD_MIGRATIONS[7] converting the legacy flat Tags list; search --tag filters the new shape. ls/search share output selectors with a new -g tags column, summary last, columns rpad'd to their longest sub-30-char value. Frozen 7-test oracle + ~50 impl tests; full affected suite 239 green. Built via Sonnet subagents (batch A manual core, batch B auto-tagging) against the frozen oracle, orchestrator-verified each.",
   "BaseSha": "5164aaff2bd5c27187962c28dcf678ceada5ca8a",
   "Body": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -665,7 +666,7 @@
     "git_url": "https://github.com/jovlinger/utils.git"
   },
   "State": {
-    "working": {}
+    "done": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1320,46 +1321,62 @@
   },
   "WorkItems": [
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): frozen plural-Tag oracle (skipped until final WI) (WI0)",
+      "sha": "8f6311b04544d252072eda4f6f659464df2ce134",
       "summary": "END TEST (frozen oracle, skip until WI7 enables): tagadd adds a downcased manual Tag element {raw,manual:true,vectors}; get-json-path Tag.0.raw works; per-element embedding present; editing Summary zeros AUTOMATIC tag elements + their vectors but leaves manual ones; doctor recomputes automatic Tag elements; search ranks a todo by a tag match; migrate-to-latest converts a legacy flat Tags string-list -> plural Tag elements (manual=true)"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): plural Tag coverage; adjust two tests for the v7 sweep\n\ntest_todo.py: two pre-existing tests assumed doctor never touches Tags. Since\ndoctor's opportunistic schema sweep (unchanged code path) now also applies\nmigrate_record_v7, a legacy Tags list gets folded into Tag the moment doctor\nruns on that record:\n  * test_doctor_fails_bad_tags_shape -> test_doctor_fails_bad_tag_shape: the\n    malformed-shape check now needs to target the new Tag field directly,\n    since a malformed legacy Tags list would already have been repaired by\n    the time doctor_findings runs.\n  * test_persisted_tags_end_to_end: reordered so search --tag (which only\n    reads the legacy Tags field) runs before the doctor call that migrates\n    it away.\n\nAdds test_todo_tag_impl.py: unit tests for apply_tag_add/apply_tag_remove/\ntag_findings/migrate_record_v7 beyond the frozen oracle's pinned cases, plus\nthe internal _embed_targets/_container_at/_changed_raw_fields helpers, plus\nintegration tests (temp git repo) proving tagadd stamps a cheap vector per\nTag element, editing one element's raw clears only that element's vectors,\nand search ranks a todo whose tag matches the query.",
+      "sha": "3fc73a1c47a8cd8fd7b299f0a2f1f9f8300f5093",
       "summary": "Plural Tag schema + version-7 migrator TOGETHER (migrator + internal logic land together): Tag = list of {raw, manual, embedder-vectors} in ALLOWED_TOP_LEVEL_FIELDS; doctor validates shape; downcase+dedupe normalize; bump todo_db.SCHEMA_VERSION to 7 + RECORD_MIGRATIONS[7] converting flat Tags string-list -> plural Tag (manual=true); UNIT + migration test"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): plural Tag coverage; adjust two tests for the v7 sweep\n\ntest_todo.py: two pre-existing tests assumed doctor never touches Tags. Since\ndoctor's opportunistic schema sweep (unchanged code path) now also applies\nmigrate_record_v7, a legacy Tags list gets folded into Tag the moment doctor\nruns on that record:\n  * test_doctor_fails_bad_tags_shape -> test_doctor_fails_bad_tag_shape: the\n    malformed-shape check now needs to target the new Tag field directly,\n    since a malformed legacy Tags list would already have been repaired by\n    the time doctor_findings runs.\n  * test_persisted_tags_end_to_end: reordered so search --tag (which only\n    reads the legacy Tags field) runs before the doctor call that migrates\n    it away.\n\nAdds test_todo_tag_impl.py: unit tests for apply_tag_add/apply_tag_remove/\ntag_findings/migrate_record_v7 beyond the frozen oracle's pinned cases, plus\nthe internal _embed_targets/_container_at/_changed_raw_fields helpers, plus\nintegration tests (temp git repo) proving tagadd stamps a cheap vector per\nTag element, editing one element's raw clears only that element's vectors,\nand search ranks a todo whose tag matches the query.",
+      "sha": "3fc73a1c47a8cd8fd7b299f0a2f1f9f8300f5093",
       "summary": "Embedding machinery iterates the Tag list: each element's raw embedded individually (cheap eager / expensive lazy), clear-on-write per element, search ranking includes tag elements; fix the hardcoded (Summary.raw,Body.raw) ranking loop to include Tag; UNIT TEST"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): plural Tag coverage; adjust two tests for the v7 sweep\n\ntest_todo.py: two pre-existing tests assumed doctor never touches Tags. Since\ndoctor's opportunistic schema sweep (unchanged code path) now also applies\nmigrate_record_v7, a legacy Tags list gets folded into Tag the moment doctor\nruns on that record:\n  * test_doctor_fails_bad_tags_shape -> test_doctor_fails_bad_tag_shape: the\n    malformed-shape check now needs to target the new Tag field directly,\n    since a malformed legacy Tags list would already have been repaired by\n    the time doctor_findings runs.\n  * test_persisted_tags_end_to_end: reordered so search --tag (which only\n    reads the legacy Tags field) runs before the doctor call that migrates\n    it away.\n\nAdds test_todo_tag_impl.py: unit tests for apply_tag_add/apply_tag_remove/\ntag_findings/migrate_record_v7 beyond the frozen oracle's pinned cases, plus\nthe internal _embed_targets/_container_at/_changed_raw_fields helpers, plus\nintegration tests (temp git repo) proving tagadd stamps a cheap vector per\nTag element, editing one element's raw clears only that element's vectors,\nand search ranks a todo whose tag matches the query.",
+      "sha": "3fc73a1c47a8cd8fd7b299f0a2f1f9f8300f5093",
       "summary": "tagadd/tagrm subcommands: add/remove a MANUAL Tag element (downcased, deduped, field dropped when empty); manual=true; survive re-read; UNIT TEST"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): cover auto-tag mining/scoring, cross-field invalidation, doctor recompute; adjust set/search --tag for plural Tag (WI4-6)\n\nAdds unit coverage for compute_auto_tags (top-k, provenance, deterministic tie\n-break, empty-candidates) and the ported _split_phrases/_nphrase_windows/\n_mine_tag_candidates on small inputs; integration coverage for cross-field\ninvalidation (editing Summary/Body drops AUTOMATIC tags, keeps MANUAL, and\n--no-clear suppresses it), doctor's auto-tag recompute (computes when absent,\ntrusts existing, skips under --dry-run), and set --tag/--untag plus\nsearch --tag against the plural Tag shape.\n\nRewrites TagTests in test_todo.py (test_set_tag_adds_deduped[_and_sorted],\ntest_set_tag_alone_is_a_valid_edit, test_set_untag_removes_and_drops_empty_\nfield, test_search_tag_filters_to_tagged, test_persisted_tags_end_to_end):\nset --tag/--untag now write the plural Tag field rather than the legacy flat\nTags list (see the WI6 commit), so their legacy-Tags assertions were obsolete.\nRewritten against the new shape, keeping the original intent -- set a tag, it\npersists, search finds it.",
+      "sha": "a535b5289827e95c244ebc65a6c27b27ca697ebb",
       "summary": "PORT ef4ad78d tagger internals into the plural-Tag model (NOT a git merge): _split_phrases, _nphrase_windows, _mine_tag_candidates (1..3-gram corpus candidate domain), _load_corpus, and cosine top-k scoring; expose a compute_auto_tags(todo, corpus, embedders, k) that returns automatic Tag elements; UNIT TEST"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): cover auto-tag mining/scoring, cross-field invalidation, doctor recompute; adjust set/search --tag for plural Tag (WI4-6)\n\nAdds unit coverage for compute_auto_tags (top-k, provenance, deterministic tie\n-break, empty-candidates) and the ported _split_phrases/_nphrase_windows/\n_mine_tag_candidates on small inputs; integration coverage for cross-field\ninvalidation (editing Summary/Body drops AUTOMATIC tags, keeps MANUAL, and\n--no-clear suppresses it), doctor's auto-tag recompute (computes when absent,\ntrusts existing, skips under --dry-run), and set --tag/--untag plus\nsearch --tag against the plural Tag shape.\n\nRewrites TagTests in test_todo.py (test_set_tag_adds_deduped[_and_sorted],\ntest_set_tag_alone_is_a_valid_edit, test_set_untag_removes_and_drops_empty_\nfield, test_search_tag_filters_to_tagged, test_persisted_tags_end_to_end):\nset --tag/--untag now write the plural Tag field rather than the legacy flat\nTags list (see the WI6 commit), so their legacy-Tags assertions were obsolete.\nRewritten against the new shape, keeping the original intent -- set a tag, it\npersists, search finds it.",
+      "sha": "a535b5289827e95c244ebc65a6c27b27ca697ebb",
       "summary": "Cross-field invalidation + doctor redo tagging: editing Summary/Body zeros AUTOMATIC Tag elements + their embeddings and marks for recompute; doctor recomputes automatic Tag elements via the ported tagger and persists them; MANUAL tags untouched; UNIT TEST"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "test(todo): cover auto-tag mining/scoring, cross-field invalidation, doctor recompute; adjust set/search --tag for plural Tag (WI4-6)\n\nAdds unit coverage for compute_auto_tags (top-k, provenance, deterministic tie\n-break, empty-candidates) and the ported _split_phrases/_nphrase_windows/\n_mine_tag_candidates on small inputs; integration coverage for cross-field\ninvalidation (editing Summary/Body drops AUTOMATIC tags, keeps MANUAL, and\n--no-clear suppresses it), doctor's auto-tag recompute (computes when absent,\ntrusts existing, skips under --dry-run), and set --tag/--untag plus\nsearch --tag against the plural Tag shape.\n\nRewrites TagTests in test_todo.py (test_set_tag_adds_deduped[_and_sorted],\ntest_set_tag_alone_is_a_valid_edit, test_set_untag_removes_and_drops_empty_\nfield, test_search_tag_filters_to_tagged, test_persisted_tags_end_to_end):\nset --tag/--untag now write the plural Tag field rather than the legacy flat\nTags list (see the WI6 commit), so their legacy-Tags assertions were obsolete.\nRewritten against the new shape, keeping the original intent -- set a tag, it\npersists, search finds it.",
+      "sha": "a535b5289827e95c244ebc65a6c27b27ca697ebb",
       "summary": "Retire/alias set --tag/--untag -> tagadd/tagrm; search --tag filters on the new plural Tag shape (old-shape migration rides WI1 RECORD_MIGRATIONS[7]); UNIT TEST"
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): homogenize ls/search selectors + tags column (-g) + summary-last + rpad; enable plural-Tag oracle; SKILL.md docs (WI7)",
+      "sha": "091c4ff504d31bfcb560f53d9e4d23145f2f40ee",
       "summary": "Display (the original request): homogenize ls + search output selectors (ls == null search), add a tags column, summary ALWAYS last, and right-pad each column to its longest value under 30 chars; enable the WI0 oracle; SKILL.md docs; full suite + lint green"
     }
   ],
   "create_dt": "2026-07-24T17:17:18Z",
-  "update_dt": "2026-07-24T21:08:51Z"
+  "update_dt": "2026-07-24T22:46:29Z"
 }
