@@ -1,5 +1,6 @@
 {
   "AC": "",
+  "ActualSummary": "Landed as sha:9bfe50c on branch:master (todo:b1123cd9). Noun state renames (pre/pre-init->groom, init->ready, info->fact); ls/search hide FINAL by default + -s/--states macro filter with config.json default; schema v8 migration, rebased onto the plural-Tag v7 feature; SKILL.md docs + Working-a-fact rule. Full suite 269 green.",
   "Body": {
     "hash": [
       [
@@ -148,7 +149,7 @@
     "git_url": "https://github.com/jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "done": {}
   },
   "Summary": {
     "hash": [
@@ -286,5 +287,5 @@
     "raw": "todo ls/search hide FINAL (done,merged) by default: -s/--states macro filter, state renames pre/pre-init->groom, init->ready, info->fact (+ fact state), config.json default, skill updates"
   },
   "create_dt": "2026-07-24T21:52:41Z",
-  "update_dt": "2026-07-24T21:52:41Z"
+  "update_dt": "2026-07-24T23:28:17Z"
 }
