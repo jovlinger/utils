@@ -482,5 +482,119 @@ class PerTodoLockTest(unittest.TestCase):
             self.assertEqual(store.force_unlock_all(), 2)
 
 
+class RecordMigrationRegistryTest(unittest.TestCase):
+    """RECORD_MIGRATIONS ordering and no-op skipping in migrate_record()."""
+
+    def test_migrations_apply_ascending_and_skip_at_or_below_current(self) -> None:
+        calls: list = []
+
+        def _step(version: int):
+            def _apply(todo: dict) -> dict:
+                calls.append(version)
+                todo.setdefault("applied", []).append(version)
+                return todo
+
+            return _apply
+
+        # 2 is at-or-below the record's starting _schema (3) and must not run;
+        # 5 and 6 are pending and must run in ascending order.
+        fake_migrations = {2: _step(2), 5: _step(5), 6: _step(6)}
+        with unittest.mock.patch.object(todo_db, "RECORD_MIGRATIONS", fake_migrations):
+            result = todo_db.migrate_record({"_schema": 3})
+        self.assertEqual(calls, [5, 6])
+        self.assertEqual(result["applied"], [5, 6])
+        self.assertEqual(result["_schema"], todo_db.SCHEMA_VERSION)
+
+    def test_version_with_no_registered_transform_is_a_no_op(self) -> None:
+        # Versions 1..5 register no transform (table-only changes); only 6 does.
+        # migrate_record must not error on the gaps and must still apply 6.
+        fake_migrations = {6: lambda t: {**t, "touched": True}}
+        with unittest.mock.patch.object(todo_db, "RECORD_MIGRATIONS", fake_migrations):
+            result = todo_db.migrate_record({"Id": "x"})
+        self.assertTrue(result["touched"])
+        self.assertEqual(result["_schema"], todo_db.SCHEMA_VERSION)
+
+
+class MigrateRecordTest(unittest.TestCase):
+    """todo_db.migrate_record(): the real v6 transform, plus idempotence."""
+
+    _LEGACY = {
+        "Id": "c" * 64,
+        "Branch": "cccccccc-legacy",
+        "State": {"init": {}},
+        "Scope": {
+            "git_url": "https://github.com/o/n.git",
+            "path_to_project": "/old/machine/path",
+        },
+        "Chunks": [{"kind": "task", "summary": "old work item", "done": False}],
+        "Subtickets": [],
+        "Parent": {"Id": "d" * 64, "Branch": "dddddddd-parent"},
+    }
+
+    def test_legacy_shape_folded_and_schema_stamped(self) -> None:
+        once = todo_db.migrate_record(json.loads(json.dumps(self._LEGACY)))
+        self.assertIn("WorkItems", once)
+        self.assertNotIn("Chunks", once)
+        self.assertNotIn("Subtickets", once)
+        self.assertIsInstance(once["Parent"], list)
+        self.assertEqual(once["Parent"][0]["Id"], "d" * 64)
+        self.assertNotIn("path_to_project", once["Scope"])
+        self.assertEqual(once["_schema"], todo_db.SCHEMA_VERSION)
+
+    def test_idempotent(self) -> None:
+        once = todo_db.migrate_record(json.loads(json.dumps(self._LEGACY)))
+        twice = todo_db.migrate_record(json.loads(json.dumps(once)))
+        self.assertEqual(once, twice)
+
+    def test_defaults_missing_schema_to_zero(self) -> None:
+        result = todo_db.migrate_record({"Id": "e" * 64})
+        self.assertEqual(result["_schema"], todo_db.SCHEMA_VERSION)
+
+
+class DataVersionMarkerTest(unittest.TestCase):
+    """get_data_version()/set_data_version() round-trip on both backends.
+
+    Distinct from the sqlite table's schema_version, which auto-applies on
+    connect regardless of this marker.
+    """
+
+    def tearDown(self) -> None:
+        todo_store.reset_store()
+        todo_db.reset_todo_dir()
+
+    def test_sqlite_round_trip_defaults_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            db_path = Path(d) / "sqlite.db"
+            store = todo_store.SqliteTodoStore(db_path=db_path)
+            self.assertEqual(store.get_data_version(), 0)
+            store.set_data_version(todo_db.SCHEMA_VERSION)
+            self.assertEqual(store.get_data_version(), todo_db.SCHEMA_VERSION)
+            # A fresh store instance against the same file sees the persisted value.
+            reopened = todo_store.SqliteTodoStore(db_path=db_path)
+            self.assertEqual(reopened.get_data_version(), todo_db.SCHEMA_VERSION)
+
+    def test_file_dir_round_trip_defaults_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "storage"
+            store = todo_store.JsonDirTodoStore(base)
+            self.assertEqual(store.get_data_version(), 0)
+            store.set_data_version(todo_db.SCHEMA_VERSION)
+            self.assertEqual(store.get_data_version(), todo_db.SCHEMA_VERSION)
+            reopened = todo_store.JsonDirTodoStore(base)
+            self.assertEqual(reopened.get_data_version(), todo_db.SCHEMA_VERSION)
+
+    def test_sqlite_data_version_distinct_from_schema_version_table(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            db_path = Path(d) / "sqlite.db"
+            store = todo_store.SqliteTodoStore(db_path=db_path)
+            store.set_data_version(1)  # deliberately behind todo_db.SCHEMA_VERSION
+            with todo_db.connection(db_path) as conn:
+                table_version = conn.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+            self.assertEqual(table_version, todo_db.SCHEMA_VERSION)  # table auto-applies
+            self.assertEqual(store.get_data_version(), 1)  # data marker unaffected
+
+
 if __name__ == "__main__":
     unittest.main()
