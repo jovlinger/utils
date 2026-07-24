@@ -381,6 +381,42 @@ _EMBED_FIELDS: tuple[tuple[str, str], ...] = (
     ("Body", "Body.raw"),
 )
 
+# Largest n-phrase window (unigram..trigram) used to mine tag candidates from
+# corpus text (see _mine_tag_candidates). Ported from ef4ad78d's zero-shot
+# tagger, where it also sized embedding chunks; chunking has not landed here,
+# so this constant now serves candidate mining alone.
+_MAX_NPHRASE = 3
+
+# A phrase boundary is a sentence terminator followed by whitespace/EOL, or one
+# or more newlines. The trailing-whitespace lookahead keeps decimals like "3.5"
+# from splitting; newlines make headings, list items, and ascii-art lines each
+# stand alone as their own phrase. Ported unchanged from ef4ad78d.
+_PHRASE_SPLIT_RE = re.compile(r"[.!?]+(?=\s|$)|\n+")
+
+
+def _split_phrases(text: str) -> List[str]:
+    """Split raw text into phrases on sentence terminators and line breaks.
+
+    A phrase is the unit between phrase separators (see ``_PHRASE_SPLIT_RE``).
+    Whitespace-only fragments are dropped; each returned phrase is stripped.
+    """
+    return [p.strip() for p in _PHRASE_SPLIT_RE.split(text) if p.strip()]
+
+
+def _nphrase_windows(text: str, max_n: int = _MAX_NPHRASE) -> List[str]:
+    """Contiguous 1..max_n phrase windows over *text* (its n-phrases).
+
+    Each window joins its phrases with a single space. Source order is
+    preserved and duplicates are kept; callers dedup when they need a set
+    (candidate mining) but not when they need one window per occurrence.
+    """
+    phrases = _split_phrases(text)
+    windows: List[str] = []
+    for n in range(1, max_n + 1):
+        for i in range(len(phrases) - n + 1):
+            windows.append(" ".join(phrases[i : i + n]))
+    return windows
+
 
 def _is_flat_vector(value: Any) -> bool:
     """True for a single embedding vector: a list of >2 numbers, no bools."""
@@ -584,6 +620,36 @@ def _cheap_embedding_rows(
     return rows
 
 
+def _drop_stale_automatic_tags(old: Optional[JsonDict], todo: JsonDict) -> None:
+    """Drop AUTOMATIC Tag elements from *todo*, in place, when Summary/Body changed.
+
+    Automatic tags (``manual: False``) are computed from a todo's Summary+Body
+    text (see ``compute_auto_tags`` and doctor's recompute); once that text
+    changes they no longer describe the todo, so they are dropped here to be
+    recomputed fresh rather than linger stale. MANUAL elements are never
+    touched. A no-op when *old* is None (a brand-new ticket has nothing to have
+    changed away from -- any automatic tags seeded into its first write are
+    trusted, not invalidated) or when neither Summary.raw nor Body.raw differs
+    from *old*. Called from ``write_todo_worktree`` before it computes
+    per-field vector changes, so ``Tag`` is already in its final shape by the
+    time positional Tag.<i>.raw paths are derived from it.
+    """
+    if old is None:
+        return
+    if _raw_of(old, "Summary") == _raw_of(todo, "Summary") and _raw_of(old, "Body") == _raw_of(
+        todo, "Body"
+    ):
+        return
+    tag = todo.get("Tag")
+    if not isinstance(tag, list):
+        return
+    kept = [e for e in tag if not (isinstance(e, dict) and e.get("manual") is False)]
+    if kept:
+        todo["Tag"] = kept
+    else:
+        todo.pop("Tag", None)
+
+
 def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -> None:
     """Persist ticket to sqlite (default) or legacy TODO.json.
 
@@ -591,6 +657,9 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
     embedders) so stale expensive vectors do not linger -- unless ``no_clear``,
     which keeps them (for semantically trivial edits). Cheap embedders are then
     re-populated eagerly; expensive ones are left for lazy backfill at search.
+    A Summary/Body raw change also drops any AUTOMATIC Tag elements (see
+    ``_drop_stale_automatic_tags``) -- also skipped under ``no_clear``, since
+    that flag means the edit is being treated as semantically trivial.
     """
     normalize_todo_schema(todo)
     todo["update_dt"] = utc_now()
@@ -606,6 +675,8 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
         # are being calculated, and lets us persist the fully embedded TODO once.
         with store.lock(ticket_id):
             old = store.get(repo, branch)
+            if not no_clear:
+                _drop_stale_automatic_tags(old, todo)
             changed = [] if no_clear else _changed_raw_fields(old, todo)
             for field_path in changed:
                 _strip_vectors_at(todo, field_path)
@@ -798,24 +869,6 @@ def apply_set_fields(
     return state
 
 
-def apply_tag_edits(
-    todo: JsonDict, add: Sequence[str], remove: Sequence[str]
-) -> None:
-    """Add/remove tags on ``todo['Tags']`` in place.
-
-    Tags are kept sorted and deduped; surrounding whitespace is stripped and
-    empty tags are ignored. When the result is empty the field is dropped rather
-    than left as ``[]`` (optional fields are absent, not empty -- see doctor).
-    """
-    current = {tag for tag in (todo.get("Tags") or []) if isinstance(tag, str)}
-    current |= {tag.strip() for tag in add if tag and tag.strip()}
-    current -= {tag.strip() for tag in remove if tag and tag.strip()}
-    if current:
-        todo["Tags"] = sorted(current)
-    else:
-        todo.pop("Tags", None)
-
-
 def _tag_elements(todo: JsonDict) -> List[JsonDict]:
     """Return ``todo["Tag"]`` as a list, tolerating an absent or malformed field."""
     tag = todo.get("Tag")
@@ -894,6 +947,91 @@ def tag_findings(todo: JsonDict) -> List[str]:
         if not isinstance(element.get("manual"), bool):
             findings.append(f"Tag.{index}.manual must be a bool")
     return findings
+
+
+# Default top-k for compute_auto_tags, ported from ef4ad78d's zero-shot tagger.
+_AUTO_TAG_K = 3
+
+
+def _load_corpus(
+    store: "todo_store.TodoStore", states: Optional[frozenset] = None
+) -> tuple[Dict[str, JsonDict], Dict[str, Dict[str, str]]]:
+    """Load every ticket and its embeddable raw fields (Summary/Body) through the store.
+
+    Returns ``(tickets, raws)``: ``tickets`` maps Id -> the ticket dict; ``raws``
+    maps Id -> {field_path -> raw text} over the non-empty Summary/Body fields.
+    Ported from ef4ad78d's zero-shot tagger; used here only to mine the tag
+    candidate domain (see ``_mine_tag_candidates``) -- Tag elements themselves
+    are excluded from the mined text via ``_EMBED_FIELDS``, so a todo is never
+    auto-tagged from its own already-applied tags. When *states* is given,
+    only tickets whose current State is in that set are included.
+    """
+    tickets: Dict[str, JsonDict] = {}
+    raws: Dict[str, Dict[str, str]] = {}
+    for parsed in store.list_all():
+        if not isinstance(parsed, dict):
+            continue
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if states is not None and (current_state_name(parsed) or "") not in states:
+            continue
+        tickets[ticket_id] = parsed
+        raws[ticket_id] = {
+            field_path: raw
+            for field_name, field_path in _EMBED_FIELDS
+            if (raw := _raw_of(parsed, field_name)) is not None
+        }
+    return tickets, raws
+
+
+def _mine_tag_candidates(raws: Dict[str, Dict[str, str]]) -> List[str]:
+    """Deduped, downcased union of 1..3 n-phrases across the corpus -- the tag domain.
+
+    Candidates are mined from every ticket's Summary/Body raw text. Ported from
+    ef4ad78d's zero-shot tagger; adapted to downcase+strip each window before
+    dedup/append (ef4's version kept source case) so a mined candidate is
+    already a valid Tag.raw -- see ``apply_tag_add``, where a manual tag is
+    downcased the same way. Order is first appearance, for stable output.
+    """
+    seen: set[str] = set()
+    candidates: List[str] = []
+    for field_raws in raws.values():
+        for raw in field_raws.values():
+            for window in _nphrase_windows(raw):
+                candidate = window.strip().lower()
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+    return candidates
+
+
+def compute_auto_tags(
+    text: str,
+    candidates: Sequence[str],
+    embedder: "todo_embed.Embedder",
+    k: int = _AUTO_TAG_K,
+) -> List[JsonDict]:
+    """Top-k AUTOMATIC Tag elements for *text*, scored against *candidates*.
+
+    Embeds *text* once and every candidate with *embedder*, scores each
+    candidate by ``todo_embed.cosine_similarity(text_vec, candidate_vec)``, and
+    returns the k highest-scoring candidates as ``{"raw": <candidate>,
+    "manual": False}`` elements -- ef4ad78d's zero-shot tagger scoring, adapted
+    to emit plural Tag elements instead of a bare ``{candidate: score}`` map.
+    ``raw`` is exactly the candidate string (no downcasing here); a caller that
+    wants downcased tags mines downcased candidates -- see
+    ``_mine_tag_candidates``. Ties break on score (descending) then candidate
+    text (ascending) for a deterministic order. Returns fewer than *k* elements
+    when there are fewer than *k* candidates.
+    """
+    text_vec = embedder.embed(text)
+    scored = [
+        (todo_embed.cosine_similarity(text_vec, embedder.embed(candidate)), candidate)
+        for candidate in candidates
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [{"raw": candidate, "manual": False} for _score, candidate in scored[:k]]
 
 
 def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1296,7 +1434,9 @@ def search_tickets(
     chosen embedder are computed and stored (lazy backfill) before ranking; a
     ticket still missing a vector simply does not contribute to that ranker. When
     ``states`` is given, only tickets whose current State is in that set are
-    considered; ``tags`` likewise keeps only tickets whose ``Tags`` intersect it.
+    considered; ``tags`` likewise keeps only tickets with a plural ``Tag``
+    element (manual or automatic) whose ``raw`` is in it -- callers pass
+    already-downcased tag text, matching how ``Tag.raw`` is always stored.
     Both filters apply before ranking, so the limit counts matches only.
     """
     names = list(embedder_names) if embedder_names else todo_embed.default_embedder_names()
@@ -1321,7 +1461,12 @@ def search_tickets(
         if states is not None and (current_state_name(parsed) or "") not in states:
             continue
         if tags is not None and not (
-            {tag for tag in (parsed.get("Tags") or []) if isinstance(tag, str)} & tags
+            {
+                e["raw"]
+                for e in (parsed.get("Tag") or [])
+                if isinstance(e, dict) and isinstance(e.get("raw"), str)
+            }
+            & tags
         ):
             continue
         tickets[ticket_id] = parsed
@@ -2800,7 +2945,9 @@ class SetCommand(TodoSubCommand):
         "Pass --parent <id> (repeatable) as a make-it-so Parent list: the child's Parent becomes "
         "exactly those refs, follow-only INFO back-links are added on desired parents, and INFO "
         "back-links on former parents that are no longer listed are removed (tracked subtodos are "
-        "never removed). Blank `--parent=` clears Parent. To replace WorkItems or any other JSON "
+        "never removed). Blank `--parent=` clears Parent. --tag/--untag (each repeatable) are "
+        "aliases for the `tagadd`/`tagrm` subcommands -- see their help for the plural Tag "
+        "field's manual/automatic semantics. To replace WorkItems or any other JSON "
         "path from a file or stdin, use set-json-path. The command requires at least one field "
         "change. It commits the current-branch todo by default; with --id it is sqlite-only (no "
         "commit), since a pre-init/other todo has no branch of its own to commit on. For a "
@@ -2833,13 +2980,13 @@ class SetCommand(TodoSubCommand):
             "--tag",
             action="append",
             metavar="TAG",
-            help="add a tag (repeatable); persisted on the todo, deduped and sorted",
+            help="add a MANUAL tag (repeatable); alias for `tagadd` -- see its help",
         )
         parser.add_argument(
             "--untag",
             action="append",
             metavar="TAG",
-            help="remove a tag (repeatable)",
+            help="remove a MANUAL tag (repeatable); alias for `tagrm` -- see its help",
         )
         parser.add_argument("--no-commit", action="store_true")
         parser.add_argument(
@@ -2881,8 +3028,10 @@ class SetCommand(TodoSubCommand):
         )
         if parent_touched:
             apply_parent_links(root, todo, self.parent)
-        if tags_touched:
-            apply_tag_edits(todo, self.tag or [], self.untag or [])
+        if self.tag:
+            apply_tag_add(todo, *self.tag)
+        if self.untag:
+            apply_tag_remove(todo, *self.untag)
         # While still collecting data (pre-init), keep the Branch label in sync
         # with the summary so `init` creates a well-named branch later.
         if self.summary is not None and current_state_name(todo) == "pre-init":
@@ -3430,23 +3579,72 @@ class WaitAndMergeCommand(TodoSubCommand):
         return 0
 
 
+def _recompute_auto_tags(todo: JsonDict) -> int:
+    """Recompute AUTOMATIC Tag elements for *todo* in place; return how many were set.
+
+    Trusts any AUTOMATIC (``manual: False``) elements already present and does
+    nothing (a cheap no-op) -- the same trust-existing/backfill-empty policy
+    used elsewhere for embeddings, so a normal doctor run stays cheap. MANUAL
+    elements are always kept. Otherwise mines the tag candidate domain from the
+    whole corpus (``_load_corpus`` + ``_mine_tag_candidates``) and scores it
+    against this todo's Summary+Body text (``compute_auto_tags``) using the
+    first cheap embedder (deterministic, network-free -- matches doctor's cost
+    profile). Tolerates a missing/failing embedder, an empty corpus, or an
+    embedder error by doing nothing, so a broken embedder never crashes doctor.
+    """
+    existing = todo.get("Tag")
+    elements = existing if isinstance(existing, list) else []
+    if any(isinstance(e, dict) and e.get("manual") is False for e in elements):
+        return 0
+    text = " ".join(
+        raw for raw in (_raw_of(todo, "Summary"), _raw_of(todo, "Body")) if raw
+    )
+    if not text:
+        return 0
+    try:
+        embedders = todo_embed.cheap_embedders()
+        if not embedders:
+            return 0
+        store = todo_store.get_store()
+        _tickets, raws = _load_corpus(store)
+        candidates = _mine_tag_candidates(raws)
+        if not candidates:
+            return 0
+        auto = compute_auto_tags(text, candidates, embedders[0], _AUTO_TAG_K)
+    except (ValueError, RuntimeError):
+        return 0
+    if not auto:
+        return 0
+    manual = [e for e in elements if isinstance(e, dict) and e.get("manual") is True]
+    todo["Tag"] = manual + auto
+    return len(auto)
+
+
 def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
-    """Audit one todo and (unless dry_run) repair its parent back-links.
+    """Audit one todo and (unless dry_run) repair its parent back-links + auto tags.
 
     Repair walks the audited todo's `Parent` refs and re-establishes a
     follow-only INFO back-link on each parent -- healing links that were
-    one-way (legacy links) or lost, and refreshing INFO summaries.
+    one-way (legacy links) or lost, and refreshing INFO summaries. It also
+    recomputes AUTOMATIC Tag elements when none are present yet (see
+    ``_recompute_auto_tags``), persisting the todo only when that adds any.
     """
     _loc, todo = resolve_ticket_by_selector(root, selector)
     findings = doctor_findings(root, selector)
     warnings = doctor_warnings(root, selector)
     repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
+    auto_tags = 0
+    if not dry_run:
+        auto_tags = _recompute_auto_tags(todo)
+        if auto_tags:
+            write_todo_worktree(root, todo)
     return {
         "id": str(todo.get("Id", ""))[:8],
         "ok": not findings,
         "findings": findings,
         "warnings": warnings,
         "repairs": repairs,
+        "auto_tags": auto_tags,
     }
 
 
@@ -3461,8 +3659,10 @@ class DoctorCommand(TodoSubCommand):
         "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
         "lock left by a crashed writer (reported as 'unlocked'). It also brings the store's records "
         "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
-        "already current), reported as 'migrated'. Pass --all to sweep the whole corpus instead of a "
-        "single selector. Exit 1 when any hard finding is present."
+        "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag elements for an "
+        "audited todo that has none yet (trusting any already present, so a normal run is cheap), "
+        "reported as 'auto_tags'. Pass --all to sweep the whole corpus instead of a single selector. "
+        "Exit 1 when any hard finding is present."
     )
 
     @classmethod
@@ -3517,6 +3717,7 @@ class DoctorCommand(TodoSubCommand):
                         "dry_run": self.dry_run,
                         "unlocked": unlocked,
                         "migrated": migrated,
+                        "auto_tags": sum(r["auto_tags"] for r in results),
                         "audited": len(results),
                         "results": results,
                     },
@@ -3532,6 +3733,7 @@ class DoctorCommand(TodoSubCommand):
                     "dry_run": self.dry_run,
                     "unlocked": unlocked,
                     "migrated": migrated,
+                    "auto_tags": result["auto_tags"],
                     "findings": result["findings"],
                     "warnings": result["warnings"],
                     "repairs": result["repairs"],
@@ -4060,7 +4262,8 @@ class SearchCommand(TodoSubCommand):
         )
         parser.add_argument(
             "--tag",
-            help="restrict to todos tagged with any of these (comma list); e.g. ui,billing",
+            help="restrict to todos with any of these Tag elements (comma list, "
+            "case-insensitive, manual or automatic); e.g. ui,billing",
         )
         _add_column_args(parser)
 
@@ -4072,7 +4275,7 @@ class SearchCommand(TodoSubCommand):
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
         states = parse_state_filter(self.state) if self.state else None
         tags = (
-            frozenset(part.strip() for part in self.tag.split(",") if part.strip())
+            frozenset(part.strip().lower() for part in self.tag.split(",") if part.strip())
             if self.tag
             else None
         )
