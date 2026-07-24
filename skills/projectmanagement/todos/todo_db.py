@@ -10,13 +10,89 @@ import struct
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
 SCHEMA_VERSION: int = 6
 _RESOLVED_TODO_DIR: Optional[Path] = None
+
+
+def migrate_record_v6(todo: JsonDict) -> JsonDict:
+    """Fold legacy field names (Chunks, Subtickets) into WorkItems, Subtodos.
+
+    Also migrates the singular ``Parent`` dict to a ``Parent`` list of
+    ``{Id, Branch}`` refs (element 0 is the structural/fork parent used for the
+    log diff base and merge; later entries are context-only references set by
+    ``set --parent``), and strips the machine-specific ``Scope.path_to_project``
+    (the repo name identifies the repo; CWD is the concrete location on this
+    machine). This is the record-shape half of the version-6 migration; the
+    table-shape half lives in ``migrate()`` below. Registered in
+    ``RECORD_MIGRATIONS[6]`` and reused by ``todo.normalize_todo_schema`` so
+    both the migration sweep and ordinary reads share one implementation.
+    """
+    if "Chunks" in todo and "WorkItems" not in todo:
+        todo["WorkItems"] = todo.pop("Chunks")
+    if "Subtickets" in todo and "Subtodos" not in todo:
+        todo["Subtodos"] = todo.pop("Subtickets")
+    parent = todo.get("Parent")
+    if isinstance(parent, dict):
+        todo["Parent"] = [parent]
+    scope = todo.get("Scope")
+    if isinstance(scope, dict):
+        scope.pop("path_to_project", None)
+    return todo
+
+
+# Record transform keyed by the SCHEMA_VERSION it produces. A version whose
+# change was table-only (see `migrate()`) registers no entry here -- a no-op
+# on the record axis. Keep this in ascending-version order for readability;
+# `migrate_record` sorts explicitly so declaration order does not matter.
+RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
+    6: migrate_record_v6,
+}
+
+
+def migrate_record(todo: JsonDict) -> JsonDict:
+    """Bring *todo* up to SCHEMA_VERSION and stamp ``todo["_schema"]``.
+
+    Applies every ``RECORD_MIGRATIONS[v]`` with ``v > todo.get("_schema", 0)``
+    and ``v <= SCHEMA_VERSION``, ascending, then stamps
+    ``todo["_schema"] = SCHEMA_VERSION``. Idempotent: a record already at
+    SCHEMA_VERSION runs no transforms and is returned with the same stamp.
+    """
+    current = todo.get("_schema", 0)
+    if not isinstance(current, int):
+        current = 0
+    for version in sorted(v for v in RECORD_MIGRATIONS if current < v <= SCHEMA_VERSION):
+        todo = RECORD_MIGRATIONS[version](todo)
+    todo["_schema"] = SCHEMA_VERSION
+    return todo
+
+
+def get_data_version(conn: sqlite3.Connection) -> int:
+    """Return the store's record-sweep marker (0 when unset).
+
+    Distinct from the ``schema_version`` table, which tracks TABLE structure
+    and auto-applies on every connect (see ``migrate()``); this tracks how far
+    the RECORDS themselves have been swept by ``migrate_record``, and only
+    advances when something explicitly calls ``set_data_version`` (the
+    migration sweep). Cheap: one indexed-free SELECT on a one-row table.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    return int(row["version"]) if row else 0
+
+
+def set_data_version(conn: sqlite3.Connection, version: int) -> None:
+    """Persist the store's record-sweep marker."""
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO data_version(version) VALUES (?)", (version,))
+    else:
+        conn.execute("UPDATE data_version SET version = ?", (version,))
 
 
 def repo_identity_from_url(url: str) -> Optional[str]:
