@@ -778,6 +778,15 @@ def is_self_selector(selector: str) -> bool:
     return selector in {"self", "curr"}
 
 
+def is_all_selector(selector: str) -> bool:
+    """Return True when *selector* is the reserved ALL sentinel (the whole corpus).
+
+    Uppercase, matching the --states=ALL macro convention. Ids are hex (lowercase),
+    so ALL can never collide with a real ticket id prefix.
+    """
+    return selector == "ALL"
+
+
 def read_todo_current_branch(root: Path) -> tuple[str, JsonDict]:
     """Return the todo bound to the checked-out branch."""
     branch: Optional[str] = current_branch(root)
@@ -3700,8 +3709,8 @@ class DoctorCommand(TodoSubCommand):
         "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
         "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag elements for an "
         "audited todo that has none yet (trusting any already present, so a normal run is cheap), "
-        "reported as 'auto_tags'. Pass --all to sweep the whole corpus instead of a single selector. "
-        "Exit 1 when any hard finding is present."
+        "reported as 'auto_tags'. Pass the ALL sentinel as the selector to sweep the whole corpus "
+        "instead of a single selector. Exit 1 when any hard finding is present."
     )
 
     @classmethod
@@ -3711,13 +3720,7 @@ class DoctorCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default="self",
-            help="todo selector to audit (default: self; ignored with --all)",
-        )
-        parser.add_argument(
-            "--all",
-            dest="sweep_all",
-            action="store_true",
-            help="sweep every todo in the corpus instead of one selector",
+            help="todo selector to audit, or ALL to sweep the whole corpus (default: self)",
         )
         parser.add_argument(
             "--dry-run",
@@ -3743,9 +3746,9 @@ class DoctorCommand(TodoSubCommand):
             store = todo_store.get_store()
             if store.get_data_version() < todo_db.SCHEMA_VERSION:
                 migrated = migrate_store(store)["migrated"]
-        if self.sweep_all:
+        if is_all_selector(self.selector):
             if not use_sqlite():
-                raise TodoError("--all requires the db store (unset TODO_USE_JSON)")
+                raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             ids = [str(t.get("Id", "")) for t in todo_store.get_store().list_all()]
             results = [_doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid]
             ok = all(r["ok"] for r in results)
@@ -3944,8 +3947,8 @@ class LogCommand(TodoSubCommand):
         "git-log --graph --oneline style: one line per todo as "
         "'* <Id[0:8]> <summary>  [<state>]', with vertical rails for the subtodo tree. The "
         "graph is read entirely from TODO.json files through todo.py's own readers, never "
-        "from git history. Selector is self/curr or a 4+ hex Id prefix (default self); --all "
-        "renders every discoverable todo as a forest."
+        "from git history. Selector is self/curr, a 4+ hex Id prefix, or the ALL sentinel "
+        "(default self); ALL renders every discoverable todo as a forest."
     )
 
     @classmethod
@@ -3955,13 +3958,7 @@ class LogCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default="self",
-            help="todo selector: self, curr, or 4+ hex Id prefix (default: self)",
-        )
-        parser.add_argument(
-            "--all",
-            dest="all_tickets",
-            action="store_true",
-            help="render every discoverable todo as a forest",
+            help="todo selector: self, curr, 4+ hex Id prefix, or ALL (default: self)",
         )
         parser.add_argument(
             "-n",
@@ -3986,7 +3983,7 @@ class LogCommand(TodoSubCommand):
     def do(self) -> int:
         """Render the ticket graph from TODO.json (no git log)."""
         root = self.root()
-        if self.all_tickets:
+        if is_all_selector(self.selector):
             roots = forest_roots(root)
             if not roots:
                 raise TodoError("no TODO.json tickets found in this repo")

@@ -300,8 +300,8 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
-| `todo.py doctor [<selector>] [--all] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, sqlite only). Repair runs by default; `--dry-run` reports intended repairs without writing; `--all` sweeps the whole corpus instead of one selector. Repair also sweeps records to the latest schema (`migrated` count) and recomputes missing AUTOMATIC `Tag` elements from Summary+Body (trust-existing; `auto_tags` count; manual tags untouched). Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
-| `todo.py log [<selector>]` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (default `self`; `self`/`curr` or a 4+ hex Id prefix) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. `--all` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
+| `todo.py doctor [<selector>\|ALL] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, sqlite only). Repair runs by default; `--dry-run` reports intended repairs without writing; selector `ALL` sweeps the whole corpus instead of one selector. Repair also sweeps records to the latest schema (`migrated` count) and recomputes missing AUTOMATIC `Tag` elements from Summary+Body (trust-existing; `auto_tags` count; manual tags untouched). Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
+| `todo.py log [<selector>\|ALL]` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (default `self`; `self`/`curr`, a 4+ hex Id prefix, or `ALL`) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. Selector `ALL` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
 | `todo.py new --summary=... --body=...` | planned | alias for `init` with optional JSON seed |
 
 Run from inside the target repo (`cd` there first; there is no `--repo` flag --
@@ -322,6 +322,7 @@ unambiguous 4+ hex `Id` prefixes, and current-branch aliases:
 |----------|---------|
 | `self` | Resolve the todo for the checked-out branch. |
 | `curr` | Alias for `self`. |
+| `ALL` | Every todo in the corpus (uppercase, matching the `--states=ALL` macro convention); recognized by `doctor` and `log` in place of a single selector. |
 
 `self`/`curr` resolution must not depend only on an Id prefix in the branch
 name. Deconstruct the current branch and combine it with repo identity plus the
@@ -842,10 +843,10 @@ parallel-checkout use case, keep worktree creation/listing manual.
 
 ## Doctor checks
 
-`todo.py doctor [<selector>]` audits and, by default, repairs. It re-establishes
+`todo.py doctor [<selector>|ALL]` audits and, by default, repairs. It re-establishes
 follow-only `INFO` parent back-links from the audited todo's `Parent` refs
 (best-effort, same-repo, sqlite only); `--dry-run` makes it report-only and
-`--all` sweeps the whole corpus. Checks:
+selector `ALL` sweeps the whole corpus. Checks:
 
 - Selector resolution: ids are unambiguous; `self`/`curr` resolves to exactly one
   branch-bound todo.

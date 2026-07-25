@@ -864,11 +864,11 @@ class LogTests(TodoCase):
         self.assertFalse(child_lines[0].startswith("* "), proc.stdout)
         self.assertIn("*", child_lines[0])
 
-    def test_log_all_includes_root_ticket(self) -> None:
+    def test_log_ALL_includes_root_ticket(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         init = self.todo("init", "--summary=Solo ticket")
         self.assertEqual(init.returncode, 0, init.stderr)
-        proc = self.todo("log", "--all")
+        proc = self.todo("log", "ALL")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("Solo ticket", proc.stdout)
 
@@ -1200,7 +1200,7 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
         self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
 
-    def test_doctor_all_sweeps_corpus_and_repairs(self) -> None:
+    def test_doctor_ALL_sweeps_corpus_and_repairs(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
@@ -1209,7 +1209,7 @@ class ParentPromptTests(TodoCase):
         self._set_parents(parent_id[:8])
         self._strip_subtodos(parent_id)
 
-        proc = self.todo("doctor", "--all")
+        proc = self.todo("doctor", "ALL")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
         self.assertGreaterEqual(payload["audited"], 2)
