@@ -21,7 +21,6 @@ import unittest
 from test_todo import TodoCase
 
 
-@unittest.skip("until 8bf724f7 ALL-sentinel lands; the implementation WI enables it")
 class AllSentinelEndTest(TodoCase):
     def _seed_two(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
