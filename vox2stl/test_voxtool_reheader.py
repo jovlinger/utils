@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import contextlib
 import io
-import shutil
 import tempfile
 from pathlib import Path
 
 import check_vox
 import voxtool
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-UP_SIDE = REPO_ROOT / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox"
 STRAIGHT = Path(__file__).resolve().parent / "testdata" / "straight.vox"
 
 
@@ -39,16 +36,27 @@ def test_reheader_is_noop_on_straight_fixture() -> None:
         require(check_exit == 0, f"check should pass after noop reheader; {check_exit}")
 
 
-def test_reheader_fixes_height_on_up_side_copy() -> None:
-    require(UP_SIDE.is_file(), f"missing fixture {UP_SIDE}")
+def test_reheader_fixes_stale_height_rows() -> None:
+    text = "\n".join(
+        [
+            "layer base (0, 3, 9)",
+            "XXX",
+            "XXX",
+            "   ",
+            "net alias TX = GPIO43",
+            "",
+            "layer trace (0, 3, 9)",
+            "...",
+            "...",
+            "",
+        ]
+    )
     with tempfile.TemporaryDirectory() as tmp_dir:
-        path = Path(tmp_dir) / "up-side.vox"
-        shutil.copyfile(UP_SIDE, path)
+        path = Path(tmp_dir) / "stale-height.vox"
+        path.write_text(text, encoding="utf-8")
         before = check_vox.read_layers(path)
-        require(
-            before["base"].height != len(before["base"].rows),
-            "up-side fixture should start with base height mismatch",
-        )
+        require(before["base"].height == 9, "fixture should declare stale height_rows")
+        require(len(before["base"].rows) == 2, "meta/whitespace must not count as rows")
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -60,6 +68,7 @@ def test_reheader_fixes_height_on_up_side_copy() -> None:
                 layer.height == len(layer.rows),
                 f"{name}: height_rows={layer.height} != len(rows)={len(layer.rows)}",
             )
+        require(after["base"].height == 2, "reheader should set height_rows to data rows")
 
 
 def test_reheader_fails_on_offset_width_mismatch() -> None:

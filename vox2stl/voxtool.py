@@ -19,6 +19,7 @@ from constants import (
     LAYER_POSITIONAL_KEYS,
     PAD_CHARS,
     correct_vox_shorthand_text,
+    is_vox_meta_line,
     parse_layer_header,
 )
 
@@ -104,13 +105,7 @@ def find_layer_specs(lines: Sequence[str]) -> List[LayerSpec]:
         current_rows = []
 
     for line_index, line in enumerate(lines):
-        if not line or line.startswith("#"):
-            continue
-        stripped = line.strip()
-        if (
-            _check_vox.parse_alias_line(stripped) is not None
-            or _check_vox.parse_net_alias_line(stripped) is not None
-        ):
+        if is_vox_meta_line(line):
             continue
         header = _check_vox.parse_layer_header(line)
         if header is not None:

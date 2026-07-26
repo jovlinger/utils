@@ -1,9 +1,8 @@
 ;;; vox-mode.el --- Major mode for HAT .vox layer files -*- lexical-binding: t; -*-
 
-;; Install (from a checkout of this repo):
-;;   (load "/ABSOLUTE/PATH/TO/utils/vox2stl/emacs/vox-mode.el")
-;; Or add that emacs/ directory to `load-path` and (require 'vox-mode).
-;; Files matching \\.vox\\' open in vox-mode via auto-mode-alist.
+;; Install: with configfiles sibling to utils, other-languages.el adds
+;; this emacs/ dir to load-path and autoloads vox-mode for \\.vox\\'.
+;; Manual: add this directory to load-path and (require 'vox-mode).
 ;;
 ;; voxtool.py is resolved next to this file: ../voxtool.py (the vox2stl/ tree).
 ;; Transform commands save the buffer, run the tool on `buffer-file-name`, then
@@ -51,8 +50,8 @@
     ("[-|+/\\\\<>^]" 0 font-lock-type-face)
     ("[\u2500\u2502\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c]"
      0 font-lock-type-face)
-    ;; Lowercase letter labels in the design window
-    ("\\b[a-z]\\b" 0 font-lock-constant-face)
+    ;; Lowercase letter / digit labels in the design window
+    ("\\b[a-z0-9]\\b" 0 font-lock-constant-face)
     ;; Base fill
     ("[X]" 0 font-lock-comment-delimiter-face)
     ;; Empty trace cells
@@ -193,7 +192,10 @@ Commands:
   :syntax-table vox-mode-syntax-table
   (setq-local comment-start "# ")
   (setq-local comment-start-skip "#+\\s-*")
-  (setq-local font-lock-defaults '(vox-mode-font-lock-keywords)))
+  (setq-local font-lock-defaults '(vox-mode-font-lock-keywords))
+  ;; Trailing spaces on otherwise-blank lines are still "empty" to the
+  ;; parsers, but strip them on save so files stay tidy.
+  (add-hook 'before-save-hook #'delete-trailing-whitespace nil t))
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.vox\\'" . vox-mode))

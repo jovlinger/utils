@@ -412,6 +412,31 @@ def test_keyword_layer_header_and_thickness_override() -> None:
     require(layers["trace"].letter_style == "negative", "trace layer should carry letter style")
 
 
+def test_read_layers_skips_net_alias_and_whitespace_only_lines() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "aliases.vox"
+        path.write_text(
+            "\n".join(
+                [
+                    "layer base (0, 1, 1)",
+                    "X",
+                    "   ",
+                    "net alias TX = GPIO43",
+                    "alias V -> | = 3V3",
+                    "",
+                    "layer trace (0, 1, 1)",
+                    "*",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        layers = vox2stl.read_layers(path)
+
+    require(len(layers["base"].rows) == 1, f"base rows: {layers['base'].rows!r}")
+    require(len(layers["trace"].rows) == 1, f"trace rows: {layers['trace'].rows!r}")
+
+
 def test_full_mesh_uses_layer_thickness_overrides() -> None:
     base_layer = vox2stl.Layer(
         "base",
@@ -603,6 +628,16 @@ def test_letter_tile_manifest() -> None:
     text = manifest.read_text(encoding="ascii")
     require("source=hershey_simplex_smoothed" in text, "letter tile manifest should record smoothed Hershey source")
     require("A " in text, "letter tile manifest should list A")
+    require("0 " in text, "letter tile manifest should list numeral 0")
+
+
+def test_digits_render_numeral_label_shapes() -> None:
+    config = vox2stl.RenderConfig()
+    layer = vox2stl.Layer("trace", 0, 3, 1, ("320",))
+    mesh, box_count, letter_count = vox2stl.build_layer_mesh(layer, config)
+    require(box_count == 0, f"digit label boxes: got {box_count}")
+    require(letter_count == 3, f"digit label cells: got {letter_count}")
+    require(len(mesh.triangles) > 300, f"digit label triangles: got {len(mesh.triangles)}")
 
 
 def test_lowercase_letters_render_uppercase_label_shapes() -> None:

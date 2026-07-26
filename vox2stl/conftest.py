@@ -57,7 +57,7 @@ def _letter_template(letter: str) -> List[Tri]:
 
 
 def _mock_load_letter_tile(letter: str) -> List[Tri]:
-    return _letter_template(letter.upper())
+    return _letter_template(vox2stl.label_tile_key(letter))
 
 
 def _mock_cached_tile_tris(
