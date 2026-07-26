@@ -32,11 +32,19 @@ Each prints an `undo:` line on stderr.
 
 ## Run
 
+With `binlinks/` on `PATH` (`make binlinks`):
+
+```bash
+onboardctl help
+onboardctl logs office
+onboardctl sendcommand kitchen   # defaults: cool / auto / on / 22c
+```
+
+Or from the package dir:
+
 ```bash
 cd thermo/onboard/onboardctl
 ./onboardctl help
-./onboardctl logs office
-./onboardctl sendcommand kitchen   # defaults: cool / auto / on / 22c
 ```
 
 Tests: `make -C thermo/onboard test-local` (includes `test/test_onboardctl_*.py`).
