@@ -2,6 +2,18 @@
 
 Layout and human pointers: [`README.md`](README.md).
 
+## onboardctl (direct board debug)
+
+`onboardctl/` is a sibling-role CLI to `thermo/dmz/manage`: it talks to onboard
+HTTP debug ports (default `:5000`) and **does not** go through the DMZ. Use it
+for synchronous bring-up (`logs`, `version`, `deviceinfo`, `sendcommand`,
+`setvar`). See [`onboardctl/README.md`](onboardctl/README.md).
+
+```bash
+thermo/onboard/onboardctl/onboardctl help
+thermo/onboard/onboardctl/onboardctl logs office
+```
+
 ## Standard targets (onboard root)
 
 ```bash
