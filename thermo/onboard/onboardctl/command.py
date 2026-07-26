@@ -72,11 +72,33 @@ class HelpCommand(Subcommand):
         return 0
 
 
-# Populated at end of module / by commands package import.
-COMMAND_CLASSES: List[Type[Subcommand]] = [HelpCommand]
+def _command_classes() -> List[Type[Subcommand]]:
+    # Local import avoids circular import at module load.
+    from commands import (
+        DeviceInfoCommand,
+        LogsCommand,
+        SendCommandCommand,
+        SetVarCommand,
+        VersionCommand,
+    )
+
+    return [
+        HelpCommand,
+        LogsCommand,
+        VersionCommand,
+        DeviceInfoCommand,
+        SendCommandCommand,
+        SetVarCommand,
+    ]
+
+
+COMMAND_CLASSES: List[Type[Subcommand]] = []
 
 
 def build_parser() -> argparse.ArgumentParser:
+    global COMMAND_CLASSES
+    if not COMMAND_CLASSES:
+        COMMAND_CLASSES = _command_classes()
     parser = argparse.ArgumentParser(
         prog="onboardctl",
         description=(
