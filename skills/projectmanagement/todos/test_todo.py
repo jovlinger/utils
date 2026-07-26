@@ -165,6 +165,30 @@ class MintSetInitFlowTests(TodoCase):
         # set --id must not create a git branch (sqlite-only)
         self.assertFalse(self._branch_exists(rec["Branch"]))
 
+    def test_set_json_path_seeds_workitems_on_branchless_groom(self) -> None:
+        # set-json-path by id must write sqlite-only, like `set --id`: a groom
+        # todo has a Branch label but no git branch, so requiring a checkout
+        # used to make seeding a plan onto a freshly minted todo impossible.
+        tid = self.mint()
+        self.todo("set", "--id", tid, "--summary", "seed my plan")
+        branch = self._read_id(tid)["Branch"]
+        self.assertFalse(self._branch_exists(branch))  # no git branch yet
+        plan = [
+            {"kind": "task", "done": False, "summary": "first step"},
+            {"kind": "task", "done": False, "summary": "second step"},
+        ]
+        proc = subprocess.run(
+            [sys.executable, str(TODO_PY), "set-json-path", tid[:8], "WorkItems"],
+            cwd=str(self.repo), input=json.dumps(plan), capture_output=True, text=True,
+            check=False, env=self._env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rec = self._read_id(tid)
+        self.assertEqual([w["summary"] for w in rec["WorkItems"]], ["first step", "second step"])
+        # still branchless and still groom -- writing a plan did not create a branch
+        self.assertFalse(self._branch_exists(branch))
+        self.assertEqual(list(rec["State"].keys()), ["groom"])
+
     def test_init_promotes_pre_init_to_branch(self) -> None:
         # An initial commit so the parent branch is born (--stay-on-parent can
         # check it back out). Real repos always have history here.

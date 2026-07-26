@@ -2058,40 +2058,28 @@ def apply_ticket_path(
     no_commit: bool = False,
     no_clear: bool = False,
 ) -> Any:
-    """Set *jsonpath* to an already-parsed *value* on a selected ticket."""
-    origin_branch = current_branch(root)
-    target_branch: Optional[str] = None
-    if is_self_selector(selector):
-        read_todo_current_branch(root)
+    """Set *jsonpath* to an already-parsed *value* on a selected ticket.
+
+    A non-self selector resolves the todo by Id through the store and writes it
+    back sqlite-only, exactly like ``set --id``: no branch checkout and no
+    commit. Storage access -- which reading the todo already proves we have --
+    is all that is required, so this works on a branchless ``groom`` todo (it
+    carries a Branch *label* but has no git branch yet) and never lands an empty
+    marker commit on whatever branch the caller happens to be on. Only a
+    ``self``/``curr`` edit commits, on the current branch. ``stay`` is retained
+    for CLI backward compatibility but is now a no-op: with no checkout there is
+    no branch to return from.
+    """
+    by_id = not is_self_selector(selector)
+    if by_id:
+        _, todo = resolve_ticket_by_id(root, selector)
     else:
-        _, located = resolve_ticket_by_id(root, selector)
-        target_branch = checkout_todo_branch(root, located)
-    try:
         todo = read_todo_required(root)
-        set_at_path(todo, jsonpath, value)
-        write_todo_worktree(root, todo, no_clear=no_clear)
-        if not no_commit:
-            commit_todo(root, f"chore(todo): update {jsonpath}")
-        return get_at_path(todo, jsonpath)
-    finally:
-        if (
-            target_branch
-            and origin_branch
-            and origin_branch != target_branch
-            and not stay
-        ):
-            run_git(root, "checkout", origin_branch, check=False)
-
-
-def checkout_todo_branch(root: Path, todo: JsonDict) -> str:
-    """Checkout the branch carrying *todo*; return the branch name."""
-    branch = str(todo.get("Branch") or "")
-    if not branch:
-        raise TodoError("todo missing Branch")
-    if not branch_exists(root, branch):
-        raise TodoError(f"branch {branch!r} does not exist locally")
-    run_git(root, "checkout", branch)
-    return branch
+    set_at_path(todo, jsonpath, value)
+    write_todo_worktree(root, todo, no_clear=no_clear)
+    if not no_commit and not by_id:
+        commit_todo(root, f"chore(todo): update {jsonpath}")
+    return get_at_path(todo, jsonpath)
 
 
 def merge_subtodo(
@@ -3473,9 +3461,11 @@ class SetJsonPathCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Set-json-path sets any JSON path on a selected todo (e.g. WorkItems, Body.raw, "
         "WorkItems.0.summary) to a value read as JSON from --file, or from stdin by default. The "
-        "input must be valid JSON. It checks out the target branch for a non-self selector, writes, "
-        "and commits by default, returning to the previous branch unless --stay. This is the "
-        "general way to replace WorkItems or seed a whole plan."
+        "input must be valid JSON. A non-self selector targets the todo by Id through the store "
+        "and writes sqlite-only (no branch checkout, no commit), exactly like `set --id` -- so it "
+        "works on a branchless `groom` todo (e.g. seeding WorkItems on a freshly minted plan). A "
+        "self/curr edit writes and commits on the current branch. This is the general way to "
+        "replace WorkItems or seed a whole plan. (--stay is a retained no-op: no checkout happens.)"
     )
 
     @classmethod
