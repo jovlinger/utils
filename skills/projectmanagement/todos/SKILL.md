@@ -254,6 +254,18 @@ remember. The `migrate-to-latest` subcommand remains for an explicit or
 `SCHEMA_VERSION`, add any table DDL to `migrate`, add any record transform to
 `RECORD_MIGRATIONS` at the new version -- `doctor` sweeps it in.
 
+**Startup skills-doctor check (agent install-health).** A second cheap startup check runs the
+*inverse* way to the store-behind nudge: when `todo.py` is invoked by an **agent framework**
+(detected from env -- `AGENT=<name>` first, else `CLAUDECODE`/`CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`,
+`OPENCODE_RUN_ID`), it verifies that framework can actually *discover* its skills and complains on
+stderr (the pipe the agent reads back) if any are installed too deep for its scanner -- e.g. a skill
+at `<root>/<group>/<sub>/SKILL.md` when Claude Code only scans one level under `~/.claude/skills`
+(unless a top-level sibling symlink already exposes it). It is gated on **framework detection, not
+`isatty`** (an agent's stderr is not a tty, so the store-behind gate would wrongly hide it), and
+fires **once per session**. Frameworks whose discovery rules are not yet encoded (cursor,
+chatgpt/codex, ...) emit a `FIXME` asking for them; a plain shell / unknown caller stays silent. See
+`_warn_if_skills_buried` / `_detect_agent_framework` / `_buried_claude_skills` in `todo.py`.
+
 ## CLI (`todo.py`)
 
 AWS-style subcommands live beside this skill as

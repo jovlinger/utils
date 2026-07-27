@@ -4867,6 +4867,133 @@ def log_invocation(command: str, argv: Sequence[str], exit_code: int, dur_ms: in
         pass
 
 
+def _detect_agent_framework() -> Optional[str]:
+    """Best-effort name of the agent framework driving this invocation, from env.
+
+    Env vars are inherited by the spawned process, so they identify the *caller*
+    right now (a config file like CLAUDE.md/AGENTS.md only says what is
+    configured, not who is running). Cascade: the emerging cross-vendor
+    ``AGENT=<name>`` convention first, then per-tool signals. Returns a lowercase
+    framework name, or ``None`` for a plain shell / unknown caller (skills-doctor
+    stays silent then).
+    """
+    agent: str = os.environ.get("AGENT", "").strip().lower()
+    if agent:
+        return agent
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
+        return "claude"
+    if os.environ.get("CODEX_SANDBOX") or os.environ.get("CODEX_THREAD_ID"):
+        return "codex"
+    if os.environ.get("CURSOR_TRACE_ID") or os.environ.get("CURSOR_CLI"):
+        return "cursor"
+    if os.environ.get("OPENCODE_RUN_ID"):
+        return "opencode"
+    return None
+
+
+def _buried_claude_skills() -> List[str]:
+    """Complaints for skills installed too deep for Claude Code to discover.
+
+    Claude Code scans ``<root>/<name>/SKILL.md`` exactly one level under each
+    skills root (``~/.claude/skills`` and a project ``.claude/skills``). A skill
+    whose ``SKILL.md`` sits deeper (``<root>/<group>/<sub>/SKILL.md``) is
+    invisible -- UNLESS a top-level ``<sub>`` entry separately exposes it (e.g. a
+    sibling symlink), which is not flagged. Cheap: one listdir per root plus a
+    shallow peek into the non-skill dirs.
+    """
+    complaints: List[str] = []
+    roots: List[Path] = [Path.home() / ".claude" / "skills"]
+    project_root: Path = Path.cwd() / ".claude" / "skills"
+    if project_root.is_dir():
+        roots.append(project_root)
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            entries: List[Path] = sorted(p for p in root.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        discoverable = {p.name for p in entries if (p / "SKILL.md").is_file()}
+        for entry in entries:
+            if (entry / "SKILL.md").is_file():
+                continue
+            try:
+                nested = sorted(
+                    sub.name
+                    for sub in entry.iterdir()
+                    if sub.is_dir() and (sub / "SKILL.md").is_file()
+                )
+            except OSError:
+                nested = []
+            for sub in nested:
+                if sub in discoverable:
+                    continue
+                complaints.append(
+                    f"skill '{sub}' is buried at {entry.name}/{sub}/ under {root} "
+                    f"(Claude Code scans one level deep); symlink it to {root}/{sub}"
+                )
+    return complaints
+
+
+def _warn_if_skills_buried() -> None:
+    """Complain on stderr, once per session, when the calling agent framework
+    cannot discover skills installed too deep for its scanner.
+
+    The INVERSE of ``_warn_if_store_behind``: that nudge targets a human at a tty;
+    this one targets an AGENT driving non-interactively (its stderr is a pipe the
+    agent reads back), so it is gated on *framework detection*, NOT ``isatty``, and
+    stays silent for a plain shell or unknown caller. Frameworks whose discovery
+    rules skills-doctor does not yet know emit a FIXME asking for them. Cheap and
+    non-fatal -- a health nudge must never break the tool.
+    """
+    try:
+        framework: Optional[str] = _detect_agent_framework()
+        if framework is None:
+            return
+        # Complain at most once per session (agents call todo.py many times),
+        # keyed on whatever session id the detected framework exposes.
+        session: str = (
+            os.environ.get("CLAUDE_CODE_SESSION_ID")
+            or os.environ.get("CODEX_THREAD_ID")
+            or os.environ.get("CURSOR_TRACE_ID")
+            or ""
+        )
+        marker: Path = Path(tempfile.gettempdir()) / f".todo-skills-doctor.{framework}.{session}"
+        if session and marker.exists():
+            return
+        if framework == "claude":
+            for complaint in _buried_claude_skills():
+                print(f"todo.py: skills-doctor: {complaint}", file=sys.stderr)
+        elif framework == "cursor":
+            # FIXME: cursor -- discovery root + scan depth not yet known.
+            print(
+                "todo.py: skills-doctor: FIXME: cursor, how do you like your SKILLs "
+                "in the morning? (teach skills-doctor your discovery root + scan depth)",
+                file=sys.stderr,
+            )
+        elif framework in ("codex", "chatgpt", "openai"):
+            # FIXME: chatgpt/codex -- discovery root + scan depth not yet known.
+            print(
+                "todo.py: skills-doctor: FIXME: chatgpt/codex, where do you read SKILLs "
+                "from? (teach skills-doctor your discovery root + scan depth)",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"todo.py: skills-doctor: FIXME: {framework}, skill-discovery rules "
+                "not yet known; teach skills-doctor this framework",
+                file=sys.stderr,
+            )
+        if session:
+            try:
+                marker.touch()
+            except OSError:
+                pass
+    except Exception:  # pylint: disable=broad-except
+        # A startup health nudge must never break the tool.
+        return
+
+
 def _warn_if_store_behind() -> None:
     """Print a one-line stderr warning when the store's records lag SCHEMA_VERSION.
 
@@ -4900,6 +5027,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     exit_code: int = 1
     try:
         _warn_if_store_behind()
+        _warn_if_skills_buried()
         command: TodoSubCommand = args.command_cls(args)
         exit_code = int(command.do())
         return exit_code
