@@ -1233,7 +1233,7 @@ def next_action(todo: JsonDict) -> JsonDict:
     if index is None:
         return {
             "action": "finish",
-            "command": 'todo.py set --state done --actual-summary="..."',
+            "command": 'todo.py set self --state done --actual-summary="..."',
             "note": "run doctor first (must be ok); synthesize ActualSummary from the done WorkItems",
         }
     item = todo["WorkItems"][index]
@@ -2061,9 +2061,10 @@ def apply_ticket_path(
     """Set *jsonpath* to an already-parsed *value* on a selected ticket.
 
     A non-self selector resolves the todo by Id through the store and writes it
-    back sqlite-only, exactly like ``set --id``: no branch checkout and no
-    commit. Storage access -- which reading the todo already proves we have --
-    is all that is required, so this works on a branchless ``groom`` todo (it
+    back sqlite-only, exactly like ``set`` targeting a non-self selector: no
+    branch checkout and no commit. Storage access -- which reading the todo
+    already proves we have -- is all that is required, so this works on a
+    branchless ``groom`` todo (it
     carries a Branch *label* but has no git branch yet) and never lands an empty
     marker commit on whatever branch the caller happens to be on. Only a
     ``self``/``curr`` edit commits, on the current branch. ``stay`` is retained
@@ -2531,10 +2532,10 @@ class MintCommand(TodoSubCommand):
         "Mint creates a new TODO and prints its Id. It hashes a uuid1 value into the canonical "
         "64-character lowercase hex Id (collision-checked against existing todos), then materializes "
         "a data-collection record for it: State `groom` (still collecting data / grooming), no git "
-        "branch, sqlite-only (no commit). Fill it in with `set --id <id>`; run `init` when it is "
+        "branch, sqlite-only (no commit). Fill it in with `set <id>`; run `init` when it is "
         "ready to be worked (gives it a branch and moves it to `ready`). Prints only the Id so "
-        "callers can capture it directly. Use `set --id`/`init` -- `set` alone (without --id) still "
-        "targets the current branch's todo."
+        "callers can capture it directly. Use `set <id>`/`init` -- `set` always requires an "
+        "explicit selector, self/curr for the current branch or an Id prefix otherwise."
     )
 
     @classmethod
@@ -2674,6 +2675,58 @@ class GetJsonPathCommand(TodoSubCommand):
         return 0
 
 
+_GET_FIELD_PATHS: Dict[str, str] = {
+    "summary": "Summary.raw",
+    "body": "Body.raw",
+    "ac": "AC",
+    "state": "State",
+    "actual_summary": "ActualSummary",
+    "parent": "Parent",
+    "tag": "Tag",
+}
+
+
+class GetCommand(TodoSubCommand):
+    command_names = ("get",)
+    doc_short: ClassVar[str] = "Print one named todo field"
+    doc_long: ClassVar[str] = (
+        "Get is a friendly-field-name wrapper over get-json-path: pass exactly one of "
+        "--summary/--body/--ac/--state/--actual-summary/--parent/--tag and it expands to the "
+        "matching internal path (Summary.raw, Body.raw, AC, State, ActualSummary, Parent, Tag "
+        "respectively) and prints that value as JSON -- exactly like `get-json-path <selector> "
+        "<path>` with the path already filled in. <selector> is self/curr for the checked-out "
+        "branch, or an Id prefix/full digest for another todo. For any other path, or a nested "
+        "value like WorkItems.0.summary, use get-json-path directly."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register get arguments."""
+        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("--summary", action="store_true", help="print Summary.raw")
+        parser.add_argument("--body", action="store_true", help="print Body.raw")
+        parser.add_argument("--ac", action="store_true", help="print AC")
+        parser.add_argument("--state", action="store_true", help="print State")
+        parser.add_argument(
+            "--actual-summary", dest="actual_summary", action="store_true",
+            help="print ActualSummary",
+        )
+        parser.add_argument("--parent", action="store_true", help="print Parent")
+        parser.add_argument("--tag", action="store_true", help="print Tag")
+
+    def do(self) -> int:
+        """Print the one requested field, expanded to its internal path."""
+        selected = [name for name in _GET_FIELD_PATHS if getattr(self, name)]
+        if len(selected) != 1:
+            raise TodoError(
+                "pass exactly one of --summary, --body, --ac, --state, "
+                "--actual-summary, --parent, --tag"
+            )
+        root = self.root()
+        _, todo = resolve_ticket_by_selector(root, self.selector)
+        print_json_value(get_at_path(todo, _GET_FIELD_PATHS[selected[0]]))
+        return 0
+
 
 class InitCommand(TodoSubCommand):
     command_names = ("init",)
@@ -2682,13 +2735,14 @@ class InitCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Init makes a todo branch-bound and ready to work -- run it when the design is ready and "
         "you are about to WORK the todo. Two modes: (1) PROMOTE -- with --id naming an existing "
-        "`groom` todo (created by `mint` and filled in with `set --id`), it creates the git branch "
+        "`groom` todo (created by `mint` and filled in with `set <id>`), it creates the git branch "
         "from that todo's finalized Branch label and moves it to state `ready`; (2) FRESH -- "
         "with --summary and no existing record, it mints (or accepts --id), writes the initial "
         "skeleton, and creates the branch, all in one call (backward-compatible). It refuses to "
         "create a second todo on a branch that already has one, and can optionally return to the "
-        "parent branch (--stay-on-parent). For parent/context links use `set --parent` after init "
-        "(or on any existing todo). For the full subtodo lifecycle use add-subtodo."
+        "parent branch (--stay-on-parent). For parent/context links use `set self --parent` after "
+        "init (or `set <id> --parent` on any existing todo). For the full subtodo lifecycle use "
+        "add-subtodo."
     )
 
     @classmethod
@@ -2973,11 +3027,12 @@ class SetCommand(TodoSubCommand):
     command_names = ("set",)
     doc_short: ClassVar[str] = "Patch todo fields / state"
     doc_long: ClassVar[str] = (
-        "Set edits a todo's fields without changing branches. By default it targets the current "
-        "branch's todo; pass --id <prefix> to target another todo by Id -- typically a `groom` "
-        "todo from `mint` that has no branch yet. It updates Summary.raw, Body.raw, AC, "
-        "ActualSummary, and/or the workflow State (--state, which replaces the removed `set-state` "
-        "subcommand; State metadata --note/--last-commit/--merged-into/--owner ride along). "
+        "Set edits a todo's fields without changing branches. <selector> is required -- there is "
+        "no current-branch default -- and is self/curr for the checked-out branch, or an Id prefix/"
+        "full digest for another todo (typically a `groom` todo from `mint` that has no branch "
+        "yet). It updates Summary.raw, Body.raw, AC, ActualSummary, and/or the workflow State "
+        "(--state, which replaces the removed `set-state` subcommand; State metadata "
+        "--note/--last-commit/--merged-into/--owner ride along). "
         "Pass --parent <id> (repeatable) as a make-it-so Parent list: the child's Parent becomes "
         "exactly those refs, follow-only INFO back-links are added on desired parents, and INFO "
         "back-links on former parents that are no longer listed are removed (tracked subtodos are "
@@ -2985,10 +3040,10 @@ class SetCommand(TodoSubCommand):
         "aliases for the `tagadd`/`tagrm` subcommands -- see their help for the plural Tag "
         "field's manual/automatic semantics. To replace WorkItems or any other JSON "
         "path from a file or stdin, use set-json-path. The command requires at least one field "
-        "change. It commits the current-branch todo by default; with --id it is sqlite-only (no "
-        "commit), since a groom/other todo has no branch of its own to commit on. For a "
-        "`groom` todo, changing --summary also refreshes the Branch label so `init` later "
-        "creates a well-named branch. Any free-text value passed as EDIT is captured from "
+        "change. A self/curr selector commits on the current branch by default; any other "
+        "selector is sqlite-only (no commit), since that todo has no branch of its own to commit "
+        "on. For a `groom` todo, changing --summary also refreshes the Branch label so `init` "
+        "later creates a well-named branch. Any free-text value passed as EDIT is captured from "
         "$VISUAL/$EDITOR/vi (interactive terminals only)."
     )
     edit_fields = ("summary", "body", "ac", "note", "actual_summary")
@@ -2997,9 +3052,9 @@ class SetCommand(TodoSubCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register set arguments."""
         parser.add_argument(
-            "--id",
-            help="target a todo by Id prefix instead of the current branch "
-            "(e.g. a groom todo from `mint`)",
+            "id",
+            help="todo selector: self, curr, Id prefix, or full digest -- required, no "
+            "current-branch default",
         )
         parser.add_argument("--summary")
         parser.add_argument("--body")
@@ -3035,12 +3090,13 @@ class SetCommand(TodoSubCommand):
     def do(self) -> int:
         """Patch Summary/Body/AC/ActualSummary/Parent and/or State on a todo.
 
-        Targets the current branch's todo, or the --id todo when given. A --id
-        (groom/branchless) todo is written sqlite-only: committing would land
-        an empty commit on whatever branch the caller happens to be on.
+        <selector> is required. self/curr targets the current branch's todo;
+        any other selector resolves by Id and is written sqlite-only:
+        committing would land an empty commit on whatever branch the caller
+        happens to be on.
         """
         root = self.root()
-        by_id = bool(self.id)
+        by_id = not is_self_selector(self.id)
         if by_id:
             _loc, todo = resolve_ticket_by_id(root, self.id)
         else:
@@ -3462,8 +3518,9 @@ class SetJsonPathCommand(TodoSubCommand):
         "Set-json-path sets any JSON path on a selected todo (e.g. WorkItems, Body.raw, "
         "WorkItems.0.summary) to a value read as JSON from --file, or from stdin by default. The "
         "input must be valid JSON. A non-self selector targets the todo by Id through the store "
-        "and writes sqlite-only (no branch checkout, no commit), exactly like `set --id` -- so it "
-        "works on a branchless `groom` todo (e.g. seeding WorkItems on a freshly minted plan). A "
+        "and writes sqlite-only (no branch checkout, no commit), exactly like `set` targeting a "
+        "non-self selector -- so it works on a branchless `groom` todo (e.g. seeding WorkItems on "
+        "a freshly minted plan). A "
         "self/curr edit writes and commits on the current branch. This is the general way to "
         "replace WorkItems or seed a whole plan. (--stay is a retained no-op: no checkout happens.)"
     )
@@ -4624,6 +4681,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     RepoDirCommand,
     ReadCommand,
     GetJsonPathCommand,
+    GetCommand,
     InitCommand,
     EnsureWorktreeCommand,
     AddSubtodoCommand,

@@ -128,7 +128,7 @@ todo.py search QUERY                     # default embedders (hash,apple here)
 todo.py search QUERY --embedder hash     # hermetic; hard 0-similarity cutoff
 todo.py search QUERY --embedder hash,apple --dry-run   # rank existing vectors only
 todo.py search QUERY --embedder st       # hidden backend, by exact name
-todo.py set --summary "..." --no-clear   # keep vectors despite a trivial raw edit
+todo.py set self --summary "..." --no-clear   # keep vectors despite a trivial raw edit
 
 TODO_APPLE_NLCE_BIN=/path/to/nlce-embed  # override the apple sidecar binary path
 make apple-embedder                      # build the sidecar (macOS 14+, swiftc)

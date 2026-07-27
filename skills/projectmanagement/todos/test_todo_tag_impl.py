@@ -407,7 +407,7 @@ class CrossFieldTagInvalidationTests(TodoCase):
                 ]
             },
         )
-        proc = self.todo("set", "--summary", "a whole new summary")
+        proc = self.todo("set", "self", "--summary", "a whole new summary")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ticket = self.read_self()
         self.assertEqual(_raws(ticket), ["manual one"])
@@ -422,7 +422,7 @@ class CrossFieldTagInvalidationTests(TodoCase):
             body="original body",
             extra={"Tag": [{"raw": "auto one", "manual": False}]},
         )
-        proc = self.todo("set", "--body", "a whole new body")
+        proc = self.todo("set", "self", "--body", "a whole new body")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Tag", self.read_self())  # only element was automatic -> field dropped
 
@@ -434,7 +434,7 @@ class CrossFieldTagInvalidationTests(TodoCase):
             summary="s",
             extra={"Tag": [{"raw": "auto one", "manual": False}]},
         )
-        proc = self.todo("set", "--ac", "some acceptance criteria")
+        proc = self.todo("set", "self", "--ac", "some acceptance criteria")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("auto one", _raws(self.read_self()))
 
@@ -446,7 +446,7 @@ class CrossFieldTagInvalidationTests(TodoCase):
             summary="original summary",
             extra={"Tag": [{"raw": "auto one", "manual": False}]},
         )
-        proc = self.todo("set", "--summary", "trivial rewording", "--no-clear")
+        proc = self.todo("set", "self", "--summary", "trivial rewording", "--no-clear")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("auto one", _raws(self.read_self()))
 
@@ -502,7 +502,7 @@ class SetTagPluralShapeTests(TodoCase):
     def test_set_tag_writes_a_manual_plural_tag_element(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        proc = self.todo("set", "--tag", "Billing")
+        proc = self.todo("set", "self", "--tag", "Billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ticket = self.read_self()
         self.assertEqual(_raws(ticket), ["billing"])  # downcased, like tagadd
@@ -516,7 +516,7 @@ class SetTagPluralShapeTests(TodoCase):
             summary="x",
             extra={"Tag": [{"raw": "shared", "manual": False}]},
         )
-        proc = self.todo("set", "--untag", "shared")
+        proc = self.todo("set", "self", "--untag", "shared")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("shared", _raws(self.read_self()))  # automatic: not set's to remove
 

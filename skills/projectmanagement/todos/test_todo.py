@@ -135,7 +135,7 @@ class MintTests(TodoCase):
 
 
 class MintSetInitFlowTests(TodoCase):
-    """The two-phase flow: mint (groom) -> set --id -> init (promote)."""
+    """The two-phase flow: mint (groom) -> set <id> -> init (promote)."""
 
     def _branch_exists(self, name: str) -> bool:
         return bool(self._git("branch", "--list", name).stdout.strip())
@@ -155,22 +155,22 @@ class MintSetInitFlowTests(TodoCase):
 
     def test_set_by_id_fills_fields_and_finalizes_branch(self) -> None:
         tid = self.mint()
-        proc = self.todo("set", "--id", tid, "--summary", "persist the local db")
+        proc = self.todo("set", tid, "--summary", "persist the local db")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         rec = self._read_id(tid)
         self.assertEqual(rec["Summary"]["raw"], "persist the local db")
         self.assertEqual(list(rec["State"].keys()), ["groom"])  # still collecting
         self.assertTrue(rec["Branch"].startswith(f"{tid[:8]}-"))
         self.assertIn("persist", rec["Branch"])
-        # set --id must not create a git branch (sqlite-only)
+        # set on a non-self selector must not create a git branch (sqlite-only)
         self.assertFalse(self._branch_exists(rec["Branch"]))
 
     def test_set_json_path_seeds_workitems_on_branchless_groom(self) -> None:
-        # set-json-path by id must write sqlite-only, like `set --id`: a groom
+        # set-json-path by id must write sqlite-only, like `set <id>`: a groom
         # todo has a Branch label but no git branch, so requiring a checkout
         # used to make seeding a plan onto a freshly minted todo impossible.
         tid = self.mint()
-        self.todo("set", "--id", tid, "--summary", "seed my plan")
+        self.todo("set", tid, "--summary", "seed my plan")
         branch = self._read_id(tid)["Branch"]
         self.assertFalse(self._branch_exists(branch))  # no git branch yet
         plan = [
@@ -194,7 +194,7 @@ class MintSetInitFlowTests(TodoCase):
         # check it back out). Real repos always have history here.
         self._git("commit", "--allow-empty", "-qm", "root")
         tid = self.mint()
-        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        self.todo("set", tid, "--summary", "persist the local db")
         branch = self._read_id(tid)["Branch"]
         proc = self.todo("init", "--id", tid, "--stay-on-parent")
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -212,7 +212,7 @@ class MintSetInitFlowTests(TodoCase):
 
     def test_ensure_worktree_is_stub(self) -> None:
         tid = self.mint()
-        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        self.todo("set", tid, "--summary", "persist the local db")
         proc = self.todo("ensure_worktree", tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
@@ -300,7 +300,7 @@ class ReadTests(TodoCase):
     def test_worktree_edit_takes_precedence_over_commit(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-demo", tid, summary="committed")
-        proc = self.todo("set", "--summary=worktree-edit")
+        proc = self.todo("set", "self", "--summary=worktree-edit")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("read", tid[:8])
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -398,7 +398,7 @@ class SetStateViaSetTests(TodoCase):
         self._git("commit", "--allow-empty", "-qm", "seed")
         branch = json.loads(self.todo("init", "--summary=Do it").stdout)["Branch"]
         self._git("checkout", "-q", branch)
-        proc = self.todo("set", "--state", "working", "--owner=agent")
+        proc = self.todo("set", "self", "--state", "working", "--owner=agent")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.read_self()["State"], {"working": {"owner": "agent"}})
         # the removed subcommand must not resolve anymore
@@ -472,6 +472,7 @@ class FieldAndWorkItemTests(TodoCase):
         self.write_ticket(f"{tid[:8]}-fields", tid)
         proc = self.todo(
             "set",
+            "self",
             "--summary=Renamed ticket",
             "--body=More detail",
             "--ac=All checks pass",
@@ -608,11 +609,51 @@ class PathTests(TodoCase):
         self.assertNotIn("Subtickets", loaded)
 
 
+class GetCommandTests(TodoCase):
+    """`get` is a friendly-field wrapper that expands to `get-json-path`."""
+
+    def test_get_summary_matches_get_json_path(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="read me via get")
+        proc = self.todo("get", "self", "--summary")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "read me via get")
+        via_path = self.todo("get-json-path", "self", "Summary.raw")
+        self.assertEqual(proc.stdout, via_path.stdout)
+
+    def test_get_body_ac_and_state(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="s", body="detailed body")
+        body = self.todo("get", "self", "--body")
+        self.assertEqual(body.returncode, 0, body.stderr)
+        self.assertEqual(body.stdout.strip(), "detailed body")
+        state = self.todo("get", "self", "--state")
+        self.assertEqual(state.returncode, 0, state.stderr)
+        self.assertEqual(json.loads(state.stdout), {"ready": {}})
+
+    def test_get_by_id_selector(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="cross-branch")
+        self._git("checkout", "-q", "-b", "elsewhere")
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        proc = self.todo("get", tid[:8], "--summary")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "cross-branch")
+
+    def test_get_requires_exactly_one_field_flag(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid)
+        none_given = self.todo("get", "self")
+        self.assertNotEqual(none_given.returncode, 0)
+        two_given = self.todo("get", "self", "--summary", "--body")
+        self.assertNotEqual(two_given.returncode, 0)
+
+
 class StateTests(TodoCase):
     def test_set_state_done_then_merged(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
-        proc = self.todo("set", "--state", "done", "--last-commit=finish child")
+        proc = self.todo("set", "self", "--state", "done", "--last-commit=finish child")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -621,7 +662,7 @@ class StateTests(TodoCase):
             {"done": {"last_commit": "finish child"}},
         )
 
-        proc3 = self.todo("set", "--state", "merged", "--merged-into=parent-branch")
+        proc3 = self.todo("set", "self", "--state", "merged", "--merged-into=parent-branch")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
         proc4 = self.todo("get-json-path", "self", "State")
         self.assertEqual(proc4.returncode, 0, proc4.stderr)
@@ -634,7 +675,9 @@ class StateTests(TodoCase):
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
         proc = self.todo(
-            "set", "--state", "done", "--actual-summary=rewrote the parser instead of patching it"
+            "set",
+            "self",
+            "--state", "done", "--actual-summary=rewrote the parser instead of patching it",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         got = self.todo("get-json-path", "self", "ActualSummary")
@@ -649,7 +692,7 @@ class WaitTests(TodoCase):
     def test_wait_for_done_succeeds_immediately(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-done", tid)
-        proc = self.todo("set", "--state", "done")
+        proc = self.todo("set", "self", "--state", "done")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("wait-for", tid[:8], "--timeout=0", "--interval=0")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -688,7 +731,7 @@ class WaitTests(TodoCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self._git("checkout", f"{child_id[:8]}-child")
-        proc2 = self.todo("set", "--state", "done")
+        proc2 = self.todo("set", "self", "--state", "done")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self._git("checkout", "parent-branch")
 
@@ -717,7 +760,9 @@ class WaitTests(TodoCase):
         self.assertEqual(add.returncode, 0, add.stderr)
         self._git("checkout", f"{child_id[:8]}-child")
         # child finishes and records how it actually panned out
-        done = self.todo("set", "--state", "done", "--actual-summary=actually landed via a rewrite")
+        done = self.todo(
+            "set", "self", "--state", "done", "--actual-summary=actually landed via a rewrite"
+        )
         self.assertEqual(done.returncode, 0, done.stderr)
         self._git("checkout", parent_branch)
 
@@ -991,7 +1036,7 @@ class SearchTests(TodoCase):
         )
         conn.commit()
         conn.close()
-        proc = self.todo("set", "--summary", "completely different text", "--no-commit")
+        proc = self.todo("set", "self", "--summary", "completely different text", "--no-commit")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         embedders = {emb for _t, _f, emb in self._emb_rows()}
         self.assertNotIn(stale, embedders)  # cleared on raw change
@@ -1009,7 +1054,7 @@ class SearchTests(TodoCase):
         conn.commit()
         conn.close()
         proc = self.todo(
-            "set", "--summary", "completely different text", "--no-commit", "--no-clear"
+            "set", "self", "--summary", "completely different text", "--no-commit", "--no-clear"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(stale, {emb for _t, _f, emb in self._emb_rows()})  # kept
@@ -1111,7 +1156,7 @@ class ParentPromptTests(TodoCase):
         return json.loads(proc.stdout)["Id"]
 
     def _set_parents(self, *parents: str) -> None:
-        args = ["set"]
+        args = ["set", "self"]
         for parent in parents:
             args += ["--parent", parent]
         proc = self.todo(*args)
@@ -1171,7 +1216,7 @@ class ParentPromptTests(TodoCase):
         self._git("checkout", base)
         child_id = self._init("child", body="task")
         self._set_parents(parent_id[:8])
-        clear = self.todo("set", "--parent=")
+        clear = self.todo("set", "self", "--parent=")
         self.assertEqual(clear.returncode, 0, clear.stderr)
         self.assertEqual(self._read(child_id[:8]).get("Parent", []), [])
         self.assertEqual(self._read(parent_id[:8]).get("Subtodos", []), [])
@@ -1185,7 +1230,7 @@ class ParentPromptTests(TodoCase):
         self._init("child", body="task")
         self._set_parents(parent_id[:8])
         self._git("checkout", f"{parent_id[:8]}-parent")
-        self.assertEqual(self.todo("set", "--state", "done").returncode, 0)
+        self.assertEqual(self.todo("set", "self", "--state", "done").returncode, 0)
         doc = self.todo("doctor", "self")
         self.assertEqual(doc.returncode, 0, doc.stdout)
         self.assertTrue(json.loads(doc.stdout)["ok"])
@@ -1593,7 +1638,7 @@ class SetJsonPathTests(TodoCase):
     def test_set_no_longer_accepts_work_items_file(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-sjp", tid)
-        proc = self.todo("set", "--work-items-file", "plan.json")
+        proc = self.todo("set", "self", "--work-items-file", "plan.json")
         self.assertNotEqual(proc.returncode, 0)
 
 
@@ -1613,7 +1658,7 @@ class WorkItemModelUnitTests(unittest.TestCase):
         done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
         nxt = todo.next_action(done_todo)
         self.assertEqual(nxt["action"], "finish")
-        self.assertIn("set --state done", nxt["command"])
+        self.assertIn("set self --state done", nxt["command"])
         self.assertIn("actual-summary", nxt["command"])
 
     def test_next_action_defaults_plain_task_to_work_item_done(self) -> None:
@@ -1883,14 +1928,14 @@ class TagTests(TodoCase):
     def test_set_tag_adds_deduped(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid)
-        proc = self.todo("set", "--tag", "ui", "--tag", "billing", "--tag", "ui")
+        proc = self.todo("set", "self", "--tag", "ui", "--tag", "billing", "--tag", "ui")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(sorted(_tag_raws(self.read_self())), ["billing", "ui"])
 
     def test_set_tag_alone_is_a_valid_edit(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-tags", tid)
-        proc = self.todo("set", "--tag", "solo")
+        proc = self.todo("set", "self", "--tag", "solo")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(_tag_raws(self.read_self()), ["solo"])
 
@@ -1899,7 +1944,7 @@ class TagTests(TodoCase):
         self.write_ticket(
             f"{tid[:8]}-tags", tid, extra={"Tag": [{"raw": "ui", "manual": True}]}
         )
-        proc = self.todo("set", "--untag", "ui")
+        proc = self.todo("set", "self", "--untag", "ui")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Tag", self.read_self())  # emptied -> field dropped
 
@@ -1926,17 +1971,17 @@ class TagTests(TodoCase):
         self.write_ticket(f"{tid[:8]}-tags", tid, summary="taggable ticket")
 
         # --tag is repeatable; Tag elements are deduped (insertion order, not sorted).
-        proc = self.todo("set", "--tag", "ui", "--tag", "billing")
+        proc = self.todo("set", "self", "--tag", "ui", "--tag", "billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(sorted(_tag_raws(self.read_self())), ["billing", "ui"])
 
         # A second set merges (a dup is idempotent, a new tag is added).
-        proc = self.todo("set", "--tag", "ui", "--tag", "api")
+        proc = self.todo("set", "self", "--tag", "ui", "--tag", "api")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(sorted(_tag_raws(self.read_self())), ["api", "billing", "ui"])
 
         # --untag removes (manual only, but these are all manual).
-        proc = self.todo("set", "--untag", "billing")
+        proc = self.todo("set", "self", "--untag", "billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(sorted(_tag_raws(self.read_self())), ["api", "ui"])
 
