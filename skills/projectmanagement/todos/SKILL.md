@@ -424,7 +424,7 @@ git branch --show-current              # expect: <todo Branch>
 the main tree -- prefer that when filing from the main checkout, then
 `git worktree add` and work there.
 
-### Todo / subtodo worktree lifecycle (open on entry, tear down on last commit)
+### Todo / subtodo worktree lifecycle (open on entry, tear down on done/merged)
 
 A **todo is worked in its own dedicated git worktree**, so the main checkout
 (and parent/siblings) never share that checkout:
@@ -435,14 +435,21 @@ A **todo is worked in its own dedicated git worktree**, so the main checkout
   <branch>`) and `cd` into it. Reuse an existing worktree for that branch if
   `git worktree list` already shows one; never move it. Confirm the main
   checkout is still on `master` before continuing.
-- **On last commit** (the todo's final commit is in -- `is-done` is true and its
-  `set --state done` commit has landed): tear the worktree down (`cd` out, then
-  `git worktree remove <path>`). Teardown removes only the *checkout*; the branch
-  and its commits survive for merge/handoff. If the tree is dirty, the todo is
+- **On entering `done` or `merged`** (the todo's final commit is in -- `is-done` is
+  true and the `set --state done` / `set --state merged` commit has landed): tear the worktree
+  down (`cd` out, then `git worktree remove <path>`). Teardown removes only the *checkout*; the
+  branch and its commits survive for merge/handoff. If the tree is dirty, the todo is
   not actually done -- finish or surface it before removing.
 
+**INVARIANT: `done` and `merged` imply no live worktree.** Tearing the worktree down is a *defining
+property* of entering either terminal state, not an optional cleanup step: `set --state done` /
+`set --state merged` MUST be followed by `git worktree remove` of that todo's worktree. A todo left
+in `done`/`merged` with its worktree still standing is an invariant violation; the next agent (or a
+`doctor` sweep) should remove the orphaned worktree. The branch is retired *separately* -- see the
+delete gate below.
+
 The branch is the durable asset; the worktree is scratch space that exists only
-for the span from entry to last commit.
+for the span from entry to the terminal state.
 
 **Branch retirement (the delete gate).** Tearing down a *worktree* is always safe
 -- it removes only a checkout; the branch and its commits survive. DELETING a
@@ -637,8 +644,8 @@ may hit.
 | `working` | `{ "owner"?: string, "expire"?: rfc3339 }` | Active work. (`owner`/`expire` only matter for future multi-owner handoff; omit on a single-agent run.) |
 | `userneeded` | `{ "note"?: string }` | Agent blocked; needs user input. |
 | `stopped` | `{ "note"?: string }` | User override halt. |
-| `done` | `{ "last_commit"?: string }` | Complete on the ticket branch; record last commit message if useful. |
-| `merged` | `{ "merged_into"?: string, "last_commit"?: string }` | Parent absorbed this branch; written on the **child** todo after merge. Parent `Subtodos[].State` becomes `merged`. |
+| `done` | `{ "last_commit"?: string }` | Complete on the ticket branch; record last commit message if useful. Entering `done` tears down the todo's worktree (worktree-lifecycle invariant). |
+| `merged` | `{ "merged_into"?: string, "last_commit"?: string }` | Parent absorbed this branch; written on the **child** todo after merge. Parent `Subtodos[].State` becomes `merged`. Entering `merged` tears down the todo's worktree (worktree-lifecycle invariant). |
 | `fact` | `{}` | An informational anchor: a todo that will **never** be worked, kept to harness vector-memory associative recall. (was `info`) See "Working a fact" below. |
 | `waiting` | (deferred) | Blocked on subtodos -- see Deferred. |
 | `N/a` | `{}` | Non-work associative item; not a task. |
