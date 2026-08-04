@@ -1340,6 +1340,7 @@
       "summary": "Create per-platform decision matrix: fully OTA, partially OTA, or manual-only"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-06-26T00:33:33Z",
   "update_dt": "2026-07-04T22:48:45Z"
 }

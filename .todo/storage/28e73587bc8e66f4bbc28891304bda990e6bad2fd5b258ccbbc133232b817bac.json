@@ -1643,6 +1643,7 @@
       "summary": "Add starter panda hero image under portfolio assets/hero/ (source path TBD)"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-06-30T22:23:30Z",
   "update_dt": "2026-07-04T22:48:46Z"
 }

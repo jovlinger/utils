@@ -1336,6 +1336,7 @@
       "summary": "Author per-provider synonym maps from inventory"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-18T06:26:50Z",
   "update_dt": "2026-07-18T18:03:49Z"
 }

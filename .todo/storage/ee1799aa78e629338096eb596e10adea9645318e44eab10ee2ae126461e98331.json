@@ -1377,6 +1377,7 @@
       "summary": "Display (the original request): homogenize ls + search output selectors (ls == null search), add a tags column, summary ALWAYS last, and right-pad each column to its longest value under 30 chars; enable the WI0 oracle; SKILL.md docs; full suite + lint green"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-24T17:17:18Z",
   "update_dt": "2026-07-24T22:46:29Z"
 }

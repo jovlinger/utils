@@ -653,16 +653,18 @@
   },
   "Branch": "797e476e-vec-nl-contextual-embed",
   "Id": "797e476e408724f09466e95783f5ec0f36c90b9ef0b740d920453c6f87fd051b",
-  "Parent": {
-    "Branch": "todo-embedding",
-    "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
-  },
+  "Parent": [
+    {
+      "Branch": "todo-embedding",
+      "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
+    }
+  ],
   "Scope": {
     "branch": "797e476e-vec-nl-contextual-embed",
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "init": {}
+    "ready": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1316,6 +1318,7 @@
     "raw": "vec nl contextual embedding embedder"
   },
   "WorkItems": [],
+  "_schema": 8,
   "create_dt": "2026-07-05T04:09:30Z",
   "update_dt": "2026-07-05T04:09:30Z"
 }

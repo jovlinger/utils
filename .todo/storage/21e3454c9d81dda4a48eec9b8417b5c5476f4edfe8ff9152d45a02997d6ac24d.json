@@ -1382,6 +1382,7 @@
       "summary": "Deploy and curl-verify /dmz/ping auth succeeds (or epoch >= 1.7e9 with clear status)"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-14T16:36:14Z",
   "update_dt": "2026-07-19T04:39:47Z"
 }

@@ -1357,6 +1357,7 @@
       "summary": "Enable WI1 end test; SKILL.md docs (single schema version bumped per change; table+record share it; migrate-to-latest; startup check); full suite + lint green"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-24T18:00:19Z",
   "update_dt": "2026-07-24T19:12:15Z"
 }

@@ -2734,6 +2734,7 @@
       "summary": "Final barrier: merge all subtodos; parent done"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-04T22:31:54Z",
   "update_dt": "2026-07-09T18:32:20Z"
 }

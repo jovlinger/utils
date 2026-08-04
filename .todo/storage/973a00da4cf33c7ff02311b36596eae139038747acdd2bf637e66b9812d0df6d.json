@@ -1344,6 +1344,7 @@
       "summary": "Deploy to esp32s3-office and curl-verify /dmz/ping AC (signed path + logs)"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-14T16:47:44Z",
   "update_dt": "2026-07-19T04:17:42Z"
 }

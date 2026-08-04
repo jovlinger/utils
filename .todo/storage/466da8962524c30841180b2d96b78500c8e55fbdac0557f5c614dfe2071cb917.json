@@ -1350,6 +1350,7 @@
       "summary": "doctor action lines: full RDF tuples + end-duplicate before/after"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-19T17:02:11Z",
   "update_dt": "2026-07-19T17:50:44Z"
 }

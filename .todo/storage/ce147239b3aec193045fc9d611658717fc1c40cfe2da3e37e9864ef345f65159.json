@@ -1387,6 +1387,7 @@
       "summary": "E1: emacs --batch smoke (load mode, open straight.vox, check) + mirror parity diff vs voxtool.py mirror"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-18T14:08:24Z",
   "update_dt": "2026-07-20T01:48:37Z"
 }

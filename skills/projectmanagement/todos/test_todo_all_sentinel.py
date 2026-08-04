@@ -53,8 +53,11 @@ class AllSentinelEndTest(TodoCase):
         for argv in (("doctor", "--all"), ("log", "--all")):
             proc = self.todo(*argv)
             self.assertEqual(proc.returncode, 2, f"{argv}: {proc.stdout}{proc.stderr}")
-            self.assertIn(
-                "unrecognized arguments", (proc.stderr + proc.stdout).lower()
+            err = (proc.stderr + proc.stdout).lower()
+            # argparse rejects --all: as an unknown flag, or (now that the
+            # selector is a required positional) as the missing selector.
+            self.assertTrue(
+                "unrecognized arguments" in err or "required: selector" in err, err
             )
 
     def test_ls_still_takes_no_selector(self) -> None:

@@ -666,7 +666,7 @@
     "path_from_root": "vox2stl"
   },
   "State": {
-    "init": {}
+    "ready": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1356,6 +1356,7 @@
       "summary": "vox2stl/test_voxtool_indent.py: WARNING add short-row indent +1/-1 byte-identity test (or document intentional space materialization)"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-20T01:48:11Z",
   "update_dt": "2026-07-20T01:48:36Z"
 }

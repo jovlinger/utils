@@ -1371,6 +1371,7 @@
       "summary": "finish: full test suite green; set --state done with --actual-summary"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-21T18:19:09Z",
   "update_dt": "2026-07-24T17:19:20Z"
 }

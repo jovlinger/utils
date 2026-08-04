@@ -658,7 +658,7 @@
     "git_url": "git@github.com:jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "groom": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1311,6 +1311,7 @@
     ],
     "raw": "python wrapper / pythonic language for agent-generated scripting"
   },
+  "_schema": 8,
   "create_dt": "2026-07-19T13:49:37Z",
   "update_dt": "2026-07-19T13:49:38Z"
 }

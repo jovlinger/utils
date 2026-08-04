@@ -1399,6 +1399,7 @@
       "summary": "Skill: collision DUP suffixes; record original-album-name in .meta.johan.json"
     }
   ],
+  "_schema": 8,
   "create_dt": "2026-07-18T06:46:44Z",
   "update_dt": "2026-07-19T13:41:54Z"
 }

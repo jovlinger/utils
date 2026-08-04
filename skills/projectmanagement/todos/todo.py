@@ -327,8 +327,15 @@ def migrate_store(store: "todo_store.TodoStore", *, dry_run: bool = False) -> Di
     return {"scanned": scanned, "migrated": migrated}
 
 
-def use_sqlite() -> bool:
-    """Return True when tickets are stored in sqlite (default)."""
+def use_store() -> bool:
+    """Return True when tickets live in the resolved store (default).
+
+    The store has two interchangeable backends -- sqlite.db or a
+    .todo/storage json dir -- selected by the todo_storage DSN (see
+    todo_store). Either way the record is a JSON object addressed by id.
+    False only in legacy TODO_USE_JSON=1 mode, where the record is a
+    TODO.json file committed on its branch.
+    """
     return os.environ.get(LEGACY_JSON_ENV) != "1"
 
 
@@ -360,7 +367,7 @@ def repo_key(root: Path) -> str:
 
 def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
     """Return parsed ticket from sqlite or legacy git ref TODO.json."""
-    if use_sqlite():
+    if use_store():
         ticket = todo_store.get_store().get(repo_key(root), ref)
         if ticket is not None:
             return normalize_todo_schema(ticket)
@@ -389,14 +396,14 @@ def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
 def read_todo_worktree(root: Path) -> Optional[JsonDict]:
     """Return parsed ticket for the current branch from sqlite or legacy file."""
     branch = current_branch(root)
-    if branch and use_sqlite():
+    if branch and use_store():
         ticket = todo_store.get_store().get(repo_key(root), branch)
         if ticket is not None:
             return normalize_todo_schema(ticket)
     path: Path = root / "TODO.json"
     if not path.is_file():
         return None
-    if use_sqlite():
+    if use_store():
         return None
     try:
         parsed: Any = json.loads(path.read_text(encoding="utf-8"))
@@ -405,12 +412,6 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
     if not isinstance(parsed, dict):
         return None
     return normalize_todo_schema(parsed)
-
-
-def read_todo_required(root: Path) -> JsonDict:
-    """Return parsed ticket from the worktree or raise."""
-    _, todo = read_todo_current_branch(root)
-    return todo
 
 
 # (Summary/Body field name, its stored field_path) pairs we embed.
@@ -689,7 +690,7 @@ def _drop_stale_automatic_tags(old: Optional[JsonDict], todo: JsonDict) -> None:
 
 
 def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -> None:
-    """Persist ticket to sqlite (default) or legacy TODO.json.
+    """Persist ticket to the store (default) or legacy TODO.json.
 
     On sqlite: when a raw field changed, its stored vectors are cleared (all
     embedders) so stale expensive vectors do not linger -- unless ``no_clear``,
@@ -704,7 +705,7 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
     branch = str(todo.get("Branch") or current_branch(root) or "")
     if not branch:
         raise TodoError("todo missing Branch")
-    if use_sqlite():
+    if use_store():
         ticket_id = str(todo["Id"])
         store = todo_store.get_store()
         repo = repo_key(root)
@@ -729,6 +730,14 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
                 for field_path, fingerprint, vec in rows:
                     store.put_embedding(ticket_id, field_path, fingerprint, vec)
         return
+    # Legacy TODO_USE_JSON mode: the record IS the branch's TODO.json, so a
+    # write is only coherent with that branch checked out.
+    checked_out = current_branch(root)
+    if checked_out != branch:
+        raise TodoError(
+            f"legacy TODO.json mode: todo {str(todo.get('Id', ''))[:8]} lives on "
+            f"branch {branch!r}; checkout that branch first (currently on {checked_out!r})"
+        )
     path: Path = root / "TODO.json"
     tmp: Path = root / "TODO.json.tmp"
     tmp.write_text(json.dumps(todo, indent=2) + "\n", encoding="utf-8")
@@ -736,9 +745,13 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
 
 
 def commit_todo(root: Path, message: str) -> None:
-    """Record a todo change commit (empty when sqlite-only)."""
-    if use_sqlite():
-        run_git(root, "commit", "--allow-empty", "-m", message, check=False)
+    """Commit TODO.json in legacy file mode; no-op in store mode.
+
+    In store mode the record lives in the store, addressed by id -- there is
+    no branch-bound file to commit, and an empty marker commit would land on
+    whatever branch the caller happens to have checked out.
+    """
+    if use_store():
         return
     if not (root / "TODO.json").is_file():
         raise TodoError("TODO.json missing; nothing to commit")
@@ -773,11 +786,6 @@ def current_branch(root: Path) -> Optional[str]:
     return name or None
 
 
-def is_self_selector(selector: str) -> bool:
-    """Return True when *selector* names the current branch's todo."""
-    return selector in {"self", "curr"}
-
-
 def is_all_selector(selector: str) -> bool:
     """Return True when *selector* is the reserved ALL sentinel (the whole corpus).
 
@@ -785,20 +793,6 @@ def is_all_selector(selector: str) -> bool:
     so ALL can never collide with a real ticket id prefix.
     """
     return selector == "ALL"
-
-
-def read_todo_current_branch(root: Path) -> tuple[str, JsonDict]:
-    """Return the todo bound to the checked-out branch."""
-    branch: Optional[str] = current_branch(root)
-    if not branch:
-        raise TodoError("detached HEAD; self/curr requires a checked-out branch")
-    worktree = read_todo_worktree(root)
-    if worktree is not None:
-        return f"worktree:{branch}", worktree
-    todo = read_todo_at_ref(root, branch)
-    if todo is None:
-        raise TodoError(f"no todo found on current branch {branch!r}")
-    return branch, todo
 
 
 def id_matches(ticket_id: str, query: str) -> bool:
@@ -1229,11 +1223,12 @@ def next_action(todo: JsonDict) -> JsonDict:
     dispatch table. A plain freetext task with no execution hints defaults to
     work-item-done, the common local-coding completion.
     """
+    self_id = str(todo.get("Id", ""))[:8] or "<id>"
     index = cursor_index(todo)
     if index is None:
         return {
             "action": "finish",
-            "command": 'todo.py set self --state done --actual-summary="..."',
+            "command": f'todo.py set {self_id} --state done --actual-summary="..."',
             "note": "run doctor first (must be ok); synthesize ActualSummary from the done WorkItems",
         }
     item = todo["WorkItems"][index]
@@ -1245,14 +1240,14 @@ def next_action(todo: JsonDict) -> JsonDict:
     child = subtodo_id[:8] if isinstance(subtodo_id, str) and subtodo_id else "<child-id>"
     ids = " ".join(wait_for) or "<child-id>..."
     if primitive == "add-subtodo":
-        return {"action": "add-subtodo", "command": "todo.py add-subtodo --summary=..."}
+        return {"action": "add-subtodo", "command": f"todo.py add-subtodo {self_id} --summary=..."}
     if primitive in (WORKITEM_MERGE_SUBTODO, "merge-subtodo"):
         return {"action": "merge-subtodo", "command": f"todo.py merge-subtodo {child}"}
     if primitive == "wait-and-merge" or (wait_for and execution.get("mode") == "barrier"):
         return {"action": "wait-and-merge", "command": f"todo.py wait-and-merge {ids}"}
     if primitive == "wait-for" or wait_for:
         return {"action": "wait-for", "command": f"todo.py wait-for {ids}"}
-    return {"action": "work-item-done", "command": "todo.py work-item-done"}
+    return {"action": "work-item-done", "command": f"todo.py work-item-done {self_id}"}
 
 
 def last_sha(todo: JsonDict) -> Optional[str]:
@@ -1320,7 +1315,7 @@ def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
     matches: List[tuple[str, JsonDict]] = []
     seen_ids: set[str] = set()
 
-    if use_sqlite():
+    if use_store():
         for repo_path, branch, todo in todo_store.get_store().find_by_id_prefix(query):
             ticket_id = str(todo.get("Id", ""))
             if ticket_id and ticket_id not in seen_ids:
@@ -1376,13 +1371,6 @@ def resolve_ticket_by_id(root: Path, query: str) -> tuple[str, JsonDict]:
     return matches[0]
 
 
-def resolve_ticket_by_selector(root: Path, selector: str) -> tuple[str, JsonDict]:
-    """Return the ticket selected by id prefix or self/curr."""
-    if is_self_selector(selector):
-        return read_todo_current_branch(root)
-    return resolve_ticket_by_id(root, selector)
-
-
 def mint_id(root: Path, attempts: int = 1000) -> str:
     """Mint a fresh ticket Id with no 8-hex prefix clash in the repo or db."""
     for _ in range(attempts):
@@ -1393,7 +1381,7 @@ def mint_id(root: Path, attempts: int = 1000) -> str:
 
 
 def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = None) -> JsonDict:
-    """Load one ticket dict into sqlite for *root*."""
+    """Load one ticket dict into the store for *root*."""
     normalize_todo_schema(ticket)
     branch_name = branch or str(ticket.get("Branch") or "")
     if not branch_name:
@@ -1414,7 +1402,7 @@ def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = 
 
 
 def import_all_json_refs(root: Path) -> int:
-    """Import every TODO.json found on git refs in *root* into sqlite."""
+    """Import every TODO.json found on git refs in *root* into the store."""
     count = 0
     for ref in list_branch_refs(root):
         todo = read_todo_at_ref_legacy(root, ref)
@@ -1657,7 +1645,7 @@ def build_prompt_chain(root: Path, selector: str) -> str:
     cannot be resolved in this db rather than dropping it silently. Read-only:
     parents are resolved from the db with no branch checkout.
     """
-    _loc, target = resolve_ticket_by_selector(root, selector)
+    _loc, target = resolve_ticket_by_id(root, selector)
     sections: List[str] = []
     seen: set[str] = set()
 
@@ -1958,7 +1946,7 @@ def apply_parent_links(
     child["Parent"] = desired
 
     changes: List[str] = []
-    if not use_sqlite():
+    if not use_store():
         return changes
 
     current = repo_key(root)
@@ -1987,12 +1975,12 @@ def reestablish_backlinks(root: Path, child: JsonDict, *, dry_run: bool = False)
     just child -> parent). Returns human descriptions of the back-links added or
     refreshed; writes them unless *dry_run*.
 
-    Best-effort and sqlite-only: unresolvable and cross-repo parents are skipped
+    Best-effort and store-only: unresolvable and cross-repo parents are skipped
     (a write keys by the current repo, so persisting another repo's parent would
     misfile it), and legacy JSON mode -- where a write targets the current
     branch's file -- makes no changes.
     """
-    if not use_sqlite():
+    if not use_store():
         return []
     child_id = str(child.get("Id") or "")
     current = repo_key(root)
@@ -2060,25 +2048,20 @@ def apply_ticket_path(
 ) -> Any:
     """Set *jsonpath* to an already-parsed *value* on a selected ticket.
 
-    A non-self selector resolves the todo by Id through the store and writes it
-    back sqlite-only, exactly like ``set`` targeting a non-self selector: no
-    branch checkout and no commit. Storage access -- which reading the todo
-    already proves we have -- is all that is required, so this works on a
-    branchless ``groom`` todo (it
-    carries a Branch *label* but has no git branch yet) and never lands an empty
-    marker commit on whatever branch the caller happens to be on. Only a
-    ``self``/``curr`` edit commits, on the current branch. ``stay`` is retained
-    for CLI backward compatibility but is now a no-op: with no checkout there is
-    no branch to return from.
+    The selector resolves the todo by Id through the store and writes it back
+    store-only (sqlite or json-dir backend): no branch checkout and no commit.
+    Storage access -- which reading the todo already proves we have -- is all
+    that is required, so this works on a branchless ``groom`` todo (it carries
+    a Branch *label* but has no git branch yet) and never lands a commit on
+    whatever branch the caller happens to be on. ``stay`` is retained for CLI
+    backward compatibility but is a no-op: with no checkout there is no branch
+    to return from. ``no_commit`` only matters in legacy TODO_USE_JSON mode,
+    where the record is a branch-bound file (see ``commit_todo``).
     """
-    by_id = not is_self_selector(selector)
-    if by_id:
-        _, todo = resolve_ticket_by_id(root, selector)
-    else:
-        todo = read_todo_required(root)
+    _, todo = resolve_ticket_by_id(root, selector)
     set_at_path(todo, jsonpath, value)
     write_todo_worktree(root, todo, no_clear=no_clear)
-    if not no_commit and not by_id:
+    if not no_commit:
         commit_todo(root, f"chore(todo): update {jsonpath}")
     return get_at_path(todo, jsonpath)
 
@@ -2090,12 +2073,16 @@ def merge_subtodo(
     merged_into: Optional[str] = None,
     last_commit: Optional[str] = None,
 ) -> JsonDict:
-    """Mark a child todo merged and update the checked-out parent."""
-    parent_branch = current_branch(root)
-    if not parent_branch:
-        raise TodoError("detached HEAD; checkout parent branch first")
-    parent = read_todo_required(root)
-    _, child = resolve_ticket_by_selector(root, child_selector)
+    """Mark a child todo merged and update its parent's bookkeeping.
+
+    The parent is the child's ``Parent[0]`` ref -- the structural parent
+    ``add-subtodo`` recorded. Both records are updated through the store with
+    no branch checkout. The recorded merge sha is the tip of the parent's
+    branch: the caller's actual git merge (or absorption) commit, which the
+    caller must have landed before calling (invariant #6 keeps holding, with a
+    real sha instead of a marker commit).
+    """
+    _, child = resolve_ticket_by_id(root, child_selector)
     child_id = str(child["Id"])
     child_branch = str(child.get("Branch") or "")
     if not child_branch:
@@ -2105,13 +2092,30 @@ def merge_subtodo(
         raise TodoError(
             f"child {child_id[:8]} is {child_state!r}; expected done before merge-subtodo"
         )
+    parents = child.get("Parent") or []
+    first_ref = parents[0] if parents and isinstance(parents[0], dict) else {}
+    parent_id_ref = str(first_ref.get("Id") or "")
+    if not parent_id_ref:
+        raise TodoError(
+            f"child {child_id[:8]} has no Parent ref; cannot locate the parent todo"
+        )
+    _, parent = resolve_ticket_by_id(root, parent_id_ref)
+    parent_branch = str(parent.get("Branch") or "")
+    if not parent_branch:
+        raise TodoError(f"parent {parent_id_ref[:8]} ticket missing Branch")
 
     merge_target = merged_into or parent_branch
-    run_git(root, "checkout", child_branch)
-    child_worktree = read_todo_required(root)
-    set_state(child_worktree, "merged", merged_into=merge_target, last_commit=last_commit)
-    write_todo_worktree(root, child_worktree)
-    commit_todo(root, f"chore(todo): merged into {merge_target}")
+    merge_sha = run_git(
+        root, "rev-parse", "--verify", "--quiet", parent_branch, check=False
+    ).stdout.strip()
+    if not merge_sha:
+        raise TodoError(
+            f"parent branch {parent_branch!r} not found here; git-merge the child "
+            "into the parent branch before merge-subtodo"
+        )
+
+    set_state(child, "merged", merged_into=merge_target, last_commit=last_commit)
+    write_todo_worktree(root, child)
 
     # Prefer the child's ActualSummary (how the work actually panned out) over
     # its planned Summary for the merge message and work item node; fall back to
@@ -2125,15 +2129,7 @@ def merge_subtodo(
     if merge_message:
         merge_subject += f": {_summary_snippet(merge_message)}"
 
-    run_git(root, "checkout", parent_branch)
-    parent = read_todo_required(root)
     update_subtodo_state(parent, child_id, "merged")
-    write_todo_worktree(root, parent)
-    # Marker commit first, then record its sha on the parent's cursor item as a
-    # typed merge_subtodo done item. Keeping the workitem sha == HEAD upholds
-    # "the last workitem is the last commit to the branch" (#6).
-    commit_todo(root, f"chore(todo): {merge_subject}")
-    merge_sha = head_sha(root) or ""
     index = mark_cursor_done(parent, merge_subtodo_workitem(child_id, merge_sha, summary=""))
     if not parent["WorkItems"][index].get("summary"):
         parent["WorkItems"][index]["summary"] = merge_subject
@@ -2155,7 +2151,7 @@ def wait_for_state(
     while True:
         still_waiting: List[str] = []
         for selector in remaining:
-            _, todo = resolve_ticket_by_selector(root, selector)
+            _, todo = resolve_ticket_by_id(root, selector)
             state = current_state_name(todo)
             if state != target_state:
                 still_waiting.append(selector)
@@ -2270,7 +2266,7 @@ def unmerged_subtodos(todo: JsonDict) -> List[str]:
 
 def doctor_findings(root: Path, selector: str) -> List[str]:
     """Return hard doctor findings for the selected todo (shape invariants)."""
-    _, todo = resolve_ticket_by_selector(root, selector)
+    _, todo = resolve_ticket_by_id(root, selector)
     findings: List[str] = []
     unknown = sorted(set(todo) - ALLOWED_TOP_LEVEL_FIELDS)
     if unknown:
@@ -2328,7 +2324,7 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
     """Return soft doctor warnings that need an absent subbranch or other repo to
     verify. These never fail doctor, so transitional and cross-repo todos (where
     not every subbranch is available) do not hard-fail."""
-    _, todo = resolve_ticket_by_selector(root, selector)
+    _, todo = resolve_ticket_by_id(root, selector)
     warnings: List[str] = []
     base = todo.get("BaseSha")
     if isinstance(base, str) and base and not commit_exists(root, base):
@@ -2341,7 +2337,7 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
             child_id = entry.get("Id")
             if isinstance(child_id, str) and child_id:
                 try:
-                    resolve_ticket_by_selector(root, child_id[:8])
+                    resolve_ticket_by_id(root, child_id[:8])
                 except TodoError:
                     warnings.append(f"Subtodos.{index}.Id {child_id[:8]} not discoverable here")
     items = todo.get("WorkItems") or []
@@ -2355,7 +2351,7 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
             sub = item.get("subtodo_id")
             if isinstance(sub, str) and sub:
                 try:
-                    resolve_ticket_by_selector(root, sub[:8])
+                    resolve_ticket_by_id(root, sub[:8])
                 except TodoError:
                     warnings.append(f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here")
     # Surface unmerged subtodos while the parent is still open; once the parent
@@ -2397,7 +2393,7 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
                 findings.append(f"WorkItems.{index} waits on itself")
                 continue
             try:
-                resolve_ticket_by_selector(root, child_selector)
+                resolve_ticket_by_id(root, child_selector)
             except TodoError as exc:
                 findings.append(f"WorkItems.{index} wait target not discoverable: {exc}")
                 continue
@@ -2435,7 +2431,7 @@ def wait_cycle_findings(root: Path, root_id: str, targets: Sequence[str]) -> Lis
     def visit(selector: str, stack: List[str]) -> None:
         """Depth-first traversal through discoverable wait_for targets."""
         try:
-            _, child = resolve_ticket_by_selector(root, selector)
+            _, child = resolve_ticket_by_id(root, selector)
         except TodoError:
             return
         child_id = str(child.get("Id") or selector)
@@ -2532,10 +2528,9 @@ class MintCommand(TodoSubCommand):
         "Mint creates a new TODO and prints its Id. It hashes a uuid1 value into the canonical "
         "64-character lowercase hex Id (collision-checked against existing todos), then materializes "
         "a data-collection record for it: State `groom` (still collecting data / grooming), no git "
-        "branch, sqlite-only (no commit). Fill it in with `set <id>`; run `init` when it is "
+        "branch, store-only (no commit). Fill it in with `set <id>`; run `init` when it is "
         "ready to be worked (gives it a branch and moves it to `ready`). Prints only the Id so "
-        "callers can capture it directly. Use `set <id>`/`init` -- `set` always requires an "
-        "explicit selector, self/curr for the current branch or an Id prefix otherwise."
+        "callers can capture it directly."
     )
 
     @classmethod
@@ -2545,7 +2540,7 @@ class MintCommand(TodoSubCommand):
     def do(self) -> int:
         """Create a groom (data-collection) todo and print its Id.
 
-        The record is sqlite-only: no git branch and no commit at groom. The
+        The record is store-only: no git branch and no commit at groom. The
         Branch is a placeholder (Id[0:8]) until `set` finalizes it from the
         summary and `init` creates the actual branch.
         """
@@ -2617,9 +2612,9 @@ class ReadCommand(TodoSubCommand):
     command_names = ("read",)
     doc_short: ClassVar[str] = "Print todo JSON"
     doc_long: ClassVar[str] = (
-        "Read locates a TODO by full Id, by an unambiguous prefix of at least four hex "
-        "characters, or by self/curr for the checked-out branch. It searches the current worktree "
-        "first, then local and cached remote refs. Legacy field names are normalized and fields are "
+        "Read locates a TODO by full Id or by an unambiguous prefix of at least four hex "
+        "characters. It searches the store first, then local and cached remote refs. "
+        "Legacy field names are normalized and fields are "
         "ordered Id/Summary/Body first, Subtodos/WorkItems last. Every embedder with a stored vector "
         "for this todo is shown (cheap ones written at save time, expensive ones backfilled by "
         "search), merged in from the sqlite embeddings index regardless of which path wrote them. "
@@ -2630,7 +2625,7 @@ class ReadCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register read arguments."""
-        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument(
             "-v",
             "--verbose",
@@ -2642,7 +2637,7 @@ class ReadCommand(TodoSubCommand):
         """Print the todo selected by selector."""
         root = self.root()
         git_fetch_if_remote(root)
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         _merge_stored_embeddings(todo)
         payload: Any = order_ticket_fields(todo)
@@ -2664,13 +2659,13 @@ class GetJsonPathCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary")
 
     def do(self) -> int:
         """Print a selected path value."""
         root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         print_json_value(get_at_path(todo, self.jsonpath))
         return 0
 
@@ -2694,15 +2689,15 @@ class GetCommand(TodoSubCommand):
         "--summary/--body/--ac/--state/--actual-summary/--parent/--tag and it expands to the "
         "matching internal path (Summary.raw, Body.raw, AC, State, ActualSummary, Parent, Tag "
         "respectively) and prints that value as JSON -- exactly like `get-json-path <selector> "
-        "<path>` with the path already filled in. <selector> is self/curr for the checked-out "
-        "branch, or an Id prefix/full digest for another todo. For any other path, or a nested "
-        "value like WorkItems.0.summary, use get-json-path directly."
+        "<path>` with the path already filled in. <selector> is an Id prefix or full digest. "
+        "For any other path, or a nested value like WorkItems.0.summary, use get-json-path "
+        "directly."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get arguments."""
-        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--summary", action="store_true", help="print Summary.raw")
         parser.add_argument("--body", action="store_true", help="print Body.raw")
         parser.add_argument("--ac", action="store_true", help="print AC")
@@ -2723,7 +2718,7 @@ class GetCommand(TodoSubCommand):
                 "--actual-summary, --parent, --tag"
             )
         root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         print_json_value(get_at_path(todo, _GET_FIELD_PATHS[selected[0]]))
         return 0
 
@@ -2740,9 +2735,8 @@ class InitCommand(TodoSubCommand):
         "with --summary and no existing record, it mints (or accepts --id), writes the initial "
         "skeleton, and creates the branch, all in one call (backward-compatible). It refuses to "
         "create a second todo on a branch that already has one, and can optionally return to the "
-        "parent branch (--stay-on-parent). For parent/context links use `set self --parent` after "
-        "init (or `set <id> --parent` on any existing todo). For the full subtodo lifecycle use "
-        "add-subtodo."
+        "parent branch (--stay-on-parent). For parent/context links use `set <id> --parent` "
+        "after init. For the full subtodo lifecycle use add-subtodo."
     )
 
     @classmethod
@@ -2895,23 +2889,18 @@ class EnsureWorktreeCommand(TodoSubCommand):
         "(created on demand, discarded when idle) in a later revision. STUB: for now it only "
         "resolves the todo and prints the INTENDED worktree path (under "
         "<todo-dir>/worktrees/<repo>/<branch>) with created=false; it does not run `git worktree "
-        "add` yet. Selector is a 4+ hex Id prefix or self/curr (default self)."
+        "add` yet. Selector is a 4+ hex Id prefix or the full digest."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ensure_worktree arguments."""
-        parser.add_argument(
-            "todoid",
-            nargs="?",
-            default="self",
-            help="id prefix or self/curr (default: self)",
-        )
+        parser.add_argument("todoid", help="todo selector: Id prefix (4+ hex) or full digest")
 
     def do(self) -> int:
         """STUB: print the intended worktree path for the todo without creating it."""
         root = self.root()
-        _loc, todo = resolve_ticket_by_selector(root, self.todoid)
+        _loc, todo = resolve_ticket_by_id(root, self.todoid)
         branch = str(todo.get("Branch") or "")
         # STUB: real impl will `git worktree add` at this path (idempotent) and may
         # treat the tree as ephemeral. Convention: <todo-dir>/worktrees/<repo>/<branch>.
@@ -2935,15 +2924,17 @@ class AddSubtodoCommand(TodoSubCommand):
     command_names = ("add-subtodo",)
     doc_short: ClassVar[str] = "Create child todo"
     doc_long: ClassVar[str] = (
-        "Add-subtodo creates a child TODO from the current parent todo branch. It can "
-        "load the child todo from JSON or build one from summary, body, and acceptance criteria. "
-        "The command creates and commits the child branch, then returns to the parent branch. It "
+        "Add-subtodo creates a child TODO under the parent selected by <parent> (an Id prefix "
+        "or full digest). It can load the child todo from JSON or build one from summary, body, "
+        "and acceptance criteria. The child git branch is created at the tip of the parent's "
+        "branch without checking anything out; both records are written through the store. It "
         "registers the child in the parent's Subtodos list so later merge bookkeeping can find it."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register add-subtodo arguments."""
+        parser.add_argument("parent", help="parent todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--from-json", help="seed todo JSON (Id, Branch, fields)")
         parser.add_argument("--summary", help="Summary.raw when not using --from-json")
         parser.add_argument("--body", default="", help="Body.raw")
@@ -2953,13 +2944,18 @@ class AddSubtodoCommand(TodoSubCommand):
         parser.add_argument("--path-from-root", help="Scope.path_from_root")
 
     def do(self) -> int:
-        """Create a child branch + TODO.json from the current parent todo."""
+        """Create a child branch + store record under the selected parent todo."""
         root = self.root()
-        parent_branch = current_branch(root)
+        if not use_store():
+            raise TodoError(
+                "add-subtodo requires the store (sqlite or json-dir); "
+                "legacy TODO_USE_JSON mode is import-only"
+            )
+        _, parent = resolve_ticket_by_id(root, self.parent)
+        parent_branch = str(parent.get("Branch") or "")
         if not parent_branch:
-            raise TodoError("detached HEAD; checkout a parent branch first")
+            raise TodoError("parent ticket missing Branch")
 
-        parent = read_todo_required(root)
         if self.from_json:
             child_spec = load_json_file(Path(self.from_json))
         else:
@@ -3000,13 +2996,18 @@ class AddSubtodoCommand(TodoSubCommand):
         if branch_exists(root, child_branch):
             raise TodoError(f"branch {child_branch!r} already exists")
 
-        run_git(root, "checkout", "-b", child_branch)
-        base = head_sha(root)  # child branch's initial sha (invariant #5)
-        if base:
-            child_spec["BaseSha"] = base
+        base = run_git(
+            root, "rev-parse", "--verify", "--quiet", parent_branch, check=False
+        ).stdout.strip()
+        if not base:
+            raise TodoError(
+                f"parent branch {parent_branch!r} not found here; "
+                "init the parent (give it a branch) before adding subtodos"
+            )
+        # Child branch starts at the parent branch's tip; no checkout needed.
+        run_git(root, "branch", child_branch, parent_branch)
+        child_spec["BaseSha"] = base  # child branch's initial sha (invariant #5)
         write_todo_worktree(root, child_spec)
-        commit_todo(root, f"chore(todo): init subtodo {child_id[:8]}")
-        run_git(root, "checkout", parent_branch)
 
         upsert_subtodo(parent, child_spec)
         # Firing the subtodo completes the parent's cursor work item as a typed
@@ -3017,7 +3018,6 @@ class AddSubtodoCommand(TodoSubCommand):
                 f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
             )
         write_todo_worktree(root, parent)
-        commit_todo(root, f"chore(todo): register subtodo {child_id[:8]} on parent")
 
         print(json.dumps({"Id": child_id, "Branch": child_branch, "Parent": parent_branch}, indent=2))
         return 0
@@ -3027,10 +3027,9 @@ class SetCommand(TodoSubCommand):
     command_names = ("set",)
     doc_short: ClassVar[str] = "Patch todo fields / state"
     doc_long: ClassVar[str] = (
-        "Set edits a todo's fields without changing branches. <selector> is required -- there is "
-        "no current-branch default -- and is self/curr for the checked-out branch, or an Id prefix/"
-        "full digest for another todo (typically a `groom` todo from `mint` that has no branch "
-        "yet). It updates Summary.raw, Body.raw, AC, ActualSummary, and/or the workflow State "
+        "Set edits a todo's fields without changing branches. <selector> is required and is an "
+        "Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` "
+        "todo from `mint`). It updates Summary.raw, Body.raw, AC, ActualSummary, and/or the workflow State "
         "(--state, which replaces the removed `set-state` subcommand; State metadata "
         "--note/--last-commit/--merged-into/--owner ride along). "
         "Pass --parent <id> (repeatable) as a make-it-so Parent list: the child's Parent becomes "
@@ -3040,11 +3039,10 @@ class SetCommand(TodoSubCommand):
         "aliases for the `tagadd`/`tagrm` subcommands -- see their help for the plural Tag "
         "field's manual/automatic semantics. To replace WorkItems or any other JSON "
         "path from a file or stdin, use set-json-path. The command requires at least one field "
-        "change. A self/curr selector commits on the current branch by default; any other "
-        "selector is sqlite-only (no commit), since that todo has no branch of its own to commit "
-        "on. For a `groom` todo, changing --summary also refreshes the Branch label so `init` "
-        "later creates a well-named branch. Any free-text value passed as EDIT is captured from "
-        "$VISUAL/$EDITOR/vi (interactive terminals only)."
+        "change. The write is store-only (sqlite or json-dir backend): no branch checkout and "
+        "no commit. For a `groom` todo, changing --summary also refreshes the Branch label so "
+        "`init` later creates a well-named branch. Any free-text value passed as EDIT is "
+        "captured from $VISUAL/$EDITOR/vi (interactive terminals only)."
     )
     edit_fields = ("summary", "body", "ac", "note", "actual_summary")
 
@@ -3053,8 +3051,7 @@ class SetCommand(TodoSubCommand):
         """Register set arguments."""
         parser.add_argument(
             "id",
-            help="todo selector: self, curr, Id prefix, or full digest -- required, no "
-            "current-branch default",
+            help="todo selector: Id prefix (4+ hex) or full digest -- required",
         )
         parser.add_argument("--summary")
         parser.add_argument("--body")
@@ -3090,17 +3087,12 @@ class SetCommand(TodoSubCommand):
     def do(self) -> int:
         """Patch Summary/Body/AC/ActualSummary/Parent and/or State on a todo.
 
-        <selector> is required. self/curr targets the current branch's todo;
-        any other selector resolves by Id and is written sqlite-only:
-        committing would land an empty commit on whatever branch the caller
-        happens to be on.
+        <selector> is required and resolves by Id; the write is store-only.
+        Committing would land a commit on whatever branch the caller happens
+        to be on, so no record edit ever commits.
         """
         root = self.root()
-        by_id = not is_self_selector(self.id)
-        if by_id:
-            _loc, todo = resolve_ticket_by_id(root, self.id)
-        else:
-            todo = read_todo_required(root)
+        _loc, todo = resolve_ticket_by_id(root, self.id)
         self.resolve_edit_fields(str(todo.get("Id", "") or "current"))
         parent_touched = self.parent is not None
         tags_touched = bool(self.tag or self.untag)
@@ -3132,7 +3124,7 @@ class SetCommand(TodoSubCommand):
             if isinstance(todo.get("Scope"), dict):
                 todo["Scope"]["branch"] = new_branch
         write_todo_worktree(root, todo, no_clear=self.no_clear)
-        if not self.no_commit and not by_id:
+        if not self.no_commit:
             message = f"chore(todo): state -> {state}" if state else "chore(todo): update ticket fields"
             commit_todo(root, message)
         if state:
@@ -3182,22 +3174,23 @@ class TagAddCommand(TodoSubCommand):
     command_names = ("tagadd",)
     doc_short: ClassVar[str] = "Add manual tag(s)"
     doc_long: ClassVar[str] = (
-        "Tagadd adds one or more tags (repeatable) to the current branch's todo's plural Tag "
+        "Tagadd adds one or more tags (repeatable) to the selected todo's plural Tag "
         "field as MANUAL elements: each is stripped, downcased, and deduped against any tag "
-        "already present (manual or automatic) -- a no-op for one already there. It writes and "
-        "commits the current-branch todo by default."
+        "already present (manual or automatic) -- a no-op for one already there. The write is "
+        "store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tagadd arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to add")
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Add one or more manual tags to the current todo."""
+        """Add one or more manual tags to the selected todo."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         apply_tag_add(todo, *self.tags)
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -3209,23 +3202,24 @@ class TagRmCommand(TodoSubCommand):
     command_names = ("tagrm",)
     doc_short: ClassVar[str] = "Remove manual tag(s)"
     doc_long: ClassVar[str] = (
-        "Tagrm removes one or more tags (repeatable, case-insensitive) from the current branch's "
+        "Tagrm removes one or more tags (repeatable, case-insensitive) from the selected "
         "todo's plural Tag field. Only MANUAL elements are ever removed -- an automatic tag "
         "(manual: False, set by doctor's auto-tagging) is left alone even if named here, since "
-        "those are doctor's to manage. The whole Tag field is dropped once it is empty. It writes "
-        "and commits the current-branch todo by default."
+        "those are doctor's to manage. The whole Tag field is dropped once it is empty. The "
+        "write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tagrm arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to remove")
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Remove one or more manual tags from the current todo."""
+        """Remove one or more manual tags from the selected todo."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         apply_tag_remove(todo, *self.tags)
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -3237,21 +3231,23 @@ class WorkItemAddCommand(TodoSubCommand):
     command_names = ("work-item-add",)
     doc_short: ClassVar[str] = "Append work item"
     doc_long: ClassVar[str] = (
-        "Work-item-add appends a new open WorkItems entry to the current todo. The entry stores "
+        "Work-item-add appends a new open WorkItems entry to the selected todo. The entry stores "
         "the provided summary and starts with done set to false. Existing work items keep their "
-        "order and content. The command writes TODO.json and commits by default."
+        "order and content. The write is store-only, so it works equally on a branchless groom "
+        "todo (incremental plan seeding) and a branch-bound one."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-add arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Append a not-done task work item to the current todo."""
+        """Append a not-done task work item to the selected todo."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
         work_items.append({"kind": WORKITEM_TASK, "summary": self.summary, "done": False})
         todo["WorkItems"] = work_items
@@ -3278,6 +3274,7 @@ class WorkItemDoneCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
         parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
         parser.add_argument("--summary", help="override the work item's high-level description")
@@ -3288,7 +3285,17 @@ class WorkItemDoneCommand(TodoSubCommand):
         Post-condition: the branch is fully committed. A clean tree records the
         current HEAD; a dirty tree commits all updates and new files first."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        # The recorded sha must land on the todo's own branch, so the CWD must
+        # be a checkout (worktree) of that branch -- unlike pure record edits,
+        # which are store-only and work from anywhere.
+        branch = str(todo.get("Branch") or "")
+        checked_out = current_branch(root)
+        if checked_out != branch:
+            raise TodoError(
+                f"work-item-done commits code on the todo's branch {branch!r}; "
+                f"run it from a checkout of that branch (currently on {checked_out!r})"
+            )
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
         if dirty:
             if self.sha:
@@ -3338,12 +3345,12 @@ class WorkItemReadCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-read arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
 
     def do(self) -> int:
         """Print the cursor work item for the selected todo."""
         root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         index = cursor_index(todo)
         items = todo.get("WorkItems") or []
@@ -3368,19 +3375,20 @@ class WorkItemInsertCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Work-item-insert adds a not-done task at the cursor so it becomes the current item, "
         "pushing the existing frontier down (used to explode a step into finer steps). It appends "
-        "when the todo has no open item. Writes and commits by default."
+        "when the todo has no open item. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-insert arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
         """Insert a not-done task at the cursor."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         items: List[JsonDict] = list(todo.get("WorkItems") or [])
         new_item = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
         index = cursor_index(todo)
@@ -3402,19 +3410,20 @@ class WorkItemReplaceCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Replace the cursor work item"
     doc_long: ClassVar[str] = (
         "Work-item-replace rewrites the current (cursor) task's freetext summary, leaving it "
-        "not-done. Errors when there is no open item. Writes and commits by default."
+        "not-done. Errors when there is no open item. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-replace arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
         """Replace the cursor task's summary."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         index = cursor_index(todo)
         if index is None:
             raise TodoError("no open work item to replace")
@@ -3434,18 +3443,19 @@ class WorkItemDeleteCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Work-item-delete removes the current (cursor) not-done item. Done items are the "
         "committed history of the todo and are never the cursor, so they are never deleted here. "
-        "Errors when there is no open item. Writes and commits by default."
+        "Errors when there is no open item. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-delete arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
         """Delete the cursor work item."""
         root = self.root()
-        todo = read_todo_required(root)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         index = cursor_index(todo)
         if index is None:
             raise TodoError("no open work item to delete")
@@ -3474,12 +3484,12 @@ class IsDoneCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register is-done arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
 
     def do(self) -> int:
         """Print and return the todo's done state."""
         root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         done = is_done(todo)
         print(json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2))
@@ -3497,12 +3507,12 @@ class LastShaCommand(TodoSubCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register last-sha arguments."""
-        parser.add_argument("selector", nargs="?", default="self", help="todo selector (default: self)")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
 
     def do(self) -> int:
         """Print the last work item's sha."""
         root = self.root()
-        _, todo = resolve_ticket_by_selector(root, self.selector)
+        _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         sha = last_sha(todo)
         if not sha:
@@ -3517,18 +3527,17 @@ class SetJsonPathCommand(TodoSubCommand):
     doc_long: ClassVar[str] = (
         "Set-json-path sets any JSON path on a selected todo (e.g. WorkItems, Body.raw, "
         "WorkItems.0.summary) to a value read as JSON from --file, or from stdin by default. The "
-        "input must be valid JSON. A non-self selector targets the todo by Id through the store "
-        "and writes sqlite-only (no branch checkout, no commit), exactly like `set` targeting a "
-        "non-self selector -- so it works on a branchless `groom` todo (e.g. seeding WorkItems on "
-        "a freshly minted plan). A "
-        "self/curr edit writes and commits on the current branch. This is the general way to "
-        "replace WorkItems or seed a whole plan. (--stay is a retained no-op: no checkout happens.)"
+        "input must be valid JSON. The selector targets the todo by Id through the store and the "
+        "write is store-only (no branch checkout, no commit), exactly like `set` -- so it works "
+        "on a branchless `groom` todo (e.g. seeding WorkItems on a freshly minted plan). This is "
+        "the general way to replace WorkItems or seed a whole plan. (--stay is a retained no-op: "
+        "no checkout happens.)"
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register set-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: self, curr, Id prefix, or full digest")
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("jsonpath", help="dot path, e.g. WorkItems or Body.raw")
         parser.add_argument("--file", help="read the JSON value from this file (default: stdin)")
         parser.add_argument(
@@ -3578,9 +3587,10 @@ class MergeSubtodoCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Record child merge"
     doc_long: ClassVar[str] = (
         "Merge-subtodo records that a child todo has been merged into its parent. It verifies "
-        "the child todo is done or already merged, checks out the child branch, and marks the "
-        "child State as merged. It then returns to the parent branch and updates the parent's "
-        "Subtodos entry for that child. The command prints a small JSON merge summary."
+        "the child todo is done or already merged, locates the parent through the child's "
+        "Parent[0] ref, and updates both records through the store -- no branch is checked out. "
+        "The recorded merge sha is the tip of the parent's branch (the caller's actual git "
+        "merge, which must already have landed). The command prints a small JSON merge summary."
     )
 
     @classmethod
@@ -3724,7 +3734,7 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     recomputes AUTOMATIC Tag elements when none are present yet (see
     ``_recompute_auto_tags``), persisting the todo only when that adds any.
     """
-    _loc, todo = resolve_ticket_by_selector(root, selector)
+    _loc, todo = resolve_ticket_by_id(root, selector)
     findings = doctor_findings(root, selector)
     warnings = doctor_warnings(root, selector)
     repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
@@ -3750,7 +3760,7 @@ class DoctorCommand(TodoSubCommand):
         "Doctor audits a todo -- selector resolution, top-level schema, State shape, Subtodos "
         "references, and wait-graph sanity -- and repairs parent back-links: for each of the "
         "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
-        "Subtodos (best-effort, same-repo, sqlite only). Repair runs by default; pass --dry-run to "
+        "Subtodos (best-effort, same-repo, store only). Repair runs by default; pass --dry-run to "
         "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
         "lock left by a crashed writer (reported as 'unlocked'). It also brings the store's records "
         "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
@@ -3765,9 +3775,7 @@ class DoctorCommand(TodoSubCommand):
         """Register doctor arguments."""
         parser.add_argument(
             "selector",
-            nargs="?",
-            default="self",
-            help="todo selector to audit, or ALL to sweep the whole corpus (default: self)",
+            help="todo selector (Id prefix or full digest) to audit, or ALL to sweep the whole corpus",
         )
         parser.add_argument(
             "--dry-run",
@@ -3782,7 +3790,7 @@ class DoctorCommand(TodoSubCommand):
         # leave a lock behind, so doctor drops them all (recovery escape hatch).
         # --dry-run only reports; it never mutates.
         unlocked = 0
-        if not self.dry_run and use_sqlite():
+        if not self.dry_run and use_store():
             unlocked = todo_store.get_store().force_unlock_all()
         # Opportunistic schema sweep: bringing the store's records up to the
         # latest schema is maintenance, so doctor owns it -- not a bespoke command
@@ -3794,7 +3802,7 @@ class DoctorCommand(TodoSubCommand):
             if store.get_data_version() < todo_db.SCHEMA_VERSION:
                 migrated = migrate_store(store)["migrated"]
         if is_all_selector(self.selector):
-            if not use_sqlite():
+            if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             ids = [str(t.get("Id", "")) for t in todo_store.get_store().list_all()]
             results = [_doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid]
@@ -3875,7 +3883,7 @@ def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
         if todo is not None:
             return todo
     cid = str(entry.get("Id", ""))
-    if len(cid) >= 4 and use_sqlite():
+    if len(cid) >= 4 and use_store():
         for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(cid[:8]):
             return todo
     return None
@@ -3955,7 +3963,7 @@ def render_ticket_graph(
 def discover_all_tickets(root: Path) -> Dict[str, JsonDict]:
     """Map Id -> ticket for every discoverable ticket in the store or git refs."""
     tickets: Dict[str, JsonDict] = {}
-    if use_sqlite():
+    if use_store():
         repo = repo_key(root)
         for repo_path, _branch, parsed in todo_store.get_store().list_located():
             if repo_path and repo_path != repo:
@@ -3994,8 +4002,8 @@ class LogCommand(TodoSubCommand):
         "git-log --graph --oneline style: one line per todo as "
         "'* <Id[0:8]> <summary>  [<state>]', with vertical rails for the subtodo tree. The "
         "graph is read entirely from TODO.json files through todo.py's own readers, never "
-        "from git history. Selector is self/curr, a 4+ hex Id prefix, or the ALL sentinel "
-        "(default self); ALL renders every discoverable todo as a forest."
+        "from git history. Selector is a 4+ hex Id prefix, the full digest, or the ALL "
+        "sentinel; ALL renders every discoverable todo as a forest."
     )
 
     @classmethod
@@ -4003,9 +4011,7 @@ class LogCommand(TodoSubCommand):
         """Register log arguments."""
         parser.add_argument(
             "selector",
-            nargs="?",
-            default="self",
-            help="todo selector: self, curr, 4+ hex Id prefix, or ALL (default: self)",
+            help="todo selector: Id prefix (4+ hex), full digest, or ALL",
         )
         parser.add_argument(
             "-n",
@@ -4035,7 +4041,7 @@ class LogCommand(TodoSubCommand):
             if not roots:
                 raise TodoError("no TODO.json tickets found in this repo")
         else:
-            _loc, ticket = resolve_ticket_by_selector(root, self.selector)
+            _loc, ticket = resolve_ticket_by_id(root, self.selector)
             roots = [ticket]
         lines: List[str] = []
         seen: set[str] = set()
@@ -4062,7 +4068,7 @@ class WebCommand(TodoSubCommand):
         "Body, work items (horizontal boxes) and subtodos (horizontal boxes). Clicking a work "
         "item shows its full commit message and diff below the split and highlights any subtodo "
         "it references; clicking a subtodo highlights the work items that reference it and shows "
-        "a read-only rendition below the split. With a selector (self, curr, or 4+ hex Id prefix) "
+        "a read-only rendition below the split. With a selector (a 4+ hex Id prefix) "
         "the printed URL opens straight onto that todo; without one the page is a vector search "
         "(the same ranking as 'todo search') over every todo, showing update-time and State "
         "columns, with an empty query listing all."
@@ -4075,7 +4081,7 @@ class WebCommand(TodoSubCommand):
             "selector",
             nargs="?",
             default=None,
-            help="todo selector: self, curr, or 4+ hex Id prefix (default: search page)",
+            help="todo selector: 4+ hex Id prefix or full digest (default: search page)",
         )
         parser.add_argument("--host", default="127.0.0.1", help="bind host")
         parser.add_argument("--port", type=int, default=8765, help="bind port")
@@ -4101,14 +4107,14 @@ class WebCommand(TodoSubCommand):
             commits are not present here render as 'diff unavailable'.
             """
             try:
-                ticket = resolve_ticket_by_selector(root, selector)[1]
+                ticket = resolve_ticket_by_id(root, selector)[1]
             except TodoError as exc:
                 raise todo_web.TodoWebError(str(exc)) from exc
             return root, ticket
 
         def list_todos() -> List[JsonDict]:
             """Every todo in the store -- no repo scoping, no filtering."""
-            if not use_sqlite():
+            if not use_store():
                 return list(discover_all_tickets(root).values())
             return [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
 
@@ -4136,7 +4142,7 @@ class WebCommand(TodoSubCommand):
 
         initial_id: Optional[str] = None
         if self.selector is not None:
-            _, ticket = resolve_ticket_by_selector(root, self.selector)
+            _, ticket = resolve_ticket_by_id(root, self.selector)
             initial_id = str(ticket.get("Id") or "") or None
 
         try:
@@ -4162,7 +4168,7 @@ class WebCommand(TodoSubCommand):
 
 class ImportJsonCommand(TodoSubCommand):
     command_names = ("import-json",)
-    doc_short: ClassVar[str] = "Import legacy TODO.json into sqlite"
+    doc_short: ClassVar[str] = "Import legacy TODO.json into the store"
     doc_long: ClassVar[str] = (
         "Import-json loads todo JSON into the resolved todo sqlite db. Use --from-json for one file "
         "or --scan-refs to import every TODO.json on git refs in the current repo."
@@ -4180,7 +4186,7 @@ class ImportJsonCommand(TodoSubCommand):
         )
 
     def do(self) -> int:
-        """Import legacy JSON ticket(s) into sqlite."""
+        """Import legacy JSON ticket(s) into the store."""
         root = self.root()
         if self.scan_refs:
             count = import_all_json_refs(root)
@@ -4443,8 +4449,8 @@ class PromptCommand(TodoSubCommand):
         "(context references from set --parent included), farthest ancestors "
         "first and the target last, so a fresh agent with zero context reads WHY "
         "down to WHAT before starting. Read-only: it resolves parents from the db "
-        "without checking out branches. Selector is self/curr or a 4+ hex Id "
-        "prefix (default self)."
+        "without checking out branches. Selector is a 4+ hex Id prefix or the "
+        "full digest."
     )
 
     @classmethod
@@ -4452,9 +4458,7 @@ class PromptCommand(TodoSubCommand):
         """Register prompt arguments."""
         parser.add_argument(
             "selector",
-            nargs="?",
-            default="self",
-            help="todo selector: self, curr, or 4+ hex Id prefix (default self)",
+            help="todo selector: Id prefix (4+ hex) or full digest",
         )
 
     def do(self) -> int:
@@ -4501,7 +4505,7 @@ class LsCommand(TodoSubCommand):
         Hides terminated (FINAL) states by default; -s reveals all, --states
         filters explicitly (see resolve_state_filter).
         """
-        if not use_sqlite():
+        if not use_store():
             raise TodoError("ls requires the db store (unset TODO_USE_JSON)")
         columns = self.columns or []
         # get_store() resolves the todo dir, which default_state_filter reads.
@@ -4548,7 +4552,7 @@ class RepoDirCommand(TodoSubCommand):
         "Repodir prints the concrete repo directory for the selected todo on this machine: "
         "the repo's MAIN checkout root (not the current worktree). Absolute paths are never "
         "stored -- the todo's repo name only identifies the repo (and warns if the CWD is a "
-        "different one). Selector is self/curr or a 4+ hex Id prefix (default self)."
+        "different one). Selector is a 4+ hex Id prefix or the full digest."
     )
 
     @classmethod
@@ -4556,15 +4560,13 @@ class RepoDirCommand(TodoSubCommand):
         """Register repodir arguments."""
         parser.add_argument(
             "selector",
-            nargs="?",
-            default="self",
-            help="todo selector: self, curr, or 4+ hex Id prefix (default: self)",
+            help="todo selector: Id prefix (4+ hex) or full digest",
         )
 
     def do(self) -> int:
         """Print the repo's main checkout root for the selected todo."""
         root = self.root()
-        resolve_ticket_by_selector(root, self.selector)  # validates id; warns on repo mismatch
+        resolve_ticket_by_id(root, self.selector)  # validates id; warns on repo mismatch
         print(todo_db.main_checkout_root() or root)
         return 0
 
@@ -5070,7 +5072,7 @@ def _warn_if_store_behind() -> None:
     if current < todo_db.SCHEMA_VERSION:
         print(
             f"todo.py: warning: store data_version {current} is behind schema "
-            f"{todo_db.SCHEMA_VERSION}; run 'todo.py doctor' to sweep records",
+            f"{todo_db.SCHEMA_VERSION}; run 'todo.py doctor ALL' to sweep records",
             file=sys.stderr,
         )
 

@@ -653,10 +653,12 @@
   },
   "Branch": "23067f38-vec-local-embedder-impl",
   "Id": "23067f385c3634eb9de7cfa9f9949add403364328c6dc0b9dadc59ba929cfc27",
-  "Parent": {
-    "Branch": "todo-embedding",
-    "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
-  },
+  "Parent": [
+    {
+      "Branch": "todo-embedding",
+      "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
+    }
+  ],
   "Scope": {
     "branch": "23067f38-vec-local-embedder-impl",
     "git_url": "git@github.com:jovlinger/utils.git",
@@ -1319,6 +1321,7 @@
     "raw": "vec local embedder impl"
   },
   "WorkItems": [],
+  "_schema": 8,
   "create_dt": "2026-07-04T22:33:56Z",
   "update_dt": "2026-07-05T03:06:54Z"
 }

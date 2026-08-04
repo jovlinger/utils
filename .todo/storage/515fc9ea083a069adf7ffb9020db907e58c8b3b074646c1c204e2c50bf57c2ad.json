@@ -654,15 +654,16 @@
   },
   "Branch": "515fc9ea-test-sqlite-storage-sui",
   "Id": "515fc9ea083a069adf7ffb9020db907e58c8b3b074646c1c204e2c50bf57c2ad",
-  "Parent": {
-    "Branch": "todo-embedding",
-    "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
-  },
+  "Parent": [
+    {
+      "Branch": "todo-embedding",
+      "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
+    }
+  ],
   "Scope": {
     "branch": "515fc9ea-test-sqlite-storage-sui",
     "git_url": "git@github.com:jovlinger/utils.git",
-    "path_from_root": "skills/projectmanagement/todos",
-    "path_to_project": "/Users/johan/.todo/worktrees/github.com/jovlinger/utils/todo-embedding"
+    "path_from_root": "skills/projectmanagement/todos"
   },
   "State": {
     "merged": {
@@ -1321,6 +1322,7 @@
     "raw": "test sqlite storage suite"
   },
   "WorkItems": [],
+  "_schema": 8,
   "create_dt": "2026-07-04T22:34:02Z",
   "update_dt": "2026-07-06T22:20:58Z"
 }

@@ -20029,7 +20029,7 @@
     "git_url": "https://github.com/jovlinger/utils.git"
   },
   "State": {
-    "pre": {}
+    "groom": {}
   },
   "Subtodos": [
     {
@@ -20690,6 +20690,7 @@
     ],
     "raw": "todo tool grooming: state renames (nouns), weighted/field-scoped search, state-filter terms, priority field, sort terms, stable web tab title"
   },
+  "_schema": 8,
   "create_dt": "2026-07-16T13:59:30Z",
   "update_dt": "2026-07-24T21:52:41Z"
 }

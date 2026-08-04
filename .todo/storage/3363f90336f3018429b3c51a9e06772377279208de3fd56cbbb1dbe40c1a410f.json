@@ -658,7 +658,7 @@
     "git_url": "https://github.com/jovlinger/utils.git"
   },
   "State": {
-    "pre-init": {}
+    "groom": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1311,6 +1311,7 @@
     ],
     "raw": "Model assignment for AC-gated WorkItems: orchestrator (trust floor) vs implementor (cost lever) model tiering"
   },
+  "_schema": 8,
   "create_dt": "2026-07-24T18:25:55Z",
   "update_dt": "2026-07-24T18:26:04Z"
 }

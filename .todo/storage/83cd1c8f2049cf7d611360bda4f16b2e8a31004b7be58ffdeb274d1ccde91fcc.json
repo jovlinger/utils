@@ -653,10 +653,12 @@
   },
   "Branch": "83cd1c8f-vec-search-command",
   "Id": "83cd1c8f2049cf7d611360bda4f16b2e8a31004b7be58ffdeb274d1ccde91fcc",
-  "Parent": {
-    "Branch": "todo-embedding",
-    "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
-  },
+  "Parent": [
+    {
+      "Branch": "todo-embedding",
+      "Id": "810154bdf067e5c50e0cae946a18da5f567eba4bb27e697022b78dff77eb2f52"
+    }
+  ],
   "Scope": {
     "branch": "83cd1c8f-vec-search-command",
     "git_url": "git@github.com:jovlinger/utils.git",
@@ -1319,6 +1321,7 @@
     "raw": "vec search command"
   },
   "WorkItems": [],
+  "_schema": 8,
   "create_dt": "2026-07-04T22:34:00Z",
   "update_dt": "2026-07-05T03:06:57Z"
 }
