@@ -28,9 +28,9 @@ from __future__ import annotations
 import json
 import unittest
 
+import fake_nlce
 import todo
 import todo_db
-import todo_embed
 
 
 def _raws(todo_dict) -> list:
@@ -90,7 +90,9 @@ class PluralTagEndTest(unittest.TestCase):
             self.assertTrue(todo.tag_findings(bad), f"expected a finding for {bad}")
 
     def test_compute_auto_tags_top_k(self) -> None:
-        embedder = todo_embed.get_embedder("hash")
+        # Was get_embedder("hash"); that lexical backend was retired, so this
+        # borrows the equivalent bag-of-words test double. Contract unchanged.
+        embedder = fake_nlce.BowEmbedder()
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
         text = "alpha beta gamma"
         elems = todo.compute_auto_tags(text, candidates, embedder, 2)

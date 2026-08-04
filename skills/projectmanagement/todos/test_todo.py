@@ -28,10 +28,18 @@ TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+
+# `apple` is the only production embedder and it needs the macOS Swift sidecar, so
+# vector tests mock that sidecar with a bag-of-words fake (see fake_nlce): the
+# `--embedder apple` path then runs identically off-macOS, and unrelated todos
+# score exactly 0.0 so they can be asserted absent. This is the fingerprint the
+# fake's handshake produces, i.e. the key vectors are stored under.
+BOW = fake_nlce.FINGERPRINT
 
 
 class TodoCase(unittest.TestCase):
@@ -49,6 +57,9 @@ class TodoCase(unittest.TestCase):
         self._env: Dict[str, str] = {
             **ENV,
             "TODO_DIR": str(self._db_dir),
+            # Every `todo.py` subprocess sees the fake sidecar, so `--embedder apple`
+            # is hermetic and deterministic. Harmless for the tests that never embed.
+            "TODO_APPLE_NLCE_BIN": fake_nlce.install(str(self._db_dir)),
         }
         self._git("init", "-q")
         self._git("config", "user.email", "t@example.com")
@@ -282,6 +293,10 @@ class ReadTests(TodoCase):
         self.init_ok("--summary=Vector demo", "--body=some text")
         add = self.todo("work-item-add", self.tid, "--summary=wi one")
         self.assertEqual(add.returncode, 0, add.stderr)
+        # No embedder is cheap, so a plain write stamps nothing; a search is what
+        # backfills the vectors this test is here to check the rendering of.
+        search = self.todo("search", "vector", "--embedder", "apple")
+        self.assertEqual(search.returncode, 0, search.stderr)
 
         elided = self.read_cur()
         keys = list(elided.keys())
@@ -289,13 +304,13 @@ class ReadTests(TodoCase):
         self.assertEqual(keys[-1], "WorkItems")
         # Embedding under Summary is a list-of-arrays (one vector per chunk);
         # each chunk vector is elided to its first two elements.
-        self.assertEqual(len(elided["Summary"]["hash"]), 1)
-        self.assertEqual(len(elided["Summary"]["hash"][0]), 2)
+        self.assertEqual(len(elided["Summary"][BOW]), 1)
+        self.assertEqual(len(elided["Summary"][BOW][0]), 2)
 
         proc = self.todo("read", self.tid, "-v")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         full = json.loads(proc.stdout)
-        self.assertGreater(len(full["Summary"]["hash"][0]), 2)
+        self.assertGreater(len(full["Summary"][BOW][0]), 2)
 
     def test_longer_prefix_disambiguates(self) -> None:
         self.write_ticket("abcd0001-a", "abcd0001" + "f" * 56)
@@ -988,9 +1003,9 @@ class SearchTests(TodoCase):
             body="Handle oauth bearer token rotation for API clients.",
         )
         self.write_ticket(f"{other_id[:8]}-other", other_id, summary="unrelated database work")
-        # --embedder hash keeps this hermetic (apple is unavailable on CI) and
+        # The mocked apple sidecar (bag of words) keeps this hermetic off-macOS and
         # gives a hard 0-similarity cutoff so the unrelated ticket is excluded.
-        proc = self.todo("search", "oauth bearer token", "--embedder", "hash")
+        proc = self.todo("search", "oauth bearer token", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(oauth_id[:8], proc.stdout)
         self.assertNotIn(other_id[:8], proc.stdout)
@@ -998,14 +1013,14 @@ class SearchTests(TodoCase):
     def test_search_multiple_terms_match_each_doc_individually(self) -> None:
         # Google-style: each space-separated term is its own matcher, so a doc
         # matching only one term still surfaces (scores add across terms); a doc
-        # matching no term stays excluded by hash's hard 0-similarity cutoff.
+        # matching no term stays excluded by the bag-of-words 0-similarity cutoff.
         alpha_id = self.mint()
         beta_id = self.mint()
         gamma_id = self.mint()
         self.write_ticket(f"{alpha_id[:8]}-a", alpha_id, summary="alpha")
         self.write_ticket(f"{beta_id[:8]}-b", beta_id, summary="beta")
         self.write_ticket(f"{gamma_id[:8]}-g", gamma_id, summary="gamma")
-        proc = self.todo("search", "alpha", "beta", "--embedder", "hash")
+        proc = self.todo("search", "alpha", "beta", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(alpha_id[:8], proc.stdout)
         self.assertIn(beta_id[:8], proc.stdout)
@@ -1019,7 +1034,7 @@ class SearchTests(TodoCase):
         split_id = self.mint()
         self.write_ticket(f"{phrase_id[:8]}-p", phrase_id, summary="alpha beta")
         self.write_ticket(f"{split_id[:8]}-s", split_id, summary="beta gamma alpha")
-        proc = self.todo("search", "alpha beta", "--embedder", "hash")
+        proc = self.todo("search", "alpha beta", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertLess(
             proc.stdout.index(phrase_id[:8]),
@@ -1027,10 +1042,16 @@ class SearchTests(TodoCase):
             f"contiguous-phrase doc should rank first:\n{proc.stdout}",
         )
 
-    def test_cheap_embedder_autopopulated_on_write(self) -> None:
+    def test_write_stamps_no_vectors_when_no_embedder_is_cheap(self) -> None:
+        # Since the lexical `hash` backend was retired nothing is cheap, so a write
+        # embeds nothing at all and search's lazy backfill is the only producer.
+        # (todo_embed's registry tests cover the cheap plumbing itself.)
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
-        self.assertIn((tid, "Summary.raw", "hash"), self._emb_rows())
+        self.assertEqual(self._emb_rows(), [])
+        proc = self.todo("search", "alpha", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn((tid, "Summary.raw", BOW), self._emb_rows())
 
     def test_raw_change_clears_stale_expensive_vector(self) -> None:
         tid = self.mint()
@@ -1048,7 +1069,8 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         embedders = {emb for _t, _f, emb in self._emb_rows()}
         self.assertNotIn(stale, embedders)  # cleared on raw change
-        self.assertIn("hash", embedders)  # cheap repopulated
+        # Nothing is cheap, so nothing repopulates here; the next search does.
+        self.assertEqual(embedders, set())
 
     def test_no_clear_keeps_stale_vector(self) -> None:
         tid = self.mint()
@@ -1148,10 +1170,10 @@ class SearchTests(TodoCase):
     def test_embedders_lists_non_hidden_only(self) -> None:
         proc = self.todo("embedders")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("hash", proc.stdout)
         self.assertIn("apple", proc.stdout)
-        for hidden in ("mock", "null", "st"):
-            self.assertNotIn(hidden, proc.stdout)
+        # hash was retired outright, so it is not listed and not selectable either.
+        for absent in ("hash", "mock", "null", "st"):
+            self.assertNotIn(absent, proc.stdout)
 
 
 class ParentPromptTests(TodoCase):
@@ -1956,7 +1978,7 @@ class TagTests(TodoCase):
         untagged = self.mint()
         self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
         proc = self.todo(
-            "search", "alpha beta gamma", "--embedder", "hash", "--tag", "ui"
+            "search", "alpha beta gamma", "--embedder", "apple", "--tag", "ui"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(tagged[:8], proc.stdout)
@@ -1986,7 +2008,7 @@ class TagTests(TodoCase):
         other = self.mint()
         self.write_ticket(f"{other[:8]}-untagged", other, summary="taggable ticket")
         proc = self.todo(
-            "search", "taggable ticket", "--embedder", "hash", "--tag", "ui"
+            "search", "taggable ticket", "--embedder", "apple", "--tag", "ui"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(tid[:8], proc.stdout)

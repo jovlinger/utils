@@ -689,8 +689,16 @@ def _drop_stale_automatic_tags(old: Optional[JsonDict], todo: JsonDict) -> None:
         todo.pop("Tag", None)
 
 
-def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -> None:
+def write_todo_worktree(
+    root: Path, todo: JsonDict, *, no_clear: bool = False, repo: Optional[str] = None
+) -> None:
     """Persist ticket to the store (default) or legacy TODO.json.
+
+    *repo* overrides the repo key the record is stored under, which otherwise
+    comes from *root*. A command sweeping the WHOLE corpus (`tag-clear ALL`) must
+    pass each record's own repo -- the store is shared across repos, and the
+    sqlite backend keys tickets by ``(repo_path, branch)``, so writing a
+    foreign-repo record under the current root would silently move it.
 
     On sqlite: when a raw field changed, its stored vectors are cleared (all
     embedders) so stale expensive vectors do not linger -- unless ``no_clear``,
@@ -708,7 +716,8 @@ def write_todo_worktree(root: Path, todo: JsonDict, *, no_clear: bool = False) -
     if use_store():
         ticket_id = str(todo["Id"])
         store = todo_store.get_store()
-        repo = repo_key(root)
+        if repo is None:
+            repo = repo_key(root)
         # Lock the complete read/calculate/write operation for this TODO. This
         # prevents a concurrent writer from changing raw text while its vectors
         # are being calculated, and lets us persist the fully embedded TODO once.
@@ -963,6 +972,30 @@ def apply_tag_remove(todo: JsonDict, *tags: str) -> None:
         todo["Tag"] = kept
     else:
         todo.pop("Tag", None)
+
+
+def apply_tag_clear(todo: JsonDict, *, include_manual: bool = False) -> int:
+    """Drop tags from the plural ``Tag`` list, in place; return how many went.
+
+    By default only AUTOMATIC elements (``manual: False``) are removed, mirroring
+    which side of the field each command owns: ``tag-add``/``tag-rm`` own the
+    manual elements, and the automatic ones are recomputed rather than curated,
+    so wiping them is always safe. With *include_manual* the field is emptied
+    outright -- hand-set tags included, which no other command will bring back.
+    Drops the whole ``Tag`` field once it is empty (optional fields are absent,
+    not ``[]`` -- see doctor).
+    """
+    elements = _tag_elements(todo)
+    kept = (
+        []
+        if include_manual
+        else [e for e in elements if not (isinstance(e, dict) and e.get("manual") is False)]
+    )
+    if kept:
+        todo["Tag"] = kept
+    else:
+        todo.pop("Tag", None)
+    return len(elements) - len(kept)
 
 
 def tag_findings(todo: JsonDict) -> List[str]:
@@ -1482,7 +1515,7 @@ def search_tickets(
         except (ValueError, RuntimeError) as exc:
             raise TodoError(
                 f"embedder {name!r} unavailable: {exc}; "
-                f"choose --embedder explicitly (e.g. --embedder hash)"
+                f"choose --embedder explicitly (e.g. --embedder mock)"
             ) from exc
 
     store = todo_store.get_store()
@@ -3171,10 +3204,10 @@ class RmCommand(TodoSubCommand):
 
 
 class TagAddCommand(TodoSubCommand):
-    command_names = ("tagadd",)
+    command_names = ("tag-add",)
     doc_short: ClassVar[str] = "Add manual tag(s)"
     doc_long: ClassVar[str] = (
-        "Tagadd adds one or more tags (repeatable) to the selected todo's plural Tag "
+        "Tag-add adds one or more tags (repeatable) to the selected todo's plural Tag "
         "field as MANUAL elements: each is stripped, downcased, and deduped against any tag "
         "already present (manual or automatic) -- a no-op for one already there. The write is "
         "store-only."
@@ -3182,7 +3215,7 @@ class TagAddCommand(TodoSubCommand):
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """Register tagadd arguments."""
+        """Register tag-add arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to add")
         parser.add_argument("--no-commit", action="store_true")
@@ -3199,19 +3232,19 @@ class TagAddCommand(TodoSubCommand):
 
 
 class TagRmCommand(TodoSubCommand):
-    command_names = ("tagrm",)
+    command_names = ("tag-rm",)
     doc_short: ClassVar[str] = "Remove manual tag(s)"
     doc_long: ClassVar[str] = (
-        "Tagrm removes one or more tags (repeatable, case-insensitive) from the selected "
+        "Tag-rm removes one or more tags (repeatable, case-insensitive) from the selected "
         "todo's plural Tag field. Only MANUAL elements are ever removed -- an automatic tag "
         "(manual: False, set by doctor's auto-tagging) is left alone even if named here, since "
-        "those are doctor's to manage. The whole Tag field is dropped once it is empty. The "
-        "write is store-only."
+        "those are doctor's to manage. Use tag-clear to drop automatic tags. The whole Tag "
+        "field is dropped once it is empty. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
-        """Register tagrm arguments."""
+        """Register tag-rm arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to remove")
         parser.add_argument("--no-commit", action="store_true")
@@ -3224,6 +3257,84 @@ class TagRmCommand(TodoSubCommand):
         write_todo_worktree(root, todo)
         if not self.no_commit:
             commit_todo(root, f"chore(todo): untag -{', -'.join(self.tags)}")
+        return 0
+
+
+class TagClearCommand(TodoSubCommand):
+    command_names = ("tag-clear",)
+    doc_short: ClassVar[str] = "Clear tags (automatic by default)"
+    doc_long: ClassVar[str] = (
+        "Tag-clear drops tags wholesale, the counterpart to tag-add/tag-rm's per-tag edits. "
+        "By default it removes only AUTOMATIC elements (manual: False) -- the ones doctor "
+        "derives from Summary+Body, which are recomputed rather than curated and so are always "
+        "safe to wipe. --all also removes MANUAL elements, which nothing will bring back. "
+        "The selector is optional: a specific todo (Id prefix or full digest), the ALL "
+        "sentinel, or omitted, which is the same as ALL and clears the whole corpus. Writes "
+        "are store-only, and a todo with no matching tags is left untouched (no update_dt "
+        "bump). Prints a JSON summary of what went."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register tag-clear arguments."""
+        parser.add_argument(
+            "selector",
+            nargs="?",
+            default="ALL",
+            help="todo selector: Id prefix (4+ hex), full digest, or ALL "
+            "(default: ALL -- the whole corpus)",
+        )
+        parser.add_argument(
+            "--all",
+            dest="include_manual",
+            action="store_true",
+            help="also remove MANUAL tags (default: automatic tags only)",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Clear tags on one todo or across the corpus."""
+        root = self.root()
+        # (repo, todo) pairs: the store spans repos, so a corpus sweep must write
+        # each record back under ITS OWN repo key, not this root's.
+        targets: List[tuple[Optional[str], JsonDict]] = []
+        if is_all_selector(self.selector):
+            if not use_store():
+                raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
+            targets = [
+                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                if t.get("Id")
+            ]
+        else:
+            _, todo = resolve_ticket_by_id(root, self.selector)
+            targets = [(None, todo)]
+        results: List[JsonDict] = []
+        cleared = 0
+        for repo, todo in targets:
+            removed = apply_tag_clear(todo, include_manual=self.include_manual)
+            if not removed:
+                continue
+            # A cleared tag takes its stamped vectors with it, so the positional
+            # Tag.<i>.raw paths of whatever survives shift: write through
+            # write_todo_worktree, which recomputes them (see _changed_raw_fields).
+            write_todo_worktree(root, todo, repo=repo)
+            cleared += 1
+            results.append({"id": str(todo.get("Id", ""))[:8], "removed": removed})
+        print(
+            json.dumps(
+                {
+                    "include_manual": self.include_manual,
+                    "scanned": len(targets),
+                    "todos_cleared": cleared,
+                    "tags_removed": sum(r["removed"] for r in results),
+                    "results": results,
+                },
+                indent=2,
+            )
+        )
+        if not self.no_commit and cleared:
+            scope = "all" if self.include_manual else "auto"
+            commit_todo(root, f"chore(todo): tag-clear ({scope}) on {cleared} todo(s)")
         return 0
 
 
@@ -3687,15 +3798,24 @@ class WaitAndMergeCommand(TodoSubCommand):
 def _recompute_auto_tags(todo: JsonDict) -> int:
     """Recompute AUTOMATIC Tag elements for *todo* in place; return how many were set.
 
-    Trusts any AUTOMATIC (``manual: False``) elements already present and does
-    nothing (a cheap no-op) -- the same trust-existing/backfill-empty policy
-    used elsewhere for embeddings, so a normal doctor run stays cheap. MANUAL
-    elements are always kept. Otherwise mines the tag candidate domain from the
-    whole corpus (``_load_corpus`` + ``_mine_tag_candidates``) and scores it
-    against this todo's Summary+Body text (``compute_auto_tags``) using the
-    first cheap embedder (deterministic, network-free -- matches doctor's cost
-    profile). Tolerates a missing/failing embedder, an empty corpus, or an
-    embedder error by doing nothing, so a broken embedder never crashes doctor.
+    DORMANT as shipped: there is no cheap embedder registered any more (the
+    lexical ``hash`` backend that used to fill that slot was removed precisely
+    because it made these tags collision noise rather than topics), so
+    ``cheap_embedders()`` is empty and this returns 0 without touching *todo*.
+    It re-arms by itself once a cheap SEMANTIC backend is registered -- the
+    successor work is ticket 91e28fd0's domain-tuned importance pipeline, which
+    should also settle the hubness correction and word-level (rather than
+    sentence-level) candidates before this is trusted again.
+
+    When armed: trusts any AUTOMATIC (``manual: False``) elements already
+    present and does nothing (a cheap no-op) -- the same
+    trust-existing/backfill-empty policy used elsewhere for embeddings, so a
+    normal doctor run stays cheap. MANUAL elements are always kept. Otherwise
+    mines the tag candidate domain from the whole corpus (``_load_corpus`` +
+    ``_mine_tag_candidates``) and scores it against this todo's Summary+Body
+    text (``compute_auto_tags``) using the first cheap embedder. Tolerates a
+    missing/failing embedder, an empty corpus, or an embedder error by doing
+    nothing, so a broken embedder never crashes doctor.
     """
     existing = todo.get("Tag")
     elements = existing if isinstance(existing, list) else []
@@ -4366,7 +4486,7 @@ class SearchCommand(TodoSubCommand):
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
         parser.add_argument(
             "--embedder",
-            help="comma list of embedders (default: all non-hidden, e.g. hash,apple)",
+            help="comma list of embedders (default: all non-hidden, e.g. apple)",
         )
         parser.add_argument(
             "--dry-run",
@@ -4691,6 +4811,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     RmCommand,
     TagAddCommand,
     TagRmCommand,
+    TagClearCommand,
     WorkItemAddCommand,
     WorkItemDoneCommand,
     WorkItemReadCommand,

@@ -23,11 +23,11 @@ import sys
 import unittest
 from typing import Any, Dict
 
+import fake_nlce
 import todo
 import todo_db
-import todo_embed
 
-from test_todo import TODO_PY, TodoCase
+from test_todo import BOW, TODO_PY, TodoCase
 
 
 def _raws(todo_dict: Dict[str, Any]) -> list:
@@ -184,7 +184,14 @@ class EmbedTargetsUnitTests(unittest.TestCase):
 
 
 class TagEmbeddingIntegrationTests(TodoCase):
-    """End-to-end: tagadd stamps per-element vectors; edits clear them; search ranks by tag."""
+    """End-to-end: search stamps per-element vectors; edits clear them; search ranks by tag.
+
+    Tag elements used to be embedded eagerly by tag-add, back when the lexical
+    `hash` backend was cheap. Nothing is cheap now, so the per-element vectors are
+    produced by search's lazy backfill instead -- the field_path bookkeeping under
+    test (one Tag.<i>.raw path per element, cleared per element on edit) is the
+    same either way.
+    """
 
     def _emb_rows(self) -> list:
         conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
@@ -202,29 +209,34 @@ class TagEmbeddingIntegrationTests(TodoCase):
             check=False, env=self._env,
         )
 
-    def test_tagadd_stamps_cheap_vector_for_that_element(self) -> None:
+    def test_search_stamps_vector_for_a_tag_element(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        proc = self.todo("tagadd", self.tid, "Billing")
+        proc = self.todo("tag-add", self.tid, "Billing")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ticket = self.read_cur()
         self.assertEqual(ticket["Tag"][0]["raw"], "billing")
-        self.assertIn("hash", ticket["Tag"][0])  # cheap embedder stamped inline
-        self.assertIn((tid, "Tag.0.raw", "hash"), self._emb_rows())
+        self.assertNotIn(BOW, ticket["Tag"][0])  # no cheap embedder: not stamped yet
+        search = self.todo("search", "billing", "--embedder", "apple")
+        self.assertEqual(search.returncode, 0, search.stderr)
+        self.assertIn(BOW, self.read_cur()["Tag"][0])  # backfilled inline
+        self.assertIn((tid, "Tag.0.raw", BOW), self._emb_rows())
 
     def test_two_tags_get_independent_field_paths(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        proc = self.todo("tagadd", self.tid, "alpha", "beta")
+        proc = self.todo("tag-add", self.tid, "alpha", "beta")
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        search = self.todo("search", "alpha", "--embedder", "apple")
+        self.assertEqual(search.returncode, 0, search.stderr)
         rows = {(field, emb) for _t, field, emb in self._emb_rows()}
-        self.assertIn(("Tag.0.raw", "hash"), rows)
-        self.assertIn(("Tag.1.raw", "hash"), rows)
+        self.assertIn(("Tag.0.raw", BOW), rows)
+        self.assertIn(("Tag.1.raw", BOW), rows)
 
     def test_editing_a_tags_raw_clears_only_that_elements_vectors(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        proc = self.todo("tagadd", self.tid, "alpha", "beta")
+        proc = self.todo("tag-add", self.tid, "alpha", "beta")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         # Inject stale expensive vectors as if a prior search had backfilled them.
         stale = "apple_nlce:x:r1:pool=mean:norm=l2:v1"
@@ -246,7 +258,7 @@ class TagEmbeddingIntegrationTests(TodoCase):
         tag0_embedders = {emb for _t, field, emb in rows if field == "Tag.0.raw"}
         tag1_embedders = {emb for _t, field, emb in rows if field == "Tag.1.raw"}
         self.assertNotIn(stale, tag0_embedders)  # cleared: this element's raw changed
-        self.assertIn("hash", tag0_embedders)  # cheap repopulated for the new text
+        self.assertEqual(tag0_embedders, set())  # nothing cheap repopulates it
         self.assertIn(stale, tag1_embedders)  # untouched: a different element
         # get-json-path (not read/read_cur): it never merges the sqlite
         # embeddings index, so the still-injected 4-byte fake "stale" blob on
@@ -262,11 +274,11 @@ class TagEmbeddingIntegrationTests(TodoCase):
     def test_search_ranks_todo_whose_tag_matches_the_query(self) -> None:
         tagged = self.mint()
         self.write_ticket(f"{tagged[:8]}-a", tagged, summary="unrelated summary text")
-        proc = self.todo("tagadd", self.tid, "gizmo-widget")
+        proc = self.todo("tag-add", self.tid, "gizmo-widget")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         untagged = self.mint()
         self.write_ticket(f"{untagged[:8]}-b", untagged, summary="also unrelated text")
-        proc = self.todo("search", "gizmo-widget", "--embedder", "hash")
+        proc = self.todo("search", "gizmo-widget", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(tagged[:8], proc.stdout)
         self.assertNotIn(untagged[:8], proc.stdout)
@@ -274,14 +286,14 @@ class TagEmbeddingIntegrationTests(TodoCase):
     def test_tagrm_drops_field_and_no_longer_ranks(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="unrelated summary text")
-        proc = self.todo("tagadd", self.tid, "unique-marker-xyz")
+        proc = self.todo("tag-add", self.tid, "unique-marker-xyz")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        proc = self.todo("search", "unique-marker-xyz", "--embedder", "hash")
+        proc = self.todo("search", "unique-marker-xyz", "--embedder", "apple")
         self.assertIn(tid[:8], proc.stdout)
-        proc = self.todo("tagrm", self.tid, "unique-marker-xyz")
+        proc = self.todo("tag-rm", self.tid, "unique-marker-xyz")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Tag", self.read_cur())
-        proc = self.todo("search", "unique-marker-xyz", "--embedder", "hash")
+        proc = self.todo("search", "unique-marker-xyz", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn(tid[:8], proc.stdout)
 
@@ -292,9 +304,9 @@ class TagCliRoundTripTests(TodoCase):
     def test_tagadd_idempotent_and_deduped(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        self.todo("tagadd", self.tid, "Todo Tool")
-        self.todo("tagadd", self.tid, "todo tool")
-        proc = self.todo("tagadd", self.tid, "Embeddings")
+        self.todo("tag-add", self.tid, "Todo Tool")
+        self.todo("tag-add", self.tid, "todo tool")
+        proc = self.todo("tag-add", self.tid, "Embeddings")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(sorted(_raws(self.read_cur())), ["embeddings", "todo tool"])
 
@@ -306,14 +318,14 @@ class TagCliRoundTripTests(TodoCase):
             summary="x",
             extra={"Tag": [{"raw": "auto one", "manual": False}]},
         )
-        proc = self.todo("tagrm", self.tid, "auto one")
+        proc = self.todo("tag-rm", self.tid, "auto one")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("auto one", _raws(self.read_cur()))
 
     def test_doctor_ok_for_well_formed_tag(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="x")
-        self.todo("tagadd", self.tid, "ok")
+        self.todo("tag-add", self.tid, "ok")
         proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])
@@ -323,7 +335,9 @@ class ComputeAutoTagsTests(unittest.TestCase):
     """Unit coverage for todo.compute_auto_tags beyond the oracle's pinned case."""
 
     def setUp(self) -> None:
-        self.embedder = todo_embed.get_embedder("hash")
+        # Bag-of-words double: scoring is by shared tokens, which is what these
+        # ranking assertions are written against (was get_embedder("hash")).
+        self.embedder = fake_nlce.BowEmbedder()
 
     def test_top_k_are_automatic_elements_whose_raw_is_a_candidate(self) -> None:
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
@@ -345,8 +359,8 @@ class ComputeAutoTagsTests(unittest.TestCase):
         self.assertEqual(todo.compute_auto_tags("text", [], self.embedder, 3), [])
 
     def test_tie_break_is_deterministic_by_candidate_text(self) -> None:
-        # "zulu alpha" and "alpha zulu" are the same bag of words, so the
-        # HashEmbedder scores them identically against "alpha zulu" -- a tie
+        # "zulu alpha" and "alpha zulu" are the same bag of words, so BowEmbedder
+        # scores them identically against "alpha zulu" -- a tie
         # that must break on candidate text (ascending), not input order.
         candidates = ["zulu alpha", "alpha zulu"]
         elems = todo.compute_auto_tags("alpha zulu", candidates, self.embedder, 1)
@@ -451,10 +465,188 @@ class CrossFieldTagInvalidationTests(TodoCase):
         self.assertIn("auto one", _raws(self.read_cur()))
 
 
-class DoctorAutoTagRecomputeTests(TodoCase):
-    """doctor recomputes AUTOMATIC Tag elements when absent; trusts existing; keeps manual."""
+class ApplyTagClearTests(unittest.TestCase):
+    """Unit coverage for todo.apply_tag_clear: which provenance goes, which stays."""
 
-    def test_doctor_computes_automatic_tags_when_absent(self) -> None:
+    def _both(self) -> Dict[str, Any]:
+        return {
+            "Tag": [
+                {"raw": "manual one", "manual": True},
+                {"raw": "auto one", "manual": False},
+                {"raw": "auto two", "manual": False},
+            ]
+        }
+
+    def test_default_removes_automatic_only(self) -> None:
+        d = self._both()
+        self.assertEqual(todo.apply_tag_clear(d), 2)
+        self.assertEqual(_raws(d), ["manual one"])
+
+    def test_include_manual_removes_everything_and_drops_field(self) -> None:
+        d = self._both()
+        self.assertEqual(todo.apply_tag_clear(d, include_manual=True), 3)
+        self.assertNotIn("Tag", d)  # optional fields are absent, not []
+
+    def test_field_dropped_when_only_automatic_present(self) -> None:
+        d = {"Tag": [{"raw": "auto one", "manual": False}]}
+        self.assertEqual(todo.apply_tag_clear(d), 1)
+        self.assertNotIn("Tag", d)
+
+    def test_no_tags_is_a_no_op(self) -> None:
+        d: Dict[str, Any] = {}
+        self.assertEqual(todo.apply_tag_clear(d, include_manual=True), 0)
+        self.assertNotIn("Tag", d)
+
+    def test_manual_only_survives_the_default(self) -> None:
+        d = {"Tag": [{"raw": "keep", "manual": True}]}
+        self.assertEqual(todo.apply_tag_clear(d), 0)
+        self.assertEqual(_raws(d), ["keep"])
+
+
+class TagClearCliTests(TodoCase):
+    """tag-clear end to end: provenance scoping, selector scoping, corpus default."""
+
+    def _seed(self, name: str, tags: list) -> str:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-{name}", tid, summary=name, extra={"Tag": tags})
+        return tid
+
+    def _tags_of(self, tid: str) -> list:
+        proc = self.todo("read", tid[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return _raws(json.loads(proc.stdout))
+
+    def test_default_clears_automatic_and_keeps_manual(self) -> None:
+        tid = self._seed(
+            "mixed",
+            [{"raw": "keep me", "manual": True}, {"raw": "drop me", "manual": False}],
+        )
+        proc = self.todo("tag-clear", tid[:8])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["include_manual"])
+        self.assertEqual(payload["tags_removed"], 1)
+        self.assertEqual(payload["todos_cleared"], 1)
+        self.assertEqual(self._tags_of(tid), ["keep me"])
+
+    def test_all_flag_clears_manual_too(self) -> None:
+        tid = self._seed(
+            "mixed",
+            [{"raw": "keep me", "manual": True}, {"raw": "drop me", "manual": False}],
+        )
+        proc = self.todo("tag-clear", tid[:8], "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["include_manual"])
+        self.assertEqual(payload["tags_removed"], 2)
+        self.assertEqual(self._tags_of(tid), [])
+
+    def test_explicit_selector_leaves_other_todos_alone(self) -> None:
+        target = self._seed("target", [{"raw": "t", "manual": True}])
+        other = self._seed("other", [{"raw": "o", "manual": True}])
+        proc = self.todo("tag-clear", target[:8], "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["scanned"], 1)
+        self.assertEqual(self._tags_of(target), [])
+        self.assertEqual(self._tags_of(other), ["o"])
+
+    def test_omitted_selector_clears_the_whole_corpus(self) -> None:
+        first = self._seed("first", [{"raw": "a", "manual": True}])
+        second = self._seed("second", [{"raw": "b", "manual": False}])
+        untagged = self._seed("untagged", [])
+        proc = self.todo("tag-clear", "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["scanned"], 3)
+        self.assertEqual(payload["todos_cleared"], 2)  # the untagged one is skipped
+        self.assertEqual(payload["tags_removed"], 2)
+        self.assertEqual(self._tags_of(first), [])
+        self.assertEqual(self._tags_of(second), [])
+        self.assertEqual(self._tags_of(untagged), [])
+
+    def test_ALL_sentinel_is_the_same_as_omitting_the_selector(self) -> None:
+        tid = self._seed("one", [{"raw": "x", "manual": False}])
+        proc = self.todo("tag-clear", "ALL")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["tags_removed"], 1)
+        self.assertEqual(self._tags_of(tid), [])
+
+    def test_untouched_todo_keeps_its_update_dt(self) -> None:
+        tid = self._seed("untagged", [])
+        before = json.loads(self.todo("read", tid[:8]).stdout)["update_dt"]
+        proc = self.todo("tag-clear", tid[:8], "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["todos_cleared"], 0)
+        self.assertEqual(payload["results"], [])
+        after = json.loads(self.todo("read", tid[:8]).stdout)["update_dt"]
+        self.assertEqual(before, after)  # no write, so no update_dt bump
+
+    def test_corpus_sweep_does_not_move_a_foreign_repo_todo(self) -> None:
+        # The store is shared across repos and sqlite keys tickets by
+        # (repo_path, branch), so a `tag-clear ALL` run from THIS repo must write a
+        # foreign-repo record back under its own repo_path -- not silently relocate
+        # it to the current root.
+        mine = self._seed("mine", [{"raw": "m", "manual": True}])
+        foreign = self.mint()
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            conn.execute(
+                "UPDATE tickets SET repo_path = ? WHERE id = ?",
+                ("github.com/elsewhere/other", foreign),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        proc = self.todo("tag-clear", "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            repos = dict(
+                conn.execute("SELECT id, repo_path FROM tickets").fetchall()
+            )
+        finally:
+            conn.close()
+        self.assertEqual(repos[foreign], "github.com/elsewhere/other")
+        self.assertNotEqual(repos[mine], "github.com/elsewhere/other")
+        self.assertEqual(self._tags_of(mine), [])
+
+    def test_clearing_a_tag_drops_its_stored_vectors(self) -> None:
+        # Tag vectors are keyed by POSITIONAL field_path (Tag.<i>.raw), so a
+        # cleared element must not leave its vector behind for whatever element
+        # shifts into that index.
+        tid = self._seed("vec", [{"raw": "gizmo-widget", "manual": True}])
+        search = self.todo("search", "gizmo-widget", "--embedder", "apple")
+        self.assertEqual(search.returncode, 0, search.stderr)
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            rows = conn.execute(
+                "SELECT field_path FROM embeddings WHERE ticket_id = ?", (tid,)
+            ).fetchall()
+        finally:
+            conn.close()
+        self.assertIn(("Tag.0.raw",), rows)
+        proc = self.todo("tag-clear", tid[:8], "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            after = conn.execute(
+                "SELECT field_path FROM embeddings WHERE ticket_id = ?", (tid,)
+            ).fetchall()
+        finally:
+            conn.close()
+        self.assertNotIn(("Tag.0.raw",), after)
+
+
+class DoctorAutoTagRecomputeTests(TodoCase):
+    """doctor's auto-tagging is dormant (no cheap embedder); it still trusts and keeps tags."""
+
+    def test_doctor_adds_no_automatic_tags_while_dormant(self) -> None:
+        # Auto-tagging ran on the lexical `hash` embedder, which made the tags
+        # md5-collision noise rather than topics; with that backend retired
+        # cheap_embedders() is empty and _recompute_auto_tags stands down. It
+        # re-arms on its own once a cheap SEMANTIC backend is registered (ticket
+        # 91e28fd0). Manual tags must survive the dormant pass untouched.
         tid = self.mint()
         self.write_ticket(
             f"{tid[:8]}-a",
@@ -465,12 +657,10 @@ class DoctorAutoTagRecomputeTests(TodoCase):
         proc = self.todo("doctor", tid[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
-        self.assertGreater(payload["auto_tags"], 0)
+        self.assertEqual(payload["auto_tags"], 0)
         ticket = self.read_cur()
-        self.assertIn("manual keep", _raws(ticket))
-        auto = [e for e in ticket["Tag"] if e["manual"] is False]
-        self.assertTrue(auto)
-        self.assertEqual(payload["auto_tags"], len(auto))
+        self.assertEqual(_raws(ticket), ["manual keep"])
+        self.assertEqual([e for e in ticket["Tag"] if e["manual"] is False], [])
 
     def test_doctor_trusts_existing_automatic_tags(self) -> None:
         tid = self.mint()
@@ -531,7 +721,7 @@ class SetTagPluralShapeTests(TodoCase):
         untagged = self.mint()
         self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
         proc = self.todo(
-            "search", "alpha beta gamma", "--embedder", "hash", "--tag", "UI"
+            "search", "alpha beta gamma", "--embedder", "apple", "--tag", "UI"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(tagged[:8], proc.stdout)
