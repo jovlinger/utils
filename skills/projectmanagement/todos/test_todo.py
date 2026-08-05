@@ -1744,6 +1744,25 @@ class WorkItemModelUnitTests(unittest.TestCase):
         }
         self.assertEqual(todo.workitem_findings(well_formed), [])
 
+    def test_workitem_findings_checkpoint_invariants(self) -> None:
+        missing_at = {"WorkItems": [{"kind": "checkpoint", "done": True, "message": "m"},
+                                    {"kind": "code", "done": True, "sha": "a"}]}
+        self.assertTrue(any("missing at_sha" in f for f in todo.workitem_findings(missing_at)))
+        claims_sha = {"WorkItems": [{"kind": "checkpoint", "done": True, "at_sha": "a", "sha": "a"},
+                                    {"kind": "code", "done": True, "sha": "a"}]}
+        self.assertTrue(any("claims" in f for f in todo.workitem_findings(claims_sha)))
+        last_checkpoint = {"WorkItems": [{"kind": "checkpoint", "done": True, "at_sha": "a"}]}
+        self.assertTrue(
+            any("checkpoint" in f and "#6" in f for f in todo.workitem_findings(last_checkpoint))
+        )
+        well_formed = {
+            "WorkItems": [
+                {"kind": "checkpoint", "done": True, "at_sha": "a", "message": "recon"},
+                {"kind": "code", "done": True, "sha": "b"},
+            ]
+        }
+        self.assertEqual(todo.workitem_findings(well_formed), [])
+
 
 class BacklinkUnitTests(unittest.TestCase):
     """Pure-function tests for INFO back-link helpers."""
@@ -1868,6 +1887,52 @@ class WorkItemInvariantTests(TodoCase):
         ok = self.todo("work-item-done", self.tid, "--sha", self._head())
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(self.read_cur()["WorkItems"][0]["sha"], self._head())
+
+    def test_checkpoint_workitem_records_at_sha_not_sha(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon: findings in Body")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(item["kind"], "checkpoint")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["at_sha"], self._head())
+        self.assertNotIn("sha", item)  # observational position, never attribution
+        self.assertEqual(item["message"], "recon: findings in Body")
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)  # cursor advanced
+
+    def test_checkpoint_without_message_marks_explicit_noop(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=wait for CI")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        # never inherits the HEAD commit's own message
+        self.assertEqual(item["message"], "(no-op checkpoint; no commit produced)")
+
+    def test_checkpoint_refuses_dirty_tree(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("dirty", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
+
+    def test_checkpoint_refuses_sha_flag(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "--sha", self._head())
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--checkpoint does not take --sha", proc.stderr)
+
+    def test_clean_tree_message_without_checkpoint_is_an_error(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        proc = self.todo("work-item-done", self.tid, "-m", "would be silently dropped")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--checkpoint", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
 
     def test_cursor_insert_replace_delete_read(self) -> None:
         self._init()

@@ -359,7 +359,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py tag-rm <selector> <tag>...` | implemented | Remove MANUAL tags from the selected todo's `Tag` field (case-insensitive match on `raw`); automatic (`manual: false`) tags are never removed here (use `tag-clear`). Drops the field when empty. `set <id> --untag` is an alias |
 | `todo.py tag-clear <selector>\|ALL [--all]` | implemented | Drop tags wholesale -- the counterpart to `tag-add`/`tag-rm`'s per-tag edits. Removes only AUTOMATIC (`manual: false`) elements by default; `--all` also removes MANUAL ones (nothing brings those back). The selector is **required** -- one todo, or the `ALL` sentinel to sweep the corpus; a corpus-wide wipe must be named, never defaulted into (same convention as `doctor`/`log`). Store-only; a todo with no matching tags is skipped entirely (no `update_dt` bump). Prints a JSON summary (`scanned`, `todos_cleared`, `tags_removed`) |
 | `todo.py work-item-add <selector> --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to the selected todo's `WorkItems`. Store-only, so it works on a branchless `groom` todo (incremental plan seeding) |
-| `todo.py work-item-done <selector> [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Must run from a checkout (worktree) of the todo's branch -- it binds a code commit to the work item -- and errors otherwise. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
+| `todo.py work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Must run from a checkout (worktree) of the todo's branch -- it binds a code commit to the work item -- and errors otherwise. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1); `-m` on a clean tree without `--checkpoint` is an ERROR (it would be silently dropped and the node would inherit HEAD's own message). `--checkpoint` completes a NO-commit item instead (recon, waits, bookkeeping): clean tree only, records HEAD as observational `at_sha` (never attribution), `message` = `-m` or an explicit no-op marker; `--sha` with `--checkpoint` errors. Adds no bookkeeping commit, so a code sha stays branch HEAD (#6). Stores the full commit message on a `code` node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
 | `todo.py work-item-read <selector>` | implemented | Print the cursor work item (first not-done), its index, whether the todo is done, and a `next` object -- the deterministic mechanical command to advance the loop (`{action, command}`), including the finish sequence when done. `next` is a mechanism hint, not policy; a plain task defaults to `work-item-done` but may instead be split or turned into a subtodo per the dispatch table |
 | `todo.py work-item-insert <selector> --summary=...` | implemented | Insert a not-done `task` at the cursor so it becomes current, pushing the frontier down (used to explode a step into finer steps); appends when there is no open item |
 | `todo.py work-item-replace <selector> --summary=...` | implemented | Rewrite the cursor task's freetext summary, leaving it not-done |
@@ -895,6 +895,7 @@ typed **done** kinds, each produced by the command that performs that work:
 | `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` (local coding) |
 | `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` (no sha) | `add-subtodo` |
+| `checkpoint` | `summary`, `at_sha`, `message`, `done:true` (no `sha`) | `work-item-done --checkpoint` (no-commit step: recon, waits, bookkeeping) |
 
 `summary` is the high-level step description (carried over from the cursor task). `message`
 on a `code` item is the **full commit message** recorded at `sha` (from `work-item-done`'s
@@ -906,18 +907,30 @@ the task `summary`. Note `work-item-done` completes the **cursor** (first not-do
 message attaches to whatever item is at the cursor -- complete items in cursor order or the
 message lands on the wrong node.
 
+**`sha` vs `at_sha` (attribution vs observation).** A `code`/`merge_subtodo` `sha` means "this
+commit IS this item's work" -- attribution. A `checkpoint` records `at_sha` instead: where branch
+HEAD happened to stand when a NO-commit step finished -- observation, claiming no authorship (on
+a fresh branch that commit is usually someone else's upstream work). Checkpoint metadata follows
+the State-value doctrine: each kind keeps only its own fields, and an inapplicable flag raises
+instead of being silently dropped (`-m` on a clean tree without `--checkpoint` errors; `--sha`
+with `--checkpoint` errors). A checkpoint's `message` comes from `-m` (say what the no-code step
+did) and defaults to `"(no-op checkpoint; no commit produced)"` -- it never inherits the HEAD
+commit's own message.
+
 The **cursor** is the first not-done item (derived, not stored). Work proceeds
 by completing the cursor and advancing; the cursor index never decreases though
 the list may grow (e.g. `work-item-insert` explodes one step into several). The
 invariants the tool guarantees and `doctor` enforces:
 
-1. A done item is a `start_subtodo`, or carries a `sha` (a `code` or
-   `merge_subtodo` commit) with a high-level description.
+1. A done item is a `start_subtodo`, a `checkpoint` (carries observational
+   `at_sha`, never `sha`), or carries a `sha` (a `code` or `merge_subtodo`
+   commit) with a high-level description.
 2. A not-done item is freetext (a task or a list of not-yet-started subtasks).
 3. Done items form a prefix; the cursor moves monotonically down.
 5. `BaseSha` records the branch's initial sha, captured at branch creation.
-6. The last item cannot be `start_subtodo` -- it must be a `code`/`merge`
-   commit, so the last item's sha (`last-sha`) is the branch's last commit.
+6. The last item cannot be `start_subtodo` or `checkpoint` -- it must be a
+   `code`/`merge` commit, so the last item's sha (`last-sha`) is the branch's
+   last commit.
 7. A todo `is-done` when it has no not-yet-done items.
 
 `is-done` and `last-sha` expose these as subcommands. `doctor` reports shape
@@ -1044,8 +1057,9 @@ selector `ALL` sweeps the whole corpus. Checks:
   termination, by any route. Follow-only `INFO` back-links are excluded (they
   carry no merge obligation).
 - WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
-  `code`/`merge_subtodo` item carries a sha; a done todo does not end in
-  `start_subtodo`.
+  `code`/`merge_subtodo` item carries a sha; a `checkpoint` item carries `at_sha`
+  and must NOT carry `sha` (observation, not attribution); a done todo does not
+  end in `start_subtodo` or `checkpoint`.
 - PR disposition (root todos only): for a todo in `done`/`merged`/`rejected`, ask
   `gh` about its branch (or its recorded `pr`) and reconcile the state -- discover
   a hand-opened PR, record a merged PR's `merge_commit`, demote a closed-unmerged
@@ -1101,6 +1115,7 @@ done item -- the tool guarantees the shape and captures the sha:
 | a subtodo to start | `todo.py add-subtodo <parent-id> --summary=...` | `start_subtodo` (+ child branch & `BaseSha`) |
 | a subtodo to land | git-merge the child, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` (+ parent branch tip sha) |
 | local coding | make the change in the todo's worktree, then `todo.py work-item-done <id>` (dirty tree commits it, message = `-m` or the item summary; clean tree records HEAD) | `code` (+ HEAD sha) |
+| a no-code step (recon, notes-to-record, a wait that resolved) | `todo.py work-item-done <id> --checkpoint -m "what the step actually did"` (clean tree only; never attributes the HEAD commit) | `checkpoint` (+ observational `at_sha`) |
 | too coarse | `todo.py work-item-insert <id> --summary=...` to split it, then re-poll | new task at the cursor |
 | blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set <id> --state userneeded --note=...` and **come back and poll later** | -- |
 | empty (`is_done == true`) | run `todo.py doctor <id>` (must be `ok`); read the done items (`todo.py read <id> | jq '.WorkItems'`) and **synthesize a 1-3 sentence ActualSummary of what actually landed**; then `todo.py set <id> --state done --actual-summary="..."` | `done` (State) |

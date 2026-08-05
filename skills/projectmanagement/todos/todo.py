@@ -1262,11 +1262,17 @@ def build_ticket_skeleton(
 
 # --- WorkItem model: typed items, cursor, and invariants -------------------
 #
-# A WorkItem is either not-done freetext (kind "task") or one of three typed
+# A WorkItem is either not-done freetext (kind "task") or one of four typed
 # done kinds, each produced by the command that performs that work:
 #   - "code"          local coding; carries a `sha` (invariant #1)
 #   - "merge_subtodo" a merged subtodo; carries `subtodo_id` and a `sha`
 #   - "start_subtodo" a fired subtodo; carries `subtodo_id`, no sha
+#   - "checkpoint"    completed with NO commit produced (recon, waits,
+#                     bookkeeping); carries `at_sha` -- observational (where
+#                     HEAD stood), never attribution -- and a `message` saying
+#                     what the no-code step did. Mirrors the State-value
+#                     doctrine: each kind keeps only its own metadata, and
+#                     inapplicable metadata raises instead of silently dropping.
 # The cursor is the first not-done item (derived). Working proceeds by marking
 # the cursor done and advancing; the index never decreases though the list may
 # grow (invariant #3). A todo is done when nothing is not-done (invariant #7).
@@ -1275,8 +1281,9 @@ WORKITEM_TASK = "task"
 WORKITEM_CODE = "code"
 WORKITEM_MERGE_SUBTODO = "merge_subtodo"
 WORKITEM_START_SUBTODO = "start_subtodo"
+WORKITEM_CHECKPOINT = "checkpoint"
 WORKITEM_DONE_KINDS = frozenset(
-    {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO}
+    {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO, WORKITEM_CHECKPOINT}
 )
 WORKITEM_KINDS = WORKITEM_DONE_KINDS | {WORKITEM_TASK}
 
@@ -1375,6 +1382,23 @@ def code_workitem(sha: str, summary: str = "", message: str = "") -> JsonDict:
     if message:
         item["message"] = message
     return item
+
+
+def checkpoint_workitem(at_sha: str, summary: str = "", message: str = "") -> JsonDict:
+    """Build a done 'checkpoint' work item: completed with NO commit produced.
+
+    `at_sha` is observational -- where branch HEAD stood at completion -- NOT
+    attribution: a checkpoint claims no authorship of that commit (contrast
+    `code_workitem`, whose `sha` means "this commit IS this item's work").
+    `message` should say what the no-code step actually did; the default marks
+    an explicit no-op so the trail never inherits a foreign commit's message."""
+    return {
+        "kind": WORKITEM_CHECKPOINT,
+        "summary": summary,
+        "at_sha": at_sha,
+        "message": message or "(no-op checkpoint; no commit produced)",
+        "done": True,
+    }
 
 
 def start_subtodo_workitem(subtodo_id: str, summary: str = "") -> JsonDict:
@@ -2332,12 +2356,25 @@ def workitem_findings(todo: JsonDict) -> List[str]:
             isinstance(item.get("subtodo_id"), str) and item.get("subtodo_id")
         ):
             findings.append(f"WorkItems.{index} {k} item is missing subtodo_id")
-    # a done todo must not end in start_subtodo -- it must be a code/merge commit (#6)
+        if k == WORKITEM_CHECKPOINT:
+            if not (isinstance(item.get("at_sha"), str) and item.get("at_sha")):
+                findings.append(f"WorkItems.{index} checkpoint item is missing at_sha")
+            if item.get("sha"):
+                findings.append(
+                    f"WorkItems.{index} checkpoint item carries a sha; a checkpoint claims "
+                    "no commit (observational position goes in at_sha)"
+                )
+    # a done todo must not end in start_subtodo or checkpoint -- it must be a
+    # code/merge commit so last-sha is the branch's last commit (#6)
     if items and is_done(todo):
         last = items[-1]
-        if isinstance(last, dict) and workitem_kind(last) == WORKITEM_START_SUBTODO:
+        if isinstance(last, dict) and workitem_kind(last) in (
+            WORKITEM_START_SUBTODO,
+            WORKITEM_CHECKPOINT,
+        ):
             findings.append(
-                "last work item is start_subtodo; a done todo must end in a code or merge commit (#6)"
+                f"last work item is {workitem_kind(last)}; a done todo must end in a "
+                "code or merge commit (#6)"
             )
     return findings
 
@@ -3457,16 +3494,25 @@ class WorkItemDoneCommand(TodoSubCommand):
         "records the new HEAD sha; the commit message is -m when given, else the work item's "
         "summary. It adds no bookkeeping commit, so the recorded sha stays the branch HEAD "
         "(invariant #6). --summary overrides the item's high-level description (defaults to the "
-        "cursor task's summary)."
+        "cursor task's summary). --checkpoint completes a NO-COMMIT item (recon, waits, "
+        "bookkeeping) instead: clean tree only, records HEAD observationally as at_sha (never as "
+        "attribution), message = -m. Like State metadata, inapplicable flags raise: -m on a clean "
+        "tree without --checkpoint, or --sha with --checkpoint, are errors rather than silent "
+        "no-ops."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
+        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary); with --checkpoint, the recorded no-op message")
         parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
         parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--checkpoint",
+            action="store_true",
+            help="complete as a no-commit checkpoint: records HEAD as observational at_sha; clean tree only",
+        )
 
     def do(self) -> int:
         """Complete the cursor work item as code (invariant #1).
@@ -3486,6 +3532,40 @@ class WorkItemDoneCommand(TodoSubCommand):
                 f"run it from a checkout of that branch (currently on {checked_out!r})"
             )
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
+        if self.checkpoint:
+            # No-commit completion. Per-variant metadata discipline (same doctrine
+            # as set_state): flags the variant does not keep are errors.
+            if self.sha:
+                raise TodoError(
+                    "--checkpoint does not take --sha; it records HEAD as observational at_sha"
+                )
+            if dirty:
+                raise TodoError(
+                    "--checkpoint records no commit but the tree is dirty; commit the work "
+                    "(plain work-item-done) or clean the tree first"
+                )
+            head = head_sha(root)
+            if not head:
+                raise TodoError("no commits on branch; cannot record a checkpoint position")
+            item = checkpoint_workitem(
+                str(head), summary=self.summary or "", message=self.message or ""
+            )
+            index = mark_cursor_done(todo, item)
+            write_todo_worktree(root, todo)
+            node = todo["WorkItems"][index]
+            print(
+                json.dumps(
+                    {
+                        "index": index,
+                        "kind": WORKITEM_CHECKPOINT,
+                        "at_sha": node["at_sha"],
+                        "summary": node.get("summary", ""),
+                        "message": node["message"],
+                    },
+                    indent=2,
+                )
+            )
+            return 0
         if dirty:
             if self.sha:
                 raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
@@ -3494,6 +3574,14 @@ class WorkItemDoneCommand(TodoSubCommand):
             run_git(root, "commit", "-m", message)
             sha = head_sha(root)
         else:
+            if self.message:
+                # Silently dropping -m would make it look like it took effect
+                # (the node would instead inherit HEAD's own commit message).
+                raise TodoError(
+                    "-m does nothing on a clean tree (the HEAD commit's own message is "
+                    "recorded); commit the work first, or pass --checkpoint for a "
+                    "no-commit item"
+                )
             head = head_sha(root)
             if not head:
                 raise TodoError("no commits on branch; cannot record a code work item")
