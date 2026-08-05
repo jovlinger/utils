@@ -44,6 +44,7 @@ VALID_STATES = frozenset(
         "stopped",
         "done",
         "merged",
+        "rejected",  # PR closed without merging; the handoff was refused
         "waiting",
         "fact",  # never worked; an informational anchor for vector-memory recall (was info)
         "N/a",
@@ -56,7 +57,7 @@ STOPWORDS = frozenset({"a", "an", "the", "to", "from", "for", "and", "or", "in",
 # name (lowercase). FINAL is the terminated set hidden by default.
 STATE_MACROS = {
     "ALL": VALID_STATES,
-    "FINAL": frozenset({"done", "merged"}),
+    "FINAL": frozenset({"done", "merged", "rejected"}),
     "PAUSING": frozenset({"waiting", "userneeded", "stopped"}),
     "WORKING": frozenset({"working"}),
     "UNSTARTED": frozenset({"groom", "ready"}),
@@ -853,20 +854,33 @@ def set_state(
     last_commit: Optional[str] = None,
     merged_into: Optional[str] = None,
     owner: Optional[str] = None,
+    pr: Optional[int] = None,
+    merge_commit: Optional[str] = None,
 ) -> None:
-    """Replace State with a single-key object."""
+    """Replace State with a single-key object.
+
+    ``merged`` covers BOTH handoff shapes, distinguished by which keys are set:
+    a subtodo absorbed by its parent (``merged_into`` = parent branch) and a root
+    todo whose branch was handed to a PR (``pr``, plus ``merge_commit`` once that
+    PR actually merged). ``rejected`` is the PR-closed-unmerged outcome and keeps
+    the ``pr`` it was refused under, so doctor can re-check a reopened PR.
+    """
     if state not in VALID_STATES:
         raise TodoError(f"invalid state {state!r}")
     value: JsonDict = {}
     if state == "working" and owner:
         value["owner"] = owner
-    if state in {"userneeded", "stopped"} and note:
+    if state in {"userneeded", "stopped", "rejected"} and note:
         value["note"] = note
     if state == "done" and last_commit:
         value["last_commit"] = last_commit
     if state == "merged":
         if merged_into:
             value["merged_into"] = merged_into
+        if merge_commit:
+            value["merge_commit"] = merge_commit
+    if state in {"merged", "rejected"} and pr is not None:
+        value["pr"] = pr
     todo["State"] = {state: value}
 
 
@@ -881,6 +895,8 @@ def apply_set_fields(
     last_commit: Optional[str] = None,
     merged_into: Optional[str] = None,
     owner: Optional[str] = None,
+    pr: Optional[int] = None,
+    merge_commit: Optional[str] = None,
     actual_summary: Optional[str] = None,
     parent_touched: bool = False,
     tags_touched: bool = False,
@@ -909,7 +925,8 @@ def apply_set_fields(
         changed = True
     if state is not None:
         set_state(todo, state, note=note, last_commit=last_commit,
-                  merged_into=merged_into, owner=owner)
+                  merged_into=merged_into, owner=owner, pr=pr,
+                  merge_commit=merge_commit)
         changed = True
     if not changed and not parent_touched and not tags_touched:
         raise TodoError(
@@ -1119,10 +1136,21 @@ def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
         choices=sorted(VALID_STATES - {"waiting", "N/a"}),
         help="new workflow state (replaces the removed `set-state` subcommand)",
     )
-    parser.add_argument("--note", help="note for userneeded/stopped")
+    parser.add_argument("--note", help="note for userneeded/stopped/rejected")
     parser.add_argument("--last-commit", help="last commit message for done/merged")
     parser.add_argument("--merged-into", help="parent branch name for merged")
     parser.add_argument("--owner", help="owner for working")
+    parser.add_argument(
+        "--pr",
+        type=int,
+        help="pull-request number for merged/rejected: a root todo whose branch was "
+        "handed off to a PR is `merged --pr N` (doctor reconciles its fate via gh)",
+    )
+    parser.add_argument(
+        "--merge-commit",
+        help="merge commit sha for merged, once the PR actually merged "
+        "(doctor fills this in from gh)",
+    )
     parser.add_argument(
         "--actual-summary",
         help="ActualSummary: how the work actually panned out; reused as the merge "
@@ -2896,6 +2924,8 @@ class InitCommand(TodoSubCommand):
                 last_commit=self.last_commit,
                 merged_into=self.merged_into,
                 owner=self.owner,
+                pr=self.pr,
+                merge_commit=self.merge_commit,
                 actual_summary=self.actual_summary,
             )
             write_todo_worktree(root, ticket)
@@ -3139,6 +3169,8 @@ class SetCommand(TodoSubCommand):
             last_commit=self.last_commit,
             merged_into=self.merged_into,
             owner=self.owner,
+            pr=self.pr,
+            merge_commit=self.merge_commit,
             actual_summary=self.actual_summary,
             parent_touched=parent_touched,
             tags_touched=tags_touched,
@@ -3845,6 +3877,208 @@ def _recompute_auto_tags(todo: JsonDict) -> int:
     return len(auto)
 
 
+# --- gh / pull-request reconciliation ---------------------------------------
+#
+# Pushing a PR hands this branch's contents off to another entity, which is the
+# same thing `merged` already means for a subtodo absorbed by its parent -- so a
+# ROOT todo whose branch went to a PR is `merged {"pr": N}`. The PR's fate then
+# refines that: a merged PR records its merge commit, a closed-unmerged PR becomes
+# `rejected`. Doctor reconciles in both directions, so a PR opened by hand in the
+# GitHub UI (which this CLI never saw) is still discovered and filled in.
+#
+# gh is attempted ONCE per process. The first ENVIRONMENTAL failure (missing
+# binary, no auth, no network, rate limit) disables it for the rest of the run and
+# records the reason plus its remediation, so a `doctor ALL` sweep reports one
+# actionable line instead of repeating the same failure per todo. A per-repo
+# failure (unknown repo, no access) skips only that todo -- it says nothing about
+# whether gh works.
+_GH_GATE: Dict[str, Optional[str]] = {"disabled": None}
+
+# owner/repo out of a git remote URL: git@host:owner/repo.git,
+# https://host/owner/repo.git, ssh://git@host/owner/repo
+_GH_SLUG_RE = re.compile(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?/?$")
+
+# States whose disposition a PR can still refine. `done` is included because a
+# PR may have been opened by hand after the todo was closed out.
+_PR_RECONCILABLE = frozenset({"done", "merged", "rejected"})
+
+
+def gh_reset_gate() -> None:
+    """Re-arm the once-per-run gh gate (test seam; a fresh process starts armed)."""
+    _GH_GATE["disabled"] = None
+
+
+def gh_gate_reason() -> Optional[str]:
+    """Return why gh is disabled for this run, or None while it is still armed."""
+    return _GH_GATE["disabled"]
+
+
+def gh_repo_slug(todo: JsonDict, root: Path) -> Optional[str]:
+    """Best-effort ``owner/repo`` for ``gh -R``, or None when it is not GitHub.
+
+    Prefers the todo's own ``Scope.git_url`` so a cross-repo store still resolves
+    the right repo, and falls back to the current repo's origin.
+    """
+    scope = todo.get("Scope")
+    url = scope.get("git_url") if isinstance(scope, dict) else None
+    if not isinstance(url, str) or not url:
+        url = git_url_for_repo(root)
+    if not isinstance(url, str) or "github" not in url.lower():
+        return None
+    match = _GH_SLUG_RE.search(url.strip())
+    return match.group(1) if match else None
+
+
+def run_gh(*args: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
+    """Run a gh command, turning a missing binary or timeout into a failed result."""
+    try:
+        return subprocess.run(
+            ["gh", *args], capture_output=True, text=True, check=False, timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(["gh", *args], returncode=127, stdout="", stderr=str(exc))
+    except OSError as exc:
+        return subprocess.CompletedProcess(["gh", *args], returncode=1, stdout="", stderr=str(exc))
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            ["gh", *args], returncode=124, stdout="", stderr=f"gh timed out after {timeout}s"
+        )
+
+
+def _gh_classify(result: subprocess.CompletedProcess[str]) -> tuple[str, str, bool]:
+    """Map a failed gh run to ``(reason, remediation, environmental)``.
+
+    *environmental* True means the failure is about this machine or session rather
+    than one repo, so it disables gh for the rest of the run.
+    """
+    stderr = (result.stderr or "").strip()
+    low = stderr.lower()
+    if result.returncode == 127 or "no such file" in low:
+        return ("gh is not installed", "install the GitHub CLI: brew install gh", True)
+    if result.returncode == 124:
+        return (stderr or "gh timed out", "check network/VPN, then re-run doctor", True)
+    if "auth login" in low or "authentication" in low or "not logged in" in low:
+        return ("gh is not authenticated", "run: gh auth login", True)
+    if "rate limit" in low:
+        return ("GitHub API rate limit reached", "wait for the reset, or check: gh auth status", True)
+    for token in ("could not resolve host", "dial tcp", "connection refused", "network is unreachable"):
+        if token in low:
+            return ("cannot reach GitHub", "check network/VPN, then re-run doctor", True)
+    if "could not resolve to a repository" in low or "not found" in low:
+        return ("repo not found or no access", "check the repo slug and: gh auth status", False)
+    first = stderr.splitlines()[0] if stderr else f"gh exited {result.returncode}"
+    return (f"gh failed: {first}", "run the gh command by hand to see the full error", False)
+
+
+def _gh_json(*args: str) -> tuple[Any, Optional[str]]:
+    """Run a gh command expecting JSON on stdout; return ``(payload, skip_reason)``.
+
+    An environmental failure trips the once-per-run gate; every later call short
+    circuits on that recorded reason instead of retrying.
+    """
+    disabled = _GH_GATE["disabled"]
+    if disabled:
+        return (None, f"gh disabled this run ({disabled})")
+    result = run_gh(*args)
+    if result.returncode != 0:
+        reason, remediation, environmental = _gh_classify(result)
+        message = f"{reason} -- {remediation}"
+        if environmental:
+            _GH_GATE["disabled"] = message
+        return (None, message)
+    try:
+        return (json.loads(result.stdout or "null"), None)
+    except json.JSONDecodeError:
+        return (None, "gh returned unparseable JSON -- run the gh command by hand")
+
+
+def gh_pr_for_todo(todo: JsonDict, root: Path) -> tuple[Optional[JsonDict], Optional[str]]:
+    """Return ``(pr, skip_reason)`` for this todo's branch or recorded PR number.
+
+    Looks the PR up by its recorded number when the State carries one (so a
+    renamed or deleted branch still reconciles), else discovers one from the
+    branch head -- which is how a hand-opened PR gets noticed.
+    """
+    slug = gh_repo_slug(todo, root)
+    if not slug:
+        return (None, "no GitHub remote for this todo")
+    fields = "number,state,mergeCommit,baseRefName,url"
+    state = todo.get("State")
+    recorded = None
+    if isinstance(state, dict):
+        value = next(iter(state.values()), None)
+        if isinstance(value, dict) and isinstance(value.get("pr"), int):
+            recorded = value["pr"]
+    if recorded is not None:
+        payload, skip = _gh_json("pr", "view", str(recorded), "-R", slug, "--json", fields)
+        if skip:
+            return (None, skip)
+        return (payload if isinstance(payload, dict) else None, None)
+    branch = todo.get("Branch")
+    if not isinstance(branch, str) or not branch:
+        return (None, "todo has no Branch to search for a PR")
+    payload, skip = _gh_json(
+        "pr", "list", "-R", slug, "--head", branch, "--state", "all",
+        "--json", fields, "--limit", "1",
+    )
+    if skip:
+        return (None, skip)
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return (payload[0], None)
+    return (None, None)  # no PR exists yet; not an error
+
+
+def reconcile_pr_state(root: Path, todo: JsonDict, *, dry_run: bool) -> JsonDict:
+    """Reconcile a ROOT todo's terminal disposition against its PR's fate on GitHub.
+
+    Only root todos are considered: a subtodo's ``merged`` records absorption by
+    its parent, which has nothing to do with a PR and must never be overwritten
+    here. Returns a summary dict; ``changed`` is True only when State moved (and
+    was written, unless *dry_run*).
+    """
+    out: JsonDict = {"checked": False, "changed": False}
+    name = current_state_name(todo)
+    if name not in _PR_RECONCILABLE:
+        return out
+    if todo.get("Parent"):
+        out["skipped"] = "subtodo: `merged` here means parent-absorbed, not a PR"
+        return out
+    pr, skip = gh_pr_for_todo(todo, root)
+    if skip:
+        out["skipped"] = skip
+        return out
+    out["checked"] = True
+    if pr is None:
+        if name == "merged":
+            out["warning"] = "State records a pr that gh cannot find"
+        return out
+    number = pr.get("number")
+    gh_state = str(pr.get("state") or "").upper()
+    out["pr"] = number
+    out["gh_state"] = gh_state
+    out["from"] = name
+    commit = pr.get("mergeCommit")
+    sha = commit.get("oid") if isinstance(commit, dict) else None
+    if gh_state == "MERGED":
+        target, kwargs = "merged", {"pr": number, "merge_commit": sha, "merged_into": pr.get("baseRefName")}
+    elif gh_state == "CLOSED":
+        target, kwargs = "rejected", {"pr": number, "note": f"PR #{number} closed without merging"}
+    else:  # OPEN (or DRAFT): the handoff happened, its fate is undecided
+        target, kwargs = "merged", {"pr": number}
+    before = json.dumps(todo.get("State"), sort_keys=True)
+    candidate = dict(todo)
+    set_state(candidate, target, **kwargs)
+    out["to"] = target
+    if json.dumps(candidate["State"], sort_keys=True) == before:
+        return out
+    out["changed"] = True
+    if not dry_run:
+        todo["State"] = candidate["State"]
+        todo["update_dt"] = utc_now()
+        write_todo_worktree(root, todo)
+    return out
+
+
 def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     """Audit one todo and (unless dry_run) repair its parent back-links + auto tags.
 
@@ -3852,12 +4086,20 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     follow-only INFO back-link on each parent -- healing links that were
     one-way (legacy links) or lost, and refreshing INFO summaries. It also
     recomputes AUTOMATIC Tag elements when none are present yet (see
-    ``_recompute_auto_tags``), persisting the todo only when that adds any.
+    ``_recompute_auto_tags``), persisting the todo only when that adds any, and
+    reconciles a root todo's terminal disposition against its PR's fate on GitHub
+    (see ``reconcile_pr_state``). A gh failure is reported as a warning carrying
+    its remediation, never a hard finding.
     """
     _loc, todo = resolve_ticket_by_id(root, selector)
     findings = doctor_findings(root, selector)
     warnings = doctor_warnings(root, selector)
     repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
+    # Read-only, so it runs under --dry-run too: reporting the disposition doctor
+    # WOULD write is the point of a dry run.
+    pr = reconcile_pr_state(root, todo, dry_run=dry_run)
+    if pr.get("warning"):
+        warnings.append(f"PR: {pr['warning']}")
     auto_tags = 0
     if not dry_run:
         auto_tags = _recompute_auto_tags(todo)
@@ -3869,6 +4111,7 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
         "findings": findings,
         "warnings": warnings,
         "repairs": repairs,
+        "pr": pr,
         "auto_tags": auto_tags,
     }
 
@@ -3886,8 +4129,12 @@ class DoctorCommand(TodoSubCommand):
         "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
         "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag elements for an "
         "audited todo that has none yet (trusting any already present, so a normal run is cheap), "
-        "reported as 'auto_tags'. Pass the ALL sentinel as the selector to sweep the whole corpus "
-        "instead of a single selector. Exit 1 when any hard finding is present."
+        "reported as 'auto_tags'. For a ROOT todo in a terminal state it reconciles the PR "
+        "disposition via gh (reported as 'pr'): a done todo with a PR becomes merged {pr}, a merged "
+        "PR records its merge_commit, a closed-unmerged PR becomes rejected. gh is attempted once "
+        "per run -- the first environmental failure disables it for the rest of the run and reports "
+        "the reason plus its remediation under 'gh'. Pass the ALL sentinel as the selector to sweep "
+        "the whole corpus instead of a single selector. Exit 1 when any hard finding is present."
     )
 
     @classmethod
@@ -3935,6 +4182,8 @@ class DoctorCommand(TodoSubCommand):
                         "unlocked": unlocked,
                         "migrated": migrated,
                         "auto_tags": sum(r["auto_tags"] for r in results),
+                        "pr_reconciled": sum(1 for r in results if r["pr"].get("changed")),
+                        "gh": gh_gate_reason() or "ok",
                         "audited": len(results),
                         "results": results,
                     },
@@ -3951,6 +4200,8 @@ class DoctorCommand(TodoSubCommand):
                     "unlocked": unlocked,
                     "migrated": migrated,
                     "auto_tags": result["auto_tags"],
+                    "pr": result["pr"],
+                    "gh": gh_gate_reason() or "ok",
                     "findings": result["findings"],
                     "warnings": result["warnings"],
                     "repairs": result["repairs"],

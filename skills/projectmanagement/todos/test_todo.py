@@ -2020,16 +2020,235 @@ class TagTests(TodoCase):
         self.assertTrue(json.loads(proc.stdout)["ok"])
 
 
+def _gh_proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
+    """A stand-in gh CompletedProcess."""
+    return subprocess.CompletedProcess(["gh"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+OPEN_PR: Dict[str, Any] = {"number": 12345, "state": "OPEN", "mergeCommit": None, "baseRefName": "dev"}
+MERGED_PR: Dict[str, Any] = {
+    "number": 12345, "state": "MERGED", "mergeCommit": {"oid": "abc1234"}, "baseRefName": "dev",
+}
+CLOSED_PR: Dict[str, Any] = {"number": 12345, "state": "CLOSED", "mergeCommit": None, "baseRefName": "dev"}
+
+
+def _gh_returning(pr: Optional[Dict[str, Any]]) -> Any:
+    """side_effect for run_gh: `pr list` yields an array, `pr view` an object."""
+    def _run(*args: str, **_kwargs: Any) -> Any:
+        payload = ([pr] if pr else []) if "list" in args else pr
+        return _gh_proc(stdout=json.dumps(payload))
+    return _run
+
+
+class GhSlugUnitTests(unittest.TestCase):
+    """todo.gh_repo_slug: owner/repo out of the remote URL forms we actually see."""
+
+    def _todo(self, url: str) -> Dict[str, Any]:
+        return {"Scope": {"git_url": url}}
+
+    def test_ssh_scp_form(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("git@github.com:easternlabs/opportunity.git"), Path("/"))
+        self.assertEqual(slug, "easternlabs/opportunity")
+
+    def test_https_form(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("https://github.com/acme/widget.git"), Path("/"))
+        self.assertEqual(slug, "acme/widget")
+
+    def test_ssh_url_form_without_dot_git(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("ssh://git@github.com/acme/widget"), Path("/"))
+        self.assertEqual(slug, "acme/widget")
+
+    def test_non_github_remote_is_none(self) -> None:
+        """gh only speaks GitHub, so a gitlab remote must skip rather than shell out."""
+        self.assertIsNone(todo.gh_repo_slug(self._todo("git@gitlab.com:acme/widget.git"), Path("/")))
+
+
+class GhGateUnitTests(unittest.TestCase):
+    """gh is attempted once per run: an environmental failure disables it with a remedy."""
+
+    def setUp(self) -> None:
+        todo.gh_reset_gate()
+
+    def tearDown(self) -> None:
+        todo.gh_reset_gate()
+
+    def test_classify_environmental_failures_carry_remediation(self) -> None:
+        cases = [
+            (_gh_proc(127, stderr="No such file or directory: 'gh'"), "not installed", "brew install gh"),
+            (_gh_proc(1, stderr="gh auth login required"), "not authenticated", "gh auth login"),
+            (_gh_proc(1, stderr="API rate limit exceeded"), "rate limit", "gh auth status"),
+            (_gh_proc(1, stderr="dial tcp: lookup api.github.com"), "cannot reach GitHub", "network"),
+        ]
+        for proc, reason_part, remedy_part in cases:
+            reason, remediation, environmental = todo._gh_classify(proc)
+            self.assertIn(reason_part, reason)
+            self.assertIn(remedy_part, remediation)
+            self.assertTrue(environmental, reason)
+
+    def test_repo_not_found_is_not_environmental(self) -> None:
+        """One inaccessible repo says nothing about gh, so it must not gate the run."""
+        _reason, _remedy, environmental = todo._gh_classify(
+            _gh_proc(1, stderr="Could not resolve to a Repository with the name 'x'")
+        )
+        self.assertFalse(environmental)
+
+    def test_first_failure_disables_and_second_call_does_not_reinvoke_gh(self) -> None:
+        with unittest.mock.patch.object(
+            todo, "run_gh", return_value=_gh_proc(127, stderr="No such file")
+        ) as run:
+            first, skip1 = todo._gh_json("pr", "list")
+            self.assertIsNone(first)
+            self.assertIn("brew install gh", skip1 or "")
+            second, skip2 = todo._gh_json("pr", "list")
+            self.assertIsNone(second)
+            self.assertIn("gh disabled this run", skip2 or "")
+        self.assertEqual(run.call_count, 1, "gh must be attempted only once per run")
+        self.assertIn("not installed", todo.gh_gate_reason() or "")
+
+
+class ReconcilePrStateUnitTests(unittest.TestCase):
+    """reconcile_pr_state: a PR's fate refines a root todo's terminal disposition."""
+
+    def setUp(self) -> None:
+        todo.gh_reset_gate()
+
+    def tearDown(self) -> None:
+        todo.gh_reset_gate()
+
+    def _todo(self, state: Dict[str, Any], **extra: Any) -> Dict[str, Any]:
+        base = {
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-thing",
+            "Scope": {"git_url": "git@github.com:acme/widget.git"},
+            "Summary": {"raw": "x"},
+            "State": state,
+        }
+        base.update(extra)
+        return base
+
+    def _reconcile(self, item: Dict[str, Any], pr: Optional[Dict[str, Any]], *, dry_run: bool = True) -> Any:
+        with unittest.mock.patch.object(todo, "run_gh", side_effect=_gh_returning(pr)):
+            return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
+
+    def test_done_with_open_pr_becomes_merged_with_pr(self) -> None:
+        item = self._todo({"done": {}})
+        out = self._reconcile(item, OPEN_PR)
+        self.assertTrue(out["checked"])
+        self.assertTrue(out["changed"])
+        self.assertEqual((out["from"], out["to"], out["pr"]), ("done", "merged", 12345))
+
+    def test_merged_pr_records_merge_commit_and_base(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        out = self._reconcile(item, MERGED_PR, dry_run=False)
+        self.assertEqual(out["to"], "merged")
+        self.assertEqual(
+            item["State"], {"merged": {"merged_into": "dev", "merge_commit": "abc1234", "pr": 12345}}
+        )
+
+    def test_closed_unmerged_pr_becomes_rejected(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        out = self._reconcile(item, CLOSED_PR, dry_run=False)
+        self.assertEqual(out["to"], "rejected")
+        self.assertEqual(item["State"]["rejected"]["pr"], 12345)
+        self.assertIn("closed without merging", item["State"]["rejected"]["note"])
+
+    def test_reopened_pr_returns_a_rejected_todo_to_merged(self) -> None:
+        """Reconciliation runs both directions, so a reopened PR is not stuck rejected."""
+        item = self._todo({"rejected": {"pr": 12345}})
+        out = self._reconcile(item, OPEN_PR, dry_run=False)
+        self.assertEqual(out["to"], "merged")
+        self.assertEqual(item["State"], {"merged": {"pr": 12345}})
+
+    def test_subtodo_merged_is_never_touched(self) -> None:
+        """A subtodo's `merged` means parent-absorbed; a PR must not overwrite it."""
+        item = self._todo(
+            {"merged": {"merged_into": "parent-branch"}},
+            Parent=[{"Id": "b" * 64, "Branch": "bbbbbbbb-parent"}],
+        )
+        out = self._reconcile(item, MERGED_PR)
+        self.assertFalse(out["checked"])
+        self.assertIn("subtodo", out["skipped"])
+        self.assertEqual(item["State"], {"merged": {"merged_into": "parent-branch"}})
+
+    def test_non_terminal_state_is_not_checked(self) -> None:
+        out = self._reconcile(self._todo({"working": {}}), OPEN_PR)
+        self.assertFalse(out["checked"])
+        self.assertFalse(out["changed"])
+
+    def test_done_with_no_pr_is_left_alone(self) -> None:
+        """Not every done todo went to a PR (cherry-pick handoff), so absence is fine."""
+        item = self._todo({"done": {}})
+        out = self._reconcile(item, None)
+        self.assertTrue(out["checked"])
+        self.assertFalse(out["changed"])
+        self.assertEqual(item["State"], {"done": {}})
+
+    def test_recorded_pr_that_gh_cannot_find_warns(self) -> None:
+        out = self._reconcile(self._todo({"merged": {"pr": 12345}}), None)
+        self.assertIn("cannot find", out["warning"])
+
+    def test_dry_run_reports_the_change_without_writing(self) -> None:
+        item = self._todo({"done": {}})
+        with unittest.mock.patch.object(todo, "write_todo_worktree") as write:
+            out = self._reconcile(item, OPEN_PR, dry_run=True)
+        self.assertTrue(out["changed"])
+        self.assertEqual(item["State"], {"done": {}}, "dry-run must not mutate State")
+        write.assert_not_called()
+
+    def test_idempotent_second_pass_reports_no_change(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        self._reconcile(item, MERGED_PR, dry_run=False)
+        again = self._reconcile(item, MERGED_PR, dry_run=False)
+        self.assertFalse(again["changed"])
+
+
+class PrStateCliTests(TodoCase):
+    """`set --state merged --pr N` / `--state rejected`, and FINAL hiding rejected."""
+
+    def test_merged_with_pr_number(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo("set", self.tid, "--state", "merged", "--pr", "12345")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(json.loads(got.stdout), {"merged": {"pr": 12345}})
+
+    def test_rejected_keeps_pr_and_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo(
+            "set", self.tid, "--state", "rejected", "--pr", "999", "--note=closed unmerged"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(json.loads(got.stdout), {"rejected": {"note": "closed unmerged", "pr": 999}})
+
+    def test_rejected_is_final_and_hidden_by_default(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        self.todo("set", self.tid, "--summary=find me rejected")
+        self.todo("set", self.tid, "--state", "rejected", "--pr", "7")
+        hidden = self.todo("ls")
+        self.assertNotIn(tid[:8], hidden.stdout)
+        shown = self.todo("ls", "-s")
+        self.assertIn(tid[:8], shown.stdout)
+        explicit = self.todo("ls", "--states=rejected")
+        self.assertIn(tid[:8], explicit.stdout)
+
+
 class ParseStateFilterUnitTests(unittest.TestCase):
     """todo.parse_state_filter: macro expansion and include/-exclude, left-to-right."""
 
     def test_macro_expands_to_states(self) -> None:
-        self.assertEqual(todo.parse_state_filter("FINAL"), frozenset({"done", "merged"}))
+        self.assertEqual(
+            todo.parse_state_filter("FINAL"), frozenset({"done", "merged", "rejected"})
+        )
 
     def test_default_expr_hides_final(self) -> None:
         result = todo.parse_state_filter(todo.DEFAULT_STATE_FILTER)
         self.assertNotIn("done", result)
         self.assertNotIn("merged", result)
+        self.assertNotIn("rejected", result)
         self.assertIn("ready", result)
         self.assertIn("working", result)
 
