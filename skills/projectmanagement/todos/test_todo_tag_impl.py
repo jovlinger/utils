@@ -550,11 +550,11 @@ class TagClearCliTests(TodoCase):
         self.assertEqual(self._tags_of(target), [])
         self.assertEqual(self._tags_of(other), ["o"])
 
-    def test_omitted_selector_clears_the_whole_corpus(self) -> None:
+    def test_ALL_sentinel_clears_the_whole_corpus(self) -> None:
         first = self._seed("first", [{"raw": "a", "manual": True}])
         second = self._seed("second", [{"raw": "b", "manual": False}])
         untagged = self._seed("untagged", [])
-        proc = self.todo("tag-clear", "--all")
+        proc = self.todo("tag-clear", "ALL", "--all")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
         self.assertEqual(payload["scanned"], 3)
@@ -564,12 +564,14 @@ class TagClearCliTests(TodoCase):
         self.assertEqual(self._tags_of(second), [])
         self.assertEqual(self._tags_of(untagged), [])
 
-    def test_ALL_sentinel_is_the_same_as_omitting_the_selector(self) -> None:
-        tid = self._seed("one", [{"raw": "x", "manual": False}])
-        proc = self.todo("tag-clear", "ALL")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["tags_removed"], 1)
-        self.assertEqual(self._tags_of(tid), [])
+    def test_selector_is_required_no_implicit_corpus_wipe(self) -> None:
+        # A corpus-wide wipe must be named. Omitting the selector is an argparse
+        # error, NOT an implicit ALL -- `--all` alone must never touch anything.
+        tid = self._seed("keeper", [{"raw": "x", "manual": True}])
+        proc = self.todo("tag-clear", "--all")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("selector", proc.stderr)
+        self.assertEqual(self._tags_of(tid), ["x"])  # untouched
 
     def test_untouched_todo_keeps_its_update_dt(self) -> None:
         tid = self._seed("untagged", [])
@@ -598,7 +600,7 @@ class TagClearCliTests(TodoCase):
             conn.commit()
         finally:
             conn.close()
-        proc = self.todo("tag-clear", "--all")
+        proc = self.todo("tag-clear", "ALL", "--all")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
         try:

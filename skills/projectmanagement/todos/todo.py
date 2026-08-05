@@ -3300,10 +3300,10 @@ class TagClearCommand(TodoSubCommand):
         "By default it removes only AUTOMATIC elements (manual: False) -- the ones doctor "
         "derives from Summary+Body, which are recomputed rather than curated and so are always "
         "safe to wipe. --all also removes MANUAL elements, which nothing will bring back. "
-        "The selector is optional: a specific todo (Id prefix or full digest), the ALL "
-        "sentinel, or omitted, which is the same as ALL and clears the whole corpus. Writes "
-        "are store-only, and a todo with no matching tags is left untouched (no update_dt "
-        "bump). Prints a JSON summary of what went."
+        "The selector is REQUIRED: either a specific todo (Id prefix or full digest) or the "
+        "ALL sentinel to sweep the whole corpus -- a corpus-wide wipe has to be asked for "
+        "by name, never defaulted into. Writes are store-only, and a todo with no matching "
+        "tags is left untouched (no update_dt bump). Prints a JSON summary of what went."
     )
 
     @classmethod
@@ -3311,10 +3311,8 @@ class TagClearCommand(TodoSubCommand):
         """Register tag-clear arguments."""
         parser.add_argument(
             "selector",
-            nargs="?",
-            default="ALL",
-            help="todo selector: Id prefix (4+ hex), full digest, or ALL "
-            "(default: ALL -- the whole corpus)",
+            help="todo selector: Id prefix (4+ hex) or full digest, or ALL to sweep the "
+            "whole corpus (required -- there is no default)",
         )
         parser.add_argument(
             "--all",

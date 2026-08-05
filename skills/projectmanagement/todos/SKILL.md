@@ -353,11 +353,11 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or the full digest |
 | `todo.py add-subtodo <parent> --from-json=...` | implemented | Create a child todo under the parent selected by id: the child git branch is created at the tip of the parent's branch (no checkout, requires the parent branch to exist locally), `BaseSha` captured, both records written through the store, child registered in the parent's `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor. Requires the store (legacy TODO_USE_JSON mode is import-only) |
 | `todo.py merge-subtodo <child-id>` | implemented | After child is `done`: locate the parent through the child's `Parent[0]` ref, set the child `merged`, update parent `Subtodos[].State` to `merged` -- all store-only, no checkout. Records a typed `merge_subtodo` done item on the parent's cursor whose sha is the parent branch's tip (the caller's real git merge, which must already have landed) and advances the cursor. The work item summary comes from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `fact`. `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
+| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`/`--pr`/`--merge-commit`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `rejected`, `fact`. `--pr <N>` records a PR handoff (`--state merged --pr 12345`, the "Push PR" transition) and is also kept on `rejected`; `--merge-commit` exists so `doctor` can fill in a merged PR's commit -- you rarely pass it by hand. `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
 | `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py tag-add <selector> <tag>...` | implemented | Add MANUAL tags to the selected todo's plural `Tag` field: each becomes a `{raw, manual: true}` element (stripped, downcased, deduped). Idempotent; store-only write. `set <id> --tag` is an alias |
 | `todo.py tag-rm <selector> <tag>...` | implemented | Remove MANUAL tags from the selected todo's `Tag` field (case-insensitive match on `raw`); automatic (`manual: false`) tags are never removed here (use `tag-clear`). Drops the field when empty. `set <id> --untag` is an alias |
-| `todo.py tag-clear [<selector>\|ALL] [--all]` | implemented | Drop tags wholesale -- the counterpart to `tag-add`/`tag-rm`'s per-tag edits. Removes only AUTOMATIC (`manual: false`) elements by default; `--all` also removes MANUAL ones (nothing brings those back). The selector is optional: one todo, `ALL`, or omitted (same as `ALL` -- the whole corpus). Store-only; a todo with no matching tags is skipped entirely (no `update_dt` bump). Prints a JSON summary (`scanned`, `todos_cleared`, `tags_removed`) |
+| `todo.py tag-clear <selector>\|ALL [--all]` | implemented | Drop tags wholesale -- the counterpart to `tag-add`/`tag-rm`'s per-tag edits. Removes only AUTOMATIC (`manual: false`) elements by default; `--all` also removes MANUAL ones (nothing brings those back). The selector is **required** -- one todo, or the `ALL` sentinel to sweep the corpus; a corpus-wide wipe must be named, never defaulted into (same convention as `doctor`/`log`). Store-only; a todo with no matching tags is skipped entirely (no `update_dt` bump). Prints a JSON summary (`scanned`, `todos_cleared`, `tags_removed`) |
 | `todo.py work-item-add <selector> --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to the selected todo's `WorkItems`. Store-only, so it works on a branchless `groom` todo (incremental plan seeding) |
 | `todo.py work-item-done <selector> [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Must run from a checkout (worktree) of the todo's branch -- it binds a code commit to the work item -- and errors otherwise. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
 | `todo.py work-item-read <selector>` | implemented | Print the cursor work item (first not-done), its index, whether the todo is done, and a `next` object -- the deterministic mechanical command to advance the loop (`{action, command}`), including the finish sequence when done. `next` is a mechanism hint, not policy; a plain task defaults to `work-item-done` but may instead be split or turned into a subtodo per the dispatch table |
@@ -368,7 +368,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py last-sha <selector>` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
-| `todo.py doctor [<selector>\|ALL] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, store only). Repair runs by default; `--dry-run` reports intended repairs without writing; selector `ALL` sweeps the whole corpus instead of one selector. Repair also sweeps records to the latest schema (`migrated` count) and would recompute missing AUTOMATIC `Tag` elements from Summary+Body (trust-existing; `auto_tags` count; manual tags untouched) -- but auto-tagging is **dormant** and `auto_tags` is always 0 until a cheap semantic embedder exists (see "Automatic tags are dormant"). Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
+| `todo.py doctor [<selector>\|ALL] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, store only). Repair runs by default; `--dry-run` reports intended repairs without writing; selector `ALL` sweeps the whole corpus instead of one selector. Repair also sweeps records to the latest schema (`migrated` count) and would recompute missing AUTOMATIC `Tag` elements from Summary+Body (trust-existing; `auto_tags` count; manual tags untouched) -- but auto-tagging is **dormant** and `auto_tags` is always 0 until a cheap semantic embedder exists (see "Automatic tags are dormant"). It also **reconciles PR disposition** for a ROOT todo in `done`/`merged`/`rejected` by asking `gh` about that todo's branch or recorded PR number (reported as `pr`; see "PR handoff and disposition past `done`") -- discovering a hand-opened PR, recording a merged PR's `merge_commit`, or moving a closed-unmerged one to `rejected`. gh is attempted once per run; the first environmental failure disables it for the rest of the run and reports the reason plus remediation under `gh`. Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo, and for any gh failure |
 | `todo.py log <selector>\|ALL` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (a 4+ hex Id prefix, the full digest, or `ALL`) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. Selector `ALL` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
 | `todo.py new --summary=... --body=...` | planned | alias for `init` with optional JSON seed |
 
@@ -526,10 +526,11 @@ branch is gated on **handoff to its PARENT / upstream branch -- NOT on reaching
   a git merge of the child);
 - a **top-level todo** hands off to whatever upstream branch it fed -- the branch
   the work was handed to (e.g. a diagnosis todo whose fixes were cherry-picked
-  onto a feature branch).
+  onto a feature branch), or **a PR** it was pushed to.
 
-The handoff can be a git merge OR a cherry-pick / equivalent-content absorption --
-what matters is that the WORK is upstream, not git-ancestry. Once handed off, the
+The handoff can be a git merge, a **PR push** (recorded as `merged {pr}` -- see "PR
+handoff and disposition past `done`"), or a cherry-pick / equivalent-content
+absorption -- what matters is that the WORK is upstream, not git-ancestry. Once handed off, the
 branch is disposable scaffold; delete it (`git branch -D`, since a cherry-pick
 handoff won't register as "merged"). Do **not** gate deletion on the work reaching
 `dev` -- that is often many merges upstream and is not this branch's concern.
@@ -703,6 +704,10 @@ Mainline flow is `groom -> ready -> working -> done`; subtodos the parent merges
 go `done -> merged`. `userneeded` and `stopped` are the interrupts a normal run
 may hit.
 
+**`done` is not the last word.** We track disposition PAST `done`: a todo whose
+branch was handed off to a PR continues `done -> merged {pr} -> rejected` (if that
+PR is closed unmerged). See "PR handoff and disposition past `done`" below.
+
 | State | Value shape | Meaning |
 |-------|-------------|---------|
 | `groom` | `{}` | Minted; still collecting data / grooming. Not yet workable; branchless (store-only) until `init`. (was `pre`/`pre-init`) |
@@ -711,7 +716,8 @@ may hit.
 | `userneeded` | `{ "note"?: string }` | Agent blocked; needs user input. |
 | `stopped` | `{ "note"?: string }` | User override halt. |
 | `done` | `{ "last_commit"?: string }` | Complete on the ticket branch; record last commit message if useful. Entering `done` tears down the todo's worktree (worktree-lifecycle invariant). |
-| `merged` | `{ "merged_into"?: string, "last_commit"?: string }` | Parent absorbed this branch; written on the **child** todo after merge. Parent `Subtodos[].State` becomes `merged`. Entering `merged` tears down the todo's worktree (worktree-lifecycle invariant). |
+| `merged` | `{ "merged_into"?: string, "last_commit"?: string, "pr"?: int, "merge_commit"?: string }` | **Handed off.** Two shapes, told apart by which keys are set. (a) *Subtodo absorbed by its parent*: `merged_into` = parent branch, written on the **child** after merge; parent `Subtodos[].State` becomes `merged`. (b) *Root todo handed to a PR*: `pr` = PR number, plus `merge_commit` + `merged_into` once that PR actually merged. Entering `merged` tears down the todo's worktree (worktree-lifecycle invariant). |
+| `rejected` | `{ "pr"?: int, "note"?: string }` | A PR handoff was **refused**: the PR closed without merging. Keeps the `pr` it was refused under so `doctor` can notice a reopen and reconcile back to `merged`. |
 | `fact` | `{}` | An informational anchor: a todo that will **never** be worked, kept to harness vector-memory associative recall. (was `info`) See "Working a fact" below. |
 | `waiting` | (deferred) | Blocked on subtodos -- see Deferred. |
 | `N/a` | `{}` | Non-work associative item; not a task. |
@@ -723,19 +729,70 @@ start work on a `fact` todo -- `set <id> --state working`, opening a worktree, o
 code/ticket action -- STOP and ask the user to confirm they really want it
 worked. Never transition a `fact` to `working` on your own.
 
-The terminated states `done` and `merged` are the `FINAL` set, hidden by default
-by `ls`/`search` (see "Selecting todos").
+The terminated states `done`, `merged`, and `rejected` are the `FINAL` set, hidden
+by default by `ls`/`search` (see "Selecting todos"). `rejected` is FINAL
+deliberately: a closed PR is a disposition, not an open loop. Surface one with
+`ls --states=rejected` when you want to review refused handoffs.
+
+### PR handoff and disposition past `done`
+
+**Pushing a PR is a merge.** It hands this branch's contents to another entity,
+which is exactly what `merged` already means for a subtodo absorbed by its parent.
+So a **root** todo that is `done` and whose branch went to a PR is
+`merged {"pr": N}`, and the PR's fate refines that disposition from there.
+
+| Event | Transition |
+|-------|-----------|
+| Root todo finishes its WorkItems | `done` (as always) |
+| You push a PR ("Push PR") | `set <id> --state merged --pr <N>` |
+| That PR merges | `merged {pr, merge_commit, merged_into}` (doctor fills in) |
+| That PR closes unmerged | `rejected {pr, note}` (doctor fills in) |
+| A closed PR is reopened | back to `merged {pr}` (doctor reconciles both ways) |
+
+```bash
+todo.py set <id> --state merged --pr 12345      # the "Push PR" transition
+```
+
+**Only ROOT todos.** A subtodo's `merged` records absorption by its parent and has
+nothing to do with a PR, so reconciliation skips any todo with a `Parent` ref and
+never overwrites it. This is the same root-vs-child distinction that makes
+`merge-subtodo` inapplicable to a top-level todo.
+
+**A PR opened by hand is still found.** If you create the PR in the GitHub UI, the
+CLI never saw it -- so `doctor` discovers it: for a root todo in `done`/`merged`/
+`rejected` it asks `gh` for a PR on that todo's branch (or looks up the recorded
+`pr` number, so a renamed branch still reconciles) and writes the disposition. A
+`done` todo with **no** PR is left alone: not every todo goes to a PR (a
+cherry-pick handoff is legitimate), so absence is not an error.
+
+**gh is attempted once per run.** The first *environmental* failure disables gh for
+the rest of the process and reports the reason plus its remediation under doctor's
+`gh` key -- so a `doctor ALL` sweep gives one actionable line instead of the same
+failure per todo, and never retries within the run:
+
+| Failure | Reported remediation | Disables run |
+|---------|---------------------|--------------|
+| gh not installed | `install the GitHub CLI: brew install gh` | yes |
+| not authenticated | `run: gh auth login` | yes |
+| rate limited | `wait for the reset, or check: gh auth status` | yes |
+| cannot reach GitHub / timeout | `check network/VPN, then re-run doctor` | yes |
+| repo not found / no access | `check the repo slug and: gh auth status` | no -- skips that todo only |
+| remote is not GitHub | skipped (`no GitHub remote for this todo`) | no |
+
+A gh failure is always a **warning**, never a hard finding: doctor must not fail
+because a laptop is offline. `--dry-run` still queries (read-only) and reports the
+disposition it *would* write.
 
 ### Selecting todos
 
 `ls` and `search` share one state filter. By default they hide the terminated
-`FINAL` states (`done`, `merged`) so you see live work. Precedence:
+`FINAL` states (`done`, `merged`, `rejected`) so you see live work. Precedence:
 `--states` > `-s` (which means `ALL`) > the per-dir default in
 `<todo-dir>/config.json` (`"default_state_filter"`, default `ALL,-FINAL`).
 
 `--states=<expr>` is a comma/`+`/`-` expression, evaluated left-to-right, over
-lowercase state names and UPPERCASE macros: `ALL`, `FINAL` (done, merged),
-`PAUSING` (waiting, userneeded, stopped), `WORKING` (working),
+lowercase state names and UPPERCASE macros: `ALL`, `FINAL` (done, merged,
+rejected), `PAUSING` (waiting, userneeded, stopped), `WORKING` (working),
 `UNSTARTED` (groom, ready), `INFO` (fact). `-s` also adds a State column.
 
 ```bash
@@ -745,6 +802,7 @@ todo ls --states=WORKING                # only actively-worked todos
 todo ls --states=UNSTARTED+PAUSING      # not-yet-started or blocked
 todo ls --states=ALL,-done              # everything except done
 todo ls --states=fact                   # browse the fact / memory corpus
+todo ls --states=rejected               # PR handoffs that were refused
 todo search "auth token" --states=WORKING+PAUSING
 todo search bh 791 -s                   # search all states, show State column
 ```
@@ -962,11 +1020,17 @@ selector `ALL` sweeps the whole corpus. Checks:
 - WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
   `code`/`merge_subtodo` item carries a sha; a done todo does not end in
   `start_subtodo`.
+- PR disposition (root todos only): for a todo in `done`/`merged`/`rejected`, ask
+  `gh` about its branch (or its recorded `pr`) and reconcile the state -- discover
+  a hand-opened PR, record a merged PR's `merge_commit`, demote a closed-unmerged
+  one to `rejected`, or restore a reopened one to `merged`. Reported under `pr`.
+  A `merged` state whose recorded `pr` gh cannot find is a **warning**.
 
 Findings come in two tiers: hard **findings** fail doctor (exit 1); soft
 **warnings** never fail it. Checks that need an absent subbranch or another repo
 -- an unresolvable sha or `subtodo_id` -- are warnings, so transitional and
-cross-repo todos (where not every subbranch is available) do not hard-fail.
+cross-repo todos (where not every subbranch is available) do not hard-fail. Every
+gh failure is a warning too: doctor must not fail because a laptop is offline.
 
 ## Todo lifecycle (poll the tool for the next step)
 
@@ -1033,6 +1097,12 @@ The `--actual-summary` is not optional here: it is the merge message the
 parent's `merge-subtodo` reuses (falling back to `Summary.raw` only when a child
 skipped this step). A parent only finishes after every subtodo shows `merged`
 (see Recursive completion).
+
+**After `done`, the disposition keeps moving.** `done` means the work is complete
+on the branch, not that the ticket's story is over. For a **root** todo, pushing
+the branch to a PR is the next transition -- `set <id> --state merged --pr <N>` --
+and `doctor` tracks that PR's fate from there (`merged {merge_commit}` or
+`rejected`). See "PR handoff and disposition past `done`".
 
 Each todo -- parent or child -- runs this same loop on its own branch. Split
 into child todos when the Body is too big for one clean run **or** when
