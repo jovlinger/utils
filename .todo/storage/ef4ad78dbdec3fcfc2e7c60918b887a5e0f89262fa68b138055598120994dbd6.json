@@ -536,6 +536,12 @@
       "Id": "5da67f94b1364b62e1ad55bbce85bae24d577b5362f5630eeda74b194c5655a1",
       "State": "INFO",
       "Summary": "Persisted explicit tags on todos (user-set, stored top-level field)"
+    },
+    {
+      "Branch": "32ca7662-spike-find-next-steps",
+      "Id": "32ca7662e94ea72bd7a264a1c75dd3c73a4b93c5f1c427795e1d5360c23dbd30",
+      "State": "INFO",
+      "Summary": "spike to find next steps in oneshot tagging and embedding"
     }
   ],
   "Summary": {
@@ -1124,5 +1130,5 @@
   ],
   "_schema": 8,
   "create_dt": "2026-07-17T15:41:17Z",
-  "update_dt": "2026-08-04T16:59:55Z"
+  "update_dt": "2026-08-05T13:25:29Z"
 }

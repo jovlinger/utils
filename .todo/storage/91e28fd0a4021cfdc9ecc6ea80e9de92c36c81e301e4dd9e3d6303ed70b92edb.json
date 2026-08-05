@@ -531,6 +531,14 @@
   "State": {
     "ready": {}
   },
+  "Subtodos": [
+    {
+      "Branch": "32ca7662-spike-find-next-steps",
+      "Id": "32ca7662e94ea72bd7a264a1c75dd3c73a4b93c5f1c427795e1d5360c23dbd30",
+      "State": "INFO",
+      "Summary": "spike to find next steps in oneshot tagging and embedding"
+    }
+  ],
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
       [
@@ -1084,5 +1092,5 @@
   ],
   "_schema": 8,
   "create_dt": "2026-07-05T04:06:19Z",
-  "update_dt": "2026-07-29T14:41:32Z"
+  "update_dt": "2026-08-05T13:25:29Z"
 }
