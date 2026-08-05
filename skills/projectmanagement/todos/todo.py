@@ -1282,6 +1282,12 @@ WORKITEM_CODE = "code"
 WORKITEM_MERGE_SUBTODO = "merge_subtodo"
 WORKITEM_START_SUBTODO = "start_subtodo"
 WORKITEM_CHECKPOINT = "checkpoint"
+# git's null object id: an EXPLICIT no-change sentinel on a done code/merge
+# item's `sha` -- the interim / legacy-record way to say "this step produced
+# no commit" without converting the node to kind=checkpoint (preferred going
+# forward). Readers must never resolve it, attribute it, or report it as a
+# branch commit; doctor accepts it mid-list and rejects it as the last item.
+WORKITEM_NULL_SHA = "0" * 40
 WORKITEM_DONE_KINDS = frozenset(
     {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO, WORKITEM_CHECKPOINT}
 )
@@ -1364,11 +1370,16 @@ def next_action(todo: JsonDict) -> JsonDict:
 
 
 def last_sha(todo: JsonDict) -> Optional[str]:
-    """Sha of the last work item -- the last branch commit (invariant #6), if any."""
+    """Sha of the last work item -- the last branch commit (invariant #6), if any.
+
+    The no-change sentinel (WORKITEM_NULL_SHA) is not a branch commit and
+    reports as None; doctor separately flags it as the last item of a done todo."""
     items = todo.get("WorkItems") or []
     if not items or not isinstance(items[-1], dict):
         return None
     sha = items[-1].get("sha")
+    if sha == WORKITEM_NULL_SHA:
+        return None
     return sha if isinstance(sha, str) and sha else None
 
 
@@ -2364,8 +2375,9 @@ def workitem_findings(todo: JsonDict) -> List[str]:
                     f"WorkItems.{index} checkpoint item carries a sha; a checkpoint claims "
                     "no commit (observational position goes in at_sha)"
                 )
-    # a done todo must not end in start_subtodo or checkpoint -- it must be a
-    # code/merge commit so last-sha is the branch's last commit (#6)
+    # a done todo must not end in start_subtodo, checkpoint, or a no-change
+    # sentinel -- it must be a real code/merge commit so last-sha is the
+    # branch's last commit (#6)
     if items and is_done(todo):
         last = items[-1]
         if isinstance(last, dict) and workitem_kind(last) in (
@@ -2375,6 +2387,11 @@ def workitem_findings(todo: JsonDict) -> List[str]:
             findings.append(
                 f"last work item is {workitem_kind(last)}; a done todo must end in a "
                 "code or merge commit (#6)"
+            )
+        elif isinstance(last, dict) and last.get("sha") == WORKITEM_NULL_SHA:
+            findings.append(
+                "last work item carries the no-change sentinel sha; a done todo must "
+                "end in a code or merge commit (#6)"
             )
     return findings
 
@@ -2492,7 +2509,12 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
             if not isinstance(item, dict):
                 continue
             sha = item.get("sha")
-            if isinstance(sha, str) and sha and not commit_exists(root, sha):
+            if (
+                isinstance(sha, str)
+                and sha
+                and sha != WORKITEM_NULL_SHA  # explicit no-change sentinel, never resolvable
+                and not commit_exists(root, sha)
+            ):
                 warnings.append(f"WorkItems.{index}.sha {sha[:8]} not found in this repo")
             sub = item.get("subtodo_id")
             if isinstance(sub, str) and sub:

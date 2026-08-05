@@ -1763,6 +1763,54 @@ class WorkItemModelUnitTests(unittest.TestCase):
         }
         self.assertEqual(todo.workitem_findings(well_formed), [])
 
+    def test_null_sha_sentinel_signals_no_change(self) -> None:
+        null = todo.WORKITEM_NULL_SHA
+        # mid-list: a legacy no-change node with the sentinel is well-formed
+        mid = {
+            "WorkItems": [
+                {"kind": "code", "done": True, "sha": null, "message": "recon; no change"},
+                {"kind": "code", "done": True, "sha": "b"},
+            ]
+        }
+        self.assertEqual(todo.workitem_findings(mid), [])
+        # last item of a done todo: the sentinel is not a branch commit (#6)
+        last = {"WorkItems": [{"kind": "code", "done": True, "sha": null}]}
+        self.assertTrue(any("sentinel" in f and "#6" in f for f in todo.workitem_findings(last)))
+        # last-sha never reports the sentinel as a branch commit
+        self.assertIsNone(todo.last_sha(last))
+
+
+class NullShaSentinelCliTests(TodoCase):
+    """Doctor treats the no-change sentinel as valid and never tries to resolve it."""
+
+    def test_doctor_does_not_warn_unresolvable_for_sentinel(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=sentinel probe")
+        self.todo("work-item-add", self.tid, "--summary=recon, retrofitted as sentinel")
+        self.todo("work-item-add", self.tid, "--summary=real work")
+        items_file = self.repo / "items.json"
+        items_file.write_text(
+            json.dumps(
+                [
+                    {"kind": "code", "done": True, "sha": todo.WORKITEM_NULL_SHA,
+                     "summary": "recon", "message": "no change"},
+                    {"kind": "task", "done": False, "summary": "real work"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        proc = self.todo("set-json-path", self.tid, "WorkItems", "--file", str(items_file))
+        items_file.unlink()  # keep the tree clean for any later git ops
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        doc = self.todo("doctor", self.tid)
+        self.assertEqual(doc.returncode, 0, doc.stderr)
+        payload = json.loads(doc.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(
+            [w for w in payload.get("warnings", []) if "00000000" in w],
+            payload.get("warnings"),
+        )
+
 
 class BacklinkUnitTests(unittest.TestCase):
     """Pure-function tests for INFO back-link helpers."""

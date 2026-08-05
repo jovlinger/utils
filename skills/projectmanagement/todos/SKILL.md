@@ -917,6 +917,14 @@ with `--checkpoint` errors). A checkpoint's `message` comes from `-m` (say what 
 did) and defaults to `"(no-op checkpoint; no commit produced)"` -- it never inherits the HEAD
 commit's own message.
 
+**Interim / legacy sentinel.** A done `code`/`merge` node may instead carry git's null object
+id (40 zeros, `WORKITEM_NULL_SHA`) as its `sha` to signal "no change" explicitly -- the cheap
+retrofit for OLD records that misattribute a foreign commit, without converting the node's
+kind. Doctor accepts it mid-list, never tries to resolve it, and rejects it as the last item
+of a done todo (same #6 rule as checkpoint); `last-sha` reports None for it, never the zeros.
+New completions should use `--checkpoint`; the sentinel exists so legacy cleanups are one
+field edit.
+
 The **cursor** is the first not-done item (derived, not stored). Work proceeds
 by completing the cursor and advancing; the cursor index never decreases though
 the list may grow (e.g. `work-item-insert` explodes one step into several). The
