@@ -2127,8 +2127,16 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
         return base
 
     def _reconcile(self, item: Dict[str, Any], pr: Optional[Dict[str, Any]], *, dry_run: bool = True) -> Any:
+        """Reconcile against a stubbed gh, with the store write stubbed out.
+
+        Patching write_todo_worktree keeps these hermetic: the todo dict is still
+        mutated in memory (which is what the assertions check), but no real store
+        is ever touched. self.write records whether a write was attempted.
+        """
         with unittest.mock.patch.object(todo, "run_gh", side_effect=_gh_returning(pr)):
-            return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
+            with unittest.mock.patch.object(todo, "write_todo_worktree") as write:
+                self.write = write
+                return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
 
     def test_done_with_open_pr_becomes_merged_with_pr(self) -> None:
         item = self._todo({"done": {}})
@@ -2189,11 +2197,14 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
 
     def test_dry_run_reports_the_change_without_writing(self) -> None:
         item = self._todo({"done": {}})
-        with unittest.mock.patch.object(todo, "write_todo_worktree") as write:
-            out = self._reconcile(item, OPEN_PR, dry_run=True)
+        out = self._reconcile(item, OPEN_PR, dry_run=True)
         self.assertTrue(out["changed"])
         self.assertEqual(item["State"], {"done": {}}, "dry-run must not mutate State")
-        write.assert_not_called()
+        self.write.assert_not_called()
+
+    def test_real_run_persists_the_new_disposition(self) -> None:
+        self._reconcile(self._todo({"done": {}}), OPEN_PR, dry_run=False)
+        self.write.assert_called_once()
 
     def test_idempotent_second_pass_reports_no_change(self) -> None:
         item = self._todo({"merged": {"pr": 12345}})
