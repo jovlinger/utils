@@ -697,6 +697,21 @@ class StateTests(TodoCase):
             {"merged": {"merged_into": "parent-branch"}},
         )
 
+    def test_merged_records_last_commit(self) -> None:
+        """The State table documents last_commit on merged; it used to be dropped."""
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo(
+            "set", self.tid, "--state", "merged",
+            "--merged-into=parent-branch", "--last-commit=absorbed the child",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(
+            json.loads(got.stdout),
+            {"merged": {"merged_into": "parent-branch", "last_commit": "absorbed the child"}},
+        )
+
     def test_set_state_done_records_actual_summary(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
@@ -2194,6 +2209,20 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
     def test_recorded_pr_that_gh_cannot_find_warns(self) -> None:
         out = self._reconcile(self._todo({"merged": {"pr": 12345}}), None)
         self.assertIn("cannot find", out["warning"])
+        self.assertIn("12345", out["warning"])
+
+    def test_branch_handoff_without_a_pr_does_not_warn(self) -> None:
+        """`merged {merged_into}` on a ROOT todo is a direct-merge/cherry-pick handoff.
+
+        It names no PR, so gh finding none is the expected case, not a warning.
+        Regression: an earlier cut warned "State records a pr" for every merged
+        todo with no PR, which was false for exactly this (common) shape.
+        """
+        item = self._todo({"merged": {"merged_into": "feature-branch"}})
+        out = self._reconcile(item, None)
+        self.assertTrue(out["checked"])
+        self.assertIsNone(out.get("warning"))
+        self.assertEqual(item["State"], {"merged": {"merged_into": "feature-branch"}})
 
     def test_dry_run_reports_the_change_without_writing(self) -> None:
         item = self._todo({"done": {}})

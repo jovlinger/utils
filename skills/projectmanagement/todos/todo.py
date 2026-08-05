@@ -872,7 +872,9 @@ def set_state(
         value["owner"] = owner
     if state in {"userneeded", "stopped", "rejected"} and note:
         value["note"] = note
-    if state == "done" and last_commit:
+    # `merged` accepts last_commit too: merge_subtodo passes one, and the State
+    # table documents it. It used to be dropped here for merged, silently.
+    if state in {"done", "merged"} and last_commit:
         value["last_commit"] = last_commit
     if state == "merged":
         if merged_into:
@@ -3990,6 +3992,21 @@ def _gh_json(*args: str) -> tuple[Any, Optional[str]]:
         return (None, "gh returned unparseable JSON -- run the gh command by hand")
 
 
+def recorded_pr(todo: JsonDict) -> Optional[int]:
+    """The PR number this todo's State already records, or None.
+
+    Distinguishes a PR handoff (`merged {"pr": N}`) from a plain branch handoff
+    (`merged {"merged_into": "some-branch"}`), which records no PR at all.
+    """
+    state = todo.get("State")
+    if not isinstance(state, dict):
+        return None
+    value = next(iter(state.values()), None)
+    if isinstance(value, dict) and isinstance(value.get("pr"), int):
+        return value["pr"]
+    return None
+
+
 def gh_pr_for_todo(todo: JsonDict, root: Path) -> tuple[Optional[JsonDict], Optional[str]]:
     """Return ``(pr, skip_reason)`` for this todo's branch or recorded PR number.
 
@@ -4001,12 +4018,7 @@ def gh_pr_for_todo(todo: JsonDict, root: Path) -> tuple[Optional[JsonDict], Opti
     if not slug:
         return (None, "no GitHub remote for this todo")
     fields = "number,state,mergeCommit,baseRefName,url"
-    state = todo.get("State")
-    recorded = None
-    if isinstance(state, dict):
-        value = next(iter(state.values()), None)
-        if isinstance(value, dict) and isinstance(value.get("pr"), int):
-            recorded = value["pr"]
+    recorded = recorded_pr(todo)
     if recorded is not None:
         payload, skip = _gh_json("pr", "view", str(recorded), "-R", slug, "--json", fields)
         if skip:
@@ -4047,8 +4059,12 @@ def reconcile_pr_state(root: Path, todo: JsonDict, *, dry_run: bool) -> JsonDict
         return out
     out["checked"] = True
     if pr is None:
-        if name == "merged":
-            out["warning"] = "State records a pr that gh cannot find"
+        # Only a state that actually names a PR is suspicious when gh cannot find
+        # it. `merged {merged_into: <branch>}` on a root todo is a plain branch
+        # handoff (a direct merge or cherry-pick) and needs no PR at all.
+        missing = recorded_pr(todo)
+        if missing is not None:
+            out["warning"] = f"State records pr #{missing} that gh cannot find"
         return out
     number = pr.get("number")
     gh_state = str(pr.get("state") or "").upper()
