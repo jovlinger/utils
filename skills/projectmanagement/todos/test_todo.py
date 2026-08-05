@@ -2055,6 +2055,62 @@ def _gh_returning(pr: Optional[Dict[str, Any]]) -> Any:
     return _run
 
 
+class StateMetadataUnitTests(unittest.TestCase):
+    """set_state keeps exactly the metadata each state declares, and rejects the rest."""
+
+    def test_each_state_keeps_its_declared_metadata(self) -> None:
+        cases = [
+            ("working", {"owner": "agent"}, {"owner": "agent"}),
+            ("userneeded", {"note": "blocked"}, {"note": "blocked"}),
+            ("stopped", {"note": "halted"}, {"note": "halted"}),
+            ("done", {"last_commit": "msg"}, {"last_commit": "msg"}),
+            ("merged", {"merged_into": "parent", "last_commit": "m"},
+             {"merged_into": "parent", "last_commit": "m"}),
+            ("merged", {"pr": 7, "merge_commit": "abc"}, {"pr": 7, "merge_commit": "abc"}),
+            ("rejected", {"pr": 7, "note": "closed"}, {"pr": 7, "note": "closed"}),
+        ]
+        for state, kwargs, expected in cases:
+            item: Dict[str, Any] = {}
+            todo.set_state(item, state, **kwargs)
+            self.assertEqual(item["State"], {state: expected}, f"{state} {kwargs}")
+
+    def test_inapplicable_metadata_is_an_error_not_a_silent_drop(self) -> None:
+        for state, kwargs, flag in [
+            ("done", {"pr": 5}, "--pr"),
+            ("working", {"note": "x"}, "--note"),
+            ("merged", {"owner": "agent"}, "--owner"),
+            ("rejected", {"merged_into": "b"}, "--merged-into"),
+            ("ready", {"last_commit": "m"}, "--last-commit"),
+        ]:
+            with self.assertRaises(todo.TodoError) as caught:
+                todo.set_state({}, state, **kwargs)
+            message = str(caught.exception)
+            self.assertIn(flag, message)
+            self.assertIn(state, message)
+
+    def test_stateless_states_take_no_metadata(self) -> None:
+        for state in ("groom", "ready", "fact"):
+            item: Dict[str, Any] = {}
+            todo.set_state(item, state)
+            self.assertEqual(item["State"], {state: {}})
+
+    def test_metadata_map_does_not_drift_from_valid_states(self) -> None:
+        """Guard: a new state must be added to _STATE_METADATA deliberately."""
+        self.assertTrue(set(todo._STATE_METADATA) <= set(todo.VALID_STATES))
+        declared = {flag for flags in todo._STATE_METADATA.values() for flag in flags}
+        self.assertEqual(
+            declared,
+            {"owner", "note", "last_commit", "merged_into", "pr", "merge_commit"},
+            "set_state's metadata parameters and _STATE_METADATA have drifted apart",
+        )
+
+    def test_every_final_state_is_a_terminal_parent_state(self) -> None:
+        """An unmerged subtodo must escalate under ANY terminal parent, incl. rejected."""
+        self.assertEqual(
+            set(todo.TERMINAL_PARENT_STATES), set(todo.STATE_MACROS["FINAL"])
+        )
+
+
 class GhSlugUnitTests(unittest.TestCase):
     """todo.gh_repo_slug: owner/repo out of the remote URL forms we actually see."""
 
@@ -2262,6 +2318,14 @@ class PrStateCliTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         got = self.todo("get-json-path", self.tid, "State")
         self.assertEqual(json.loads(got.stdout), {"rejected": {"note": "closed unmerged", "pr": 999}})
+
+    def test_inapplicable_metadata_fails_the_command(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo("set", self.tid, "--state", "done", "--pr", "5")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("--pr", proc.stdout + proc.stderr)
+        self.assertIn("--last-commit", proc.stdout + proc.stderr)
 
     def test_rejected_is_final_and_hidden_by_default(self) -> None:
         tid = self.mint()

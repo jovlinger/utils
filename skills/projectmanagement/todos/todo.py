@@ -846,6 +846,25 @@ def current_state_name(todo: JsonDict) -> Optional[str]:
     return next(iter(state.keys()))
 
 
+# Which State metadata each state actually keeps. A state absent here keeps none
+# (groom, ready, fact, waiting, N/a). Metadata a state does not keep used to be
+# accepted and silently dropped; set_state now rejects it, so a flag that would
+# have done nothing says so instead of looking like it worked.
+_STATE_METADATA: Dict[str, frozenset] = {
+    "working": frozenset({"owner"}),
+    "userneeded": frozenset({"note"}),
+    "stopped": frozenset({"note"}),
+    "rejected": frozenset({"note", "pr"}),
+    "done": frozenset({"last_commit"}),
+    "merged": frozenset({"merged_into", "last_commit", "pr", "merge_commit"}),
+}
+
+
+def _as_flag(name: str) -> str:
+    """Render a set_state metadata parameter as its CLI flag, for error text."""
+    return "--" + name.replace("_", "-")
+
+
 def set_state(
     todo: JsonDict,
     state: str,
@@ -864,9 +883,33 @@ def set_state(
     todo whose branch was handed to a PR (``pr``, plus ``merge_commit`` once that
     PR actually merged). ``rejected`` is the PR-closed-unmerged outcome and keeps
     the ``pr`` it was refused under, so doctor can re-check a reopened PR.
+
+    Raises TodoError when *state* is unknown, or when metadata is supplied that
+    the target state does not keep (see ``_STATE_METADATA``) -- silently dropping
+    it would make a no-op flag look like it took effect.
     """
     if state not in VALID_STATES:
         raise TodoError(f"invalid state {state!r}")
+    supplied = {
+        name
+        for name, given in (
+            ("note", note),
+            ("last_commit", last_commit),
+            ("merged_into", merged_into),
+            ("owner", owner),
+            ("pr", pr),
+            ("merge_commit", merge_commit),
+        )
+        if given is not None
+    }
+    allowed = _STATE_METADATA.get(state, frozenset())
+    inapplicable = sorted(supplied - allowed)
+    if inapplicable:
+        takes = ", ".join(_as_flag(n) for n in sorted(allowed)) or "no metadata"
+        raise TodoError(
+            f"state {state!r} does not take "
+            f"{', '.join(_as_flag(n) for n in inapplicable)} (it takes: {takes})"
+        )
     value: JsonDict = {}
     if state == "working" and owner:
         value["owner"] = owner
@@ -2299,7 +2342,10 @@ def workitem_findings(todo: JsonDict) -> List[str]:
     return findings
 
 
-TERMINAL_PARENT_STATES = ("done", "merged")
+# A parent in any of these has terminated, so an unmerged tracked subtodo can no
+# longer be merged and escalates from warning to hard finding. `rejected` counts:
+# it is a FINAL disposition, and a spawn without a merge must not survive it.
+TERMINAL_PARENT_STATES = ("done", "merged", "rejected")
 
 
 def unmerged_subtodos(todo: JsonDict) -> List[str]:

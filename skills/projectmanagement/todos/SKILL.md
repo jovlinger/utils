@@ -353,7 +353,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or the full digest |
 | `todo.py add-subtodo <parent> --from-json=...` | implemented | Create a child todo under the parent selected by id: the child git branch is created at the tip of the parent's branch (no checkout, requires the parent branch to exist locally), `BaseSha` captured, both records written through the store, child registered in the parent's `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor. Requires the store (legacy TODO_USE_JSON mode is import-only) |
 | `todo.py merge-subtodo <child-id>` | implemented | After child is `done`: locate the parent through the child's `Parent[0]` ref, set the child `merged`, update parent `Subtodos[].State` to `merged` -- all store-only, no checkout. Records a typed `merge_subtodo` done item on the parent's cursor whose sha is the parent branch's tip (the caller's real git merge, which must already have landed) and advances the cursor. The work item summary comes from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`/`--pr`/`--merge-commit`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `rejected`, `fact`. `--pr <N>` records a PR handoff (`--state merged --pr 12345`, the "Push PR" transition) and is also kept on `rejected`; `--merge-commit` exists so `doctor` can fill in a merged PR's commit -- you rarely pass it by hand. `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
+| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`/`--pr`/`--merge-commit`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `rejected`, `fact`. `--pr <N>` records a PR handoff (`--state merged --pr 12345`, the "Push PR" transition) and is also kept on `rejected`; `--merge-commit` exists so `doctor` can fill in a merged PR's commit -- you rarely pass it by hand. Metadata a state does not keep is an **error**, not a silent no-op -- see "Which metadata each state takes". `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
 | `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py tag-add <selector> <tag>...` | implemented | Add MANUAL tags to the selected todo's plural `Tag` field: each becomes a `{raw, manual: true}` element (stripped, downcased, deduped). Idempotent; store-only write. `set <id> --tag` is an alias |
 | `todo.py tag-rm <selector> <tag>...` | implemented | Remove MANUAL tags from the selected todo's `Tag` field (case-insensitive match on `raw`); automatic (`manual: false`) tags are never removed here (use `tag-clear`). Drops the field when empty. `set <id> --untag` is an alias |
@@ -507,12 +507,14 @@ A **todo is worked in its own dedicated git worktree**, so the main checkout
   branch and its commits survive for merge/handoff. If the tree is dirty, the todo is
   not actually done -- finish or surface it before removing.
 
-**INVARIANT: `done` and `merged` imply no live worktree.** Tearing the worktree down is a *defining
-property* of entering either terminal state, not an optional cleanup step: `set <id> --state done` /
-`set <id> --state merged` MUST be followed by `git worktree remove` of that todo's worktree. A todo left
-in `done`/`merged` with its worktree still standing is an invariant violation; the next agent (or a
-`doctor` sweep) should remove the orphaned worktree. The branch is retired *separately* -- see the
-delete gate below.
+**INVARIANT: every `FINAL` state (`done`, `merged`, `rejected`) implies no live worktree.** Tearing
+the worktree down is a *defining property* of entering a terminal state, not an optional cleanup
+step: `set <id> --state done` / `--state merged` / `--state rejected` MUST be followed by
+`git worktree remove` of that todo's worktree. A todo left in a FINAL state with its worktree still
+standing is an invariant violation; the next agent (or a `doctor` sweep) should remove the orphaned
+worktree. (`rejected` is normally reached from an already-worktree-free `merged {pr}`, so in practice
+there is nothing left to remove -- but the invariant holds if you set it by hand.) The branch is
+retired *separately* -- see the delete gate below.
 
 The branch is the durable asset; the worktree is scratch space that exists only
 for the span from entry to the terminal state.
@@ -712,7 +714,7 @@ PR is closed unmerged). See "PR handoff and disposition past `done`" below.
 |-------|-------------|---------|
 | `groom` | `{}` | Minted; still collecting data / grooming. Not yet workable; branchless (store-only) until `init`. (was `pre`/`pre-init`) |
 | `ready` | `{}` | Groomed and ready to work; has a branch. Not yet started. (was `init`) |
-| `working` | `{ "owner"?: string, "expire"?: rfc3339 }` | Active work. (`owner`/`expire` only matter for future multi-owner handoff; omit on a single-agent run.) |
+| `working` | `{ "owner"?: string, "expire"?: rfc3339 }` | Active work. `owner` is set with `--owner`; `expire` is **reserved and not settable** -- both only matter for future multi-owner handoff, so omit them on a single-agent run. |
 | `userneeded` | `{ "note"?: string }` | Agent blocked; needs user input. |
 | `stopped` | `{ "note"?: string }` | User override halt. |
 | `done` | `{ "last_commit"?: string }` | Complete on the ticket branch; record last commit message if useful. Entering `done` tears down the todo's worktree (worktree-lifecycle invariant). |
@@ -723,6 +725,29 @@ PR is closed unmerged). See "PR handoff and disposition past `done`" below.
 | `N/a` | `{}` | Non-work associative item; not a task. |
 
 Always patch `State` and `update_dt` together.
+
+**Which metadata each state takes.** `set --state <s>` carries the value object's
+fields as flags. A state keeps only the flags listed here; passing any other is an
+**error**, not a silent no-op, so a flag that would do nothing tells you instead of
+looking like it worked. (Mirrors `_STATE_METADATA` in `todo.py` -- keep the two in
+step when adding a state.)
+
+| State | Flags it takes |
+|-------|----------------|
+| `groom`, `ready`, `fact` | none |
+| `working` | `--owner` |
+| `userneeded`, `stopped` | `--note` |
+| `done` | `--last-commit` |
+| `merged` | `--merged-into`, `--last-commit`, `--pr`, `--merge-commit` |
+| `rejected` | `--pr`, `--note` |
+
+```bash
+todo.py set <id> --state done --pr 5
+# TodoError: state 'done' does not take --pr (it takes: --last-commit)
+```
+
+`waiting` and `N/a` are not settable through `--state` at all (excluded from its
+choices).
 
 **Working a fact.** `fact` todos are memory anchors, not work items. Before you
 start work on a `fact` todo -- `set <id> --state working`, opening a worktree, or any
@@ -1014,9 +1039,10 @@ selector `ALL` sweeps the whole corpus. Checks:
   `merged` (or waived by user) before parent `done`. Any child not `merged`
   (including one spawned via `start_subtodo` that terminated
   `userneeded`/`stopped`) is a soft **warning** while the parent is still open,
-  and a hard **finding** once the parent is `done`/`merged` -- a spawn without a
-  merge cannot survive parent completion. Follow-only `INFO` back-links are
-  excluded (they carry no merge obligation).
+  and a hard **finding** once the parent has reached any FINAL state
+  (`done`/`merged`/`rejected`) -- a spawn without a merge cannot survive parent
+  termination, by any route. Follow-only `INFO` back-links are excluded (they
+  carry no merge obligation).
 - WorkItem invariants (#1/#3/#6/#7): valid kinds; done items form a prefix; a
   `code`/`merge_subtodo` item carries a sha; a done todo does not end in
   `start_subtodo`.
