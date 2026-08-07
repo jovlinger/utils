@@ -30,6 +30,7 @@ HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
+import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
@@ -2656,6 +2657,129 @@ class ObjidWiringTests(TodoCase):
         proc = self.todo("doctor", self.tid)
         self.assertNotIn("_nextobjid", proc.stdout)
         self.assertNotIn("unknown top-level fields", proc.stdout)
+
+
+class ObjidDoctorTests(TodoCase):
+    """doctor hard-fails a record whose objids were broken outside todo.py."""
+
+    def _corrupt(self, mutate) -> None:
+        """Rewrite self.tid's stored JSON through *mutate*, bypassing todo.py.
+
+        Only a writer that goes around the CLI can produce these shapes -- the
+        write choke point re-stamps anything malformed -- so the corruption has
+        to be applied straight to sqlite.
+        """
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            mutate(record)
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?",
+                (json.dumps(record), self.tid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _findings_after(self, mutate) -> list:
+        """Corrupt the record, run doctor, and return its hard findings.
+
+        doctor repairs before it audits: its opportunistic schema sweep would
+        re-stamp the corruption away on a store that has never been swept. So
+        sweep first (one doctor run, which also stamps _schema onto the
+        record), and only then corrupt -- that is the state a real store is in.
+        """
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        swept = self.todo("doctor", self.tid)
+        self.assertEqual(swept.returncode, 0, swept.stdout)
+        self._corrupt(mutate)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        return json.loads(proc.stdout)["findings"]
+
+    def test_missing_objid_is_a_finding(self) -> None:
+        findings = self._findings_after(
+            lambda rec: rec["WorkItems"][0].pop("objid")
+        )
+        self.assertTrue(
+            any("WorkItems.0 has no objid" in f for f in findings), findings
+        )
+
+    def test_duplicate_objid_is_a_finding(self) -> None:
+        def mutate(rec: Dict[str, Any]) -> None:
+            rec["WorkItems"][0]["objid"] = rec["Summary"]["objid"]
+
+        findings = self._findings_after(mutate)
+        self.assertTrue(any("duplicates" in f for f in findings), findings)
+
+    def test_stale_nextobjid_is_a_finding(self) -> None:
+        findings = self._findings_after(lambda rec: rec.update({"_nextobjid": 0}))
+        self.assertTrue(
+            any("_nextobjid 0 is not past" in f for f in findings), findings
+        )
+
+
+class ObjidFindingUnitTests(unittest.TestCase):
+    """objid_findings reports exactly the broken-permalink shapes."""
+
+    @staticmethod
+    def _record(**extra: Any) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-x",
+            "State": {"groom": {}},
+        }
+        record.update(extra)
+        return record
+
+    def test_clean_record_has_no_findings(self) -> None:
+        record = self._record(Summary={"raw": "s"}, WorkItems=[{"summary": "one"}])
+        todo_objid.stamp_objids(record)
+        self.assertEqual([], todo.objid_findings(record))
+
+    def test_record_without_objects_has_no_findings(self) -> None:
+        self.assertEqual([], todo.objid_findings(self._record()))
+
+    def test_missing_objid(self) -> None:
+        record = self._record(Summary={"raw": "s"}, _nextobjid=1)
+        self.assertEqual(["Summary has no objid"], todo.objid_findings(record))
+
+    def test_malformed_objid(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "00FF"}, _nextobjid=1)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("is not 4+ lowercase hex", findings[0])
+
+    def test_duplicate_objid_names_the_first_holder(self) -> None:
+        record = self._record(
+            Summary={"raw": "s", "objid": "0001"},
+            WorkItems=[{"summary": "one", "objid": "0001"}],
+            _nextobjid=2,
+        )
+        self.assertEqual(
+            ["WorkItems.0.objid 0001 duplicates Summary"],
+            todo.objid_findings(record),
+        )
+
+    def test_nextobjid_must_be_past_the_highest_id(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0005"}, _nextobjid=5)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("_nextobjid 5 is not past the highest objid 0005", findings[0])
+
+    def test_nextobjid_must_be_an_integer(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid="1")
+        self.assertEqual(
+            ["_nextobjid must be an integer"], todo.objid_findings(record)
+        )
+
+    def test_state_is_never_reported(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid=1)
+        self.assertEqual([], todo.objid_findings(record))
 
 
 if __name__ == "__main__":

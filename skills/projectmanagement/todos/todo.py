@@ -2433,6 +2433,47 @@ def unmerged_subtodos(todo: JsonDict) -> List[str]:
     return labels
 
 
+def objid_findings(todo: JsonDict) -> List[str]:
+    """Return hard findings about objids: the permalink handles must hold.
+
+    A permalink names an object by objid, so a missing, malformed, or reused id
+    is a broken link, not cosmetic drift. ``_nextobjid`` must also stay ahead of
+    every id in the record, or the next allocation would hand out one that is
+    already in use and silently move an existing permalink onto a new object.
+
+    None of this should ever fire in normal operation -- the write choke point
+    stamps every record and doctor's own schema sweep backfills legacy ones --
+    so a finding here means something wrote the store outside todo.py.
+    """
+    findings: List[str] = []
+    highest = -1
+    by_objid: Dict[str, str] = {}
+    for path, obj in todo_objid.iter_objects(todo):
+        value = obj.get(todo_objid.OBJID_KEY)
+        if value is None:
+            findings.append(f"{path} has no objid")
+            continue
+        if not todo_objid.is_objid(value):
+            findings.append(f"{path}.objid {value!r} is not 4+ lowercase hex")
+            continue
+        if value in by_objid:
+            findings.append(f"{path}.objid {value} duplicates {by_objid[value]}")
+            continue
+        by_objid[value] = path
+        highest = max(highest, int(value, 16))
+    if highest < 0:
+        return findings
+    cursor = todo.get(todo_objid.NEXT_OBJID_KEY)
+    if not isinstance(cursor, int) or isinstance(cursor, bool):
+        findings.append(f"{todo_objid.NEXT_OBJID_KEY} must be an integer")
+    elif cursor <= highest:
+        findings.append(
+            f"{todo_objid.NEXT_OBJID_KEY} {cursor} is not past the highest "
+            f"objid {todo_objid.format_objid(highest)}"
+        )
+    return findings
+
+
 def doctor_findings(root: Path, selector: str) -> List[str]:
     """Return hard doctor findings for the selected todo (shape invariants)."""
     _, todo = resolve_ticket_by_id(root, selector)
@@ -2485,6 +2526,7 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
             )
     findings.extend(workitem_findings(todo))
     findings.extend(tag_findings(todo))
+    findings.extend(objid_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     return findings
 
