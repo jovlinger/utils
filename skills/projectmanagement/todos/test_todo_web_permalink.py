@@ -62,6 +62,31 @@ class PermalinkTargetTest(unittest.TestCase):
             self.target("nope")
 
 
+class RenderFocusTest(unittest.TestCase):
+    """render_todo_page embeds the objid the page should open focused on.
+
+    The focusing itself is browser JS (focusOn), so what is asserted here is
+    the server's half of the contract: the objid it hands the page, and that
+    the element that objid names is actually present to focus.
+    """
+
+    def render(self, **kwargs: str) -> str:
+        return todo_web.render_todo_page(Path("."), dict(TODO), **kwargs)
+
+    def test_focus_objid_is_embedded(self) -> None:
+        page = self.render(focus_objid="0003")
+        self.assertIn('const FOCUS = "0003";', page)
+        self.assertIn('data-obj="0003"', page)
+
+    def test_unfocused_by_default(self) -> None:
+        self.assertIn('const FOCUS = "";', self.render())
+
+    def test_section_objid_is_embedded_and_addressable(self) -> None:
+        page = self.render(focus_objid="0000")
+        self.assertIn('const FOCUS = "0000";', page)
+        self.assertIn('data-objs="0000"', page)  # the Summary section
+
+
 class PermalinkRouteTest(unittest.TestCase):
     """The running server redirects a permalink onto the anchored page."""
 

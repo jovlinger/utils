@@ -612,8 +612,8 @@ _STYLE = """<style>
              background: #fff; }
   .wi { cursor: pointer; }
   .wi.static, .st.static { cursor: default; }
-  /* A permalink lands on #obj-<objid>; say which box it landed on. */
-  .wi:target, .st:target { border-color: #0969da; box-shadow: 0 0 0 2px #cfe3ff; }
+  /* Where a permalink landed: a marked section, alongside .active for boxes. */
+  .focus { box-shadow: 0 0 0 2px #cfe3ff; border-radius: 6px; }
   .wi.done { background: #f6f8fa; }
   .wi-kind { font-size: 11px; color: #57606a; }
   .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
@@ -644,6 +644,7 @@ _STYLE = """<style>
 
 _TODO_SCRIPT = """<script>
 const DATA = __DATA__;
+const FOCUS = __FOCUS__;
 const fold = document.getElementById('fold');
 const topPane = document.getElementById('top');
 const divider = document.getElementById('divider');
@@ -692,6 +693,23 @@ document.querySelectorAll('#top .idlink').forEach(function(a){
   a.addEventListener('click', function(e){ e.stopPropagation(); });
 });
 
+// A permalink resolved server-side to one objid: open on it. A box gets the
+// full click treatment; a section (addressable, not selectable) is just marked.
+// Either way scroll it into view -- the work-items row scrolls horizontally, so
+// a later item is off-screen until we do.
+function focusOn(objid){
+  if (!objid) return;
+  var el = box(objid);
+  if (el) {
+    select(objid);
+  } else {
+    el = document.querySelector('#top [data-objs~="'+objid+'"]');
+    if (el) el.classList.add('focus');
+  }
+  if (el) el.scrollIntoView({block: 'nearest', inline: 'center'});
+}
+focusOn(FOCUS);
+
 var dragging = false;
 divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
 window.addEventListener('mousemove', function(e){
@@ -703,8 +721,15 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 </script>"""
 
 
-def render_todo_page(root: Path, todo: JsonDict) -> str:
-    """Render the single-todo viewer: representation on top, message/diff below."""
+def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+    """Render the single-todo viewer: representation on top, message/diff below.
+
+    *focus_objid* is the object a permalink resolved to. The page opens with
+    it already selected -- the same state a click produces, plus scrolled
+    into view -- so a deep link lands ON the item rather than at the top of
+    the todo. An objid naming a non-box section is marked instead; one that
+    is not on the page at all is ignored, and the todo simply renders.
+    """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
     started = time.monotonic()
@@ -718,7 +743,9 @@ def render_todo_page(root: Path, todo: JsonDict) -> str:
         todo, witems, stodos, parents, interactive=True, github=github or ""
     )
     title = html.escape(_summary_text(todo) or "todo")
-    script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data))
+    script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data)).replace(
+        "__FOCUS__", json.dumps(focus_objid or "")
+    )
     page = f"""<!doctype html>
 <html lang="en">
 <head>
