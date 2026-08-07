@@ -28,13 +28,19 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
+
+import todo_url
 
 JsonDict = Dict[str, Any]
 
 _DONE_KINDS = frozenset({"code", "merge_subtodo", "start_subtodo"})
 
 _DEBUG_COUNTER: int = 0
+
+# A permalink starts with a todo selector: 4+ hex, the same rule every other
+# selector uses. Anything else keeps its old 404 rather than being swallowed.
+_PERMALINK_HEAD = re.compile(r"\A/[0-9a-fA-F]{4,}(/|\Z)")
 
 
 def _debug_enabled() -> bool:
@@ -216,6 +222,7 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
                 "sha": sha,
                 "short": sha[:8] if sha else "",
                 "subtodo": str(item.get("subtodo_id") or ""),
+                "objid": str(item.get("objid") or ""),
             }
         )
     return out
@@ -235,6 +242,7 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
                 "short": cid[:8],
                 "summary": _summary_text(child) or str(entry.get("Summary") or ""),
                 "state": _state_text(child),
+                "objid": str(entry.get("objid") or ""),
                 "child": child,
             }
         )
@@ -242,6 +250,18 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
 
 
 # --- HTML rendering --------------------------------------------------------
+
+
+def _anchor(obj: JsonDict, *, interactive: bool) -> str:
+    """Return the ``id=`` attribute a permalink scrolls to, or nothing.
+
+    Only INTERACTIVE boxes get an anchor. A static rendition in the fold shows
+    another todo's record, whose objids come from a different id scope and
+    would collide with this page's -- and a deep link means "this todo's item"
+    anyway.
+    """
+    objid = obj.get("objid") or ""
+    return f' id="obj-{html.escape(str(objid))}"' if interactive and objid else ""
 
 
 def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
@@ -282,7 +302,7 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     sep = "&nbsp;&nbsp;" if todo_html and sha_html else ""
     mark = "[x]" if item["done"] else "[ ]"
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_anchor(item, interactive=interactive)}{attrs}>'
         f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
         f'<div class="wi-sum">{html.escape(item["summary"] or "(no summary)")}</div>'
         f"{todo_html}{sep}{sha_html}"
@@ -304,7 +324,7 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
         attrs = ""
         id_html = f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_anchor(sub, interactive=interactive)}{attrs}>'
         f"{id_html}"
         f'<div class="st-sum">{html.escape(sub["summary"] or "(no summary)")}</div>'
         f'<div class="st-state">{html.escape(sub["state"])}</div>'
@@ -335,6 +355,7 @@ def _parents_view(root: Path, todo: JsonDict) -> List[JsonDict]:
                 "branch": str(entry.get("Branch") or ""),
                 "summary": _summary_text(child) or str(entry.get("Summary") or ""),
                 "state": _state_text(child),
+                "objid": str(entry.get("objid") or ""),
                 "child": child,
             }
         )
@@ -356,7 +377,7 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
         id_html = f'<div class="st-id mono">todo:{html.escape(p["short"] or "?")}</div>'
     branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_anchor(p, interactive=interactive)}{attrs}>'
         f"{id_html}"
         f'<div class="st-sum">{html.escape(p["summary"] or "(no summary)")}</div>'
         f'<div class="st-state">{html.escape(p["state"])}</div>'
@@ -529,6 +550,8 @@ _STYLE = """<style>
              background: #fff; }
   .wi { cursor: pointer; }
   .wi.static, .st.static { cursor: default; }
+  /* A permalink lands on #obj-<objid>; say which box it landed on. */
+  .wi:target, .st:target { border-color: #0969da; box-shadow: 0 0 0 2px #cfe3ff; }
   .wi.done { background: #f6f8fa; }
   .wi-kind { font-size: 11px; color: #57606a; }
   .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
@@ -718,6 +741,21 @@ def render_search_page(root: Path, rows: List[JsonDict]) -> str:
 """
 
 
+def permalink_target(todo: JsonDict, segments: List[str], *, selector: str = "") -> str:
+    """Return the ``/?id=...#obj=...`` page URL a permalink deep link lands on.
+
+    The fragment is the nearest enclosing object that carries an anchor, so a
+    link to a scalar (``.../workitem/1/summary``) still scrolls to the box that
+    holds it; a path with nothing stamped above it (the State subtree, or the
+    record itself) lands on the page with no fragment. Raises
+    ``todo_url.TodoUrlError`` when the path does not address anything.
+    """
+    json_path = todo_url.to_json_path(todo, segments)
+    target = f"/?id={quote(str(todo.get('Id') or selector))}"
+    objid = todo_url.nearest_objid(todo, json_path)
+    return f"{target}#obj-{quote(objid)}" if objid else target
+
+
 def serve(
     root: Path,
     *,
@@ -753,6 +791,9 @@ def serve(
                 )
                 return
             if parsed.path not in {"/", "/index.html"}:
+                if _PERMALINK_HEAD.match(parsed.path):
+                    self._permalink(parsed.path)
+                    return
                 self.send_error(404)
                 return
             todo_id = parse_qs(parsed.query).get("id", [None])[0]
@@ -766,6 +807,27 @@ def serve(
                 self.send_error(400, str(exc))
                 return
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _permalink(self, path: str) -> None:
+            """Redirect a /<todoid>/<path...> deep link onto the anchored page.
+
+            Resolving lands on the nearest enclosing object that has an anchor,
+            so a link to a scalar (``.../workitem/1/summary``) still scrolls to
+            the work-item box that holds it. Redirecting rather than rendering
+            here keeps ONE page-render path -- the permalink is the durable
+            name, ``/?id=...#obj-...`` is where the browser ends up.
+            """
+            try:
+                selector, segments = todo_url.split_url_path(path)
+                todo = resolver(selector)[1]
+                target = permalink_target(todo, segments, selector=selector)
+            except (todo_url.TodoUrlError, TodoWebError) as exc:
+                self.send_error(404, str(exc))
+                return
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _respond(self, body: bytes, content_type: str) -> None:
             self.send_response(200)

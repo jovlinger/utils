@@ -189,6 +189,25 @@ def _dig(todo: JsonDict, parts: Sequence[str]) -> Any:
     return node
 
 
+def nearest_objid(todo: JsonDict, json_path: str) -> str:
+    """Return the objid of the innermost stamped object at or above *json_path*.
+
+    A permalink may address a scalar (``WorkItems.1.summary``), but a page can
+    only scroll to a box -- so a deep link lands on the nearest object that has
+    an anchor. Returns the empty string when nothing on the way up is stamped,
+    which is the State subtree and the record root.
+    """
+    parts = json_path.split(".") if json_path else []
+    while parts:
+        node = _dig(todo, parts)
+        if isinstance(node, dict):
+            value = node.get(todo_objid.OBJID_KEY)
+            if todo_objid.is_objid(value):
+                return str(value)
+        parts.pop()
+    return ""
+
+
 def value_at(todo: JsonDict, json_path: str) -> Any:
     """Return the value the translated *json_path* addresses in *todo*."""
     if not json_path:

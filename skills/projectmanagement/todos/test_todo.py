@@ -2752,6 +2752,42 @@ class ResolveUrlTests(TodoCase):
         self.assertEqual(record, json.loads(self._resolve(f"/{self.tid[:8]}").stdout))
 
 
+class PermalinkAnchorTests(TodoCase):
+    """The rendered page carries the obj-<objid> anchors permalinks land on."""
+
+    def test_work_item_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        objid = self.read_cur()["WorkItems"][0]["objid"]
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_subtodo_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        add = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        record = json.loads(self.todo("read", parent_id).stdout)
+        objid = record["Subtodos"][0]["objid"]
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_static_renditions_carry_no_anchor(self) -> None:
+        # A child's objids come from its own id scope and would collide with
+        # this page's, so only interactive boxes are anchored.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        self.todo("add-subtodo", parent_id, "--summary=child")
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        anchors = re.findall(r'id="obj-([0-9a-f]{4,})"', out)
+        self.assertEqual(len(anchors), len(set(anchors)), anchors)
+
+
 class ObjidDoctorTests(TodoCase):
     """doctor hard-fails a record whose objids were broken outside todo.py."""
 
