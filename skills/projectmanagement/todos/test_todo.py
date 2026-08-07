@@ -1072,6 +1072,46 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn((tid, "Summary.raw", BOW), self._emb_rows())
 
+    def test_long_summary_is_embedded_and_searchable(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="beta",
+            extra={"LongSummary": {"raw": "quokka marsupial nocturnal"}},
+        )
+        proc = self.todo("search", "quokka marsupial", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+
+    def test_editing_body_leaves_long_summary_vectors_alone(self) -> None:
+        # The no-coupling AC: Body and LongSummary are independent, so a Body
+        # edit must not invalidate the summary vector.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+        self.assertIn((tid, "Body.raw", BOW), self._emb_rows())
+        self.todo("set", tid, "--body=completely different body")
+        rows = self._emb_rows()
+        self.assertIn((tid, "LongSummary.raw", BOW), rows)  # survives
+        self.assertNotIn((tid, "Body.raw", BOW), rows)  # its own is cleared
+
+    def test_editing_long_summary_clears_only_its_own_vectors(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.todo("set", tid, "--long-summary=wombat burrow")
+        rows = self._emb_rows()
+        self.assertNotIn((tid, "LongSummary.raw", BOW), rows)
+        self.assertIn((tid, "Body.raw", BOW), rows)
+        self.assertIn((tid, "Summary.raw", BOW), rows)
+
     def test_raw_change_clears_stale_expensive_vector(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="first summary text")
@@ -2665,6 +2705,105 @@ class ObjidWiringTests(TodoCase):
         proc = self.todo("doctor", self.tid)
         self.assertNotIn("_nextobjid", proc.stdout)
         self.assertNotIn("unknown top-level fields", proc.stdout)
+
+
+class LongSummaryTests(TodoCase):
+    """LongSummary: a derived, reader-first summary of Body -- and NOT coupled to it."""
+
+    def test_absent_by_default(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body")
+        self.assertNotIn("LongSummary", self.read_cur())
+
+    def test_set_and_get_round_trip(self) -> None:
+        self.init_ok("--summary=hello")
+        text = "What this todo is about, in a paragraph a human can skim."
+        proc = self.todo("set", self.tid, f"--long-summary={text}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual({"raw": text}, {"raw": self.read_cur()["LongSummary"]["raw"]})
+        self.assertEqual(text, self.todo("get", self.tid, "--long-summary").stdout.strip())
+
+    def test_settable_alone_on_a_groom_todo(self) -> None:
+        # The motivating case: a HICAP agent rewriting a MIDCAP agent's
+        # LongSummary without touching anything else.
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("set", self.tid, "--long-summary=only this")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("only this", self.read_cur()["LongSummary"]["raw"])
+
+    def test_init_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=seeded at init")
+        self.assertEqual("seeded at init", self.read_cur()["LongSummary"]["raw"])
+
+    def test_doctor_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=fine")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_no_field_at_all_still_errors(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("set", self.tid)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--long-summary", proc.stderr)
+
+    def test_get_requires_exactly_one_flag(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=x")
+        proc = self.todo("get", self.tid, "--long-summary", "--summary")
+        self.assertNotEqual(proc.returncode, 0)
+
+
+class LongSummaryDoctorAndViewTests(TodoCase):
+    """doctor checks LongSummary's SHAPE only; the viewer renders it as text."""
+
+    def test_doctor_does_not_care_that_it_disagrees_with_body(self) -> None:
+        # The point of the test: the ABSENCE of a staleness check. Body and
+        # LongSummary are independent by design, so a mismatch is not a defect.
+        self.init_ok("--summary=hello", "--body=a body about databases")
+        self.todo("set", self.tid, "--long-summary=this text is about something else entirely")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_doctor_is_silent_about_a_body_with_no_long_summary(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body with no summary written yet")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("LongSummary", proc.stdout)
+
+    def test_doctor_rejects_a_malformed_long_summary(self) -> None:
+        self.init_ok("--summary=hello")
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            record["LongSummary"] = "a bare string, not {raw: ...}"
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?", (json.dumps(record), self.tid)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("LongSummary.raw must be a string", proc.stdout)
+
+    def test_viewer_renders_it_as_text_not_a_json_blob(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.todo("set", self.tid, "--long-summary=A readable paragraph for a human.")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn("Long summary", out)
+        self.assertIn("A readable paragraph for a human.", out)
+        # Not dumped through the generic Fields path, which would show the dict
+        # (and, once vectors exist, the vectors).
+        self.assertNotIn('meta-key">LongSummary', out)
+
+    def test_viewer_omits_the_section_when_absent(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.assertNotIn("Long summary", self.todo("web", "--dump-html", self.tid).stdout)
 
 
 class ResolveUrlTests(TodoCase):

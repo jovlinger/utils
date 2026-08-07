@@ -348,13 +348,13 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py ls [--states=<expr>] [-s] [-t\|-tc\|-tu\|-g]` | implemented | Print `<id[0:8]>  <summary>` per todo -- where-to-find-it only; use `read <id>` for content. Hides FINAL (done, merged) by default; `-s` shows all states, `--states=<expr>` filters (macro grammar; see `search`). Column flags: `-s` State, `-t`/`-tc` create-time, `-tu` update-time, `-g` Tags (leftmost, in flag order, summary last, right-padded); with any column flag rows sort ascending by the leftmost column, else insertion order |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
 | `todo.py resolveurl <path-or-url>` | implemented | Dereference a permalink -- `/<todoid>/<path...>` -- and print the value it addresses, exactly as `get-json-path` prints the equivalent dot-path. Takes NO selector: the todo is the first path segment. A full URL or a bare path both work, so a link pasted from the browser resolves as-is. See "Permalinks" for the grammar. There is deliberately no inverse (url-emitting) command -- `objid` is the handle to hold, not the json path. |
-| `todo.py get <selector> [--summary\|--body\|--ac\|--state\|--actual-summary\|--parent\|--tag]` | implemented | Friendly-field-name wrapper: pass exactly one flag and it expands into the matching `get-json-path <selector> <path>` call (`Summary.raw`, `Body.raw`, `AC`, `State`, `ActualSummary`, `Parent`, `Tag` respectively) and prints that value. `<selector>` is required, same as `set`. For any other path use `get-json-path` directly. |
+| `todo.py get <selector> [--summary\|--body\|--ac\|--state\|--actual-summary\|--long-summary\|--parent\|--tag]` | implemented | Friendly-field-name wrapper: pass exactly one flag and it expands into the matching `get-json-path <selector> <path>` call (`Summary.raw`, `Body.raw`, `AC`, `State`, `ActualSummary`, `LongSummary.raw`, `Parent`, `Tag` respectively) and prints that value. `<selector>` is required, same as `set`. For any other path use `get-json-path` directly. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Store-only: no branch checkout, no commit -- works on a branchless `groom` todo. The general way to replace `WorkItems` or seed a whole plan. |
 | `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `groom` todo): create the local branch from its `set`-finalized `Branch`, move it to state `ready`, capture `BaseSha` (invariant #5). **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set) except `--parent` (use `set <id> --parent` after). `--stay-on-parent` returns to the previous branch after creating the todo branch |
 | `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or the full digest |
 | `todo.py add-subtodo <parent> --from-json=...` | implemented | Create a child todo under the parent selected by id: the child git branch is created at the tip of the parent's branch (no checkout, requires the parent branch to exist locally), `BaseSha` captured, both records written through the store, child registered in the parent's `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor. Requires the store (legacy TODO_USE_JSON mode is import-only) |
 | `todo.py merge-subtodo <child-id>` | implemented | After child is `done`: locate the parent through the child's `Parent[0]` ref, set the child `merged`, update parent `Subtodos[].State` to `merged` -- all store-only, no checkout. Records a typed `merge_subtodo` done item on the parent's cursor whose sha is the parent branch's tip (the caller's real git merge, which must already have landed) and advances the cursor. The work item summary comes from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`/`--pr`/`--merge-commit`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `rejected`, `fact`. `--pr <N>` records a PR handoff (`--state merged --pr 12345`, the "Push PR" transition) and is also kept on `rejected`; `--merge-commit` exists so `doctor` can fill in a merged PR's commit -- you rarely pass it by hand. Metadata a state does not keep is an **error**, not a silent no-op -- see "Which metadata each state takes". `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
+| `todo.py set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--long-summary=] [--parent=<id>] [--tag=] [--untag=]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary`/`LongSummary.raw`, add/remove MANUAL plural `Tag` elements (`--tag`/`--untag`, repeatable -- aliases of `tag-add`/`tag-rm`; downcased, deduped, field dropped when empty), and/or transition `State` (requires at least one field). `<selector>` is required and positional: an Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` todo from `mint`). The write is store-only -- no checkout, no commit. For a `groom` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`/`--pr`/`--merge-commit`) **replaces the removed `set-state` subcommand**; valid states `groom`, `ready`, `working`, `userneeded`, `stopped`, `done`, `merged`, `rejected`, `fact`. `--pr <N>` records a PR handoff (`--state merged --pr 12345`, the "Push PR" transition) and is also kept on `rejected`; `--merge-commit` exists so `doctor` can fill in a merged PR's commit -- you rarely pass it by hand. Metadata a state does not keep is an **error**, not a silent no-op -- see "Which metadata each state takes". `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). |
 | `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py tag-add <selector> <tag>...` | implemented | Add MANUAL tags to the selected todo's plural `Tag` field: each becomes a `{raw, manual: true}` element (stripped, downcased, deduped). Idempotent; store-only write. `set <id> --tag` is an alias |
 | `todo.py tag-rm <selector> <tag>...` | implemented | Remove MANUAL tags from the selected todo's `Tag` field (case-insensitive match on `raw`); automatic (`manual: false`) tags are never removed here (use `tag-clear`). Drops the field when empty. `set <id> --untag` is an alias |
@@ -957,6 +957,7 @@ Where the ticket applies. Set at least one locator.
 |-------|------|----------|
 | `Summary` | object | `{ "raw": "<human title>" }`. Optional embedding keys may be added later for recall (vector format deferred). |
 | `Body` | object | `{ "raw": "<description>" }`. Same optional-embedding pattern. |
+| `LongSummary` | object (optional) | `{ "raw": "<reader-first summary of Body>" }`. DERIVED from Body, but not tool-coupled to it. Two permitted uses only: showing a human, and being the summary embedding. See "LongSummary" below BEFORE writing one. Set with `set <id> --long-summary=...`. |
 | `AC` | string | Acceptance criteria, concrete enough to agree on "done". |
 | `ActualSummary` | string (optional) | How the work actually panned out (vs the planned `Summary`). Written at finish via `set <id> --state done --actual-summary=...`; when this todo is later merged into a parent, `merge-subtodo` reuses it as the merge commit subject and the parent's `merge_subtodo` work item summary, falling back to `Summary.raw` when absent. |
 | `Tag` | list of objects (optional) | Plural, provenance-tracked tags. Each element is `{raw, manual, <embedder>: vectors}`: `raw` is the tag text (short, free-form, may contain spaces, always stored **downcased**); `manual` is `true` for a hand-set tag (`tag-add`, or the `set <id> --tag` alias), `false` for an automatic zero-shot semantic tag. Automatic tags are derived from Summary+Body -- `doctor` recomputes them (trust-existing / backfill-empty), and editing Summary or Body drops them for recompute -- but that path is **dormant** (see below); **manual tags are sticky** (never auto-removed; only `tag-rm` or `tag-clear --all` removes one). Each element's `raw` is embedded like Summary/Body, so tags rank in `search` and filter via `search --tag=a,b` (any element's `raw`, case-insensitive). Deduped; the field is dropped when empty. (Migrated from the legacy flat `Tags` string list by `RECORD_MIGRATIONS[7]`.) |
@@ -986,7 +987,83 @@ and `doctor` adds no tags. Consequences:
 
 `Summary.raw` and `Body.raw` are always present; embedding keys are optional
 enrichments, omitted on first write and backfilled later if ever.
-`ActualSummary` and `Tag` are optional and omitted when unused.
+`ActualSummary`, `LongSummary` and `Tag` are optional and omitted when unused.
+
+### LongSummary
+
+A **careful summary of the `Body`**, written to inform a human reader without
+overwhelming them -- and, at the same time, the text the summary **embedding**
+is computed from. It is DERIVED, in the same spirit as embeddings: nothing is
+lost if it is regenerated from scratch.
+
+**Exactly two things may read it:**
+
+1. **Display to a user.**
+2. **Generating the summary embedding.**
+
+That list is exhaustive. In particular it does NOT feed `prompt` -- that output
+goes to an agent, not a user, and using it there would be a third use.
+
+**Why it exists.** `Body` is usually too long for an embedder to handle well: the
+signal gets diluted or truncated, and the resulting vector matches poorly. The
+`LongSummary` vector is the one worth matching on, so the field is deliberately
+written to be embedded. `Summary`, `Body` and `LongSummary` are all embedded
+(additively); `LongSummary` is expected to yield ONE phrase vector because it is
+written as a single coherent unit, where `Body` produces a list of n-phrase
+vectors.
+
+#### There is no tool connection to Body
+
+There is **ZERO** access control on this field beyond agents obeying this skill,
+and **no tool-level coupling** between `Body` and `LongSummary`:
+
+- Editing `Body` does not clear, drop, regenerate, or flag `LongSummary`.
+- Editing `LongSummary` clears only its own vectors, like any raw field.
+- `doctor` checks its SHAPE only. It will never tell you a `LongSummary` is
+  missing, stale, or inconsistent with its `Body` -- the tool cannot judge that,
+  and the absence of the check is deliberate, not an oversight.
+
+It is therefore **completely allowed to set one without the other**. The
+motivating case: a HICAP agent rewriting a `LongSummary` a MIDCAP agent wrote,
+touching nothing else. Both writes are legitimate; the tool will not arbitrate.
+
+The consequence is that **staleness is on you**. If you materially change a
+`Body` and a `LongSummary` exists, rewrite it in the same breath, because
+nothing else will notice.
+
+#### Writing one
+
+Write for a human skimming the ticket, under the knowledge that the same text
+becomes a vector. Those two goals mostly agree -- both reward dense, concrete,
+self-contained prose and punish padding.
+
+| Do | Don't |
+|----|-------|
+| Lead with what the todo IS and why it exists | Open with "This todo..." or restate the `Summary` |
+| Name the concrete nouns: files, commands, fields, systems | Use vague placeholders ("the relevant module") an embedder cannot match |
+| Keep it self-contained: it is read without the `Body` | Refer to "the above", "the second option", or the `Body`'s structure |
+| A few short paragraphs, prose | Deep bullet trees, tables, ASCII art -- they read badly and embed worse |
+| Include the decisions and constraints that were RATIFIED | Reproduce the whole reasoning that led to them |
+| Say what was deliberately excluded, if it is load-bearing | Pad to look thorough |
+
+**Write it as if it were an important embedding**, because it is. Terms a
+future searcher would plausibly type should actually appear in it. This is the
+single most useful rule when you are unsure what to include.
+
+**Length** is whatever informs without overwhelming -- typically a handful of
+paragraphs. A `LongSummary` approaching the length of its `Body` has failed at
+both jobs.
+
+**Not the `pr-description` format.** That skill is tailored for FINISHED work
+(what broke, what was fixed, how it was verified) and is deliberately terse to
+the point of being a pointer for someone with the diff open. A `LongSummary`
+describes a todo at ANY stage, for a reader with nothing else in front of them.
+The spirit -- reader-first, no padding -- carries over; the shape does not.
+
+```bash
+todo.py set <id> --long-summary="..."   # write or replace it
+todo.py get <id> --long-summary          # read it back
+```
 
 ### WorkItems: invariants and the cursor
 
