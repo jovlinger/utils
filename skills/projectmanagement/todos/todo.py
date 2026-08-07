@@ -949,6 +949,7 @@ def apply_set_fields(
     pr: Optional[int] = None,
     merge_commit: Optional[str] = None,
     actual_summary: Optional[str] = None,
+    long_summary: Optional[str] = None,
     parent_touched: bool = False,
     tags_touched: bool = False,
 ) -> Optional[str]:
@@ -974,6 +975,11 @@ def apply_set_fields(
     if actual_summary is not None:
         todo["ActualSummary"] = actual_summary
         changed = True
+    if long_summary is not None:
+        # Deliberately independent of Body: either may be written without the
+        # other (see "LongSummary" in SKILL.md). Nothing here reads Body.
+        todo.setdefault("LongSummary", {})["raw"] = long_summary
+        changed = True
     if state is not None:
         set_state(todo, state, note=note, last_commit=last_commit,
                   merged_into=merged_into, owner=owner, pr=pr,
@@ -982,7 +988,7 @@ def apply_set_fields(
     if not changed and not parent_touched and not tags_touched:
         raise TodoError(
             "pass at least one of --summary, --body, --ac, --state, "
-            "--actual-summary, --parent, --tag, --untag"
+            "--actual-summary, --long-summary, --parent, --tag, --untag"
         )
     return state
 
@@ -1206,6 +1212,13 @@ def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
         "--actual-summary",
         help="ActualSummary: how the work actually panned out; reused as the merge "
         "message when this todo is merged into its parent",
+    )
+    parser.add_argument(
+        "--long-summary",
+        dest="long_summary",
+        help="LongSummary: a careful, reader-first summary of the Body, and the source "
+        "for the summary embedding. Derived, but NOT tool-coupled to Body -- either may "
+        "be written without the other. See 'LongSummary' in SKILL.md before writing one",
     )
 
 
@@ -2317,6 +2330,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "AC",
         "ActualSummary",
+        "LongSummary",
         "Agent",
         "BaseSha",
         "Body",
@@ -2933,6 +2947,7 @@ _GET_FIELD_PATHS: Dict[str, str] = {
     "ac": "AC",
     "state": "State",
     "actual_summary": "ActualSummary",
+    "long_summary": "LongSummary.raw",
     "parent": "Parent",
     "tag": "Tag",
 }
@@ -2943,9 +2958,9 @@ class GetCommand(TodoSubCommand):
     doc_short: ClassVar[str] = "Print one named todo field"
     doc_long: ClassVar[str] = (
         "Get is a friendly-field-name wrapper over get-json-path: pass exactly one of "
-        "--summary/--body/--ac/--state/--actual-summary/--parent/--tag and it expands to the "
-        "matching internal path (Summary.raw, Body.raw, AC, State, ActualSummary, Parent, Tag "
-        "respectively) and prints that value as JSON -- exactly like `get-json-path <selector> "
+        "--summary/--body/--ac/--state/--actual-summary/--long-summary/--parent/--tag and it "
+        "expands to the matching internal path (Summary.raw, Body.raw, AC, State, "
+        "ActualSummary, LongSummary.raw, Parent, Tag respectively) and prints that value as JSON -- exactly like `get-json-path <selector> "
         "<path>` with the path already filled in. <selector> is an Id prefix or full digest. "
         "For any other path, or a nested value like WorkItems.0.summary, use get-json-path "
         "directly."
@@ -2963,6 +2978,10 @@ class GetCommand(TodoSubCommand):
             "--actual-summary", dest="actual_summary", action="store_true",
             help="print ActualSummary",
         )
+        parser.add_argument(
+            "--long-summary", dest="long_summary", action="store_true",
+            help="print LongSummary.raw",
+        )
         parser.add_argument("--parent", action="store_true", help="print Parent")
         parser.add_argument("--tag", action="store_true", help="print Tag")
 
@@ -2972,7 +2991,7 @@ class GetCommand(TodoSubCommand):
         if len(selected) != 1:
             raise TodoError(
                 "pass exactly one of --summary, --body, --ac, --state, "
-                "--actual-summary, --parent, --tag"
+                "--actual-summary, --long-summary, --parent, --tag"
             )
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
@@ -3112,7 +3131,11 @@ class InitCommand(TodoSubCommand):
             commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
         # init-then-set: apply any set-style State/ActualSummary passed to init
         # (Summary/Body/AC already went into the skeleton above).
-        if self.state is not None or self.actual_summary is not None:
+        if (
+            self.state is not None
+            or self.actual_summary is not None
+            or self.long_summary is not None
+        ):
             state = apply_set_fields(
                 ticket,
                 state=self.state,
@@ -3123,6 +3146,7 @@ class InitCommand(TodoSubCommand):
                 pr=self.pr,
                 merge_commit=self.merge_commit,
                 actual_summary=self.actual_summary,
+                long_summary=self.long_summary,
             )
             write_todo_worktree(root, ticket)
             if not self.no_commit:
@@ -3368,6 +3392,7 @@ class SetCommand(TodoSubCommand):
             pr=self.pr,
             merge_commit=self.merge_commit,
             actual_summary=self.actual_summary,
+            long_summary=self.long_summary,
             parent_touched=parent_touched,
             tags_touched=tags_touched,
         )

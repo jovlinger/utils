@@ -2667,6 +2667,51 @@ class ObjidWiringTests(TodoCase):
         self.assertNotIn("unknown top-level fields", proc.stdout)
 
 
+class LongSummaryTests(TodoCase):
+    """LongSummary: a derived, reader-first summary of Body -- and NOT coupled to it."""
+
+    def test_absent_by_default(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body")
+        self.assertNotIn("LongSummary", self.read_cur())
+
+    def test_set_and_get_round_trip(self) -> None:
+        self.init_ok("--summary=hello")
+        text = "What this todo is about, in a paragraph a human can skim."
+        proc = self.todo("set", self.tid, f"--long-summary={text}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual({"raw": text}, {"raw": self.read_cur()["LongSummary"]["raw"]})
+        self.assertEqual(text, self.todo("get", self.tid, "--long-summary").stdout.strip())
+
+    def test_settable_alone_on_a_groom_todo(self) -> None:
+        # The motivating case: a HICAP agent rewriting a MIDCAP agent's
+        # LongSummary without touching anything else.
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("set", self.tid, "--long-summary=only this")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("only this", self.read_cur()["LongSummary"]["raw"])
+
+    def test_init_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=seeded at init")
+        self.assertEqual("seeded at init", self.read_cur()["LongSummary"]["raw"])
+
+    def test_doctor_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=fine")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_no_field_at_all_still_errors(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("set", self.tid)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--long-summary", proc.stderr)
+
+    def test_get_requires_exactly_one_flag(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=x")
+        proc = self.todo("get", self.tid, "--long-summary", "--summary")
+        self.assertNotEqual(proc.returncode, 0)
+
+
 class ResolveUrlTests(TodoCase):
     """resolveurl dereferences a permalink to the value it addresses."""
 
