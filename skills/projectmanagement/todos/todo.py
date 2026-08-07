@@ -26,6 +26,7 @@ import todo_db
 import todo_objid
 import todo_store
 import todo_embed
+import todo_url
 import todo_web
 
 JsonDict = Dict[str, Any]
@@ -2886,6 +2887,46 @@ class GetJsonPathCommand(TodoSubCommand):
         return 0
 
 
+class ResolveUrlCommand(TodoSubCommand):
+    command_names = ("resolveurl",)
+    doc_short: ClassVar[str] = "Print the value a permalink addresses"
+    doc_long: ClassVar[str] = (
+        "Resolveurl dereferences a permalink -- /<todoid>/<path...> -- and prints the value it "
+        "addresses, exactly as get-json-path would for the equivalent dot-path. It takes no "
+        "selector: the todo is the first path segment. A full URL or a bare path both work, so a "
+        "link pasted out of a browser resolves as-is. The first segment is any 4+ hex Id prefix; "
+        "after it, a segment names a field case-insensitively (a list field ending in 's' also "
+        "answers to the name minus that 's'), and a segment in front of a list is a where-clause "
+        "whose default key is idx -- so a bare segment is always a 0-based index. The keys sha, "
+        "subtodo_id and objid match on a 4+ character prefix. /<todoid>/objid/<prefix> addresses "
+        "any object in the todo without naming its collection, and is the form to emit as a "
+        "permalink: it survives edits to the work plan, which an index does not."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register resolveurl arguments."""
+        parser.add_argument(
+            "url",
+            help="permalink: full URL or path, e.g. /8f3a2c1d/workitem/objid/0a3f",
+        )
+
+    def do(self) -> int:
+        """Print the value the permalink addresses."""
+        root = self.root()
+        try:
+            selector, segments = todo_url.split_url_path(self.url)
+        except todo_url.TodoUrlError as exc:
+            raise TodoError(str(exc)) from exc
+        _, todo = resolve_ticket_by_id(root, selector)
+        try:
+            json_path = todo_url.to_json_path(todo, segments)
+        except todo_url.TodoUrlError as exc:
+            raise TodoError(f"{exc} (in todo {str(todo.get('Id', ''))[:8]})") from exc
+        print_json_value(todo_url.value_at(todo, json_path))
+        return 0
+
+
 _GET_FIELD_PATHS: Dict[str, str] = {
     "summary": "Summary.raw",
     "body": "Body.raw",
@@ -5273,6 +5314,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     ReadCommand,
     GetJsonPathCommand,
     GetCommand,
+    ResolveUrlCommand,
     InitCommand,
     EnsureWorktreeCommand,
     AddSubtodoCommand,

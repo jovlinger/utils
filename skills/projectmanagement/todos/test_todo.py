@@ -2659,6 +2659,99 @@ class ObjidWiringTests(TodoCase):
         self.assertNotIn("unknown top-level fields", proc.stdout)
 
 
+class ResolveUrlTests(TodoCase):
+    """resolveurl dereferences a permalink to the value it addresses."""
+
+    def _seed(self) -> Dict[str, Any]:
+        """A todo with two work items and a tag; returns the stored record."""
+        self.init_ok("--summary=routing", "--body=a body")
+        self.todo("work-item-add", self.tid, "--summary=first")
+        self.todo("work-item-add", self.tid, "--summary=second")
+        self.todo("tag-add", self.tid, "alpha")
+        return self.read_cur()
+
+    def _resolve(self, url: str) -> subprocess.CompletedProcess[str]:
+        return self.todo("resolveurl", url)
+
+    def test_field_path(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/summary/raw")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("routing", proc.stdout.strip())
+
+    def test_bare_index_is_zero_based(self) -> None:
+        self._seed()
+        self.assertEqual(
+            "first", self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout.strip()
+        )
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        )
+
+    def test_matches_get_json_path(self) -> None:
+        self._seed()
+        expected = self.todo("get-json-path", self.tid, "WorkItems.1.summary").stdout
+        self.assertEqual(expected, self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout)
+
+    def test_full_url_with_host_and_port(self) -> None:
+        self._seed()
+        url = f"http://localhost:8765/{self.tid[:8]}/workitem/1/summary"
+        self.assertEqual("second", self._resolve(url).stdout.strip())
+
+    def test_objid_addresses_an_object_with_no_collection(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        out = self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout
+        self.assertEqual(record["WorkItems"][1], json.loads(out))
+
+    def test_objid_survives_an_insert_that_moves_the_index(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        # The insert lands at the cursor (index 0), shifting everything down:
+        # "second" moves from index 1 to 2. The objid link still finds it; the
+        # index link silently means a different work item now.
+        self.todo("work-item-insert", self.tid, "--summary=squeezed in")
+        by_objid = json.loads(self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout)
+        self.assertEqual("second", by_objid["summary"])
+        by_index = self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        self.assertEqual("first", by_index)
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/2/summary").stdout.strip()
+        )
+
+    def test_drop_the_s_alias_and_plural_agree(self) -> None:
+        self._seed()
+        singular = self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout
+        plural = self._resolve(f"/{self.tid[:8]}/workitems/0/summary").stdout
+        self.assertEqual(singular, plural)
+
+    def test_tag_resolves_to_the_tag_field(self) -> None:
+        self._seed()
+        self.assertEqual("alpha", self._resolve(f"/{self.tid[:8]}/tag/0/raw").stdout.strip())
+
+    def test_out_of_bounds_index_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/workitem/883368/summary")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("out of bounds", proc.stderr)
+
+    def test_unknown_field_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/nope")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown field", proc.stderr)
+
+    def test_unknown_todo_errors(self) -> None:
+        self._seed()
+        proc = self._resolve("/ffffffff/summary/raw")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual("", proc.stdout)
+
+    def test_todoid_only_prints_the_record(self) -> None:
+        record = self._seed()
+        self.assertEqual(record, json.loads(self._resolve(f"/{self.tid[:8]}").stdout))
+
+
 class ObjidDoctorTests(TodoCase):
     """doctor hard-fails a record whose objids were broken outside todo.py."""
 
