@@ -462,11 +462,39 @@ Rules worth knowing before you hand-write one:
   so `/workitem/1` silently comes to mean a different item; the `objid` link
   keeps pointing at the same one. Use an index for a throwaway reference only.
 
-`todo.py web` serves these: a deep link 302-redirects to the todo's page
-anchored at the item (`/?id=<Id>#obj-<objid>`), scrolling to and highlighting
-the box. A link to a scalar lands on the object that holds it. `todo.py
-resolveurl <path-or-url>` is the CLI side -- it prints the value the link
-addresses, exactly as `get-json-path` would.
+**What the viewer does with one.** `todo.py web` serves a permalink **in
+place**: `GET /<todoid>/<path...>` renders the whole todo, scrolled to and
+focused on the object the path resolves to -- the same state clicking that box
+produces (its commit message and diff in the fold). There is no redirect; the
+path IS the resource, "this todo, focused here". `/<todoid>` alone is the
+canonical page URL, and every internal link (subtodo, parent, search result)
+emits it. `?id=<Id>` still works for links pasted before this.
+
+Resolution is entirely server-side, which is why the grammar can use 4+
+character prefixes: matching `sha/883368` needs the record, and a browser
+fragment never reaches the server.
+
+Degrading is deliberate rather than fatal:
+
+| The path resolves to | You get |
+|----------------------|---------|
+| a work item, subtodo, or parent | the page, that box focused and scrolled to |
+| a scalar inside one (`.../workitem/1/summary`) | the page, focused on the box that holds it |
+| an object the viewer does not draw (`WorkItems.2.execution`) | the page, focused on the nearest thing it does draw |
+| a section (`Summary`, `Scope`, `Tag.0`) | the page, that section scrolled to and marked |
+| the State subtree, or `/<todoid>` alone | the page, unfocused |
+| nothing | 404 |
+
+**Clicking rewrites the address bar** to `/<todoid>/objid/<objid>`
+(`replaceState`, so Back still leaves the todo). Whatever is on screen is
+already a copyable permalink -- you rarely need to build one by hand.
+
+All client-side selection is keyed by objid: one `data-obj` attribute over one
+`DATA.objects` map, for work items, subtodos and parents alike. No browser code
+reads a list position or a child todo id.
+
+`todo.py resolveurl <path-or-url>` is the CLI side -- it prints the value the
+link addresses, exactly as `get-json-path` would.
 
 ## Placement and branch rule
 

@@ -4698,10 +4698,13 @@ class WebCommand(TodoSubCommand):
         "Body, work items (horizontal boxes) and subtodos (horizontal boxes). Clicking a work "
         "item shows its full commit message and diff below the split and highlights any subtodo "
         "it references; clicking a subtodo highlights the work items that reference it and shows "
-        "a read-only rendition below the split. With a selector (a 4+ hex Id prefix) "
-        "the printed URL opens straight onto that todo; without one the page is a vector search "
-        "(the same ranking as 'todo search') over every todo, showing update-time and State "
-        "columns, with an empty query listing all."
+        "a read-only rendition below the split. Clicking anything rewrites the address bar to "
+        "that item's permalink, so what is on screen is always copyable. With a selector (a 4+ "
+        "hex Id prefix) the printed URL opens straight onto that todo; without one the page is a "
+        "vector search (the same ranking as 'todo search') over every todo, showing update-time "
+        "and State columns, with an empty query listing all. It also serves permalinks: "
+        "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
+        "(see 'resolveurl' for the grammar)."
     )
 
     @classmethod
