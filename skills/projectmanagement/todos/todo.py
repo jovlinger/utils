@@ -2514,6 +2514,15 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
         not isinstance(summary, dict) or not isinstance(summary.get("raw"), str)
     ):
         findings.append("Summary.raw must be a string")
+    # SHAPE ONLY. doctor deliberately does not check that LongSummary still
+    # describes Body: the two are independent by design (either may be written
+    # without the other -- see "LongSummary" in SKILL.md), so a LongSummary that
+    # disagrees with its Body is not a defect the tool can judge.
+    long_summary = todo.get("LongSummary")
+    if long_summary is not None and (
+        not isinstance(long_summary, dict) or not isinstance(long_summary.get("raw"), str)
+    ):
+        findings.append("LongSummary.raw must be a string")
     tags = todo.get("Tags")
     if tags is not None and (
         not isinstance(tags, list)

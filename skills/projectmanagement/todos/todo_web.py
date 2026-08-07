@@ -444,7 +444,7 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
 # live inside Summary/Body as .hash and only .raw is rendered), so nothing
 # opaque reaches the generic path.
 _DEDICATED_FIELDS = frozenset(
-    {"Id", "Summary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
+    {"Id", "Summary", "LongSummary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
 )
 
 
@@ -487,6 +487,16 @@ def _sections_html(
     summary = _summary_text(todo)
     body = _body_text(todo)
     parents_html = _parents_html(parents, interactive=interactive)
+    # Only when present: an empty "Long summary" heading on every todo that has
+    # none is noise. Rendered as its own section rather than through _meta_html,
+    # which would dump the whole dict including embedding vectors.
+    long_summary = _raw_field(todo, "LongSummary")
+    long_summary_html = (
+        f'<section class="part"'
+        f'{_section_attrs(todo.get("LongSummary"), interactive=interactive)}>'
+        f'<h2>Long summary</h2>'
+        f'<pre class="val body">{html.escape(long_summary)}</pre></section>'
+    ) if long_summary else ""
     wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
@@ -499,6 +509,7 @@ def _sections_html(
         f'<section class="part"{_section_attrs(todo.get("Summary"), interactive=interactive)}>'
         f'<h2>Summary</h2>'
         f'<div class="val">{html.escape(summary or "(no summary)")}</div></section>'
+        f"{long_summary_html}"
         f'<section class="part"{_section_attrs(todo.get("Body"), interactive=interactive)}>'
         f'<h2>Body</h2>'
         f'<pre class="val body">{html.escape(body)}</pre></section>'

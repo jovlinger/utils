@@ -2752,6 +2752,60 @@ class LongSummaryTests(TodoCase):
         self.assertNotEqual(proc.returncode, 0)
 
 
+class LongSummaryDoctorAndViewTests(TodoCase):
+    """doctor checks LongSummary's SHAPE only; the viewer renders it as text."""
+
+    def test_doctor_does_not_care_that_it_disagrees_with_body(self) -> None:
+        # The point of the test: the ABSENCE of a staleness check. Body and
+        # LongSummary are independent by design, so a mismatch is not a defect.
+        self.init_ok("--summary=hello", "--body=a body about databases")
+        self.todo("set", self.tid, "--long-summary=this text is about something else entirely")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_doctor_is_silent_about_a_body_with_no_long_summary(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body with no summary written yet")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("LongSummary", proc.stdout)
+
+    def test_doctor_rejects_a_malformed_long_summary(self) -> None:
+        self.init_ok("--summary=hello")
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            record["LongSummary"] = "a bare string, not {raw: ...}"
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?", (json.dumps(record), self.tid)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("LongSummary.raw must be a string", proc.stdout)
+
+    def test_viewer_renders_it_as_text_not_a_json_blob(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.todo("set", self.tid, "--long-summary=A readable paragraph for a human.")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn("Long summary", out)
+        self.assertIn("A readable paragraph for a human.", out)
+        # Not dumped through the generic Fields path, which would show the dict
+        # (and, once vectors exist, the vectors).
+        self.assertNotIn('meta-key">LongSummary', out)
+
+    def test_viewer_omits_the_section_when_absent(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.assertNotIn("Long summary", self.todo("web", "--dump-html", self.tid).stdout)
+
+
 class ResolveUrlTests(TodoCase):
     """resolveurl dereferences a permalink to the value it addresses."""
 
