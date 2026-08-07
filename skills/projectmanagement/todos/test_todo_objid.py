@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 
+import todo_db
 import todo_objid
 
 
@@ -212,6 +213,33 @@ class IterObjectsTest(unittest.TestCase):
         todo = _record()
         paths = [path for path, _ in todo_objid.iter_objects(todo)]
         self.assertEqual(["Summary"], paths)
+
+
+class MigrateRecordV9Test(unittest.TestCase):
+    """RECORD_MIGRATIONS[9] backfills objids onto records written before them."""
+
+    def test_legacy_record_gains_objids(self) -> None:
+        todo = todo_db.migrate_record(_record(WorkItems=[{"summary": "one"}]))
+        self.assertEqual(todo_db.SCHEMA_VERSION, todo["_schema"])
+        self.assertRegex(todo["Summary"]["objid"], r"^[0-9a-f]{4,}$")
+        self.assertRegex(todo["WorkItems"][0]["objid"], r"^[0-9a-f]{4,}$")
+        self.assertIsInstance(todo["_nextobjid"], int)
+
+    def test_sweep_is_idempotent(self) -> None:
+        once = todo_db.migrate_record(_record(WorkItems=[{"summary": "one"}]))
+        snapshot = json.dumps(once, sort_keys=True)
+        twice = todo_db.migrate_record(json.loads(json.dumps(once)))
+        self.assertEqual(snapshot, json.dumps(twice, sort_keys=True))
+
+    def test_sweep_preserves_hand_seeded_ids(self) -> None:
+        todo = todo_db.migrate_record(
+            _record(WorkItems=[{"summary": "one", "objid": "0a3f"}])
+        )
+        self.assertEqual("0a3f", todo["WorkItems"][0]["objid"])
+
+    def test_version_9_is_registered(self) -> None:
+        self.assertIn(9, todo_db.RECORD_MIGRATIONS)
+        self.assertGreaterEqual(todo_db.SCHEMA_VERSION, 9)
 
 
 if __name__ == "__main__":
