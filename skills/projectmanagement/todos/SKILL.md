@@ -347,6 +347,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py migrate-to-latest [--dry-run]` | implemented | Sweep every record in the resolved store to `todo_db.SCHEMA_VERSION` via `todo_db.migrate_record` (both backends), write back changed records, and advance the store's `data_version` marker. Idempotent; `--dry-run` reports scanned/would-migrate counts without writing. See "Schema versioning" above |
 | `todo.py ls [--states=<expr>] [-s] [-t\|-tc\|-tu\|-g]` | implemented | Print `<id[0:8]>  <summary>` per todo -- where-to-find-it only; use `read <id>` for content. Hides FINAL (done, merged) by default; `-s` shows all states, `--states=<expr>` filters (macro grammar; see `search`). Column flags: `-s` State, `-t`/`-tc` create-time, `-tu` update-time, `-g` Tags (leftmost, in flag order, summary last, right-padded); with any column flag rows sort ascending by the leftmost column, else insertion order |
 | `todo.py get-json-path <selector> <path>` | implemented | Low-level path read. Prints one value from a selected todo as JSON. `<path>` is the internal dot-path syntax, e.g. `Body.raw` or `WorkItems.0.summary`. |
+| `todo.py resolveurl <path-or-url>` | implemented | Dereference a permalink -- `/<todoid>/<path...>` -- and print the value it addresses, exactly as `get-json-path` prints the equivalent dot-path. Takes NO selector: the todo is the first path segment. A full URL or a bare path both work, so a link pasted from the browser resolves as-is. See "Permalinks" for the grammar. There is deliberately no inverse (url-emitting) command -- `objid` is the handle to hold, not the json path. |
 | `todo.py get <selector> [--summary\|--body\|--ac\|--state\|--actual-summary\|--parent\|--tag]` | implemented | Friendly-field-name wrapper: pass exactly one flag and it expands into the matching `get-json-path <selector> <path>` call (`Summary.raw`, `Body.raw`, `AC`, `State`, `ActualSummary`, `Parent`, `Tag` respectively) and prints that value. `<selector>` is required, same as `set`. For any other path use `get-json-path` directly. |
 | `todo.py set-json-path <selector> <path> [--file <path>]` | implemented | Low-level path write. Sets one JSON path to a value read as JSON from `--file` or stdin. Store-only: no branch checkout, no commit -- works on a branchless `groom` todo. The general way to replace `WorkItems` or seed a whole plan. |
 | `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `groom` todo): create the local branch from its `set`-finalized `Branch`, move it to state `ready`, capture `BaseSha` (invariant #5). **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set) except `--parent` (use `set <id> --parent` after). `--stay-on-parent` returns to the previous branch after creating the todo branch |
@@ -412,6 +413,60 @@ Higher-level commands are special syntax for these primitives, plus triggers.
 Triggers fire by changed path, not by command name, so `set <id> --state done` and
 `set-json-path <id> State` (with `{"done": {}}` on stdin) share the same
 downstream behavior.
+
+## Permalinks
+
+**Emit permalinks.** When you name a specific work item, subtodo, or field in
+chat, a commit message, a PR, or another todo's Body, write the link -- not
+prose like "the third work item", which stops being true the next time the plan
+is edited. The form to emit is the **objid** one:
+
+```
+http://localhost:8765/<todoid>/objid/<objid>
+```
+
+`http://localhost:8765/` is the default base (`todo.py web`'s default bind);
+the path alone is equally valid and is what `resolveurl` takes. Read an object's
+`objid` straight off `todo.py read <id>`.
+
+A permalink is all path segments, no query string, and decodes into a path into
+the record. The first segment is the todo (any 4+ hex `Id` prefix); the rest walk
+in:
+
+| Form | Means |
+|------|-------|
+| `/<todoid>` | the whole record |
+| `/<todoid>/summary/raw` | a field, matched case-insensitively |
+| `/<todoid>/workitem/5/summary` | a bare segment in front of a list is a **0-based index** |
+| `/<todoid>/workitem/idx/5/summary` | the same, written out; `idx` is the default key |
+| `/<todoid>/workitem/sha/883368/summary` | where-clause on `sha` (4+ char prefix) |
+| `/<todoid>/subtodo/subtodo_id/13e5` | where-clause on `subtodo_id` (4+ char prefix) |
+| `/<todoid>/workitem/objid/0a3f` | where-clause on `objid` (4+ char prefix) |
+| `/<todoid>/objid/0a3f` | **canonical**: any object in the todo, no collection named |
+
+Rules worth knowing before you hand-write one:
+
+- **Indexes are 0-based**, identical to the json dot-path, `jq`, and `doctor`'s
+  finding labels -- so a link built from what those print is never off by one.
+- **A bare segment is always an index.** `/557a/workitem/883368/summary` is
+  perfectly well defined; it is just out of bounds. There is no bare-hex
+  fallback, so a hex value must name its key (`sha/883368`).
+- **Only `sha`, `subtodo_id`, and `objid` take prefixes** (4+ characters,
+  ambiguity is an error). An index is exact and is never shortened.
+- **Field names match case-insensitively**, and a LIST-valued field whose name
+  ends in `s` also answers to the name minus that `s`. That is naming the
+  element type, not singularizing: `WorkItems` is a list of WorkItem, so
+  `workitem` works, while a field named `Oxen` answers only to `oxen`. An exact
+  match wins over the drop-the-s alias, so `tag` is `Tag`, never legacy `Tags`.
+- **An index is not a permalink.** `work-item-insert` shifts every later item,
+  so `/workitem/1` silently comes to mean a different item; the `objid` link
+  keeps pointing at the same one. Use an index for a throwaway reference only.
+
+`todo.py web` serves these: a deep link 302-redirects to the todo's page
+anchored at the item (`/?id=<Id>#obj-<objid>`), scrolling to and highlighting
+the box. A link to a scalar lands on the object that holds it. `todo.py
+resolveurl <path-or-url>` is the CLI side -- it prints the value the link
+addresses, exactly as `get-json-path` would.
 
 ## Placement and branch rule
 
@@ -697,6 +752,28 @@ separate unset/delete operation unless repeated use shows `null` is insufficient
 | `Branch` | string | Best-effort label, constructed once: `(Id[0:8] + "-" + kebab(big words of Summary.raw))[:32]`. Drop obvious stopwords; do not agonize. May exist only locally. |
 | `create_dt` | string (RFC3339 `Z`) | Immutable creation time. |
 | `update_dt` | string (RFC3339 `Z`) | Bump on **every** successful write. |
+| `_nextobjid` | int | Allocation cursor for `objid` (below). Always past every id in the record. An allocation bookmark ONLY -- it is **not** an optimistic-locking token (it does not move on every write; `update_dt` does). |
+
+### objid: naming an object inside a todo
+
+Every JSON object nested in a record carries `"objid": "0a3f"` -- a short
+lowercase-hex id, immutable, unique within that todo. It is what a permalink
+names, so a link keeps pointing at the same object after the work plan is
+edited around it. Two exemptions: the **root** record (the todo `Id` already
+names it) and the whole **State** subtree (`State` must hold exactly one key,
+and each state's value object has its own metadata allow-list).
+
+- Ids come from `_nextobjid` and render as `%04x`, so they are 4 characters
+  until a single todo exceeds 65536 objects, then they widen.
+- Uniqueness scope is ONE todo. A subtodo is a separate record and a separate
+  scope: the same `objid` in two todos means nothing, and a child's counter
+  restarts at `0000`.
+- Existing ids are never rewritten. A fresh one is issued only when an object's
+  id is missing, malformed, or duplicates one seen earlier in the record.
+- You never set these. Every write stamps them; `doctor`'s schema sweep
+  backfills records written before objids existed, and `doctor` hard-fails a
+  missing, malformed, or duplicated id (which can only happen if something
+  wrote the store outside `todo.py`).
 
 ### State
 
@@ -1068,6 +1145,11 @@ selector `ALL` sweeps the whole corpus. Checks:
   `code`/`merge_subtodo` item carries a sha; a `checkpoint` item carries `at_sha`
   and must NOT carry `sha` (observation, not attribution); a done todo does not
   end in `start_subtodo` or `checkpoint`.
+- objid integrity: every stampable object carries a well-formed `objid`, no two
+  share one, and `_nextobjid` is past every id in the record. A broken id is a
+  broken permalink, so all four are hard findings. Repair comes first -- doctor's
+  schema sweep backfills a legacy record before the audit runs -- so a finding
+  here means the store was written outside `todo.py`.
 - PR disposition (root todos only): for a todo in `done`/`merged`/`rejected`, ask
   `gh` about its branch (or its recorded `pr`) and reconcile the state -- discover
   a hand-opened PR, record a merged PR's `merge_commit`, demote a closed-unmerged
