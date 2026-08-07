@@ -252,6 +252,38 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
 # --- HTML rendering --------------------------------------------------------
 
 
+def _objids_within(value: Any) -> List[str]:
+    """Every objid inside *value*, outermost first, in walk order."""
+    found: List[str] = []
+    if isinstance(value, dict):
+        objid = value.get("objid")
+        if isinstance(objid, str) and objid:
+            found.append(objid)
+        for nested in value.values():
+            found.extend(_objids_within(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            found.extend(_objids_within(nested))
+    return found
+
+
+def _section_attrs(value: Any, *, interactive: bool) -> str:
+    """Return the attributes that make a non-box SECTION a permalink target.
+
+    Sections are addressable but not selectable: a permalink to ``Summary.raw``
+    or ``Tag.0`` should scroll to and mark the section that shows it, but there
+    is nothing to open in the fold. ``data-objs`` is a space-separated list
+    (matched with the CSS ``~=`` operator) because one row can display several
+    stamped objects -- the Tag field renders every element together, and a DOM
+    id can only name one of them.
+    """
+    ids = _objids_within(value)
+    if not interactive or not ids:
+        return ""
+    joined = html.escape(" ".join(ids))
+    return f' id="obj-{html.escape(ids[0])}" data-objs="{joined}"'
+
+
 def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
     """Return the objid attributes that make a box addressable and selectable.
 
@@ -413,7 +445,7 @@ _DEDICATED_FIELDS = frozenset(
 )
 
 
-def _meta_html(todo: JsonDict) -> str:
+def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
     'show everything the todo carries'."""
@@ -427,7 +459,11 @@ def _meta_html(todo: JsonDict) -> str:
             rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
         else:
             rendered = f'<div class="val">{html.escape(str(value))}</div>'
-        rows.append(f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}')
+        attrs = _section_attrs(value, interactive=interactive)
+        rows.append(
+            f'<div class="meta-row"{attrs}>'
+            f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}</div>'
+        )
     if not rows:
         return ""
     return f'<section class="part"><h2>Fields</h2>{"".join(rows)}</section>'
@@ -457,13 +493,15 @@ def _sections_html(
         f'<div class="val mono">{html.escape(tid or "?")}</div>'
         f' <span class="state-tag">{html.escape(_state_text(todo))}</span></section>'
         f"{parents_html}"
-        f'<section class="part"><h2>Summary</h2>'
+        f'<section class="part"{_section_attrs(todo.get("Summary"), interactive=interactive)}>'
+        f'<h2>Summary</h2>'
         f'<div class="val">{html.escape(summary or "(no summary)")}</div></section>'
-        f'<section class="part"><h2>Body</h2>'
+        f'<section class="part"{_section_attrs(todo.get("Body"), interactive=interactive)}>'
+        f'<h2>Body</h2>'
         f'<pre class="val body">{html.escape(body)}</pre></section>'
         f"<section class=\"part\"><h2>Work items</h2>{wi_row}</section>"
         f"<section class=\"part\"><h2>Subtodos</h2>{st_row}</section>"
-        f"{_meta_html(todo)}"
+        f"{_meta_html(todo, interactive=interactive)}"
     )
 
 

@@ -2800,6 +2800,20 @@ class PermalinkAnchorTests(TodoCase):
         self.assertEqual({"id", "objects"}, set(data))
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{4,}", k) for k in data["objects"]))
 
+    def test_non_box_sections_are_addressable(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored", "--body=a body")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        record = self.read_cur()
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for field in ("Summary", "Body", "Scope"):
+            with self.subTest(field=field):
+                self.assertIn(f'id="obj-{record[field]["objid"]}"', out)
+        # Tag renders every element in one row, and a DOM id can only name one,
+        # so the row lists them all in data-objs (matched with CSS ~=).
+        tag_objids = [element["objid"] for element in record["Tag"]]
+        self.assertIn(f'data-objs="{" ".join(tag_objids)}"', out)
+
     def test_static_renditions_carry_no_anchor(self) -> None:
         # A child's objids come from its own id scope and would collide with
         # this page's, so only interactive boxes are anchored.
