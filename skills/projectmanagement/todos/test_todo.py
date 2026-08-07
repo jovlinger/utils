@@ -1496,9 +1496,17 @@ class WebViewerTests(TodoCase):
         out = proc.stdout
         self.assertIn("Parent viewer", out)
         self.assertIn("child viewer", out)  # subtodo box + embedded read-only repr
-        # The subtodo box carries the full id; the start_subtodo work item references it.
-        self.assertIn(f'data-st="{child_id}"', out)
-        self.assertIn(f'data-subtodo="{child_id}"', out)
+        # Boxes are keyed by objid, and the start_subtodo work item's reference to
+        # the subtodo is resolved to objids server-side (no child todo id in the
+        # client model at all).
+        st_objid = parent["Subtodos"][0]["objid"]
+        wi_objid = parent["WorkItems"][0]["objid"]
+        self.assertIn(f'data-obj="{st_objid}"', out)
+        self.assertIn(f'data-obj="{wi_objid}"', out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual([st_objid], data["objects"][wi_objid]["hi"])
+        self.assertEqual([wi_objid], data["objects"][st_objid]["hi"])
+        self.assertNotIn(child_id, json.dumps(data["objects"][wi_objid]))
 
     def test_web_dump_html_no_selector_shows_search_page(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -2774,6 +2782,23 @@ class PermalinkAnchorTests(TodoCase):
         objid = record["Subtodos"][0]["objid"]
         out = self.todo("web", "--dump-html", parent_id).stdout
         self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_client_model_is_objid_only(self) -> None:
+        # AC: no client code reads a list index or a child todo id. The old key
+        # spaces (data-idx, data-st, data-parent, DATA.workitems-by-position)
+        # must be gone, not merely unused.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        self.todo("work-item-add", self.tid, "--summary=spawn")
+        self.todo("add-subtodo", self.tid, "--summary=child")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for stale in ('data-idx', 'data-st=', 'data-parent=',
+                      'DATA.workitems', 'DATA.subtodos', 'DATA.parents'):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual({"id", "objects"}, set(data))
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{4,}", k) for k in data["objects"]))
 
     def test_static_renditions_carry_no_anchor(self) -> None:
         # A child's objids come from its own id scope and would collide with
