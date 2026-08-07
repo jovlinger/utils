@@ -28,7 +28,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import todo_url
 
@@ -825,19 +825,46 @@ def render_search_page(root: Path, rows: List[JsonDict]) -> str:
 """
 
 
-def permalink_target(todo: JsonDict, segments: List[str], *, selector: str = "") -> str:
-    """Return the ``/?id=...#obj=...`` page URL a permalink deep link lands on.
+def _focusable_objids(
+    todo: JsonDict,
+    witems: List[JsonDict],
+    stodos: List[JsonDict],
+    parents: List[JsonDict],
+) -> set:
+    """objids the page can actually focus: every box, plus every section.
 
-    The fragment is the nearest enclosing object that carries an anchor, so a
-    link to a scalar (``.../workitem/1/summary``) still scrolls to the box that
-    holds it; a path with nothing stamped above it (the State subtree, or the
-    record itself) lands on the page with no fragment. Raises
-    ``todo_url.TodoUrlError`` when the path does not address anything.
+    Anything nested INSIDE a box (a work item's ``execution`` block, say) is not
+    drawn on its own and so cannot be focused -- the caller walks outward to the
+    box that contains it.
+    """
+    focusable = {v["objid"] for v in (*witems, *stodos, *parents) if v.get("objid")}
+    focusable.update(_objids_within(todo.get("Summary")))
+    focusable.update(_objids_within(todo.get("Body")))
+    for key, value in todo.items():
+        if key not in _DEDICATED_FIELDS:
+            focusable.update(_objids_within(value))
+    return focusable
+
+
+def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
+    """Return the objid a permalink's *segments* should open the page focused on.
+
+    Raises ``todo_url.TodoUrlError`` when the path addresses nothing. Resolving
+    to something the page cannot draw is NOT an error: the chain is walked
+    outward to the nearest object that is on the page, and a path with nothing
+    focusable above it (the State subtree) renders the todo unfocused.
     """
     json_path = todo_url.to_json_path(todo, segments)
-    target = f"/?id={quote(str(todo.get('Id') or selector))}"
-    objid = todo_url.nearest_objid(todo, json_path)
-    return f"{target}#obj-{quote(objid)}" if objid else target
+    focusable = _focusable_objids(
+        todo,
+        _workitems_view(todo),
+        _subtodos_view(root, todo),
+        _parents_view(root, todo),
+    )
+    for objid in todo_url.objid_chain(todo, json_path):
+        if objid in focusable:
+            return objid
+    return ""
 
 
 def serve(
@@ -893,25 +920,22 @@ def serve(
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
         def _permalink(self, path: str) -> None:
-            """Redirect a /<todoid>/<path...> deep link onto the anchored page.
+            """Serve /<todoid>/<path...>: the whole todo, focused on that item.
 
-            Resolving lands on the nearest enclosing object that has an anchor,
-            so a link to a scalar (``.../workitem/1/summary``) still scrolls to
-            the work-item box that holds it. Redirecting rather than rendering
-            here keeps ONE page-render path -- the permalink is the durable
-            name, ``/?id=...#obj-...`` is where the browser ends up.
+            The path IS the resource -- "todo d56d, focused on objid 23" -- so it
+            renders 200 in place. It does not redirect: a permalink that bounced
+            you to a different URL would not be the durable name it claims to be,
+            and the address bar would stop matching the link you were handed.
             """
             try:
                 selector, segments = todo_url.split_url_path(path)
-                todo = resolver(selector)[1]
-                target = permalink_target(todo, segments, selector=selector)
+                todo_root, todo = resolver(selector)
+                focus = resolve_focus(todo_root, todo, segments)
+                payload = render_todo_page(todo_root, todo, focus_objid=focus)
             except (todo_url.TodoUrlError, TodoWebError) as exc:
                 self.send_error(404, str(exc))
                 return
-            self.send_response(302)
-            self.send_header("Location", target)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+            self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
         def _respond(self, body: bytes, content_type: str) -> None:
             self.send_response(200)

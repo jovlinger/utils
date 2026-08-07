@@ -26,40 +26,58 @@ TODO = {
     "WorkItems": [
         {"summary": "first", "sha": "883368de28aa", "done": True, "objid": "0002"},
         {"summary": "second", "done": False, "objid": "0003"},
+        # execution is stamped but never drawn on its own -- the case that
+        # proves focus walks outward to the box that contains it.
+        {
+            "summary": "third",
+            "done": False,
+            "objid": "0004",
+            "execution": {"mode": "parallel", "objid": "0005"},
+        },
     ],
     "Subtodos": [{"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0006"}],
     "_nextobjid": 7,
 }
 
 
-class PermalinkTargetTest(unittest.TestCase):
-    """permalink_target picks the anchor a deep link should land on."""
+class ResolveFocusTest(unittest.TestCase):
+    """resolve_focus picks the object the page should open focused on."""
 
-    def target(self, *segments: str) -> str:
-        return todo_web.permalink_target(TODO, list(segments))
+    def focus(self, *segments: str) -> str:
+        return todo_web.resolve_focus(Path("."), dict(TODO), list(segments))
 
-    def test_object_path_anchors_on_that_object(self) -> None:
-        self.assertEqual(f"/?id={TID}#obj-0003", self.target("workitem", "1"))
+    def test_object_path_focuses_that_object(self) -> None:
+        self.assertEqual("0003", self.focus("workitem", "1"))
 
-    def test_scalar_path_anchors_on_its_enclosing_object(self) -> None:
-        self.assertEqual(f"/?id={TID}#obj-0002", self.target("workitem", "0", "summary"))
+    def test_scalar_path_focuses_its_enclosing_object(self) -> None:
+        self.assertEqual("0002", self.focus("workitem", "0", "summary"))
 
     def test_objid_form(self) -> None:
-        self.assertEqual(f"/?id={TID}#obj-0006", self.target("objid", "0006"))
+        self.assertEqual("0006", self.focus("objid", "0006"))
 
     def test_sha_where_clause(self) -> None:
-        self.assertEqual(f"/?id={TID}#obj-0002", self.target("workitem", "sha", "883368"))
+        self.assertEqual("0002", self.focus("workitem", "sha", "883368"))
 
-    def test_record_itself_has_no_fragment(self) -> None:
-        self.assertEqual(f"/?id={TID}", self.target())
+    def test_undrawn_object_walks_out_to_its_box(self) -> None:
+        # WorkItems.2.execution (objid 0005) is nested inside a work item and is
+        # not drawn on its own, so focus lands on the work item that holds it.
+        self.assertEqual("0004", self.focus("objid", "0005"))
+        self.assertEqual("0004", self.focus("workitem", "2", "execution", "mode"))
 
-    def test_unstamped_subtree_has_no_fragment(self) -> None:
-        # State is deliberately never stamped, so there is no anchor to land on.
-        self.assertEqual(f"/?id={TID}", self.target("state", "working", "owner"))
+    def test_section_target(self) -> None:
+        self.assertEqual("0000", self.focus("summary", "raw"))
+
+    def test_record_itself_is_unfocused(self) -> None:
+        self.assertEqual("", self.focus())
+
+    def test_unstamped_subtree_is_unfocused(self) -> None:
+        # State is never stamped, so there is nothing to focus -- but the todo
+        # still renders; this is not an error.
+        self.assertEqual("", self.focus("state", "working", "owner"))
 
     def test_bad_path_raises(self) -> None:
         with self.assertRaises(todo_url.TodoUrlError):
-            self.target("nope")
+            self.focus("nope")
 
 
 class RenderFocusTest(unittest.TestCase):
@@ -88,7 +106,7 @@ class RenderFocusTest(unittest.TestCase):
 
 
 class PermalinkRouteTest(unittest.TestCase):
-    """The running server redirects a permalink onto the anchored page."""
+    """The running server renders a permalink in place, focused, with no redirect."""
 
     base: str = ""
 
@@ -123,34 +141,37 @@ class PermalinkRouteTest(unittest.TestCase):
             time.sleep(0.01)
         raise AssertionError("viewer did not print its URL")
 
-    def _get(self, path: str) -> urllib.response.addinfourl:
-        """GET *path* WITHOUT following redirects."""
+    def _get(self, path: str):
+        """GET *path*, following nothing -- a permalink must not redirect."""
 
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *_args, **_kwargs):  # noqa: D102
                 return None
 
-        opener = urllib.request.build_opener(NoRedirect)
-        return opener.open(self.base + path, timeout=10)
+        return urllib.request.build_opener(NoRedirect).open(self.base + path, timeout=10)
 
-    def test_permalink_redirects_to_the_anchored_page(self) -> None:
-        try:
-            self._get("/557ab9d3/workitem/1")
-            self.fail("expected a redirect")
-        except urllib.error.HTTPError as exc:
-            self.assertEqual(302, exc.code)
-            self.assertEqual(f"/?id={TID}#obj-0003", exc.headers["Location"])
+    def test_permalink_renders_the_focused_page_in_place(self) -> None:
+        resp = self._get("/557ab9d3/workitem/1")
+        self.assertEqual(200, resp.status)
+        page = resp.read().decode("utf-8")
+        self.assertIn('const FOCUS = "0003";', page)
+        self.assertIn("routing and agent choice", page)  # the WHOLE todo, not a fragment
+        self.assertIn('data-obj="0003"', page)
 
     def test_short_selector_and_scalar_path(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as caught:
-            self._get("/557a/workitem/0/summary")
-        self.assertEqual(302, caught.exception.code)
-        self.assertEqual(f"/?id={TID}#obj-0002", caught.exception.headers["Location"])
+        page = self._get("/557a/workitem/0/summary").read().decode("utf-8")
+        self.assertIn('const FOCUS = "0002";', page)
 
     def test_objid_permalink(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as caught:
-            self._get("/557a/objid/0006")
-        self.assertEqual(f"/?id={TID}#obj-0006", caught.exception.headers["Location"])
+        page = self._get("/557a/objid/0006").read().decode("utf-8")
+        self.assertIn('const FOCUS = "0006";', page)
+
+    def test_unfocusable_path_still_renders_the_todo(self) -> None:
+        resp = self._get("/557a/state/working/owner")
+        self.assertEqual(200, resp.status)
+        page = resp.read().decode("utf-8")
+        self.assertIn('const FOCUS = "";', page)
+        self.assertIn("routing and agent choice", page)
 
     def test_unresolvable_path_is_404(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -166,6 +187,11 @@ class PermalinkRouteTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self._get("/favicon.ico")
         self.assertEqual(404, caught.exception.code)
+
+    def test_query_form_still_renders(self) -> None:
+        resp = self._get("/?id=" + TID)
+        self.assertEqual(200, resp.status)
+        self.assertIn("routing and agent choice", resp.read().decode("utf-8"))
 
     def test_search_route_is_unchanged(self) -> None:
         self.assertEqual(200, self._get("/search?q=").status)
