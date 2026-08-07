@@ -1,0 +1,91 @@
+{
+  "AC": "1. GET /<todoid>/<path...> returns 200 with the full todo page, focused on\n   the object the path resolves to. No redirect anywhere in the flow.\n2. Focus == a click: the box carries .active, the fold shows that items\n   commit message and diff, and the item is scrolled into view.\n3. Every client-side selection is keyed by objid: one data-obj attribute and\n   one DATA.objects map replace data-idx, data-st, data-parent and the\n   position-indexed DATA.workitems array. No client code reads a list index.\n4. Clicking any box replaceStates the address bar to /<todoid>/objid/<objid>;\n   no history entries are added.\n5. /<todoid> renders the page; subtodo, parent and search-result links all\n   emit path form; ?id=<Id> still renders the same page.\n6. A permalink resolving to a non-box object (Summary.raw, Scope, Tag.0)\n   scrolls to and marks that section.\n7. A path that resolves to nothing is still 404; /favicon.ico and other\n   non-selector paths keep their 404.\n8. Full test suite green; touched files pass pylint; everything authored is\n   7-bit ASCII.",
+  "ActualSummary": "Delivered all 7 items. The viewer now serves a permalink IN PLACE: GET /<todoid>/<path...> returns 200 with the whole todo rendered and focused on the object the path resolves to, replacing the 302-to-fragment from todo:71fabcb7. Verified end-to-end against the live store: /11038f9a/workitem/3 and /11038f9a/objid/000e both render 200 with zero redirects and identical focus, /summary/raw focuses the Summary section, a bogus path 404s. The larger win was collapsing three client key spaces (list position, and child todo id twice) into one objid-keyed DATA.objects map, so no browser code reads a position any more. Focus degrades outward rather than failing: a scalar focuses its box, an undrawn object (WorkItems.N.execution) focuses the box containing it, a section is marked, the unstamped State subtree renders unfocused. One process note: items 4 and 5 share commit sha:a431578d because both edits were staged before the first commit and touch the same file, so they could not be split afterward.",
+  "BaseSha": "4f44f9e32d3d67d1d547e5cb14a821b272162ab1",
+  "Body": {
+    "objid": "0002",
+    "raw": "Correction to the unlanded permalink work in todo:71fabcb7 (branch\n71fabcb7-objid-stable-object-ids, 8 commits, not yet merged). That branch\nresolves a permalink server-side and then 302-redirects to\n/?id=<Id>#obj-<objid>. The redirect is wrong.\n\n## The requirement\n\nHanded http://localhost:8765/d56d/workitem/1 I expect the MAIN WEB VIEW of\ntodo d56d, scrolled to and focused on that item -- not a redirect elsewhere.\nThe URL may carry the rich js-like path; the SERVER resolves it and renders\n\"whole d56d\" + \"focus on objid:23\".\n\nThis makes the path honest. The resource genuinely is \"todo d56d, focused at\nobjid 23\" -- a legitimate view of a primary resource, served 200. The earlier\ndesign had the URL promise a sub-resource and the server answer \"go look at\nthe parent document\"; that mismatch is what this removes. Server-side\nresolution is retained, so todo_url, objid stamping and nearest_objid all\nsurvive unchanged -- only the HTTP response layer moves.\n\n## ALL client-side UI nav is keyed by objid\n\nToday the page uses three different key spaces:\n  - work items: data-idx (a POSITION), with DATA.workitems an array indexed\n    by that position\n  - subtodos: data-st = the child TODO ID\n  - parents: data-parent = the parent TODO ID\nAll three collapse to one: data-obj = objid, over a single DATA.objects map.\nPosition-keyed client state is the same fragility as position-keyed URLs --\nthat is why \"ALL\".\n\n## Ratified decisions\n\n- Clicking a box rewrites the address bar to /<todoid>/objid/<objid> with\n  history.replaceState -- always a copyable permalink to what is on screen,\n  and Back still means \"the page before this todo\" rather than unwinding\n  every selection.\n- /<todoid> becomes the canonical page URL; subtodo/parent box links and\n  search-result links emit it. ?id= keeps working so links already pasted\n  into todo bodies, commits and chat do not break. No flag day.\n- A permalink to something that is not a clickable box (Summary, Scope, a Tag\n  element) scrolls to and marks that SECTION: the Summary/Body/Fields sections\n  get objid anchors too, so every stamped object is reachable. That is what\n  makes the grammar worth having.\n- Focus means exactly what a click means today: .active on the box, its commit\n  message + diff in the fold, plus scrollIntoView (the work-items row scrolls\n  horizontally, so a later item is off-screen without it).\n\n## Removed from the 71fabcb7 branch\n\n- todo_web._permalink()s 302 and permalink_target()\n- the #obj-<objid> fragment and the :target CSS rule\nBoth are superseded by rendering the focused view at the path."
+  },
+  "Branch": "11038f9a-permalink-renders-focus",
+  "Id": "11038f9a8007c326d50402d2963beabed204c336a62b4d690e4d4daed255f944",
+  "Parent": [
+    {
+      "Branch": "71fabcb7-objid-stable-object-ids",
+      "Id": "71fabcb730574039e22becaaf33d9e8ca204aabcecc9d6fc280a3c4452a6e16a",
+      "objid": "0003"
+    }
+  ],
+  "Scope": {
+    "branch": "11038f9a-permalink-renders-focus",
+    "git_url": "https://github.com/jovlinger/utils.git",
+    "objid": "0000"
+  },
+  "State": {
+    "done": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "permalink renders the focused todo view; unify all client nav on objid"
+  },
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "refactor(todo): key all client-side viewer nav on objid\n\nThe page used three key spaces: data-idx (a POSITION) for work items over a\nposition-indexed DATA.workitems array, and the child TODO ID for both\ndata-st and data-parent over two id-keyed maps. All three collapse to one\ndata-obj=<objid> attribute over a single DATA.objects map. Position-keyed\nclient state is the same fragility as position-keyed URLs, which is the whole\nreason objids exist.\n\nCross-highlighting is resolved to objids SERVER-side: each entry carries a\n'hi' list of the objids to mark when it is selected (a work item names the\nsubtodo row it references, a subtodo names the work items referencing it).\nNo browser code matches on a child todo id or a list index any more; the three\nclick handlers become one select(objid).\n\n_anchor becomes _box_attrs, emitting id= (scroll target) and data-obj\n(selection key) together. Behavior is unchanged -- this is the re-key only;\nserving the focused view at the path comes next.\n\nTests: PermalinkAnchorTests.test_client_model_is_objid_only asserts the stale\nkeys are GONE (not merely unused) and that DATA is {id, objects} with hex\nkeys; the existing subtodo-reference test now asserts the cross-link in objid\nterms and that the child todo id does not appear in the work item's entry at\nall. Full suite green (446); pylint 10.00/10.",
+      "objid": "000b",
+      "sha": "c30f389325caacc2ee157619791d70cb11181bf6",
+      "summary": "[MIDCAP] Re-key the client model to objid: data-obj on work-item/subtodo/parent boxes, a single DATA.objects map keyed by objid replacing the idx-indexed DATA.workitems array and the two todo-id-keyed maps, click handlers looking up by objid. Behavior identical; no client code reads a list index. Tests assert no data-idx remains and selection still works."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): make non-box sections permalink targets\n\nA permalink can resolve to an object that has no clickable box -- Summary,\nBody, Scope, a Tag element. Those now carry addressing attributes so the link\nhas something to scroll to and mark.\n\nSections are ADDRESSABLE but not SELECTABLE, which is why this is data-objs\nrather than data-obj: there is nothing to open in the fold. It is a\nspace-separated list (CSS ~= matches it) because one row can display several\nstamped objects -- the Tag field renders every element together and a DOM id\ncan only name one of them.\n\n_objids_within walks a field value for the objids it contains; _section_attrs\nemits id= for the first plus data-objs for all. Gated on interactive, same as\nboxes, so a static rendition in the fold never emits another id scope's ids.\n_meta_html wraps each field in a .meta-row div to hang the attributes on and\nnow takes the interactive flag.\n\nTests: PermalinkAnchorTests.test_non_box_sections_are_addressable -- Summary,\nBody and Scope carry their objid as an id, and the Tag row lists both element\nobjids in data-objs.",
+      "objid": "000c",
+      "sha": "dc85f3b3ffdc79023383826e449b0a5fd14667d5",
+      "summary": "[MIDCAP] Section anchors: carry each stamped section's objid (Summary, Body, Fields rows) into the rendered HTML so a non-box permalink target is reachable and markable."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): render_todo_page opens focused on a permalink's object\n\nrender_todo_page(root, todo, focus_objid=...) embeds the resolved objid as\nFOCUS, and the page opens with that object already selected: for a box, the\nexact state a click produces (.active, its message and diff in the fold); for\nan addressable section, a .focus marker. Either way scrollIntoView, because\nthe work-items row scrolls horizontally and a later item is off-screen until\nwe scroll it -- 'SCROLLED to the item' is the requirement, not just 'the right\npage'.\n\nAn objid that is not on the page is ignored and the todo renders normally, so\na stale or cross-scope link degrades to 'the right todo' rather than an error.\n\nThe fragment-era ':target' CSS becomes an explicit .focus class, which also\ncovers sections (marked, not selected -- they have nothing to put in the fold).\n\nTests: RenderFocusTest in test_todo_web_permalink.py -- the focus objid is\nembedded and its box exists, a section objid is embedded and its data-objs\ntarget exists, and the default render is unfocused. The focusing itself is\nbrowser JS, so what is pinned here is the server's half of the contract; the\ntest docstring says so rather than implying the JS ran.",
+      "objid": "000d",
+      "sha": "f92d2c302f74b931ae6759fdbbdfcc47509941ac",
+      "summary": "[MIDCAP] Server-side focus: render_todo_page(root, todo, focus_objid=...) sets the initial selection -- .active on the box, its message+diff in the fold, scrollIntoView on load; a section target scrolls and marks the section. Tests via --dump-html."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): serve the focused todo view at the permalink path\n\nReplaces the 302. GET /<todoid>/<path...> now returns 200 with the whole todo\nrendered and focused on the object the path resolves to. The path IS the\nresource -- 'todo d56d, focused on objid 23' -- so a permalink that bounced\nyou to a different URL was never the durable name it claimed to be, and left\nthe address bar disagreeing with the link you were handed.\n\nDeleted: permalink_target, the #obj-<objid> redirect target, todo_url's\nnearest_objid, and the now-unused quote import.\n\nAdded resolve_focus(root, todo, segments) and todo_url.objid_chain, which\nreturns the enclosing objids innermost-first. Resolving to something the page\ncannot DRAW is not an error: WorkItems.2.execution is stamped but never\nrendered on its own, so the chain is walked outward to the work item that\ncontains it. A path with nothing focusable above it (the State subtree) renders\nthe todo unfocused rather than 404 -- the link still means 'this todo'.\n_focusable_objids is the set the walk stops at: every box, plus every\naddressable section.\n\nAn unresolvable path is still 404, and /favicon.ico and friends keep theirs.\n\nTests: test_todo_web_permalink.py rewritten off Location headers onto rendered\ncontent -- ResolveFocusTest (9 cases incl. the walk-out from an undrawn\nexecution block, reachable now that the fixture carries one) and\nPermalinkRouteTest asserting 200 + FOCUS + the whole todo in the body, the\nunfocusable path rendering anyway, both 404s, ?id= still rendering, and\n/search untouched. Full suite green (454); pylint 10.00/10.",
+      "objid": "000e",
+      "sha": "641203155767cf942325a016a8503b67fd7d90b6",
+      "summary": "[MIDCAP] Serve the focused view at the path: /<todoid>/<path...> returns 200 rendering the whole todo focused at the resolved objid. Delete _permalink's 302, permalink_target, the #obj- fragment and the :target CSS. Keep ?id= working and non-selector paths 404. Rewrite test_todo_web_permalink.py to assert 200 + focused content instead of Location headers."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): path-form links throughout the viewer\n\nSubtodo boxes, parent boxes, work-item subtodo references and search-result\nrows all emit /<todoid> instead of /?id=<Id>, and the URL the server prints on\nstartup is path form too. ?id= still renders the same page, so links already\npasted into todo bodies, commit messages and chat keep working -- no flag day.\n\nOne shape to read in the address bar, and it is the same shape a permalink\nuses.\n\nTests: test_subtodo_link_is_path_form asserts the child link and that no\n/?id= remains anywhere in a rendered page; the existing parent-link assertion\nin test_todo.py moves to path form. test_query_form_still_renders (added with\nthe previous item) pins the back-compat side.",
+      "objid": "000f",
+      "sha": "a431578d9435361756fc2f1db74bcad8bd78079c",
+      "summary": "[MIDCAP] Path-form internal links: subtodo boxes, parent boxes and search-result rows emit /<todoid> instead of /?id=<Id>; ?id= still resolves for already-pasted links."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "feat(todo): path-form links throughout the viewer\n\nSubtodo boxes, parent boxes, work-item subtodo references and search-result\nrows all emit /<todoid> instead of /?id=<Id>, and the URL the server prints on\nstartup is path form too. ?id= still renders the same page, so links already\npasted into todo bodies, commit messages and chat keep working -- no flag day.\n\nOne shape to read in the address bar, and it is the same shape a permalink\nuses.\n\nTests: test_subtodo_link_is_path_form asserts the child link and that no\n/?id= remains anywhere in a rendered page; the existing parent-link assertion\nin test_todo.py moves to path form. test_query_form_still_renders (added with\nthe previous item) pins the back-compat side.",
+      "objid": "0010",
+      "sha": "a431578d9435361756fc2f1db74bcad8bd78079c",
+      "summary": "[MIDCAP] replaceState on click: selecting a box rewrites the address bar to /<todoid>/objid/<objid> without adding history entries."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "docs(todo): permalinks render in place, focused\n\nRewrites the SKILL.md Permalinks section for the render-in-place model. The\nviewer serves /<todoid>/<path...> as 200 -- the whole todo, scrolled to and\nfocused on the object the path resolves to, in the state clicking that box\nproduces. No redirect: the path IS the resource. /<todoid> is the canonical\npage URL and every internal link emits it; ?id= still works.\n\nAdds a table of how a link DEGRADES, which is the part worth writing down:\na scalar focuses its enclosing box, an object the viewer does not draw focuses\nthe nearest one it does, a section is scrolled to and marked, the State subtree\nrenders unfocused, and only an unresolvable path is a 404.\n\nAlso documents that clicking rewrites the address bar (replaceState) so what\nis on screen is already copyable, that all client-side selection is objid-keyed,\nand why resolution must be server-side (prefix matching needs the record; a\nfragment never reaches the server).\n\nThe web subcommand's doc_long gains the permalink route and the address-bar\nbehavior.\n\nSKILL.md's one non-ASCII character (line 554) predates this branch and is\noutside the edited sections; everything authored here is 7-bit clean.",
+      "objid": "0011",
+      "sha": "c64f4e28111b4f8f8c81d525b3883bce3e51ca47",
+      "summary": "[LOCAP] SKILL.md: rewrite the Permalinks section for the render-in-place model (no redirect, server resolves and focuses), and note that all client-side nav is objid-keyed."
+    }
+  ],
+  "_nextobjid": 18,
+  "create_dt": "2026-08-07T16:30:17Z",
+  "update_dt": "2026-08-07T17:00:22Z"
+}
