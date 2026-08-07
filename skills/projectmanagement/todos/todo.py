@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
 import todo_db
+import todo_objid
 import todo_store
 import todo_embed
+import todo_url
 import todo_web
 
 JsonDict = Dict[str, Any]
@@ -710,6 +712,10 @@ def write_todo_worktree(
     that flag means the edit is being treated as semantically trivial.
     """
     normalize_todo_schema(todo)
+    # Every persisted record carries objids: stamping at the single write choke
+    # point means no command has to remember to do it, and a permalink minted
+    # against any object stays valid because existing ids are never rewritten.
+    todo_objid.stamp_objids(todo)
     todo["update_dt"] = utc_now()
     branch = str(todo.get("Branch") or current_branch(root) or "")
     if not branch:
@@ -2327,6 +2333,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "create_dt",
         "update_dt",
         "_schema",  # stamped by todo_db.migrate_record on a migrate-to-latest sweep
+        "_nextobjid",  # objid allocation cursor; see todo_objid
     }
 )
 REQUIRED_TOP_LEVEL_FIELDS = frozenset({"Branch", "Id", "State", "Summary"})
@@ -2427,6 +2434,47 @@ def unmerged_subtodos(todo: JsonDict) -> List[str]:
     return labels
 
 
+def objid_findings(todo: JsonDict) -> List[str]:
+    """Return hard findings about objids: the permalink handles must hold.
+
+    A permalink names an object by objid, so a missing, malformed, or reused id
+    is a broken link, not cosmetic drift. ``_nextobjid`` must also stay ahead of
+    every id in the record, or the next allocation would hand out one that is
+    already in use and silently move an existing permalink onto a new object.
+
+    None of this should ever fire in normal operation -- the write choke point
+    stamps every record and doctor's own schema sweep backfills legacy ones --
+    so a finding here means something wrote the store outside todo.py.
+    """
+    findings: List[str] = []
+    highest = -1
+    by_objid: Dict[str, str] = {}
+    for path, obj in todo_objid.iter_objects(todo):
+        value = obj.get(todo_objid.OBJID_KEY)
+        if value is None:
+            findings.append(f"{path} has no objid")
+            continue
+        if not todo_objid.is_objid(value):
+            findings.append(f"{path}.objid {value!r} is not 4+ lowercase hex")
+            continue
+        if value in by_objid:
+            findings.append(f"{path}.objid {value} duplicates {by_objid[value]}")
+            continue
+        by_objid[value] = path
+        highest = max(highest, int(value, 16))
+    if highest < 0:
+        return findings
+    cursor = todo.get(todo_objid.NEXT_OBJID_KEY)
+    if not isinstance(cursor, int) or isinstance(cursor, bool):
+        findings.append(f"{todo_objid.NEXT_OBJID_KEY} must be an integer")
+    elif cursor <= highest:
+        findings.append(
+            f"{todo_objid.NEXT_OBJID_KEY} {cursor} is not past the highest "
+            f"objid {todo_objid.format_objid(highest)}"
+        )
+    return findings
+
+
 def doctor_findings(root: Path, selector: str) -> List[str]:
     """Return hard doctor findings for the selected todo (shape invariants)."""
     _, todo = resolve_ticket_by_id(root, selector)
@@ -2479,6 +2527,7 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
             )
     findings.extend(workitem_findings(todo))
     findings.extend(tag_findings(todo))
+    findings.extend(objid_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     return findings
 
@@ -2835,6 +2884,46 @@ class GetJsonPathCommand(TodoSubCommand):
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         print_json_value(get_at_path(todo, self.jsonpath))
+        return 0
+
+
+class ResolveUrlCommand(TodoSubCommand):
+    command_names = ("resolveurl",)
+    doc_short: ClassVar[str] = "Print the value a permalink addresses"
+    doc_long: ClassVar[str] = (
+        "Resolveurl dereferences a permalink -- /<todoid>/<path...> -- and prints the value it "
+        "addresses, exactly as get-json-path would for the equivalent dot-path. It takes no "
+        "selector: the todo is the first path segment. A full URL or a bare path both work, so a "
+        "link pasted out of a browser resolves as-is. The first segment is any 4+ hex Id prefix; "
+        "after it, a segment names a field case-insensitively (a list field ending in 's' also "
+        "answers to the name minus that 's'), and a segment in front of a list is a where-clause "
+        "whose default key is idx -- so a bare segment is always a 0-based index. The keys sha, "
+        "subtodo_id and objid match on a 4+ character prefix. /<todoid>/objid/<prefix> addresses "
+        "any object in the todo without naming its collection, and is the form to emit as a "
+        "permalink: it survives edits to the work plan, which an index does not."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register resolveurl arguments."""
+        parser.add_argument(
+            "url",
+            help="permalink: full URL or path, e.g. /8f3a2c1d/workitem/objid/0a3f",
+        )
+
+    def do(self) -> int:
+        """Print the value the permalink addresses."""
+        root = self.root()
+        try:
+            selector, segments = todo_url.split_url_path(self.url)
+        except todo_url.TodoUrlError as exc:
+            raise TodoError(str(exc)) from exc
+        _, todo = resolve_ticket_by_id(root, selector)
+        try:
+            json_path = todo_url.to_json_path(todo, segments)
+        except todo_url.TodoUrlError as exc:
+            raise TodoError(f"{exc} (in todo {str(todo.get('Id', ''))[:8]})") from exc
+        print_json_value(todo_url.value_at(todo, json_path))
         return 0
 
 
@@ -4609,10 +4698,13 @@ class WebCommand(TodoSubCommand):
         "Body, work items (horizontal boxes) and subtodos (horizontal boxes). Clicking a work "
         "item shows its full commit message and diff below the split and highlights any subtodo "
         "it references; clicking a subtodo highlights the work items that reference it and shows "
-        "a read-only rendition below the split. With a selector (a 4+ hex Id prefix) "
-        "the printed URL opens straight onto that todo; without one the page is a vector search "
-        "(the same ranking as 'todo search') over every todo, showing update-time and State "
-        "columns, with an empty query listing all."
+        "a read-only rendition below the split. Clicking anything rewrites the address bar to "
+        "that item's permalink, so what is on screen is always copyable. With a selector (a 4+ "
+        "hex Id prefix) the printed URL opens straight onto that todo; without one the page is a "
+        "vector search (the same ranking as 'todo search') over every todo, showing update-time "
+        "and State columns, with an empty query listing all. It also serves permalinks: "
+        "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
+        "(see 'resolveurl' for the grammar)."
     )
 
     @classmethod
@@ -5225,6 +5317,7 @@ COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
     ReadCommand,
     GetJsonPathCommand,
     GetCommand,
+    ResolveUrlCommand,
     InitCommand,
     EnsureWorktreeCommand,
     AddSubtodoCommand,

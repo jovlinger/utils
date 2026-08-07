@@ -12,10 +12,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
+import todo_objid
+
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 8
+SCHEMA_VERSION: int = 9
 _RESOLVED_TODO_DIR: Optional[Path] = None
 
 
@@ -104,6 +106,18 @@ def migrate_record_v8(todo: JsonDict) -> JsonDict:
     return todo
 
 
+def migrate_record_v9(todo: JsonDict) -> JsonDict:
+    """Stamp an objid onto every nested object, plus the ``_nextobjid`` cursor.
+
+    Backfills the permalink handles for records written before objids existed
+    (see ``todo_objid``). Ordinary writes stamp at the write choke point, so
+    this only has to catch what is already in the store; it is idempotent, so a
+    record that has been swept re-sweeps to itself and reports no change.
+    """
+    todo_objid.stamp_objids(todo)
+    return todo
+
+
 # Record transform keyed by the SCHEMA_VERSION it produces. A version whose
 # change was table-only (see `migrate()`) registers no entry here -- a no-op
 # on the record axis. Keep this in ascending-version order for readability;
@@ -112,6 +126,7 @@ RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
     6: migrate_record_v6,
     7: migrate_record_v7,
     8: migrate_record_v8,
+    9: migrate_record_v9,
 }
 
 

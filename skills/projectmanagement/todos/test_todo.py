@@ -30,6 +30,7 @@ HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
+import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
@@ -528,6 +529,9 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(first["summary"], "first item")
         self.assertTrue(first["done"])
         self.assertRegex(first["sha"], r"\A[0-9a-f]{40}\Z")
+        # Every stored object also carries an objid (see todo_objid); the rest
+        # of the item must still be exactly the not-done task shape.
+        self.assertRegex(second.pop("objid"), r"\A[0-9a-f]{4,}\Z")
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
@@ -1492,9 +1496,17 @@ class WebViewerTests(TodoCase):
         out = proc.stdout
         self.assertIn("Parent viewer", out)
         self.assertIn("child viewer", out)  # subtodo box + embedded read-only repr
-        # The subtodo box carries the full id; the start_subtodo work item references it.
-        self.assertIn(f'data-st="{child_id}"', out)
-        self.assertIn(f'data-subtodo="{child_id}"', out)
+        # Boxes are keyed by objid, and the start_subtodo work item's reference to
+        # the subtodo is resolved to objids server-side (no child todo id in the
+        # client model at all).
+        st_objid = parent["Subtodos"][0]["objid"]
+        wi_objid = parent["WorkItems"][0]["objid"]
+        self.assertIn(f'data-obj="{st_objid}"', out)
+        self.assertIn(f'data-obj="{wi_objid}"', out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual([st_objid], data["objects"][wi_objid]["hi"])
+        self.assertEqual([wi_objid], data["objects"][st_objid]["hi"])
+        self.assertNotIn(child_id, json.dumps(data["objects"][wi_objid]))
 
     def test_web_dump_html_no_selector_shows_search_page(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -1522,7 +1534,7 @@ class WebViewerTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertIn("<h2>Parent</h2>", out)
-        self.assertIn(f'href="/?id={parent_id}"', out)  # parent link navigates to the parent todo
+        self.assertIn(f'href="/{parent_id}"', out)  # parent link navigates to the parent todo
 
     def test_web_worktree_todo_collapses_to_repo(self) -> None:
         # A shared origin gives main checkout and worktree the same repo identity,
@@ -1652,7 +1664,11 @@ class SetJsonPathTests(TodoCase):
         plan = [{"kind": "task", "summary": "a", "done": False}]
         proc = self._stdin(["set-json-path", self.tid, "WorkItems"], json.dumps(plan))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_cur()["WorkItems"], plan)
+        # The write stamps an objid onto the seeded item (see todo_objid);
+        # everything else must round-trip untouched.
+        stored = self.read_cur()["WorkItems"]
+        self.assertRegex(stored[0].pop("objid"), r"\A[0-9a-f]{4,}\Z")
+        self.assertEqual(stored, plan)
 
     def test_set_json_path_from_file(self) -> None:
         tid = self.mint()
@@ -2553,6 +2569,385 @@ class StateFilterTests(TodoCase):
         self.assertNotIn(ready[:8], out)
         # -s still reveals everything regardless of the config default.
         self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
+
+
+class ObjidWiringTests(TodoCase):
+    """Every persisted record carries objids, stamped at the write choke point."""
+
+    @staticmethod
+    def _objids(node: Any) -> list:
+        """Every objid in *node*, depth-first in walk order."""
+        found: list = []
+        if isinstance(node, dict):
+            if isinstance(node.get("objid"), str):
+                found.append(node["objid"])
+            for value in node.values():
+                found.extend(ObjidWiringTests._objids(value))
+        elif isinstance(node, list):
+            for value in node:
+                found.extend(ObjidWiringTests._objids(value))
+        return found
+
+    def test_mint_stamps_objids(self) -> None:
+        self.tid = self.todo("mint").stdout.strip()
+        todo_json = self.read_cur()
+        self.assertRegex(todo_json["Summary"]["objid"], r"\A[0-9a-f]{4,}\Z")
+        self.assertIsInstance(todo_json["_nextobjid"], int)
+
+    def test_init_stamps_objids(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        for field in ("Summary", "Scope"):
+            with self.subTest(field=field):
+                self.assertRegex(todo_json[field]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_state_and_root_carry_no_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        self.assertNotIn("objid", todo_json)
+        self.assertNotIn("objid", todo_json["State"])
+        self.assertNotIn("objid", next(iter(todo_json["State"].values())))
+
+    def test_objids_are_unique_within_a_todo(self) -> None:
+        self.init_ok("--summary=hello", "--body=world", "--ac=criteria")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        self.todo("work-item-add", self.tid, "--summary=two")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        ids = self._objids(self.read_cur())
+        self.assertGreater(len(ids), 4)
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_objids_survive_an_unrelated_edit(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        before = self.read_cur()
+        self.todo("set", self.tid, "--ac=fresh criteria")
+        after = self.read_cur()
+        self.assertEqual(before["Summary"]["objid"], after["Summary"]["objid"])
+        self.assertEqual(
+            before["WorkItems"][0]["objid"], after["WorkItems"][0]["objid"]
+        )
+
+    def test_new_work_item_gets_a_fresh_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        first = self.read_cur()["WorkItems"][0]["objid"]
+        self.todo("work-item-add", self.tid, "--summary=two")
+        items = self.read_cur()["WorkItems"]
+        self.assertEqual(first, items[0]["objid"])
+        self.assertNotEqual(first, items[1]["objid"])
+
+    def test_nextobjid_stays_ahead_of_every_id(self) -> None:
+        self.init_ok("--summary=hello", "--body=world")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        todo_json = self.read_cur()
+        highest = max(int(objid, 16) for objid in self._objids(todo_json))
+        self.assertGreater(todo_json["_nextobjid"], highest)
+
+    def test_subtodo_is_a_separate_id_scope(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn a child")
+        proc = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_id = json.loads(proc.stdout)["Id"]
+        child = json.loads(self.todo("read", child_id).stdout)
+        # The child counts from scratch rather than continuing the parent's
+        # sequence: its own ids start at 0000 and its cursor is back near zero.
+        self.assertEqual("0000", min(self._objids(child)))
+        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
+        parent = json.loads(self.todo("read", parent_id).stdout)
+        self.assertEqual("0000", min(self._objids(parent)))
+
+    def test_doctor_accepts_nextobjid(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("doctor", self.tid)
+        self.assertNotIn("_nextobjid", proc.stdout)
+        self.assertNotIn("unknown top-level fields", proc.stdout)
+
+
+class ResolveUrlTests(TodoCase):
+    """resolveurl dereferences a permalink to the value it addresses."""
+
+    def _seed(self) -> Dict[str, Any]:
+        """A todo with two work items and a tag; returns the stored record."""
+        self.init_ok("--summary=routing", "--body=a body")
+        self.todo("work-item-add", self.tid, "--summary=first")
+        self.todo("work-item-add", self.tid, "--summary=second")
+        self.todo("tag-add", self.tid, "alpha")
+        return self.read_cur()
+
+    def _resolve(self, url: str) -> subprocess.CompletedProcess[str]:
+        return self.todo("resolveurl", url)
+
+    def test_field_path(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/summary/raw")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("routing", proc.stdout.strip())
+
+    def test_bare_index_is_zero_based(self) -> None:
+        self._seed()
+        self.assertEqual(
+            "first", self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout.strip()
+        )
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        )
+
+    def test_matches_get_json_path(self) -> None:
+        self._seed()
+        expected = self.todo("get-json-path", self.tid, "WorkItems.1.summary").stdout
+        self.assertEqual(expected, self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout)
+
+    def test_full_url_with_host_and_port(self) -> None:
+        self._seed()
+        url = f"http://localhost:8765/{self.tid[:8]}/workitem/1/summary"
+        self.assertEqual("second", self._resolve(url).stdout.strip())
+
+    def test_objid_addresses_an_object_with_no_collection(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        out = self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout
+        self.assertEqual(record["WorkItems"][1], json.loads(out))
+
+    def test_objid_survives_an_insert_that_moves_the_index(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        # The insert lands at the cursor (index 0), shifting everything down:
+        # "second" moves from index 1 to 2. The objid link still finds it; the
+        # index link silently means a different work item now.
+        self.todo("work-item-insert", self.tid, "--summary=squeezed in")
+        by_objid = json.loads(self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout)
+        self.assertEqual("second", by_objid["summary"])
+        by_index = self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        self.assertEqual("first", by_index)
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/2/summary").stdout.strip()
+        )
+
+    def test_drop_the_s_alias_and_plural_agree(self) -> None:
+        self._seed()
+        singular = self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout
+        plural = self._resolve(f"/{self.tid[:8]}/workitems/0/summary").stdout
+        self.assertEqual(singular, plural)
+
+    def test_tag_resolves_to_the_tag_field(self) -> None:
+        self._seed()
+        self.assertEqual("alpha", self._resolve(f"/{self.tid[:8]}/tag/0/raw").stdout.strip())
+
+    def test_out_of_bounds_index_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/workitem/883368/summary")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("out of bounds", proc.stderr)
+
+    def test_unknown_field_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/nope")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown field", proc.stderr)
+
+    def test_unknown_todo_errors(self) -> None:
+        self._seed()
+        proc = self._resolve("/ffffffff/summary/raw")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual("", proc.stdout)
+
+    def test_todoid_only_prints_the_record(self) -> None:
+        record = self._seed()
+        self.assertEqual(record, json.loads(self._resolve(f"/{self.tid[:8]}").stdout))
+
+
+class PermalinkAnchorTests(TodoCase):
+    """The rendered page carries the obj-<objid> anchors permalinks land on."""
+
+    def test_work_item_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        objid = self.read_cur()["WorkItems"][0]["objid"]
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_subtodo_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        add = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        record = json.loads(self.todo("read", parent_id).stdout)
+        objid = record["Subtodos"][0]["objid"]
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_client_model_is_objid_only(self) -> None:
+        # AC: no client code reads a list index or a child todo id. The old key
+        # spaces (data-idx, data-st, data-parent, DATA.workitems-by-position)
+        # must be gone, not merely unused.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        self.todo("work-item-add", self.tid, "--summary=spawn")
+        self.todo("add-subtodo", self.tid, "--summary=child")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for stale in ('data-idx', 'data-st=', 'data-parent=',
+                      'DATA.workitems', 'DATA.subtodos', 'DATA.parents'):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual({"id", "objects"}, set(data))
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{4,}", k) for k in data["objects"]))
+
+    def test_non_box_sections_are_addressable(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored", "--body=a body")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        record = self.read_cur()
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for field in ("Summary", "Body", "Scope"):
+            with self.subTest(field=field):
+                self.assertIn(f'id="obj-{record[field]["objid"]}"', out)
+        # Tag renders every element in one row, and a DOM id can only name one,
+        # so the row lists them all in data-objs (matched with CSS ~=).
+        tag_objids = [element["objid"] for element in record["Tag"]]
+        self.assertIn(f'data-objs="{" ".join(tag_objids)}"', out)
+
+    def test_static_renditions_carry_no_anchor(self) -> None:
+        # A child's objids come from its own id scope and would collide with
+        # this page's, so only interactive boxes are anchored.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        self.todo("add-subtodo", parent_id, "--summary=child")
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        anchors = re.findall(r'id="obj-([0-9a-f]{4,})"', out)
+        self.assertEqual(len(anchors), len(set(anchors)), anchors)
+
+
+class ObjidDoctorTests(TodoCase):
+    """doctor hard-fails a record whose objids were broken outside todo.py."""
+
+    def _corrupt(self, mutate) -> None:
+        """Rewrite self.tid's stored JSON through *mutate*, bypassing todo.py.
+
+        Only a writer that goes around the CLI can produce these shapes -- the
+        write choke point re-stamps anything malformed -- so the corruption has
+        to be applied straight to sqlite.
+        """
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            mutate(record)
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?",
+                (json.dumps(record), self.tid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _findings_after(self, mutate) -> list:
+        """Corrupt the record, run doctor, and return its hard findings.
+
+        doctor repairs before it audits: its opportunistic schema sweep would
+        re-stamp the corruption away on a store that has never been swept. So
+        sweep first (one doctor run, which also stamps _schema onto the
+        record), and only then corrupt -- that is the state a real store is in.
+        """
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        swept = self.todo("doctor", self.tid)
+        self.assertEqual(swept.returncode, 0, swept.stdout)
+        self._corrupt(mutate)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        return json.loads(proc.stdout)["findings"]
+
+    def test_missing_objid_is_a_finding(self) -> None:
+        findings = self._findings_after(
+            lambda rec: rec["WorkItems"][0].pop("objid")
+        )
+        self.assertTrue(
+            any("WorkItems.0 has no objid" in f for f in findings), findings
+        )
+
+    def test_duplicate_objid_is_a_finding(self) -> None:
+        def mutate(rec: Dict[str, Any]) -> None:
+            rec["WorkItems"][0]["objid"] = rec["Summary"]["objid"]
+
+        findings = self._findings_after(mutate)
+        self.assertTrue(any("duplicates" in f for f in findings), findings)
+
+    def test_stale_nextobjid_is_a_finding(self) -> None:
+        findings = self._findings_after(lambda rec: rec.update({"_nextobjid": 0}))
+        self.assertTrue(
+            any("_nextobjid 0 is not past" in f for f in findings), findings
+        )
+
+
+class ObjidFindingUnitTests(unittest.TestCase):
+    """objid_findings reports exactly the broken-permalink shapes."""
+
+    @staticmethod
+    def _record(**extra: Any) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-x",
+            "State": {"groom": {}},
+        }
+        record.update(extra)
+        return record
+
+    def test_clean_record_has_no_findings(self) -> None:
+        record = self._record(Summary={"raw": "s"}, WorkItems=[{"summary": "one"}])
+        todo_objid.stamp_objids(record)
+        self.assertEqual([], todo.objid_findings(record))
+
+    def test_record_without_objects_has_no_findings(self) -> None:
+        self.assertEqual([], todo.objid_findings(self._record()))
+
+    def test_missing_objid(self) -> None:
+        record = self._record(Summary={"raw": "s"}, _nextobjid=1)
+        self.assertEqual(["Summary has no objid"], todo.objid_findings(record))
+
+    def test_malformed_objid(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "00FF"}, _nextobjid=1)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("is not 4+ lowercase hex", findings[0])
+
+    def test_duplicate_objid_names_the_first_holder(self) -> None:
+        record = self._record(
+            Summary={"raw": "s", "objid": "0001"},
+            WorkItems=[{"summary": "one", "objid": "0001"}],
+            _nextobjid=2,
+        )
+        self.assertEqual(
+            ["WorkItems.0.objid 0001 duplicates Summary"],
+            todo.objid_findings(record),
+        )
+
+    def test_nextobjid_must_be_past_the_highest_id(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0005"}, _nextobjid=5)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("_nextobjid 5 is not past the highest objid 0005", findings[0])
+
+    def test_nextobjid_must_be_an_integer(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid="1")
+        self.assertEqual(
+            ["_nextobjid must be an integer"], todo.objid_findings(record)
+        )
+
+    def test_state_is_never_reported(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid=1)
+        self.assertEqual([], todo.objid_findings(record))
 
 
 if __name__ == "__main__":
