@@ -421,6 +421,9 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
 _EMBED_FIELDS: tuple[tuple[str, str], ...] = (
     ("Summary", "Summary.raw"),
     ("Body", "Body.raw"),
+    # LongSummary is written to BE embedded (see SKILL.md): Body is often too
+    # long to embed well, so the summary vector is the one worth matching on.
+    ("LongSummary", "LongSummary.raw"),
 )
 
 # Largest n-phrase window (unigram..trigram) used to mine tag candidates from

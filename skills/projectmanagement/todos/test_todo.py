@@ -1072,6 +1072,46 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn((tid, "Summary.raw", BOW), self._emb_rows())
 
+    def test_long_summary_is_embedded_and_searchable(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="beta",
+            extra={"LongSummary": {"raw": "quokka marsupial nocturnal"}},
+        )
+        proc = self.todo("search", "quokka marsupial", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+
+    def test_editing_body_leaves_long_summary_vectors_alone(self) -> None:
+        # The no-coupling AC: Body and LongSummary are independent, so a Body
+        # edit must not invalidate the summary vector.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+        self.assertIn((tid, "Body.raw", BOW), self._emb_rows())
+        self.todo("set", tid, "--body=completely different body")
+        rows = self._emb_rows()
+        self.assertIn((tid, "LongSummary.raw", BOW), rows)  # survives
+        self.assertNotIn((tid, "Body.raw", BOW), rows)  # its own is cleared
+
+    def test_editing_long_summary_clears_only_its_own_vectors(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.todo("set", tid, "--long-summary=wombat burrow")
+        rows = self._emb_rows()
+        self.assertNotIn((tid, "LongSummary.raw", BOW), rows)
+        self.assertIn((tid, "Body.raw", BOW), rows)
+        self.assertIn((tid, "Summary.raw", BOW), rows)
+
     def test_raw_change_clears_stale_expensive_vector(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="first summary text")
