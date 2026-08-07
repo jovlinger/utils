@@ -528,6 +528,9 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(first["summary"], "first item")
         self.assertTrue(first["done"])
         self.assertRegex(first["sha"], r"\A[0-9a-f]{40}\Z")
+        # Every stored object also carries an objid (see todo_objid); the rest
+        # of the item must still be exactly the not-done task shape.
+        self.assertRegex(second.pop("objid"), r"\A[0-9a-f]{4,}\Z")
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
@@ -1652,7 +1655,11 @@ class SetJsonPathTests(TodoCase):
         plan = [{"kind": "task", "summary": "a", "done": False}]
         proc = self._stdin(["set-json-path", self.tid, "WorkItems"], json.dumps(plan))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_cur()["WorkItems"], plan)
+        # The write stamps an objid onto the seeded item (see todo_objid);
+        # everything else must round-trip untouched.
+        stored = self.read_cur()["WorkItems"]
+        self.assertRegex(stored[0].pop("objid"), r"\A[0-9a-f]{4,}\Z")
+        self.assertEqual(stored, plan)
 
     def test_set_json_path_from_file(self) -> None:
         tid = self.mint()
@@ -2553,6 +2560,102 @@ class StateFilterTests(TodoCase):
         self.assertNotIn(ready[:8], out)
         # -s still reveals everything regardless of the config default.
         self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
+
+
+class ObjidWiringTests(TodoCase):
+    """Every persisted record carries objids, stamped at the write choke point."""
+
+    @staticmethod
+    def _objids(node: Any) -> list:
+        """Every objid in *node*, depth-first in walk order."""
+        found: list = []
+        if isinstance(node, dict):
+            if isinstance(node.get("objid"), str):
+                found.append(node["objid"])
+            for value in node.values():
+                found.extend(ObjidWiringTests._objids(value))
+        elif isinstance(node, list):
+            for value in node:
+                found.extend(ObjidWiringTests._objids(value))
+        return found
+
+    def test_mint_stamps_objids(self) -> None:
+        self.tid = self.todo("mint").stdout.strip()
+        todo_json = self.read_cur()
+        self.assertRegex(todo_json["Summary"]["objid"], r"\A[0-9a-f]{4,}\Z")
+        self.assertIsInstance(todo_json["_nextobjid"], int)
+
+    def test_init_stamps_objids(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        for field in ("Summary", "Scope"):
+            with self.subTest(field=field):
+                self.assertRegex(todo_json[field]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_state_and_root_carry_no_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        self.assertNotIn("objid", todo_json)
+        self.assertNotIn("objid", todo_json["State"])
+        self.assertNotIn("objid", next(iter(todo_json["State"].values())))
+
+    def test_objids_are_unique_within_a_todo(self) -> None:
+        self.init_ok("--summary=hello", "--body=world", "--ac=criteria")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        self.todo("work-item-add", self.tid, "--summary=two")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        ids = self._objids(self.read_cur())
+        self.assertGreater(len(ids), 4)
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_objids_survive_an_unrelated_edit(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        before = self.read_cur()
+        self.todo("set", self.tid, "--ac=fresh criteria")
+        after = self.read_cur()
+        self.assertEqual(before["Summary"]["objid"], after["Summary"]["objid"])
+        self.assertEqual(
+            before["WorkItems"][0]["objid"], after["WorkItems"][0]["objid"]
+        )
+
+    def test_new_work_item_gets_a_fresh_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        first = self.read_cur()["WorkItems"][0]["objid"]
+        self.todo("work-item-add", self.tid, "--summary=two")
+        items = self.read_cur()["WorkItems"]
+        self.assertEqual(first, items[0]["objid"])
+        self.assertNotEqual(first, items[1]["objid"])
+
+    def test_nextobjid_stays_ahead_of_every_id(self) -> None:
+        self.init_ok("--summary=hello", "--body=world")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        todo_json = self.read_cur()
+        highest = max(int(objid, 16) for objid in self._objids(todo_json))
+        self.assertGreater(todo_json["_nextobjid"], highest)
+
+    def test_subtodo_is_a_separate_id_scope(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn a child")
+        proc = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_id = json.loads(proc.stdout)["Id"]
+        child = json.loads(self.todo("read", child_id).stdout)
+        # The child counts from scratch rather than continuing the parent's
+        # sequence: its own ids start at 0000 and its cursor is back near zero.
+        self.assertEqual("0000", min(self._objids(child)))
+        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
+        parent = json.loads(self.todo("read", parent_id).stdout)
+        self.assertEqual("0000", min(self._objids(parent)))
+
+    def test_doctor_accepts_nextobjid(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("doctor", self.tid)
+        self.assertNotIn("_nextobjid", proc.stdout)
+        self.assertNotIn("unknown top-level fields", proc.stdout)
 
 
 if __name__ == "__main__":

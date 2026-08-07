@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
 import todo_db
+import todo_objid
 import todo_store
 import todo_embed
 import todo_web
@@ -710,6 +711,10 @@ def write_todo_worktree(
     that flag means the edit is being treated as semantically trivial.
     """
     normalize_todo_schema(todo)
+    # Every persisted record carries objids: stamping at the single write choke
+    # point means no command has to remember to do it, and a permalink minted
+    # against any object stays valid because existing ids are never rewritten.
+    todo_objid.stamp_objids(todo)
     todo["update_dt"] = utc_now()
     branch = str(todo.get("Branch") or current_branch(root) or "")
     if not branch:
@@ -2327,6 +2332,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "create_dt",
         "update_dt",
         "_schema",  # stamped by todo_db.migrate_record on a migrate-to-latest sweep
+        "_nextobjid",  # objid allocation cursor; see todo_objid
     }
 )
 REQUIRED_TOP_LEVEL_FIELDS = frozenset({"Branch", "Id", "State", "Summary"})
