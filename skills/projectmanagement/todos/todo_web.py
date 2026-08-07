@@ -10,8 +10,11 @@ page (subtodo/parent) or the github commit (work item). A work-item box also
 highlights any subtodo it references, and a subtodo box highlights the work
 items that reference it.
 
-Opened with an ``?id=`` query the viewer shows that todo; opened bare it shows a
-search box over every discoverable todo (empty query lists them all). All
+Opened at ``/<todoid>`` the viewer shows that todo, and ``/<todoid>/<path...>``
+opens it focused on the object that permalink path resolves to (see todo_url).
+The older ``?id=`` query still works so links already pasted elsewhere keep
+resolving. Opened bare it shows a search box over every discoverable todo
+(empty query lists them all). All
 below-fold content is pre-computed and embedded in the page, so a dumped page is
 a complete self-contained artifact.
 """
@@ -325,7 +328,7 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         todo_html = ""
     elif interactive:
         todo_html = (
-            f'<a class="wi-sub mono idlink" href="/?id={html.escape(item["subtodo"])}">'
+            f'<a class="wi-sub mono idlink" href="/{html.escape(item["subtodo"])}">'
             f'todo:{html.escape(item["subtodo"][:8])}</a>'
         )
     else:
@@ -356,7 +359,7 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
     if interactive:
         attrs = ""
         id_html = (
-            f'<a class="st-id mono idlink" href="/?id={html.escape(sub["id"])}">'
+            f'<a class="st-id mono idlink" href="/{html.escape(sub["id"])}">'
             f'todo:{html.escape(sub["short"] or "?")}</a>'
         )
     else:
@@ -408,7 +411,7 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     if interactive:
         attrs = ""
         id_html = (
-            f'<a class="st-id mono idlink" href="/?id={html.escape(p["id"])}">'
+            f'<a class="st-id mono idlink" href="/{html.escape(p["id"])}">'
             f'todo:{html.escape(p["short"] or "?")}</a>'
         )
     else:
@@ -682,8 +685,19 @@ function select(objid){
   return true;
 }
 
+// Selecting rewrites the address bar to that item's permalink, so what is on
+// screen is always what you would share. replaceState, not pushState: Back
+// should leave the todo, not unwind every box you clicked on the way here.
+function remember(objid){
+  if (!window.history || !history.replaceState || !DATA.id) return;
+  history.replaceState(null, '', '/' + DATA.id + '/objid/' + objid);
+}
+
 document.querySelectorAll('#top [data-obj]').forEach(function(el){
-  el.addEventListener('click', function(){ select(el.getAttribute('data-obj')); });
+  el.addEventListener('click', function(){
+    var objid = el.getAttribute('data-obj');
+    if (select(objid)) remember(objid);
+  });
 });
 
 // Clicking the underlined id/sha is a plain hyperlink: let the browser open it
@@ -778,7 +792,7 @@ const results = document.getElementById('results');
 const q = document.getElementById('q');
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function row(t){
-  return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
+  return '<li><a href="/'+encodeURIComponent(t.id)+'">' +
          '<span class="mono">todo:'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+'</a> ' +
          '<span class="r-utime">'+esc(t.utime)+'</span> <span class="r-state">'+esc(t.state)+'</span></li>';
 }
@@ -950,7 +964,7 @@ def serve(
 
     server = ThreadingHTTPServer((host, port), Handler)
     base = f"http://{host}:{server.server_port}/"
-    url = f"{base}?id={initial_id}" if initial_id else base
+    url = f"{base}{initial_id}" if initial_id else base
     print(url, flush=True)
     try:
         server.serve_forever()

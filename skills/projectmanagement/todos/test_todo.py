@@ -1534,7 +1534,7 @@ class WebViewerTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertIn("<h2>Parent</h2>", out)
-        self.assertIn(f'href="/?id={parent_id}"', out)  # parent link navigates to the parent todo
+        self.assertIn(f'href="/{parent_id}"', out)  # parent link navigates to the parent todo
 
     def test_web_worktree_todo_collapses_to_repo(self) -> None:
         # A shared origin gives main checkout and worktree the same repo identity,

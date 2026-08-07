@@ -193,6 +193,19 @@ class PermalinkRouteTest(unittest.TestCase):
         self.assertEqual(200, resp.status)
         self.assertIn("routing and agent choice", resp.read().decode("utf-8"))
 
+    def test_click_rewrites_the_address_bar_to_a_permalink(self) -> None:
+        page = self._get("/557a").read().decode("utf-8")
+        self.assertIn("history.replaceState", page)
+        self.assertIn("'/' + DATA.id + '/objid/' + objid", page)
+        # The call, not the word -- the comment above it mentions pushState.
+        self.assertNotIn("history.pushState", page)
+
+    def test_subtodo_link_is_path_form(self) -> None:
+        page = self._get("/557a").read().decode("utf-8")
+        child = TODO["Subtodos"][0]["Id"]
+        self.assertIn(f'href="/{child}"', page)
+        self.assertNotIn("/?id=", page)
+
     def test_search_route_is_unchanged(self) -> None:
         self.assertEqual(200, self._get("/search?q=").status)
 
