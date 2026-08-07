@@ -1275,6 +1275,70 @@ defaulting a plain task to `work-item-done`). The tool emits only mechanism as
 structured data; policy -- when to split a task or spin off a subtodo -- stays
 in this skill's dispatch table, so the two do not drift.
 
+## Narrating todo work (chat output)
+
+Specializes the global response rules (`~/AGENTS.md`) for todo work. Namespace every id:
+`todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`, and a work item as
+`todo:d56d.WI[4]`.
+
+**While working: action lines, nothing else.** One short line per action, phrased as the
+action:
+
+```
+working todo:354d.WI[4] with subagent Sonnet 5
+merging child todo:dead into todo:beef
+harvest refresh: 3 banks, 0 decrypt failures
+```
+
+No preamble, no plan restatement, no reflection. It scrolls away -- spend nothing on it.
+
+**Durable notes go in the commit, not the chat.** A `CAVEAT`, `NUANCE`, `WARNING`, or
+`CALLOUT` discovered while working a work item belongs in that item's commit message
+(`work-item-done -m`), which is the durable record bound to `sha:`. Chat is ephemeral; the
+WorkItems trail is what a future agent reads. Mention it in chat only if the user must act
+on it now.
+
+**The verdict is the TODO's state, not the last thing you did.** When the prompt was "work
+todo:X", the question being answered is "is todo:X finished?" -- so a step that went well
+inside an unfinished todo is NOT a success. Grade the todo:
+
+| verdict | when |
+|---------|------|
+| `success` | the todo reached a FINAL success state: `done` or `merged` |
+| `mix` | progress, not finished: items remain, or state is `userneeded` / `stopped` |
+| `fail` | STUCK on a step -- a work item cannot be completed as written |
+
+Always give the count and the frontier: `N of M work items done, cursor at WI[i]`, plus what
+remains. Reporting `success` because the item you just did passed its tests is the specific
+error this table exists to prevent.
+
+**An untracked ask is a process bug: make it a WorkItem.** When the user adds a condition
+mid-run ("also push", "make sure X first"), do NOT carry it as a side condition you later
+explain around in prose. Append it as a work item -- `[TIER] Ensure <condition>` -- at the
+end of the list. Then it has exactly the same three outcomes as everything else: it
+completes, or it visibly blocks (impossible ask, misunderstood system interaction,
+mis-collected data), and the blocker lands in the record instead of in a paragraph. An ask
+that stays untracked forces the summary to carve out an exception, which is precisely how a
+`success` gets claimed over an unfinished todo.
+
+**Then the global SUMMARY shape, aimed at the MAIN todo.** Subtodos and work items are the
+MEANS; the deliverable is what changed for the parent. So:
+
+- `SUMMARY: <success|fail|mix> [one clause]` first, graded per the table above.
+- Then the effect of the todo AS A WHOLE: what actually changed, notable success or
+  difficulty, whether the design held up, recommended tweaks. This is the main verbiage.
+- Then bullets for INTERESTING work items only -- short. Skip the routine ones.
+- **Never report that a work item spawned a subtodo.** Spawning is bookkeeping. Mention a
+  subtodo only when its RESULT is notable ("generated 34 test cases"), and then report the
+  result, not the mechanism.
+- Point at the durable record (`todo:<id>`, `sha:<id>`) instead of repeating it. Detail can
+  always be dug up later from the commits.
+
+**Coming (`todo:71fa`, in the utils repo):** stable per-object `objid`s plus path-based
+permalinks into a todo record (`<base>/<todoid>/workitem/5/summary`). Once it lands, prefer
+emitting a permalink for anything worth highlighting or cross-linking, instead of quoting
+the content inline. Skill updates will follow.
+
 ## Minimal skeleton
 
 ```json
