@@ -485,6 +485,19 @@ Degrading is deliberate rather than fatal:
 | the State subtree, or `/<todoid>` alone | the page, unfocused |
 | nothing | 404 |
 
+**A large section arrives collapsed, and focus opens it.** A section whose
+content is oversized (a long `Body`, a `WorkItems` list past a handful of
+items, a long state `note`) renders shut, as a header carrying a size hint --
+`Body  88 lines`, `Work items  19 items` -- and an oversized box summary is
+height-clamped behind a `...more` expander. Small todos are untouched: under
+the thresholds nothing collapses and there is nothing extra to click.
+
+Collapsing never hides a permalink's own target. A section that CONTAINS the
+resolved object renders **open**, decided server-side, so every row of the
+table above still describes what you land on. The converse also holds: focus
+only ever opens. It does not close a section you expanded, does not touch
+sibling sections, and re-rendering the same permalink gives the same page.
+
 **Clicking rewrites the address bar** to `/<todoid>/objid/<objid>`
 (`replaceState`, so Back still leaves the todo). Whatever is on screen is
 already a copyable permalink -- you rarely need to build one by hand.

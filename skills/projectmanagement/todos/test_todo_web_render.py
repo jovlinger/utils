@@ -146,5 +146,161 @@ class BlockedWorkItemTest(unittest.TestCase):
         self.assertNotIn("stored copy", _fold_entry(page, "001d")["message"])
 
 
+BIG = "x" * (todo_web._COLLAPSE_CHARS + 1)
+
+
+def _top(page: str) -> str:
+    """Just the rendered representation -- not the stylesheet or the script,
+    which name every class the page can ever use."""
+    return page.split('<div id="top">', 1)[1].split('<div id="divider">', 1)[0]
+
+
+def _section_of(page: str, title: str) -> str:
+    """The rendered <section> for *title*, header included."""
+    marker = f"<h2>{title}</h2>"
+    start = page.rindex("<section", 0, page.index(marker))
+    return page[start : page.index("</section>", start)]
+
+
+class SectionCollapseTest(unittest.TestCase):
+    """An oversized section starts collapsed; a small one is untouched."""
+
+    def test_oversized_body_collapses_with_a_line_count(self) -> None:
+        body = ("a line of body text\n" * 200)
+        page = _page({**_todo({"working": {}}, []), "Body": {"raw": body, "objid": "0001"}})
+        section = _section_of(page, "Body")
+        self.assertIn("<details class=\"sec\">", section)
+        self.assertIn("200 lines", section)
+        self.assertNotIn(" open>", section)  # closed on arrival
+
+    def test_small_body_renders_exactly_as_before(self) -> None:
+        page = _page({**_todo({"working": {}}, []), "Body": {"raw": "two\nlines", "objid": "0001"}})
+        section = _section_of(page, "Body")
+        self.assertNotIn("<details", section)
+        self.assertNotIn("sec-hint", section)
+
+    def test_many_work_items_collapse_on_count_alone(self) -> None:
+        # Twenty one-word boxes wrap into as much screen as one long box, so
+        # the item count is its own trigger, independent of text length.
+        items = [
+            {"kind": "code", "summary": "short", "sha": "a" * 40, "done": True, "objid": f"01{i:02d}"}
+            for i in range(todo_web._COLLAPSE_ITEMS + 1)
+        ]
+        section = _section_of(_page(_todo({"working": {}}, items)), "Work items")
+        self.assertIn("<details", section)
+        self.assertIn(f"{len(items)} items", section)
+
+    def test_few_work_items_do_not_collapse(self) -> None:
+        items = [{"kind": "code", "summary": "short", "sha": "a" * 40, "done": True, "objid": "0101"}]
+        section = _section_of(_page(_todo({"working": {}}, items)), "Work items")
+        self.assertNotIn("<details", section)
+
+    def test_long_state_note_collapses(self) -> None:
+        section = _section_of(_page(_todo({"userneeded": {"note": BIG}}, [])), "State")
+        self.assertIn("<details", section)
+
+    def test_singular_hint_reads_as_one_item(self) -> None:
+        self.assertEqual("1 item", todo_web._size_hint(1, "items"))
+        self.assertEqual("2 items", todo_web._size_hint(2, "items"))
+
+    def test_static_fold_rendition_never_grows_toggles(self) -> None:
+        # The fold shows another todo read-only; it is not a page you navigate.
+        big = {**_todo({"working": {}}, []), "Body": {"raw": BIG, "objid": "0001"}}
+        self.assertNotIn("<details", todo_web._static_repr_html(Path("."), big, ""))
+
+
+class BoxClampTest(unittest.TestCase):
+    """An oversized box summary clamps; the expander does not open the fold."""
+
+    def _item(self, summary: str) -> Dict[str, Any]:
+        return {
+            "kind": "code",
+            "summary": summary,
+            "sha": "a" * 40,
+            "done": True,
+            "objid": "0101",
+        }
+
+    def test_paragraph_summary_clamps_with_an_expander(self) -> None:
+        para = "y" * (todo_web._CLAMP_CHARS + 1)
+        top = _top(_page(_todo({"working": {}}, [self._item(para)])))
+        self.assertIn('class="wi-sum clamped"', top)
+        self.assertIn('<button class="more" type="button">...more</button>', top)
+        self.assertIn(para, top)  # full text stays in the DOM for find and copy
+
+    def test_short_summary_is_untouched(self) -> None:
+        top = _top(_page(_todo({"working": {}}, [self._item("a one-line step")])))
+        self.assertIn('<div class="wi-sum">a one-line step</div>', top)
+        self.assertNotIn("clamped", top)
+        self.assertNotIn('class="more"', top)
+
+    def test_expander_stops_propagation_like_an_idlink(self) -> None:
+        # Without this the box's own click handler also swaps the fold.
+        page = _page(_todo({"working": {}}, [self._item("z" * 300)]))
+        handler = page.split("#top .more'")[1].split("});")[0]
+        self.assertIn("e.stopPropagation();", handler)
+
+    def test_static_boxes_in_the_fold_stay_plain(self) -> None:
+        big = {
+            "Id": "13e5" + "0" * 60,
+            "Branch": "13e5-child",
+            "State": {"done": {}},
+            "Summary": {"raw": "child", "objid": "0000"},
+            "WorkItems": [self._item("w" * 400)],
+        }
+        static = todo_web._static_repr_html(Path("."), big, "")
+        self.assertNotIn("clamped", static)
+        self.assertNotIn('class="more"', static)
+
+
+class FocusOpensTest(unittest.TestCase):
+    """A permalink target is never hidden inside the section that holds it."""
+
+    def _big_todo(self) -> Dict[str, Any]:
+        items = [
+            {
+                "kind": "code",
+                "summary": f"step {i} " + "q" * 300,
+                "sha": "a" * 40,
+                "done": True,
+                "objid": f"02{i:02d}",
+            }
+            for i in range(todo_web._COLLAPSE_ITEMS + 2)
+        ]
+        return {**_todo({"working": {}}, items), "Body": {"raw": BIG, "objid": "0001"}}
+
+    def render(self, focus: str = "") -> str:
+        return todo_web.render_todo_page(Path("."), self._big_todo(), focus_objid=focus)
+
+    def test_section_holding_the_target_renders_open(self) -> None:
+        section = _section_of(self.render(focus="0203"), "Work items")
+        self.assertIn('<details class="sec" open>', section)
+        self.assertIn('data-obj="0203"', section)  # and the target is really in it
+
+    def test_same_section_is_closed_without_focus(self) -> None:
+        self.assertIn('<details class="sec">', _section_of(self.render(), "Work items"))
+
+    def test_focus_does_not_open_sibling_sections(self) -> None:
+        # "Opens if needed" -- not "opens everything".
+        page = self.render(focus="0203")
+        self.assertIn('<details class="sec">', _section_of(page, "Body"))
+
+    def test_focus_on_a_section_field_opens_that_section(self) -> None:
+        # 0001 is the Body field object, not a box: a section target.
+        self.assertIn('<details class="sec" open>', _section_of(self.render(focus="0001"), "Body"))
+
+    def test_rendering_the_same_permalink_twice_is_idempotent(self) -> None:
+        self.assertEqual(self.render(focus="0203"), self.render(focus="0203"))
+
+    def test_unknown_focus_opens_nothing(self) -> None:
+        page = self.render(focus="ffff")
+        self.assertNotIn(" open>", _top(page))
+
+    def test_holds_never_reports_true_without_a_target(self) -> None:
+        # The guard that keeps an unfocused page from opening every section.
+        self.assertFalse(todo_web._holds({"objid": "0001"}, ""))
+        self.assertTrue(todo_web._holds({"objid": "0001"}, "0001"))
+
+
 if __name__ == "__main__":
     unittest.main()
