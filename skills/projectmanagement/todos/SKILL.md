@@ -89,7 +89,7 @@ the parent is an incomplete call -- same as forgetting to await a promise.
 3. Parent: `wait-for` / `wait-and-merge` (or `merge-subtodo` each) until every child is `merged` on the parent record.
 4. Parent works any remaining synthesis WorkItems to `is-done`, then `set <parent-id> --state done`.
 
-**Surfacing blockers:** If a child cannot finish without the user, `set <child-id> --state userneeded --note=...`, then set parent `userneeded` with which child blocked. Never leave a child in `ready`/`working` indefinitely without escalating.
+**Surfacing blockers:** If a child cannot finish without the user, `set <child-id> --state userneeded --note=...`, then set parent `userneeded` with which child blocked. Never leave a child in `ready`/`working` indefinitely without escalating. When what blocked is one specific work item that cannot be done as written, record it on that item first (`work-item-done --blocked`, see "Recording a blocked item") so the detail survives in the child's trail and the notes stay short.
 
 **Anti-patterns (do not do this):**
 
@@ -360,7 +360,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py tag-rm <selector> <tag>...` | implemented | Remove MANUAL tags from the selected todo's `Tag` field (case-insensitive match on `raw`); automatic (`manual: false`) tags are never removed here (use `tag-clear`). Drops the field when empty. `set <id> --untag` is an alias |
 | `todo.py tag-clear <selector>\|ALL [--all]` | implemented | Drop tags wholesale -- the counterpart to `tag-add`/`tag-rm`'s per-tag edits. Removes only AUTOMATIC (`manual: false`) elements by default; `--all` also removes MANUAL ones (nothing brings those back). The selector is **required** -- one todo, or the `ALL` sentinel to sweep the corpus; a corpus-wide wipe must be named, never defaulted into (same convention as `doctor`/`log`). Store-only; a todo with no matching tags is skipped entirely (no `update_dt` bump). Prints a JSON summary (`scanned`, `todos_cleared`, `tags_removed`) |
 | `todo.py work-item-add <selector> --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to the selected todo's `WorkItems`. Store-only, so it works on a branchless `groom` todo (incremental plan seeding) |
-| `todo.py work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Must run from a checkout (worktree) of the todo's branch -- it binds a code commit to the work item -- and errors otherwise. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1); `-m` on a clean tree without `--checkpoint` is an ERROR (it would be silently dropped and the node would inherit HEAD's own message). `--checkpoint` completes a NO-commit item instead (recon, waits, bookkeeping): clean tree only, records HEAD as observational `at_sha` (never attribution), `message` = `-m` or an explicit no-op marker; `--sha` with `--checkpoint` errors. Adds no bookkeeping commit, so a code sha stays branch HEAD (#6). Stores the full commit message on a `code` node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
+| `todo.py work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Must run from a checkout (worktree) of the todo's branch -- it binds a code commit to the work item -- and errors otherwise. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1); `-m` on a clean tree without `--checkpoint` is an ERROR (it would be silently dropped and the node would inherit HEAD's own message). `--checkpoint` completes a NO-commit item instead (recon, waits, bookkeeping): clean tree only, records HEAD as observational `at_sha` (never attribution), `message` = `-m` or an explicit no-op marker; `--sha` with `--checkpoint` errors. `--blocked` completes an item that CANNOT be done as written: clean tree only, records the no-change sentinel `sha` (40 zeros), and REQUIRES `-m` -- the long form of what was tried, what was found, and what the options are (see "Recording a blocked item"); `--sha` with `--blocked`, or `--blocked` with `--checkpoint`, error. Adds no bookkeeping commit, so a code sha stays branch HEAD (#6). Stores the full commit message on a `code` node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
 | `todo.py work-item-read <selector>` | implemented | Print the cursor work item (first not-done), its index, whether the todo is done, and a `next` object -- the deterministic mechanical command to advance the loop (`{action, command}`), including the finish sequence when done. `next` is a mechanism hint, not policy; a plain task defaults to `work-item-done` but may instead be split or turned into a subtodo per the dispatch table |
 | `todo.py work-item-insert <selector> --summary=...` | implemented | Insert a not-done `task` at the cursor so it becomes current, pushing the frontier down (used to explode a step into finer steps); appends when there is no open item |
 | `todo.py work-item-replace <selector> --summary=...` | implemented | Rewrite the cursor task's freetext summary, leaving it not-done |
@@ -820,7 +820,7 @@ PR is closed unmerged). See "PR handoff and disposition past `done`" below.
 | `groom` | `{}` | Minted; still collecting data / grooming. Not yet workable; branchless (store-only) until `init`. (was `pre`/`pre-init`) |
 | `ready` | `{}` | Groomed and ready to work; has a branch. Not yet started. (was `init`) |
 | `working` | `{ "owner"?: string, "expire"?: rfc3339 }` | Active work. `owner` is set with `--owner`; `expire` is **reserved and not settable** -- both only matter for future multi-owner handoff, so omit them on a single-agent run. |
-| `userneeded` | `{ "note"?: string }` | Agent blocked; needs user input. |
+| `userneeded` | `{ "note"?: string }` | Agent blocked; needs user input. The `note` is the SHORT form -- which item, what decision is being asked for -- pointing at the work item that carries the detail (see "Recording a blocked item"). |
 | `stopped` | `{ "note"?: string }` | User override halt. |
 | `done` | `{ "last_commit"?: string }` | Complete on the ticket branch; record last commit message if useful. Entering `done` tears down the todo's worktree (worktree-lifecycle invariant). |
 | `merged` | `{ "merged_into"?: string, "last_commit"?: string, "pr"?: int, "merge_commit"?: string }` | **Handed off.** Two shapes, told apart by which keys are set. (a) *Subtodo absorbed by its parent*: `merged_into` = parent branch, written on the **child** after merge; parent `Subtodos[].State` becomes `merged`. (b) *Root todo handed to a PR*: `pr` = PR number, plus `merge_commit` + `merged_into` once that PR actually merged. Entering `merged` tears down the todo's worktree (worktree-lifecycle invariant). |
@@ -1074,7 +1074,7 @@ typed **done** kinds, each produced by the command that performs that work:
 | kind | fields | produced by |
 | --- | --- | --- |
 | `task` | `summary`, `done:false` | `work-item-add` / `work-item-insert` (not done) |
-| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` (local coding) |
+| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` (local coding); `work-item-done --blocked` for an item that cannot be done as written (`sha` = the no-change sentinel, `-m` required) |
 | `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` (no sha) | `add-subtodo` |
 | `checkpoint` | `summary`, `at_sha`, `message`, `done:true` (no `sha`) | `work-item-done --checkpoint` (no-commit step: recon, waits, bookkeeping) |
@@ -1099,13 +1099,19 @@ with `--checkpoint` errors). A checkpoint's `message` comes from `-m` (say what 
 did) and defaults to `"(no-op checkpoint; no commit produced)"` -- it never inherits the HEAD
 commit's own message.
 
-**Interim / legacy sentinel.** A done `code`/`merge` node may instead carry git's null object
-id (40 zeros, `WORKITEM_NULL_SHA`) as its `sha` to signal "no change" explicitly -- the cheap
-retrofit for OLD records that misattribute a foreign commit, without converting the node's
-kind. Doctor accepts it mid-list, never tries to resolve it, and rejects it as the last item
-of a done todo (same #6 rule as checkpoint); `last-sha` reports None for it, never the zeros.
-New completions should use `--checkpoint`; the sentinel exists so legacy cleanups are one
-field edit.
+**The no-change sentinel (`sha` = 40 zeros, `WORKITEM_NULL_SHA`).** A done `code`/`merge` node
+may carry git's null object id as its `sha` to say "no commit" explicitly. Two producers:
+
+- **`work-item-done --blocked -m "<long form>"`** -- the item CANNOT be done as written. Where
+  a checkpoint says "no commit, step finished", the sentinel says "no commit, and none is
+  coming". See "Recording a blocked item" below; `-m` is required there.
+- The **legacy retrofit** for OLD records that misattribute a foreign commit, without
+  converting the node's kind -- one field edit.
+
+Doctor accepts it mid-list, never tries to resolve it, and rejects it as the last item of a
+done todo (same #6 rule as checkpoint); `last-sha` reports None for it, never the zeros. That
+last rule is load-bearing for a blocked item: it is exactly the tool refusing to call a todo
+finished when its final act was failing to do something.
 
 The **cursor** is the first not-done item (derived, not stored). Work proceeds
 by completing the cursor and advancing; the cursor index never decreases though
@@ -1126,6 +1132,35 @@ invariants the tool guarantees and `doctor` enforces:
 `is-done` and `last-sha` expose these as subcommands. `doctor` reports shape
 violations as hard `findings` and checks that need an absent subbranch/other
 repo (unresolvable sha or subtodo_id) as soft `warnings`.
+
+#### Recording a blocked item
+
+A work item that cannot be completed as written -- the approach turns out to require solving
+P==NP, the data it needs does not exist, the API it assumed is not there -- is **not** silently
+left at the cursor, and **not** disposed of in the chat. It is recorded in TWO places, long
+form and short form:
+
+| Where | What | Why there |
+|-------|------|-----------|
+| **The work item** (`work-item-done --blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them. | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- and the reason `-m` is mandatory here rather than optional as it is for a checkpoint. |
+| **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item. | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question. |
+
+```bash
+todo.py work-item-done <id> --blocked -m "Not achievable with the committed corpus.
+MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
+STORM-30: no interchange fixture exists at all...
+Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
+todo.py set <id> --state userneeded --note="WI[18] blocked: replay corpus lacks the recordings. Three options on the work item, need a pick."
+```
+
+Both writes, not one. The state note without the item leaves the trail claiming the step is
+merely unstarted; the item without the state note leaves a stuck todo that never asks the user
+anything. The **permalink to the blocked item** is what you paste into chat, a PR, or another
+todo -- not a retelling.
+
+`--blocked` requires a clean tree (commit or discard the partial attempt first), refuses
+`--sha`, and refuses to be combined with `--checkpoint`. Reach for `--checkpoint` when the step
+genuinely finished without producing code; reach for `--blocked` when it did not finish at all.
 
 Larger work may add an `execution` object to make ordering and parallelism
 explicit without inventing a scheduler.
@@ -1312,6 +1347,7 @@ done item -- the tool guarantees the shape and captures the sha:
 | local coding | make the change in the todo's worktree, then `todo.py work-item-done <id>` (dirty tree commits it, message = `-m` or the item summary; clean tree records HEAD) | `code` (+ HEAD sha) |
 | a no-code step (recon, notes-to-record, a wait that resolved) | `todo.py work-item-done <id> --checkpoint -m "what the step actually did"` (clean tree only; never attributes the HEAD commit) | `checkpoint` (+ observational `at_sha`) |
 | too coarse | `todo.py work-item-insert <id> --summary=...` to split it, then re-poll | new task at the cursor |
+| impossible as written (the approach cannot work, the data does not exist) | `todo.py work-item-done <id> --blocked -m "<long form: tried, found, options>"`, THEN `set <id> --state userneeded --note="<short form + the decision needed>"` | `code` (+ the no-change sentinel sha) |
 | blocked on children | `todo.py wait-for <id>...` / `wait-and-merge <id>...`, or `set <id> --state userneeded --note=...` and **come back and poll later** | -- |
 | empty (`is_done == true`) | run `todo.py doctor <id>` (must be `ok`); read the done items (`todo.py read <id> | jq '.WorkItems'`) and **synthesize a 1-3 sentence ActualSummary of what actually landed**; then `todo.py set <id> --state done --actual-summary="..."` | `done` (State) |
 
@@ -1375,6 +1411,13 @@ No preamble, no plan restatement, no reflection. It scrolls away -- spend nothin
 WorkItems trail is what a future agent reads. Mention it in chat only if the user must act
 on it now.
 
+**A FAILURE is a durable note too -- it does not become an essay in chat.** When the item
+cannot be done at all there is no commit to carry the note, which is exactly the moment the
+temptation to explain at length in chat (or to dump everything into the state `note`) shows
+up. Record it instead: long form on the item via `work-item-done --blocked -m`, short form in
+`--state userneeded --note`, per "Recording a blocked item". Then chat gets the verdict, the
+frontier, and the permalink -- not the retelling.
+
 **The verdict is the TODO's state, not the last thing you did.** When the prompt was "work
 todo:X", the question being answered is "is todo:X finished?" -- so a step that went well
 inside an unfinished todo is NOT a success. Grade the todo:
@@ -1384,6 +1427,10 @@ inside an unfinished todo is NOT a success. Grade the todo:
 | `success` | the todo reached a FINAL success state: `done` or `merged` |
 | `mix` | progress, not finished: items remain, or state is `userneeded` / `stopped` |
 | `fail` | STUCK on a step -- a work item cannot be completed as written |
+
+`fail` is the more specific case and wins the overlap: a todo sitting in `userneeded` because
+it needs a decision is `mix`, but one sitting there because an item is IMPOSSIBLE as written is
+`fail`, and that item should already be recorded with `--blocked` before you write the summary.
 
 Always give the count and the frontier: `N of M work items done, cursor at WI[i]`, plus what
 remains. Reporting `success` because the item you just did passed its tests is the specific

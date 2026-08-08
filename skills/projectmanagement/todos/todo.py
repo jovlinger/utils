@@ -1305,10 +1305,13 @@ WORKITEM_MERGE_SUBTODO = "merge_subtodo"
 WORKITEM_START_SUBTODO = "start_subtodo"
 WORKITEM_CHECKPOINT = "checkpoint"
 # git's null object id: an EXPLICIT no-change sentinel on a done code/merge
-# item's `sha` -- the interim / legacy-record way to say "this step produced
-# no commit" without converting the node to kind=checkpoint (preferred going
-# forward). Readers must never resolve it, attribute it, or report it as a
-# branch commit; doctor accepts it mid-list and rejects it as the last item.
+# item's `sha`. Two producers: `work-item-done --blocked`, for an item that
+# CANNOT be done as written (the sentinel says "no commit, and none is coming"
+# where a checkpoint says "no commit, step finished"); and the legacy retrofit
+# for old records that misattribute a foreign commit, without converting the
+# node to kind=checkpoint. Readers must never resolve it, attribute it, or
+# report it as a branch commit; doctor accepts it mid-list and rejects it as
+# the last item.
 WORKITEM_NULL_SHA = "0" * 40
 WORKITEM_DONE_KINDS = frozenset(
     {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO, WORKITEM_CHECKPOINT}
@@ -3644,9 +3647,12 @@ class WorkItemDoneCommand(TodoSubCommand):
         "(invariant #6). --summary overrides the item's high-level description (defaults to the "
         "cursor task's summary). --checkpoint completes a NO-COMMIT item (recon, waits, "
         "bookkeeping) instead: clean tree only, records HEAD observationally as at_sha (never as "
-        "attribution), message = -m. Like State metadata, inapplicable flags raise: -m on a clean "
-        "tree without --checkpoint, or --sha with --checkpoint, are errors rather than silent "
-        "no-ops."
+        "attribution), message = -m. --blocked completes an item that CANNOT be done as written "
+        "(the approach turned out to be impossible, or the data it needs does not exist): clean "
+        "tree only, records the no-change sentinel sha, and requires -m -- the long form of what "
+        "was tried, what was found, and what the options are. Like State metadata, inapplicable "
+        "flags raise: -m on a clean tree without --checkpoint/--blocked, --sha with either, or "
+        "both variants together, are errors rather than silent no-ops."
     )
 
     @classmethod
@@ -3660,6 +3666,11 @@ class WorkItemDoneCommand(TodoSubCommand):
             "--checkpoint",
             action="store_true",
             help="complete as a no-commit checkpoint: records HEAD as observational at_sha; clean tree only",
+        )
+        parser.add_argument(
+            "--blocked",
+            action="store_true",
+            help="complete as BLOCKED (cannot be done as written): records the no-change sentinel sha; requires -m; clean tree only",
         )
 
     def do(self) -> int:
@@ -3680,6 +3691,54 @@ class WorkItemDoneCommand(TodoSubCommand):
                 f"run it from a checkout of that branch (currently on {checked_out!r})"
             )
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
+        if self.checkpoint and self.blocked:
+            raise TodoError(
+                "--checkpoint and --blocked are different completions: a no-commit step that "
+                "FINISHED versus one that cannot be done as written; pass one"
+            )
+        if self.blocked:
+            # The item cannot be completed as written. The LONG form of why belongs
+            # here, on the item: the State note is read once by the user deciding
+            # what to do next, while the WorkItems trail is what a future agent
+            # walks -- so the narrative has to survive in the trail. Same per-variant
+            # metadata discipline as --checkpoint: inapplicable flags raise.
+            # A blocked item left LAST makes the todo is-done with no real final
+            # commit; doctor rejects that under #6 rather than this command, since
+            # a later item may still be added.
+            if self.sha:
+                raise TodoError(
+                    "--blocked does not take --sha; it records the no-change sentinel "
+                    "(a blocked item produced no commit)"
+                )
+            if not self.message:
+                raise TodoError(
+                    "--blocked requires -m: the long form of what was tried, what was found, "
+                    "and what the options are -- a bare 'blocked' teaches the next agent nothing"
+                )
+            if dirty:
+                raise TodoError(
+                    "--blocked records no commit but the tree is dirty; commit the partial "
+                    "attempt (plain work-item-done) or clean the tree first"
+                )
+            item = code_workitem(
+                WORKITEM_NULL_SHA, summary=self.summary or "", message=self.message
+            )
+            index = mark_cursor_done(todo, item)
+            write_todo_worktree(root, todo)
+            node = todo["WorkItems"][index]
+            print(
+                json.dumps(
+                    {
+                        "index": index,
+                        "kind": WORKITEM_CODE,
+                        "sha": node["sha"],
+                        "summary": node.get("summary", ""),
+                        "message": node["message"],
+                    },
+                    indent=2,
+                )
+            )
+            return 0
         if self.checkpoint:
             # No-commit completion. Per-variant metadata discipline (same doctrine
             # as set_state): flags the variant does not keep are errors.
@@ -3728,7 +3787,7 @@ class WorkItemDoneCommand(TodoSubCommand):
                 raise TodoError(
                     "-m does nothing on a clean tree (the HEAD commit's own message is "
                     "recorded); commit the work first, or pass --checkpoint for a "
-                    "no-commit item"
+                    "no-commit item, or --blocked for one that cannot be done as written"
                 )
             head = head_sha(root)
             if not head:
