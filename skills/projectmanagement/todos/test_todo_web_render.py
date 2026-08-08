@@ -146,5 +146,62 @@ class BlockedWorkItemTest(unittest.TestCase):
         self.assertNotIn("stored copy", _fold_entry(page, "001d")["message"])
 
 
+BIG = "x" * (todo_web._COLLAPSE_CHARS + 1)
+
+
+def _section_of(page: str, title: str) -> str:
+    """The rendered <section> for *title*, header included."""
+    marker = f"<h2>{title}</h2>"
+    start = page.rindex("<section", 0, page.index(marker))
+    return page[start : page.index("</section>", start)]
+
+
+class SectionCollapseTest(unittest.TestCase):
+    """An oversized section starts collapsed; a small one is untouched."""
+
+    def test_oversized_body_collapses_with_a_line_count(self) -> None:
+        body = ("a line of body text\n" * 200)
+        page = _page({**_todo({"working": {}}, []), "Body": {"raw": body, "objid": "0001"}})
+        section = _section_of(page, "Body")
+        self.assertIn("<details class=\"sec\">", section)
+        self.assertIn("200 lines", section)
+        self.assertNotIn(" open>", section)  # closed on arrival
+
+    def test_small_body_renders_exactly_as_before(self) -> None:
+        page = _page({**_todo({"working": {}}, []), "Body": {"raw": "two\nlines", "objid": "0001"}})
+        section = _section_of(page, "Body")
+        self.assertNotIn("<details", section)
+        self.assertNotIn("sec-hint", section)
+
+    def test_many_work_items_collapse_on_count_alone(self) -> None:
+        # Twenty one-word boxes wrap into as much screen as one long box, so
+        # the item count is its own trigger, independent of text length.
+        items = [
+            {"kind": "code", "summary": "short", "sha": "a" * 40, "done": True, "objid": f"01{i:02d}"}
+            for i in range(todo_web._COLLAPSE_ITEMS + 1)
+        ]
+        section = _section_of(_page(_todo({"working": {}}, items)), "Work items")
+        self.assertIn("<details", section)
+        self.assertIn(f"{len(items)} items", section)
+
+    def test_few_work_items_do_not_collapse(self) -> None:
+        items = [{"kind": "code", "summary": "short", "sha": "a" * 40, "done": True, "objid": "0101"}]
+        section = _section_of(_page(_todo({"working": {}}, items)), "Work items")
+        self.assertNotIn("<details", section)
+
+    def test_long_state_note_collapses(self) -> None:
+        section = _section_of(_page(_todo({"userneeded": {"note": BIG}}, [])), "State")
+        self.assertIn("<details", section)
+
+    def test_singular_hint_reads_as_one_item(self) -> None:
+        self.assertEqual("1 item", todo_web._size_hint(1, "items"))
+        self.assertEqual("2 items", todo_web._size_hint(2, "items"))
+
+    def test_static_fold_rendition_never_grows_toggles(self) -> None:
+        # The fold shows another todo read-only; it is not a page you navigate.
+        big = {**_todo({"working": {}}, []), "Body": {"raw": BIG, "objid": "0001"}}
+        self.assertNotIn("<details", todo_web._static_repr_html(Path("."), big, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

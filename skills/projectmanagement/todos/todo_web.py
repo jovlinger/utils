@@ -463,9 +463,13 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
     if not parents:
         return ""
     boxes = "".join(_parent_box(p, interactive=interactive) for p in parents)
-    return (
-        f'<section class="part"><h2>Parent</h2>'
-        f'<div class="row">{boxes}</div></section>'
+    return _section(
+        "Parent",
+        f'<div class="row">{boxes}</div>',
+        interactive=interactive,
+        text="".join(str(p["summary"]) for p in parents),
+        items=len(parents),
+        hint=_size_hint(len(parents), "parents"),
     )
 
 
@@ -476,6 +480,61 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
 _DEDICATED_FIELDS = frozenset(
     {"Id", "Summary", "LongSummary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
 )
+
+# Size past which a section starts COLLAPSED. Measured on the content's text,
+# never its markup -- markup length would scale with the number of boxes and
+# collapse a short list for the wrong reason. A row of boxes is oversized on
+# either measure, because twenty short boxes wrap into as much screen as one
+# long one. Under both, the section renders exactly as it did before collapsing
+# existed: no <details>, no toggle, nothing extra to click on a small todo.
+_COLLAPSE_CHARS = 1200
+_COLLAPSE_ITEMS = 8
+
+
+def _size_hint(count: int, noun: str) -> str:
+    """'19 items' / '1 item' -- what the collapsed header advertises."""
+    return f"{count} {noun}" if count != 1 else f"{count} {noun[:-1]}"
+
+
+def _section(
+    title: str,
+    inner: str,
+    *,
+    interactive: bool = True,
+    attrs: str = "",
+    text: str = "",
+    items: int = 0,
+    hint: str = "",
+    is_open: bool = False,
+) -> str:
+    """One page section, collapsed into a <details> when it is oversized.
+
+    *text* and *items* are the CONTENT's size, from the source strings rather
+    than the rendered html. *hint* overrides the header's size advertisement
+    (a list says '19 items'; prose defaults to its line count).
+
+    Native <details> rather than a bespoke toggle: it brings its own keyboard
+    and click handling, and "open the section holding the permalink target" is
+    then one attribute the SERVER can set, with no client state machine and no
+    flash of collapsed content on load.
+
+    The static rendition in the fold (interactive=False) never grows toggles --
+    it is a read-only repr of another todo, not a page you navigate.
+    """
+    heading = f"<h2>{title}</h2>"
+    oversized = len(text) > _COLLAPSE_CHARS or items > _COLLAPSE_ITEMS
+    if not interactive or not oversized:
+        return f'<section class="part"{attrs}>{heading}{inner}</section>'
+    # rstrip first: a trailing newline ends the last line, it does not start
+    # another one, and "201 lines" for a 200-line body is the kind of small lie
+    # that makes a reader distrust the rest of the header.
+    advertised = hint or _size_hint(text.rstrip("\n").count("\n") + 1, "lines")
+    return (
+        f'<section class="part"{attrs}>'
+        f'<details class="sec"{" open" if is_open else ""}>'
+        f'<summary>{heading}<span class="sec-hint">{html.escape(advertised)}</span></summary>'
+        f"{inner}</details></section>"
+    )
 
 
 def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
@@ -499,10 +558,15 @@ def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
         )
     if not rows:
         return ""
-    return f'<section class="part"><h2>Fields</h2>{"".join(rows)}</section>'
+    return _section(
+        "Fields",
+        "".join(rows),
+        interactive=interactive,
+        text="".join(str(v) for k, v in todo.items() if k not in _DEDICATED_FIELDS),
+    )
 
 
-def _state_section_html(todo: JsonDict) -> str:
+def _state_section_html(todo: JsonDict, *, interactive: bool = True) -> str:
     """Render State: the state name plus whatever metadata it carries.
 
     The name alone already rides next to the Id as a small tag, but the METADATA
@@ -538,7 +602,12 @@ def _state_section_html(todo: JsonDict) -> str:
             f'<div class="meta-row"><h3 class="meta-key">{html.escape(str(key))}</h3>'
             f"{rendered}</div>"
         )
-    return f'<section class="part"><h2>State</h2>{"".join(rows)}</section>'
+    return _section(
+        "State",
+        "".join(rows),
+        interactive=interactive,
+        text="".join(v for v in _state_meta(todo).values() if isinstance(v, str)),
+    )
 
 
 def _sections_html(
@@ -560,11 +629,12 @@ def _sections_html(
     # none is noise. Rendered as its own section rather than through _meta_html,
     # which would dump the whole dict including embedding vectors.
     long_summary = _raw_field(todo, "LongSummary")
-    long_summary_html = (
-        f'<section class="part"'
-        f'{_section_attrs(todo.get("LongSummary"), interactive=interactive)}>'
-        f'<h2>Long summary</h2>'
-        f'<pre class="val body">{html.escape(long_summary)}</pre></section>'
+    long_summary_html = _section(
+        "Long summary",
+        f'<pre class="val body">{html.escape(long_summary)}</pre>',
+        interactive=interactive,
+        attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
+        text=long_summary,
     ) if long_summary else ""
     wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
@@ -574,18 +644,40 @@ def _sections_html(
         f'<section class="part"><h2>Id</h2>'
         f'<div class="val mono">{html.escape(tid or "?")}</div>'
         f' <span class="state-tag">{html.escape(_state_text(todo))}</span></section>'
-        f"{_state_section_html(todo)}"
+        f"{_state_section_html(todo, interactive=interactive)}"
         f"{parents_html}"
-        f'<section class="part"{_section_attrs(todo.get("Summary"), interactive=interactive)}>'
-        f'<h2>Summary</h2>'
-        f'<div class="val">{html.escape(summary or "(no summary)")}</div></section>'
-        f"{long_summary_html}"
-        f'<section class="part"{_section_attrs(todo.get("Body"), interactive=interactive)}>'
-        f'<h2>Body</h2>'
-        f'<pre class="val body">{html.escape(body)}</pre></section>'
-        f"<section class=\"part\"><h2>Work items</h2>{wi_row}</section>"
-        f"<section class=\"part\"><h2>Subtodos</h2>{st_row}</section>"
-        f"{_meta_html(todo, interactive=interactive)}"
+        + _section(
+            "Summary",
+            f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
+            interactive=interactive,
+            attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
+            text=summary,
+        )
+        + long_summary_html
+        + _section(
+            "Body",
+            f'<pre class="val body">{html.escape(body)}</pre>',
+            interactive=interactive,
+            attrs=_section_attrs(todo.get("Body"), interactive=interactive),
+            text=body,
+        )
+        + _section(
+            "Work items",
+            wi_row,
+            interactive=interactive,
+            text="".join(str(w["summary"]) for w in witems),
+            items=len(witems),
+            hint=_size_hint(len(witems), "items"),
+        )
+        + _section(
+            "Subtodos",
+            st_row,
+            interactive=interactive,
+            text="".join(str(s["summary"]) for s in stodos),
+            items=len(stodos),
+            hint=_size_hint(len(stodos), "subtodos"),
+        )
+        + _meta_html(todo, interactive=interactive)
     )
 
 
@@ -694,6 +786,12 @@ _STYLE = """<style>
   .val.body { background: #f6f8fa; padding: 10px; border-radius: 6px; white-space: pre-wrap;
               margin: 0; max-height: 20vh; overflow: auto; }
   .state-tag { font-size: 12px; color: #57606a; }
+  /* Collapsed section: the native disclosure marker is kept (free affordance,
+     free keyboard handling); only the heading has to stop being a block so it
+     sits on the marker's line next to its size hint. */
+  details.sec > summary { cursor: pointer; }
+  details.sec > summary h2 { display: inline; }
+  details.sec > summary .sec-hint { font-size: 12px; color: #57606a; margin-left: 8px; }
   .none { color: #8c959f; font-size: 12px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .wi, .st { border: 1px solid #d8dee4; border-radius: 6px; padding: 8px; width: 200px;
