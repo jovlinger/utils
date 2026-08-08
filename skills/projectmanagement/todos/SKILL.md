@@ -1355,14 +1355,20 @@ in this skill's dispatch table, so the two do not drift.
 ## Narrating todo work (chat output)
 
 Specializes the global response rules (`~/AGENTS.md`) for todo work. Namespace every id:
-`todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`, and a work item as
-`todo:d56d.WI[4]`.
+`todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`.
+
+**Name a work item by PATH, not by index notation:** `todo:d56d/workitem/18`. This is the
+same path grammar the permalink syntax uses (see the selectors table and `todo:71fa`), so
+the token a reader sees in chat is the token that resolves -- and once permalinks land it
+becomes clickable with no rewriting. Deeper paths work the same way when you need to point
+at a field: `todo:d56d/workitem/18/summary`. The older organic `WI[18]` / `todo:x.WI[4]`
+forms still appear in existing records; read them, do not write them.
 
 **While working: action lines, nothing else.** One short line per action, phrased as the
 action:
 
 ```
-working todo:354d.WI[4] with subagent Sonnet 5
+working todo:354d/workitem/4 with subagent Sonnet 5
 merging child todo:dead into todo:beef
 harvest refresh: 3 banks, 0 decrypt failures
 ```
@@ -1385,8 +1391,9 @@ inside an unfinished todo is NOT a success. Grade the todo:
 | `mix` | progress, not finished: items remain, or state is `userneeded` / `stopped` |
 | `fail` | STUCK on a step -- a work item cannot be completed as written |
 
-Always give the count and the frontier: `N of M work items done, cursor at WI[i]`, plus what
-remains. Reporting `success` because the item you just did passed its tests is the specific
+Always give the count and the frontier: `N of M work items done, cursor at
+todo:<id>/workitem/<i>`, plus what remains. Reporting `success` because the item you just
+did passed its tests is the specific
 error this table exists to prevent.
 
 **An untracked ask is a process bug: make it a WorkItem.** When the user adds a condition
