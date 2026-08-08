@@ -296,6 +296,19 @@ def _objids_within(value: Any) -> List[str]:
     return found
 
 
+def _holds(value: Any, focus_objid: str) -> bool:
+    """True when *focus_objid* names something inside *value*.
+
+    Consulted only to force a collapsed section OPEN. Focus never closes
+    anything: a section the reader expanded stays expanded, a section that was
+    never oversized has no <details> to shut, and re-rendering the same
+    permalink produces the same page. Otherwise a deep link could hide its own
+    target -- the permalink contract is "this todo, focused HERE", and silently
+    landing on a closed box breaks it.
+    """
+    return bool(focus_objid) and focus_objid in _objids_within(value)
+
+
 def _section_attrs(value: Any, *, interactive: bool) -> str:
     """Return the attributes that make a non-box SECTION a permalink target.
 
@@ -482,7 +495,7 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     )
 
 
-def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
+def _parents_html(parents: List[JsonDict], *, interactive: bool, focus_objid: str = "") -> str:
     """Render the Parent section as boxes (same click model as subtodos)."""
     if not parents:
         return ""
@@ -494,6 +507,7 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
         text="".join(str(p["summary"]) for p in parents),
         items=len(parents),
         hint=_size_hint(len(parents), "parents"),
+        is_open=bool(focus_objid) and any(p["objid"] == focus_objid for p in parents),
     )
 
 
@@ -561,7 +575,7 @@ def _section(
     )
 
 
-def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
+def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "") -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
     'show everything the todo carries'."""
@@ -582,11 +596,13 @@ def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
         )
     if not rows:
         return ""
+    rest = {k: v for k, v in todo.items() if k not in _DEDICATED_FIELDS}
     return _section(
         "Fields",
         "".join(rows),
         interactive=interactive,
-        text="".join(str(v) for k, v in todo.items() if k not in _DEDICATED_FIELDS),
+        text="".join(str(v) for v in rest.values()),
+        is_open=_holds(rest, focus_objid),
     )
 
 
@@ -642,13 +658,17 @@ def _sections_html(
     *,
     interactive: bool,
     github: str = "",
+    focus_objid: str = "",
 ) -> str:
     """Render the labeled todo representation: Id, State, Parent, Summary, Body,
-    work items, subtodos, and remaining non-opaque fields."""
+    work items, subtodos, and remaining non-opaque fields.
+
+    A section holding *focus_objid* renders OPEN even when its size would
+    otherwise collapse it, and nothing ever renders closed that was open."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
-    parents_html = _parents_html(parents, interactive=interactive)
+    parents_html = _parents_html(parents, interactive=interactive, focus_objid=focus_objid)
     # Only when present: an empty "Long summary" heading on every todo that has
     # none is noise. Rendered as its own section rather than through _meta_html,
     # which would dump the whole dict including embedding vectors.
@@ -659,6 +679,7 @@ def _sections_html(
         interactive=interactive,
         attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
         text=long_summary,
+        is_open=_holds(todo.get("LongSummary"), focus_objid),
     ) if long_summary else ""
     wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
@@ -676,6 +697,7 @@ def _sections_html(
             interactive=interactive,
             attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
             text=summary,
+            is_open=_holds(todo.get("Summary"), focus_objid),
         )
         + long_summary_html
         + _section(
@@ -684,6 +706,7 @@ def _sections_html(
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
             text=body,
+            is_open=_holds(todo.get("Body"), focus_objid),
         )
         + _section(
             "Work items",
@@ -692,6 +715,7 @@ def _sections_html(
             text="".join(str(w["summary"]) for w in witems),
             items=len(witems),
             hint=_size_hint(len(witems), "items"),
+            is_open=_holds(todo.get("WorkItems"), focus_objid),
         )
         + _section(
             "Subtodos",
@@ -700,8 +724,9 @@ def _sections_html(
             text="".join(str(s["summary"]) for s in stodos),
             items=len(stodos),
             hint=_size_hint(len(stodos), "subtodos"),
+            is_open=_holds(todo.get("Subtodos"), focus_objid),
         )
-        + _meta_html(todo, interactive=interactive)
+        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid)
     )
 
 
@@ -981,7 +1006,8 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
     github = github_repo_url(repo_origin(root))
     data = _page_data(root, todo, witems, stodos, parents, github)
     top_html = _sections_html(
-        todo, witems, stodos, parents, interactive=True, github=github or ""
+        todo, witems, stodos, parents, interactive=True, github=github or "",
+        focus_objid=focus_objid,
     )
     title = html.escape(_summary_text(todo) or "todo")
     script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data)).replace(

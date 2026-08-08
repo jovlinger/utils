@@ -253,5 +253,54 @@ class BoxClampTest(unittest.TestCase):
         self.assertNotIn('class="more"', static)
 
 
+class FocusOpensTest(unittest.TestCase):
+    """A permalink target is never hidden inside the section that holds it."""
+
+    def _big_todo(self) -> Dict[str, Any]:
+        items = [
+            {
+                "kind": "code",
+                "summary": f"step {i} " + "q" * 300,
+                "sha": "a" * 40,
+                "done": True,
+                "objid": f"02{i:02d}",
+            }
+            for i in range(todo_web._COLLAPSE_ITEMS + 2)
+        ]
+        return {**_todo({"working": {}}, items), "Body": {"raw": BIG, "objid": "0001"}}
+
+    def render(self, focus: str = "") -> str:
+        return todo_web.render_todo_page(Path("."), self._big_todo(), focus_objid=focus)
+
+    def test_section_holding_the_target_renders_open(self) -> None:
+        section = _section_of(self.render(focus="0203"), "Work items")
+        self.assertIn('<details class="sec" open>', section)
+        self.assertIn('data-obj="0203"', section)  # and the target is really in it
+
+    def test_same_section_is_closed_without_focus(self) -> None:
+        self.assertIn('<details class="sec">', _section_of(self.render(), "Work items"))
+
+    def test_focus_does_not_open_sibling_sections(self) -> None:
+        # "Opens if needed" -- not "opens everything".
+        page = self.render(focus="0203")
+        self.assertIn('<details class="sec">', _section_of(page, "Body"))
+
+    def test_focus_on_a_section_field_opens_that_section(self) -> None:
+        # 0001 is the Body field object, not a box: a section target.
+        self.assertIn('<details class="sec" open>', _section_of(self.render(focus="0001"), "Body"))
+
+    def test_rendering_the_same_permalink_twice_is_idempotent(self) -> None:
+        self.assertEqual(self.render(focus="0203"), self.render(focus="0203"))
+
+    def test_unknown_focus_opens_nothing(self) -> None:
+        page = self.render(focus="ffff")
+        self.assertNotIn(" open>", _top(page))
+
+    def test_holds_never_reports_true_without_a_target(self) -> None:
+        # The guard that keeps an unfocused page from opening every section.
+        self.assertFalse(todo_web._holds({"objid": "0001"}, ""))
+        self.assertTrue(todo_web._holds({"objid": "0001"}, "0001"))
+
+
 if __name__ == "__main__":
     unittest.main()
