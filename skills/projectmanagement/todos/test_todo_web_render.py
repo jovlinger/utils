@@ -20,7 +20,7 @@ import todo_web
 TID = "d56d5d65" + "0" * 56
 
 NOTE = (
-    "WI[18] is NOT achievable with the committed corpus.\n\n"
+    "todo:d56d/workitem/18 is NOT achievable with the committed corpus.\n\n"
     "MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded.\n\n"
     "DECISION NEEDED: (a) descope, (b) wait for a tenant, (c) move to layer 3."
 )

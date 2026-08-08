@@ -1150,7 +1150,7 @@ todo.py work-item-done <id> --blocked -m "Not achievable with the committed corp
 MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
 STORM-30: no interchange fixture exists at all...
 Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
-todo.py set <id> --state userneeded --note="WI[18] blocked: replay corpus lacks the recordings. Three options on the work item, need a pick."
+todo.py set <id> --state userneeded --note="todo:d56d/workitem/18 blocked: replay corpus lacks the recordings. Three options on the work item, need a pick."
 ```
 
 Both writes, not one. The state note without the item leaves the trail claiming the step is
