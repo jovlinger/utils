@@ -149,6 +149,12 @@ class BlockedWorkItemTest(unittest.TestCase):
 BIG = "x" * (todo_web._COLLAPSE_CHARS + 1)
 
 
+def _top(page: str) -> str:
+    """Just the rendered representation -- not the stylesheet or the script,
+    which name every class the page can ever use."""
+    return page.split('<div id="top">', 1)[1].split('<div id="divider">', 1)[0]
+
+
 def _section_of(page: str, title: str) -> str:
     """The rendered <section> for *title*, header included."""
     marker = f"<h2>{title}</h2>"
@@ -201,6 +207,50 @@ class SectionCollapseTest(unittest.TestCase):
         # The fold shows another todo read-only; it is not a page you navigate.
         big = {**_todo({"working": {}}, []), "Body": {"raw": BIG, "objid": "0001"}}
         self.assertNotIn("<details", todo_web._static_repr_html(Path("."), big, ""))
+
+
+class BoxClampTest(unittest.TestCase):
+    """An oversized box summary clamps; the expander does not open the fold."""
+
+    def _item(self, summary: str) -> Dict[str, Any]:
+        return {
+            "kind": "code",
+            "summary": summary,
+            "sha": "a" * 40,
+            "done": True,
+            "objid": "0101",
+        }
+
+    def test_paragraph_summary_clamps_with_an_expander(self) -> None:
+        para = "y" * (todo_web._CLAMP_CHARS + 1)
+        top = _top(_page(_todo({"working": {}}, [self._item(para)])))
+        self.assertIn('class="wi-sum clamped"', top)
+        self.assertIn('<button class="more" type="button">...more</button>', top)
+        self.assertIn(para, top)  # full text stays in the DOM for find and copy
+
+    def test_short_summary_is_untouched(self) -> None:
+        top = _top(_page(_todo({"working": {}}, [self._item("a one-line step")])))
+        self.assertIn('<div class="wi-sum">a one-line step</div>', top)
+        self.assertNotIn("clamped", top)
+        self.assertNotIn('class="more"', top)
+
+    def test_expander_stops_propagation_like_an_idlink(self) -> None:
+        # Without this the box's own click handler also swaps the fold.
+        page = _page(_todo({"working": {}}, [self._item("z" * 300)]))
+        handler = page.split("#top .more'")[1].split("});")[0]
+        self.assertIn("e.stopPropagation();", handler)
+
+    def test_static_boxes_in_the_fold_stay_plain(self) -> None:
+        big = {
+            "Id": "13e5" + "0" * 60,
+            "Branch": "13e5-child",
+            "State": {"done": {}},
+            "Summary": {"raw": "child", "objid": "0000"},
+            "WorkItems": [self._item("w" * 400)],
+        }
+        static = todo_web._static_repr_html(Path("."), big, "")
+        self.assertNotIn("clamped", static)
+        self.assertNotIn('class="more"', static)
 
 
 if __name__ == "__main__":

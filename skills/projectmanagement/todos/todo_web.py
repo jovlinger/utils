@@ -313,6 +313,30 @@ def _section_attrs(value: Any, *, interactive: bool) -> str:
     return f' id="obj-{html.escape(ids[0])}" data-objs="{joined}"'
 
 
+# Summary length past which a BOX clamps. Work-item summaries are routinely
+# whole paragraphs (a groomed item states its own acceptance criteria), and one
+# of those makes a box taller than the screen -- so the row of boxes becomes a
+# column of walls with no overview left.
+_CLAMP_CHARS = 240
+
+
+def _clamped(text: str, cls: str, *, interactive: bool) -> str:
+    """A box's summary, visually clamped when it is a paragraph, not a line.
+
+    The FULL text stays in the DOM: clamping is CSS, so browser find and copy
+    still reach all of it and only the height is capped. The expander stops
+    propagation for the same reason .idlink does -- the enclosing box's click
+    opens the fold, and asking to read more of a summary is not asking for that.
+    """
+    shown = html.escape(text or "(no summary)")
+    if not interactive or len(text) <= _CLAMP_CHARS:
+        return f'<div class="{cls}">{shown}</div>'
+    return (
+        f'<div class="{cls} clamped">{shown}</div>'
+        '<button class="more" type="button">...more</button>'
+    )
+
+
 def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
     """Return the objid attributes that make a box addressable and selectable.
 
@@ -376,8 +400,8 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(item, interactive=interactive)}{attrs}>'
         f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
-        f'<div class="wi-sum">{html.escape(item["summary"] or "(no summary)")}</div>'
-        f"{todo_html}{sep}{sha_html}"
+        + _clamped(item["summary"], "wi-sum", interactive=interactive)
+        + f"{todo_html}{sep}{sha_html}"
         "</div>"
     )
 
@@ -398,8 +422,8 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(sub, interactive=interactive)}{attrs}>'
         f"{id_html}"
-        f'<div class="st-sum">{html.escape(sub["summary"] or "(no summary)")}</div>'
-        f'<div class="st-state">{html.escape(sub["state"])}</div>'
+        + _clamped(sub["summary"], "st-sum", interactive=interactive)
+        + f'<div class="st-state">{html.escape(sub["state"])}</div>'
         "</div>"
     )
 
@@ -451,8 +475,8 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(p, interactive=interactive)}{attrs}>'
         f"{id_html}"
-        f'<div class="st-sum">{html.escape(p["summary"] or "(no summary)")}</div>'
-        f'<div class="st-state">{html.escape(p["state"])}</div>'
+        + _clamped(p["summary"], "st-sum", interactive=interactive)
+        + f'<div class="st-state">{html.escape(p["state"])}</div>'
         f"{branch}"
         "</div>"
     )
@@ -792,6 +816,12 @@ _STYLE = """<style>
   details.sec > summary { cursor: pointer; }
   details.sec > summary h2 { display: inline; }
   details.sec > summary .sec-hint { font-size: 12px; color: #57606a; margin-left: 8px; }
+  /* A clamped summary keeps its full text in the DOM (find and copy still see
+     it); only the height is capped. */
+  .clamped { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4;
+             -webkit-box-orient: vertical; overflow: hidden; }
+  .more { font-size: 11px; color: #0969da; background: none; border: 0;
+          padding: 0; cursor: pointer; }
   .none { color: #8c959f; font-size: 12px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .wi, .st { border: 1px solid #d8dee4; border-radius: 6px; padding: 8px; width: 200px;
@@ -890,6 +920,18 @@ document.querySelectorAll('#top [data-obj]').forEach(function(el){
 // the fold via the enclosing box's click handler.
 document.querySelectorAll('#top .idlink').forEach(function(a){
   a.addEventListener('click', function(e){ e.stopPropagation(); });
+});
+
+// Expanding a clamped summary reads more of THIS box; it is not a request to
+// swap the fold, so it stops propagation exactly as .idlink does. The text is
+// already in the DOM -- only the clamp class comes off.
+document.querySelectorAll('#top .more').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    var sum = b.previousElementSibling;
+    if (!sum) return;
+    b.textContent = sum.classList.toggle('clamped') ? '...more' : '...less';
+  });
 });
 
 // A permalink resolved server-side to one objid: open on it. A box gets the
