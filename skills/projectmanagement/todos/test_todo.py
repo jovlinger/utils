@@ -2038,6 +2038,60 @@ class WorkItemInvariantTests(TodoCase):
         self.assertIn("--checkpoint", proc.stderr)
         self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
 
+    def test_blocked_workitem_records_null_sha_and_the_long_form(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=replay the 22-event burst")
+        long_form = (
+            "NOT achievable with the committed corpus.\n\n"
+            "MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded.\n"
+            "STORM-30: no interchange fixture exists at all.\n\n"
+            "Options: (a) descope, (b) wait for a healthy tenant, (c) move to layer 3."
+        )
+        proc = self.todo("work-item-done", self.tid, "--blocked", "-m", long_form)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(item["kind"], "code")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["sha"], "0" * 40)  # no commit, and none is coming
+        self.assertEqual(item["message"], long_form)  # the narrative lives in the trail
+        self.assertEqual(item["summary"], "replay the 22-event burst")  # cursor summary carries over
+        # cursor advanced, but the sentinel is not reported as a branch commit
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)
+        self.assertEqual(self.todo("last-sha", self.tid).stdout.strip(), "")
+
+    def test_blocked_requires_a_message(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        proc = self.todo("work-item-done", self.tid, "--blocked")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--blocked requires -m", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
+
+    def test_blocked_refuses_dirty_tree_and_sha_and_checkpoint(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        sha = self.todo("work-item-done", self.tid, "--blocked", "-m", "why", "--sha", self._head())
+        self.assertEqual(sha.returncode, 1)
+        self.assertIn("--blocked does not take --sha", sha.stderr)
+        both = self.todo("work-item-done", self.tid, "--blocked", "--checkpoint", "-m", "why")
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("different completions", both.stderr)
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        dirty = self.todo("work-item-done", self.tid, "--blocked", "-m", "why")
+        self.assertEqual(dirty.returncode, 1)
+        self.assertIn("dirty", dirty.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+
+    def test_blocked_as_last_item_is_a_doctor_finding(self) -> None:
+        # A blocked item makes the todo is-done with no real final commit; #6
+        # is what refuses to call that finished.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        self.todo("work-item-done", self.tid, "--blocked", "-m", "why it cannot be done")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no-change sentinel", proc.stdout)
+
     def test_cursor_insert_replace_delete_read(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=A")

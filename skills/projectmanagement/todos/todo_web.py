@@ -39,6 +39,12 @@ JsonDict = Dict[str, Any]
 
 _DONE_KINDS = frozenset({"code", "merge_subtodo", "start_subtodo"})
 
+# git's null object id -- the no-change sentinel a BLOCKED work item carries in
+# `sha` (todo.py WORKITEM_NULL_SHA; duplicated rather than imported, like
+# _DONE_KINDS, so the viewer keeps its light import). It names no commit, so it
+# is never resolved against git and never rendered as a sha.
+_NULL_SHA = "0" * 40
+
 _DEBUG_COUNTER: int = 0
 
 # A permalink starts with a todo selector: 4+ hex, the same rule every other
@@ -203,6 +209,16 @@ def _state_text(todo: JsonDict) -> str:
     return current_state_name(todo) or "?"
 
 
+def _state_meta(todo: JsonDict) -> JsonDict:
+    """The current state's metadata object -- {} when the state carries none."""
+    name = current_state_name(todo)
+    state = todo.get("State")
+    if not name or not isinstance(state, dict):
+        return {}
+    value = state.get(name)
+    return value if isinstance(value, dict) else {}
+
+
 def _workitems_view(todo: JsonDict) -> List[JsonDict]:
     """Light per-work-item dicts for box rendering (no git reads)."""
     out: List[JsonDict] = []
@@ -215,6 +231,13 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
         kind = str(item.get("kind") or ("code" if item.get("done") else "task"))
         sha = item.get("sha")
         sha = sha if isinstance(sha, str) and sha else ""
+        # A blocked item's sentinel sha names no commit: it must not become a
+        # sha chip, a github link, or a git lookup. `nocommit` also covers the
+        # kinds that legitimately have no sha at all (task, checkpoint,
+        # start_subtodo), which is what makes the stored `message` the only
+        # thing the fold can show for them.
+        blocked = sha == _NULL_SHA
+        sha = "" if blocked else sha
         done = bool(item.get("done")) or kind in _DONE_KINDS
         out.append(
             {
@@ -224,6 +247,9 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
                 "done": done,
                 "sha": sha,
                 "short": sha[:8] if sha else "",
+                "blocked": blocked,
+                "nocommit": not sha,
+                "message": str(item.get("message") or ""),
                 "subtodo": str(item.get("subtodo_id") or ""),
                 "objid": str(item.get("objid") or ""),
             }
@@ -333,7 +359,11 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         )
     else:
         todo_html = f'<div class="wi-sub mono">todo:{html.escape(item["subtodo"][:8])}</div>'
-    if not item["short"]:
+    if item["blocked"]:
+        # Where a sha would go: the item is done in the sense that the cursor
+        # moved past it, but nothing was achieved and no commit exists.
+        sha_html = '<div class="wi-blocked">blocked</div>'
+    elif not item["short"]:
         sha_html = ""
     elif interactive and github and item["sha"]:
         href = f'{html.escape(github)}/commit/{html.escape(item["sha"])}'
@@ -472,6 +502,45 @@ def _meta_html(todo: JsonDict, *, interactive: bool = True) -> str:
     return f'<section class="part"><h2>Fields</h2>{"".join(rows)}</section>'
 
 
+def _state_section_html(todo: JsonDict) -> str:
+    """Render State: the state name plus whatever metadata it carries.
+
+    The name alone already rides next to the Id as a small tag, but the METADATA
+    is where the content is, and none of it was reachable from this page before:
+    a userneeded/stopped `note` holds the blocker narrative and the decision the
+    user is being asked to make, and `pr` / `merged_into` / `last_commit` hold
+    the disposition past done. A todo could sit blocked with a page that said
+    nothing but the word "userneeded".
+
+    Rendered unconditionally rather than only when metadata exists (the
+    LongSummary rule): State is always present and always meaningful, and a
+    section that appears only sometimes is one a reader learns not to look for.
+
+    The State subtree is objid-exempt by design, so there is nothing here to
+    focus -- a permalink into it keeps rendering the page unfocused, as the
+    degradation table documents.
+    """
+    rows = [
+        '<div class="meta-row"><h3 class="meta-key">state</h3>'
+        f'<div class="val">{html.escape(_state_text(todo))}</div></div>'
+    ]
+    for key, value in _state_meta(todo).items():
+        if value in (None, "", [], {}):
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+        # A note is prose with paragraphs; a pr number or branch name is a word.
+        rendered = (
+            f'<pre class="val body">{html.escape(text)}</pre>'
+            if "\n" in text
+            else f'<div class="val">{html.escape(text)}</div>'
+        )
+        rows.append(
+            f'<div class="meta-row"><h3 class="meta-key">{html.escape(str(key))}</h3>'
+            f"{rendered}</div>"
+        )
+    return f'<section class="part"><h2>State</h2>{"".join(rows)}</section>'
+
+
 def _sections_html(
     todo: JsonDict,
     witems: List[JsonDict],
@@ -481,8 +550,8 @@ def _sections_html(
     interactive: bool,
     github: str = "",
 ) -> str:
-    """Render the labeled todo representation: Id, Parent, Summary, Body, work
-    items, subtodos, and remaining non-opaque fields."""
+    """Render the labeled todo representation: Id, State, Parent, Summary, Body,
+    work items, subtodos, and remaining non-opaque fields."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
@@ -505,6 +574,7 @@ def _sections_html(
         f'<section class="part"><h2>Id</h2>'
         f'<div class="val mono">{html.escape(tid or "?")}</div>'
         f' <span class="state-tag">{html.escape(_state_text(todo))}</span></section>'
+        f"{_state_section_html(todo)}"
         f"{parents_html}"
         f'<section class="part"{_section_attrs(todo.get("Summary"), interactive=interactive)}>'
         f'<h2>Summary</h2>'
@@ -558,11 +628,15 @@ def _page_data(
             continue
         sha = w["sha"]
         related = subtodo_objid.get(w["subtodo"], "")
+        # With a commit, git is the source of truth for the message (and the
+        # only source for the diff). WITHOUT one -- a blocked item, a
+        # checkpoint -- the node's stored `message` is all there is, and it is
+        # exactly the text worth reading: why the step produced no commit.
         objects[w["objid"]] = {
             "mode": "workitem",
             "kind": w["kind"],
             "short": w["short"],
-            "message": commit_message(root, sha) if sha else "",
+            "message": commit_message(root, sha) if sha else w["message"],
             "diff": diff_unified(root, sha) if sha else "",
             "github": f"{github}/commit/{sha}" if github and sha else "",
             "hi": [related] if related else [],
@@ -633,6 +707,8 @@ _STYLE = """<style>
   .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
   .wi-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
             color: #0969da; }
+  /* A blocked item is done-but-not-achieved: red, where a sha would be. */
+  .wi-blocked { font-size: 12px; color: #cf222e; font-weight: 600; }
   .wi-sub { font-size: 12px; color: #0969da; }
   .st { cursor: pointer; }
   .st-id { font-size: 12px; color: #0969da; }
