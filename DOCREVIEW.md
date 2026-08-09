@@ -1,4 +1,71 @@
-# GPT review: `skills/projectmanagement/todos/SKILL.md`
+# Merged review: `skills/projectmanagement/todos/SKILL.md`
+
+This is the GPT synthesis of two independent reviews: a GPT review and a Grok
+review. Both evaluated the same current document in isolation before this
+merge. They agree that the content is valuable but the 1,384-line monolith is
+too large and internally inconsistent to remain the sole agent-facing skill.
+
+## Consensus at a glance
+
+| Dimension | GPT | Grok | Merged assessment |
+|---|---:|---:|---|
+| Usability for agent dispatch | 2/5 | 2/5 | 2/5 |
+| Future evolution | 2/5 | 2/5 | 2/5 |
+| Duplication control | 1/5 | 2/5 | 1.5/5 |
+| Internal consistency | 1/5 | 2/5 | 1.5/5 |
+| Navigability | 2/5 | 2/5 | 2/5 |
+| Actionability | 2/5 | 3/5 | 2.5/5 |
+
+**Decision: split it.** Keep `SKILL.md` as a ≤200-line trigger/router and add
+top-level sibling documents (not a nested `docs/` directory, to avoid
+skill-discovery depth issues):
+
+1. `GROOMING.md` — create, clarify, size, and dispatch tickets.
+2. `WORKING.md` — the one normative runbook from worktree entry to handoff.
+3. `IMPLEMENTATION.md` — CLI contract, storage, schema, migrations,
+   permalinks, doctor, compatibility, and planned features.
+
+The entry skill should load only the safety rules, a compact domain model, a
+few everyday commands, and an intent router. Each rule must have one normative
+owner; other documents link to it instead of restating it.
+
+## Additions from the independent Grok review
+
+The detailed review below already establishes the primary migration map and
+acceptance criteria. The second review independently identified these further
+requirements, which the implementation must include:
+
+- Reconcile concurrency with a precedence rule: work sequentially by default;
+  parallel subtodos require an explicit user request or genuinely independent,
+  context-heavy research. Rewrite “often one subagent each” so it does not
+  override the default.
+- Remove the Claude-only `/rewind` mandate. Preserve the durable-state
+  principle while allowing the host agent to shed context by its own mechanism.
+- Repair the incomplete WorkItem invariant numbering: define #2 and #4, and
+  keep lifecycle and doctor references synchronized.
+- Place every operational command in the implementation reference. In
+  particular, add referenced `web` and `export-to-file` commands if they are
+  implemented, and visibly separate the `ensure_worktree` stub from the manual
+  worktree procedure.
+- Do not place current agent-facing procedures below a nested `docs/`
+  directory. Keep the three new documents adjacent to `SKILL.md`, then link
+  them from the router.
+
+## Implementation order
+
+1. Verify every claimed command, state, and field against `todo.py` and its
+   tests before copying it into the new current-contract documentation.
+2. Create the three siblings and move content by ownership: grooming policy,
+   working runbook, and implementation reference.
+3. Resolve the correctness issues in the owning document, then remove all
+   duplicate normative prose.
+4. Replace `SKILL.md` with the compact router and safety card.
+5. Validate links and examples, and confirm each intent path can be followed
+   without loading unrelated mechanism or history.
+
+The document below is the GPT review that supplied the line-level evidence,
+migration map, and acceptance criteria; it is retained as the detailed merged
+plan.
 
 ## Verdict
 
