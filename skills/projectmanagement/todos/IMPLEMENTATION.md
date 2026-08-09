@@ -225,7 +225,7 @@ Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 
 ## Record schema
 
-Allowed top-level fields (unknown keys → doctor findings):  
+Allowed top-level fields (unknown keys → doctor findings):
 `AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `Parent`,
 `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy), `WorkItems`,
 `create_dt`, `update_dt`, `_schema`, `_nextobjid`.

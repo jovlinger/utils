@@ -3,8 +3,8 @@
 status: living document · **normative owner** for ticket design, decomposition,
 capability targeting, and make-vs-work policy
 
-Operating an already-ready ticket → [`WORKING.md`](WORKING.md)  
-Command / schema details → [`IMPLEMENTATION.md`](IMPLEMENTATION.md)  
+Operating an already-ready ticket → [`WORKING.md`](WORKING.md)
+Command / schema details → [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
 Intent router → [`SKILL.md`](SKILL.md)
 
 ---

@@ -3,8 +3,8 @@
 status: living document · **normative owner** for lifecycle, worktrees, subtodo
 integration, finish/teardown, handoff, and chat reporting
 
-CLI syntax and schema → [`IMPLEMENTATION.md`](IMPLEMENTATION.md)  
-Ticket design / decomposition → [`GROOMING.md`](GROOMING.md)  
+CLI syntax and schema → [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
+Ticket design / decomposition → [`GROOMING.md`](GROOMING.md)
 Intent router → [`SKILL.md`](SKILL.md)
 
 There is exactly one normative sequence per operation below. Other docs link
@@ -211,7 +211,7 @@ Normative sequence per child (or batch):
 2. In the **parent** worktree, on the parent branch: integrate the child
    (`git merge <child-branch>`, or cherry-pick / equivalent absorption you can
    verify). Resolve conflicts; confirm the parent tip contains the child’s work.
-3. Bookkeeping: `todo.py merge-subtodo <child-id>`  
+3. Bookkeeping: `todo.py merge-subtodo <child-id>`
    or, after all intended git merges: `todo.py wait-and-merge <child-id>...`
    (still bookkeeping-only; fails usefully if the parent branch tip is missing).
 4. Confirm parent `Subtodos[].State` is `merged` for each tracked child.
