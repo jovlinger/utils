@@ -11,6 +11,7 @@ a throwaway git repo, exactly as an agent would invoke it. Run with:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -3141,6 +3142,59 @@ class ObjidFindingUnitTests(unittest.TestCase):
     def test_state_is_never_reported(self) -> None:
         record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid=1)
         self.assertEqual([], todo.objid_findings(record))
+
+
+class CommandTaxonomyTests(unittest.TestCase):
+    """The command tree is the registry, so the tree has to stay well formed."""
+
+    def _all_leaves(self, node: type = todo.TodoSubCommand) -> list:
+        """Every command class in the file, found WITHOUT going through the groups."""
+        found = []
+        for sub in node.__subclasses__():
+            if sub.command_names:
+                found.append(sub)
+            found.extend(self._all_leaves(sub))
+        return found
+
+    def test_no_command_is_orphaned_from_the_groups(self) -> None:
+        # The one real hazard of deriving registration from the tree: a command
+        # that subclasses TodoSubCommand directly is silently never registered.
+        self.assertEqual(
+            sorted(c.__name__ for c in self._all_leaves()),
+            sorted(c.__name__ for c in todo.COMMAND_CLASSES),
+        )
+
+    def test_every_command_is_registered_exactly_once(self) -> None:
+        names = [n for c in todo.COMMAND_CLASSES for n in c.command_names]
+        self.assertEqual(len(names), len(set(names)), "duplicate command name")
+
+    def test_every_group_is_titled_and_populated(self) -> None:
+        for group in todo.COMMAND_GROUPS:
+            self.assertTrue(group.group_title, f"{group.__name__} has no title")
+            self.assertTrue(list(todo._command_leaves(group)), f"{group.__name__} is empty")
+
+    def test_groups_are_not_runnable(self) -> None:
+        # Abstract by omission: a group implements neither configure_parser nor do.
+        for group in todo.COMMAND_GROUPS:
+            self.assertFalse(group.command_names, f"{group.__name__} declares a command")
+            with self.assertRaises(TypeError):
+                group(argparse.Namespace())  # type: ignore[abstract]
+
+    def test_help_lists_every_command_under_a_group_heading(self) -> None:
+        listing = todo.grouped_command_listing()
+        for group in todo.COMMAND_GROUPS:
+            self.assertIn(f"{group.group_title}:", listing)
+        for command_cls in todo.COMMAND_CLASSES:
+            for name in command_cls.command_names:
+                self.assertIn(f"  {name} ", listing + " ")
+
+    def test_argparse_does_not_also_print_a_flat_list(self) -> None:
+        # add_parser(help=...) would restore the 37-entry blob the grouping
+        # replaced -- and argparse.SUPPRESS does not suppress it, it prints
+        # the sentinel verbatim.
+        text = todo.build_parser().format_help()
+        self.assertNotIn("==SUPPRESS==", text)
+        self.assertEqual(1, text.count("  doctor "), "doctor listed more than once")
 
 
 if __name__ == "__main__":

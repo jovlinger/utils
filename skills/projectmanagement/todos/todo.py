@@ -20,7 +20,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Sequence
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Sequence
 
 import todo_db
 import todo_objid
@@ -2743,7 +2743,11 @@ class TodoSubCommand(ABC):
         for name in cls.command_names:
             parser: argparse.ArgumentParser = subparsers.add_parser(
                 name,
-                help=cls.doc_short,
+                # No `help=`: argparse only adds a command to its own flat
+                # listing when that kwarg is present (it builds a
+                # _ChoicesPseudoAction to hold it), and argparse.SUPPRESS is
+                # NOT honored here -- it renders the sentinel verbatim. The
+                # grouped listing in the epilog carries doc_short instead.
                 description=cls.doc_long,
             )
             cls.configure_parser(parser)
@@ -2767,7 +2771,118 @@ class TodoSubCommand(ABC):
         return repo_root()
 
 
-class MintCommand(TodoSubCommand):
+# --- command groups --------------------------------------------------------
+#
+# The taxonomy of the CLI, and nothing else. A group adds no behavior, declares
+# no command_names, and stays abstract; it exists so that related commands are
+# visibly related in the source, so --help can list them under a heading, and so
+# registration can WALK the tree instead of consulting a hand-kept list that the
+# next new command would forget to join.
+#
+# Groups nest, and the inner ones are deliberately cosmetic: they subdivide a
+# long group in the source without inventing a heading nobody asked for, because
+# a leaf is listed under its nearest TITLED ancestor. So work-item-add sits in
+# WorkItemEditCommand for the reader and under "Work item" for the user.
+#
+# Adding a command means picking its group -- there is nowhere else to put it,
+# and _command_leaves refuses to find it anywhere else (see the orphan test).
+
+
+class CommandGroup(TodoSubCommand):
+    """An organizational node of the command tree; never runnable itself.
+
+    Abstract by omission: a group implements neither configure_parser nor do,
+    so ABC refuses to instantiate one even if a caller tried.
+    """
+
+    group_title: ClassVar[str] = ""
+
+
+class ManagementCommand(CommandGroup):
+    """Acts on the store, the corpus, or the environment -- not on one todo."""
+
+    group_title: ClassVar[str] = "Management"
+
+
+class StoreMaintenanceCommand(ManagementCommand):
+    """Audits, migrates, or moves the store as a whole."""
+
+
+class CorpusQueryCommand(ManagementCommand):
+    """Finds or renders todos across the corpus."""
+
+
+class EnvironmentCommand(ManagementCommand):
+    """Reports where things live, or serves them."""
+
+
+class TodoCrudCommand(CommandGroup):
+    """Creates, reads, or edits one todo record."""
+
+    group_title: ClassVar[str] = "Todo CRUD"
+
+
+class TodoCreateCommand(TodoCrudCommand):
+    """Brings a todo into being: the two-phase mint -> init."""
+
+
+class TodoFieldCommand(TodoCrudCommand):
+    """Reads or writes fields of an existing record."""
+
+
+class TagCommand(TodoCrudCommand):
+    """Edits the plural Tag field."""
+
+
+class WorkItemCommand(CommandGroup):
+    """Acts on a todo's WorkItems -- the ordered plan and its cursor."""
+
+    group_title: ClassVar[str] = "Work item"
+
+
+class WorkItemEditCommand(WorkItemCommand):
+    """Edits the not-done frontier of the plan; never the done prefix."""
+
+
+class WorkItemProgressCommand(WorkItemCommand):
+    """Advances the cursor, or reports where it stands."""
+
+
+class SubtodoCommand(CommandGroup):
+    """Parent/child bookkeeping and the checkouts children are worked in."""
+
+    group_title: ClassVar[str] = "Subtodo and coordination"
+
+
+class SubtodoMergeCommand(SubtodoCommand):
+    """Forks a child, or lands one back on its parent."""
+
+
+class SubtodoWaitCommand(SubtodoCommand):
+    """Blocks on children reaching a state."""
+
+
+# Group order is help order; leaf order within a group is source order.
+COMMAND_GROUPS: Sequence[type[CommandGroup]] = (
+    ManagementCommand,
+    TodoCrudCommand,
+    WorkItemCommand,
+    SubtodoCommand,
+)
+
+
+def _command_leaves(node: type[TodoSubCommand]) -> Iterator[type[TodoSubCommand]]:
+    """Every runnable command at or under *node*, in source order.
+
+    A leaf is a class that declares command_names; everything else is taxonomy.
+    """
+    for sub in node.__subclasses__():
+        if sub.command_names:
+            yield sub
+        yield from _command_leaves(sub)
+
+
+class MintCommand(TodoCreateCommand):
     command_names = ("mint",)
     doc_short: ClassVar[str] = "Mint todo Id"
     doc_long: ClassVar[str] = (
@@ -2854,7 +2969,7 @@ def elide_embedding_vectors(obj: Any) -> Any:
     return obj
 
 
-class ReadCommand(TodoSubCommand):
+class ReadCommand(TodoFieldCommand):
     command_names = ("read",)
     doc_short: ClassVar[str] = "Print todo JSON"
     doc_long: ClassVar[str] = (
@@ -2894,7 +3009,7 @@ class ReadCommand(TodoSubCommand):
         return 0
 
 
-class GetJsonPathCommand(TodoSubCommand):
+class GetJsonPathCommand(TodoFieldCommand):
     command_names = ("get-json-path",)
     doc_short: ClassVar[str] = "Print a JSON path value"
     doc_long: ClassVar[str] = (
@@ -2916,7 +3031,7 @@ class GetJsonPathCommand(TodoSubCommand):
         return 0
 
 
-class ResolveUrlCommand(TodoSubCommand):
+class ResolveUrlCommand(CorpusQueryCommand):
     command_names = ("resolveurl",)
     doc_short: ClassVar[str] = "Print the value a permalink addresses"
     doc_long: ClassVar[str] = (
@@ -2968,7 +3083,7 @@ _GET_FIELD_PATHS: Dict[str, str] = {
 }
 
 
-class GetCommand(TodoSubCommand):
+class GetCommand(TodoFieldCommand):
     command_names = ("get",)
     doc_short: ClassVar[str] = "Print one named todo field"
     doc_long: ClassVar[str] = (
@@ -3014,7 +3129,7 @@ class GetCommand(TodoSubCommand):
         return 0
 
 
-class InitCommand(TodoSubCommand):
+class InitCommand(TodoCreateCommand):
     command_names = ("init",)
     edit_fields = ("summary", "body", "ac", "note", "actual_summary")
     doc_short: ClassVar[str] = "Create todo branch (run when ready to work)"
@@ -3177,7 +3292,7 @@ class InitCommand(TodoSubCommand):
         return 0
 
 
-class EnsureWorktreeCommand(TodoSubCommand):
+class EnsureWorktreeCommand(SubtodoCommand):
     command_names = ("ensure_worktree",)
     doc_short: ClassVar[str] = "Ensure a working tree exists for a todo (STUB)"
     doc_long: ClassVar[str] = (
@@ -3218,7 +3333,7 @@ class EnsureWorktreeCommand(TodoSubCommand):
         return 0
 
 
-class AddSubtodoCommand(TodoSubCommand):
+class AddSubtodoCommand(SubtodoMergeCommand):
     command_names = ("add-subtodo",)
     doc_short: ClassVar[str] = "Create child todo"
     doc_long: ClassVar[str] = (
@@ -3321,7 +3436,7 @@ class AddSubtodoCommand(TodoSubCommand):
         return 0
 
 
-class SetCommand(TodoSubCommand):
+class SetCommand(TodoFieldCommand):
     command_names = ("set",)
     doc_short: ClassVar[str] = "Patch todo fields / state"
     doc_long: ClassVar[str] = (
@@ -3433,7 +3548,7 @@ class SetCommand(TodoSubCommand):
         return 0
 
 
-class RmCommand(TodoSubCommand):
+class RmCommand(TodoFieldCommand):
     command_names = ("rm",)
     doc_short: ClassVar[str] = "Soft-delete a todo"
     doc_long: ClassVar[str] = (
@@ -3471,7 +3586,7 @@ class RmCommand(TodoSubCommand):
         return 0 if removed else 1
 
 
-class TagAddCommand(TodoSubCommand):
+class TagAddCommand(TagCommand):
     command_names = ("tag-add",)
     doc_short: ClassVar[str] = "Add manual tag(s)"
     doc_long: ClassVar[str] = (
@@ -3499,7 +3614,7 @@ class TagAddCommand(TodoSubCommand):
         return 0
 
 
-class TagRmCommand(TodoSubCommand):
+class TagRmCommand(TagCommand):
     command_names = ("tag-rm",)
     doc_short: ClassVar[str] = "Remove manual tag(s)"
     doc_long: ClassVar[str] = (
@@ -3528,7 +3643,7 @@ class TagRmCommand(TodoSubCommand):
         return 0
 
 
-class TagClearCommand(TodoSubCommand):
+class TagClearCommand(TagCommand):
     command_names = ("tag-clear",)
     doc_short: ClassVar[str] = "Clear tags (automatic by default)"
     doc_long: ClassVar[str] = (
@@ -3604,7 +3719,7 @@ class TagClearCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemAddCommand(TodoSubCommand):
+class WorkItemAddCommand(WorkItemEditCommand):
     command_names = ("work-item-add",)
     doc_short: ClassVar[str] = "Append work item"
     doc_long: ClassVar[str] = (
@@ -3634,7 +3749,7 @@ class WorkItemAddCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemDoneCommand(TodoSubCommand):
+class WorkItemDoneCommand(WorkItemProgressCommand):
     command_names = ("work-item-done",)
     doc_short: ClassVar[str] = "Complete cursor work item as code"
     doc_long: ClassVar[str] = (
@@ -3814,7 +3929,7 @@ class WorkItemDoneCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemReadCommand(TodoSubCommand):
+class WorkItemReadCommand(WorkItemProgressCommand):
     command_names = ("work-item-read",)
     doc_short: ClassVar[str] = "Read the cursor work item"
     doc_long: ClassVar[str] = (
@@ -3853,7 +3968,7 @@ class WorkItemReadCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemInsertCommand(TodoSubCommand):
+class WorkItemInsertCommand(WorkItemEditCommand):
     command_names = ("work-item-insert",)
     doc_short: ClassVar[str] = "Insert a task at the cursor"
     doc_long: ClassVar[str] = (
@@ -3889,7 +4004,7 @@ class WorkItemInsertCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemReplaceCommand(TodoSubCommand):
+class WorkItemReplaceCommand(WorkItemEditCommand):
     command_names = ("work-item-replace",)
     doc_short: ClassVar[str] = "Replace the cursor work item"
     doc_long: ClassVar[str] = (
@@ -3921,7 +4036,7 @@ class WorkItemReplaceCommand(TodoSubCommand):
         return 0
 
 
-class WorkItemDeleteCommand(TodoSubCommand):
+class WorkItemDeleteCommand(WorkItemEditCommand):
     command_names = ("work-item-delete",)
     doc_short: ClassVar[str] = "Delete the cursor work item"
     doc_long: ClassVar[str] = (
@@ -3956,7 +4071,7 @@ class WorkItemDeleteCommand(TodoSubCommand):
         return 0
 
 
-class IsDoneCommand(TodoSubCommand):
+class IsDoneCommand(WorkItemProgressCommand):
     command_names = ("is-done",)
     doc_short: ClassVar[str] = "Report todo completion"
     doc_long: ClassVar[str] = (
@@ -3980,7 +4095,7 @@ class IsDoneCommand(TodoSubCommand):
         return 0 if done else 1
 
 
-class LastShaCommand(TodoSubCommand):
+class LastShaCommand(WorkItemProgressCommand):
     command_names = ("last-sha",)
     doc_short: ClassVar[str] = "Print the last work item sha"
     doc_long: ClassVar[str] = (
@@ -4005,7 +4120,7 @@ class LastShaCommand(TodoSubCommand):
         return 0
 
 
-class SetJsonPathCommand(TodoSubCommand):
+class SetJsonPathCommand(TodoFieldCommand):
     command_names = ("set-json-path",)
     doc_short: ClassVar[str] = "Set a JSON path from stdin or file"
     doc_long: ClassVar[str] = (
@@ -4066,7 +4181,7 @@ class SetJsonPathCommand(TodoSubCommand):
         return 0
 
 
-class MergeSubtodoCommand(TodoSubCommand):
+class MergeSubtodoCommand(SubtodoMergeCommand):
     command_names = ("merge-subtodo",)
     doc_short: ClassVar[str] = "Record child merge"
     doc_long: ClassVar[str] = (
@@ -4097,7 +4212,7 @@ class MergeSubtodoCommand(TodoSubCommand):
         return 0
 
 
-class WaitForCommand(TodoSubCommand):
+class WaitForCommand(SubtodoWaitCommand):
     command_names = ("wait-for",)
     doc_short: ClassVar[str] = "Wait for todo state"
     doc_long: ClassVar[str] = (
@@ -4128,7 +4243,7 @@ class WaitForCommand(TodoSubCommand):
         return 0
 
 
-class WaitAndMergeCommand(TodoSubCommand):
+class WaitAndMergeCommand(SubtodoWaitCommand):
     command_names = ("wait-and-merge",)
     doc_short: ClassVar[str] = "Wait and merge children"
     doc_long: ClassVar[str] = (
@@ -4471,7 +4586,7 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     }
 
 
-class DoctorCommand(TodoSubCommand):
+class DoctorCommand(StoreMaintenanceCommand):
     command_names = ("doctor",)
     doc_short: ClassVar[str] = "Audit and repair todo health"
     doc_long: ClassVar[str] = (
@@ -4720,7 +4835,7 @@ def forest_roots(root: Path) -> List[JsonDict]:
     return roots
 
 
-class LogCommand(TodoSubCommand):
+class LogCommand(CorpusQueryCommand):
     command_names = ("log",)
     doc_short: ClassVar[str] = "Show todo graph (oneline, from TODO.json)"
     doc_long: ClassVar[str] = (
@@ -4786,7 +4901,7 @@ class LogCommand(TodoSubCommand):
         return 0
 
 
-class WebCommand(TodoSubCommand):
+class WebCommand(EnvironmentCommand):
     command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo viewer"
     doc_long: ClassVar[str] = (
@@ -4895,7 +5010,7 @@ class WebCommand(TodoSubCommand):
         return 0
 
 
-class ImportJsonCommand(TodoSubCommand):
+class ImportJsonCommand(StoreMaintenanceCommand):
     command_names = ("import-json",)
     doc_short: ClassVar[str] = "Import legacy TODO.json into the store"
     doc_long: ClassVar[str] = (
@@ -5057,7 +5172,7 @@ def run_search(
     return [todo_row(todo) for todo in hits]
 
 
-class SearchCommand(TodoSubCommand):
+class SearchCommand(CorpusQueryCommand):
     command_names = ("search",)
     doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
@@ -5146,7 +5261,7 @@ class SearchCommand(TodoSubCommand):
         return 0
 
 
-class EmbeddersCommand(TodoSubCommand):
+class EmbeddersCommand(CorpusQueryCommand):
     command_names = ("embedders",)
     doc_short: ClassVar[str] = "List selectable embedders"
     doc_long: ClassVar[str] = (
@@ -5170,7 +5285,7 @@ class EmbeddersCommand(TodoSubCommand):
         return 0
 
 
-class PromptCommand(TodoSubCommand):
+class PromptCommand(CorpusQueryCommand):
     command_names = ("prompt",)
     doc_short: ClassVar[str] = "Print a todo + its parent chain as one startup prompt"
     doc_long: ClassVar[str] = (
@@ -5197,7 +5312,7 @@ class PromptCommand(TodoSubCommand):
         return 0
 
 
-class LsCommand(TodoSubCommand):
+class LsCommand(CorpusQueryCommand):
     command_names = ("ls",)
     doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
@@ -5252,7 +5367,7 @@ class LsCommand(TodoSubCommand):
         return 0
 
 
-class BaseDirCommand(TodoSubCommand):
+class BaseDirCommand(EnvironmentCommand):
     command_names = ("basedir",)
     doc_short: ClassVar[str] = "Print the todo base directory"
     doc_long: ClassVar[str] = (
@@ -5274,7 +5389,7 @@ class BaseDirCommand(TodoSubCommand):
         return 0
 
 
-class RepoDirCommand(TodoSubCommand):
+class RepoDirCommand(EnvironmentCommand):
     command_names = ("repodir",)
     doc_short: ClassVar[str] = "Print the repo directory a todo lives in"
     doc_long: ClassVar[str] = (
@@ -5300,7 +5415,7 @@ class RepoDirCommand(TodoSubCommand):
         return 0
 
 
-class ExportToFileCommand(TodoSubCommand):
+class ExportToFileCommand(StoreMaintenanceCommand):
     command_names = ("export-to-file",)
     doc_short: ClassVar[str] = "Export todos to <basedir>/storage/<id>.json"
     doc_long: ClassVar[str] = (
@@ -5376,7 +5491,7 @@ class ExportToFileCommand(TodoSubCommand):
         return 0
 
 
-class MigrateToLatestCommand(TodoSubCommand):
+class MigrateToLatestCommand(StoreMaintenanceCommand):
     command_names = ("migrate-to-latest",)
     doc_short: ClassVar[str] = "Sweep the store's records to the latest schema"
     doc_long: ClassVar[str] = (
@@ -5403,45 +5518,31 @@ class MigrateToLatestCommand(TodoSubCommand):
         return 0
 
 
-COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = (
-    MintCommand,
-    LogCommand,
-    WebCommand,
-    LsCommand,
-    BaseDirCommand,
-    RepoDirCommand,
-    ReadCommand,
-    GetJsonPathCommand,
-    GetCommand,
-    ResolveUrlCommand,
-    InitCommand,
-    EnsureWorktreeCommand,
-    AddSubtodoCommand,
-    SetCommand,
-    RmCommand,
-    TagAddCommand,
-    TagRmCommand,
-    TagClearCommand,
-    WorkItemAddCommand,
-    WorkItemDoneCommand,
-    WorkItemReadCommand,
-    WorkItemInsertCommand,
-    WorkItemReplaceCommand,
-    WorkItemDeleteCommand,
-    IsDoneCommand,
-    LastShaCommand,
-    SetJsonPathCommand,
-    MergeSubtodoCommand,
-    WaitForCommand,
-    WaitAndMergeCommand,
-    DoctorCommand,
-    ImportJsonCommand,
-    ExportToFileCommand,
-    SearchCommand,
-    EmbeddersCommand,
-    PromptCommand,
-    MigrateToLatestCommand,
+# Derived from the class tree, not hand-kept: a command joins the CLI by
+# choosing a group to subclass, and cannot be registered any other way. The
+# previous 37-entry tuple was a second list to remember.
+COMMAND_CLASSES: Sequence[type[TodoSubCommand]] = tuple(
+    leaf for group in COMMAND_GROUPS for leaf in _command_leaves(group)
 )
+
+
+def grouped_command_listing() -> str:
+    """The --help command list, under one heading per top-level group.
+
+    argparse has no notion of subcommand groups, so the listing is built here
+    and carried in the epilog (already raw-formatted); the flat blob argparse
+    would print is suppressed in register(). Width is fixed rather than
+    computed: the columns should not shift because one long command name was
+    added somewhere else in the tree.
+    """
+    lines: List[str] = []
+    for group in COMMAND_GROUPS:
+        lines.append(f"{group.group_title}:")
+        for leaf in _command_leaves(group):
+            for name in leaf.command_names:
+                lines.append(f"  {name:<18} {leaf.doc_short}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 TOP_LEVEL_EPILOG = """\
@@ -5475,7 +5576,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Branch-bound todo CLI (sqlite-backed). Repo root is the current "
             "directory's gitroot (cd to the target repo; no --repo flag); "
-            "hard-errors if CWD is not a git repo."
+            "hard-errors if CWD is not a git repo.\n\n"
+            # In the description, not the epilog: argparse would print the
+            # commands below an empty "positional arguments: COMMAND" block,
+            # and the commands are what --help is for.
+            + grouped_command_listing()
         ),
         epilog=TOP_LEVEL_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -5483,6 +5588,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub: argparse._SubParsersAction = parser.add_subparsers(
         dest="command",
         required=True,
+        # Collapses the 37-choice blob in the usage line; the epilog lists them.
+        metavar="COMMAND",
     )
 
     for command_cls in COMMAND_CLASSES:
