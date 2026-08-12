@@ -182,6 +182,7 @@ spawn a subtodo.
 | local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
 | no-code step | `todo.py work-item-done <id> --checkpoint -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
+| impossible as written | `todo.py work-item-done <id> --blocked -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-stopped)) | `code` with the no-change sentinel |
 | blocked on children | integrate/wait (below), or `userneeded` and return later | — |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
 
@@ -234,6 +235,39 @@ todo.py set <parent-id> --state userneeded --note="blocked on child <id>: ..."
 
 Never leave a child in `ready`/`working` indefinitely without escalating.
 `stopped` is a user override halt (`--note`).
+
+### Recording a blocked item
+
+A work item that cannot be completed as written -- the approach turns out to
+require solving P==NP, the data it needs does not exist, the API it assumed is
+not there -- is **not** silently left at the cursor and **not** disposed of in
+chat. Record it in TWO places, long form and short form:
+
+| Where | What | Why there |
+|-------|------|-----------|
+| **The work item** (`work-item-done --blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
+| **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question |
+
+```bash
+todo.py work-item-done <id> --blocked -m "Not achievable with the committed corpus.
+MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
+STORM-30: no interchange fixture exists at all...
+Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
+todo.py set <id> --state userneeded --note="http://localhost:8765/<id>/objid/<objid> blocked: replay corpus lacks the recordings. Three options on the work item, need a pick."
+```
+
+Both writes, not one. The state note without the item leaves the trail claiming
+the step is merely unstarted; the item without the state note leaves a stuck todo
+that never asks the user anything. The **permalink to the blocked item** is what
+you paste into chat, a PR, or another todo -- not a retelling.
+
+`--blocked` requires a clean tree (commit or discard the partial attempt first),
+refuses `--sha`, and refuses to be combined with `--checkpoint`. Reach for
+`--checkpoint` when the step genuinely finished without producing code; reach for
+`--blocked` when it did not finish at all. Because the sentinel cannot be the
+last item of a done todo (invariant #6), a blocked tail keeps the todo honestly
+unfinished -- see
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants).
 
 ---
 

@@ -11,6 +11,7 @@ a throwaway git repo, exactly as an agent would invoke it. Run with:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -1072,6 +1073,46 @@ class SearchTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn((tid, "Summary.raw", BOW), self._emb_rows())
 
+    def test_long_summary_is_embedded_and_searchable(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="beta",
+            extra={"LongSummary": {"raw": "quokka marsupial nocturnal"}},
+        )
+        proc = self.todo("search", "quokka marsupial", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+
+    def test_editing_body_leaves_long_summary_vectors_alone(self) -> None:
+        # The no-coupling AC: Body and LongSummary are independent, so a Body
+        # edit must not invalidate the summary vector.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+        self.assertIn((tid, "Body.raw", BOW), self._emb_rows())
+        self.todo("set", tid, "--body=completely different body")
+        rows = self._emb_rows()
+        self.assertIn((tid, "LongSummary.raw", BOW), rows)  # survives
+        self.assertNotIn((tid, "Body.raw", BOW), rows)  # its own is cleared
+
+    def test_editing_long_summary_clears_only_its_own_vectors(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.todo("set", tid, "--long-summary=wombat burrow")
+        rows = self._emb_rows()
+        self.assertNotIn((tid, "LongSummary.raw", BOW), rows)
+        self.assertIn((tid, "Body.raw", BOW), rows)
+        self.assertIn((tid, "Summary.raw", BOW), rows)
+
     def test_raw_change_clears_stale_expensive_vector(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="first summary text")
@@ -1998,6 +2039,60 @@ class WorkItemInvariantTests(TodoCase):
         self.assertIn("--checkpoint", proc.stderr)
         self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
 
+    def test_blocked_workitem_records_null_sha_and_the_long_form(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=replay the 22-event burst")
+        long_form = (
+            "NOT achievable with the committed corpus.\n\n"
+            "MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded.\n"
+            "STORM-30: no interchange fixture exists at all.\n\n"
+            "Options: (a) descope, (b) wait for a healthy tenant, (c) move to layer 3."
+        )
+        proc = self.todo("work-item-done", self.tid, "--blocked", "-m", long_form)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(item["kind"], "code")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["sha"], "0" * 40)  # no commit, and none is coming
+        self.assertEqual(item["message"], long_form)  # the narrative lives in the trail
+        self.assertEqual(item["summary"], "replay the 22-event burst")  # cursor summary carries over
+        # cursor advanced, but the sentinel is not reported as a branch commit
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)
+        self.assertEqual(self.todo("last-sha", self.tid).stdout.strip(), "")
+
+    def test_blocked_requires_a_message(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        proc = self.todo("work-item-done", self.tid, "--blocked")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--blocked requires -m", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
+
+    def test_blocked_refuses_dirty_tree_and_sha_and_checkpoint(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        sha = self.todo("work-item-done", self.tid, "--blocked", "-m", "why", "--sha", self._head())
+        self.assertEqual(sha.returncode, 1)
+        self.assertIn("--blocked does not take --sha", sha.stderr)
+        both = self.todo("work-item-done", self.tid, "--blocked", "--checkpoint", "-m", "why")
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("different completions", both.stderr)
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        dirty = self.todo("work-item-done", self.tid, "--blocked", "-m", "why")
+        self.assertEqual(dirty.returncode, 1)
+        self.assertIn("dirty", dirty.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+
+    def test_blocked_as_last_item_is_a_doctor_finding(self) -> None:
+        # A blocked item makes the todo is-done with no real final commit; #6
+        # is what refuses to call that finished.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        self.todo("work-item-done", self.tid, "--blocked", "-m", "why it cannot be done")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no-change sentinel", proc.stdout)
+
     def test_cursor_insert_replace_delete_read(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=A")
@@ -2667,6 +2762,105 @@ class ObjidWiringTests(TodoCase):
         self.assertNotIn("unknown top-level fields", proc.stdout)
 
 
+class LongSummaryTests(TodoCase):
+    """LongSummary: a derived, reader-first summary of Body -- and NOT coupled to it."""
+
+    def test_absent_by_default(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body")
+        self.assertNotIn("LongSummary", self.read_cur())
+
+    def test_set_and_get_round_trip(self) -> None:
+        self.init_ok("--summary=hello")
+        text = "What this todo is about, in a paragraph a human can skim."
+        proc = self.todo("set", self.tid, f"--long-summary={text}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual({"raw": text}, {"raw": self.read_cur()["LongSummary"]["raw"]})
+        self.assertEqual(text, self.todo("get", self.tid, "--long-summary").stdout.strip())
+
+    def test_settable_alone_on_a_groom_todo(self) -> None:
+        # The motivating case: a HICAP agent rewriting a MIDCAP agent's
+        # LongSummary without touching anything else.
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("set", self.tid, "--long-summary=only this")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("only this", self.read_cur()["LongSummary"]["raw"])
+
+    def test_init_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=seeded at init")
+        self.assertEqual("seeded at init", self.read_cur()["LongSummary"]["raw"])
+
+    def test_doctor_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=fine")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_no_field_at_all_still_errors(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("set", self.tid)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--long-summary", proc.stderr)
+
+    def test_get_requires_exactly_one_flag(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=x")
+        proc = self.todo("get", self.tid, "--long-summary", "--summary")
+        self.assertNotEqual(proc.returncode, 0)
+
+
+class LongSummaryDoctorAndViewTests(TodoCase):
+    """doctor checks LongSummary's SHAPE only; the viewer renders it as text."""
+
+    def test_doctor_does_not_care_that_it_disagrees_with_body(self) -> None:
+        # The point of the test: the ABSENCE of a staleness check. Body and
+        # LongSummary are independent by design, so a mismatch is not a defect.
+        self.init_ok("--summary=hello", "--body=a body about databases")
+        self.todo("set", self.tid, "--long-summary=this text is about something else entirely")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_doctor_is_silent_about_a_body_with_no_long_summary(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body with no summary written yet")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("LongSummary", proc.stdout)
+
+    def test_doctor_rejects_a_malformed_long_summary(self) -> None:
+        self.init_ok("--summary=hello")
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            record["LongSummary"] = "a bare string, not {raw: ...}"
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?", (json.dumps(record), self.tid)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("LongSummary.raw must be a string", proc.stdout)
+
+    def test_viewer_renders_it_as_text_not_a_json_blob(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.todo("set", self.tid, "--long-summary=A readable paragraph for a human.")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn("Long summary", out)
+        self.assertIn("A readable paragraph for a human.", out)
+        # Not dumped through the generic Fields path, which would show the dict
+        # (and, once vectors exist, the vectors).
+        self.assertNotIn('meta-key">LongSummary', out)
+
+    def test_viewer_omits_the_section_when_absent(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.assertNotIn("Long summary", self.todo("web", "--dump-html", self.tid).stdout)
+
+
 class ResolveUrlTests(TodoCase):
     """resolveurl dereferences a permalink to the value it addresses."""
 
@@ -2948,6 +3142,59 @@ class ObjidFindingUnitTests(unittest.TestCase):
     def test_state_is_never_reported(self) -> None:
         record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid=1)
         self.assertEqual([], todo.objid_findings(record))
+
+
+class CommandTaxonomyTests(unittest.TestCase):
+    """The command tree is the registry, so the tree has to stay well formed."""
+
+    def _all_leaves(self, node: type = todo.TodoSubCommand) -> list:
+        """Every command class in the file, found WITHOUT going through the groups."""
+        found = []
+        for sub in node.__subclasses__():
+            if sub.command_names:
+                found.append(sub)
+            found.extend(self._all_leaves(sub))
+        return found
+
+    def test_no_command_is_orphaned_from_the_groups(self) -> None:
+        # The one real hazard of deriving registration from the tree: a command
+        # that subclasses TodoSubCommand directly is silently never registered.
+        self.assertEqual(
+            sorted(c.__name__ for c in self._all_leaves()),
+            sorted(c.__name__ for c in todo.COMMAND_CLASSES),
+        )
+
+    def test_every_command_is_registered_exactly_once(self) -> None:
+        names = [n for c in todo.COMMAND_CLASSES for n in c.command_names]
+        self.assertEqual(len(names), len(set(names)), "duplicate command name")
+
+    def test_every_group_is_titled_and_populated(self) -> None:
+        for group in todo.COMMAND_GROUPS:
+            self.assertTrue(group.group_title, f"{group.__name__} has no title")
+            self.assertTrue(list(todo._command_leaves(group)), f"{group.__name__} is empty")
+
+    def test_groups_are_not_runnable(self) -> None:
+        # Abstract by omission: a group implements neither configure_parser nor do.
+        for group in todo.COMMAND_GROUPS:
+            self.assertFalse(group.command_names, f"{group.__name__} declares a command")
+            with self.assertRaises(TypeError):
+                group(argparse.Namespace())  # type: ignore[abstract]
+
+    def test_help_lists_every_command_under_a_group_heading(self) -> None:
+        listing = todo.grouped_command_listing()
+        for group in todo.COMMAND_GROUPS:
+            self.assertIn(f"{group.group_title}:", listing)
+        for command_cls in todo.COMMAND_CLASSES:
+            for name in command_cls.command_names:
+                self.assertIn(f"  {name} ", listing + " ")
+
+    def test_argparse_does_not_also_print_a_flat_list(self) -> None:
+        # add_parser(help=...) would restore the 37-entry blob the grouping
+        # replaced -- and argparse.SUPPRESS does not suppress it, it prints
+        # the sentinel verbatim.
+        text = todo.build_parser().format_help()
+        self.assertNotIn("==SUPPRESS==", text)
+        self.assertEqual(1, text.count("  doctor "), "doctor listed more than once")
 
 
 if __name__ == "__main__":

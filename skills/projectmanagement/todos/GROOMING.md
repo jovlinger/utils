@@ -42,6 +42,7 @@ Before `init` / before implementation agents fan out, the ticket should have:
 |--------|-------|
 | `Summary.raw` | Human title |
 | `Body.raw` | Description / WHY |
+| `LongSummary.raw` | Optional. A reader-first summary of `Body`, and the text the summary embedding is computed from (below) |
 | `AC` | Concrete acceptance criteria |
 | `Scope` | At least one of `git_url`, `path_from_root` (+ `branch` with `git_url`). Do **not** set `path_to_project` (stripped by migration) |
 | Tiered WorkItems | Head of list small enough for one trackable unit (`frequentcommits`) |
@@ -57,6 +58,53 @@ todo.py work-item-add <id> --summary="[MIDCAP] ..."
 Wholesale replan: `set-json-path <id> WorkItems` (JSON array) — see
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items). Edit the not-done frontier;
 never rewrite the done prefix.
+
+---
+
+## Writing a LongSummary
+
+`LongSummary` is a careful summary of the `Body`, written to inform a human
+reader without overwhelming them -- and, at the same time, the text the summary
+**embedding** is computed from. The field contract (its two permitted readers,
+the deliberate absence of any tool coupling to `Body`, and the staleness
+obligation that follows) is owned by
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#longsummary-the-field-contract). Read it
+before writing one.
+
+Write for a human skimming the ticket, knowing the same text becomes a vector.
+Those two goals mostly agree: both reward dense, concrete, self-contained prose
+and punish padding.
+
+| Do | Don't |
+|----|-------|
+| Lead with what the todo IS and why it exists | Open with "This todo..." or restate the `Summary` |
+| Name the concrete nouns: files, commands, fields, systems | Use vague placeholders ("the relevant module") an embedder cannot match |
+| Keep it self-contained: it is read without the `Body` | Refer to "the above", "the second option", or the `Body`'s structure |
+| A few short paragraphs, prose | Deep bullet trees, tables, ASCII art -- they read badly and embed worse |
+| Include the decisions and constraints that were RATIFIED | Reproduce the whole reasoning that led to them |
+| Say what was deliberately excluded, if it is load-bearing | Pad to look thorough |
+
+**Write it as if it were an important embedding**, because it is. Terms a future
+searcher would plausibly type should actually appear in it -- the single most
+useful rule when you are unsure what to include.
+
+**Length** is whatever informs without overwhelming, typically a handful of
+paragraphs. A `LongSummary` approaching the length of its `Body` has failed at
+both jobs.
+
+**Not the `pr-description` format.** That skill is tailored for FINISHED work
+(what broke, what was fixed, how it was verified) and is deliberately terse to
+the point of being a pointer for someone with the diff open. A `LongSummary`
+describes a todo at ANY stage, for a reader with nothing else in front of them.
+The spirit -- reader-first, no padding -- carries over; the shape does not.
+
+```bash
+todo.py set <id> --long-summary="..."   # write or replace it
+todo.py get <id> --long-summary         # read it back
+```
+
+Because nothing couples the two fields, a materially rewritten `Body` obliges
+you to rewrite an existing `LongSummary` in the same breath.
 
 ---
 

@@ -122,10 +122,10 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 
 | Command | Behavior |
 |---------|----------|
-| `get <selector> --summary\|--body\|--ac\|--state\|--actual-summary\|--parent\|--tag` | Exactly one flag; friendly wrapper over `get-json-path` |
+| `get <selector> --summary\|--body\|--ac\|--state\|--actual-summary\|--long-summary\|--parent\|--tag` | Exactly one flag; friendly wrapper over `get-json-path` |
 | `get-json-path <selector> <path>` | Low-level path read |
 | `set-json-path <selector> <path> [--file <path>]` | Low-level path write (stdin or `--file`). Store-only |
-| `set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>] [--tag=] [--untag=]` | Patch fields and/or state. Store-only. Requires at least one field. `--parent` is make-it-so Parent list + INFO backlinks |
+| `set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--long-summary=] [--parent=<id>] [--tag=] [--untag=]` | Patch fields and/or state. Store-only. Requires at least one field. `--parent` is make-it-so Parent list + INFO backlinks. `EDIT` as a value captures free text from `$VISUAL`/`$EDITOR`/`vi` (exits 1 non-interactively) |
 | `tag-add` / `tag-rm` / `tag-clear` | Manual tag ops (`set --tag`/`--untag` aliases for add/rm) |
 | `resolveurl <path-or-url>` | Dereference permalink; no selector (todo is first path segment) |
 
@@ -147,9 +147,9 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `work-item-replace <selector> --summary=...` | Reword cursor task |
 | `work-item-delete <selector>` | Delete cursor task |
 | `work-item-read <selector>` | Cursor + `next` mechanism hint |
-| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint]` | Complete cursor as `code` (or `--checkpoint`). Must run from a checkout of the todo’s branch |
+| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | Complete cursor as `code` (or `--checkpoint` / `--blocked`). Must run from a checkout of the todo’s branch. `--blocked` requires `-m` and a clean tree; refuses `--sha` and refuses `--checkpoint` |
 | `is-done <selector>` | Exit 0 when no open work items |
-| `last-sha <selector>` | Sha of last work item (branch tip attribution) |
+| `last-sha <selector>` | Sha of last work item (branch tip attribution); `None` for the no-change sentinel |
 
 ### Maintenance and I/O
 
@@ -204,7 +204,7 @@ working → done`. Subtodos the parent absorbs: `done → merged`. Interrupts:
 | `groom` | `{}` | Minted; collecting data; branchless until `init` |
 | `ready` | `{}` | Has a branch; not yet started |
 | `working` | `{ "owner"?: string }` | Active (`expire` reserved, not settable) |
-| `userneeded` | `{ "note"?: string }` | Blocked on user |
+| `userneeded` | `{ "note"?: string }` | Blocked on user. The `note` is the SHORT form -- which item, what decision is asked for -- pointing at the work item that carries the detail (see [`WORKING.md`](WORKING.md#5-handle-userneeded-stopped)) |
 | `stopped` | `{ "note"?: string }` | User halt |
 | `done` | `{ "last_commit"?: string }` | Complete on ticket branch |
 | `merged` | `{ "merged_into"?, "last_commit"?, "pr"?, "merge_commit"? }` | Handed off (parent absorb **or** root PR) |
@@ -244,9 +244,9 @@ Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 ## Record schema
 
 Allowed top-level fields (unknown keys → doctor findings):
-`AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `Parent`,
-`Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy), `WorkItems`,
-`create_dt`, `update_dt`, `_schema`, `_nextobjid`.
+`AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `LongSummary`,
+`Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
+`WorkItems`, `create_dt`, `update_dt`, `_schema`, `_nextobjid`.
 
 Required: `Branch`, `Id`, `State`, `Summary`.
 
@@ -284,21 +284,81 @@ appear in current examples.
 |-------|------|
 | `Summary` | `{ "raw": "<title>" }` (+ optional embedder keys) |
 | `Body` | `{ "raw": "<description>" }` |
+| `LongSummary` | optional `{ "raw": "<reader-first summary of Body>" }`; DERIVED from `Body` but not tool-coupled to it (below). Set with `set <id> --long-summary=` |
 | `AC` | string |
 | `ActualSummary` | optional string at finish; reused by `merge-subtodo` |
 | `Tag` | optional list of `{raw, manual, ...}`; manual sticky; auto-tagging dormant |
+
+`Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`
+and `Tag` are optional and omitted when unused.
+
+### LongSummary: the field contract
+
+A careful summary of the `Body`. **Exactly two things may read it:** display to a
+user, and generating the summary embedding. That list is exhaustive -- in
+particular it does **not** feed `prompt`, whose output goes to an agent, not a
+user. How to write one:
+[`GROOMING.md`](GROOMING.md#writing-a-longsummary).
+
+Why it exists: `Body` is usually too long for an embedder to handle well, so the
+signal gets diluted or truncated and the vector matches poorly. `Summary`, `Body`
+and `LongSummary` are all embedded additively; `LongSummary` is written as a
+single coherent unit and so is expected to yield ONE phrase vector where `Body`
+produces a list of n-phrase vectors. It is DERIVED in the same spirit as an
+embedding: nothing is lost if it is regenerated from scratch.
+
+**There is no tool connection to `Body`.** Zero access control beyond agents
+obeying this skill, and no tool-level coupling:
+
+- Editing `Body` does not clear, drop, regenerate, or flag `LongSummary`.
+- Editing `LongSummary` clears only its own vectors, like any raw field.
+- `doctor` checks its SHAPE only. It will never report a `LongSummary` as
+  missing, stale, or inconsistent with its `Body` -- the tool cannot judge that,
+  and the absence of the check is deliberate, not an oversight.
+
+Setting one without the other is therefore **completely allowed**; the motivating
+case is a HICAP agent rewriting a `LongSummary` a MIDCAP agent wrote, touching
+nothing else. The consequence is that **staleness is on you**: materially change
+a `Body` while a `LongSummary` exists and you rewrite it in the same breath,
+because nothing else will notice.
 
 ### WorkItems and invariants
 
 | kind | fields | produced by |
 |------|--------|-------------|
 | `task` | `summary`, `done:false` | `work-item-add` / `work-item-insert` |
-| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` |
+| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done`; also `work-item-done --blocked` for an item that cannot be done as written (`sha` = the no-change sentinel, `-m` required) |
 | `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` | `add-subtodo` |
 | `checkpoint` | `summary`, `at_sha`, `message`, `done:true` | `work-item-done --checkpoint` |
 
 Cursor = first not-done item (derived).
+
+**`sha` vs `at_sha` (attribution vs observation).** A `code`/`merge_subtodo`
+`sha` means "this commit IS this item's work". A `checkpoint` records `at_sha`
+instead: where branch HEAD stood when a no-commit step finished, claiming no
+authorship. `message` on a `code` item is the full commit message recorded at
+`sha`, which makes the trail self-describing -- so `-m` must state the concrete
+outcome (files/tests added, with paths), not a vague label. Inapplicable flags
+raise rather than being silently dropped (`-m` on a clean tree without
+`--checkpoint`/`--blocked` errors; `--sha` with either errors).
+
+**The no-change sentinel (`sha` = 40 zeros, `WORKITEM_NULL_SHA`).** A done
+`code`/`merge` node may carry git's null object id to say "no commit"
+explicitly. Two producers:
+
+- `work-item-done --blocked -m "<long form>"` -- the item CANNOT be done as
+  written. Where a checkpoint says "no commit, step finished", the sentinel says
+  "no commit, and none is coming". Procedure:
+  [`WORKING.md`](WORKING.md#5-handle-userneeded-stopped).
+- The legacy retrofit for old records that misattribute a foreign commit,
+  without converting the node's kind.
+
+`doctor` accepts the sentinel mid-list, never tries to resolve it, and rejects it
+as the last item of a done todo (invariant #6, same as `checkpoint`); `last-sha`
+reports `None` for it, never the zeros. That last rule is load-bearing for a
+blocked item: it is the tool refusing to call a todo finished when its final act
+was failing to do something.
 
 **Invariants** (tool + `doctor`; numbers kept stable):
 
@@ -336,11 +396,48 @@ Path grammar (served by `todo.py web`; CLI: `resolveurl`):
 | `/<todoid>` | whole record |
 | `/<todoid>/summary/raw` | field (case-insensitive) |
 | `/<todoid>/workitem/5/summary` | 0-based index |
-| `/<todoid>/workitem/sha/883368/summary` | where-clause (4+ prefix) |
+| `/<todoid>/workitem/idx/5/summary` | the same, written out; `idx` is the default key |
+| `/<todoid>/workitem/sha/883368/summary` | where-clause on `sha` (4+ prefix) |
+| `/<todoid>/subtodo/subtodo_id/13e5` | where-clause on `subtodo_id` (4+ prefix) |
 | `/<todoid>/objid/0a3f` | canonical object link |
 
-Indexes are 0-based; bare segments are indexes (not bare hex). Prefer objid
-over indexes when linking durable content.
+Indexes are 0-based, matching the json dot-path, `jq`, and `doctor` finding
+labels. A bare segment is **always** an index -- there is no bare-hex fallback,
+so a hex value must name its key (`sha/883368`). Only `sha`, `subtodo_id`, and
+`objid` take 4+ character prefixes (ambiguity is an error); an index is exact.
+A list-valued field whose name ends in `s` also answers to the name minus that
+`s` (naming the element type: `WorkItems` answers to `workitem`), with an exact
+match winning over the alias. Prefer objid over indexes when linking durable
+content -- `work-item-insert` shifts every later item, so `/workitem/1` silently
+comes to mean a different item.
+
+`todo.py web` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
+the whole todo, scrolled to and focused on the resolved object. No redirect --
+the path IS the resource. Resolution is entirely server-side, which is why the
+grammar can use prefixes. Degrading is deliberate rather than fatal:
+
+| The path resolves to | You get |
+|----------------------|---------|
+| a work item, subtodo, or parent | the page, that box focused and scrolled to |
+| a scalar inside one | the page, focused on the box that holds it |
+| an object the viewer does not draw | the page, focused on the nearest thing it does draw |
+| a section (`Summary`, `Scope`, `Tag.0`) | the page, that section scrolled to and marked |
+| the `State` subtree, or `/<todoid>` alone | the page, unfocused |
+| nothing | 404 |
+
+**A large section arrives collapsed, and focus opens it.** A section whose
+content is oversized (a long `Body`, a `WorkItems` list past a handful of items,
+a long state `note`) renders shut as a header carrying a size hint (`Body 88
+lines`, `Work items 19 items`), and an oversized box summary is height-clamped
+behind a `...more` expander. Under the thresholds nothing collapses. Collapsing
+never hides a permalink's own target: a section CONTAINING the resolved object
+renders **open**, decided server-side, so every row of the table above still
+describes what you land on. Focus only ever opens -- it does not close a section
+you expanded, does not touch siblings, and re-rendering the same permalink gives
+the same page.
+
+Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
+(`replaceState`), so whatever is on screen is already a copyable permalink.
 
 ### Minimal current skeleton
 
