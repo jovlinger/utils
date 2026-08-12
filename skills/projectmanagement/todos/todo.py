@@ -24,6 +24,7 @@ from typing import Any, ClassVar, Dict, Iterator, List, Optional, Sequence
 
 import todo_db
 import todo_objid
+import todo_search
 import todo_store
 import todo_embed
 import todo_url
@@ -69,6 +70,21 @@ STATE_MACROS = {
 # Default --states expression when neither --states nor -s is given; overridable
 # per todo dir via config.json "default_state_filter". Hides terminated states.
 DEFAULT_STATE_FILTER = "ALL,-FINAL"
+
+# Search config keys, all per todo dir in config.json.
+#   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
+#                            derived data, dropped by clear-search-data
+#   search_stopword_min_idf  the IDF below which a term is a stopword here
+#   embedder                 present-and-null turns vector search OFF for this
+#                            store, leaving lexical IDF as the only ranker
+SEARCH_STOPWORDS_KEY = "search_stopwords"
+SEARCH_STOPWORD_MIN_IDF_KEY = "search_stopword_min_idf"
+SEARCH_EMBEDDER_KEY = "embedder"
+
+# A term appearing in ~74% or more of the corpus (ln(N+1/df+1) < 0.3) carries
+# too little signal to rank on. Tunable per store; the value only decides where
+# the discovered list is cut, never whether discovery happens.
+DEFAULT_STOPWORD_MIN_IDF = 0.3
 
 
 def parse_state_filter(expr: str) -> frozenset:
@@ -1614,6 +1630,74 @@ def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
     return fused
 
 
+def resolve_embedder_names(requested: Optional[Sequence[str]]) -> List[str]:
+    """Which embedders this search runs, honoring the store's ``embedder`` config.
+
+    An explicit ``--embedder`` always wins. Otherwise the todo dir decides:
+
+    ==========================  ==========================================
+    ``config.json``             search runs with
+    ==========================  ==========================================
+    (key absent)                every non-hidden embedder -- the default
+    ``"embedder": null``        NO embedder: lexical IDF is the only ranker
+    ``"embedder": "apple"``     that embedder (comma list, like --embedder)
+    ``"embedder": ["a", "b"]``  those embedders
+    ==========================  ==========================================
+
+    The null case is the point: it skips instantiation entirely, so nothing
+    spawns the macOS NLCE sidecar, nothing backfills a vector, and search stays
+    fast and hermetic on a machine that cannot embed at all. It is a store-level
+    policy rather than a flag because "this checkout does not do vectors" is a
+    property of the checkout.
+    """
+    if requested:
+        return list(requested)
+    todo_dir = todo_db.todo_dir()
+    if not todo_store.config_has(todo_dir, SEARCH_EMBEDDER_KEY):
+        return todo_embed.default_embedder_names()
+    configured = todo_store.config_value_raw(todo_dir, SEARCH_EMBEDDER_KEY)
+    if configured is None:
+        return []
+    if isinstance(configured, str):
+        return [part.strip() for part in configured.split(",") if part.strip()]
+    if isinstance(configured, list):
+        return [str(part).strip() for part in configured if str(part).strip()]
+    raise TodoError(
+        f"config.json {SEARCH_EMBEDDER_KEY!r} must be null (no embedder), a name, "
+        f"or a list of names; got {type(configured).__name__}"
+    )
+
+
+def resolve_stopwords(
+    index: todo_search.LexicalIndex, *, persist: bool = True
+) -> List[str]:
+    """This corpus's stopwords: the persisted list, or discover and persist one.
+
+    Nobody writes the list by hand. A term earns the label by falling below
+    ``search_stopword_min_idf`` -- i.e. by being so widespread it carries no
+    signal -- which is what makes it catch the domain words a shipped English
+    list never would (``todo``, ``sha``, ``branch``, ``commit``).
+
+    Discovery is LAZY and sticky, exactly like the embedding backfill next to
+    it: computed when the config holds no list, then reused verbatim (a
+    hand-edited list is therefore honored). ``clear-search-data`` is how you
+    ask for a fresh one after the corpus has moved on. ``persist`` is False
+    under ``--dry-run``, which still uses the discovered list but writes
+    nothing.
+    """
+    todo_dir = todo_db.todo_dir()
+    stored = todo_store.config_list(todo_dir, SEARCH_STOPWORDS_KEY)
+    if stored or not index.document_count:
+        return stored
+    min_idf = todo_store.config_float(
+        todo_dir, SEARCH_STOPWORD_MIN_IDF_KEY, DEFAULT_STOPWORD_MIN_IDF
+    )
+    discovered = index.stopword_candidates(min_idf)
+    if discovered and persist:
+        todo_store.update_config(todo_dir, {SEARCH_STOPWORDS_KEY: discovered})
+    return discovered
+
+
 def search_tickets(
     root: Path,
     terms: Sequence[str],
@@ -1641,7 +1725,7 @@ def search_tickets(
     already-downcased tag text, matching how ``Tag.raw`` is always stored.
     Both filters apply before ranking, so the limit counts matches only.
     """
-    names = list(embedder_names) if embedder_names else todo_embed.default_embedder_names()
+    names = resolve_embedder_names(embedder_names)
     embedders: List[tuple[str, todo_embed.Embedder]] = []
     for name in names:
         try:
@@ -1768,21 +1852,14 @@ def search_tickets(
                     scores[tid] = best
             rankings.append(scores)
 
-    text_by_tid = {tid: " ".join(raws[tid].values()).lower() for tid in tickets}
-    for term in terms:
-        term_lower = term.lower()
-        sub_tokens = {tok for tok in term_lower.split() if tok}
-        lexical: Dict[str, float] = {}
-        for tid, text in text_by_tid.items():
-            score = 0.0
-            if term_lower and term_lower in text:
-                score += 1.0
-            for token in sub_tokens:
-                if token in text:
-                    score += 0.1
-            if score > 0.0:
-                lexical[tid] = score
-        rankings.append(lexical)
+    # Lexical half: one IDF ranking over all terms (their weights add), so a
+    # rare term outranks a corpus-wide one instead of every term counting the
+    # same. Built fresh here -- see todo_search on why none of it is persisted.
+    index = todo_search.LexicalIndex(
+        {tid: " ".join(raws[tid].values()) for tid in tickets}
+    )
+    index.use_stopwords(resolve_stopwords(index, persist=not dry_run))
+    rankings.append(index.score(terms))
 
     if refreshing_embeddings:
         print("Done", file=sys.stderr, flush=True)
@@ -3717,6 +3794,92 @@ class TagClearCommand(TagCommand):
         if not self.no_commit and cleared:
             scope = "all" if self.include_manual else "auto"
             commit_todo(root, f"chore(todo): tag-clear ({scope}) on {cleared} todo(s)")
+        return 0
+
+
+class ClearSearchDataCommand(StoreMaintenanceCommand):
+    command_names = ("clear-search-data",)
+    doc_short: ClassVar[str] = "Drop derived search data (re-derived lazily)"
+    doc_long: ClassVar[str] = (
+        "Clear-search-data drops what SEARCH derived, which is safe precisely because "
+        "none of it is source data: the next search recomputes whatever it needs. Two "
+        "kinds go. Embedding vectors are removed from the embeddings index and from the "
+        "stamped ticket JSON, and are backfilled again on the next search that selects "
+        "that embedder. The DISCOVERED stopword list is removed from the todo dir's "
+        "config.json, and the next search rediscovers it from the corpus as it stands "
+        "then -- which is how you ask for a fresh list after the corpus has moved on, "
+        "since discovery is otherwise sticky. The lexical index itself is not mentioned "
+        "because it is never stored: tokenizing the corpus is cheap enough to redo per "
+        "search, so only the expensive artifact earns storage. The selector is REQUIRED: "
+        "a specific todo (Id prefix or full digest) or the ALL sentinel to sweep the "
+        "corpus -- a corpus-wide wipe has to be asked for by name. The stopword list is "
+        "corpus-level, so only ALL drops it; clearing one todo touches only its vectors. "
+        "Prints a JSON summary of what went."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register clear-search-data arguments."""
+        parser.add_argument(
+            "selector",
+            help="todo selector: Id prefix (4+ hex) or full digest, or ALL to sweep the "
+            "whole corpus (required -- there is no default)",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Drop derived search data for one todo or across the corpus."""
+        root = self.root()
+        sweep = is_all_selector(self.selector)
+        targets: List[tuple[Optional[str], JsonDict]] = []
+        if sweep:
+            if not use_store():
+                raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
+            targets = [
+                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                if t.get("Id")
+            ]
+        else:
+            _, todo = resolve_ticket_by_id(root, self.selector)
+            targets = [(None, todo)]
+
+        store = todo_store.get_store()
+        cleared = 0
+        vectors_removed = 0
+        for repo, todo in targets:
+            ticket_id = str(todo.get("Id", ""))
+            if not ticket_id:
+                continue
+            stamped = _json_embeddings_present(todo)
+            for field_path in {path for path, _fingerprint in stamped}:
+                _strip_vectors_at(todo, field_path)
+            store.clear_embeddings(ticket_id)
+            if not stamped:
+                continue
+            # no_clear: the raws did not change, so there is nothing stale to
+            # re-clear -- and clearing again would just redo what we did here.
+            write_todo_worktree(root, todo, no_clear=True, repo=repo)
+            cleared += 1
+            vectors_removed += len(stamped)
+
+        stopwords_cleared = False
+        if sweep and todo_store.config_list(todo_db.todo_dir(), SEARCH_STOPWORDS_KEY):
+            todo_store.update_config(todo_db.todo_dir(), {SEARCH_STOPWORDS_KEY: None})
+            stopwords_cleared = True
+
+        print(
+            json.dumps(
+                {
+                    "scanned": len(targets),
+                    "todos_cleared": cleared,
+                    "vectors_removed": vectors_removed,
+                    "stopwords_cleared": stopwords_cleared,
+                },
+                indent=2,
+            )
+        )
+        if not self.no_commit and cleared:
+            commit_todo(root, f"chore(todo): clear-search-data on {cleared} todo(s)")
         return 0
 
 

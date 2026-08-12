@@ -41,7 +41,7 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 import todo_db
 
@@ -538,6 +538,49 @@ def config_value(base: Path, key: str, default: str) -> str:
     """Read a non-empty string config *key* from ``<base>/config.json``, else *default*."""
     value = _load_config(base).get(key)
     return value if isinstance(value, str) and value.strip() else default
+
+
+def config_float(base: Path, key: str, default: float) -> float:
+    """Read a float config *key* from ``<base>/config.json``, else *default*."""
+    return _float_config(_load_config(base), key, default)
+
+
+def config_list(base: Path, key: str) -> List[str]:
+    """Read a list-of-strings config *key*; empty when absent or malformed."""
+    value = _load_config(base).get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def config_value_raw(base: Path, key: str) -> Any:
+    """Read *key* from ``<base>/config.json`` with no coercion (None when absent)."""
+    return _load_config(base).get(key)
+
+
+def config_has(base: Path, key: str) -> bool:
+    """True when *key* is present at all -- including with a ``null`` value.
+
+    Distinguishes "explicitly set to null" from "absent", which the readers
+    above cannot: a null-valued key is how a config says OFF rather than
+    unspecified.
+    """
+    return key in _load_config(base)
+
+
+def update_config(base: Path, updates: Mapping[str, Any]) -> None:
+    """Merge *updates* into ``<base>/config.json``; a ``None`` value drops the key.
+
+    Read-modify-write, so a caller touching one key never clobbers the storage
+    DSN or anything else the tool put there.
+    """
+    config = _load_config(base)
+    for key, value in updates.items():
+        if value is None:
+            config.pop(key, None)
+        else:
+            config[key] = value
+    _write_config(base, config)
 
 
 def _expand_todo_base(path: str, base: Path) -> str:

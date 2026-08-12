@@ -59,6 +59,7 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 | Tickets | `<todo-dir>/sqlite.db` or `<todo-dir>/storage/*.json` |
 | Worktrees (convention) | `<todo-dir>/worktrees/<repo-path>/<branch>` |
 | Embeddings | In ticket JSON; sqlite also mirrors a derived index |
+| Search config | `<todo-dir>/config.json` (`search_stopwords`, `search_stopword_min_idf`, `embedder`) -- see [Search ranking](#search-ranking) |
 
 `TODO_USE_JSON=1` enables legacy file mode (import-oriented). There is **no
 `--repo` flag** -- `cd` into the target repo/worktree; CWD must be a git repo.
@@ -112,7 +113,7 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `ls [--states=<expr>] [-s] [-t\|-tc\|-tu\|-g]` | List short id + summary. Hides FINAL by default |
 | `read <selector>` | Print ticket JSON |
 | `prompt <selector>` | Ancestor Summary/Body chain (farthest first) -- startup context |
-| `search <term>...` | Vector + lexical search; same state/column flags as `ls` |
+| `search <term>...` | Vector + lexical IDF search; same state/column flags as `ls`. See [Search ranking](#search-ranking) |
 | `embedders` | List selectable search embedders |
 | `log <selector>\|ALL` | Graph of `Subtodos` tree (`-n`, `-v`, `-t`) |
 | `basedir` / `repodir <selector>` | Print todo dir / main-checkout repo path |
@@ -157,6 +158,7 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 |---------|----------|
 | `doctor <selector>\|ALL [--dry-run]` | Audit + repair (INFO backlinks, schema sweep, PR reconcile via `gh`) |
 | `migrate-to-latest [--dry-run]` | Explicit record sweep to `SCHEMA_VERSION` |
+| `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
 | `web [selector] [--host] [--port] [--dump-html]` | Serve viewer + permalinks (default bind `localhost:8765`) |
@@ -240,6 +242,36 @@ Precedence: `--states` > `-s` (means `ALL`) > config `default_state_filter`
 
 Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 `UNSTARTED` (groom, ready), `INFO` (fact).
+
+### Search ranking
+
+`search` fuses (reciprocal rank) one ranking per selected embedder with **one**
+lexical ranking over all terms. The lexical half is IDF-weighted full-text, in
+`todo_search.py`:
+
+| Piece | Behavior |
+|-------|----------|
+| Tokenizer | Runs of letters/digits, downcased, then stemmed. Digits are kept -- ids and ticket keys are what people type |
+| Stemming | `STEMMER` is a **seam**: rebind the module attribute to drop in Porter/Snowball without touching a caller. Shipped `stem()` is crude and idempotent -- de-pluralize (`-es` only after a sibilant; never after `ss`), de-gerund (`-ing`, refused when the stem would be under 4 chars), then drop a trailing `e` on words of 5+ so `merge` and `merging` agree |
+| Scoring | Each document scores the IDF of every distinct query token it holds; a rare term dominates a corpus-wide one. Weights are floored so a term in EVERY todo still returns its todos. A document matching nothing is absent, not scored zero |
+| Phrases | A multi-token term (a quoted phrase) earns a bonus where its tokens appear contiguously -- IDF alone cannot see word order |
+| Stopwords | Discovered, never shipped: a term whose IDF falls below `search_stopword_min_idf` is skipped. Matching ONLY a stopword is not matching. Skipping is suspended when the WHOLE query is stopwords, so searching common words still returns their todos |
+
+**Nothing lexical is persisted.** The corpus is tokenized fresh per search
+(milliseconds for a few hundred records); embedding is expensive and earns
+storage, tokenizing does not. The one durable lexical artifact is the discovered
+stopword list.
+
+Config keys, per todo dir in `config.json`:
+
+| Key | Meaning |
+|-----|---------|
+| `search_stopwords` | The discovered list. Written on the first search that finds one, then reused verbatim -- so a hand-edited list is honored. Derived data: `clear-search-data ALL` drops it and the next search rediscovers it against the corpus as it stands then (which is how a list that has gone stale gets corrected) |
+| `search_stopword_min_idf` | Cut-off for discovery (default `0.3`, i.e. a term in roughly 74%+ of todos) |
+| `embedder` | Absent = every non-hidden embedder. **`null` = none**, leaving lexical IDF as the only ranker: nothing instantiates an embedder, so no NLCE sidecar spawns and no vector is backfilled. A string (comma list) or list selects. `--embedder` always overrides; any other value type errors |
+
+`--dry-run` discovers stopwords for that run but persists nothing, matching how
+it already refuses to backfill vectors.
 
 ## Record schema
 
