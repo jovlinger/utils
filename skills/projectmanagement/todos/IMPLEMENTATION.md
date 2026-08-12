@@ -66,6 +66,24 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 Print the resolved base with `todo.py basedir`. Print a todo’s main-checkout
 repo path with `todo.py repodir <selector>`.
 
+### Repository-local storage
+
+SQLite and `storage/*.json` are interchangeable backend features. They should
+be opaque to an agent following the grooming or working runbook: use
+`todo.py`, not the backend files.
+
+A resolved store inside a repository checkout is supported, but versioning its
+ticket data beside source changes is a **very strong anti-pattern**. Routine
+ticket writes can otherwise dirty the repository and create unrelated merge
+pressure. This is not forbidden: a workflow may intentionally version that
+state. Prefer an external or ignored store when ticket history is not meant to
+be code history.
+
+**Desired tool behavior (not implemented by this document):** warn prominently
+on every invocation when the resolved store is inside the current repository
+and is not ignored. The warning should name the resolved path and explain the
+intermingling risk, but must not block supported workflows.
+
 ## Selectors
 
 | Selector | Meaning |

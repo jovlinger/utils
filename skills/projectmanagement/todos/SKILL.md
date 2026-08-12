@@ -2,10 +2,9 @@
 name: todos
 description: >-
   Branch-bound todo task tickets managed through the todo.py CLI (one ticket
-  per git branch; stored in the repo's .todo/ store -- sqlite.db or
-  storage/*.json). TRIGGER: the user says "TODO", "todo", "ticket", "branch
+  per git branch). TRIGGER: the user says "TODO", "todo", "ticket", "branch
   task", or asks to track/manage task state -- invoke immediately. Route ALL
-  ticket access through todo.py; never read or write TODO.json or the store by
+  ticket access through todo.py; never read or write TODO.json or a backend by
   hand. Load detailed references on demand via the intent router below -- do
   not preload the full CLI/schema/runbook unless needed.
 disable-model-invocation: false
@@ -16,16 +15,15 @@ disable-model-invocation: false
 status: living document · entry skill (router)
 
 Associative memory for pruned contexts: a task ticket bound to a git branch.
-One branch carries **zero or one** ticket in the **resolved store** (JSON
-record in `<main-checkout-root>/.todo/` — sqlite or `storage/*.json`). Address
-every todo by explicit `Id` (no current-branch selector). Legacy `TODO.json` is
-import-only.
+One branch carries **zero or one** ticket, addressed through `todo.py` by
+explicit `Id` (no current-branch selector). Storage backend selection is a
+tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
 
 ## Domain model (compact)
 
 - **`gitroot`:** current working tree (`git rev-parse --show-toplevel`) — git ops.
-- **`main checkout root`:** primary worktree (first `git worktree list` entry) —
-  **storage anchor**; all worktrees share `<main-checkout-root>/.todo/`.
+- **`main checkout root`:** primary worktree (first `git worktree list` entry);
+  keep it on the repository’s default branch while code is worked elsewhere.
 - **Todo branch / worktree:** code lives on the ticket’s `Branch`, checked out
   only in a dedicated linked worktree — never in the main checkout while working.
 - **Tracked subtodo:** child from `add-subtodo` (must be git-integrated then
@@ -37,8 +35,8 @@ import-only.
 1. **CLI-only** — all ticket reads/writes via `todo.py` (never direct store /
    `TODO.json` access). Piping `todo.py read` to `jq` is fine.
 2. **Explicit selector** — capture Id from `mint`/`init`; use 4+ hex prefix or full digest.
-3. **Resolved-store model** — live records are in the shared store, not a
-   branch-local file.
+3. **Tool-owned storage** — `todo.py` owns live records and backend selection;
+   never infer ticket state from a branch-local file.
 4. **Dedicated worktree for code** — main checkout stays on the repo’s
    `DEFAULT_BRANCH`; see [`WORKING.md`](WORKING.md#default-branch-default_branch).
 5. **No parent completion before tracked children are integrated** — git-merge

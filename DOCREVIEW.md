@@ -29,6 +29,22 @@ The entry skill should load only the safety rules, a compact domain model, a
 few everyday commands, and an intent router. Each rule must have one normative
 owner; other documents link to it instead of restating it.
 
+## Author feedback incorporated after review
+
+The SQLite and `.todo/storage` backends are product features, not concepts a
+working agent normally needs. The dispatch skill should treat backend selection
+as opaque: agents use `todo.py`, while the implementation reference owns the
+backend contract and maintainer details.
+
+Repository-local storage is supported, but it is a **very strong
+anti-pattern** when its files are versioned beside the work: ordinary ticket
+writes then create unrelated repository changes and merge pressure. This is a
+warning and design concern, not a prohibition — legitimate workflows may need
+versioned local storage. The tool should be considered for a prominent warning
+on every invocation when the resolved backend is inside the repository and is
+not ignored; a future warning must identify the resolved path and explain the
+intermingling risk without blocking the command.
+
 ## Additions from the independent Grok review
 
 The detailed review below already establishes the primary migration map and
@@ -103,7 +119,7 @@ path.
 
 ## Highest-priority correctness issues
 
-### 1. Choose one storage model and remove branch-local `TODO.json` language
+### 1. Keep storage backend opaque; remove branch-local `TODO.json` language
 
 The opening model says records live in a shared store and legacy `TODO.json` is
 import-only (`L18-L23`). Storage and placement repeat that model
@@ -116,11 +132,18 @@ import-only (`L18-L23`). Storage and placement repeat that model
 - Worktree discovery again relies on `TODO.json` (`L639-L640`).
 - Record shape says one ticket per `TODO.json` (`L766-L769`).
 
-Precise change: make “ticket record in the resolved store, keyed by repository
-and branch/Id” the only current model. Replace every current-tense
-`TODO.json` statement with store terminology. Put legacy import behavior in one
-boxed compatibility note in `implementation.md`; do not teach agents to infer
-ticket presence from a file.
+Precise change: make “ticket record addressed through `todo.py`” the agent
+model; do not expose SQLite or json-dir backend details in the dispatch skill.
+The implementation reference may define the resolved-store contract and
+backend features. Replace every current-tense `TODO.json` statement with
+store terminology, and put legacy import behavior in one boxed compatibility
+note. Do not teach agents to infer ticket presence from a file.
+
+Repository-local versioned storage deserves a loud anti-pattern warning, not a
+ban: it intermingles ticket churn with working-tree changes, but it remains a
+supported feature for intentional workflows. A future per-invocation tool
+warning should name the resolved path and explain the risk whenever that
+condition is detected.
 
 ### 2. Make the worktree lifecycle executable end to end
 

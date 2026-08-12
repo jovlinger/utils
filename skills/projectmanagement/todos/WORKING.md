@@ -30,9 +30,10 @@ here; they do not restate these steps.
 1. **CLI-only ticket access** — every read/write through `todo.py` (see
    [`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands)).
 2. **Explicit selector** — no current-branch alias; capture and reuse `Id`.
-3. **Resolved store** — tickets live in the shared store at the main checkout’s
-   `.todo/` (or `$TODO_DIR` / `~/.todo/`), keyed by repo + branch/`Id`. Never
-   treat `TODO.json` as the live record.
+3. **Tool-owned storage** — `todo.py` owns the ticket record and backend
+   selection. Never treat `TODO.json` as the live record. Backend placement is
+   normally irrelevant to working a ticket; see
+   [`IMPLEMENTATION.md`](IMPLEMENTATION.md#repository-local-storage).
 4. **Dedicated worktree for code** — never `git checkout` the todo branch in
    the main checkout while working it.
 5. **No parent `done` before tracked children are `merged`** on the parent
@@ -84,9 +85,8 @@ Every “main checkout branch” check compares against `$DEFAULT_BRANCH`.
 
 ### Why the main checkout stays on the default branch
 
-`.todo/` storage is versioned from the main checkout. Checking out a todo
-branch *in that tree* couples storage churn into feature-branch history. Keep
-code work in linked worktrees only.
+Checking out a todo branch in the main tree couples any local storage churn
+into feature-branch history. Keep code work in linked worktrees only.
 
 ---
 
