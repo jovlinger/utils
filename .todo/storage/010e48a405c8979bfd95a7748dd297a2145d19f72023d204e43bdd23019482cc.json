@@ -660,7 +660,7 @@
     "objid": "0001"
   },
   "State": {
-    "groom": {}
+    "rejected": {}
   },
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
@@ -1317,5 +1317,5 @@
   "_nextobjid": 3,
   "_schema": 9,
   "create_dt": "2026-07-18T14:21:56Z",
-  "update_dt": "2026-07-18T14:21:56Z"
+  "update_dt": "2026-08-08T05:17:54Z"
 }
