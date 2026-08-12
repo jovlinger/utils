@@ -1630,6 +1630,44 @@ def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
     return fused
 
 
+def resolve_embedder_names(requested: Optional[Sequence[str]]) -> List[str]:
+    """Which embedders this search runs, honoring the store's ``embedder`` config.
+
+    An explicit ``--embedder`` always wins. Otherwise the todo dir decides:
+
+    ==========================  ==========================================
+    ``config.json``             search runs with
+    ==========================  ==========================================
+    (key absent)                every non-hidden embedder -- the default
+    ``"embedder": null``        NO embedder: lexical IDF is the only ranker
+    ``"embedder": "apple"``     that embedder (comma list, like --embedder)
+    ``"embedder": ["a", "b"]``  those embedders
+    ==========================  ==========================================
+
+    The null case is the point: it skips instantiation entirely, so nothing
+    spawns the macOS NLCE sidecar, nothing backfills a vector, and search stays
+    fast and hermetic on a machine that cannot embed at all. It is a store-level
+    policy rather than a flag because "this checkout does not do vectors" is a
+    property of the checkout.
+    """
+    if requested:
+        return list(requested)
+    todo_dir = todo_db.todo_dir()
+    if not todo_store.config_has(todo_dir, SEARCH_EMBEDDER_KEY):
+        return todo_embed.default_embedder_names()
+    configured = todo_store.config_value_raw(todo_dir, SEARCH_EMBEDDER_KEY)
+    if configured is None:
+        return []
+    if isinstance(configured, str):
+        return [part.strip() for part in configured.split(",") if part.strip()]
+    if isinstance(configured, list):
+        return [str(part).strip() for part in configured if str(part).strip()]
+    raise TodoError(
+        f"config.json {SEARCH_EMBEDDER_KEY!r} must be null (no embedder), a name, "
+        f"or a list of names; got {type(configured).__name__}"
+    )
+
+
 def resolve_stopwords(
     index: todo_search.LexicalIndex, *, persist: bool = True
 ) -> List[str]:
@@ -1687,7 +1725,7 @@ def search_tickets(
     already-downcased tag text, matching how ``Tag.raw`` is always stored.
     Both filters apply before ranking, so the limit counts matches only.
     """
-    names = list(embedder_names) if embedder_names else todo_embed.default_embedder_names()
+    names = resolve_embedder_names(embedder_names)
     embedders: List[tuple[str, todo_embed.Embedder]] = []
     for name in names:
         try:

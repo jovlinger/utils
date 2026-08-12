@@ -553,6 +553,11 @@ def config_list(base: Path, key: str) -> List[str]:
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def config_value_raw(base: Path, key: str) -> Any:
+    """Read *key* from ``<base>/config.json`` with no coercion (None when absent)."""
+    return _load_config(base).get(key)
+
+
 def config_has(base: Path, key: str) -> bool:
     """True when *key* is present at all -- including with a ``null`` value.
 

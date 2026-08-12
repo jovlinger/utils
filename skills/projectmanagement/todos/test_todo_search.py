@@ -8,6 +8,7 @@ test_todo_search_idf.py.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import unittest
 import unittest.mock
@@ -173,6 +174,69 @@ class StemmerSeamTest(unittest.TestCase):
 
     def test_default_stemmer_is_the_documented_one(self) -> None:
         self.assertIs(todo_search.STEMMER, todo_search.stem)
+
+
+class EmbedderOffSwitchTest(TodoCase):
+    """`"embedder": null` in config.json: lexical IDF only, nothing instantiated."""
+
+    def _set_config(self, **keys) -> None:
+        config = json.loads((self._db_dir / "config.json").read_text(encoding="utf-8"))
+        config.update(keys)
+        (self._db_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def _embedding_count(self) -> int:
+        db = self._db_dir / "sqlite.db"
+        if not db.exists():
+            return 0
+        conn = sqlite3.connect(str(db))
+        try:
+            return conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+        finally:
+            conn.close()
+
+    def _seed(self) -> str:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-q", tid, summary="quokka sighting log")
+        return tid[:8]
+
+    def test_off_switch_searches_without_any_embedder(self) -> None:
+        # Point the sidecar at a path that does not exist: anything trying to
+        # embed would fail loudly, so success proves nothing tried.
+        short = self._seed()
+        self._set_config(embedder=None)
+        self._env["TODO_APPLE_NLCE_BIN"] = str(self._db_dir / "nope")
+        proc = self.todo("search", "quokka")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(short, proc.stdout)
+        self.assertEqual(0, self._embedding_count(), "off switch still wrote vectors")
+
+    def test_explicit_embedder_flag_overrides_the_off_switch(self) -> None:
+        short = self._seed()
+        self._set_config(embedder=None)
+        proc = self.todo("search", "quokka", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(short, proc.stdout)
+        self.assertGreater(self._embedding_count(), 0, "--embedder should still embed")
+
+    def test_a_named_embedder_in_config_is_used(self) -> None:
+        self._seed()
+        self._set_config(embedder="apple")
+        proc = self.todo("search", "quokka")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreater(self._embedding_count(), 0)
+
+    def test_absent_key_keeps_the_default(self) -> None:
+        self._seed()
+        proc = self.todo("search", "quokka")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreater(self._embedding_count(), 0, "default is every embedder")
+
+    def test_a_nonsense_value_is_an_error_not_a_silent_default(self) -> None:
+        self._seed()
+        self._set_config(embedder=17)
+        proc = self.todo("search", "quokka")
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("embedder", proc.stderr)
 
 
 class StopwordDiscoveryCliTest(TodoCase):
