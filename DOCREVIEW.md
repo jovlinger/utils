@@ -16,13 +16,13 @@ too large and internally inconsistent to remain the sole agent-facing skill.
 | Navigability | 2/5 | 2/5 | 2/5 |
 | Actionability | 2/5 | 3/5 | 2.5/5 |
 
-**Decision: split it.** Keep `SKILL.md` as a ≤200-line trigger/router and add
+**Decision: split it.** Keep `SKILL.md` as a <=200-line trigger/router and add
 top-level sibling documents (not a nested `docs/` directory, to avoid
 skill-discovery depth issues):
 
-1. `GROOMING.md` — create, clarify, size, and dispatch tickets.
-2. `WORKING.md` — the one normative runbook from worktree entry to handoff.
-3. `IMPLEMENTATION.md` — CLI contract, storage, schema, migrations,
+1. `GROOMING.md` -- create, clarify, size, and dispatch tickets.
+2. `WORKING.md` -- the one normative runbook from worktree entry to handoff.
+3. `IMPLEMENTATION.md` -- CLI contract, storage, schema, migrations,
    permalinks, doctor, compatibility, and planned features.
 
 The entry skill should load only the safety rules, a compact domain model, a
@@ -39,7 +39,7 @@ backend contract and maintainer details.
 Repository-local storage is supported, but it is a **very strong
 anti-pattern** when its files are versioned beside the work: ordinary ticket
 writes then create unrelated repository changes and merge pressure. This is a
-warning and design concern, not a prohibition — legitimate workflows may need
+warning and design concern, not a prohibition -- legitimate workflows may need
 versioned local storage. The tool should be considered for a prominent warning
 on every invocation when the resolved backend is inside the repository and is
 not ignored; a future warning must identify the resolved path and explain the
@@ -53,7 +53,7 @@ requirements, which the implementation must include:
 
 - Reconcile concurrency with a precedence rule: work sequentially by default;
   parallel subtodos require an explicit user request or genuinely independent,
-  context-heavy research. Rewrite “often one subagent each” so it does not
+  context-heavy research. Rewrite "often one subagent each" so it does not
   override the default.
 - Remove the Claude-only `/rewind` mandate. Preserve the durable-state
   principle while allowing the host agent to shed context by its own mechanism.
@@ -88,9 +88,9 @@ plan.
 Split it. Keep `SKILL.md` as a short dispatch entry point, then move the
 normative material into three documents:
 
-1. `grooming.md` — creating and decomposing a ticket.
-2. `working.md` — operating a ticket safely from start through handoff.
-3. `implementation.md` — CLI, storage, schema, migrations, and deferred design.
+1. `grooming.md` -- creating and decomposing a ticket.
+2. `working.md` -- operating a ticket safely from start through handoff.
+3. `implementation.md` -- CLI, storage, schema, migrations, and deferred design.
 
 The current 1,384-line skill is simultaneously a trigger, agent policy,
 runbook, CLI reference, schema specification, implementation diary, and
@@ -106,11 +106,11 @@ interpretation.
 
 | Dimension | Score | Evidence |
 |---|---:|---|
-| Usability for agent dispatch | 2/5 | The trigger promises that the “full workflow, CLI, and schema” load together (`SKILL.md:L3-L10`), while the authoritative driver loop does not appear until `L1193-L1276`. A dispatched agent must traverse storage, migrations, all commands, permalinks, and schema details before reaching the operational loop. |
-| Future evolution | 2/5 | Current behavior, future sketches, historical notes, and deferred work share the same level: a stub is in the command table (`L354`), worktree automation is “future” (`L1141-L1147`), notification designs are speculative (`L1114-L1124`), and deferred features are mixed into current state/schema (`L829-L830`, `L1369-L1383`). The stale “Coming” note at `L1337-L1340` describes objids/permalinks that are already documented as present at `L417-L497` and `L785-L804`. |
+| Usability for agent dispatch | 2/5 | The trigger promises that the "full workflow, CLI, and schema" load together (`SKILL.md:L3-L10`), while the authoritative driver loop does not appear until `L1193-L1276`. A dispatched agent must traverse storage, migrations, all commands, permalinks, and schema details before reaching the operational loop. |
+| Future evolution | 2/5 | Current behavior, future sketches, historical notes, and deferred work share the same level: a stub is in the command table (`L354`), worktree automation is "future" (`L1141-L1147`), notification designs are speculative (`L1114-L1124`), and deferred features are mixed into current state/schema (`L829-L830`, `L1369-L1383`). The stale "Coming" note at `L1337-L1340` describes objids/permalinks that are already documented as present at `L417-L497` and `L785-L804`. |
 | Duplication control | 1/5 | The no-direct-JSON rule appears at `L8-L10`, `L332-L337`, and `L675-L689`; explicit selectors at `L21-L23`, `L342`, `L384-L396`, `L671-L673`, and `L759-L764`; creation at `L341-L353`, `L725-L759`, and `L1199-L1208`; worktree policy at `L499-L647`, `L649-L669`, and `L1203-L1207`; finishing at `L1239` and again at `L1244-L1258`. |
 | Internal consistency / contradictions | 1/5 | The document alternately defines the store as shared `.todo/` with `TODO.json` import-only (`L18-L23`, `L252-L278`) and as a branch-local `TODO.json` (`L33-L34`, `L167-L169`, `L513-L515`, `L639-L640`, `L766-L769`). Other operational contradictions are listed below. |
-| Navigability | 2/5 | Headings help locally, but closely related normative rules are far apart: subtodo operation spans `L69-L201`, `L991-L1124`, and `L1231-L1269`; worktree setup spans four sections. There is no contents/routing table and no quick path by user intent (“make”, “work”, “resume”, “finish”, “handoff”, “inspect”). |
+| Navigability | 2/5 | Headings help locally, but closely related normative rules are far apart: subtodo operation spans `L69-L201`, `L991-L1124`, and `L1231-L1269`; worktree setup spans four sections. There is no contents/routing table and no quick path by user intent ("make", "work", "resume", "finish", "handoff", "inspect"). |
 | Actionability | 2/5 | Many commands are concrete, but key sequences are incomplete or disagree. The authoritative finish sequence omits mandatory worktree teardown (`L1244-L1258` versus `L593-L600`), and `wait-and-merge` can be read as replacing the required git merge (`L82-L83`, `L370-L371`, `L1104-L1112`, `L1234-L1238`). |
 
 Overall: **1.7/5**. The content contains substantial useful operational
@@ -125,14 +125,14 @@ The opening model says records live in a shared store and legacy `TODO.json` is
 import-only (`L18-L23`). Storage and placement repeat that model
 (`L252-L278`, `L499-L508`). In conflict:
 
-- “CWD is a TODO branch” requires `gitroot` to hold `TODO.json` (`L33-L34`).
-- Subtodos are described as branches “with their own `TODO.json`”
+- "CWD is a TODO branch" requires `gitroot` to hold `TODO.json` (`L33-L34`).
+- Subtodos are described as branches "with their own `TODO.json`"
   (`L165-L169`).
-- The lifecycle says “`TODO.json` lives with the branch” (`L513-L515`).
+- The lifecycle says "`TODO.json` lives with the branch" (`L513-L515`).
 - Worktree discovery again relies on `TODO.json` (`L639-L640`).
 - Record shape says one ticket per `TODO.json` (`L766-L769`).
 
-Precise change: make “ticket record addressed through `todo.py`” the agent
+Precise change: make "ticket record addressed through `todo.py`" the agent
 model; do not expose SQLite or json-dir backend details in the dispatch skill.
 The implementation reference may define the resolved-store contract and
 backend features. Replace every current-tense `TODO.json` statement with
@@ -172,7 +172,7 @@ state and lifecycle references.
 
 The hard rule requires the child branch to be merged before
 `merge-subtodo` bookkeeping (`L76-L83`), and the dispatch table says
-“git-merge the child, then `merge-subtodo`” (`L1231-L1235`). Yet
+"git-merge the child, then `merge-subtodo`" (`L1231-L1235`). Yet
 `wait-and-merge` is described as polling and then running merge bookkeeping
 (`L370-L371`, `L1104-L1112`), while the blocked-child dispatch offers it without
 an explicit git merge (`L1238`).
@@ -206,13 +206,13 @@ with required fields.
 
 Placement allows `master`, `main`, or `dev` according to repository default
 (`L501-L505`), but the verification procedure repeatedly requires literal
-`master` (`L550-L568`, `L580-L585`, `L651-L660`). This makes the “hard rule”
+`master` (`L550-L568`, `L580-L585`, `L651-L660`). This makes the "hard rule"
 wrong for repos whose default branch is `main` or `dev`.
 
 Precise change: define `DEFAULT_BRANCH` once from a reliable local/remote
 source, with an explicit fallback and error case. Every check should compare
-against that value. Avoid prose saying “master” when the invariant is “the
-repository’s configured default branch.”
+against that value. Avoid prose saying "master" when the invariant is "the
+repository's configured default branch."
 
 ### 6. Replace stale or invalid schema examples
 
@@ -225,7 +225,7 @@ repository’s configured default branch.”
 - WorkItem examples use an `id` field (`L1056-L1083`), while every nested
   object is required to carry `objid` (`L785-L804`) and unknown fields are to
   be rejected (`L771-L773`).
-- “Coming” objids/permalinks (`L1337-L1340`) contradicts the current permalink
+- "Coming" objids/permalinks (`L1337-L1340`) contradicts the current permalink
   and objid sections (`L417-L497`, `L785-L804`).
 
 Precise change: generate or validate examples against the current schema in
@@ -235,7 +235,7 @@ Move migration history to `implementation.md` and label it historical.
 ### 7. Put destructive branch retirement behind a verifiable gate
 
 The branch-retirement section recommends `git branch -D` based on work being
-merged, cherry-picked, or having “equivalent-content absorption”
+merged, cherry-picked, or having "equivalent-content absorption"
 (`L605-L621`). The last condition is not mechanically defined, and force
 deletion is presented as a routine consequence.
 
@@ -247,7 +247,7 @@ out of scope unless separately requested.
 
 ## Proposed document architecture and migration map
 
-### `SKILL.md`: trigger and router only (target: 120–180 lines)
+### `SKILL.md`: trigger and router only (target: 120-180 lines)
 
 Retain:
 
@@ -258,9 +258,9 @@ Retain:
   resolved-store model, dedicated worktree for code work, and no parent
   completion before tracked children are integrated.
 - An intent router:
-  - make/groom/plan/decompose → `grooming.md`
-  - start/resume/work/wait/finish/handoff → `working.md`
-  - command/schema/storage/migration/debugging → `implementation.md`
+  - make/groom/plan/decompose -> `grooming.md`
+  - start/resume/work/wait/finish/handoff -> `working.md`
+  - command/schema/storage/migration/debugging -> `implementation.md`
 - A five-command quick start that links to the authoritative working flow.
 
 Remove all full command tables, schema field tables, implementation history,
@@ -284,7 +284,7 @@ Add:
   subtodos.
 - Required grooming outputs: Summary, Body, AC, Scope, tiered WorkItems, child
   independence/integration plan, and unresolved user decisions.
-- A “ready to init” checklist. Keep CLI syntax linked to
+- A "ready to init" checklist. Keep CLI syntax linked to
   `implementation.md` rather than duplicated.
 
 The sequential-default rule (`L101-L110`) must be the top-level default.
@@ -315,7 +315,7 @@ Organize by operator intent:
 
 There must be exactly one normative command sequence for each operation.
 Other documents should link to anchors in this runbook. Move the explanatory
-“why main stays…” material (`L517-L529`) to a short rationale after the rule,
+"why main stays..." material (`L517-L529`) to a short rationale after the rule,
 not before the commands.
 
 ### `implementation.md`: mechanism and maintainer reference
@@ -335,28 +335,28 @@ Move:
 
 Separate this document internally into:
 
-- **Current public contract** — commands and record schema agents may rely on.
-- **Maintainer internals** — DSN resolution, migration registry, embedding
+- **Current public contract** -- commands and record schema agents may rely on.
+- **Maintainer internals** -- DSN resolution, migration registry, embedding
   behavior, health detection.
-- **Compatibility/history** — legacy `TODO.json`, renamed fields/states.
-- **Deferred proposals** — clearly non-normative and absent from current
+- **Compatibility/history** -- legacy `TODO.json`, renamed fields/states.
+- **Deferred proposals** -- clearly non-normative and absent from current
   schemas/command tables.
 
 Do not put planned commands or states in current tables. Use separate
-“planned” tables so `STUB`, `deferred`, and implemented behavior cannot be
+"planned" tables so `STUB`, `deferred`, and implemented behavior cannot be
 mistaken for equivalent capabilities.
 
 ## Precise editing plan
 
 1. Freeze terminology: **ticket**, **record**, **resolved store**, **todo
    branch**, **todo worktree**, **tracked subtodo**, and **INFO backlink**.
-   Define each once; eliminate “ticket file” and current-tense `TODO.json`.
+   Define each once; eliminate "ticket file" and current-tense `TODO.json`.
 2. Create the three destination documents with stable anchors, then move
    sections without rewriting behavior.
 3. Deduplicate by assigning an owner:
-   - lifecycle/worktrees/subtodo integration → `working.md`
-   - decomposition/model targeting → `grooming.md`
-   - exact command/schema/storage behavior → `implementation.md`
+   - lifecycle/worktrees/subtodo integration -> `working.md`
+   - decomposition/model targeting -> `grooming.md`
+   - exact command/schema/storage behavior -> `implementation.md`
 4. Resolve the seven correctness issues above against the implementation and
    tests before shortening the router.
 5. Replace repeated prose in non-owning documents with a one-sentence link.
@@ -367,11 +367,11 @@ mistaken for equivalent capabilities.
    - current state names and metadata flags,
    - JSON examples against the current record validator,
    - links/anchors among the four documents.
-7. Add a short “current versus planned” lint rule or review checklist:
+7. Add a short "current versus planned" lint rule or review checklist:
    planned/stub/deferred features cannot appear in current dispatch tables.
 8. After migration, read each intent path independently. An agent responding
-   to “make a todo” should need the router plus `grooming.md`; an agent
-   responding to “work todo X” should need the router plus `working.md`;
+   to "make a todo" should need the router plus `grooming.md`; an agent
+   responding to "work todo X" should need the router plus `working.md`;
    neither should load migration internals or embedding incident history.
 
 ## Acceptance criteria for the restructure

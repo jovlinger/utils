@@ -12,7 +12,7 @@ disable-model-invocation: false
 
 # Todo tickets
 
-status: living document · entry skill (router)
+status: living document - entry skill (router)
 
 Associative memory for pruned contexts: a task ticket bound to a git branch.
 One branch carries **zero or one** ticket, addressed through `todo.py` by
@@ -21,28 +21,28 @@ tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
 
 ## Domain model (compact)
 
-- **`gitroot`:** current working tree (`git rev-parse --show-toplevel`) — git ops.
+- **`gitroot`:** current working tree (`git rev-parse --show-toplevel`) -- git ops.
 - **`main checkout root`:** primary worktree (first `git worktree list` entry);
-  keep it on the repository’s default branch while code is worked elsewhere.
-- **Todo branch / worktree:** code lives on the ticket’s `Branch`, checked out
-  only in a dedicated linked worktree — never in the main checkout while working.
+  keep it on the repository's default branch while code is worked elsewhere.
+- **Todo branch / worktree:** code lives on the ticket's `Branch`, checked out
+  only in a dedicated linked worktree -- never in the main checkout while working.
 - **Tracked subtodo:** child from `add-subtodo` (must be git-integrated then
-  `merge-subtodo`’d). **INFO backlink:** follow-only parent link from `set --parent`.
-- **Repo selection:** CWD’s gitroot; no `--repo` flag — `cd` into the repo first.
+  `merge-subtodo`'d). **INFO backlink:** follow-only parent link from `set --parent`.
+- **Repo selection:** CWD's gitroot; no `--repo` flag -- `cd` into the repo first.
 
 ## Safety rules (non-negotiable)
 
-1. **CLI-only** — all ticket reads/writes via `todo.py` (never direct store /
+1. **CLI-only** -- all ticket reads/writes via `todo.py` (never direct store /
    `TODO.json` access). Piping `todo.py read` to `jq` is fine.
-2. **Explicit selector** — capture Id from `mint`/`init`; use 4+ hex prefix or full digest.
-3. **Tool-owned storage** — `todo.py` owns live records and backend selection;
+2. **Explicit selector** -- capture Id from `mint`/`init`; use 4+ hex prefix or full digest.
+3. **Tool-owned storage** -- `todo.py` owns live records and backend selection;
    never infer ticket state from a branch-local file.
-4. **Dedicated worktree for code** — main checkout stays on the repo’s
+4. **Dedicated worktree for code** -- main checkout stays on the repo's
    `DEFAULT_BRANCH`; see [`WORKING.md`](WORKING.md#default-branch-default_branch).
-5. **No parent completion before tracked children are integrated** — git-merge
+5. **No parent completion before tracked children are integrated** -- git-merge
    (or verified absorption) **then** merge bookkeeping; parent `done` only after
    tracked subtodos are `merged` (or user-waived).
-6. **Sequential default** — work subtodos one at a time unless the user asks for
+6. **Sequential default** -- work subtodos one at a time unless the user asks for
    parallel or grooming authorizes independent research fan-out
    ([`GROOMING.md`](GROOMING.md#workitem-vs-subtodo)).
 
@@ -61,18 +61,18 @@ Load **only** what the user intent needs:
 ```bash
 TODO=skills/projectmanagement/todos/todo.py
 
-# make → later work
+# make -> later work
 ID=$("$TODO" mint)
 "$TODO" set "$ID" --summary="..." --body="..." --ac="..."
 "$TODO" init --id "$ID" --stay-on-parent
 
-# work loop (inside the todo worktree — see WORKING.md)
+# work loop (inside the todo worktree -- see WORKING.md)
 "$TODO" prompt "$ID"
 "$TODO" set "$ID" --state working
 "$TODO" work-item-read "$ID"          # poll; follow WORKING.md dispatch
 "$TODO" work-item-done "$ID" -m "..." # or add-subtodo / merge after git merge
 
-# finish (WORKING.md §6 — includes worktree remove after set done)
+# finish (WORKING.md section 6 -- includes worktree remove after set done)
 "$TODO" doctor "$ID"                  # must be ok
 "$TODO" set "$ID" --state done --actual-summary="..."
 ```
@@ -82,4 +82,4 @@ Authoritative finish, child integration, and worktree teardown:
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands).
 
 Related: `frequentcommits` (WorkItem sizing policy); `bookmark-management`;
-`project-lifecycle` (separate `TODOs.md` — do not merge formats without user direction).
+`project-lifecycle` (separate `TODOs.md` -- do not merge formats without user direction).

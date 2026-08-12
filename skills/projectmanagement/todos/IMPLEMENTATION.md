@@ -1,14 +1,14 @@
 # Todo implementation reference
 
-status: living document · normative owner for CLI, storage, schema, migrations,
+status: living document - normative owner for CLI, storage, schema, migrations,
 permalinks, doctor, compatibility, and planned features
 
 Load this when you need exact command syntax, record fields, store layout, or
 compatibility notes. Policy and runbooks live elsewhere:
 
-- Intent / safety card → [`SKILL.md`](SKILL.md)
-- Ticket design / dispatch → [`GROOMING.md`](GROOMING.md)
-- Start → finish runbook → [`WORKING.md`](WORKING.md)
+- Intent / safety card -> [`SKILL.md`](SKILL.md)
+- Ticket design / dispatch -> [`GROOMING.md`](GROOMING.md)
+- Start -> finish runbook -> [`WORKING.md`](WORKING.md)
 
 ---
 
@@ -19,23 +19,23 @@ compatibility notes. Policy and runbooks live elsewhere:
 | **ticket** / **todo** | One task record addressed by `Id` |
 | **record** | The JSON object for a ticket (sqlite or json-dir backend) |
 | **resolved store** | The todo directory chosen for this invocation (`todo.py basedir`) |
-| **todo branch** | Git branch named in the record’s `Branch` field |
+| **todo branch** | Git branch named in the record's `Branch` field |
 | **todo worktree** | Dedicated linked worktree checking out that branch |
 | **tracked subtodo** | Child registered via `add-subtodo` (merge obligation) |
 | **INFO backlink** | Follow-only `Subtodos` row (`State: "INFO"`) from `set --parent`; no merge obligation |
 
-Do **not** teach agents that a live ticket “lives in” `TODO.json`. Current
-records live in the resolved store. Legacy `TODO.json` is import-only — see
-[Compatibility](#compatibility-history).
+Do **not** teach agents that a live ticket "lives in" `TODO.json`. Current
+records live in the resolved store. Legacy `TODO.json` is import-only -- see
+[Compatibility](#compatibility-and-history).
 
 ---
 
 ## Document sections
 
-1. [Current public contract](#current-public-contract) — agents may rely on this
+1. [Current public contract](#current-public-contract) -- agents may rely on this
 2. [Maintainer internals](#maintainer-internals)
-3. [Compatibility / history](#compatibility-history)
-4. [Deferred / planned](#deferred-planned) — non-normative
+3. [Compatibility and history](#compatibility-and-history)
+4. [Deferred and planned](#deferred-and-planned) -- non-normative
 
 ---
 
@@ -43,9 +43,9 @@ records live in the resolved store. Legacy `TODO.json` is import-only — see
 
 ## Store resolution
 
-Resolved once per `todo.py` invocation. The storage anchor is the repo’s
+Resolved once per `todo.py` invocation. The storage anchor is the repo's
 **main checkout root** (first `git worktree list` entry), not the current
-linked worktree — every worktree of a repo shares one store.
+linked worktree -- every worktree of a repo shares one store.
 
 1. `$TODO_DIR` when set and it holds a store (`config.json`, `sqlite.db`, or `storage/`)
 2. `<main-checkout-root>/.todo/` when that holds a store
@@ -61,9 +61,9 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 | Embeddings | In ticket JSON; sqlite also mirrors a derived index |
 
 `TODO_USE_JSON=1` enables legacy file mode (import-oriented). There is **no
-`--repo` flag** — `cd` into the target repo/worktree; CWD must be a git repo.
+`--repo` flag** -- `cd` into the target repo/worktree; CWD must be a git repo.
 
-Print the resolved base with `todo.py basedir`. Print a todo’s main-checkout
+Print the resolved base with `todo.py basedir`. Print a todo's main-checkout
 repo path with `todo.py repodir <selector>`.
 
 ### Repository-local storage
@@ -89,12 +89,12 @@ intermingling risk, but must not block supported workflows.
 | Selector | Meaning |
 |----------|---------|
 | `<id-prefix>` | Unambiguous 4+ hex prefix of the 64-hex `Id`, or the full digest |
-| `ALL` | Whole corpus — recognized by `doctor`, `log`, `export-to-file`, `tag-clear` |
+| `ALL` | Whole corpus -- recognized by `doctor`, `log`, `export-to-file`, `tag-clear` |
 
 Former `self`/`curr` current-branch aliases are **removed**. Every command that
 targets a todo takes an explicit selector. Capture the Id from `mint` / `init`.
 
-## CLI — implemented commands
+## CLI: implemented commands
 
 Mechanism only. Policy (sizing, sequencing) lives in `frequentcommits` and
 [`GROOMING.md`](GROOMING.md) / [`WORKING.md`](WORKING.md).
@@ -108,10 +108,10 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | Command | Behavior |
 |---------|----------|
 | `mint` | Mint Id + create store-only `groom` record (no git branch). Prints 64-hex Id |
-| `init [--id <id>] [--summary=...]` | Promote `groom` → branch + `ready`, or fresh one-shot create. `--stay-on-parent` returns to previous branch. Refuses second ticket on current branch |
+| `init [--id <id>] [--summary=...]` | Promote `groom` -> branch + `ready`, or fresh one-shot create. `--stay-on-parent` returns to previous branch. Refuses second ticket on current branch |
 | `ls [--states=<expr>] [-s] [-t\|-tc\|-tu\|-g]` | List short id + summary. Hides FINAL by default |
 | `read <selector>` | Print ticket JSON |
-| `prompt <selector>` | Ancestor Summary/Body chain (farthest first) — startup context |
+| `prompt <selector>` | Ancestor Summary/Body chain (farthest first) -- startup context |
 | `search <term>...` | Vector + lexical search; same state/column flags as `ls` |
 | `embedders` | List selectable search embedders |
 | `log <selector>\|ALL` | Graph of `Subtodos` tree (`-n`, `-v`, `-t`) |
@@ -134,9 +134,9 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | Command | Behavior |
 |---------|----------|
 | `add-subtodo <parent> (--from-json=... \| --summary=...)` | Create child at tip of parent branch (no checkout). Requires `--summary` unless `--from-json`. Optional `--body`, `--ac`, `--id`, `--branch`, `--path-from-root`. Registers tracked subtodo; completes parent cursor as `start_subtodo` |
-| `merge-subtodo <child-id>` | **Store bookkeeping only** after child is `done`. Locates parent via `Parent[0]`. Records `merge_subtodo` with parent branch tip sha. **Does not run `git merge`** — caller must already have integrated the child branch |
+| `merge-subtodo <child-id>` | **Store bookkeeping only** after child is `done`. Locates parent via `Parent[0]`. Records `merge_subtodo` with parent branch tip sha. **Does not run `git merge`** -- caller must already have integrated the child branch |
 | `wait-for <id>...` | Poll until children reach target state (default `done`) |
-| `wait-and-merge <subtodo-id>...` | Poll until `done`, then run `merge-subtodo` for each. **Does not git-merge branches** — same bookkeeping as `merge-subtodo` |
+| `wait-and-merge <subtodo-id>...` | Poll until `done`, then run `merge-subtodo` for each. **Does not git-merge branches** -- same bookkeeping as `merge-subtodo` |
 
 ### Work items
 
@@ -147,7 +147,7 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `work-item-replace <selector> --summary=...` | Reword cursor task |
 | `work-item-delete <selector>` | Delete cursor task |
 | `work-item-read <selector>` | Cursor + `next` mechanism hint |
-| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | Complete cursor as `code` (or `--checkpoint` / `--blocked`). Must run from a checkout of the todo’s branch. `--blocked` requires `-m` and a clean tree; refuses `--sha` and refuses `--checkpoint` |
+| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | Complete cursor as `code` (or `--checkpoint` / `--blocked`). Must run from a checkout of the todo's branch. `--blocked` requires `-m` and a clean tree; refuses `--sha` and refuses `--checkpoint` |
 | `is-done <selector>` | Exit 0 when no open work items |
 | `last-sha <selector>` | Sha of last work item (branch tip attribution); `None` for the no-change sentinel |
 
@@ -183,7 +183,7 @@ ID=$("$TODO" mint)
 # promote when ready to work
 "$TODO" init --id "$ID" --stay-on-parent
 
-# subtodo — either seed form
+# subtodo -- either seed form
 "$TODO" add-subtodo "$ID" --summary="Child research domain"
 # or: "$TODO" add-subtodo "$ID" --from-json=./child-seed.json
 
@@ -195,8 +195,8 @@ git merge "<child-branch>"   # on parent branch, in parent worktree
 
 ## State machine
 
-`State` is an object with **exactly one** key. Mainline: `groom → ready →
-working → done`. Subtodos the parent absorbs: `done → merged`. Interrupts:
+`State` is an object with **exactly one** key. Mainline: `groom -> ready ->
+working -> done`. Subtodos the parent absorbs: `done -> merged`. Interrupts:
 `userneeded`, `stopped`.
 
 | State | Value shape | Meaning |
@@ -204,7 +204,7 @@ working → done`. Subtodos the parent absorbs: `done → merged`. Interrupts:
 | `groom` | `{}` | Minted; collecting data; branchless until `init` |
 | `ready` | `{}` | Has a branch; not yet started |
 | `working` | `{ "owner"?: string }` | Active (`expire` reserved, not settable) |
-| `userneeded` | `{ "note"?: string }` | Blocked on user. The `note` is the SHORT form -- which item, what decision is asked for -- pointing at the work item that carries the detail (see [`WORKING.md`](WORKING.md#5-handle-userneeded-stopped)) |
+| `userneeded` | `{ "note"?: string }` | Blocked on user. The `note` is the SHORT form -- which item, what decision is asked for -- pointing at the work item that carries the detail (see [`WORKING.md`](WORKING.md#5-handle-userneeded-or-stopped)) |
 | `stopped` | `{ "note"?: string }` | User halt |
 | `done` | `{ "last_commit"?: string }` | Complete on ticket branch |
 | `merged` | `{ "merged_into"?, "last_commit"?, "pr"?, "merge_commit"? }` | Handed off (parent absorb **or** root PR) |
@@ -226,7 +226,7 @@ Passing metadata a state does not keep is an **error**.
 
 `FINAL` = `done`, `merged`, `rejected` (hidden by default by `ls`/`search`).
 
-**PR handoff (root todos only):** `done` → `set <id> --state merged --pr <N>`.
+**PR handoff (root todos only):** `done` -> `set <id> --state merged --pr <N>`.
 `doctor` reconciles merge_commit / `rejected` via `gh`. Subtodos with `Parent`
 are skipped for PR reconcile.
 
@@ -243,7 +243,7 @@ Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 
 ## Record schema
 
-Allowed top-level fields (unknown keys → doctor findings):
+Allowed top-level fields (unknown keys -> doctor findings):
 `AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `LongSummary`,
 `Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
 `WorkItems`, `create_dt`, `update_dt`, `_schema`, `_nextobjid`.
@@ -350,7 +350,7 @@ explicitly. Two producers:
 - `work-item-done --blocked -m "<long form>"` -- the item CANNOT be done as
   written. Where a checkpoint says "no commit, step finished", the sentinel says
   "no commit, and none is coming". Procedure:
-  [`WORKING.md`](WORKING.md#5-handle-userneeded-stopped).
+  [`WORKING.md`](WORKING.md#5-handle-userneeded-or-stopped).
 - The legacy retrofit for old records that misattribute a foreign commit,
   without converting the node's kind.
 
@@ -365,12 +365,12 @@ was failing to do something.
 1. A done item is `start_subtodo`, `checkpoint` (observational `at_sha`, never
    attributing `sha`), or a `code`/`merge_subtodo` that carries a `sha` plus a
    high-level description.
-2. A not-done item is freetext (`task`) — a step or a prose list of not-yet-
-   started subtasks — with `done:false`.
+2. A not-done item is freetext (`task`) -- a step or a prose list of not-yet-
+   started subtasks -- with `done:false`.
 3. Done items form a prefix; the cursor moves monotonically down (list may grow).
-4. One todo ↔ one branch; the ticket’s lifetime matches that branch’s role as
+4. One todo <-> one branch; the ticket's lifetime matches that branch's role as
    the durable code line for the work (worktrees are ephemeral).
-5. `BaseSha` records the branch’s initial sha, captured at branch creation
+5. `BaseSha` records the branch's initial sha, captured at branch creation
    (`init` / `add-subtodo`).
 6. The last item of a done todo cannot be `start_subtodo` or `checkpoint` (or
    the null-sha sentinel); it must be a real `code`/`merge` commit so
@@ -481,17 +481,17 @@ run on sqlite connect. Record migrations: ordered `RECORD_MIGRATIONS`;
 `todo.py migrate-to-latest` sweeps all records and advances store
 `data_version`. `doctor` runs that sweep opportunistically (`migrated` count).
 
-Notable record transforms (historical — see Compatibility):
+Notable record transforms (historical -- see Compatibility):
 
-- v6: `Chunks`→`WorkItems`, `Subtickets`→`Subtodos`, Parent dict→list, strip
+- v6: `Chunks`->`WorkItems`, `Subtickets`->`Subtodos`, Parent dict->list, strip
   `Scope.path_to_project`
-- v7: flat `Tags` → plural `Tag` elements
-- v8: state renames `pre`/`pre-init`→`groom`, `init`→`ready`, `info`→`fact`
+- v7: flat `Tags` -> plural `Tag` elements
+- v8: state renames `pre`/`pre-init`->`groom`, `init`->`ready`, `info`->`fact`
 
 ## Startup health
 
-- Store behind → interactive warning to run `todo.py doctor ALL`
-- Agent-framework detection → skills-buried warning on stderr (once per session)
+- Store behind -> interactive warning to run `todo.py doctor ALL`
+- Agent-framework detection -> skills-buried warning on stderr (once per session)
 
 ## JSON path primitives
 
@@ -516,13 +516,13 @@ sweep.
 
 ---
 
-# Compatibility / history
+# Compatibility and history
 
 **Legacy `TODO.json`:** import-only via `import-json --from-json` or
 `--scan-refs`. Do not infer ticket presence from a worktree file. Doctor may
 warn about leftover files. `TODO_USE_JSON=1` is legacy file mode.
 
-**Renamed states:** `pre` / `pre-init` → `groom`; `init` → `ready`; `info` →
+**Renamed states:** `pre` / `pre-init` -> `groom`; `init` -> `ready`; `info` ->
 `fact`. Do not use old names in current examples.
 
 **Removed selectors:** `self` / `curr`.
@@ -531,13 +531,13 @@ warn about leftover files. `TODO_USE_JSON=1` is legacy file mode.
 
 ---
 
-# Deferred / planned
+# Deferred and planned
 
 Non-normative. Do **not** put these in current dispatch tables.
 
 | Item | Notes |
 |------|-------|
-| `todo.py new` | Mentioned historically as alias for `init` with JSON seed — **not implemented** |
+| `todo.py new` | Mentioned historically as alias for `init` with JSON seed -- **not implemented** |
 | `ensure_worktree` automation | STUB today; future may create/remove trees |
 | `waiting` state / dependency graph | In `VALID_STATES` / macros but not settable via `--state`; design deferred |
 | `N/a` state | Present but not settable via `--note`/`--state` workflow |
@@ -547,5 +547,5 @@ Non-normative. Do **not** put these in current dispatch tables.
 | Worktree add/list/remove CLI family | Future if parallel-checkout needs it |
 
 Related skills: `frequentcommits` (WorkItem sizing policy),
-`bookmark-management`, `project-lifecycle` (separate `TODOs.md` format — do not
+`bookmark-management`, `project-lifecycle` (separate `TODOs.md` format -- do not
 merge without user direction).
