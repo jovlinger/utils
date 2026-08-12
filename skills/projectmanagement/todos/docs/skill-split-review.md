@@ -1,5 +1,14 @@
 # Merged review: `skills/projectmanagement/todos/SKILL.md`
 
+status: **HISTORICAL** -- the review that motivated the split, kept for its
+rationale. Every `SKILL.md:Lnnn` citation below points into the 1,384-line
+monolith that no longer exists; the line numbers are evidence of what was
+wrong, not a map of anything current. The documents it proposed are now
+[`SKILL.md`](../SKILL.md) (router), [`GROOMING.md`](../GROOMING.md),
+[`WORKING.md`](../WORKING.md), and
+[`IMPLEMENTATION.md`](../IMPLEMENTATION.md) -- read those for current
+behavior. Not an agent-facing procedure; nothing routes here.
+
 This is the GPT synthesis of two independent reviews: a GPT review and a Grok
 review. Both evaluated the same current document in isolation before this
 merge. They agree that the content is valuable but the 1,384-line monolith is
