@@ -348,8 +348,14 @@ ticket evidence + user auth.
 
 ## 8. Report the result
 
-Namespace ids: `todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`,
-`todo:d56d.WI[4]`. Prefer permalinks (`objid`) when naming a specific object —
+Namespace ids: `todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`.
+
+**Name a work item by PATH, not by index notation:** `todo:d56d/workitem/18`,
+and deeper when you need a field: `todo:d56d/workitem/18/summary`. This is the
+same grammar the permalink syntax uses, so the token a reader sees in chat is the
+token that resolves. The older organic `WI[18]` / `todo:x.WI[4]` forms stay
+readable but are not written any more. Prefer the `objid` form
+(`todo:d56d/objid/0a3f`) when naming a durable object, since an index shifts --
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#permalinks).
 
 **While working:** one short action line per action; no preamble.
@@ -364,8 +370,9 @@ Namespace ids: `todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`,
 | `mix` | progress, unfinished; or `userneeded` / `stopped` |
 | `fail` | stuck — cannot complete a work item as written |
 
-Always report `N of M work items done, cursor at WI[i]`. Untracked mid-run
-asks become WorkItems (`work-item-add`), not prose side conditions.
+Always report `N of M work items done, cursor at todo:<id>/workitem/<i>`.
+Untracked mid-run asks become WorkItems (`work-item-add`), not prose side
+conditions.
 
 SUMMARY shape: `SUMMARY: <success|fail|mix> [clause]` → effect of the todo as a
 whole → short bullets for interesting items only. Never report “spawned a
