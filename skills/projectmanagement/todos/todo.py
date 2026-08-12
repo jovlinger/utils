@@ -71,6 +71,21 @@ STATE_MACROS = {
 # per todo dir via config.json "default_state_filter". Hides terminated states.
 DEFAULT_STATE_FILTER = "ALL,-FINAL"
 
+# Search config keys, all per todo dir in config.json.
+#   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
+#                            derived data, dropped by clear-search-data
+#   search_stopword_min_idf  the IDF below which a term is a stopword here
+#   embedder                 present-and-null turns vector search OFF for this
+#                            store, leaving lexical IDF as the only ranker
+SEARCH_STOPWORDS_KEY = "search_stopwords"
+SEARCH_STOPWORD_MIN_IDF_KEY = "search_stopword_min_idf"
+SEARCH_EMBEDDER_KEY = "embedder"
+
+# A term appearing in ~74% or more of the corpus (ln(N+1/df+1) < 0.3) carries
+# too little signal to rank on. Tunable per store; the value only decides where
+# the discovered list is cut, never whether discovery happens.
+DEFAULT_STOPWORD_MIN_IDF = 0.3
+
 
 def parse_state_filter(expr: str) -> frozenset:
     """Resolve a --states expression to the set of acceptable state names.
@@ -1615,6 +1630,36 @@ def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
     return fused
 
 
+def resolve_stopwords(
+    index: todo_search.LexicalIndex, *, persist: bool = True
+) -> List[str]:
+    """This corpus's stopwords: the persisted list, or discover and persist one.
+
+    Nobody writes the list by hand. A term earns the label by falling below
+    ``search_stopword_min_idf`` -- i.e. by being so widespread it carries no
+    signal -- which is what makes it catch the domain words a shipped English
+    list never would (``todo``, ``sha``, ``branch``, ``commit``).
+
+    Discovery is LAZY and sticky, exactly like the embedding backfill next to
+    it: computed when the config holds no list, then reused verbatim (a
+    hand-edited list is therefore honored). ``clear-search-data`` is how you
+    ask for a fresh one after the corpus has moved on. ``persist`` is False
+    under ``--dry-run``, which still uses the discovered list but writes
+    nothing.
+    """
+    todo_dir = todo_db.todo_dir()
+    stored = todo_store.config_list(todo_dir, SEARCH_STOPWORDS_KEY)
+    if stored or not index.document_count:
+        return stored
+    min_idf = todo_store.config_float(
+        todo_dir, SEARCH_STOPWORD_MIN_IDF_KEY, DEFAULT_STOPWORD_MIN_IDF
+    )
+    discovered = index.stopword_candidates(min_idf)
+    if discovered and persist:
+        todo_store.update_config(todo_dir, {SEARCH_STOPWORDS_KEY: discovered})
+    return discovered
+
+
 def search_tickets(
     root: Path,
     terms: Sequence[str],
@@ -1775,6 +1820,7 @@ def search_tickets(
     index = todo_search.LexicalIndex(
         {tid: " ".join(raws[tid].values()) for tid in tickets}
     )
+    index.use_stopwords(resolve_stopwords(index, persist=not dry_run))
     rankings.append(index.score(terms))
 
     if refreshing_embeddings:

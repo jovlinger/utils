@@ -169,7 +169,16 @@ class LexicalIndex:
         }
         self.frequencies = document_frequencies(self.documents.values())
         self.document_count = len(self.documents)
-        self.stopwords: Set[str] = {stem(word) for word in stopwords}
+        self.stopwords: Set[str] = set()
+        self.use_stopwords(stopwords)
+
+    def use_stopwords(self, words: Iterable[str]) -> None:
+        """Adopt *words* as this index's stopwords, stemmed to match its terms.
+
+        Separate from construction because discovery needs a built index: the
+        caller builds, discovers (or loads a persisted list), then adopts.
+        """
+        self.stopwords = {stem(word) for word in words}
 
     def idf(self, term: str) -> float:
         """Weight of *term* in this corpus, floored so presence always counts."""

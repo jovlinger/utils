@@ -7,6 +7,7 @@ test_todo_search_idf.py.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 import unittest.mock
@@ -14,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import todo_search  # noqa: E402
+from test_todo import TodoCase  # noqa: E402  (temp-repo + subprocess harness)
 
 
 class StemTest(unittest.TestCase):
@@ -171,6 +173,59 @@ class StemmerSeamTest(unittest.TestCase):
 
     def test_default_stemmer_is_the_documented_one(self) -> None:
         self.assertIs(todo_search.STEMMER, todo_search.stem)
+
+
+class StopwordDiscoveryCliTest(TodoCase):
+    """Discovery through the binary: what lands in config.json, and when."""
+
+    def _config(self) -> dict:
+        return json.loads((self._db_dir / "config.json").read_text(encoding="utf-8"))
+
+    def _seed_corpus(self) -> None:
+        """Nine todos about widgets, one about a quokka."""
+        for n in range(9):
+            tid = self.mint()
+            self.write_ticket(f"{tid[:8]}-w{n}", tid, summary=f"widget maintenance {n}")
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-q", tid, summary="quokka sighting")
+
+    def _search(self, *args: str) -> str:
+        proc = self.todo("search", *args, "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def test_search_discovers_and_persists_stopwords(self) -> None:
+        self._seed_corpus()
+        self.assertNotIn("search_stopwords", self._config())
+        self._search("widget")
+        stopwords = self._config()["search_stopwords"]
+        self.assertIn("widget", stopwords)
+        self.assertNotIn("quokka", stopwords)
+
+    def test_a_hand_edited_list_is_honored_not_overwritten(self) -> None:
+        # Discovery is lazy: a list that already exists is reused verbatim, so
+        # editing config.json is a supported way to control the ranker.
+        self._seed_corpus()
+        config = self._config()
+        config["search_stopwords"] = ["quokka"]
+        (self._db_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        self._search("widget")
+        self.assertEqual(["quokka"], self._config()["search_stopwords"])
+
+    def test_dry_run_discovers_without_persisting(self) -> None:
+        self._seed_corpus()
+        proc = self.todo("search", "widget", "--embedder", "apple", "--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("search_stopwords", self._config())
+
+    def test_threshold_is_configurable(self) -> None:
+        # A threshold of 0 means nothing is common enough to be a stopword.
+        self._seed_corpus()
+        config = self._config()
+        config["search_stopword_min_idf"] = 0.0
+        (self._db_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        self._search("widget")
+        self.assertFalse(self._config().get("search_stopwords"))
 
 
 if __name__ == "__main__":
