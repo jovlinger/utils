@@ -139,8 +139,9 @@ def _make_apple() -> Embedder:
 # No backend is currently ``cheap``: the bag-of-words ``hash`` embedder held that
 # slot and was removed, because hashing is lexical -- unrelated text can only
 # match by md5 bucket collision -- which made it useless for the semantic work it
-# was feeding (zero-shot auto-tagging in particular; see the todos SKILL.md
-# "Automatic tags" note). Nothing eagerly embeds on write until a cheap SEMANTIC
+# was feeding (zero-shot auto-tagging in particular; see the todos
+# IMPLEMENTATION.md "Automatic tags (dormant)" note). Nothing eagerly embeds on
+# write until a cheap SEMANTIC
 # backend exists; ``search`` backfills the expensive ones lazily instead. The
 # ``cheap`` plumbing is retained for that successor.
 _BACKENDS: Dict[str, _Backend] = {

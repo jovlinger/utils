@@ -59,6 +59,9 @@ _POLL_INTERVAL = 0.1
 _EMBED_FIELD_PATHS: Tuple[Tuple[str, str], ...] = (
     ("Summary", "Summary.raw"),
     ("Body", "Body.raw"),
+    # LongSummary is written to BE embedded (see IMPLEMENTATION.md): Body is often
+    # too long to embed well, so the summary vector is the one worth matching on.
+    ("LongSummary", "LongSummary.raw"),
 )
 
 
