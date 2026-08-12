@@ -292,5 +292,75 @@ class StopwordDiscoveryCliTest(TodoCase):
         self.assertFalse(self._config().get("search_stopwords"))
 
 
+class ClearSearchDataTest(TodoCase):
+    """Derived data is droppable: what goes, what stays, and what comes back."""
+
+    def _config(self) -> dict:
+        return json.loads((self._db_dir / "config.json").read_text(encoding="utf-8"))
+
+    def _vectors(self) -> int:
+        db = self._db_dir / "sqlite.db"
+        if not db.exists():
+            return 0
+        conn = sqlite3.connect(str(db))
+        try:
+            return conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+        finally:
+            conn.close()
+
+    def _seed(self, n: int = 3) -> str:
+        last = ""
+        for i in range(n):
+            tid = self.mint()
+            self.write_ticket(f"{tid[:8]}-s{i}", tid, summary=f"quokka sighting {i}")
+            last = tid
+        return last
+
+    def _search(self) -> None:
+        proc = self.todo("search", "quokka", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_clear_all_drops_vectors_and_the_stopword_list(self) -> None:
+        self._seed()
+        self._search()
+        self.assertGreater(self._vectors(), 0)
+        self.assertTrue(self._config().get("search_stopwords"))
+
+        proc = self.todo("clear-search-data", "ALL")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(0, self._vectors())
+        self.assertFalse(self._config().get("search_stopwords"))
+
+    def test_cleared_vectors_come_back_on_the_next_search(self) -> None:
+        self._seed()
+        self._search()
+        before = self._vectors()
+        self.todo("clear-search-data", "ALL")
+        self._search()
+        self.assertEqual(before, self._vectors(), "re-derive should restore the vectors")
+
+    def test_clear_strips_vectors_stamped_into_the_ticket_json(self) -> None:
+        # The index is not the only copy -- vectors are stamped into the record
+        # too, and a clear that missed those would leave search re-reading them.
+        tid = self._seed(1)
+        self._search()
+        record = json.loads(self.todo("read", tid).stdout)
+        self.assertTrue([k for k in record["Summary"] if k != "raw"], "expected stamped vectors")
+        self.todo("clear-search-data", "ALL")
+        record = json.loads(self.todo("read", tid).stdout)
+        self.assertEqual(["raw"], [k for k in record["Summary"] if k != "objid"])
+
+    def test_clearing_one_todo_leaves_the_corpus_stopword_list_alone(self) -> None:
+        # The list is a property of the corpus, not of any one todo.
+        tid = self._seed()
+        self._search()
+        self.todo("clear-search-data", tid[:8])
+        self.assertTrue(self._config().get("search_stopwords"))
+
+    def test_selector_is_required(self) -> None:
+        proc = self.todo("clear-search-data")
+        self.assertNotEqual(0, proc.returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

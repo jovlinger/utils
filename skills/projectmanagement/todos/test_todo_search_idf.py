@@ -119,10 +119,17 @@ class SearchIdfEndTest(TodoCase):
         # ranker this replaces, both todos matched exactly one term and scored
         # identically -- there was no signal to separate them.
         both = self._search(COMMON, RARE)
-        self.assertLess(
+        self.assertEqual(
+            0,
             self._rank(both, rare_id),
-            self._rank(both, common_id),
-            f"the rare term must outrank the corpus-wide one:\n{both}",
+            f"the rare term must produce the top hit:\n{both}",
+        )
+        # The common-only match does not outrank it, and in fact does not appear
+        # at all: once the corpus-wide word is a discovered stopword, matching
+        # only that word is not matching. See step 3 -- and note the query as a
+        # WHOLE still has a real term, which is what licenses dropping it here.
+        self.assertNotIn(
+            common_id, both, f"a stopword-only match should not surface:\n{both}"
         )
 
         # 2. Morphology, and only the two forms claimed: a plural noun is found
@@ -169,12 +176,16 @@ class SearchIdfEndTest(TodoCase):
         # the property that makes clearing safe rather than destructive.
         self._write_config(embedder=None)
         again = self._search(COMMON, RARE)
-        self.assertLess(
+        self.assertEqual(
+            0,
             self._rank(again, rare_id),
-            self._rank(again, common_id),
             f"ranking must survive a clear + re-derive:\n{again}",
         )
-        self.assertIn(COMMON, self._config().get("search_stopwords") or [])
+        # ...and re-derivation is a genuine recomputation, not a restore of what
+        # was cleared. The corpus grew during step 2, and a word in 9 of 13 todos
+        # is no longer common enough to be a stopword the way a word in 9 of 10
+        # was. Clearing is therefore also how a stale list gets corrected.
+        self.assertNotIn(COMMON, self._config().get("search_stopwords") or [])
 
         # 5. Finally, the off switch is real and not merely a preference. With
         #    the sidecar binary pointed at a path that does not exist, a search

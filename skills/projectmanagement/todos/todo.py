@@ -3797,6 +3797,92 @@ class TagClearCommand(TagCommand):
         return 0
 
 
+class ClearSearchDataCommand(StoreMaintenanceCommand):
+    command_names = ("clear-search-data",)
+    doc_short: ClassVar[str] = "Drop derived search data (re-derived lazily)"
+    doc_long: ClassVar[str] = (
+        "Clear-search-data drops what SEARCH derived, which is safe precisely because "
+        "none of it is source data: the next search recomputes whatever it needs. Two "
+        "kinds go. Embedding vectors are removed from the embeddings index and from the "
+        "stamped ticket JSON, and are backfilled again on the next search that selects "
+        "that embedder. The DISCOVERED stopword list is removed from the todo dir's "
+        "config.json, and the next search rediscovers it from the corpus as it stands "
+        "then -- which is how you ask for a fresh list after the corpus has moved on, "
+        "since discovery is otherwise sticky. The lexical index itself is not mentioned "
+        "because it is never stored: tokenizing the corpus is cheap enough to redo per "
+        "search, so only the expensive artifact earns storage. The selector is REQUIRED: "
+        "a specific todo (Id prefix or full digest) or the ALL sentinel to sweep the "
+        "corpus -- a corpus-wide wipe has to be asked for by name. The stopword list is "
+        "corpus-level, so only ALL drops it; clearing one todo touches only its vectors. "
+        "Prints a JSON summary of what went."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register clear-search-data arguments."""
+        parser.add_argument(
+            "selector",
+            help="todo selector: Id prefix (4+ hex) or full digest, or ALL to sweep the "
+            "whole corpus (required -- there is no default)",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Drop derived search data for one todo or across the corpus."""
+        root = self.root()
+        sweep = is_all_selector(self.selector)
+        targets: List[tuple[Optional[str], JsonDict]] = []
+        if sweep:
+            if not use_store():
+                raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
+            targets = [
+                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                if t.get("Id")
+            ]
+        else:
+            _, todo = resolve_ticket_by_id(root, self.selector)
+            targets = [(None, todo)]
+
+        store = todo_store.get_store()
+        cleared = 0
+        vectors_removed = 0
+        for repo, todo in targets:
+            ticket_id = str(todo.get("Id", ""))
+            if not ticket_id:
+                continue
+            stamped = _json_embeddings_present(todo)
+            for field_path in {path for path, _fingerprint in stamped}:
+                _strip_vectors_at(todo, field_path)
+            store.clear_embeddings(ticket_id)
+            if not stamped:
+                continue
+            # no_clear: the raws did not change, so there is nothing stale to
+            # re-clear -- and clearing again would just redo what we did here.
+            write_todo_worktree(root, todo, no_clear=True, repo=repo)
+            cleared += 1
+            vectors_removed += len(stamped)
+
+        stopwords_cleared = False
+        if sweep and todo_store.config_list(todo_db.todo_dir(), SEARCH_STOPWORDS_KEY):
+            todo_store.update_config(todo_db.todo_dir(), {SEARCH_STOPWORDS_KEY: None})
+            stopwords_cleared = True
+
+        print(
+            json.dumps(
+                {
+                    "scanned": len(targets),
+                    "todos_cleared": cleared,
+                    "vectors_removed": vectors_removed,
+                    "stopwords_cleared": stopwords_cleared,
+                },
+                indent=2,
+            )
+        )
+        if not self.no_commit and cleared:
+            commit_todo(root, f"chore(todo): clear-search-data on {cleared} todo(s)")
+        return 0
+
+
 class WorkItemAddCommand(WorkItemEditCommand):
     command_names = ("work-item-add",)
     doc_short: ClassVar[str] = "Append work item"
