@@ -130,42 +130,103 @@ def discover_stopwords(
     )
 
 
-def score_documents(
-    query_terms: Sequence[str],
-    documents: Mapping[str, Sequence[str]],
-    *,
-    stopwords: Set[str] = frozenset(),
-) -> Dict[str, float]:
-    """Rank *documents* (id -> tokens) against *query_terms* by summed IDF.
+# A term written as a quoted phrase is the unit of matching, so a document
+# holding those words contiguously must beat one holding them scattered. IDF
+# alone cannot see the difference -- both documents contain the same tokens.
+_PHRASE_BONUS = 2.0
 
-    A document scores the IDF of each distinct query term it contains, so a rare
-    term dominates and a near-universal one barely registers. Documents matching
-    nothing are omitted entirely rather than scored 0, which keeps the hard
-    "unrelated todos are absent" cutoff the vector path also has.
+# Presence must always beat absence, even for a term in literally every todo
+# (whose smoothed IDF is exactly 0). Without a floor such a term would score 0
+# and the documents holding it would drop out of the results entirely.
+_MIN_TERM_WEIGHT = 1e-6
 
-    *stopwords* are skipped -- UNLESS every query term is one, in which case
-    they are all kept: a search for common words should return the todos holding
-    them, not nothing at all.
+
+def _contains_phrase(tokens: Sequence[str], phrase: Sequence[str]) -> bool:
+    """True when *phrase* appears as a contiguous run inside *tokens*."""
+    span = len(phrase)
+    if span == 0 or span > len(tokens):
+        return False
+    first = phrase[0]
+    return any(
+        tokens[start] == first and list(tokens[start : start + span]) == list(phrase)
+        for start in range(len(tokens) - span + 1)
+    )
+
+
+class LexicalIndex:
+    """An IDF view of the corpus, built fresh per search and never persisted.
+
+    Construction tokenizes every document, which for a few hundred todos is
+    milliseconds -- cheap enough that storing a postings list would buy nothing
+    but invalidation bugs.
     """
-    if not query_terms or not documents:
-        return {}
 
-    frequencies = document_frequencies(documents.values())
-    document_count = len(documents)
+    def __init__(
+        self, texts: Mapping[str, str], *, stopwords: Iterable[str] = ()
+    ) -> None:
+        self.documents: Dict[str, List[str]] = {
+            doc_id: tokenize(text) for doc_id, text in texts.items()
+        }
+        self.frequencies = document_frequencies(self.documents.values())
+        self.document_count = len(self.documents)
+        self.stopwords: Set[str] = {stem(word) for word in stopwords}
 
-    wanted = [term for term in query_terms if term not in stopwords]
-    if not wanted:
-        wanted = list(query_terms)
+    def idf(self, term: str) -> float:
+        """Weight of *term* in this corpus, floored so presence always counts."""
+        return max(
+            inverse_document_frequency(self.document_count, self.frequencies.get(term, 0)),
+            _MIN_TERM_WEIGHT,
+        )
 
-    weights = {
-        term: inverse_document_frequency(document_count, frequencies.get(term, 0))
-        for term in dict.fromkeys(wanted)
-    }
+    def stopword_candidates(self, min_idf: float) -> List[str]:
+        """The terms this corpus considers stopwords at *min_idf*."""
+        return discover_stopwords(self.frequencies, self.document_count, min_idf)
 
-    scores: Dict[str, float] = {}
-    for doc_id, tokens in documents.items():
-        present = set(tokens)
-        score = sum(weight for term, weight in weights.items() if term in present)
-        if score > 0.0:
-            scores[doc_id] = score
-    return scores
+    def score(self, terms: Sequence[str]) -> Dict[str, float]:
+        """Rank documents against *terms* (google-style: their scores add).
+
+        Each document scores the IDF of every distinct query token it holds, so
+        a rare term dominates and a near-universal one barely registers. A
+        multi-token term additionally earns a bonus where its tokens appear
+        contiguously. Documents matching nothing are omitted rather than scored
+        zero, preserving the hard "unrelated todos are absent" cutoff the vector
+        path also has.
+
+        Stopwords are skipped -- unless the WHOLE query is stopwords, in which
+        case they are all kept: searching for common words should return the
+        todos holding them, not nothing at all. The fallback is deliberately
+        judged across the whole query rather than per term, or a query like
+        "the quokka" would quietly reinstate "the" and surface every todo
+        containing it alongside the one real match.
+        """
+        if not terms or not self.documents:
+            return {}
+
+        tokenized = [tokenize(term) for term in terms]
+        keep_stopwords = not any(
+            token not in self.stopwords for tokens in tokenized for token in tokens
+        )
+
+        scores: Dict[str, float] = {}
+        for tokens in tokenized:
+            if not tokens:
+                continue
+            wanted = (
+                tokens
+                if keep_stopwords
+                else [token for token in tokens if token not in self.stopwords]
+            )
+            if not wanted:
+                continue
+            weights = {token: self.idf(token) for token in dict.fromkeys(wanted)}
+            for doc_id, doc_tokens in self.documents.items():
+                present = set(doc_tokens)
+                score = sum(
+                    weight for token, weight in weights.items() if token in present
+                )
+                if score <= 0.0:
+                    continue
+                if len(tokens) > 1 and _contains_phrase(doc_tokens, tokens):
+                    score *= _PHRASE_BONUS
+                scores[doc_id] = scores.get(doc_id, 0.0) + score
+        return scores

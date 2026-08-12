@@ -24,6 +24,7 @@ from typing import Any, ClassVar, Dict, Iterator, List, Optional, Sequence
 
 import todo_db
 import todo_objid
+import todo_search
 import todo_store
 import todo_embed
 import todo_url
@@ -1768,21 +1769,13 @@ def search_tickets(
                     scores[tid] = best
             rankings.append(scores)
 
-    text_by_tid = {tid: " ".join(raws[tid].values()).lower() for tid in tickets}
-    for term in terms:
-        term_lower = term.lower()
-        sub_tokens = {tok for tok in term_lower.split() if tok}
-        lexical: Dict[str, float] = {}
-        for tid, text in text_by_tid.items():
-            score = 0.0
-            if term_lower and term_lower in text:
-                score += 1.0
-            for token in sub_tokens:
-                if token in text:
-                    score += 0.1
-            if score > 0.0:
-                lexical[tid] = score
-        rankings.append(lexical)
+    # Lexical half: one IDF ranking over all terms (their weights add), so a
+    # rare term outranks a corpus-wide one instead of every term counting the
+    # same. Built fresh here -- see todo_search on why none of it is persisted.
+    index = todo_search.LexicalIndex(
+        {tid: " ".join(raws[tid].values()) for tid in tickets}
+    )
+    rankings.append(index.score(terms))
 
     if refreshing_embeddings:
         print("Done", file=sys.stderr, flush=True)
