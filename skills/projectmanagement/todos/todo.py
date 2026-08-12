@@ -421,8 +421,8 @@ def read_todo_worktree(root: Path) -> Optional[JsonDict]:
 _EMBED_FIELDS: tuple[tuple[str, str], ...] = (
     ("Summary", "Summary.raw"),
     ("Body", "Body.raw"),
-    # LongSummary is written to BE embedded (see SKILL.md): Body is often too
-    # long to embed well, so the summary vector is the one worth matching on.
+    # LongSummary is written to BE embedded (see IMPLEMENTATION.md): Body is often
+    # too long to embed well, so the summary vector is the one worth matching on.
     ("LongSummary", "LongSummary.raw"),
 )
 
@@ -980,7 +980,7 @@ def apply_set_fields(
         changed = True
     if long_summary is not None:
         # Deliberately independent of Body: either may be written without the
-        # other (see "LongSummary" in SKILL.md). Nothing here reads Body.
+        # other (see "LongSummary" in IMPLEMENTATION.md). Nothing here reads Body.
         todo.setdefault("LongSummary", {})["raw"] = long_summary
         changed = True
     if state is not None:
@@ -1221,7 +1221,8 @@ def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
         dest="long_summary",
         help="LongSummary: a careful, reader-first summary of the Body, and the source "
         "for the summary embedding. Derived, but NOT tool-coupled to Body -- either may "
-        "be written without the other. See 'LongSummary' in SKILL.md before writing one",
+        "be written without the other. See 'Writing a LongSummary' in GROOMING.md before "
+        "writing one",
     )
 
 
@@ -2519,8 +2520,8 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
         findings.append("Summary.raw must be a string")
     # SHAPE ONLY. doctor deliberately does not check that LongSummary still
     # describes Body: the two are independent by design (either may be written
-    # without the other -- see "LongSummary" in SKILL.md), so a LongSummary that
-    # disagrees with its Body is not a defect the tool can judge.
+    # without the other -- see "LongSummary" in IMPLEMENTATION.md), so a LongSummary
+    # that disagrees with its Body is not a defect the tool can judge.
     long_summary = todo.get("LongSummary")
     if long_summary is not None and (
         not isinstance(long_summary, dict) or not isinstance(long_summary.get("raw"), str)
