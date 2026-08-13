@@ -62,6 +62,70 @@ class VersionCommand(Subcommand):
         return 0
 
 
+class HealthzCommand(Subcommand):
+    command_names = ("healthz",)
+    doc_short = "Ping /healthz; report LAN connectivity per zone"
+    doc_long = (
+        "GET /healthz on each matched board and report ok/unreachable. "
+        "Use zonespec ALL to probe every zone.env target. Exit 1 if any fail."
+    )
+    mutating = False
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        add_zonespec_argument(parser)
+        parser.add_argument(
+            "--timeout",
+            type=float,
+            default=3.0,
+            help="HTTP timeout seconds per board (default 3)",
+        )
+
+    def undo_hint(self) -> str:
+        return "read-only / no undo"
+
+    def run(self) -> int:
+        targets = select_targets(self.args, mutating=False)
+        transport = transport_from_args(self.args)
+        timeout = float(getattr(self.args, "timeout", 3.0))
+        if hasattr(transport, "timeout_s"):
+            transport.timeout_s = timeout  # type: ignore[attr-defined]
+        rows: List[Dict[str, Any]] = []
+        any_fail = False
+        for target in targets:
+            row: Dict[str, Any] = {
+                "zone": target.zone_name,
+                "backend": target.backend,
+                "base_url": target.base_url,
+                "ok": False,
+            }
+            try:
+                health = transport.get_json(target, "/healthz")
+                row["ok"] = True
+                if isinstance(health, dict):
+                    row["service"] = health.get("service")
+                    row["hardware_backend"] = health.get("hardware_backend")
+                    if "epoch_seconds" in health:
+                        row["epoch_seconds"] = health.get("epoch_seconds")
+                    elif "time" in health:
+                        row["time"] = health.get("time")
+                else:
+                    row["health"] = health
+            except RuntimeError as exc:
+                any_fail = True
+                row["error"] = str(exc)
+            rows.append(row)
+            status = "ok" if row["ok"] else "FAIL"
+            detail = row.get("error") or row.get("service") or ""
+            print(
+                f"{status:4s}  {target.zone_name:12s}  {target.base_url}  {detail}",
+                file=sys.stderr,
+            )
+        print(json.dumps({"zones": rows, "ok": not any_fail}, indent=2, sort_keys=True))
+        self.print_undo()
+        return 1 if any_fail else 0
+
+
 class DeviceInfoCommand(Subcommand):
     command_names = ("deviceinfo",)
     doc_short = "Richer board identity (zone.env + /healthz)"

@@ -253,8 +253,8 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py init [--id <id>] [--summary=...]` | implemented | Run when ready to WORK the todo. **Promote mode** (`--id` of an existing `pre-init` todo): create the local branch from its `set`-finalized `Branch`, move it to state `init`, capture `BaseSha` (invariant #5), commit. **Fresh mode** (`--summary`, no existing record): mint (or accept `--id`) + create branch + skeleton in one call (backward-compatible). Refuses when the current branch already has a ticket. `--agent-type`/`--session-id` (or `$TODO_AGENT_TYPE`/`$TODO_SESSION_ID`) record the creating agent. Fresh mode also accepts `set`'s edit args (init-then-set) except `--parent` (use `set --parent` after). `--stay-on-parent` returns to the previous branch after creating the todo branch |
 | `todo.py ensure_worktree [<selector>]` | STUB | Will materialize a git working tree for the todo's branch (idempotent) so code can be worked, and is meant to be called implicitly whenever a flow touches code; the tree may become ephemeral later. STUB today: resolves the todo and prints the INTENDED path (`<todo-dir>/worktrees/<repo>/<branch>`) with `created=false`; does not run `git worktree add` yet. Selector is a 4+ hex Id prefix or `self`/`curr` (default `self`) |
 | `todo.py add-subtodo --from-json=...` | implemented | From a parent todo branch: create child branch + `TODO.json` (captures child `BaseSha`), commit, return to parent, register in `Subtodos`. Completes the parent's cursor work item as a typed `start_subtodo` done item and advances the cursor |
-| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
-| `todo.py set [--id <id>] [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary` and/or transition `State` (requires at least one field). Targets the current branch's todo by default; `--id <prefix>` targets another todo (typically a `pre-init` todo from `mint`) and is sqlite-only (no commit, since it has no branch of its own). For a `pre-init` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `pre`, `pre-init`, `init`, `working`, `done`, `merged`, `userneeded`, `stopped`. `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). Current-branch edits commit by default. |
+| `todo.py merge-subtodo <id>` | implemented | After child is `done`: checkout child branch, set `merged`, commit; update parent `Subtodos[].State` to `merged`; tear down child's linked worktree. Records a typed `merge_subtodo` done item on the parent's cursor with the merge sha and advances the cursor. The merge commit subject and work item summary come from the child's `ActualSummary` (falling back to `Summary.raw`) |
+| `todo.py set [--id <id>] [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--parent=<id>]` | implemented | Patch `Summary.raw`/`Body.raw`/`AC`/`ActualSummary` and/or transition `State` (requires at least one field). Targets the current branch's todo by default; `--id <prefix>` targets another todo (typically a `pre-init` todo from `mint`) and is sqlite-only (no commit, since it has no branch of its own). For a `pre-init` todo, `--summary` also refreshes the `Branch` label. `--state <s>` (with metadata `--note`/`--last-commit`/`--merged-into`/`--owner`) **replaces the removed `set-state` subcommand**; valid states `pre`, `pre-init`, `init`, `working`, `done`, `merged`, `userneeded`, `stopped`. **`done`/`merged` tear down any linked worktree for the branch** (fail if dirty). `--parent <id>` (repeatable) is a **make-it-so** write of the `Parent` list: desired end-state replaces the child's refs, adds/refreshes follow-only `INFO` back-links on desired parents, and removes `INFO` back-links from former parents no longer listed (tracked subtodos untouched); bare `--parent=` clears. `EDIT` free-text captured from `$VISUAL`/`$EDITOR`/`vi` (non-interactive `EDIT` exits 1). Current-branch edits commit by default. |
 | `todo.py rm <todoid> [--hard]` | implemented | Soft-delete a todo from the store: a recoverable tombstone (`deleted_tickets` row in sqlite, or an `<id>.deleted` file in a json-dir store) -- the same removal `export-to-file --remove` performs, without writing an export file. `--hard` deletes permanently (no recovery tool). The git branch and any worktree are left intact. |
 | `todo.py work-item-add --summary=...` | implemented | Append a not-done `task` work item (`{kind:"task", summary, done:false}`) to `WorkItems` |
 | `todo.py work-item-done [-m MSG] [--sha SHA] [--summary S]` | implemented | Complete the cursor (first not-done) item as a typed `code` item and advance the cursor. Post-condition: branch fully committed. Dirty tree: commits `git add -A` (message = `-m` or the work item summary), records new HEAD sha. Clean tree: records HEAD, or a `--sha` that must equal HEAD (mismatch exits 1). Adds no bookkeeping commit, so the sha stays branch HEAD (#6). Stores the full commit message on the node as `message` so the WorkItems trail records what actually changed -- pass a descriptive `-m` (outcome + files/tests added) |
@@ -266,7 +266,7 @@ hidden behind the `todo.py` interface. Filtering after a sanctioned read is fine
 | `todo.py last-sha [<selector>]` | implemented | Print the sha of the last work item, which is the last commit on the branch (#6) |
 | `todo.py wait-for <id>...` | implemented | Poll selected child todos until they reach a target state, default `done`, without direct file reads. Initial implementation polls through todo selectors; better signaling can follow real usage. |
 | `todo.py wait-and-merge <subtodo-id>...` | implemented | Poll child todos until `done`, then run merge bookkeeping for each child. |
-| `todo.py doctor [<selector>] [--all] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, sqlite only). Repair runs by default; `--dry-run` reports intended repairs without writing; `--all` sweeps the whole corpus instead of one selector. Two finding tiers: hard `findings` (fail, exit 1) for shape violations; soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
+| `todo.py doctor [<selector>] [--all] [--dry-run]` | implemented | Audit schema, references, wait graph, and the WorkItem invariants (#1/#3/#6/#7), **and repair parent back-links**: for each `Parent` ref on the audited todo, re-establish a follow-only `INFO` back-link in the parent's `Subtodos` (best-effort, same-repo, sqlite only). Repair also removes a leftover linked worktree when State is `done`/`merged`. Repair runs by default; `--dry-run` reports intended repairs without writing; `--all` sweeps the whole corpus instead of one selector. Two finding tiers: hard `findings` (fail, exit 1) for shape violations (including leftover worktree on done/merged); soft `warnings` (never fail) for checks needing an absent subbranch or other repo |
 | `todo.py log [<selector>]` | implemented | Render the ticket graph (the `Subtodos` tree) for `<selector>` (default `self`; `self`/`curr` or a 4+ hex Id prefix) in git-log `--graph --oneline` style: `* <Id[0:8]> <summary>  [<state>]` with `\|` rails. `--all` renders every root as a forest; `-n N` caps lines; `-v` lists each ticket's branch commits (its frequentcommit trail); `-t` adds timestamps (ticket update time on nodes, commit date on the `-v` lines). Graph structure is from `TODO.json` via todo.py's readers; only `-v`'s commit lines read git. Output truncates to terminal width on a TTY, full when piped. |
 | `todo.py new --summary=... --body=...` | planned | alias for `init` with optional JSON seed |
 
@@ -389,7 +389,7 @@ git branch --show-current              # expect: <todo Branch>
 the main tree -- prefer that when filing from the main checkout, then
 `git worktree add` and work there.
 
-### Todo / subtodo worktree lifecycle (open on entry, tear down on last commit)
+### Todo / subtodo worktree lifecycle (open on entry, tear down on done/merged)
 
 A **todo is worked in its own dedicated git worktree**, so the main checkout
 (and parent/siblings) never share that checkout:
@@ -400,14 +400,16 @@ A **todo is worked in its own dedicated git worktree**, so the main checkout
   <branch>`) and `cd` into it. Reuse an existing worktree for that branch if
   `git worktree list` already shows one; never move it. Confirm the main
   checkout is still on `master` before continuing.
-- **On last commit** (the todo's final commit is in -- `is-done` is true and its
-  `set --state done` commit has landed): tear the worktree down (`cd` out, then
-  `git worktree remove <path>`). Teardown removes only the *checkout*; the branch
-  and its commits survive for merge/handoff. If the tree is dirty, the todo is
-  not actually done -- finish or surface it before removing.
+- **On `State` done or merged** (tool property, not agent courtesy): `todo.py
+  set --state done|merged` and `merge-subtodo` **remove** any linked worktree
+  for that branch after the state commit. Teardown removes only the *checkout*;
+  the branch and its commits survive for merge/handoff. If the tree is dirty,
+  the transition fails -- finish or surface dirt before marking done/merged.
+  `doctor` reports a leftover worktree on done/merged as a hard finding and
+  removes it on repair.
 
 The branch is the durable asset; the worktree is scratch space that exists only
-for the span from entry to last commit.
+while the todo is not yet terminal (`done` / `merged`).
 
 **Branch retirement (the delete gate).** Tearing down a *worktree* is always safe
 -- it removes only a checkout; the branch and its commits survive. DELETING a
@@ -449,8 +451,9 @@ leaf:
 git worktree add ~/.todo/worktrees/<repo-path>/<branch> <branch>
 ```
 
-`todo.py` worktree automation is future; for now this is a manual convention,
-and discovery relies on `git worktree list`.
+`todo.py ensure_worktree` (create) is still a stub; **teardown on done/merged is
+implemented** in `set` / `merge-subtodo` / `doctor` repair. Discovery still uses
+`git worktree list`.
 
 ## Before you start
 

@@ -67,7 +67,10 @@ class HelpCommand(Subcommand):
         else:
             print("\n".join(names))
         print("\nUsage: onboardctl <subcommand> <zonespec> [extraargs...]")
-        print("zonespec: zone:NAME | hardware:TYPE | dialect:NAME | type:KIND | bare zone name")
+        print(
+            "zonespec: zone:NAME | hardware:TYPE | dialect:NAME | type:KIND | "
+            "bare zone name | ALL"
+        )
         self.print_undo()
         return 0
 
@@ -76,6 +79,7 @@ def _command_classes() -> List[Type[Subcommand]]:
     # Local import avoids circular import at module load.
     from commands import (
         DeviceInfoCommand,
+        HealthzCommand,
         LogsCommand,
         SendCommandCommand,
         SetVarCommand,
@@ -86,6 +90,7 @@ def _command_classes() -> List[Type[Subcommand]]:
         HelpCommand,
         LogsCommand,
         VersionCommand,
+        HealthzCommand,
         DeviceInfoCommand,
         SendCommandCommand,
         SetVarCommand,

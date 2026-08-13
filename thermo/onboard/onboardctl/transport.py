@@ -67,11 +67,16 @@ class FakeTransport:
     """In-memory transport for unit tests."""
 
     get_responses: Dict[str, Any] = field(default_factory=dict)
+    get_errors: Dict[str, BaseException] = field(default_factory=dict)
     post_log: List[Dict[str, Any]] = field(default_factory=list)
     default_get: Any = field(default_factory=dict)
 
     def get_json(self, target: BoardTarget, path: str) -> Any:
         key = f"{target.zone_name}:{path}"
+        if key in self.get_errors:
+            raise self.get_errors[key]
+        if path in self.get_errors:
+            raise self.get_errors[path]
         if key in self.get_responses:
             return self.get_responses[key]
         if path in self.get_responses:

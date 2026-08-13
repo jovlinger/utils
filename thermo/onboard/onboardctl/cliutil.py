@@ -27,7 +27,10 @@ from zonespec import (
 def add_zonespec_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "zonespec",
-        help="zone:NAME | hardware:TYPE | dialect:NAME | type:KIND | bare zone",
+        help=(
+            "zone:NAME | hardware:TYPE | dialect:NAME | type:KIND | bare zone | "
+            "ALL (every zone.env)"
+        ),
     )
 
 

@@ -19,3 +19,4 @@ def test_help_lists_subcommands() -> None:
     assert completed.returncode == 0, completed.stderr
     assert "onboardctl subcommands:" in completed.stdout
     assert "help" in completed.stdout
+    assert "healthz" in completed.stdout

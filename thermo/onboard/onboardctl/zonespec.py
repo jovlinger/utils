@@ -11,6 +11,8 @@ KIND_ZONE = "zone"
 KIND_HARDWARE = "hardware"
 KIND_DIALECT = "dialect"
 KIND_TYPE = "type"
+# Pseudo selector: every zone.env target (not a real zone name).
+KIND_ALL = "all"
 VALID_KINDS = frozenset({KIND_ZONE, KIND_HARDWARE, KIND_DIALECT, KIND_TYPE})
 
 _SPEC_RE = re.compile(r"^(?:(?P<kind>[a-zA-Z_]+):)?(?P<value>.+)$")
@@ -22,6 +24,8 @@ class ZoneSpec:
     value: str
 
     def __str__(self) -> str:
+        if self.kind == KIND_ALL:
+            return "ALL"
         return f"{self.kind}:{self.value}"
 
 
@@ -88,6 +92,9 @@ def parse_zonespec(raw: str) -> ZoneSpec:
     text = raw.strip()
     if not text:
         raise ValueError("zonespec is empty")
+    # Pseudo: ALL (any case) selects every configured zone.env target.
+    if text.upper() == "ALL":
+        return ZoneSpec(kind=KIND_ALL, value="*")
     match = _SPEC_RE.match(text)
     if match is None:
         raise ValueError(f"invalid zonespec {raw!r}")
@@ -177,6 +184,8 @@ def resolve_zonespec(
     spec: ZoneSpec,
     targets: Sequence[BoardTarget],
 ) -> List[BoardTarget]:
+    if spec.kind == KIND_ALL:
+        return list(targets)
     value = spec.value.lower()
     if spec.kind == KIND_ZONE:
         return [t for t in targets if t.zone_name.lower() == value]

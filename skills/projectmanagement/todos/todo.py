@@ -647,6 +647,83 @@ def set_state(
     todo["State"] = {state: value}
 
 
+# States that must not keep a linked worktree (scratch checkout only).
+WORKTREE_TEARDOWN_STATES = frozenset({"done", "merged"})
+
+
+def linked_worktrees_by_branch(root: Path) -> Dict[str, Path]:
+    """Map branch name -> linked worktree path (never the main checkout)."""
+    main = todo_db.main_checkout_root(root)
+    listed = run_git(root, "worktree", "list", "--porcelain", check=False)
+    if listed.returncode != 0:
+        return {}
+    out: Dict[str, Path] = {}
+    current_path: Optional[Path] = None
+    for line in listed.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = Path(line[len("worktree ") :].strip())
+        elif line.startswith("branch ") and current_path is not None:
+            ref = line[len("branch ") :].strip()
+            name = ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+            if main is None or current_path.resolve() != main.resolve():
+                out[name] = current_path
+            current_path = None
+        elif line.startswith("detached") or line == "":
+            current_path = None
+    return out
+
+
+def worktree_path_for_branch(root: Path, branch: str) -> Optional[Path]:
+    """Return the linked worktree path for *branch*, if any."""
+    if not branch:
+        return None
+    return linked_worktrees_by_branch(root).get(branch)
+
+
+def assert_todo_worktree_removable(root: Path, branch: str) -> None:
+    """Raise TodoError if the todo's linked worktree exists and is dirty."""
+    path = worktree_path_for_branch(root, branch)
+    if path is None:
+        return
+    status = run_git(path, "status", "--porcelain", check=False)
+    if status.returncode != 0:
+        raise TodoError(
+            f"cannot inspect worktree for {branch!r} at {path}: "
+            f"{(status.stderr or status.stdout or '').strip()}"
+        )
+    if status.stdout.strip():
+        raise TodoError(
+            f"worktree for {branch!r} is dirty ({path}); "
+            "finish or stash before State done/merged (teardown is required)"
+        )
+
+
+def remove_todo_worktree_for_branch(root: Path, branch: str) -> Optional[str]:
+    """Tear down the linked worktree for *branch* after done/merged.
+
+    Idempotent when no linked worktree exists. Never removes the main checkout.
+    Returns the removed path as a string, or None.
+    """
+    path = worktree_path_for_branch(root, branch)
+    if path is None:
+        return None
+    assert_todo_worktree_removable(root, branch)
+    main = todo_db.main_checkout_root(root) or root
+    run_git(main, "worktree", "remove", str(path))
+    run_git(main, "worktree", "prune", check=False)
+    return str(path)
+
+
+def teardown_worktree_for_terminal_state(
+    root: Path, todo: JsonDict, *, state: Optional[str]
+) -> Optional[str]:
+    """If *state* is done/merged, remove the todo's linked worktree."""
+    if state not in WORKTREE_TEARDOWN_STATES:
+        return None
+    branch = str(todo.get("Branch") or "")
+    return remove_todo_worktree_for_branch(root, branch)
+
+
 def apply_set_fields(
     todo: JsonDict,
     *,
@@ -1716,6 +1793,7 @@ def merge_subtodo(
         )
 
     merge_target = merged_into or parent_branch
+    assert_todo_worktree_removable(root, child_branch)
     run_git(root, "checkout", child_branch)
     child_worktree = read_todo_required(root)
     set_state(child_worktree, "merged", merged_into=merge_target, last_commit=last_commit)
@@ -1747,6 +1825,8 @@ def merge_subtodo(
     if not parent["WorkItems"][index].get("summary"):
         parent["WorkItems"][index]["summary"] = merge_subject
     write_todo_worktree(root, parent)
+    # State merged implies no linked worktree for the child (property of terminal).
+    remove_todo_worktree_for_branch(root, child_branch)
     return {"child": child_id, "State": "merged", "merged_into": merge_target, "sha": merge_sha}
 
 
@@ -1920,6 +2000,15 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
             )
     findings.extend(workitem_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
+    # done/merged must not retain a linked worktree (tool-enforced property).
+    if parent_state in WORKTREE_TEARDOWN_STATES:
+        branch = str(todo.get("Branch") or "")
+        leftover = worktree_path_for_branch(root, branch) if branch else None
+        if leftover is not None:
+            findings.append(
+                f"State {parent_state!r} still has linked worktree at {leftover} "
+                "(teardown is required for done/merged)"
+            )
     return findings
 
 
@@ -2417,6 +2506,8 @@ class InitCommand(TodoSubCommand):
                 owner=self.owner,
                 actual_summary=self.actual_summary,
             )
+            if state in WORKTREE_TEARDOWN_STATES:
+                assert_todo_worktree_removable(root, str(ticket.get("Branch") or ""))
             write_todo_worktree(root, ticket)
             if not self.no_commit:
                 message = (
@@ -2425,6 +2516,7 @@ class InitCommand(TodoSubCommand):
                     else "chore(todo): update ticket fields"
                 )
                 commit_todo(root, message)
+            teardown_worktree_for_terminal_state(root, ticket, state=state)
         if self.stay_on_parent and parent_branch:
             run_git(root, "checkout", parent_branch)
         print(json.dumps({"Id": ticket_id, "Branch": branch}, indent=2))
@@ -2578,6 +2670,8 @@ class SetCommand(TodoSubCommand):
         "todo from `mint` that has no branch yet. It updates Summary.raw, Body.raw, AC, "
         "ActualSummary, and/or the workflow State (--state, which replaces the removed `set-state` "
         "subcommand; State metadata --note/--last-commit/--merged-into/--owner ride along). "
+        "Transitioning to done or merged tears down any linked git worktree for the todo's branch "
+        "(refuses if that worktree is dirty). "
         "Pass --parent <id> (repeatable) as a make-it-so Parent list: the child's Parent becomes "
         "exactly those refs, follow-only INFO back-links are added on desired parents, and INFO "
         "back-links on former parents that are no longer listed are removed (tracked subtodos are "
@@ -2655,10 +2749,14 @@ class SetCommand(TodoSubCommand):
             todo["Branch"] = new_branch
             if isinstance(todo.get("Scope"), dict):
                 todo["Scope"]["branch"] = new_branch
+        # done/merged tear down the linked worktree; refuse dirty trees first.
+        if state in WORKTREE_TEARDOWN_STATES:
+            assert_todo_worktree_removable(root, str(todo.get("Branch") or ""))
         write_todo_worktree(root, todo, no_clear=self.no_clear)
         if not self.no_commit and not by_id:
             message = f"chore(todo): state -> {state}" if state else "chore(todo): update ticket fields"
             commit_todo(root, message)
+        teardown_worktree_for_terminal_state(root, todo, state=state)
         if state:
             print(json.dumps(todo["State"], indent=2))
         return 0
@@ -3146,11 +3244,27 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     Repair walks the audited todo's `Parent` refs and re-establishes a
     follow-only INFO back-link on each parent -- healing links that were
     one-way (legacy links) or lost, and refreshing INFO summaries.
+    Also tears down a leftover linked worktree when State is done/merged.
     """
     _loc, todo = resolve_ticket_by_selector(root, selector)
     findings = doctor_findings(root, selector)
     warnings = doctor_warnings(root, selector)
     repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
+    if current_state_name(todo) in WORKTREE_TEARDOWN_STATES:
+        branch = str(todo.get("Branch") or "")
+        leftover = worktree_path_for_branch(root, branch) if branch else None
+        if leftover is not None:
+            if dry_run:
+                repairs.append(f"would remove worktree {leftover}")
+            else:
+                try:
+                    removed = remove_todo_worktree_for_branch(root, branch)
+                    if removed:
+                        repairs.append(f"removed worktree {removed}")
+                        # Re-audit so ok/findings reflect the teardown.
+                        findings = doctor_findings(root, selector)
+                except TodoError as exc:
+                    findings.append(str(exc))
     return {
         "id": str(todo.get("Id", ""))[:8],
         "ok": not findings,
@@ -3167,7 +3281,8 @@ class DoctorCommand(TodoSubCommand):
         "Doctor audits a todo -- selector resolution, top-level schema, State shape, Subtodos "
         "references, and wait-graph sanity -- and repairs parent back-links: for each of the "
         "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
-        "Subtodos (best-effort, same-repo, sqlite only). Repair runs by default; pass --dry-run to "
+        "Subtodos (best-effort, same-repo, sqlite only). Repair also removes a leftover linked "
+        "worktree when State is done or merged. Repair runs by default; pass --dry-run to "
         "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
         "lock left by a crashed writer (reported as 'unlocked'). Pass --all to sweep the whole corpus "
         "instead of a single selector. Exit 1 when any hard finding is present."

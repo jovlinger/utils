@@ -6,11 +6,12 @@ Layout and human pointers: [`README.md`](README.md).
 
 `onboardctl/` is a sibling-role CLI to `thermo/dmz/manage`: it talks to onboard
 HTTP debug ports (default `:5000`) and **does not** go through the DMZ. Use it
-for synchronous bring-up (`logs`, `version`, `deviceinfo`, `sendcommand`,
+for synchronous bring-up (`logs`, `version`, `healthz`, `deviceinfo`, `sendcommand`,
 `setvar`). See [`onboardctl/README.md`](onboardctl/README.md).
 
 ```bash
 thermo/onboard/onboardctl/onboardctl help
+thermo/onboard/onboardctl/onboardctl healthz ALL
 thermo/onboard/onboardctl/onboardctl logs office
 ```
 
@@ -49,6 +50,9 @@ make -C thermo/onboard deploy ZONE=office
 
 Pico2W flash needs `thermo/priv/pico2w/<zone>.env` (WiFi password) and the board
 in BOOTSEL. See [`hardware/pico2w/AGENTS.md`](hardware/pico2w/AGENTS.md).
+
+ESP32-S3 is MicroPython (`hardware/esp32s3/mp/`); see
+[`hardware/esp32s3/AGENTS.md`](hardware/esp32s3/AGENTS.md) for mpremote REPL.
 
 Legacy wrapper (still works): `./deploy-room.sh pico2w office-pico2w.env`
 

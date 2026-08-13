@@ -21,14 +21,18 @@ onboardctl <subcommand> <zonespec> [extraargs...]
 - `hardware:esp32` (fuzzy; matches esp32s3) / `hardware:esp32s3` / `pico2w` / `pizero`
 - `dialect:midea` / `daikin` / ...
 - `type:ac` / `heatpump` / `heat` / `led`
+- `ALL` -- every `zones/*/zone.env` target (read-only multi; mutating cmds still refuse)
 
 Mutating commands (`sendcommand`, `setvar`) refuse multi-match sets.
 
 ## Subcommands
 
-`help`, `logs`, `version`, `deviceinfo`, `sendcommand`, `setvar`
+`help`, `logs`, `version`, `healthz`, `deviceinfo`, `sendcommand`, `setvar`
 
 Each prints an `undo:` line on stderr.
+
+`healthz ALL` probes `/healthz` on each configured zone (short timeout, default 3s)
+and prints one connectivity line per zone plus a JSON summary; exit 1 if any fail.
 
 ## Run
 
@@ -36,6 +40,7 @@ With `binlinks/` on `PATH` (`make binlinks`):
 
 ```bash
 onboardctl help
+onboardctl healthz ALL
 onboardctl logs office
 onboardctl sendcommand kitchen   # defaults: cool / auto / on / 22c
 ```

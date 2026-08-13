@@ -12,7 +12,12 @@ import pytest
 ONBOARDCTL_DIR = Path(__file__).resolve().parents[1] / "onboardctl"
 sys.path.insert(0, str(ONBOARDCTL_DIR))
 
-from commands import LogsCommand, SendCommandCommand, SetVarCommand  # noqa: E402
+from commands import (  # noqa: E402
+    HealthzCommand,
+    LogsCommand,
+    SendCommandCommand,
+    SetVarCommand,
+)
 from transport import AmbiguousTargetsError, FakeTransport, require_single_target  # noqa: E402
 from zonespec import BoardTarget, load_targets_from_zones_dir, parse_zonespec, resolve_zonespec  # noqa: E402
 
@@ -40,6 +45,37 @@ def test_logs_prints_fake_payload(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "office" in out
     assert '"a"' in out
+
+
+def test_healthz_all_reports_connectivity(capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeTransport(
+        get_responses={
+            "office:/healthz": {"ok": True, "service": "onboard-app"},
+            "kitchen:/healthz": {"ok": True, "service": "onboard-app"},
+        },
+        get_errors={"bedroom:/healthz": RuntimeError("GET /healthz failed: timed out")},
+    )
+    args = _ns(zonespec="ALL", fake_transport=fake, timeout=1.0)
+    rc = HealthzCommand(args).run()
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "FAIL" in captured.err
+    assert "bedroom" in captured.err
+    summary = json.loads(captured.out)
+    assert summary["ok"] is False
+    by_zone = {row["zone"]: row for row in summary["zones"]}
+    assert by_zone["office"]["ok"] is True
+    assert by_zone["bedroom"]["ok"] is False
+
+
+def test_healthz_all_ok_when_all_reachable(capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeTransport(default_get={"ok": True, "service": "onboard-app"})
+    args = _ns(zonespec="ALL", fake_transport=fake, timeout=1.0)
+    rc = HealthzCommand(args).run()
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["ok"] is True
+    assert len(summary["zones"]) == len(load_targets_from_zones_dir(ZONES))
 
 
 def test_sendcommand_defaults_and_undo(capsys: pytest.CaptureFixture[str]) -> None:

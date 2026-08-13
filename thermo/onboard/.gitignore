@@ -22,7 +22,10 @@ hardware/*/target/
 # Discarded/superseded hardware implementations kept locally for reference only.
 hardware/*/OBSOLETE/
 
-# Custom Toit envelope build tree (submodule + local artifacts).
+# ESP32-S3 MicroPython secrets (generated at deploy; do not commit).
+hardware/esp32s3/mp/secrets.py
+
+# Legacy Toit artifacts (retired; keep ignores if local leftovers remain).
 hardware/esp32s3/envelope/toit/
 hardware/esp32s3/envelope/build/
 hardware/esp32s3/envelope/out/

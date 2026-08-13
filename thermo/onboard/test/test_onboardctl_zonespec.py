@@ -60,3 +60,17 @@ def test_dialect_midea_matches_office() -> None:
     targets = load_targets_from_zones_dir(ZONES)
     matched = resolve_zonespec(parse_zonespec("dialect:midea"), targets)
     assert any(t.zone_name == "office" for t in matched)
+
+
+def test_parse_all_is_pseudo() -> None:
+    spec = parse_zonespec("ALL")
+    assert spec.kind == "all"
+    assert str(spec) == "ALL"
+    assert parse_zonespec("all").kind == "all"
+
+
+def test_resolve_all_returns_every_zone_env() -> None:
+    targets = load_targets_from_zones_dir(ZONES)
+    matched = resolve_zonespec(parse_zonespec("ALL"), targets)
+    assert matched == targets
+    assert {t.zone_name for t in matched} >= {"office", "kitchen", "bedroom"}
