@@ -3,6 +3,17 @@
 Phase D evaluated three embedding approaches for indexing `Summary.raw` and
 `Body.raw` and ranking `todo.py search` results.
 
+> **STATUS 2026-08-04: `hash` has been REMOVED.** Phase D picked it as the
+> always-available default and as the `cheap` embedder computed on every write.
+> Measured later on the real corpus, being lexical made it useless for the
+> semantic work it fed -- zero-shot auto-tagging produced md5-collision noise, and
+> the motivating "tag a testing doc with 'testing'" case scored exactly 0.0. The
+> backend and its class are gone; `apple` is the only production embedder, no
+> embedder is `cheap` (so writes stamp nothing and `search` backfills lazily), and
+> tests get hermetic vectors by mocking the apple sidecar with a bag-of-words fake
+> (`fake_nlce.py`). The evaluation below is kept as the record of the original
+> decision; the Recommendation and Usage sections have been updated.
+
 ## Candidates
 
 | Embedder | Implementation | Vector dim | ML deps | Platform |
@@ -73,10 +84,12 @@ default set. Raises at selection time if the package is absent.
 
 ## Recommendation
 
+Updated after `hash` was retired (see STATUS above):
+
 | Environment | Embedder(s) | How |
 |-------------|-------------|-----|
-| CI / agents | `hash` | `search --embedder hash` (hermetic, no downloads) |
-| Default (this machine) | `hash,apple` | `search` with no `--embedder` |
+| CI / agents | `apple`, sidecar mocked | point `$TODO_APPLE_NLCE_BIN` at `fake_nlce.install(dir)`; `search --embedder apple` is then hermetic |
+| Default (this machine) | `apple` | `search` with no `--embedder` |
 | Developer paraphrase search | `st` | `pip install sentence-transformers`, `search --embedder st` |
 
 ## Storage, selection, population, and ranking
@@ -87,11 +100,12 @@ also stamped into the ticket JSON (`Summary[<fingerprint>]`) for `read` display;
 search reads only the table.
 
 **Selection.** There is no embedder env var. `search --embedder` takes a comma
-list; the default is every non-hidden embedder (`hash,apple` here). `todo.py
-embedders` lists them. Requesting an unavailable embedder (including via the
-default) errors -- pick one explicitly.
+list; the default is every non-hidden embedder (`apple` alone, now that `hash` is
+gone). `todo.py embedders` lists them. Requesting an unavailable embedder
+(including via the default) errors -- pick one explicitly.
 
-**Population is lazy.** Only `cheap` embedders (`hash`) are computed on write.
+**Population is lazy.** Only `cheap` embedders are computed on write -- and there
+are none now, so nothing is computed on write at all.
 When a raw field changes its stored vectors are cleared for all embedders
 (`--no-clear` keeps them, for trivial edits); expensive embedders are then
 backfilled on demand the first time a `search` uses them (skipped under
@@ -124,11 +138,10 @@ in-DB `vec0` search path only when the index grows enough to justify it.
 
 ```text
 todo.py embedders                       # list selectable (non-hidden) embedders
-todo.py search QUERY                     # default embedders (hash,apple here)
-todo.py search QUERY --embedder hash     # hermetic; hard 0-similarity cutoff
-todo.py search QUERY --embedder hash,apple --dry-run   # rank existing vectors only
+todo.py search QUERY                     # default embedders (apple here)
+todo.py search QUERY --embedder apple --dry-run        # rank existing vectors only
 todo.py search QUERY --embedder st       # hidden backend, by exact name
-todo.py set --summary "..." --no-clear   # keep vectors despite a trivial raw edit
+todo.py set self --summary "..." --no-clear   # keep vectors despite a trivial raw edit
 
 TODO_APPLE_NLCE_BIN=/path/to/nlce-embed  # override the apple sidecar binary path
 make apple-embedder                      # build the sidecar (macOS 14+, swiftc)

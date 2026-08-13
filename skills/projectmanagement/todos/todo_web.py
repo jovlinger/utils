@@ -10,8 +10,11 @@ page (subtodo/parent) or the github commit (work item). A work-item box also
 highlights any subtodo it references, and a subtodo box highlights the work
 items that reference it.
 
-Opened with an ``?id=`` query the viewer shows that todo; opened bare it shows a
-search box over every discoverable todo (empty query lists them all). All
+Opened at ``/<todoid>`` the viewer shows that todo, and ``/<todoid>/<path...>``
+opens it focused on the object that permalink path resolves to (see todo_url).
+The older ``?id=`` query still works so links already pasted elsewhere keep
+resolving. Opened bare it shows a search box over every discoverable todo
+(empty query lists them all). All
 below-fold content is pre-computed and embedded in the page, so a dumped page is
 a complete self-contained artifact.
 """
@@ -30,11 +33,23 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
+import todo_url
+
 JsonDict = Dict[str, Any]
 
 _DONE_KINDS = frozenset({"code", "merge_subtodo", "start_subtodo"})
 
+# git's null object id -- the no-change sentinel a BLOCKED work item carries in
+# `sha` (todo.py WORKITEM_NULL_SHA; duplicated rather than imported, like
+# _DONE_KINDS, so the viewer keeps its light import). It names no commit, so it
+# is never resolved against git and never rendered as a sha.
+_NULL_SHA = "0" * 40
+
 _DEBUG_COUNTER: int = 0
+
+# A permalink starts with a todo selector: 4+ hex, the same rule every other
+# selector uses. Anything else keeps its old 404 rather than being swallowed.
+_PERMALINK_HEAD = re.compile(r"\A/[0-9a-fA-F]{4,}(/|\Z)")
 
 
 def _debug_enabled() -> bool:
@@ -147,7 +162,7 @@ def load_child_ticket(root: Path, entry: JsonDict) -> JsonDict:
         "Id": entry_id,
         "Branch": branch,
         "Summary": {"raw": entry.get("Summary", "")},
-        "State": {str(entry.get("State", "init")): {}},
+        "State": {str(entry.get("State", "ready")): {}},
         "WorkItems": [],
         "Subtodos": [],
     }
@@ -194,6 +209,16 @@ def _state_text(todo: JsonDict) -> str:
     return current_state_name(todo) or "?"
 
 
+def _state_meta(todo: JsonDict) -> JsonDict:
+    """The current state's metadata object -- {} when the state carries none."""
+    name = current_state_name(todo)
+    state = todo.get("State")
+    if not name or not isinstance(state, dict):
+        return {}
+    value = state.get(name)
+    return value if isinstance(value, dict) else {}
+
+
 def _workitems_view(todo: JsonDict) -> List[JsonDict]:
     """Light per-work-item dicts for box rendering (no git reads)."""
     out: List[JsonDict] = []
@@ -206,6 +231,13 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
         kind = str(item.get("kind") or ("code" if item.get("done") else "task"))
         sha = item.get("sha")
         sha = sha if isinstance(sha, str) and sha else ""
+        # A blocked item's sentinel sha names no commit: it must not become a
+        # sha chip, a github link, or a git lookup. `nocommit` also covers the
+        # kinds that legitimately have no sha at all (task, checkpoint,
+        # start_subtodo), which is what makes the stored `message` the only
+        # thing the fold can show for them.
+        blocked = sha == _NULL_SHA
+        sha = "" if blocked else sha
         done = bool(item.get("done")) or kind in _DONE_KINDS
         out.append(
             {
@@ -215,7 +247,11 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
                 "done": done,
                 "sha": sha,
                 "short": sha[:8] if sha else "",
+                "blocked": blocked,
+                "nocommit": not sha,
+                "message": str(item.get("message") or ""),
                 "subtodo": str(item.get("subtodo_id") or ""),
+                "objid": str(item.get("objid") or ""),
             }
         )
     return out
@@ -235,6 +271,7 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
                 "short": cid[:8],
                 "summary": _summary_text(child) or str(entry.get("Summary") or ""),
                 "state": _state_text(child),
+                "objid": str(entry.get("objid") or ""),
                 "child": child,
             }
         )
@@ -242,6 +279,94 @@ def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
 
 
 # --- HTML rendering --------------------------------------------------------
+
+
+def _objids_within(value: Any) -> List[str]:
+    """Every objid inside *value*, outermost first, in walk order."""
+    found: List[str] = []
+    if isinstance(value, dict):
+        objid = value.get("objid")
+        if isinstance(objid, str) and objid:
+            found.append(objid)
+        for nested in value.values():
+            found.extend(_objids_within(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            found.extend(_objids_within(nested))
+    return found
+
+
+def _holds(value: Any, focus_objid: str) -> bool:
+    """True when *focus_objid* names something inside *value*.
+
+    Consulted only to force a collapsed section OPEN. Focus never closes
+    anything: a section the reader expanded stays expanded, a section that was
+    never oversized has no <details> to shut, and re-rendering the same
+    permalink produces the same page. Otherwise a deep link could hide its own
+    target -- the permalink contract is "this todo, focused HERE", and silently
+    landing on a closed box breaks it.
+    """
+    return bool(focus_objid) and focus_objid in _objids_within(value)
+
+
+def _section_attrs(value: Any, *, interactive: bool) -> str:
+    """Return the attributes that make a non-box SECTION a permalink target.
+
+    Sections are addressable but not selectable: a permalink to ``Summary.raw``
+    or ``Tag.0`` should scroll to and mark the section that shows it, but there
+    is nothing to open in the fold. ``data-objs`` is a space-separated list
+    (matched with the CSS ``~=`` operator) because one row can display several
+    stamped objects -- the Tag field renders every element together, and a DOM
+    id can only name one of them.
+    """
+    ids = _objids_within(value)
+    if not interactive or not ids:
+        return ""
+    joined = html.escape(" ".join(ids))
+    return f' id="obj-{html.escape(ids[0])}" data-objs="{joined}"'
+
+
+# Summary length past which a BOX clamps. Work-item summaries are routinely
+# whole paragraphs (a groomed item states its own acceptance criteria), and one
+# of those makes a box taller than the screen -- so the row of boxes becomes a
+# column of walls with no overview left.
+_CLAMP_CHARS = 240
+
+
+def _clamped(text: str, cls: str, *, interactive: bool) -> str:
+    """A box's summary, visually clamped when it is a paragraph, not a line.
+
+    The FULL text stays in the DOM: clamping is CSS, so browser find and copy
+    still reach all of it and only the height is capped. The expander stops
+    propagation for the same reason .idlink does -- the enclosing box's click
+    opens the fold, and asking to read more of a summary is not asking for that.
+    """
+    shown = html.escape(text or "(no summary)")
+    if not interactive or len(text) <= _CLAMP_CHARS:
+        return f'<div class="{cls}">{shown}</div>'
+    return (
+        f'<div class="{cls} clamped">{shown}</div>'
+        '<button class="more" type="button">...more</button>'
+    )
+
+
+def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
+    """Return the objid attributes that make a box addressable and selectable.
+
+    ``data-obj`` is the ONE key the client selects on -- work items, subtodos
+    and parents all use it, so no client code reads a list index or a child
+    todo id. ``id=`` makes the same box a scroll target.
+
+    Only INTERACTIVE boxes get these. A static rendition in the fold shows
+    another todo's record, whose objids come from a different id scope and
+    would collide with this page's -- and a deep link means "this todo's item"
+    anyway.
+    """
+    objid = obj.get("objid") or ""
+    if not (interactive and objid):
+        return ""
+    safe = html.escape(str(objid))
+    return f' id="obj-{safe}" data-obj="{safe}"'
 
 
 def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
@@ -259,19 +384,23 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         classes.append("static")
     if item["done"]:
         classes.append("done")
+    # No positional or foreign-id attributes: selection is objid-only, and the
+    # boxes a selection highlights are precomputed server-side (see _page_data).
     attrs = ""
-    if interactive:
-        attrs = f' data-idx="{item["idx"]}" data-subtodo="{html.escape(item["subtodo"])}"'
     if not item["subtodo"]:
         todo_html = ""
     elif interactive:
         todo_html = (
-            f'<a class="wi-sub mono idlink" href="/?id={html.escape(item["subtodo"])}">'
+            f'<a class="wi-sub mono idlink" href="/{html.escape(item["subtodo"])}">'
             f'todo:{html.escape(item["subtodo"][:8])}</a>'
         )
     else:
         todo_html = f'<div class="wi-sub mono">todo:{html.escape(item["subtodo"][:8])}</div>'
-    if not item["short"]:
+    if item["blocked"]:
+        # Where a sha would go: the item is done in the sense that the cursor
+        # moved past it, but nothing was achieved and no commit exists.
+        sha_html = '<div class="wi-blocked">blocked</div>'
+    elif not item["short"]:
         sha_html = ""
     elif interactive and github and item["sha"]:
         href = f'{html.escape(github)}/commit/{html.escape(item["sha"])}'
@@ -282,10 +411,10 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     sep = "&nbsp;&nbsp;" if todo_html and sha_html else ""
     mark = "[x]" if item["done"] else "[ ]"
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_box_attrs(item, interactive=interactive)}{attrs}>'
         f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
-        f'<div class="wi-sum">{html.escape(item["summary"] or "(no summary)")}</div>'
-        f"{todo_html}{sep}{sha_html}"
+        + _clamped(item["summary"], "wi-sum", interactive=interactive)
+        + f"{todo_html}{sep}{sha_html}"
         "</div>"
     )
 
@@ -295,19 +424,19 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
     underlined id is a plain hyperlink to that todo's own page."""
     classes = ["st"] if interactive else ["st", "static"]
     if interactive:
-        attrs = f' data-st="{html.escape(sub["id"])}"'
+        attrs = ""
         id_html = (
-            f'<a class="st-id mono idlink" href="/?id={html.escape(sub["id"])}">'
+            f'<a class="st-id mono idlink" href="/{html.escape(sub["id"])}">'
             f'todo:{html.escape(sub["short"] or "?")}</a>'
         )
     else:
         attrs = ""
         id_html = f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_box_attrs(sub, interactive=interactive)}{attrs}>'
         f"{id_html}"
-        f'<div class="st-sum">{html.escape(sub["summary"] or "(no summary)")}</div>'
-        f'<div class="st-state">{html.escape(sub["state"])}</div>'
+        + _clamped(sub["summary"], "st-sum", interactive=interactive)
+        + f'<div class="st-state">{html.escape(sub["state"])}</div>'
         "</div>"
     )
 
@@ -335,6 +464,7 @@ def _parents_view(root: Path, todo: JsonDict) -> List[JsonDict]:
                 "branch": str(entry.get("Branch") or ""),
                 "summary": _summary_text(child) or str(entry.get("Summary") or ""),
                 "state": _state_text(child),
+                "objid": str(entry.get("objid") or ""),
                 "child": child,
             }
         )
@@ -346,9 +476,9 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     in the fold, the underlined id is a plain hyperlink to that todo's page."""
     classes = ["st"] if interactive else ["st", "static"]
     if interactive:
-        attrs = f' data-parent="{html.escape(p["id"])}"'
+        attrs = ""
         id_html = (
-            f'<a class="st-id mono idlink" href="/?id={html.escape(p["id"])}">'
+            f'<a class="st-id mono idlink" href="/{html.escape(p["id"])}">'
             f'todo:{html.escape(p["short"] or "?")}</a>'
         )
     else:
@@ -356,23 +486,28 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
         id_html = f'<div class="st-id mono">todo:{html.escape(p["short"] or "?")}</div>'
     branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
     return (
-        f'<div class="{" ".join(classes)}"{attrs}>'
+        f'<div class="{" ".join(classes)}"{_box_attrs(p, interactive=interactive)}{attrs}>'
         f"{id_html}"
-        f'<div class="st-sum">{html.escape(p["summary"] or "(no summary)")}</div>'
-        f'<div class="st-state">{html.escape(p["state"])}</div>'
+        + _clamped(p["summary"], "st-sum", interactive=interactive)
+        + f'<div class="st-state">{html.escape(p["state"])}</div>'
         f"{branch}"
         "</div>"
     )
 
 
-def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
+def _parents_html(parents: List[JsonDict], *, interactive: bool, focus_objid: str = "") -> str:
     """Render the Parent section as boxes (same click model as subtodos)."""
     if not parents:
         return ""
     boxes = "".join(_parent_box(p, interactive=interactive) for p in parents)
-    return (
-        f'<section class="part"><h2>Parent</h2>'
-        f'<div class="row">{boxes}</div></section>'
+    return _section(
+        "Parent",
+        f'<div class="row">{boxes}</div>',
+        interactive=interactive,
+        text="".join(str(p["summary"]) for p in parents),
+        items=len(parents),
+        hint=_size_hint(len(parents), "parents"),
+        is_open=bool(focus_objid) and any(p["objid"] == focus_objid for p in parents),
     )
 
 
@@ -381,11 +516,66 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool) -> str:
 # live inside Summary/Body as .hash and only .raw is rendered), so nothing
 # opaque reaches the generic path.
 _DEDICATED_FIELDS = frozenset(
-    {"Id", "Summary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
+    {"Id", "Summary", "LongSummary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
 )
 
+# Size past which a section starts COLLAPSED. Measured on the content's text,
+# never its markup -- markup length would scale with the number of boxes and
+# collapse a short list for the wrong reason. A row of boxes is oversized on
+# either measure, because twenty short boxes wrap into as much screen as one
+# long one. Under both, the section renders exactly as it did before collapsing
+# existed: no <details>, no toggle, nothing extra to click on a small todo.
+_COLLAPSE_CHARS = 1200
+_COLLAPSE_ITEMS = 8
 
-def _meta_html(todo: JsonDict) -> str:
+
+def _size_hint(count: int, noun: str) -> str:
+    """'19 items' / '1 item' -- what the collapsed header advertises."""
+    return f"{count} {noun}" if count != 1 else f"{count} {noun[:-1]}"
+
+
+def _section(
+    title: str,
+    inner: str,
+    *,
+    interactive: bool = True,
+    attrs: str = "",
+    text: str = "",
+    items: int = 0,
+    hint: str = "",
+    is_open: bool = False,
+) -> str:
+    """One page section, collapsed into a <details> when it is oversized.
+
+    *text* and *items* are the CONTENT's size, from the source strings rather
+    than the rendered html. *hint* overrides the header's size advertisement
+    (a list says '19 items'; prose defaults to its line count).
+
+    Native <details> rather than a bespoke toggle: it brings its own keyboard
+    and click handling, and "open the section holding the permalink target" is
+    then one attribute the SERVER can set, with no client state machine and no
+    flash of collapsed content on load.
+
+    The static rendition in the fold (interactive=False) never grows toggles --
+    it is a read-only repr of another todo, not a page you navigate.
+    """
+    heading = f"<h2>{title}</h2>"
+    oversized = len(text) > _COLLAPSE_CHARS or items > _COLLAPSE_ITEMS
+    if not interactive or not oversized:
+        return f'<section class="part"{attrs}>{heading}{inner}</section>'
+    # rstrip first: a trailing newline ends the last line, it does not start
+    # another one, and "201 lines" for a 200-line body is the kind of small lie
+    # that makes a reader distrust the rest of the header.
+    advertised = hint or _size_hint(text.rstrip("\n").count("\n") + 1, "lines")
+    return (
+        f'<section class="part"{attrs}>'
+        f'<details class="sec"{" open" if is_open else ""}>'
+        f'<summary>{heading}<span class="sec-hint">{html.escape(advertised)}</span></summary>'
+        f"{inner}</details></section>"
+    )
+
+
+def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "") -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
     'show everything the todo carries'."""
@@ -399,10 +589,65 @@ def _meta_html(todo: JsonDict) -> str:
             rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
         else:
             rendered = f'<div class="val">{html.escape(str(value))}</div>'
-        rows.append(f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}')
+        attrs = _section_attrs(value, interactive=interactive)
+        rows.append(
+            f'<div class="meta-row"{attrs}>'
+            f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}</div>'
+        )
     if not rows:
         return ""
-    return f'<section class="part"><h2>Fields</h2>{"".join(rows)}</section>'
+    rest = {k: v for k, v in todo.items() if k not in _DEDICATED_FIELDS}
+    return _section(
+        "Fields",
+        "".join(rows),
+        interactive=interactive,
+        text="".join(str(v) for v in rest.values()),
+        is_open=_holds(rest, focus_objid),
+    )
+
+
+def _state_section_html(todo: JsonDict, *, interactive: bool = True) -> str:
+    """Render State: the state name plus whatever metadata it carries.
+
+    The name alone already rides next to the Id as a small tag, but the METADATA
+    is where the content is, and none of it was reachable from this page before:
+    a userneeded/stopped `note` holds the blocker narrative and the decision the
+    user is being asked to make, and `pr` / `merged_into` / `last_commit` hold
+    the disposition past done. A todo could sit blocked with a page that said
+    nothing but the word "userneeded".
+
+    Rendered unconditionally rather than only when metadata exists (the
+    LongSummary rule): State is always present and always meaningful, and a
+    section that appears only sometimes is one a reader learns not to look for.
+
+    The State subtree is objid-exempt by design, so there is nothing here to
+    focus -- a permalink into it keeps rendering the page unfocused, as the
+    degradation table documents.
+    """
+    rows = [
+        '<div class="meta-row"><h3 class="meta-key">state</h3>'
+        f'<div class="val">{html.escape(_state_text(todo))}</div></div>'
+    ]
+    for key, value in _state_meta(todo).items():
+        if value in (None, "", [], {}):
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+        # A note is prose with paragraphs; a pr number or branch name is a word.
+        rendered = (
+            f'<pre class="val body">{html.escape(text)}</pre>'
+            if "\n" in text
+            else f'<div class="val">{html.escape(text)}</div>'
+        )
+        rows.append(
+            f'<div class="meta-row"><h3 class="meta-key">{html.escape(str(key))}</h3>'
+            f"{rendered}</div>"
+        )
+    return _section(
+        "State",
+        "".join(rows),
+        interactive=interactive,
+        text="".join(v for v in _state_meta(todo).values() if isinstance(v, str)),
+    )
 
 
 def _sections_html(
@@ -413,13 +658,29 @@ def _sections_html(
     *,
     interactive: bool,
     github: str = "",
+    focus_objid: str = "",
 ) -> str:
-    """Render the labeled todo representation: Id, Parent, Summary, Body, work
-    items, subtodos, and remaining non-opaque fields."""
+    """Render the labeled todo representation: Id, State, Parent, Summary, Body,
+    work items, subtodos, and remaining non-opaque fields.
+
+    A section holding *focus_objid* renders OPEN even when its size would
+    otherwise collapse it, and nothing ever renders closed that was open."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
-    parents_html = _parents_html(parents, interactive=interactive)
+    parents_html = _parents_html(parents, interactive=interactive, focus_objid=focus_objid)
+    # Only when present: an empty "Long summary" heading on every todo that has
+    # none is noise. Rendered as its own section rather than through _meta_html,
+    # which would dump the whole dict including embedding vectors.
+    long_summary = _raw_field(todo, "LongSummary")
+    long_summary_html = _section(
+        "Long summary",
+        f'<pre class="val body">{html.escape(long_summary)}</pre>',
+        interactive=interactive,
+        attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
+        text=long_summary,
+        is_open=_holds(todo.get("LongSummary"), focus_objid),
+    ) if long_summary else ""
     wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
@@ -428,14 +689,44 @@ def _sections_html(
         f'<section class="part"><h2>Id</h2>'
         f'<div class="val mono">{html.escape(tid or "?")}</div>'
         f' <span class="state-tag">{html.escape(_state_text(todo))}</span></section>'
+        f"{_state_section_html(todo, interactive=interactive)}"
         f"{parents_html}"
-        f'<section class="part"><h2>Summary</h2>'
-        f'<div class="val">{html.escape(summary or "(no summary)")}</div></section>'
-        f'<section class="part"><h2>Body</h2>'
-        f'<pre class="val body">{html.escape(body)}</pre></section>'
-        f"<section class=\"part\"><h2>Work items</h2>{wi_row}</section>"
-        f"<section class=\"part\"><h2>Subtodos</h2>{st_row}</section>"
-        f"{_meta_html(todo)}"
+        + _section(
+            "Summary",
+            f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
+            interactive=interactive,
+            attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
+            text=summary,
+            is_open=_holds(todo.get("Summary"), focus_objid),
+        )
+        + long_summary_html
+        + _section(
+            "Body",
+            f'<pre class="val body">{html.escape(body)}</pre>',
+            interactive=interactive,
+            attrs=_section_attrs(todo.get("Body"), interactive=interactive),
+            text=body,
+            is_open=_holds(todo.get("Body"), focus_objid),
+        )
+        + _section(
+            "Work items",
+            wi_row,
+            interactive=interactive,
+            text="".join(str(w["summary"]) for w in witems),
+            items=len(witems),
+            hint=_size_hint(len(witems), "items"),
+            is_open=_holds(todo.get("WorkItems"), focus_objid),
+        )
+        + _section(
+            "Subtodos",
+            st_row,
+            interactive=interactive,
+            text="".join(str(s["summary"]) for s in stodos),
+            items=len(stodos),
+            hint=_size_hint(len(stodos), "subtodos"),
+            is_open=_holds(todo.get("Subtodos"), focus_objid),
+        )
+        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid)
     )
 
 
@@ -463,30 +754,51 @@ def _page_data(
     """Assemble the embedded JSON: per-work-item message/diff and per-subtodo /
     per-parent repr HTML."""
     github = github or ""
-    data: JsonDict = {
-        "id": str(todo.get("Id") or ""),
-        "workitems": [],
-        "subtodos": {},
-        "parents": {},
-    }
+    # ONE map, keyed by objid: what to put in the fold, and which other boxes to
+    # mark related. Cross-references are resolved to objids HERE rather than in
+    # the client, so no browser code ever matches on a child todo id or a list
+    # position -- see _box_attrs.
+    objects: JsonDict = {}
+    subtodo_objid = {s["id"]: s["objid"] for s in stodos if s["id"] and s["objid"]}
+    referencing: Dict[str, List[str]] = {}
     for w in witems:
+        if w["subtodo"] and w["objid"]:
+            referencing.setdefault(w["subtodo"], []).append(w["objid"])
+    for w in witems:
+        if not w["objid"]:
+            continue
         sha = w["sha"]
-        data["workitems"].append(
-            {
-                "idx": w["idx"],
-                "kind": w["kind"],
-                "short": w["short"],
-                "subtodo": w["subtodo"],
-                "message": commit_message(root, sha) if sha else "",
-                "diff": diff_unified(root, sha) if sha else "",
-                "github": f"{github}/commit/{sha}" if github and sha else "",
-            }
-        )
+        related = subtodo_objid.get(w["subtodo"], "")
+        # With a commit, git is the source of truth for the message (and the
+        # only source for the diff). WITHOUT one -- a blocked item, a
+        # checkpoint -- the node's stored `message` is all there is, and it is
+        # exactly the text worth reading: why the step produced no commit.
+        objects[w["objid"]] = {
+            "mode": "workitem",
+            "kind": w["kind"],
+            "short": w["short"],
+            "message": commit_message(root, sha) if sha else w["message"],
+            "diff": diff_unified(root, sha) if sha else "",
+            "github": f"{github}/commit/{sha}" if github and sha else "",
+            "hi": [related] if related else [],
+        }
     for s in stodos:
-        data["subtodos"][s["id"]] = {"reprHtml": _static_repr_html(root, s["child"], github)}
+        if not s["objid"]:
+            continue
+        objects[s["objid"]] = {
+            "mode": "repr",
+            "html": _static_repr_html(root, s["child"], github),
+            "hi": referencing.get(s["id"], []),
+        }
     for p in parents:
-        data["parents"][p["id"]] = {"reprHtml": _static_repr_html(root, p["child"], github)}
-    return data
+        if not p["objid"]:
+            continue
+        objects[p["objid"]] = {
+            "mode": "repr",
+            "html": _static_repr_html(root, p["child"], github),
+            "hi": [],
+        }
+    return {"id": str(todo.get("Id") or ""), "objects": objects}
 
 
 def _embed_json(data: JsonDict) -> str:
@@ -523,17 +835,33 @@ _STYLE = """<style>
   .val.body { background: #f6f8fa; padding: 10px; border-radius: 6px; white-space: pre-wrap;
               margin: 0; max-height: 20vh; overflow: auto; }
   .state-tag { font-size: 12px; color: #57606a; }
+  /* Collapsed section: the native disclosure marker is kept (free affordance,
+     free keyboard handling); only the heading has to stop being a block so it
+     sits on the marker's line next to its size hint. */
+  details.sec > summary { cursor: pointer; }
+  details.sec > summary h2 { display: inline; }
+  details.sec > summary .sec-hint { font-size: 12px; color: #57606a; margin-left: 8px; }
+  /* A clamped summary keeps its full text in the DOM (find and copy still see
+     it); only the height is capped. */
+  .clamped { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4;
+             -webkit-box-orient: vertical; overflow: hidden; }
+  .more { font-size: 11px; color: #0969da; background: none; border: 0;
+          padding: 0; cursor: pointer; }
   .none { color: #8c959f; font-size: 12px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .wi, .st { border: 1px solid #d8dee4; border-radius: 6px; padding: 8px; width: 200px;
              background: #fff; }
   .wi { cursor: pointer; }
   .wi.static, .st.static { cursor: default; }
+  /* Where a permalink landed: a marked section, alongside .active for boxes. */
+  .focus { box-shadow: 0 0 0 2px #cfe3ff; border-radius: 6px; }
   .wi.done { background: #f6f8fa; }
   .wi-kind { font-size: 11px; color: #57606a; }
   .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
   .wi-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
             color: #0969da; }
+  /* A blocked item is done-but-not-achieved: red, where a sha would be. */
+  .wi-blocked { font-size: 12px; color: #cf222e; font-weight: 600; }
   .wi-sub { font-size: 12px; color: #0969da; }
   .st { cursor: pointer; }
   .st-id { font-size: 12px; color: #0969da; }
@@ -559,6 +887,7 @@ _STYLE = """<style>
 
 _TODO_SCRIPT = """<script>
 const DATA = __DATA__;
+const FOCUS = __FOCUS__;
 const fold = document.getElementById('fold');
 const topPane = document.getElementById('top');
 const divider = document.getElementById('divider');
@@ -568,40 +897,46 @@ function clearHi(){
   document.querySelectorAll('.wi,.st').forEach(function(el){ el.classList.remove('hi','active'); });
 }
 
-document.querySelectorAll('#top .wi').forEach(function(el){
-  el.addEventListener('click', function(){
-    clearHi(); el.classList.add('active');
-    var sub = el.getAttribute('data-subtodo');
-    if (sub) {
-      document.querySelectorAll('#top .st[data-st="'+sub+'"]').forEach(function(s){ s.classList.add('hi'); });
-    }
-    var wi = DATA.workitems[parseInt(el.getAttribute('data-idx'), 10)] || {};
-    var head = wi.short ? ('sha:'+esc(wi.short)) : esc(wi.kind || 'work item');
-    if (wi.github) { head = '<a href="'+wi.github+'">'+head+'</a>'; }
+// Every selection in this page is an objid. Work items, subtodos and parents
+// all go through here; nothing keys off a list position or a child todo id.
+function box(objid){ return document.querySelector('#top [data-obj="'+objid+'"]'); }
+
+function select(objid){
+  var entry = (DATA.objects || {})[objid];
+  if (!entry) return false;
+  clearHi();
+  var el = box(objid);
+  if (el) el.classList.add('active');
+  (entry.hi || []).forEach(function(other){
+    var rel = box(other);
+    if (rel) rel.classList.add('hi');
+  });
+  if (entry.mode === 'workitem') {
+    var head = entry.short ? ('sha:'+esc(entry.short)) : esc(entry.kind || 'work item');
+    if (entry.github) { head = '<a href="'+entry.github+'">'+head+'</a>'; }
     fold.className = 'fold split-fold';
     fold.innerHTML =
-      '<div class="fold-msg"><h3>'+head+'</h3><pre><code>'+esc(wi.message || '(no commit)')+'</code></pre></div>' +
-      '<div class="fold-diff diff-code"><pre><code>'+esc(wi.diff || 'no diff')+'</code></pre></div>';
-  });
-});
-
-document.querySelectorAll('#top .st[data-st]').forEach(function(el){
-  el.addEventListener('click', function(){
-    clearHi(); el.classList.add('active');
-    var id = el.getAttribute('data-st');
-    document.querySelectorAll('#top .wi[data-subtodo="'+id+'"]').forEach(function(w){ w.classList.add('hi'); });
-    var entry = DATA.subtodos[id];
+      '<div class="fold-msg"><h3>'+head+'</h3><pre><code>'+esc(entry.message || '(no commit)')+'</code></pre></div>' +
+      '<div class="fold-diff diff-code"><pre><code>'+esc(entry.diff || 'no diff')+'</code></pre></div>';
+  } else {
     fold.className = 'fold';
-    fold.innerHTML = entry ? entry.reprHtml : '<p class="hint">No subtodo detail.</p>';
-  });
-});
+    fold.innerHTML = entry.html || '<p class="hint">No detail.</p>';
+  }
+  return true;
+}
 
-document.querySelectorAll('#top .st[data-parent]').forEach(function(el){
+// Selecting rewrites the address bar to that item's permalink, so what is on
+// screen is always what you would share. replaceState, not pushState: Back
+// should leave the todo, not unwind every box you clicked on the way here.
+function remember(objid){
+  if (!window.history || !history.replaceState || !DATA.id) return;
+  history.replaceState(null, '', '/' + DATA.id + '/objid/' + objid);
+}
+
+document.querySelectorAll('#top [data-obj]').forEach(function(el){
   el.addEventListener('click', function(){
-    clearHi(); el.classList.add('active');
-    var entry = (DATA.parents || {})[el.getAttribute('data-parent')];
-    fold.className = 'fold';
-    fold.innerHTML = entry ? entry.reprHtml : '<p class="hint">No parent detail.</p>';
+    var objid = el.getAttribute('data-obj');
+    if (select(objid)) remember(objid);
   });
 });
 
@@ -611,6 +946,35 @@ document.querySelectorAll('#top .st[data-parent]').forEach(function(el){
 document.querySelectorAll('#top .idlink').forEach(function(a){
   a.addEventListener('click', function(e){ e.stopPropagation(); });
 });
+
+// Expanding a clamped summary reads more of THIS box; it is not a request to
+// swap the fold, so it stops propagation exactly as .idlink does. The text is
+// already in the DOM -- only the clamp class comes off.
+document.querySelectorAll('#top .more').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    var sum = b.previousElementSibling;
+    if (!sum) return;
+    b.textContent = sum.classList.toggle('clamped') ? '...more' : '...less';
+  });
+});
+
+// A permalink resolved server-side to one objid: open on it. A box gets the
+// full click treatment; a section (addressable, not selectable) is just marked.
+// Either way scroll it into view -- the work-items row scrolls horizontally, so
+// a later item is off-screen until we do.
+function focusOn(objid){
+  if (!objid) return;
+  var el = box(objid);
+  if (el) {
+    select(objid);
+  } else {
+    el = document.querySelector('#top [data-objs~="'+objid+'"]');
+    if (el) el.classList.add('focus');
+  }
+  if (el) el.scrollIntoView({block: 'nearest', inline: 'center'});
+}
+focusOn(FOCUS);
 
 var dragging = false;
 divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
@@ -623,8 +987,15 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 </script>"""
 
 
-def render_todo_page(root: Path, todo: JsonDict) -> str:
-    """Render the single-todo viewer: representation on top, message/diff below."""
+def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+    """Render the single-todo viewer: representation on top, message/diff below.
+
+    *focus_objid* is the object a permalink resolved to. The page opens with
+    it already selected -- the same state a click produces, plus scrolled
+    into view -- so a deep link lands ON the item rather than at the top of
+    the todo. An objid naming a non-box section is marked instead; one that
+    is not on the page at all is ignored, and the todo simply renders.
+    """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
     started = time.monotonic()
@@ -635,10 +1006,13 @@ def render_todo_page(root: Path, todo: JsonDict) -> str:
     github = github_repo_url(repo_origin(root))
     data = _page_data(root, todo, witems, stodos, parents, github)
     top_html = _sections_html(
-        todo, witems, stodos, parents, interactive=True, github=github or ""
+        todo, witems, stodos, parents, interactive=True, github=github or "",
+        focus_objid=focus_objid,
     )
     title = html.escape(_summary_text(todo) or "todo")
-    script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data))
+    script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data)).replace(
+        "__FOCUS__", json.dumps(focus_objid or "")
+    )
     page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -671,7 +1045,7 @@ const results = document.getElementById('results');
 const q = document.getElementById('q');
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function row(t){
-  return '<li><a href="/?id='+encodeURIComponent(t.id)+'">' +
+  return '<li><a href="/'+encodeURIComponent(t.id)+'">' +
          '<span class="mono">todo:'+esc(t.short)+'</span> '+esc(t.summary || '(no summary)')+'</a> ' +
          '<span class="r-utime">'+esc(t.utime)+'</span> <span class="r-state">'+esc(t.state)+'</span></li>';
 }
@@ -718,6 +1092,48 @@ def render_search_page(root: Path, rows: List[JsonDict]) -> str:
 """
 
 
+def _focusable_objids(
+    todo: JsonDict,
+    witems: List[JsonDict],
+    stodos: List[JsonDict],
+    parents: List[JsonDict],
+) -> set:
+    """objids the page can actually focus: every box, plus every section.
+
+    Anything nested INSIDE a box (a work item's ``execution`` block, say) is not
+    drawn on its own and so cannot be focused -- the caller walks outward to the
+    box that contains it.
+    """
+    focusable = {v["objid"] for v in (*witems, *stodos, *parents) if v.get("objid")}
+    focusable.update(_objids_within(todo.get("Summary")))
+    focusable.update(_objids_within(todo.get("Body")))
+    for key, value in todo.items():
+        if key not in _DEDICATED_FIELDS:
+            focusable.update(_objids_within(value))
+    return focusable
+
+
+def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
+    """Return the objid a permalink's *segments* should open the page focused on.
+
+    Raises ``todo_url.TodoUrlError`` when the path addresses nothing. Resolving
+    to something the page cannot draw is NOT an error: the chain is walked
+    outward to the nearest object that is on the page, and a path with nothing
+    focusable above it (the State subtree) renders the todo unfocused.
+    """
+    json_path = todo_url.to_json_path(todo, segments)
+    focusable = _focusable_objids(
+        todo,
+        _workitems_view(todo),
+        _subtodos_view(root, todo),
+        _parents_view(root, todo),
+    )
+    for objid in todo_url.objid_chain(todo, json_path):
+        if objid in focusable:
+            return objid
+    return ""
+
+
 def serve(
     root: Path,
     *,
@@ -753,6 +1169,9 @@ def serve(
                 )
                 return
             if parsed.path not in {"/", "/index.html"}:
+                if _PERMALINK_HEAD.match(parsed.path):
+                    self._permalink(parsed.path)
+                    return
                 self.send_error(404)
                 return
             todo_id = parse_qs(parsed.query).get("id", [None])[0]
@@ -764,6 +1183,24 @@ def serve(
                     payload = render_search_page(root, searcher(""))
             except TodoWebError as exc:
                 self.send_error(400, str(exc))
+                return
+            self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _permalink(self, path: str) -> None:
+            """Serve /<todoid>/<path...>: the whole todo, focused on that item.
+
+            The path IS the resource -- "todo d56d, focused on objid 23" -- so it
+            renders 200 in place. It does not redirect: a permalink that bounced
+            you to a different URL would not be the durable name it claims to be,
+            and the address bar would stop matching the link you were handed.
+            """
+            try:
+                selector, segments = todo_url.split_url_path(path)
+                todo_root, todo = resolver(selector)
+                focus = resolve_focus(todo_root, todo, segments)
+                payload = render_todo_page(todo_root, todo, focus_objid=focus)
+            except (todo_url.TodoUrlError, TodoWebError) as exc:
+                self.send_error(404, str(exc))
                 return
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
@@ -780,7 +1217,7 @@ def serve(
 
     server = ThreadingHTTPServer((host, port), Handler)
     base = f"http://{host}:{server.server_port}/"
-    url = f"{base}?id={initial_id}" if initial_id else base
+    url = f"{base}{initial_id}" if initial_id else base
     print(url, flush=True)
     try:
         server.serve_forever()

@@ -70,26 +70,6 @@ class MockEmbedder(Embedder):
         return _normalize(values)
 
 
-class HashEmbedder(Embedder):
-    """Low-resource local embedder: bag-of-words hashing into a fixed vector."""
-
-    def __init__(self, dim: int = 128) -> None:
-        self._dim = dim
-
-    def fingerprint(self) -> str:
-        return "hash"
-
-    def dimension(self) -> int:
-        return self._dim
-
-    def embed(self, text: str) -> List[float]:
-        vec = [0.0] * self._dim
-        for token in _tokenize(text):
-            bucket = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % self._dim
-            vec[bucket] += 1.0
-        return _normalize(vec)
-
-
 class SentenceTransformerEmbedder(Embedder):
     """Optional sentence-transformers backend when installed."""
 
@@ -98,7 +78,7 @@ class SentenceTransformerEmbedder(Embedder):
             from sentence_transformers import SentenceTransformer  # type: ignore
         except ImportError as exc:
             raise RuntimeError(
-                "sentence-transformers is not installed; use hash or mock embedder"
+                "sentence-transformers is not installed; use the apple or mock embedder"
             ) from exc
         self._model_name = model_name
         self._model = SentenceTransformer(model_name)
@@ -155,8 +135,16 @@ def _make_apple() -> Embedder:
 
 
 # Insertion order defines the default "all" order (non-hidden entries).
+#
+# No backend is currently ``cheap``: the bag-of-words ``hash`` embedder held that
+# slot and was removed, because hashing is lexical -- unrelated text can only
+# match by md5 bucket collision -- which made it useless for the semantic work it
+# was feeding (zero-shot auto-tagging in particular; see the todos
+# IMPLEMENTATION.md "Automatic tags (dormant)" note). Nothing eagerly embeds on
+# write until a cheap SEMANTIC
+# backend exists; ``search`` backfills the expensive ones lazily instead. The
+# ``cheap`` plumbing is retained for that successor.
 _BACKENDS: Dict[str, _Backend] = {
-    "hash": _Backend("hash", HashEmbedder, cheap=True),
     "apple": _Backend("apple", _make_apple),
     "st": _Backend("st", _make_sentence_transformers, hidden=True),
     "mock": _Backend("mock", MockEmbedder, hidden=True),
@@ -191,7 +179,12 @@ def list_embedders() -> List[Tuple[str, bool, bool]]:
 
 
 def cheap_embedders() -> List[Embedder]:
-    """Instantiate the cheap embedders -- the ones auto-populated on write."""
+    """Instantiate the cheap embedders -- the ones auto-populated on write.
+
+    Currently EMPTY: no registered backend is cheap (see ``_BACKENDS``), so every
+    caller must tolerate an empty list -- writes stamp no vectors and auto-tagging
+    stands down until a cheap semantic backend is registered.
+    """
     return [b.factory() for b in _BACKENDS.values() if b.cheap]
 
 
@@ -224,7 +217,3 @@ def _normalize(values: Sequence[float]) -> List[float]:
     if norm == 0.0:
         return list(values)
     return [v / norm for v in values]
-
-
-def _tokenize(text: str) -> List[str]:
-    return [part.lower() for part in text.split() if part.strip()]

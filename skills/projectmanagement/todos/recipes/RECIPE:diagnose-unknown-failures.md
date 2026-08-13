@@ -33,7 +33,7 @@ Working DiagnoseAndSpawn (it is the cursor):
 
 Then the normal todo loop runs itself out:
 
-5. Each "Fix: ..." task is now the cursor -> `todo.py add-subtodo --summary=...`
+5. Each "Fix: ..." task is now the cursor -> `todo.py add-subtodo <parent-id> --summary=...`
    (this CONVERTS the cursor task into a `start_subtodo` and creates the child
    branch). Immediately launch a subagent to work that child on its branch. Repeat
    per issue -- the children run in parallel.
@@ -41,11 +41,13 @@ Then the normal todo loop runs itself out:
    into the parent FIRST**, THEN `todo.py merge-subtodo <id>` (or `wait-and-merge
    <ids>`) to record the bookkeeping. `wait-and-merge`/`merge-subtodo` do **todo
    bookkeeping only -- they do NOT git-merge the child's code** (the recorded
-   `merge_subtodo` sha is a bookkeeping commit, not a real merge). If you skip the
-   `git merge`, the fixes never reach the parent branch even though the graph shows
-   `merged`. Order the merges to avoid conflicts on any shared file.
+   `merge_subtodo` sha is the parent branch's tip, i.e. YOUR git merge -- and
+   merge-subtodo errors if the parent branch is absent). If you skip the
+   `git merge`, the recorded sha is not a real merge and the fixes never reach
+   the parent branch even though the graph shows `merged`. Order the merges to
+   avoid conflicts on any shared file.
 7. Record the real code-landing (`work-item-add` + `work-item-done` so the last
-   work item's sha == branch HEAD, invariant #6), then `todo.py set --state done
+   work item's sha == branch HEAD, invariant #6), then `todo.py set <id> --state done
    --actual-summary=...`.
 
 # Mechanics notes (validated against todo.py)
@@ -69,7 +71,7 @@ Then the normal todo loop runs itself out:
 - **Cross-subtodo communication (note-to-parent):** a subtodo that COMPLETES but has
   a soft concern (impedance, a shared-file warning, "I lacked context about the
   user's motivations", a design call it made anyway) does NOT halt with
-  `userneeded`. It finishes and appends the concern to its `set --state done
+  `userneeded`. It finishes and appends the concern to its `set <child-id> --state done
   --actual-summary` as a trailing `# note-to-parent: ...` section; `merge-subtodo`
   reuses ActualSummary as the merge message, so the note surfaces to the parent
   there. Reserve `userneeded`/`stopped` for HARD blocks only. (Codify a dedicated
@@ -86,16 +88,17 @@ Then the normal todo loop runs itself out:
 ```bash
 cd <repo>                      # todo.py takes repo from $(gitroot); no --repo flag
 todo.py init --summary="Diagnose <batch>" --body="<whole raw failure dump>" --ac="..."
-todo.py work-item-add --summary="DiagnoseAndSpawn: cluster failures, spawn a subtodo per issue, wait-and-merge"
-todo.py set --state working
+ID=<the Id init printed>       # every later command addresses the todo by id
+todo.py work-item-add $ID --summary="DiagnoseAndSpawn: cluster failures, spawn a subtodo per issue, wait-and-merge"
+todo.py set $ID --state working
 # --- work DiagnoseAndSpawn ---
-todo.py work-item-add --summary="Fix: <issue 1>"      # one per distinct issue
-todo.py work-item-add --summary="Fix: <issue N>"
-todo.py work-item-add --summary="Wait-and-merge issue subtodos"   # barrier
-todo.py work-item-done -m "diagnosed N issues; queued subtodos + barrier"
+todo.py work-item-add $ID --summary="Fix: <issue 1>"      # one per distinct issue
+todo.py work-item-add $ID --summary="Fix: <issue N>"
+todo.py work-item-add $ID --summary="Wait-and-merge issue subtodos"   # barrier
+todo.py work-item-done $ID -m "diagnosed N issues; queued subtodos + barrier"
 # --- spawn loop (cursor is now Fix: issue 1) ---
-todo.py add-subtodo --summary="Fix: <issue 1>"        # -> child branch; launch a subagent on it
+todo.py add-subtodo $ID --summary="Fix: <issue 1>"    # -> child branch; launch a subagent on it
 ...                                                    # repeat to issue N
 todo.py wait-and-merge <child-id-1> ... <child-id-N>  # barrier: poll to done, merge each
-todo.py set --state done --actual-summary="..."
+todo.py set $ID --state done --actual-summary="..."
 ```
