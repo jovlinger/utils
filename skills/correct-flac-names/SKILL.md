@@ -2,9 +2,12 @@
 name: correct-flac-names
 description: >-
   Correct album directory and track filenames under a FLAC store so names are
-  accurate and Samba/VFAT-safe (notably sanitizing ':'). Use when renaming
-  FLAC albums, fixing illegal path characters, reconciling cue/SPECS/meta
-  titles, or when the user mentions correct flac names / vfat / samba naming.
+  accurate and Samba/VFAT-safe (notably sanitizing ':'). Catches mislabels
+  musicology leaves behind (year-as-artist `1996 - …`, scene junk like
+  `10-tony…`); notice, collate, propose `shadup mv` fixes. All renames MUST use
+  `shadup mv` (never bare `mv`). Use when renaming FLAC albums, fixing illegal
+  path characters, reconciling cue/SPECS/meta titles, or when the user mentions
+  correct flac names / vfat / samba naming.
 disable-model-invocation: true
 ---
 
@@ -14,11 +17,38 @@ Propose (then optionally apply) renames for album directories and track files so
 they are **correct** and **Samba/VFAT-safe**. P0 is filesystem safety; correctness
 is secondary and must never reintroduce illegal characters.
 
+## P0: rename only with `shadup mv`
+
+**Never** use bare `mv` / `os.rename` / `Path.rename` for anything under the
+store. Album dirs and track files that live in `stored_files` must be renamed
+with **`shadup mv`** so disk and DB stay in sync (`end` on old rows, `start` on
+new). Plain `mv` leaves the DB pointing at stale paths.
+
+This store (pass explicitly when discovery fails — there is no `.shadir` marker
+next to `files/`):
+
+```bash
+export PATH="$PWD/extdeps:$PWD/shadup:$PATH"   # from utils root
+SHADIR=/mnt/sdb2/music/flac
+DB=$HOME/Music/shasrv/shadup.db
+cd "$SHADIR/files"
+shadup --shadir "$SHADIR" --db "$DB" mv --dry-run "Old Name" "New Name"
+shadup --shadir "$SHADIR" --db "$DB" mv "Old Name" "New Name"
+```
+
+If `mv` errors with **matched rows span multiple store roots**, run
+`shadup --shadir "$SHADIR" --db "$DB" doctor` first, then retry `shadup mv`.
+If `mv` errors with **no active stored path matches**, the album is on disk but
+not in `stored_files` — run `shadup … reindex-files "<album>"` (or the parent
+`files/` tree), then retry `shadup mv`. Do not fall back to bare `mv`.
+
 ## Paths (this repo layout)
 
 | Role | Location |
 |------|----------|
 | FLAC album tree | `/mnt/sdb2/music/flac/files/` (override with user path) |
+| shadup store root | `/mnt/sdb2/music/flac` (`--shadir`) |
+| shadup DB | `$HOME/Music/shasrv/shadup.db` (`--db`) |
 | Content store | sibling `data/` under the same shadup root |
 | Musicology tooling | sibling checkout `../bin/musicology` (from utils root) |
 | Tag mirrors | `files/_tags/…` — rebuild with `shadup refresh-extracted-tags` after album renames |
@@ -145,11 +175,23 @@ The Album Leaf - [1999] An Orchestrated Rise To Fall [Flac]
 The Doors - 2013 - Infinite [2013 US Analogue Productions CAPP DOORS SA SACD]
   ->  Doors - Infinite
       # 2013 → year tag; drop entire edition bracket
+
+1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56
+  ->  Herbie Mann - Verve Jazz Masters 56
+      # leading YYYY is NOT the artist; musicology will treat it as one
+
+2005 - Café Del Mar - 25th Anniversary 1980-2005 [3CD]
+  ->  Cafe Del Mar - 25th Anniversary
+      # same year-as-artist trap
+
+10-tony martinez and cuba … jazz-porque soy rumbero flac
+  ->  Artist - Album   # from cue/meta; scene junk is not a name
 ```
 
 Wrong dry-run (The-strip only, noise left in place) is **incorrect** — keep
-going until the title is just the album name.
-
+going until the title is just the album name. Year-leading and scene dirs that
+still look “scanned” are still wrong — see **Musicology will not rename these
+for you**.
 #### Multi-disc sets: one elegant album string
 
 Discs of the **same** release must share one album title spelling; only the
@@ -201,14 +243,28 @@ without `The` so Discogs/MB keep matching after the strip.
 
 ```
 VA - Series - Title
-YYYY - Series - Artist - Title
+Artist - Album
+```
+
+**Not** a target form: `YYYY - Series - Artist - Title`. Leading release years
+in the basename are mislabels (year → tag), even when the rest is a real series
+like Verve Jazzclub or Café Del Mar. Live offenders still on disk:
+
+```text
+1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56
+  ->  Herbie Mann - Verve Jazz Masters 56
+      # or VA - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56
+      # if series browsing is the intent; never keep leading YYYY -
+
+2005 - Café Del Mar - 25th Anniversary 1980-2005 [3CD]
+  ->  Cafe Del Mar - 25th Anniversary
+      # match tidy peers already in-tree (Cafe Del Mar - 25th Anniversary (3-CD))
 ```
 
 Use **`VA -` only for true collections / compilations** — multi-artist
 anthologies where there is no single primary artist (soundtracks with many
 acts, label samplers, `DJ-Kicks` curated comps, `Verve Remixed`, etc.).
-Examples already in the tree: `VA - DJ-Kicks- DJ Cam`,
-`1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56`.
+Example already in the tree: `VA - DJ-Kicks- DJ Cam`.
 
 Do **not** use `VA -` when a main artist brings in guests or collaborators
 (features, duets, “with …”). Those stay filed under the main artist:
@@ -225,12 +281,34 @@ Same for **single-artist “best of” / anthology** releases: keep the artist
 (MusicBrainz artist is `The Pogues` — store that in sidecars; strip `The` /
 misplaced `VA -` from the dirname. Album title may keep leading `The`.)
 
-- Keep series tokens that aid browsing; drop ripper noise (`-GP-FLAC`,
-  `[FLAC]`, bare `flac` suffixes), years-in-title, and edition brackets — same
-  denoise rules as pop/rock (year → tag).
+- Keep series tokens that aid browsing **only when they are not a year prefix**;
+  drop ripper noise (`-GP-FLAC`, `[FLAC]`, bare `flac` suffixes), years-in-title,
+  and edition brackets — same denoise rules as pop/rock (year → tag).
 - Tree convention: short `VA`, not MusicBrainz `Various Artists`, in the
   dirname (still VFAT-sanitize the title).
 
+### Musicology will not rename these for you
+
+`musicscan` guesses artist/album from the dirname via
+`parse_album_dirname` (`../bin/musicology/audio.py`): split on the **first**
+` - `, left = artist, right = album (+ trailing noise stripped). It does **not**
+rewrite the directory name.
+
+That mishandles common mislabels:
+
+| On-disk basename | `parse_album_dirname` → `(artist, album, year)` | What goes wrong |
+|------------------|-------------------------------------------------|-----------------|
+| `1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56` | `('1996', 'Verve Jazzclub - Herbie Mann - …', 1996)` | Artist becomes the **year**; providers lookup `1996` |
+| `2005 - Café Del Mar - 25th Anniversary 1980-2005 [3CD]` | `('2005', 'Café Del Mar - 25th Anniversary 1980-2005', 2005)` | Same — artist=`2005` |
+| `10-tony martinez and cuba … jazz-porque soy rumbero flac` | `(None, None, None)` | No ` - ` split → no artist/album guess; lookups starve |
+
+Sidecars may stay empty, thin, or locked to junk queries; the broken basename
+survives. **Your job under this skill:** notice these shapes when surveying
+(year-leading `19xx`/`20xx - …`, scene/lowercase dashed junk like `10-tony…`,
+edition brackets, encoding suffixes), collate them with sidecar/cue evidence,
+and **propose** a rename plan for the user (dry-run `shadup mv`). Do not assume
+“musicscan already ran” means the dirname is correct. Do not leave year-as-artist
+or scene junk as “good enough.”
 ### Classical
 
 ```
@@ -254,7 +332,8 @@ Copy and track:
 
 ```
 Correct FLAC names:
-- [ ] Scope albums (paths or find illegal chars)
+- [ ] Scope albums (illegal chars + year-prefix / scene-junk mislabels)
+- [ ] Notice musicology-mishandled shapes (year-as-artist, unparsable scene names)
 - [ ] Gather candidates (cue / SPECS / .meta.* / export-json)
 - [ ] Resolve conflicts + pick convention
 - [ ] Denoise title (drop encoding/year/edition brackets; year → tag)
@@ -262,17 +341,21 @@ Correct FLAC names:
 - [ ] Strip The /, The on artist; VFAT-sanitize every segment
 - [ ] Resolve target collisions with DUP / DUP DUP / …
 - [ ] Emit rename plan (dir + files); dry-run with `shadup mv --dry-run` first
-- [ ] Apply dir renames with `shadup mv`; refresh _tags
+- [ ] Propose plan to user (apply only when asked); **`shadup mv` only**; refresh _tags
 ```
 
 ### 1. Find offenders
 
 ```bash
 FILES=/mnt/sdb2/music/flac/files
+# P0 illegal path chars
 find "$FILES" -mindepth 1 -maxdepth 1 -name '*:*'
 find "$FILES" -mindepth 1 -maxdepth 3 \( -name '*:*' -o -name '*\?*' -o -name '*"*' \) ! -path '*/_tags/*'
+# Year-as-artist / leading-year mislabels (musicology treats YYYY as artist)
+find "$FILES" -mindepth 1 -maxdepth 2 -type d \( -name '19[0-9][0-9] - *' -o -name '20[0-9][0-9] - *' \) ! -path '*/_tags/*'
+# Scene / ripper junk (no "Artist - Album" shape; often lowercase, dashed, trailing flac)
+find "$FILES" -mindepth 1 -maxdepth 1 -type d -name '*flac' ! -name '* - *'
 ```
-
 ### 2. Build a rename plan
 
 For each album, output a plan (do not apply until confirmed unless the user
@@ -290,21 +373,24 @@ history (`end` on old rows, `start` on new). Track symlink renames inside an
 album use the same command with file paths.
 
 Paths are **relative to `files/`** (stored path prefix), e.g. album basenames at
-the top level or `Album/track.flac` for a single file. Run from the store's
-`files/` directory so shadir/DB discovery works, or pass `--shadir` explicitly.
+the top level or `Album/track.flac` for a single file. Always pass
+`--shadir` / `--db` for this store (see P0 block above), or run from a cwd where
+`.shadir` discovery works.
 
 ```bash
-FILES=/mnt/sdb2/music/flac/files
-cd "$FILES"
+SHADIR=/mnt/sdb2/music/flac
+DB=$HOME/Music/shasrv/shadup.db
+cd "$SHADIR/files"
 
-# Rehearse one album dir rename (prints disk + DB plan, no changes)
-shadup mv --dry-run "Old Name" "New Name"
+# Rehearse one album dir rename (use -v; dry-run lines are verbosity ≥1)
+shadup -v --shadir "$SHADIR" --db "$DB" mv --dry-run "Old Name" "New Name"
 
 # Apply
-shadup mv "Old Name" "New Name"
+shadup --shadir "$SHADIR" --db "$DB" mv "Old Name" "New Name"
 
 # Track file inside an album (optional follow-up)
-shadup mv "New Name/01-old.flac" "New Name/01. Track Title.flac"
+shadup --shadir "$SHADIR" --db "$DB" mv \
+  "New Name/01-old.flac" "New Name/01. Track Title.flac"
 ```
 
 Sidecars (`.meta.*.json`, cue sheets) move with the directory on disk; edit cue
@@ -313,10 +399,17 @@ anything indexed in `stored_files` — the DB would drift from disk.
 
 ### 3. Apply carefully
 
-- Prefer `shadup mv --dry-run` before each batch (or mirror the plan in a log).
-- **Collision:** if the target basename already exists (or another planned
-  rename claims it), do **not** overwrite. Append ` DUP` to the target name and
-  retry; if still taken, append another ` DUP` (repeat until free):
+- **Usenet / scene dotted dirs** with no usable sidecar artist+album: derive
+  `Artist - Album` from the basename (drop year / catalog / SACD / DSD tokens),
+  then `shadup mv`. Do not leave dotted forms only because meta is empty.
+- **Nested multi-disc containers** (e.g. Woodstock box with `Vol. 01`… children)
+  are **in scope**. Denoise/sanitize the parent dirname like any other album
+  dir. Do not skip them because musicology also scans leaves + parent — that
+  dual treatment is orthogonal (`postingest` / groom-musicology-tags).
+- **Filesystem collision:** if the target basename already exists on disk (or
+  another planned rename claims it), do **not** overwrite the directory.
+  Append ` DUP` to the target name and retry; if still taken, append another
+  ` DUP` (repeat until free):
 
   ```text
   Artist - Album
@@ -325,12 +418,17 @@ anything indexed in `stored_files` — the DB would drift from disk.
   ```
 
   Call the chosen name out in the action log. Never clobber an existing album
-  dir.
+  dir. (`shadup mv` itself refuses when the destination path exists on disk.)
+- **DB path occupancy:** when the destination path has an active
+  `stored_files` row but no conflicting directory, `shadup mv` **end-dates**
+  that occupant and inserts the moved SHA — it does **not** invent a `DUP`
+  name for DB-only collisions.
 - **Rename provenance:** `shadup mv` end-dates the old `stored_files` rows and
   opens new ones with `start=now()`. Prior album dirnames live in the shadup DB
   — do **not** write `original-album-name` into `.meta.johan.json` (obsolete).
-- After album renames that affect tag mirrors: run shadup
-  `refresh-extracted-tags` so `_tags/` no longer points at stale basenames.
+- After album renames that affect tag mirrors: run
+  `shadup --shadir "$SHADIR" --db "$DB" refresh-extracted-tags` so `_tags/` no
+  longer points at stale basenames.
 - Do not “fix” names by writing illegal characters into `_tags/` either;
   album tag values that become path segments must be sanitized the same way.
 
