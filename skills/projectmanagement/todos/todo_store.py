@@ -41,7 +41,7 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 import todo_db
 
@@ -59,11 +59,19 @@ _POLL_INTERVAL = 0.1
 _EMBED_FIELD_PATHS: Tuple[Tuple[str, str], ...] = (
     ("Summary", "Summary.raw"),
     ("Body", "Body.raw"),
+    # LongSummary is written to BE embedded (see IMPLEMENTATION.md): Body is often
+    # too long to embed well, so the summary vector is the one worth matching on.
+    ("LongSummary", "LongSummary.raw"),
 )
 
 
 def _inline_embeddings(todo: JsonDict) -> List[Tuple[str, str, List[List[float]]]]:
-    """Collect ``(field_path, embedder, chunks)`` stamped into a ticket's JSON."""
+    """Collect ``(field_path, embedder, chunks)`` stamped into a ticket's JSON.
+
+    Covers the fixed Summary/Body dicts and, positionally, every ``Tag``
+    element (field_path ``Tag.<index>.raw``): the plural Tag field carries the
+    same per-embedder vector keys as Summary/Body, just once per list element.
+    """
     out: List[Tuple[str, str, List[List[float]]]] = []
     for field_name, field_path in _EMBED_FIELD_PATHS:
         obj = todo.get(field_name)
@@ -74,6 +82,17 @@ def _inline_embeddings(todo: JsonDict) -> List[Tuple[str, str, List[List[float]]
                 continue
             if isinstance(val[0], list):
                 out.append((field_path, str(key), val))  # type: ignore[arg-type]
+    tag = todo.get("Tag")
+    if isinstance(tag, list):
+        for index, element in enumerate(tag):
+            if not isinstance(element, dict):
+                continue
+            field_path = f"Tag.{index}.raw"
+            for key, val in element.items():
+                if key in ("raw", "manual") or not isinstance(val, list) or not val:
+                    continue
+                if isinstance(val[0], list):
+                    out.append((field_path, str(key), val))  # type: ignore[arg-type]
     return out
 
 
@@ -129,6 +148,19 @@ class TodoStore(ABC):
         """Remove *todo* from the store. ``hard`` permanently deletes it; a soft
         delete keeps a recoverable tombstone (no recovery tool exists yet).
         Returns True if the todo was present and removed."""
+
+    # -- data version marker (how far RECORDS have been swept) --------------
+    # Distinct from the sqlite table's schema_version (which auto-applies on
+    # connect): this is the O(1) startup-check signal for whether the store's
+    # records themselves still need a migrate-to-latest sweep.
+
+    @abstractmethod
+    def get_data_version(self) -> int:
+        """Return how far this store's records have been swept (0 when unset)."""
+
+    @abstractmethod
+    def set_data_version(self, v: int) -> None:
+        """Persist the record-sweep marker."""
 
     # -- embeddings (ticket JSON on every backend; derived index when available) --
 
@@ -242,6 +274,14 @@ class SqliteTodoStore(TodoStore):
             if hard:
                 return todo_db.hard_delete_ticket(conn, ticket_id)
             return todo_db.soft_delete_ticket(conn, ticket_id)
+
+    def get_data_version(self) -> int:
+        with todo_db.connection(self.db_path) as conn:
+            return todo_db.get_data_version(conn)
+
+    def set_data_version(self, v: int) -> None:
+        with todo_db.connection(self.db_path) as conn:
+            todo_db.set_data_version(conn, v)
 
     def embeddings_for_ticket(
         self, ticket_id: str
@@ -366,6 +406,24 @@ class JsonDirTodoStore(TodoStore):
             path.replace(path.with_suffix(".deleted"))
         return True
 
+    def _data_version_path(self) -> Path:
+        # A dot-file with no ".json" suffix: never matched by the *.json glob
+        # that _all() uses to enumerate tickets, so it can live in self.dir
+        # (the only location this backend knows) without being mistaken for one.
+        return self.dir / ".data_version"
+
+    def get_data_version(self) -> int:
+        try:
+            return int(self._data_version_path().read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def set_data_version(self, v: int) -> None:
+        path = self._data_version_path()
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(str(v), encoding="ascii")
+        tmp.replace(path)
+
     def embeddings_for_ticket(
         self, ticket_id: str
     ) -> List[Tuple[str, str, List[List[float]]]]:
@@ -474,6 +532,55 @@ def _float_config(config: JsonDict, key: str, default: float) -> float:
         return float(config[key])
     except (KeyError, TypeError, ValueError):
         return default
+
+
+def config_value(base: Path, key: str, default: str) -> str:
+    """Read a non-empty string config *key* from ``<base>/config.json``, else *default*."""
+    value = _load_config(base).get(key)
+    return value if isinstance(value, str) and value.strip() else default
+
+
+def config_float(base: Path, key: str, default: float) -> float:
+    """Read a float config *key* from ``<base>/config.json``, else *default*."""
+    return _float_config(_load_config(base), key, default)
+
+
+def config_list(base: Path, key: str) -> List[str]:
+    """Read a list-of-strings config *key*; empty when absent or malformed."""
+    value = _load_config(base).get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def config_value_raw(base: Path, key: str) -> Any:
+    """Read *key* from ``<base>/config.json`` with no coercion (None when absent)."""
+    return _load_config(base).get(key)
+
+
+def config_has(base: Path, key: str) -> bool:
+    """True when *key* is present at all -- including with a ``null`` value.
+
+    Distinguishes "explicitly set to null" from "absent", which the readers
+    above cannot: a null-valued key is how a config says OFF rather than
+    unspecified.
+    """
+    return key in _load_config(base)
+
+
+def update_config(base: Path, updates: Mapping[str, Any]) -> None:
+    """Merge *updates* into ``<base>/config.json``; a ``None`` value drops the key.
+
+    Read-modify-write, so a caller touching one key never clobbers the storage
+    DSN or anything else the tool put there.
+    """
+    config = _load_config(base)
+    for key, value in updates.items():
+        if value is None:
+            config.pop(key, None)
+        else:
+            config[key] = value
+    _write_config(base, config)
 
 
 def _expand_todo_base(path: str, base: Path) -> str:

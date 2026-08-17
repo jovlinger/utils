@@ -11,6 +11,7 @@ a throwaway git repo, exactly as an agent would invoke it. Run with:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -28,10 +29,19 @@ TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
+import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+
+# `apple` is the only production embedder and it needs the macOS Swift sidecar, so
+# vector tests mock that sidecar with a bag-of-words fake (see fake_nlce): the
+# `--embedder apple` path then runs identically off-macOS, and unrelated todos
+# score exactly 0.0 so they can be asserted absent. This is the fingerprint the
+# fake's handshake produces, i.e. the key vectors are stored under.
+BOW = fake_nlce.FINGERPRINT
 
 
 class TodoCase(unittest.TestCase):
@@ -40,12 +50,18 @@ class TodoCase(unittest.TestCase):
     def setUp(self) -> None:
         self.repo: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))
         self._db_dir: Path = Path(tempfile.mkdtemp(prefix="todo-db-"))
+        # Id of the most recently created ticket (write_ticket / init_ok / mint);
+        # selectors are always explicit ids now, so tests address through this.
+        self.tid: str = ""
         # Mark TODO_DIR populated so resolve_todo_dir does not fall through to
         # $HOME/.todo when that store already exists.
         (self._db_dir / "config.json").write_text("{}\n", encoding="utf-8")
         self._env: Dict[str, str] = {
             **ENV,
             "TODO_DIR": str(self._db_dir),
+            # Every `todo.py` subprocess sees the fake sidecar, so `--embedder apple`
+            # is hermetic and deterministic. Harmless for the tests that never embed.
+            "TODO_APPLE_NLCE_BIN": fake_nlce.install(str(self._db_dir)),
         }
         self._git("init", "-q")
         self._git("config", "user.email", "t@example.com")
@@ -71,11 +87,19 @@ class TodoCase(unittest.TestCase):
             check=False, env=self._env,
         )
 
-    def read_self(self) -> Dict[str, Any]:
-        """Return the current branch ticket via the binary."""
-        proc = self.todo("read", "self")
+    def read_cur(self) -> Dict[str, Any]:
+        """Return the tracked current ticket (self.tid) via the binary."""
+        proc = self.todo("read", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
+
+    def init_ok(self, *args: str, cwd: Optional[Path] = None) -> Dict[str, Any]:
+        """Run init, assert success, track the new Id, return init's payload."""
+        proc = self.todo("init", *args, cwd=cwd)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.tid = payload["Id"]
+        return payload
 
     def write_ticket(
         self,
@@ -99,6 +123,7 @@ class TodoCase(unittest.TestCase):
             ticket["Body"] = {"raw": body}
         if extra:
             ticket.update(extra)
+        self.tid = ticket_id
         seed = self.repo / f"seed-{ticket_id[:8]}.json"
         seed.write_text(json.dumps(ticket), encoding="utf-8")
         proc = self.todo("import-json", f"--from-json={seed}")
@@ -135,7 +160,7 @@ class MintTests(TodoCase):
 
 
 class MintSetInitFlowTests(TodoCase):
-    """The two-phase flow: mint (pre-init) -> set --id -> init (promote)."""
+    """The two-phase flow: mint (groom) -> set <id> -> init (promote)."""
 
     def _branch_exists(self, name: str) -> bool:
         return bool(self._git("branch", "--list", name).stdout.strip())
@@ -148,47 +173,74 @@ class MintSetInitFlowTests(TodoCase):
     def test_mint_creates_pre_init_record(self) -> None:
         tid = self.mint()
         rec = self._read_id(tid)
-        self.assertEqual(list(rec["State"].keys()), ["pre-init"])
+        self.assertEqual(list(rec["State"].keys()), ["groom"])
         self.assertEqual(rec["Branch"], tid[:8])  # placeholder until set
         # mint must not create a git branch
         self.assertFalse(self._branch_exists(tid[:8]))
 
     def test_set_by_id_fills_fields_and_finalizes_branch(self) -> None:
         tid = self.mint()
-        proc = self.todo("set", "--id", tid, "--summary", "persist the local db")
+        proc = self.todo("set", tid, "--summary", "persist the local db")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         rec = self._read_id(tid)
         self.assertEqual(rec["Summary"]["raw"], "persist the local db")
-        self.assertEqual(list(rec["State"].keys()), ["pre-init"])  # still collecting
+        self.assertEqual(list(rec["State"].keys()), ["groom"])  # still collecting
         self.assertTrue(rec["Branch"].startswith(f"{tid[:8]}-"))
         self.assertIn("persist", rec["Branch"])
-        # set --id must not create a git branch (sqlite-only)
+        # set by id must not create a git branch (store-only)
         self.assertFalse(self._branch_exists(rec["Branch"]))
+
+    def test_set_json_path_seeds_workitems_on_branchless_groom(self) -> None:
+        # set-json-path by id must write store-only, like `set <id>`: a groom
+        # todo has a Branch label but no git branch, so requiring a checkout
+        # used to make seeding a plan onto a freshly minted todo impossible.
+        tid = self.mint()
+        self.todo("set", tid, "--summary", "seed my plan")
+        branch = self._read_id(tid)["Branch"]
+        self.assertFalse(self._branch_exists(branch))  # no git branch yet
+        plan = [
+            {"kind": "task", "done": False, "summary": "first step"},
+            {"kind": "task", "done": False, "summary": "second step"},
+        ]
+        proc = subprocess.run(
+            [sys.executable, str(TODO_PY), "set-json-path", tid[:8], "WorkItems"],
+            cwd=str(self.repo), input=json.dumps(plan), capture_output=True, text=True,
+            check=False, env=self._env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rec = self._read_id(tid)
+        self.assertEqual([w["summary"] for w in rec["WorkItems"]], ["first step", "second step"])
+        # still branchless and still groom -- writing a plan did not create a branch
+        self.assertFalse(self._branch_exists(branch))
+        self.assertEqual(list(rec["State"].keys()), ["groom"])
 
     def test_init_promotes_pre_init_to_branch(self) -> None:
         # An initial commit so the parent branch is born (--stay-on-parent can
         # check it back out). Real repos always have history here.
         self._git("commit", "--allow-empty", "-qm", "root")
         tid = self.mint()
-        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        self.todo("set", tid, "--summary", "persist the local db")
         branch = self._read_id(tid)["Branch"]
         proc = self.todo("init", "--id", tid, "--stay-on-parent")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(self._branch_exists(branch))
         rec = self._read_id(tid)
-        self.assertEqual(list(rec["State"].keys()), ["init"])
+        self.assertEqual(list(rec["State"].keys()), ["ready"])
         self.assertEqual(rec["Branch"], branch)
 
     def test_init_fresh_create_still_works(self) -> None:
+        # A branch needs at least one commit to exist; record edits no longer
+        # create marker commits, so seed the repo like a real one.
+        self._git("commit", "--allow-empty", "-qm", "seed")
         proc = self.todo("init", "--summary", "one shot fresh todo")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
         self.assertTrue(self._branch_exists(out["Branch"]))
-        self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["init"])
+        self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["ready"])
 
     def test_ensure_worktree_is_stub(self) -> None:
         tid = self.mint()
-        self.todo("set", "--id", tid, "--summary", "persist the local db")
+        self.todo("set", tid, "--summary", "persist the local db")
         proc = self.todo("ensure_worktree", tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
@@ -240,24 +292,27 @@ class ReadTests(TodoCase):
         self.assertIn("abcd0002-b", proc.stderr)
 
     def test_read_orders_fields_and_elides_vectors(self) -> None:
-        init = self.todo("init", "--summary=Vector demo", "--body=some text")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        add = self.todo("work-item-add", "--summary=wi one")
+        self.init_ok("--summary=Vector demo", "--body=some text")
+        add = self.todo("work-item-add", self.tid, "--summary=wi one")
         self.assertEqual(add.returncode, 0, add.stderr)
+        # No embedder is cheap, so a plain write stamps nothing; a search is what
+        # backfills the vectors this test is here to check the rendering of.
+        search = self.todo("search", "vector", "--embedder", "apple")
+        self.assertEqual(search.returncode, 0, search.stderr)
 
-        elided = self.read_self()
+        elided = self.read_cur()
         keys = list(elided.keys())
         self.assertEqual(keys[:3], ["Id", "Summary", "Body"])
         self.assertEqual(keys[-1], "WorkItems")
         # Embedding under Summary is a list-of-arrays (one vector per chunk);
         # each chunk vector is elided to its first two elements.
-        self.assertEqual(len(elided["Summary"]["hash"]), 1)
-        self.assertEqual(len(elided["Summary"]["hash"][0]), 2)
+        self.assertEqual(len(elided["Summary"][BOW]), 1)
+        self.assertEqual(len(elided["Summary"][BOW][0]), 2)
 
-        proc = self.todo("read", "self", "-v")
+        proc = self.todo("read", self.tid, "-v")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         full = json.loads(proc.stdout)
-        self.assertGreater(len(full["Summary"]["hash"][0]), 2)
+        self.assertGreater(len(full["Summary"][BOW][0]), 2)
 
     def test_longer_prefix_disambiguates(self) -> None:
         self.write_ticket("abcd0001-a", "abcd0001" + "f" * 56)
@@ -276,25 +331,25 @@ class ReadTests(TodoCase):
     def test_worktree_edit_takes_precedence_over_commit(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-demo", tid, summary="committed")
-        proc = self.todo("set", "--summary=worktree-edit")
+        proc = self.todo("set", self.tid, "--summary=worktree-edit")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("read", tid[:8])
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout)["Summary"]["raw"], "worktree-edit")
 
-    def test_read_self_uses_current_branch_without_id_in_name(self) -> None:
+    def test_self_selector_removed(self) -> None:
         tid = self.mint()
         self.write_ticket("feature-without-id", tid, summary="current branch")
         proc = self.todo("read", "self")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["Id"], tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no todo found", proc.stderr)
 
-    def test_curr_aliases_self(self) -> None:
+    def test_curr_selector_removed(self) -> None:
         tid = self.mint()
         self.write_ticket("another-feature-name", tid, summary="current branch")
         proc = self.todo("read", "curr")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["Id"], tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no todo found", proc.stderr)
 
 
 class LocalFirstTests(TodoCase):
@@ -321,9 +376,7 @@ class CliTests(TodoCase):
 class InitTests(TodoCase):
     def test_init_creates_branch_and_todo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        proc = self.todo("init", "--summary=Fix sensor", "--ac=reads fresh")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        payload = json.loads(proc.stdout)
+        payload = self.init_ok("--summary=Fix sensor", "--ac=reads fresh")
         self.assertIn("Id", payload)
         self.assertIn("Branch", payload)
         branch = payload["Branch"]
@@ -331,9 +384,9 @@ class InitTests(TodoCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         ticket = json.loads(proc2.stdout)
         self.assertEqual(ticket["Summary"]["raw"], "Fix sensor")
-        self.assertEqual(ticket["State"], {"init": {}})
+        self.assertEqual(ticket["State"], {"ready": {}})
         self._git("checkout", branch)
-        proc3 = self.todo("read", "self")
+        proc3 = self.todo("read", self.tid)
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
         self.assertEqual(json.loads(proc3.stdout)["Id"], payload["Id"])
         self.assertFalse((self.repo / "TODO.json").is_file())
@@ -349,10 +402,10 @@ class InitTests(TodoCase):
     def test_init_then_set_state_in_one_call(self) -> None:
         """init accepts set's args and applies them; --state lands post-init."""
         self._git("commit", "--allow-empty", "-qm", "seed")
-        proc = self.todo("init", "--summary=Groom me", "--state=pre")
+        proc = self.todo("init", "--summary=Groom me", "--state=groom")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
-        self.assertEqual(ticket["State"], {"pre": {}})
+        self.assertEqual(ticket["State"], {"groom": {}})
 
     def test_init_noninteractive_EDIT_creates_nothing(self) -> None:
         """A non-tty EDIT value aborts with exit 1 and leaves no todo/branch."""
@@ -372,11 +425,11 @@ class SetStateViaSetTests(TodoCase):
     def test_set_state_flag_replaces_set_state_subcommand(self) -> None:
         """`set --state` transitions State; the old `set-state` subcommand is gone."""
         self._git("commit", "--allow-empty", "-qm", "seed")
-        branch = json.loads(self.todo("init", "--summary=Do it").stdout)["Branch"]
+        branch = self.init_ok("--summary=Do it")["Branch"]
         self._git("checkout", "-q", branch)
-        proc = self.todo("set", "--state", "working", "--owner=agent")
+        proc = self.todo("set", self.tid, "--state", "working", "--owner=agent")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["State"], {"working": {"owner": "agent"}})
+        self.assertEqual(self.read_cur()["State"], {"working": {"owner": "agent"}})
         # the removed subcommand must not resolve anymore
         gone = self.todo("set-state", "done")
         self.assertNotEqual(gone.returncode, 0)
@@ -432,10 +485,9 @@ class AddSubtodoTests(TodoCase):
             ),
             encoding="utf-8",
         )
-        proc = self.todo("add-subtodo", f"--from-json={child_path}")
+        proc = self.todo("add-subtodo", parent_id[:8], f"--from-json={child_path}")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self._git("checkout", "parent-branch")
-        parent_ticket = self.read_self()
+        parent_ticket = json.loads(self.todo("read", parent_id[:8]).stdout)
         self.assertEqual(len(parent_ticket["Subtodos"]), 1)
         self.assertEqual(parent_ticket["Subtodos"][0]["Id"], child_id)
         proc2 = self.todo("read", child_id[:8])
@@ -448,12 +500,13 @@ class FieldAndWorkItemTests(TodoCase):
         self.write_ticket(f"{tid[:8]}-fields", tid)
         proc = self.todo(
             "set",
+            self.tid,
             "--summary=Renamed ticket",
             "--body=More detail",
             "--ac=All checks pass",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        ticket = self.read_self()
+        ticket = self.read_cur()
         self.assertEqual(ticket["Summary"]["raw"], "Renamed ticket")
         self.assertEqual(ticket["Body"]["raw"], "More detail")
         self.assertEqual(ticket["AC"], "All checks pass")
@@ -461,14 +514,14 @@ class FieldAndWorkItemTests(TodoCase):
     def test_work_item_aliases_add_and_done_items(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-work-items", tid)
-        proc = self.todo("work-item-add", "--summary=first item")
+        proc = self.todo("work-item-add", self.tid, "--summary=first item")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        proc2 = self.todo("work-item-add", "--summary=second item")
+        proc2 = self.todo("work-item-add", self.tid, "--summary=second item")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
-        proc3 = self.todo("work-item-done")
+        proc3 = self.todo("work-item-done", self.tid)
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
 
-        ticket = self.read_self()
+        ticket = self.read_cur()
         work_items = ticket["WorkItems"]
         self.assertEqual(len(work_items), 2)
         first, second = work_items
@@ -477,6 +530,9 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(first["summary"], "first item")
         self.assertTrue(first["done"])
         self.assertRegex(first["sha"], r"\A[0-9a-f]{40}\Z")
+        # Every stored object also carries an objid (see todo_objid); the rest
+        # of the item must still be exactly the not-done task shape.
+        self.assertRegex(second.pop("objid"), r"\A[0-9a-f]{4,}\Z")
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
@@ -498,28 +554,29 @@ class PathTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
         self._git("checkout", branch)
-        proc2 = self.todo("read", "self")
+        proc2 = self.todo("read", self.tid)
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout)["Body"]["raw"], "patched body")
 
     def test_get_json_path_prints_scalar_from_self(self) -> None:
         tid = self.mint()
         self.write_ticket("plain-current-branch", tid, summary="read me")
-        proc = self.todo("get-json-path", "self", "Summary.raw")
+        proc = self.todo("get-json-path", self.tid, "Summary.raw")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "read me")
 
     def test_get_json_path_prints_json_values_as_json(self) -> None:
         tid = self.mint()
         self.write_ticket("state-branch", tid)
-        proc = self.todo("get-json-path", "self", "State")
+        proc = self.todo("get-json-path", self.tid, "State")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), {"init": {}})
+        # write_ticket seeds the legacy "init" state; reads normalize it to "ready".
+        self.assertEqual(json.loads(proc.stdout), {"ready": {}})
 
     def test_get_json_path_no_such_path_reports_worked_missing_options(self) -> None:
         tid = self.mint()
         self.write_ticket("missing-path-branch", tid, summary="have summary")
-        proc = self.todo("get-json-path", "self", "Summary.bogus")
+        proc = self.todo("get-json-path", self.tid, "Summary.bogus")
         self.assertEqual(proc.returncode, 1, proc.stdout)
         err = proc.stderr
         self.assertIn("path Summary no such field bogus.", err)
@@ -529,20 +586,20 @@ class PathTests(TodoCase):
     def test_set_json_path_updates_current_branch(self) -> None:
         tid = self.mint()
         self.write_ticket("path-current-branch", tid)
-        proc = self._set_json_path("self", "Body.raw", stdin='"patched body"')
+        proc = self._set_json_path(self.tid, "Body.raw", stdin='"patched body"')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "patched body")
-        proc2 = self.todo("get-json-path", "self", "Body.raw")
+        proc2 = self.todo("get-json-path", self.tid, "Body.raw")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(proc2.stdout.strip(), "patched body")
 
     def test_set_json_path_accepts_json_null(self) -> None:
         tid = self.mint()
         self.write_ticket("null-current-branch", tid)
-        proc = self._set_json_path("self", "AC", stdin="null")
+        proc = self._set_json_path(self.tid, "AC", stdin="null")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "null")
-        proc2 = self.todo("get-json-path", "self", "AC")
+        proc2 = self.todo("get-json-path", self.tid, "AC")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(json.loads(proc2.stdout), None)
 
@@ -550,12 +607,12 @@ class PathTests(TodoCase):
         """Filtering is `todo read | jq`, not a todo.py jq subcommand."""
         tid = self.mint()
         self.write_ticket("jq-pipe-branch", tid, summary="jq summary")
-        gone = self.todo("jq", "self", ".Summary.raw")
+        gone = self.todo("jq", self.tid, ".Summary.raw")
         self.assertNotEqual(gone.returncode, 0, gone.stdout + gone.stderr)
         self.assertIn("invalid choice: 'jq'", gone.stderr)
         if shutil.which("jq") is None:
             self.skipTest("jq binary is not installed")
-        read = self.todo("read", "self")
+        read = self.todo("read", self.tid)
         self.assertEqual(read.returncode, 0, read.stderr)
         proc = subprocess.run(
             ["jq", ".Summary.raw"],
@@ -583,48 +640,142 @@ class PathTests(TodoCase):
         self.assertNotIn("Subtickets", loaded)
 
 
+class GetCommandTests(TodoCase):
+    """`get` is a friendly-field wrapper that expands to `get-json-path`."""
+
+    def test_get_summary_matches_get_json_path(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="read me via get")
+        proc = self.todo("get", self.tid, "--summary")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "read me via get")
+        via_path = self.todo("get-json-path", self.tid, "Summary.raw")
+        self.assertEqual(proc.stdout, via_path.stdout)
+
+    def test_get_body_ac_and_state(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="s", body="detailed body")
+        body = self.todo("get", self.tid, "--body")
+        self.assertEqual(body.returncode, 0, body.stderr)
+        self.assertEqual(body.stdout.strip(), "detailed body")
+        state = self.todo("get", self.tid, "--state")
+        self.assertEqual(state.returncode, 0, state.stderr)
+        self.assertEqual(json.loads(state.stdout), {"ready": {}})
+
+    def test_get_by_id_selector(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid, summary="cross-branch")
+        self._git("checkout", "-q", "-b", "elsewhere")
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        proc = self.todo("get", tid[:8], "--summary")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "cross-branch")
+
+    def test_get_requires_exactly_one_field_flag(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-get", tid)
+        none_given = self.todo("get", self.tid)
+        self.assertNotEqual(none_given.returncode, 0)
+        two_given = self.todo("get", self.tid, "--summary", "--body")
+        self.assertNotEqual(two_given.returncode, 0)
+
+
 class StateTests(TodoCase):
     def test_set_state_done_then_merged(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
-        proc = self.todo("set", "--state", "done", "--last-commit=finish child")
+        proc = self.todo("set", self.tid, "--state", "done", "--last-commit=finish child")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        proc2 = self.todo("get-json-path", "self", "State")
+        proc2 = self.todo("get-json-path", self.tid, "State")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertEqual(
             json.loads(proc2.stdout),
             {"done": {"last_commit": "finish child"}},
         )
 
-        proc3 = self.todo("set", "--state", "merged", "--merged-into=parent-branch")
+        proc3 = self.todo("set", self.tid, "--state", "merged", "--merged-into=parent-branch")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
-        proc4 = self.todo("get-json-path", "self", "State")
+        proc4 = self.todo("get-json-path", self.tid, "State")
         self.assertEqual(proc4.returncode, 0, proc4.stderr)
         self.assertEqual(
             json.loads(proc4.stdout),
             {"merged": {"merged_into": "parent-branch"}},
         )
 
+    def test_merged_records_last_commit(self) -> None:
+        """The State table documents last_commit on merged; it used to be dropped."""
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo(
+            "set", self.tid, "--state", "merged",
+            "--merged-into=parent-branch", "--last-commit=absorbed the child",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(
+            json.loads(got.stdout),
+            {"merged": {"merged_into": "parent-branch", "last_commit": "absorbed the child"}},
+        )
+
     def test_set_state_done_records_actual_summary(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-leaf", tid)
         proc = self.todo(
-            "set", "--state", "done", "--actual-summary=rewrote the parser instead of patching it"
+            "set",
+            self.tid,
+            "--state", "done", "--actual-summary=rewrote the parser instead of patching it",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        got = self.todo("get-json-path", "self", "ActualSummary")
+        got = self.todo("get-json-path", self.tid, "ActualSummary")
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertEqual(got.stdout.strip(), "rewrote the parser instead of patching it")
         # doctor accepts the new whitelisted field
-        doc = self.todo("doctor", "self")
+        doc = self.todo("doctor", self.tid)
         self.assertEqual(doc.returncode, 0, doc.stdout)
+
+    def test_set_done_removes_linked_worktree(self) -> None:
+        tid = self.mint()
+        branch = f"{tid[:8]}-leaf"
+        self.write_ticket(branch, tid)
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        self._git("branch", "master")
+        self._git("checkout", "-q", "master")
+        wt = self._db_dir / "worktrees" / "test-repo" / branch
+        wt.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", str(wt), branch)
+        self.assertTrue(wt.is_dir())
+        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(wt.exists())
+        listed = self._git("worktree", "list", "--porcelain")
+        self.assertNotIn(str(wt), listed.stdout)
+
+    def test_set_done_refuses_dirty_linked_worktree(self) -> None:
+        tid = self.mint()
+        branch = f"{tid[:8]}-leaf"
+        self.write_ticket(branch, tid)
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        self._git("branch", "master")
+        self._git("checkout", "-q", "master")
+        wt = self._db_dir / "worktrees" / "test-repo" / branch
+        wt.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", str(wt), branch)
+        (wt / "dirt.txt").write_text("nope\n", encoding="utf-8")
+        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dirty", proc.stderr)
+        self.assertTrue(wt.is_dir())
+        # State must not have advanced when teardown is blocked.
+        got = self.todo("get-json-path", tid[:8], "State")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(json.loads(got.stdout), {"init": {}})
 
 
 class WaitTests(TodoCase):
     def test_wait_for_done_succeeds_immediately(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-done", tid)
-        proc = self.todo("set", "--state", "done")
+        proc = self.todo("set", self.tid, "--state", "done")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc2 = self.todo("wait-for", tid[:8], "--timeout=0", "--interval=0")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
@@ -657,22 +808,20 @@ class WaitTests(TodoCase):
         child_id = self.mint()
         proc = self.todo(
             "add-subtodo",
+            parent_id[:8],
             f"--id={child_id}",
             f"--branch={child_id[:8]}-child",
             "--summary=child",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self._git("checkout", f"{child_id[:8]}-child")
-        proc2 = self.todo("set", "--state", "done")
+        proc2 = self.todo("set", child_id[:8], "--state", "done")
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
-        self._git("checkout", "parent-branch")
 
         proc3 = self.todo("wait-and-merge", child_id[:8], "--timeout=0", "--interval=0")
         self.assertEqual(proc3.returncode, 0, proc3.stderr)
-        parent_ticket = self.read_self()
+        parent_ticket = json.loads(self.todo("read", parent_id[:8]).stdout)
         self.assertEqual(parent_ticket["Subtodos"][0]["State"], "merged")
-        self._git("checkout", f"{child_id[:8]}-child")
-        child_proc = self.todo("get-json-path", "self", "State")
+        child_proc = self.todo("get-json-path", child_id[:8], "State")
         self.assertEqual(child_proc.returncode, 0, child_proc.stderr)
         self.assertEqual(
             json.loads(child_proc.stdout),
@@ -681,53 +830,78 @@ class WaitTests(TodoCase):
 
     def test_merge_subtodo_uses_child_actual_summary(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=parent feature")
-        self.assertEqual(init.returncode, 0, init.stderr)
+        self.init_ok("--summary=parent feature")
         parent_branch = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
         child_id = self.mint()
         add = self.todo(
-            "add-subtodo", f"--id={child_id}", f"--branch={child_id[:8]}-child", "--summary=planned title"
+            "add-subtodo", self.tid, f"--id={child_id}", f"--branch={child_id[:8]}-child", "--summary=planned title"
         )
         self.assertEqual(add.returncode, 0, add.stderr)
-        self._git("checkout", f"{child_id[:8]}-child")
         # child finishes and records how it actually panned out
-        done = self.todo("set", "--state", "done", "--actual-summary=actually landed via a rewrite")
+        done = self.todo(
+            "set", child_id[:8], "--state", "done", "--actual-summary=actually landed via a rewrite"
+        )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self._git("checkout", parent_branch)
 
         merge = self.todo("merge-subtodo", child_id[:8])
         self.assertEqual(merge.returncode, 0, merge.stderr)
 
         # parent's merge_subtodo work item carries the ActualSummary, not the plan
-        parent = self.read_self()
+        parent = self.read_cur()
         merge_items = [
             wi for wi in parent["WorkItems"] if wi.get("kind") == "merge_subtodo"
         ]
         self.assertEqual(len(merge_items), 1, parent["WorkItems"])
         self.assertIn("actually landed via a rewrite", merge_items[0]["summary"])
         self.assertNotIn("planned title", merge_items[0]["summary"])
-        # and the parent-branch merge commit subject too
-        subject = self._git("log", "-1", "--format=%s").stdout.strip()
-        self.assertIn("actually landed via a rewrite", subject)
+        # the recorded merge sha is the parent branch's tip (the real merge commit)
+        self.assertEqual(
+            merge_items[0]["sha"],
+            self._git("rev-parse", parent_branch).stdout.strip(),
+        )
 
 
 class DoctorTests(TodoCase):
     def test_doctor_passes_for_minimal_ticket(self) -> None:
         tid = self.mint()
         self.write_ticket("doctor-ok", tid)
-        proc = self.todo("doctor")
+        proc = self.todo("doctor", tid[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["ok"])
 
     def test_doctor_fails_unknown_top_level_field(self) -> None:
         tid = self.mint()
         self.write_ticket("doctor-bad", tid, extra={"Surprise": True})
-        proc = self.todo("doctor", "self")
+        proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 1)
         payload = json.loads(proc.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("unknown top-level fields: Surprise", payload["findings"])
+
+    def test_doctor_accepts_valid_tags(self) -> None:
+        tid = self.mint()
+        self.write_ticket("doctor-tags-ok", tid, extra={"Tags": ["billing", "ui"]})
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
+    def test_doctor_fails_bad_tag_shape(self) -> None:
+        # A malformed legacy Tags list would be silently repaired by doctor's
+        # opportunistic schema sweep before doctor_findings ever sees it (see
+        # todo_db.migrate_record_v7), so exercise the new plural Tag field
+        # directly: one well-formed element, one with a non-string raw.
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-tag-bad",
+            tid,
+            extra={"Tag": [{"raw": "ok", "manual": True}, {"raw": 5, "manual": True}]},
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("Tag.1.raw must be a non-empty string", payload["findings"])
 
     def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
         tid = self.mint()
@@ -737,7 +911,7 @@ class DoctorTests(TodoCase):
             tid,
             extra={"Subtodos": [{"Id": child, "Branch": "c", "State": "working"}]},
         )
-        proc = self.todo("doctor", "self")
+        proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
         self.assertTrue(payload["ok"])
@@ -757,7 +931,7 @@ class DoctorTests(TodoCase):
                 "Subtodos": [{"Id": child, "Branch": "c", "State": "done"}],
             },
         )
-        proc = self.todo("doctor", "self")
+        proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 1, proc.stdout)
         payload = json.loads(proc.stdout)
         self.assertFalse(payload["ok"])
@@ -777,7 +951,7 @@ class DoctorTests(TodoCase):
                 "Subtodos": [{"Id": child, "Branch": "c", "State": "merged"}],
             },
         )
-        proc = self.todo("doctor", "self")
+        proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertTrue(json.loads(proc.stdout)["ok"])
 
@@ -821,13 +995,11 @@ class DoctorTests(TodoCase):
 class LogTests(TodoCase):
     def test_log_renders_parent_and_subtodo_tree(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Parent feature")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        parent_id = json.loads(init.stdout)["Id"]
-        add = self.todo("add-subtodo", "--summary=child one")
+        parent_id = self.init_ok("--summary=Parent feature")["Id"]
+        add = self.todo("add-subtodo", parent_id[:8], "--summary=child one")
         self.assertEqual(add.returncode, 0, add.stderr)
 
-        proc = self.todo("log", "self")
+        proc = self.todo("log", parent_id[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         lines = proc.stdout.splitlines()
         self.assertTrue(
@@ -839,11 +1011,11 @@ class LogTests(TodoCase):
         self.assertFalse(child_lines[0].startswith("* "), proc.stdout)
         self.assertIn("*", child_lines[0])
 
-    def test_log_all_includes_root_ticket(self) -> None:
+    def test_log_ALL_includes_root_ticket(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         init = self.todo("init", "--summary=Solo ticket")
         self.assertEqual(init.returncode, 0, init.stderr)
-        proc = self.todo("log", "--all")
+        proc = self.todo("log", "ALL")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("Solo ticket", proc.stdout)
 
@@ -855,14 +1027,16 @@ class LogTests(TodoCase):
 
     def test_log_verbose_lists_branch_commits(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Verbose parent")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        plain = self.todo("log", "self")
+        self.init_ok("--summary=Verbose parent")
+        (self.repo / "vf.txt").write_text("v\n", encoding="utf-8")
+        self._git("add", "vf.txt")
+        self._git("commit", "-qm", "feat: verbose work")
+        plain = self.todo("log", self.tid)
         self.assertEqual(plain.returncode, 0, plain.stderr)
-        self.assertNotIn("chore(todo)", plain.stdout)
-        verbose = self.todo("log", "self", "-v")
+        self.assertNotIn("feat: verbose work", plain.stdout)
+        verbose = self.todo("log", self.tid, "-v")
         self.assertEqual(verbose.returncode, 0, verbose.stderr)
-        self.assertIn("chore(todo): init ticket", verbose.stdout)
+        self.assertIn("feat: verbose work", verbose.stdout)
 
 
 class SearchTests(TodoCase):
@@ -886,17 +1060,95 @@ class SearchTests(TodoCase):
             body="Handle oauth bearer token rotation for API clients.",
         )
         self.write_ticket(f"{other_id[:8]}-other", other_id, summary="unrelated database work")
-        # --embedder hash keeps this hermetic (apple is unavailable on CI) and
+        # The mocked apple sidecar (bag of words) keeps this hermetic off-macOS and
         # gives a hard 0-similarity cutoff so the unrelated ticket is excluded.
-        proc = self.todo("search", "oauth bearer token", "--embedder", "hash")
+        proc = self.todo("search", "oauth bearer token", "--embedder", "apple")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(oauth_id[:8], proc.stdout)
         self.assertNotIn(other_id[:8], proc.stdout)
 
-    def test_cheap_embedder_autopopulated_on_write(self) -> None:
+    def test_search_multiple_terms_match_each_doc_individually(self) -> None:
+        # Google-style: each space-separated term is its own matcher, so a doc
+        # matching only one term still surfaces (scores add across terms); a doc
+        # matching no term stays excluded by the bag-of-words 0-similarity cutoff.
+        alpha_id = self.mint()
+        beta_id = self.mint()
+        gamma_id = self.mint()
+        self.write_ticket(f"{alpha_id[:8]}-a", alpha_id, summary="alpha")
+        self.write_ticket(f"{beta_id[:8]}-b", beta_id, summary="beta")
+        self.write_ticket(f"{gamma_id[:8]}-g", gamma_id, summary="gamma")
+        proc = self.todo("search", "alpha", "beta", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(alpha_id[:8], proc.stdout)
+        self.assertIn(beta_id[:8], proc.stdout)
+        self.assertNotIn(gamma_id[:8], proc.stdout)
+
+    def test_search_quoted_phrase_is_one_unit(self) -> None:
+        # A single argv element (a quoted phrase) is the unit of matching: the
+        # doc holding the contiguous phrase outranks one holding the same words
+        # scattered, which per-term matching alone could not distinguish.
+        phrase_id = self.mint()
+        split_id = self.mint()
+        self.write_ticket(f"{phrase_id[:8]}-p", phrase_id, summary="alpha beta")
+        self.write_ticket(f"{split_id[:8]}-s", split_id, summary="beta gamma alpha")
+        proc = self.todo("search", "alpha beta", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertLess(
+            proc.stdout.index(phrase_id[:8]),
+            proc.stdout.index(split_id[:8]),
+            f"contiguous-phrase doc should rank first:\n{proc.stdout}",
+        )
+
+    def test_write_stamps_no_vectors_when_no_embedder_is_cheap(self) -> None:
+        # Since the lexical `hash` backend was retired nothing is cheap, so a write
+        # embeds nothing at all and search's lazy backfill is the only producer.
+        # (todo_embed's registry tests cover the cheap plumbing itself.)
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-a", tid, summary="alpha beta gamma")
-        self.assertIn((tid, "Summary.raw", "hash"), self._emb_rows())
+        self.assertEqual(self._emb_rows(), [])
+        proc = self.todo("search", "alpha", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn((tid, "Summary.raw", BOW), self._emb_rows())
+
+    def test_long_summary_is_embedded_and_searchable(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="beta",
+            extra={"LongSummary": {"raw": "quokka marsupial nocturnal"}},
+        )
+        proc = self.todo("search", "quokka marsupial", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+
+    def test_editing_body_leaves_long_summary_vectors_alone(self) -> None:
+        # The no-coupling AC: Body and LongSummary are independent, so a Body
+        # edit must not invalidate the summary vector.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.assertIn((tid, "LongSummary.raw", BOW), self._emb_rows())
+        self.assertIn((tid, "Body.raw", BOW), self._emb_rows())
+        self.todo("set", tid, "--body=completely different body")
+        rows = self._emb_rows()
+        self.assertIn((tid, "LongSummary.raw", BOW), rows)  # survives
+        self.assertNotIn((tid, "Body.raw", BOW), rows)  # its own is cleared
+
+    def test_editing_long_summary_clears_only_its_own_vectors(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-ls", tid, summary="alpha", body="original body",
+            extra={"LongSummary": {"raw": "quokka marsupial"}},
+        )
+        self.todo("search", "quokka", "--embedder", "apple")  # backfill
+        self.todo("set", tid, "--long-summary=wombat burrow")
+        rows = self._emb_rows()
+        self.assertNotIn((tid, "LongSummary.raw", BOW), rows)
+        self.assertIn((tid, "Body.raw", BOW), rows)
+        self.assertIn((tid, "Summary.raw", BOW), rows)
 
     def test_raw_change_clears_stale_expensive_vector(self) -> None:
         tid = self.mint()
@@ -910,11 +1162,12 @@ class SearchTests(TodoCase):
         )
         conn.commit()
         conn.close()
-        proc = self.todo("set", "--summary", "completely different text", "--no-commit")
+        proc = self.todo("set", self.tid, "--summary", "completely different text", "--no-commit")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         embedders = {emb for _t, _f, emb in self._emb_rows()}
         self.assertNotIn(stale, embedders)  # cleared on raw change
-        self.assertIn("hash", embedders)  # cheap repopulated
+        # Nothing is cheap, so nothing repopulates here; the next search does.
+        self.assertEqual(embedders, set())
 
     def test_no_clear_keeps_stale_vector(self) -> None:
         tid = self.mint()
@@ -928,7 +1181,7 @@ class SearchTests(TodoCase):
         conn.commit()
         conn.close()
         proc = self.todo(
-            "set", "--summary", "completely different text", "--no-commit", "--no-clear"
+            "set", self.tid, "--summary", "completely different text", "--no-commit", "--no-clear"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(stale, {emb for _t, _f, emb in self._emb_rows()})  # kept
@@ -1014,10 +1267,10 @@ class SearchTests(TodoCase):
     def test_embedders_lists_non_hidden_only(self) -> None:
         proc = self.todo("embedders")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("hash", proc.stdout)
         self.assertIn("apple", proc.stdout)
-        for hidden in ("mock", "null", "st"):
-            self.assertNotIn(hidden, proc.stdout)
+        # hash was retired outright, so it is not listed and not selectable either.
+        for absent in ("hash", "mock", "null", "st"):
+            self.assertNotIn(absent, proc.stdout)
 
 
 class ParentPromptTests(TodoCase):
@@ -1025,12 +1278,10 @@ class ParentPromptTests(TodoCase):
         return self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
     def _init(self, summary: str, body: str = "") -> str:
-        proc = self.todo("init", f"--summary={summary}", f"--body={body}")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return json.loads(proc.stdout)["Id"]
+        return self.init_ok(f"--summary={summary}", f"--body={body}")["Id"]
 
-    def _set_parents(self, *parents: str) -> None:
-        args = ["set"]
+    def _set_parents(self, selector: str, *parents: str) -> None:
+        args = ["set", selector]
         for parent in parents:
             args += ["--parent", parent]
         proc = self.todo(*args)
@@ -1047,7 +1298,7 @@ class ParentPromptTests(TodoCase):
         parent_id = self._init("parent", body="why we are here")
         self._git("checkout", base)
         child_id = self._init("child", body="do the thing")
-        self._set_parents(parent_id[:8])
+        self._set_parents(child_id[:8], parent_id[:8])
         # Child records the parent ref...
         child = self._read(child_id[:8])
         self.assertEqual([p["Id"] for p in child["Parent"]], [parent_id])
@@ -1067,14 +1318,14 @@ class ParentPromptTests(TodoCase):
         b_id = self._init("beta", body="b")
         self._git("checkout", base)
         child_id = self._init("child", body="c")
-        self._set_parents(a_id[:8])
+        self._set_parents(child_id[:8], a_id[:8])
         self.assertEqual(
             [p["Id"] for p in self._read(child_id[:8])["Parent"]], [a_id]
         )
         self.assertEqual(self._read(a_id[:8])["Subtodos"][0]["State"], "INFO")
 
         # Make-it-so to B alone: A loses INFO, B gains it.
-        self._set_parents(b_id[:8])
+        self._set_parents(child_id[:8], b_id[:8])
         child = self._read(child_id[:8])
         self.assertEqual([p["Id"] for p in child["Parent"]], [b_id])
         self.assertEqual(self._read(a_id[:8]).get("Subtodos", []), [])
@@ -1089,8 +1340,8 @@ class ParentPromptTests(TodoCase):
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
         child_id = self._init("child", body="task")
-        self._set_parents(parent_id[:8])
-        clear = self.todo("set", "--parent=")
+        self._set_parents(child_id[:8], parent_id[:8])
+        clear = self.todo("set", child_id[:8], "--parent=")
         self.assertEqual(clear.returncode, 0, clear.stderr)
         self.assertEqual(self._read(child_id[:8]).get("Parent", []), [])
         self.assertEqual(self._read(parent_id[:8]).get("Subtodos", []), [])
@@ -1101,11 +1352,10 @@ class ParentPromptTests(TodoCase):
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
-        self._init("child", body="task")
-        self._set_parents(parent_id[:8])
-        self._git("checkout", f"{parent_id[:8]}-parent")
-        self.assertEqual(self.todo("set", "--state", "done").returncode, 0)
-        doc = self.todo("doctor", "self")
+        child_id = self._init("child", body="task")
+        self._set_parents(child_id[:8], parent_id[:8])
+        self.assertEqual(self.todo("set", parent_id[:8], "--state", "done").returncode, 0)
+        doc = self.todo("doctor", parent_id[:8])
         self.assertEqual(doc.returncode, 0, doc.stdout)
         self.assertTrue(json.loads(doc.stdout)["ok"])
 
@@ -1124,7 +1374,7 @@ class ParentPromptTests(TodoCase):
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
         child_id = self._init("child", body="task")
-        self._set_parents(parent_id[:8])
+        self._set_parents(child_id[:8], parent_id[:8])
         self._strip_subtodos(parent_id)
 
         # --dry-run reports the intended repair but does not write it
@@ -1143,16 +1393,16 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
         self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
 
-    def test_doctor_all_sweeps_corpus_and_repairs(self) -> None:
+    def test_doctor_ALL_sweeps_corpus_and_repairs(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent", body="ctx")
         self._git("checkout", base)
-        self._init("child", body="task")
-        self._set_parents(parent_id[:8])
+        child_id = self._init("child", body="task")
+        self._set_parents(child_id[:8], parent_id[:8])
         self._strip_subtodos(parent_id)
 
-        proc = self.todo("doctor", "--all")
+        proc = self.todo("doctor", "ALL")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
         self.assertGreaterEqual(payload["audited"], 2)
@@ -1169,7 +1419,7 @@ class ParentPromptTests(TodoCase):
         b_id = self._init("beta", body="b")
         self._git("checkout", base)
         child_id = self._init("child", body="c")
-        self._set_parents(a_id[:8], b_id[:8])
+        self._set_parents(child_id[:8], a_id[:8], b_id[:8])
         child = self._read(child_id[:8])
         self.assertEqual({p["Id"] for p in child["Parent"]}, {a_id, b_id})
         self.assertEqual(self._read(a_id[:8])["Subtodos"][0]["State"], "INFO")
@@ -1181,35 +1431,37 @@ class ParentPromptTests(TodoCase):
         gp_id = self._init("grandparent", body="GP-WHY")
         self._git("checkout", base)
         parent_id = self._init("parent", body="PARENT-WHY")
-        self._set_parents(gp_id[:8])
+        self._set_parents(parent_id[:8], gp_id[:8])
         self._git("checkout", base)
         child_id = self._init("child", body="CHILD-TASK")
-        self._set_parents(parent_id[:8])
+        self._set_parents(child_id[:8], parent_id[:8])
         proc = self.todo("prompt", child_id[:8])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertLess(out.index("GP-WHY"), out.index("PARENT-WHY"))
         self.assertLess(out.index("PARENT-WHY"), out.index("CHILD-TASK"))
 
-    def test_prompt_defaults_to_self(self) -> None:
+    def test_prompt_requires_selector(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        self._init("solo", body="SELF-BODY")  # leaves us on the new todo branch
+        self._init("solo", body="SELF-BODY")
         proc = self.todo("prompt")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("SELF-BODY", proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        proc2 = self.todo("prompt", self.tid)
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertIn("SELF-BODY", proc2.stdout)
 
     def test_prompt_notes_unresolvable_parent(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        self._init("orphan", body="ORPHAN")  # on the orphan todo branch (self)
+        self._init("orphan", body="ORPHAN")
         # Hand-graft a dangling parent ref; prompt should note it, not crash.
         ref = self.repo / "parent.json"
         ref.write_text(json.dumps([{"Id": "deadbeefdeadbeef", "Branch": "gone"}]))
         proc = self.todo(
-            "set-json-path", "self", "Parent", "--file", str(ref), "--no-commit"
+            "set-json-path", self.tid, "Parent", "--file", str(ref), "--no-commit"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         ref.unlink()
-        proc = self.todo("prompt", "self")
+        proc = self.todo("prompt", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("not found", proc.stdout)
         self.assertIn("ORPHAN", proc.stdout)
@@ -1217,7 +1469,7 @@ class ParentPromptTests(TodoCase):
     def test_add_subtodo_parent_is_list_and_prompt_walks_up(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         parent_id = self._init("parent feature", body="parent why")
-        add = self.todo("add-subtodo", "--summary=child one", "--body=child body")
+        add = self.todo("add-subtodo", parent_id[:8], "--summary=child one", "--body=child body")
         self.assertEqual(add.returncode, 0, add.stderr)
         child_id = json.loads(add.stdout)["Id"]
         child = self._read(child_id[:8])
@@ -1234,15 +1486,12 @@ class ParentPromptTests(TodoCase):
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
         parent_id = self._init("parent feature", body="parent why")
-        add = self.todo("add-subtodo", "--summary=child one", "--body=child body")
+        add = self.todo("add-subtodo", parent_id[:8], "--summary=child one", "--body=child body")
         self.assertEqual(add.returncode, 0, add.stderr)
-        add_out = json.loads(add.stdout)
-        child_id = add_out["Id"]
-        child_branch = add_out["Branch"]
+        child_id = json.loads(add.stdout)["Id"]
         self._git("checkout", base)
         other_id = self._init("other ctx", body="ctx")
-        self._git("checkout", child_branch)
-        self._set_parents(other_id[:8])
+        self._set_parents(child_id[:8], other_id[:8])
         parent = self._read(parent_id[:8])
         self.assertEqual(len(parent["Subtodos"]), 1)
         self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
@@ -1281,15 +1530,14 @@ class WebViewerTests(TodoCase):
     def test_web_dump_html_renders_done_todo_with_message_and_diff(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
-        init = self.todo("init", "--summary=Viewer parent")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        self.todo("work-item-add", "--summary=add evidence")
+        self.init_ok("--summary=Viewer parent")
+        self.todo("work-item-add", self.tid, "--summary=add evidence")
         (self.repo / "app.txt").write_text("before\n", encoding="utf-8")
-        done = self.todo("work-item-done", "-m", "add app evidence")
+        done = self.todo("work-item-done", self.tid, "-m", "add app evidence")
         self.assertEqual(done.returncode, 0, done.stderr)
-        sha = self.read_self()["WorkItems"][0]["sha"]
+        sha = self.read_cur()["WorkItems"][0]["sha"]
 
-        proc = self.todo("web", "--dump-html", "self")
+        proc = self.todo("web", "--dump-html", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertIn("Viewer parent", out)  # summary section
@@ -1302,10 +1550,9 @@ class WebViewerTests(TodoCase):
 
     def test_web_dump_html_renders_open_todo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Open viewer")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        self.todo("work-item-add", "--summary=do the thing")
-        proc = self.todo("web", "--dump-html", "self")
+        self.init_ok("--summary=Open viewer")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        proc = self.todo("web", "--dump-html", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertIn("Open viewer", out)
@@ -1316,10 +1563,8 @@ class WebViewerTests(TodoCase):
 
     def test_web_dump_html_links_subtodo_to_referencing_work_item(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Parent viewer")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        parent_id = json.loads(init.stdout)["Id"]
-        add = self.todo("add-subtodo", "--summary=child viewer")
+        parent_id = self.init_ok("--summary=Parent viewer")["Id"]
+        add = self.todo("add-subtodo", parent_id[:8], "--summary=child viewer")
         self.assertEqual(add.returncode, 0, add.stderr)
         parent = json.loads(self.todo("read", parent_id[:8]).stdout)
         child_id = parent["Subtodos"][0]["Id"]
@@ -1329,9 +1574,17 @@ class WebViewerTests(TodoCase):
         out = proc.stdout
         self.assertIn("Parent viewer", out)
         self.assertIn("child viewer", out)  # subtodo box + embedded read-only repr
-        # The subtodo box carries the full id; the start_subtodo work item references it.
-        self.assertIn(f'data-st="{child_id}"', out)
-        self.assertIn(f'data-subtodo="{child_id}"', out)
+        # Boxes are keyed by objid, and the start_subtodo work item's reference to
+        # the subtodo is resolved to objids server-side (no child todo id in the
+        # client model at all).
+        st_objid = parent["Subtodos"][0]["objid"]
+        wi_objid = parent["WorkItems"][0]["objid"]
+        self.assertIn(f'data-obj="{st_objid}"', out)
+        self.assertIn(f'data-obj="{wi_objid}"', out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual([st_objid], data["objects"][wi_objid]["hi"])
+        self.assertEqual([wi_objid], data["objects"][st_objid]["hi"])
+        self.assertNotIn(child_id, json.dumps(data["objects"][wi_objid]))
 
     def test_web_dump_html_no_selector_shows_search_page(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -1350,10 +1603,8 @@ class WebViewerTests(TodoCase):
 
     def test_web_dump_html_shows_parent_link(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        init = self.todo("init", "--summary=Parent feature")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        parent_id = json.loads(init.stdout)["Id"]
-        add = self.todo("add-subtodo", "--summary=child one")
+        parent_id = self.init_ok("--summary=Parent feature")["Id"]
+        add = self.todo("add-subtodo", parent_id[:8], "--summary=child one")
         self.assertEqual(add.returncode, 0, add.stderr)
         child_id = json.loads(self.todo("read", parent_id[:8]).stdout)["Subtodos"][0]["Id"]
 
@@ -1361,7 +1612,7 @@ class WebViewerTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
         self.assertIn("<h2>Parent</h2>", out)
-        self.assertIn(f'href="/?id={parent_id}"', out)  # parent link navigates to the parent todo
+        self.assertIn(f'href="/{parent_id}"', out)  # parent link navigates to the parent todo
 
     def test_web_worktree_todo_collapses_to_repo(self) -> None:
         # A shared origin gives main checkout and worktree the same repo identity,
@@ -1489,30 +1740,34 @@ class SetJsonPathTests(TodoCase):
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-sjp", tid)
         plan = [{"kind": "task", "summary": "a", "done": False}]
-        proc = self._stdin(["set-json-path", "self", "WorkItems"], json.dumps(plan))
+        proc = self._stdin(["set-json-path", self.tid, "WorkItems"], json.dumps(plan))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["WorkItems"], plan)
+        # The write stamps an objid onto the seeded item (see todo_objid);
+        # everything else must round-trip untouched.
+        stored = self.read_cur()["WorkItems"]
+        self.assertRegex(stored[0].pop("objid"), r"\A[0-9a-f]{4,}\Z")
+        self.assertEqual(stored, plan)
 
     def test_set_json_path_from_file(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-sjp", tid)
         value_file = self._db_dir / "val.json"  # outside the repo -> tree stays clean
         value_file.write_text('"patched body"', encoding="utf-8")
-        proc = self.todo("set-json-path", "self", "Body.raw", "--file", str(value_file))
+        proc = self.todo("set-json-path", self.tid, "Body.raw", "--file", str(value_file))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.read_self()["Body"]["raw"], "patched body")
+        self.assertEqual(self.read_cur()["Body"]["raw"], "patched body")
 
     def test_set_json_path_invalid_json_exits_1(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-sjp", tid)
-        proc = self._stdin(["set-json-path", "self", "Body.raw"], "not json {")
+        proc = self._stdin(["set-json-path", self.tid, "Body.raw"], "not json {")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("not valid JSON", proc.stderr)
 
     def test_set_no_longer_accepts_work_items_file(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-sjp", tid)
-        proc = self.todo("set", "--work-items-file", "plan.json")
+        proc = self.todo("set", self.tid, "--work-items-file", "plan.json")
         self.assertNotEqual(proc.returncode, 0)
 
 
@@ -1532,7 +1787,7 @@ class WorkItemModelUnitTests(unittest.TestCase):
         done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
         nxt = todo.next_action(done_todo)
         self.assertEqual(nxt["action"], "finish")
-        self.assertIn("set --state done", nxt["command"])
+        self.assertIn("set <id> --state done", nxt["command"])
         self.assertIn("actual-summary", nxt["command"])
 
     def test_next_action_defaults_plain_task_to_work_item_done(self) -> None:
@@ -1582,6 +1837,73 @@ class WorkItemModelUnitTests(unittest.TestCase):
             ]
         }
         self.assertEqual(todo.workitem_findings(well_formed), [])
+
+    def test_workitem_findings_checkpoint_invariants(self) -> None:
+        missing_at = {"WorkItems": [{"kind": "checkpoint", "done": True, "message": "m"},
+                                    {"kind": "code", "done": True, "sha": "a"}]}
+        self.assertTrue(any("missing at_sha" in f for f in todo.workitem_findings(missing_at)))
+        claims_sha = {"WorkItems": [{"kind": "checkpoint", "done": True, "at_sha": "a", "sha": "a"},
+                                    {"kind": "code", "done": True, "sha": "a"}]}
+        self.assertTrue(any("claims" in f for f in todo.workitem_findings(claims_sha)))
+        last_checkpoint = {"WorkItems": [{"kind": "checkpoint", "done": True, "at_sha": "a"}]}
+        self.assertTrue(
+            any("checkpoint" in f and "#6" in f for f in todo.workitem_findings(last_checkpoint))
+        )
+        well_formed = {
+            "WorkItems": [
+                {"kind": "checkpoint", "done": True, "at_sha": "a", "message": "recon"},
+                {"kind": "code", "done": True, "sha": "b"},
+            ]
+        }
+        self.assertEqual(todo.workitem_findings(well_formed), [])
+
+    def test_null_sha_sentinel_signals_no_change(self) -> None:
+        null = todo.WORKITEM_NULL_SHA
+        # mid-list: a legacy no-change node with the sentinel is well-formed
+        mid = {
+            "WorkItems": [
+                {"kind": "code", "done": True, "sha": null, "message": "recon; no change"},
+                {"kind": "code", "done": True, "sha": "b"},
+            ]
+        }
+        self.assertEqual(todo.workitem_findings(mid), [])
+        # last item of a done todo: the sentinel is not a branch commit (#6)
+        last = {"WorkItems": [{"kind": "code", "done": True, "sha": null}]}
+        self.assertTrue(any("sentinel" in f and "#6" in f for f in todo.workitem_findings(last)))
+        # last-sha never reports the sentinel as a branch commit
+        self.assertIsNone(todo.last_sha(last))
+
+
+class NullShaSentinelCliTests(TodoCase):
+    """Doctor treats the no-change sentinel as valid and never tries to resolve it."""
+
+    def test_doctor_does_not_warn_unresolvable_for_sentinel(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=sentinel probe")
+        self.todo("work-item-add", self.tid, "--summary=recon, retrofitted as sentinel")
+        self.todo("work-item-add", self.tid, "--summary=real work")
+        items_file = self.repo / "items.json"
+        items_file.write_text(
+            json.dumps(
+                [
+                    {"kind": "code", "done": True, "sha": todo.WORKITEM_NULL_SHA,
+                     "summary": "recon", "message": "no change"},
+                    {"kind": "task", "done": False, "summary": "real work"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        proc = self.todo("set-json-path", self.tid, "WorkItems", "--file", str(items_file))
+        items_file.unlink()  # keep the tree clean for any later git ops
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        doc = self.todo("doctor", self.tid)
+        self.assertEqual(doc.returncode, 0, doc.stderr)
+        payload = json.loads(doc.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(
+            [w for w in payload.get("warnings", []) if "00000000" in w],
+            payload.get("warnings"),
+        )
 
 
 class BacklinkUnitTests(unittest.TestCase):
@@ -1664,23 +1986,22 @@ class WorkItemInvariantTests(TodoCase):
 
     def _init(self, summary: str = "Effort") -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        proc = self.todo("init", f"--summary={summary}")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.init_ok(f"--summary={summary}")
 
     def _head(self) -> str:
         return self._git("rev-parse", "HEAD").stdout.strip()
 
     def test_init_captures_base_sha(self) -> None:
         self._init()
-        self.assertRegex(self.read_self()["BaseSha"], r"\A[0-9a-f]{40}\Z")
+        self.assertRegex(self.read_cur()["BaseSha"], r"\A[0-9a-f]{40}\Z")
 
     def test_code_workitem_dirty_commits_with_message(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=code it")
+        self.todo("work-item-add", self.tid, "--summary=code it")
         (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
-        proc = self.todo("work-item-done", "-m", "feat: f")
+        proc = self.todo("work-item-done", self.tid, "-m", "feat: f")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        item = self.read_self()["WorkItems"][0]
+        item = self.read_cur()["WorkItems"][0]
         self.assertEqual(item["kind"], "code")
         self.assertTrue(item["done"])
         self.assertEqual(item["sha"], self._head())
@@ -1688,11 +2009,11 @@ class WorkItemInvariantTests(TodoCase):
 
     def test_code_workitem_dirty_no_message_commits_with_summary(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=code it")
+        self.todo("work-item-add", self.tid, "--summary=code it")
         (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
-        proc = self.todo("work-item-done")  # dirty, no -m: auto-commit
+        proc = self.todo("work-item-done", self.tid)  # dirty, no -m: auto-commit
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        item = self.read_self()["WorkItems"][0]
+        item = self.read_cur()["WorkItems"][0]
         self.assertTrue(item["done"])
         self.assertEqual(item["sha"], self._head())
         # post-condition: branch is fully committed
@@ -1701,62 +2022,162 @@ class WorkItemInvariantTests(TodoCase):
 
     def test_code_workitem_clean_sha_mismatch_exits_1(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=code it")
-        proc = self.todo("work-item-done", "--sha", "0" * 40)
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        proc = self.todo("work-item-done", self.tid, "--sha", "0" * 40)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("does not match HEAD", proc.stderr)
-        ok = self.todo("work-item-done", "--sha", self._head())
+        ok = self.todo("work-item-done", self.tid, "--sha", self._head())
         self.assertEqual(ok.returncode, 0, ok.stderr)
-        self.assertEqual(self.read_self()["WorkItems"][0]["sha"], self._head())
+        self.assertEqual(self.read_cur()["WorkItems"][0]["sha"], self._head())
+
+    def test_checkpoint_workitem_records_at_sha_not_sha(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon: findings in Body")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(item["kind"], "checkpoint")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["at_sha"], self._head())
+        self.assertNotIn("sha", item)  # observational position, never attribution
+        self.assertEqual(item["message"], "recon: findings in Body")
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)  # cursor advanced
+
+    def test_checkpoint_without_message_marks_explicit_noop(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=wait for CI")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        # never inherits the HEAD commit's own message
+        self.assertEqual(item["message"], "(no-op checkpoint; no commit produced)")
+
+    def test_checkpoint_refuses_dirty_tree(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("dirty", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
+
+    def test_checkpoint_refuses_sha_flag(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=recon only")
+        proc = self.todo("work-item-done", self.tid, "--checkpoint", "--sha", self._head())
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--checkpoint does not take --sha", proc.stderr)
+
+    def test_clean_tree_message_without_checkpoint_is_an_error(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        proc = self.todo("work-item-done", self.tid, "-m", "would be silently dropped")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--checkpoint", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+
+    def test_blocked_workitem_records_null_sha_and_the_long_form(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=replay the 22-event burst")
+        long_form = (
+            "NOT achievable with the committed corpus.\n\n"
+            "MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded.\n"
+            "STORM-30: no interchange fixture exists at all.\n\n"
+            "Options: (a) descope, (b) wait for a healthy tenant, (c) move to layer 3."
+        )
+        proc = self.todo("work-item-done", self.tid, "--blocked", "-m", long_form)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(item["kind"], "code")
+        self.assertTrue(item["done"])
+        self.assertEqual(item["sha"], "0" * 40)  # no commit, and none is coming
+        self.assertEqual(item["message"], long_form)  # the narrative lives in the trail
+        self.assertEqual(item["summary"], "replay the 22-event burst")  # cursor summary carries over
+        # cursor advanced, but the sentinel is not reported as a branch commit
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)
+        self.assertEqual(self.todo("last-sha", self.tid).stdout.strip(), "")
+
+    def test_blocked_requires_a_message(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        proc = self.todo("work-item-done", self.tid, "--blocked")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("--blocked requires -m", proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
+
+    def test_blocked_refuses_dirty_tree_and_sha_and_checkpoint(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        sha = self.todo("work-item-done", self.tid, "--blocked", "-m", "why", "--sha", self._head())
+        self.assertEqual(sha.returncode, 1)
+        self.assertIn("--blocked does not take --sha", sha.stderr)
+        both = self.todo("work-item-done", self.tid, "--blocked", "--checkpoint", "-m", "why")
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("different completions", both.stderr)
+        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
+        dirty = self.todo("work-item-done", self.tid, "--blocked", "-m", "why")
+        self.assertEqual(dirty.returncode, 1)
+        self.assertIn("dirty", dirty.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+
+    def test_blocked_as_last_item_is_a_doctor_finding(self) -> None:
+        # A blocked item makes the todo is-done with no real final commit; #6
+        # is what refuses to call that finished.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        self.todo("work-item-done", self.tid, "--blocked", "-m", "why it cannot be done")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no-change sentinel", proc.stdout)
 
     def test_cursor_insert_replace_delete_read(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=A")
-        self.todo("work-item-insert", "--summary=B")  # B lands at the cursor, pushes A down
-        self.assertEqual([w["summary"] for w in self.read_self()["WorkItems"]], ["B", "A"])
-        read = json.loads(self.todo("work-item-read").stdout)
+        self.todo("work-item-add", self.tid, "--summary=A")
+        self.todo("work-item-insert", self.tid, "--summary=B")  # B lands at the cursor, pushes A down
+        self.assertEqual([w["summary"] for w in self.read_cur()["WorkItems"]], ["B", "A"])
+        read = json.loads(self.todo("work-item-read", self.tid).stdout)
         self.assertEqual(read["index"], 0)
         self.assertEqual(read["item"]["summary"], "B")
         self.assertEqual(read["next"]["action"], "work-item-done")  # open plain task
-        self.todo("work-item-replace", "--summary=B2")
-        self.assertEqual(self.read_self()["WorkItems"][0]["summary"], "B2")
-        self.todo("work-item-delete")
-        self.assertEqual([w["summary"] for w in self.read_self()["WorkItems"]], ["A"])
+        self.todo("work-item-replace", self.tid, "--summary=B2")
+        self.assertEqual(self.read_cur()["WorkItems"][0]["summary"], "B2")
+        self.todo("work-item-delete", self.tid)
+        self.assertEqual([w["summary"] for w in self.read_cur()["WorkItems"]], ["A"])
 
     def test_is_done_and_last_sha_subcommands(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=code it")
-        self.assertEqual(self.todo("is-done").returncode, 1)  # open item
-        self.assertEqual(self.todo("work-item-done").returncode, 0)  # clean tree -> HEAD
-        self.assertEqual(self.todo("is-done").returncode, 0)
-        self.assertEqual(self.todo("last-sha").stdout.strip(), self._head())
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 1)  # open item
+        self.assertEqual(self.todo("work-item-done", self.tid).returncode, 0)  # clean tree -> HEAD
+        self.assertEqual(self.todo("is-done", self.tid).returncode, 0)
+        self.assertEqual(self.todo("last-sha", self.tid).stdout.strip(), self._head())
 
     def test_add_subtodo_records_start_subtodo_item(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=fire A")
-        proc = self.todo("add-subtodo", "--summary=child A")
+        self.todo("work-item-add", self.tid, "--summary=fire A")
+        proc = self.todo("add-subtodo", self.tid, "--summary=child A")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        item = self.read_self()["WorkItems"][0]
+        item = self.read_cur()["WorkItems"][0]
         self.assertEqual(item["kind"], "start_subtodo")
         self.assertTrue(item.get("subtodo_id"))
 
     def test_doctor_flags_start_subtodo_as_last_item(self) -> None:
         self._init()
-        self.todo("add-subtodo", "--summary=child A")  # only item: a done start_subtodo
-        payload = json.loads(self.todo("doctor").stdout)
+        self.todo("add-subtodo", self.tid, "--summary=child A")  # only item: a done start_subtodo
+        payload = json.loads(self.todo("doctor", self.tid).stdout)
         self.assertFalse(payload["ok"])
         self.assertTrue(any("start_subtodo" in f for f in payload["findings"]))
 
     def test_doctor_warns_softly_for_unresolvable_base_sha(self) -> None:
         self._init()
-        self.todo("work-item-add", "--summary=x")
+        self.todo("work-item-add", self.tid, "--summary=x")
         # inject a string sha that is absent from this repo
         subprocess.run(
-            [sys.executable, str(TODO_PY), "set-json-path", "self", "BaseSha"],
+            [sys.executable, str(TODO_PY), "set-json-path", self.tid, "BaseSha"],
             cwd=str(self.repo), input='"%s"' % ("deadbeef" * 5), capture_output=True,
             text=True, check=False, env=self._env,
         )
-        payload = json.loads(self.todo("doctor").stdout)
+        payload = json.loads(self.todo("doctor", self.tid).stdout)
         self.assertTrue(payload["ok"])  # soft: does not fail doctor
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
@@ -1770,8 +2191,8 @@ class BaseDirRepoDirTests(TodoCase):
 
     def test_repodir_prints_ticket_repo(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        self.todo("init", "--summary=a todo")
-        proc = self.todo("repodir", "self")
+        self.init_ok("--summary=a todo")
+        proc = self.todo("repodir", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(Path(proc.stdout.strip()).resolve(), self.repo.resolve())
 
@@ -1780,6 +2201,1037 @@ class BaseDirRepoDirTests(TodoCase):
         proc = self.todo("repodir", "deadbeef")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("no todo found", proc.stderr)
+
+
+def _tag_raws(todo_dict: Dict[str, Any]) -> list:
+    """``[e['raw'] for e in todo_dict.get('Tag', [])]`` -- plural-Tag test helper."""
+    return [e["raw"] for e in todo_dict.get("Tag", [])]
+
+
+class TagTests(TodoCase):
+    """set --tag/--untag and search --tag against the plural Tag field.
+
+    Adjusted for ee1799aa (WI6): `set --tag`/`--untag` now alias
+    `apply_tag_add`/`apply_tag_remove` and write the plural `Tag` field
+    (MANUAL elements) instead of the legacy flat `Tags` list of strings, and
+    `search --tag` filters on any Tag element's `raw` instead of `Tags`. These
+    cases were rewritten from their original legacy-`Tags` assertions to match
+    the new shape, keeping the same intent: set a tag, it persists, search
+    finds it.
+    """
+
+    def test_set_tag_adds_deduped(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid)
+        proc = self.todo("set", self.tid, "--tag", "ui", "--tag", "billing", "--tag", "ui")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(_tag_raws(self.read_cur())), ["billing", "ui"])
+
+    def test_set_tag_alone_is_a_valid_edit(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid)
+        proc = self.todo("set", self.tid, "--tag", "solo")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_tag_raws(self.read_cur()), ["solo"])
+
+    def test_set_untag_removes_and_drops_empty_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-tags", tid, extra={"Tag": [{"raw": "ui", "manual": True}]}
+        )
+        proc = self.todo("set", self.tid, "--untag", "ui")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Tag", self.read_cur())  # emptied -> field dropped
+
+    def test_search_tag_filters_to_tagged(self) -> None:
+        tagged = self.mint()
+        self.write_ticket(
+            f"{tagged[:8]}-a",
+            tagged,
+            summary="alpha beta gamma",
+            extra={"Tag": [{"raw": "ui", "manual": True}]},
+        )
+        untagged = self.mint()
+        self.write_ticket(f"{untagged[:8]}-b", untagged, summary="alpha beta gamma")
+        proc = self.todo(
+            "search", "alpha beta gamma", "--embedder", "apple", "--tag", "ui"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tagged[:8], proc.stdout)
+        self.assertNotIn(untagged[:8], proc.stdout)
+
+    def test_persisted_tags_end_to_end(self) -> None:
+        """set --tag/--untag persist across re-read; search --tag filters; doctor accepts Tag."""
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-tags", tid, summary="taggable ticket")
+
+        # --tag is repeatable; Tag elements are deduped (insertion order, not sorted).
+        proc = self.todo("set", self.tid, "--tag", "ui", "--tag", "billing")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(_tag_raws(self.read_cur())), ["billing", "ui"])
+
+        # A second set merges (a dup is idempotent, a new tag is added).
+        proc = self.todo("set", self.tid, "--tag", "ui", "--tag", "api")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(_tag_raws(self.read_cur())), ["api", "billing", "ui"])
+
+        # --untag removes (manual only, but these are all manual).
+        proc = self.todo("set", self.tid, "--untag", "billing")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(_tag_raws(self.read_cur())), ["api", "ui"])
+
+        # search --tag keeps only todos with a matching Tag element.
+        other = self.mint()
+        self.write_ticket(f"{other[:8]}-untagged", other, summary="taggable ticket")
+        proc = self.todo(
+            "search", "taggable ticket", "--embedder", "apple", "--tag", "ui"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], proc.stdout)
+        self.assertNotIn(other[:8], proc.stdout)
+
+        # doctor accepts a well-formed plural Tag field.
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
+
+def _gh_proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
+    """A stand-in gh CompletedProcess."""
+    return subprocess.CompletedProcess(["gh"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+OPEN_PR: Dict[str, Any] = {"number": 12345, "state": "OPEN", "mergeCommit": None, "baseRefName": "dev"}
+MERGED_PR: Dict[str, Any] = {
+    "number": 12345, "state": "MERGED", "mergeCommit": {"oid": "abc1234"}, "baseRefName": "dev",
+}
+CLOSED_PR: Dict[str, Any] = {"number": 12345, "state": "CLOSED", "mergeCommit": None, "baseRefName": "dev"}
+
+
+def _gh_returning(pr: Optional[Dict[str, Any]]) -> Any:
+    """side_effect for run_gh: `pr list` yields an array, `pr view` an object."""
+    def _run(*args: str, **_kwargs: Any) -> Any:
+        payload = ([pr] if pr else []) if "list" in args else pr
+        return _gh_proc(stdout=json.dumps(payload))
+    return _run
+
+
+class StateMetadataUnitTests(unittest.TestCase):
+    """set_state keeps exactly the metadata each state declares, and rejects the rest."""
+
+    def test_each_state_keeps_its_declared_metadata(self) -> None:
+        cases = [
+            ("working", {"owner": "agent"}, {"owner": "agent"}),
+            ("userneeded", {"note": "blocked"}, {"note": "blocked"}),
+            ("stopped", {"note": "halted"}, {"note": "halted"}),
+            ("done", {"last_commit": "msg"}, {"last_commit": "msg"}),
+            ("merged", {"merged_into": "parent", "last_commit": "m"},
+             {"merged_into": "parent", "last_commit": "m"}),
+            ("merged", {"pr": 7, "merge_commit": "abc"}, {"pr": 7, "merge_commit": "abc"}),
+            ("rejected", {"pr": 7, "note": "closed"}, {"pr": 7, "note": "closed"}),
+        ]
+        for state, kwargs, expected in cases:
+            item: Dict[str, Any] = {}
+            todo.set_state(item, state, **kwargs)
+            self.assertEqual(item["State"], {state: expected}, f"{state} {kwargs}")
+
+    def test_inapplicable_metadata_is_an_error_not_a_silent_drop(self) -> None:
+        for state, kwargs, flag in [
+            ("done", {"pr": 5}, "--pr"),
+            ("working", {"note": "x"}, "--note"),
+            ("merged", {"owner": "agent"}, "--owner"),
+            ("rejected", {"merged_into": "b"}, "--merged-into"),
+            ("ready", {"last_commit": "m"}, "--last-commit"),
+        ]:
+            with self.assertRaises(todo.TodoError) as caught:
+                todo.set_state({}, state, **kwargs)
+            message = str(caught.exception)
+            self.assertIn(flag, message)
+            self.assertIn(state, message)
+
+    def test_stateless_states_take_no_metadata(self) -> None:
+        for state in ("groom", "ready", "fact"):
+            item: Dict[str, Any] = {}
+            todo.set_state(item, state)
+            self.assertEqual(item["State"], {state: {}})
+
+    def test_metadata_map_does_not_drift_from_valid_states(self) -> None:
+        """Guard: a new state must be added to _STATE_METADATA deliberately."""
+        self.assertTrue(set(todo._STATE_METADATA) <= set(todo.VALID_STATES))
+        declared = {flag for flags in todo._STATE_METADATA.values() for flag in flags}
+        self.assertEqual(
+            declared,
+            {"owner", "note", "last_commit", "merged_into", "pr", "merge_commit"},
+            "set_state's metadata parameters and _STATE_METADATA have drifted apart",
+        )
+
+    def test_every_final_state_is_a_terminal_parent_state(self) -> None:
+        """An unmerged subtodo must escalate under ANY terminal parent, incl. rejected."""
+        self.assertEqual(
+            set(todo.TERMINAL_PARENT_STATES), set(todo.STATE_MACROS["FINAL"])
+        )
+
+
+class GhSlugUnitTests(unittest.TestCase):
+    """todo.gh_repo_slug: owner/repo out of the remote URL forms we actually see."""
+
+    def _todo(self, url: str) -> Dict[str, Any]:
+        return {"Scope": {"git_url": url}}
+
+    def test_ssh_scp_form(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("git@github.com:easternlabs/opportunity.git"), Path("/"))
+        self.assertEqual(slug, "easternlabs/opportunity")
+
+    def test_https_form(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("https://github.com/acme/widget.git"), Path("/"))
+        self.assertEqual(slug, "acme/widget")
+
+    def test_ssh_url_form_without_dot_git(self) -> None:
+        slug = todo.gh_repo_slug(self._todo("ssh://git@github.com/acme/widget"), Path("/"))
+        self.assertEqual(slug, "acme/widget")
+
+    def test_non_github_remote_is_none(self) -> None:
+        """gh only speaks GitHub, so a gitlab remote must skip rather than shell out."""
+        self.assertIsNone(todo.gh_repo_slug(self._todo("git@gitlab.com:acme/widget.git"), Path("/")))
+
+
+class GhGateUnitTests(unittest.TestCase):
+    """gh is attempted once per run: an environmental failure disables it with a remedy."""
+
+    def setUp(self) -> None:
+        todo.gh_reset_gate()
+
+    def tearDown(self) -> None:
+        todo.gh_reset_gate()
+
+    def test_classify_environmental_failures_carry_remediation(self) -> None:
+        cases = [
+            (_gh_proc(127, stderr="No such file or directory: 'gh'"), "not installed", "brew install gh"),
+            (_gh_proc(1, stderr="gh auth login required"), "not authenticated", "gh auth login"),
+            (_gh_proc(1, stderr="API rate limit exceeded"), "rate limit", "gh auth status"),
+            (_gh_proc(1, stderr="dial tcp: lookup api.github.com"), "cannot reach GitHub", "network"),
+        ]
+        for proc, reason_part, remedy_part in cases:
+            reason, remediation, environmental = todo._gh_classify(proc)
+            self.assertIn(reason_part, reason)
+            self.assertIn(remedy_part, remediation)
+            self.assertTrue(environmental, reason)
+
+    def test_repo_not_found_is_not_environmental(self) -> None:
+        """One inaccessible repo says nothing about gh, so it must not gate the run."""
+        _reason, _remedy, environmental = todo._gh_classify(
+            _gh_proc(1, stderr="Could not resolve to a Repository with the name 'x'")
+        )
+        self.assertFalse(environmental)
+
+    def test_first_failure_disables_and_second_call_does_not_reinvoke_gh(self) -> None:
+        with unittest.mock.patch.object(
+            todo, "run_gh", return_value=_gh_proc(127, stderr="No such file")
+        ) as run:
+            first, skip1 = todo._gh_json("pr", "list")
+            self.assertIsNone(first)
+            self.assertIn("brew install gh", skip1 or "")
+            second, skip2 = todo._gh_json("pr", "list")
+            self.assertIsNone(second)
+            self.assertIn("gh disabled this run", skip2 or "")
+        self.assertEqual(run.call_count, 1, "gh must be attempted only once per run")
+        self.assertIn("not installed", todo.gh_gate_reason() or "")
+
+
+class ReconcilePrStateUnitTests(unittest.TestCase):
+    """reconcile_pr_state: a PR's fate refines a root todo's terminal disposition."""
+
+    def setUp(self) -> None:
+        todo.gh_reset_gate()
+
+    def tearDown(self) -> None:
+        todo.gh_reset_gate()
+
+    def _todo(self, state: Dict[str, Any], **extra: Any) -> Dict[str, Any]:
+        base = {
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-thing",
+            "Scope": {"git_url": "git@github.com:acme/widget.git"},
+            "Summary": {"raw": "x"},
+            "State": state,
+        }
+        base.update(extra)
+        return base
+
+    def _reconcile(self, item: Dict[str, Any], pr: Optional[Dict[str, Any]], *, dry_run: bool = True) -> Any:
+        """Reconcile against a stubbed gh, with the store write stubbed out.
+
+        Patching write_todo_worktree keeps these hermetic: the todo dict is still
+        mutated in memory (which is what the assertions check), but no real store
+        is ever touched. self.write records whether a write was attempted.
+        """
+        with unittest.mock.patch.object(todo, "run_gh", side_effect=_gh_returning(pr)):
+            with unittest.mock.patch.object(todo, "write_todo_worktree") as write:
+                self.write = write
+                return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
+
+    def test_done_with_open_pr_becomes_merged_with_pr(self) -> None:
+        item = self._todo({"done": {}})
+        out = self._reconcile(item, OPEN_PR)
+        self.assertTrue(out["checked"])
+        self.assertTrue(out["changed"])
+        self.assertEqual((out["from"], out["to"], out["pr"]), ("done", "merged", 12345))
+
+    def test_merged_pr_records_merge_commit_and_base(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        out = self._reconcile(item, MERGED_PR, dry_run=False)
+        self.assertEqual(out["to"], "merged")
+        self.assertEqual(
+            item["State"], {"merged": {"merged_into": "dev", "merge_commit": "abc1234", "pr": 12345}}
+        )
+
+    def test_closed_unmerged_pr_becomes_rejected(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        out = self._reconcile(item, CLOSED_PR, dry_run=False)
+        self.assertEqual(out["to"], "rejected")
+        self.assertEqual(item["State"]["rejected"]["pr"], 12345)
+        self.assertIn("closed without merging", item["State"]["rejected"]["note"])
+
+    def test_reopened_pr_returns_a_rejected_todo_to_merged(self) -> None:
+        """Reconciliation runs both directions, so a reopened PR is not stuck rejected."""
+        item = self._todo({"rejected": {"pr": 12345}})
+        out = self._reconcile(item, OPEN_PR, dry_run=False)
+        self.assertEqual(out["to"], "merged")
+        self.assertEqual(item["State"], {"merged": {"pr": 12345}})
+
+    def test_subtodo_merged_is_never_touched(self) -> None:
+        """A subtodo's `merged` means parent-absorbed; a PR must not overwrite it."""
+        item = self._todo(
+            {"merged": {"merged_into": "parent-branch"}},
+            Parent=[{"Id": "b" * 64, "Branch": "bbbbbbbb-parent"}],
+        )
+        out = self._reconcile(item, MERGED_PR)
+        self.assertFalse(out["checked"])
+        self.assertIn("subtodo", out["skipped"])
+        self.assertEqual(item["State"], {"merged": {"merged_into": "parent-branch"}})
+
+    def test_non_terminal_state_is_not_checked(self) -> None:
+        out = self._reconcile(self._todo({"working": {}}), OPEN_PR)
+        self.assertFalse(out["checked"])
+        self.assertFalse(out["changed"])
+
+    def test_done_with_no_pr_is_left_alone(self) -> None:
+        """Not every done todo went to a PR (cherry-pick handoff), so absence is fine."""
+        item = self._todo({"done": {}})
+        out = self._reconcile(item, None)
+        self.assertTrue(out["checked"])
+        self.assertFalse(out["changed"])
+        self.assertEqual(item["State"], {"done": {}})
+
+    def test_recorded_pr_that_gh_cannot_find_warns(self) -> None:
+        out = self._reconcile(self._todo({"merged": {"pr": 12345}}), None)
+        self.assertIn("cannot find", out["warning"])
+        self.assertIn("12345", out["warning"])
+
+    def test_branch_handoff_without_a_pr_does_not_warn(self) -> None:
+        """`merged {merged_into}` on a ROOT todo is a direct-merge/cherry-pick handoff.
+
+        It names no PR, so gh finding none is the expected case, not a warning.
+        Regression: an earlier cut warned "State records a pr" for every merged
+        todo with no PR, which was false for exactly this (common) shape.
+        """
+        item = self._todo({"merged": {"merged_into": "feature-branch"}})
+        out = self._reconcile(item, None)
+        self.assertTrue(out["checked"])
+        self.assertIsNone(out.get("warning"))
+        self.assertEqual(item["State"], {"merged": {"merged_into": "feature-branch"}})
+
+    def test_dry_run_reports_the_change_without_writing(self) -> None:
+        item = self._todo({"done": {}})
+        out = self._reconcile(item, OPEN_PR, dry_run=True)
+        self.assertTrue(out["changed"])
+        self.assertEqual(item["State"], {"done": {}}, "dry-run must not mutate State")
+        self.write.assert_not_called()
+
+    def test_real_run_persists_the_new_disposition(self) -> None:
+        self._reconcile(self._todo({"done": {}}), OPEN_PR, dry_run=False)
+        self.write.assert_called_once()
+
+    def test_idempotent_second_pass_reports_no_change(self) -> None:
+        item = self._todo({"merged": {"pr": 12345}})
+        self._reconcile(item, MERGED_PR, dry_run=False)
+        again = self._reconcile(item, MERGED_PR, dry_run=False)
+        self.assertFalse(again["changed"])
+
+
+class PrStateCliTests(TodoCase):
+    """`set --state merged --pr N` / `--state rejected`, and FINAL hiding rejected."""
+
+    def test_merged_with_pr_number(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo("set", self.tid, "--state", "merged", "--pr", "12345")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(json.loads(got.stdout), {"merged": {"pr": 12345}})
+
+    def test_rejected_keeps_pr_and_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo(
+            "set", self.tid, "--state", "rejected", "--pr", "999", "--note=closed unmerged"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = self.todo("get-json-path", self.tid, "State")
+        self.assertEqual(json.loads(got.stdout), {"rejected": {"note": "closed unmerged", "pr": 999}})
+
+    def test_inapplicable_metadata_fails_the_command(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        proc = self.todo("set", self.tid, "--state", "done", "--pr", "5")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("--pr", proc.stdout + proc.stderr)
+        self.assertIn("--last-commit", proc.stdout + proc.stderr)
+
+    def test_rejected_is_final_and_hidden_by_default(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-leaf", tid)
+        self.todo("set", self.tid, "--summary=find me rejected")
+        self.todo("set", self.tid, "--state", "rejected", "--pr", "7")
+        hidden = self.todo("ls")
+        self.assertNotIn(tid[:8], hidden.stdout)
+        shown = self.todo("ls", "-s")
+        self.assertIn(tid[:8], shown.stdout)
+        explicit = self.todo("ls", "--states=rejected")
+        self.assertIn(tid[:8], explicit.stdout)
+
+
+class ParseStateFilterUnitTests(unittest.TestCase):
+    """todo.parse_state_filter: macro expansion and include/-exclude, left-to-right."""
+
+    def test_macro_expands_to_states(self) -> None:
+        self.assertEqual(
+            todo.parse_state_filter("FINAL"), frozenset({"done", "merged", "rejected"})
+        )
+
+    def test_default_expr_hides_final(self) -> None:
+        result = todo.parse_state_filter(todo.DEFAULT_STATE_FILTER)
+        self.assertNotIn("done", result)
+        self.assertNotIn("merged", result)
+        self.assertNotIn("rejected", result)
+        self.assertIn("ready", result)
+        self.assertIn("working", result)
+
+    def test_exclude_single_state_left_to_right(self) -> None:
+        self.assertEqual(todo.parse_state_filter("ALL,-done"), todo.VALID_STATES - {"done"})
+
+    def test_union_of_macros(self) -> None:
+        self.assertEqual(
+            todo.parse_state_filter("WORKING+PAUSING"),
+            frozenset({"working", "waiting", "userneeded", "stopped"}),
+        )
+
+    def test_lowercase_state_name_matches(self) -> None:
+        self.assertEqual(todo.parse_state_filter("fact"), frozenset({"fact"}))
+
+    def test_unknown_term_raises(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            todo.parse_state_filter("BOGUS")
+
+
+class StateFilterTests(TodoCase):
+    """Default FINAL hiding plus the -s / --states model on ls."""
+
+    def _seed(self, state: str, name: str) -> str:
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-{name}", tid, summary=name, extra={"State": {state: {}}}
+        )
+        return tid
+
+    def _set_default_filter(self, expr: str) -> None:
+        cfg_path = self._db_dir / "config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["default_state_filter"] = expr
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def test_ls_hides_final_by_default(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        merged = self._seed("merged", "charlie")
+        out = self.todo("ls").stdout
+        self.assertIn(ready[:8], out)
+        self.assertNotIn(done[:8], out)
+        self.assertNotIn(merged[:8], out)
+
+    def test_ls_dash_s_reveals_all_with_state_column(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        proc = self.todo("ls", "-s")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(done[:8], proc.stdout)
+        self.assertIn(ready[:8], proc.stdout)
+        # State column is rendered (summaries are alpha/bravo, so these are columns).
+        self.assertIn("done", proc.stdout)
+        self.assertIn("ready", proc.stdout)
+
+    def test_ls_states_final_only(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        out = self.todo("ls", "--states=FINAL").stdout
+        self.assertIn(done[:8], out)
+        self.assertNotIn(ready[:8], out)
+
+    def test_ls_states_exclude_expression(self) -> None:
+        ready = self._seed("ready", "alpha")
+        done = self._seed("done", "bravo")
+        merged = self._seed("merged", "charlie")
+        out = self.todo("ls", "--states=ALL,-done").stdout
+        self.assertIn(ready[:8], out)
+        self.assertIn(merged[:8], out)
+        self.assertNotIn(done[:8], out)
+
+    def test_ls_unknown_state_term_errors(self) -> None:
+        self._seed("ready", "alpha")
+        proc = self.todo("ls", "--states=BOGUS")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("BOGUS", proc.stderr)
+
+    def test_ls_default_filter_overridden_by_config(self) -> None:
+        working = self._seed("working", "alpha")
+        ready = self._seed("ready", "bravo")
+        self._set_default_filter("WORKING")
+        out = self.todo("ls").stdout
+        self.assertIn(working[:8], out)
+        self.assertNotIn(ready[:8], out)
+        # -s still reveals everything regardless of the config default.
+        self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
+
+
+class ObjidWiringTests(TodoCase):
+    """Every persisted record carries objids, stamped at the write choke point."""
+
+    @staticmethod
+    def _objids(node: Any) -> list:
+        """Every objid in *node*, depth-first in walk order."""
+        found: list = []
+        if isinstance(node, dict):
+            if isinstance(node.get("objid"), str):
+                found.append(node["objid"])
+            for value in node.values():
+                found.extend(ObjidWiringTests._objids(value))
+        elif isinstance(node, list):
+            for value in node:
+                found.extend(ObjidWiringTests._objids(value))
+        return found
+
+    def test_mint_stamps_objids(self) -> None:
+        self.tid = self.todo("mint").stdout.strip()
+        todo_json = self.read_cur()
+        self.assertRegex(todo_json["Summary"]["objid"], r"\A[0-9a-f]{4,}\Z")
+        self.assertIsInstance(todo_json["_nextobjid"], int)
+
+    def test_init_stamps_objids(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        for field in ("Summary", "Scope"):
+            with self.subTest(field=field):
+                self.assertRegex(todo_json[field]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_state_and_root_carry_no_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        todo_json = self.read_cur()
+        self.assertNotIn("objid", todo_json)
+        self.assertNotIn("objid", todo_json["State"])
+        self.assertNotIn("objid", next(iter(todo_json["State"].values())))
+
+    def test_objids_are_unique_within_a_todo(self) -> None:
+        self.init_ok("--summary=hello", "--body=world", "--ac=criteria")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        self.todo("work-item-add", self.tid, "--summary=two")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        ids = self._objids(self.read_cur())
+        self.assertGreater(len(ids), 4)
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_objids_survive_an_unrelated_edit(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        before = self.read_cur()
+        self.todo("set", self.tid, "--ac=fresh criteria")
+        after = self.read_cur()
+        self.assertEqual(before["Summary"]["objid"], after["Summary"]["objid"])
+        self.assertEqual(
+            before["WorkItems"][0]["objid"], after["WorkItems"][0]["objid"]
+        )
+
+    def test_new_work_item_gets_a_fresh_objid(self) -> None:
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        first = self.read_cur()["WorkItems"][0]["objid"]
+        self.todo("work-item-add", self.tid, "--summary=two")
+        items = self.read_cur()["WorkItems"]
+        self.assertEqual(first, items[0]["objid"])
+        self.assertNotEqual(first, items[1]["objid"])
+
+    def test_nextobjid_stays_ahead_of_every_id(self) -> None:
+        self.init_ok("--summary=hello", "--body=world")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        todo_json = self.read_cur()
+        highest = max(int(objid, 16) for objid in self._objids(todo_json))
+        self.assertGreater(todo_json["_nextobjid"], highest)
+
+    def test_subtodo_is_a_separate_id_scope(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn a child")
+        proc = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_id = json.loads(proc.stdout)["Id"]
+        child = json.loads(self.todo("read", child_id).stdout)
+        # The child counts from scratch rather than continuing the parent's
+        # sequence: its own ids start at 0000 and its cursor is back near zero.
+        self.assertEqual("0000", min(self._objids(child)))
+        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
+        parent = json.loads(self.todo("read", parent_id).stdout)
+        self.assertEqual("0000", min(self._objids(parent)))
+
+    def test_doctor_accepts_nextobjid(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("doctor", self.tid)
+        self.assertNotIn("_nextobjid", proc.stdout)
+        self.assertNotIn("unknown top-level fields", proc.stdout)
+
+
+class LongSummaryTests(TodoCase):
+    """LongSummary: a derived, reader-first summary of Body -- and NOT coupled to it."""
+
+    def test_absent_by_default(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body")
+        self.assertNotIn("LongSummary", self.read_cur())
+
+    def test_set_and_get_round_trip(self) -> None:
+        self.init_ok("--summary=hello")
+        text = "What this todo is about, in a paragraph a human can skim."
+        proc = self.todo("set", self.tid, f"--long-summary={text}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual({"raw": text}, {"raw": self.read_cur()["LongSummary"]["raw"]})
+        self.assertEqual(text, self.todo("get", self.tid, "--long-summary").stdout.strip())
+
+    def test_settable_alone_on_a_groom_todo(self) -> None:
+        # The motivating case: a HICAP agent rewriting a MIDCAP agent's
+        # LongSummary without touching anything else.
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("set", self.tid, "--long-summary=only this")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("only this", self.read_cur()["LongSummary"]["raw"])
+
+    def test_init_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=seeded at init")
+        self.assertEqual("seeded at init", self.read_cur()["LongSummary"]["raw"])
+
+    def test_doctor_accepts_it(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=fine")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_no_field_at_all_still_errors(self) -> None:
+        self.init_ok("--summary=hello")
+        proc = self.todo("set", self.tid)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--long-summary", proc.stderr)
+
+    def test_get_requires_exactly_one_flag(self) -> None:
+        self.init_ok("--summary=hello", "--long-summary=x")
+        proc = self.todo("get", self.tid, "--long-summary", "--summary")
+        self.assertNotEqual(proc.returncode, 0)
+
+
+class LongSummaryDoctorAndViewTests(TodoCase):
+    """doctor checks LongSummary's SHAPE only; the viewer renders it as text."""
+
+    def test_doctor_does_not_care_that_it_disagrees_with_body(self) -> None:
+        # The point of the test: the ABSENCE of a staleness check. Body and
+        # LongSummary are independent by design, so a mismatch is not a defect.
+        self.init_ok("--summary=hello", "--body=a body about databases")
+        self.todo("set", self.tid, "--long-summary=this text is about something else entirely")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual([], json.loads(proc.stdout)["findings"])
+
+    def test_doctor_is_silent_about_a_body_with_no_long_summary(self) -> None:
+        self.init_ok("--summary=hello", "--body=a long body with no summary written yet")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("LongSummary", proc.stdout)
+
+    def test_doctor_rejects_a_malformed_long_summary(self) -> None:
+        self.init_ok("--summary=hello")
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            record["LongSummary"] = "a bare string, not {raw: ...}"
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?", (json.dumps(record), self.tid)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("LongSummary.raw must be a string", proc.stdout)
+
+    def test_viewer_renders_it_as_text_not_a_json_blob(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.todo("set", self.tid, "--long-summary=A readable paragraph for a human.")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn("Long summary", out)
+        self.assertIn("A readable paragraph for a human.", out)
+        # Not dumped through the generic Fields path, which would show the dict
+        # (and, once vectors exist, the vectors).
+        self.assertNotIn('meta-key">LongSummary', out)
+
+    def test_viewer_omits_the_section_when_absent(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=hello")
+        self.assertNotIn("Long summary", self.todo("web", "--dump-html", self.tid).stdout)
+
+
+class ResolveUrlTests(TodoCase):
+    """resolveurl dereferences a permalink to the value it addresses."""
+
+    def _seed(self) -> Dict[str, Any]:
+        """A todo with two work items and a tag; returns the stored record."""
+        self.init_ok("--summary=routing", "--body=a body")
+        self.todo("work-item-add", self.tid, "--summary=first")
+        self.todo("work-item-add", self.tid, "--summary=second")
+        self.todo("tag-add", self.tid, "alpha")
+        return self.read_cur()
+
+    def _resolve(self, url: str) -> subprocess.CompletedProcess[str]:
+        return self.todo("resolveurl", url)
+
+    def test_field_path(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/summary/raw")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("routing", proc.stdout.strip())
+
+    def test_bare_index_is_zero_based(self) -> None:
+        self._seed()
+        self.assertEqual(
+            "first", self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout.strip()
+        )
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        )
+
+    def test_matches_get_json_path(self) -> None:
+        self._seed()
+        expected = self.todo("get-json-path", self.tid, "WorkItems.1.summary").stdout
+        self.assertEqual(expected, self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout)
+
+    def test_full_url_with_host_and_port(self) -> None:
+        self._seed()
+        url = f"http://localhost:8765/{self.tid[:8]}/workitem/1/summary"
+        self.assertEqual("second", self._resolve(url).stdout.strip())
+
+    def test_objid_addresses_an_object_with_no_collection(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        out = self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout
+        self.assertEqual(record["WorkItems"][1], json.loads(out))
+
+    def test_objid_survives_an_insert_that_moves_the_index(self) -> None:
+        record = self._seed()
+        objid = record["WorkItems"][1]["objid"]
+        # The insert lands at the cursor (index 0), shifting everything down:
+        # "second" moves from index 1 to 2. The objid link still finds it; the
+        # index link silently means a different work item now.
+        self.todo("work-item-insert", self.tid, "--summary=squeezed in")
+        by_objid = json.loads(self._resolve(f"/{self.tid[:8]}/objid/{objid}").stdout)
+        self.assertEqual("second", by_objid["summary"])
+        by_index = self._resolve(f"/{self.tid[:8]}/workitem/1/summary").stdout.strip()
+        self.assertEqual("first", by_index)
+        self.assertEqual(
+            "second", self._resolve(f"/{self.tid[:8]}/workitem/2/summary").stdout.strip()
+        )
+
+    def test_drop_the_s_alias_and_plural_agree(self) -> None:
+        self._seed()
+        singular = self._resolve(f"/{self.tid[:8]}/workitem/0/summary").stdout
+        plural = self._resolve(f"/{self.tid[:8]}/workitems/0/summary").stdout
+        self.assertEqual(singular, plural)
+
+    def test_tag_resolves_to_the_tag_field(self) -> None:
+        self._seed()
+        self.assertEqual("alpha", self._resolve(f"/{self.tid[:8]}/tag/0/raw").stdout.strip())
+
+    def test_out_of_bounds_index_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/workitem/883368/summary")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("out of bounds", proc.stderr)
+
+    def test_unknown_field_errors(self) -> None:
+        self._seed()
+        proc = self._resolve(f"/{self.tid[:8]}/nope")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown field", proc.stderr)
+
+    def test_unknown_todo_errors(self) -> None:
+        self._seed()
+        proc = self._resolve("/ffffffff/summary/raw")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual("", proc.stdout)
+
+    def test_todoid_only_prints_the_record(self) -> None:
+        record = self._seed()
+        self.assertEqual(record, json.loads(self._resolve(f"/{self.tid[:8]}").stdout))
+
+
+class PermalinkAnchorTests(TodoCase):
+    """The rendered page carries the obj-<objid> anchors permalinks land on."""
+
+    def test_work_item_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        objid = self.read_cur()["WorkItems"][0]["objid"]
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_subtodo_box_has_an_objid_anchor(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        add = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(add.returncode, 0, add.stderr)
+        record = json.loads(self.todo("read", parent_id).stdout)
+        objid = record["Subtodos"][0]["objid"]
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        self.assertIn(f'id="obj-{objid}"', out)
+
+    def test_client_model_is_objid_only(self) -> None:
+        # AC: no client code reads a list index or a child todo id. The old key
+        # spaces (data-idx, data-st, data-parent, DATA.workitems-by-position)
+        # must be gone, not merely unused.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        self.todo("work-item-add", self.tid, "--summary=spawn")
+        self.todo("add-subtodo", self.tid, "--summary=child")
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for stale in ('data-idx', 'data-st=', 'data-parent=',
+                      'DATA.workitems', 'DATA.subtodos', 'DATA.parents'):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, out)
+        data = json.loads(re.search(r"const DATA = (\{.*?\});", out, re.S).group(1))
+        self.assertEqual({"id", "objects"}, set(data))
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{4,}", k) for k in data["objects"]))
+
+    def test_non_box_sections_are_addressable(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=anchored", "--body=a body")
+        self.todo("tag-add", self.tid, "alpha", "bravo")
+        record = self.read_cur()
+        out = self.todo("web", "--dump-html", self.tid).stdout
+        for field in ("Summary", "Body", "Scope"):
+            with self.subTest(field=field):
+                self.assertIn(f'id="obj-{record[field]["objid"]}"', out)
+        # Tag renders every element in one row, and a DOM id can only name one,
+        # so the row lists them all in data-objs (matched with CSS ~=).
+        tag_objids = [element["objid"] for element in record["Tag"]]
+        self.assertIn(f'data-objs="{" ".join(tag_objids)}"', out)
+
+    def test_static_renditions_carry_no_anchor(self) -> None:
+        # A child's objids come from its own id scope and would collide with
+        # this page's, so only interactive boxes are anchored.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn")
+        self.todo("add-subtodo", parent_id, "--summary=child")
+        out = self.todo("web", "--dump-html", parent_id).stdout
+        anchors = re.findall(r'id="obj-([0-9a-f]{4,})"', out)
+        self.assertEqual(len(anchors), len(set(anchors)), anchors)
+
+
+class ObjidDoctorTests(TodoCase):
+    """doctor hard-fails a record whose objids were broken outside todo.py."""
+
+    def _corrupt(self, mutate) -> None:
+        """Rewrite self.tid's stored JSON through *mutate*, bypassing todo.py.
+
+        Only a writer that goes around the CLI can produce these shapes -- the
+        write choke point re-stamps anything malformed -- so the corruption has
+        to be applied straight to sqlite.
+        """
+        conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
+        try:
+            row = conn.execute(
+                "SELECT data FROM tickets WHERE id = ?", (self.tid,)
+            ).fetchone()
+            record = json.loads(row[0])
+            mutate(record)
+            conn.execute(
+                "UPDATE tickets SET data = ? WHERE id = ?",
+                (json.dumps(record), self.tid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _findings_after(self, mutate) -> list:
+        """Corrupt the record, run doctor, and return its hard findings.
+
+        doctor repairs before it audits: its opportunistic schema sweep would
+        re-stamp the corruption away on a store that has never been swept. So
+        sweep first (one doctor run, which also stamps _schema onto the
+        record), and only then corrupt -- that is the state a real store is in.
+        """
+        self.init_ok("--summary=hello")
+        self.todo("work-item-add", self.tid, "--summary=one")
+        swept = self.todo("doctor", self.tid)
+        self.assertEqual(swept.returncode, 0, swept.stdout)
+        self._corrupt(mutate)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        return json.loads(proc.stdout)["findings"]
+
+    def test_missing_objid_is_a_finding(self) -> None:
+        findings = self._findings_after(
+            lambda rec: rec["WorkItems"][0].pop("objid")
+        )
+        self.assertTrue(
+            any("WorkItems.0 has no objid" in f for f in findings), findings
+        )
+
+    def test_duplicate_objid_is_a_finding(self) -> None:
+        def mutate(rec: Dict[str, Any]) -> None:
+            rec["WorkItems"][0]["objid"] = rec["Summary"]["objid"]
+
+        findings = self._findings_after(mutate)
+        self.assertTrue(any("duplicates" in f for f in findings), findings)
+
+    def test_stale_nextobjid_is_a_finding(self) -> None:
+        findings = self._findings_after(lambda rec: rec.update({"_nextobjid": 0}))
+        self.assertTrue(
+            any("_nextobjid 0 is not past" in f for f in findings), findings
+        )
+
+
+class ObjidFindingUnitTests(unittest.TestCase):
+    """objid_findings reports exactly the broken-permalink shapes."""
+
+    @staticmethod
+    def _record(**extra: Any) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-x",
+            "State": {"groom": {}},
+        }
+        record.update(extra)
+        return record
+
+    def test_clean_record_has_no_findings(self) -> None:
+        record = self._record(Summary={"raw": "s"}, WorkItems=[{"summary": "one"}])
+        todo_objid.stamp_objids(record)
+        self.assertEqual([], todo.objid_findings(record))
+
+    def test_record_without_objects_has_no_findings(self) -> None:
+        self.assertEqual([], todo.objid_findings(self._record()))
+
+    def test_missing_objid(self) -> None:
+        record = self._record(Summary={"raw": "s"}, _nextobjid=1)
+        self.assertEqual(["Summary has no objid"], todo.objid_findings(record))
+
+    def test_malformed_objid(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "00FF"}, _nextobjid=1)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("is not 4+ lowercase hex", findings[0])
+
+    def test_duplicate_objid_names_the_first_holder(self) -> None:
+        record = self._record(
+            Summary={"raw": "s", "objid": "0001"},
+            WorkItems=[{"summary": "one", "objid": "0001"}],
+            _nextobjid=2,
+        )
+        self.assertEqual(
+            ["WorkItems.0.objid 0001 duplicates Summary"],
+            todo.objid_findings(record),
+        )
+
+    def test_nextobjid_must_be_past_the_highest_id(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0005"}, _nextobjid=5)
+        findings = todo.objid_findings(record)
+        self.assertEqual(1, len(findings))
+        self.assertIn("_nextobjid 5 is not past the highest objid 0005", findings[0])
+
+    def test_nextobjid_must_be_an_integer(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid="1")
+        self.assertEqual(
+            ["_nextobjid must be an integer"], todo.objid_findings(record)
+        )
+
+    def test_state_is_never_reported(self) -> None:
+        record = self._record(Summary={"raw": "s", "objid": "0000"}, _nextobjid=1)
+        self.assertEqual([], todo.objid_findings(record))
+
+
+class CommandTaxonomyTests(unittest.TestCase):
+    """The command tree is the registry, so the tree has to stay well formed."""
+
+    def _all_leaves(self, node: type = todo.TodoSubCommand) -> list:
+        """Every command class in the file, found WITHOUT going through the groups."""
+        found = []
+        for sub in node.__subclasses__():
+            if sub.command_names:
+                found.append(sub)
+            found.extend(self._all_leaves(sub))
+        return found
+
+    def test_no_command_is_orphaned_from_the_groups(self) -> None:
+        # The one real hazard of deriving registration from the tree: a command
+        # that subclasses TodoSubCommand directly is silently never registered.
+        self.assertEqual(
+            sorted(c.__name__ for c in self._all_leaves()),
+            sorted(c.__name__ for c in todo.COMMAND_CLASSES),
+        )
+
+    def test_every_command_is_registered_exactly_once(self) -> None:
+        names = [n for c in todo.COMMAND_CLASSES for n in c.command_names]
+        self.assertEqual(len(names), len(set(names)), "duplicate command name")
+
+    def test_every_group_is_titled_and_populated(self) -> None:
+        for group in todo.COMMAND_GROUPS:
+            self.assertTrue(group.group_title, f"{group.__name__} has no title")
+            self.assertTrue(list(todo._command_leaves(group)), f"{group.__name__} is empty")
+
+    def test_groups_are_not_runnable(self) -> None:
+        # Abstract by omission: a group implements neither configure_parser nor do.
+        for group in todo.COMMAND_GROUPS:
+            self.assertFalse(group.command_names, f"{group.__name__} declares a command")
+            with self.assertRaises(TypeError):
+                group(argparse.Namespace())  # type: ignore[abstract]
+
+    def test_help_lists_every_command_under_a_group_heading(self) -> None:
+        listing = todo.grouped_command_listing()
+        for group in todo.COMMAND_GROUPS:
+            self.assertIn(f"{group.group_title}:", listing)
+        for command_cls in todo.COMMAND_CLASSES:
+            for name in command_cls.command_names:
+                self.assertIn(f"  {name} ", listing + " ")
+
+    def test_argparse_does_not_also_print_a_flat_list(self) -> None:
+        # add_parser(help=...) would restore the 37-entry blob the grouping
+        # replaced -- and argparse.SUPPRESS does not suppress it, it prints
+        # the sentinel verbatim.
+        text = todo.build_parser().format_help()
+        self.assertNotIn("==SUPPRESS==", text)
+        self.assertEqual(1, text.count("  doctor "), "doctor listed more than once")
 
 
 if __name__ == "__main__":

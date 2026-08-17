@@ -23,4 +23,6 @@ TSL human overview, grammar, and file map: [`README.md`](README.md).
 2. Implementer reads TSL and emits target code.
 3. Grader checks target behavior against TSL vectors and goldens.
 
-Related instruction markdown: [`AGENT_IMPLEMENT_TOIT.md`](AGENT_IMPLEMENT_TOIT.md), [`AGENT_GRADE.md`](AGENT_GRADE.md).
+Related instruction markdown: [`AGENT_IMPLEMENT_MP.md`](AGENT_IMPLEMENT_MP.md),
+[`AGENT_IMPLEMENT_TOIT.md`](AGENT_IMPLEMENT_TOIT.md) (retired Toit path),
+[`AGENT_GRADE.md`](AGENT_GRADE.md).

@@ -130,7 +130,7 @@ The CASE skill: read and write CASE files in `cases/` (symptoms, evidence and an
 
 [skills/projectmanagement/todos](skills/projectmanagement/todos/SKILL.md)
 
-Branch-bound task tickets via the `todo` CLI (on PATH through binlinks): one ticket per git branch, stored in `~/.todo/sqlite.db` by default. Full workflow and schema in [`SKILL.md`](skills/projectmanagement/todos/SKILL.md).
+Branch-bound task tickets via the `todo` CLI (on PATH through binlinks): one ticket per git branch, stored in `~/.todo/sqlite.db` by default. Entry skill [`SKILL.md`](skills/projectmanagement/todos/SKILL.md); details in sibling [`GROOMING.md`](skills/projectmanagement/todos/GROOMING.md), [`WORKING.md`](skills/projectmanagement/todos/WORKING.md), and [`IMPLEMENTATION.md`](skills/projectmanagement/todos/IMPLEMENTATION.md).
 
 ## spinme
 

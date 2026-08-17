@@ -19,58 +19,37 @@ Do not skip a check. If a check fails, stop and fix it before continuing.
 
 --------------------------------------------------------------------------------
 
-## Status and remaining steps (2026-07-10)
+## Status and remaining steps (2026-08-07)
 
-**Done**
+**Runtime decision: MicroPython (Toit/Jaguar retired).**
 
-- M0: Jaguar flashed on CH343 UART; device `esp32s3-office` at `192.168.88.73:9000`
-- M1: `thermo-esp32s3` container (heartbeat only)
-- M2: BYOB custom envelope with Monocypher Ed25519 C service
-  (`envelope/` -> `out/firmware.envelope`, flashed); `jag run src/auth_kat.toit` PASS
-- I2C remapped to GPIO8/GPIO9 (N16R8 octal PSRAM)
+Host-testable debug path lives under `mp/` (`/healthz` `/logs` `/gpio`).
+IR dialect sources stay in `mp/` but are omitted from device upload for now.
+See `AGENTS.md` for mpremote REPL interactive development.
 
-**Remaining (in order)**
+**Previously done on Toit (historical; do not extend):**
 
-1. **M3** -- `config.toit`, `protocol.toit`, NTP sync, signed long-poll POST to DMZ;
-   verify `manage zones office` shows `backend: esp32s3`
-2. **M4** -- `ir.toit`: RMT 38 kHz on GPIO17, Midea/Coolix frames, apply fresh commands
-3. **M5** -- `sensor.toit`: AHT20 on GPIO8/9, fallback 1.0 C / 1.0 %
-4. **M6** -- `led.toit` (optional): WS2812 status patterns
-5. **M7** -- `health.toit` (optional): local `/healthz` and `/logs` on port 5000
-6. **M8** -- `install/deploy.sh`, git-ignored `src/secrets.toit`, container autostart
-   survives power cycle without laptop
+- M0-M2 Jaguar flash + Ed25519 custom envelope (superseded by MP crypto options)
+- Local `:5000` debug endpoints + `/dmz/ping` sketch in `.toit` (removed)
+
+**Remaining (MicroPython)**
+
+1. Flash ESP32_GENERIC_S3 SPIRAM firmware; WiFi + NTP in `main.py`
+2. Ed25519 auth (pure25519 or natmod) + `/dmz/ping`
+3. AHT20 sensor; then IR RMT (upload `ir_midea.py` when ready)
+4. Optional `/healthz` parity stretch + autostart polish
 
 TSL source of truth: `thermo/onboard/spec/`. Implementer guide:
-`thermo/onboard/spec/AGENT_IMPLEMENT_TOIT.md`.
+`thermo/onboard/spec/AGENT_IMPLEMENT_MP.md`.
 
 --------------------------------------------------------------------------------
 
-## 0. Decision: Toit (primary) vs MicroPython (fallback)
+## 0. Decision: MicroPython (Toit retired)
 
-Chosen primary runtime: **Toit / Jaguar.**
+Chosen runtime: **MicroPython** (was Toit/Jaguar; dumped 2026-08-07).
 
-Why Toit:
-- `jag flash` installs a VM once over serial; after that, code updates go over
-  WiFi with `jag run` / `jag watch` in about two seconds. No reflash per edit.
-- First-class ESP32 peripheral libraries in the standard SDK: `i2c` (AHT20),
-  `rmt` (38 kHz IR carrier), `gpio`, plus packages for `http` and `ntp`.
-- Structured language, tasks, and containers map cleanly onto the existing
-  Pico2W module layout.
-
-The one hard risk: **Ed25519 signing.** The DMZ auth requires an Ed25519
-signature on every sensor POST (see section 4). Toit has NO Ed25519 in its
-standard `crypto` library and NO published package for it as of this writing.
-MicroPython, by contrast, has drop-in options (a pure-Python module, or a
-prebuilt native `.mpy`). This is the single fact that could flip the decision.
-
-Therefore Ed25519 was milestone M2 and a hard DECISION GATE:
-- **PASSED 2026-07-09:** custom envelope C service + `auth_kat.toit` matches TSL vector.
-  Continue on Toit for M3..M8.
-- If a future board cannot run the custom envelope, STOP the Toit path and switch
-  the whole firmware to MicroPython using Appendix B.
-
-Do not try to run part on Toit and part on MicroPython. Pick one runtime for the
-whole firmware based on the M2 outcome.
+Use Appendix B as the primary bring-up path. Do not reintroduce Jaguar
+containers or `.toit` sources for the live device runtime.
 
 --------------------------------------------------------------------------------
 
@@ -748,11 +727,11 @@ jag firmware update                    # update VM over WiFi
 
 --------------------------------------------------------------------------------
 
-## Appendix B. MicroPython fallback (use only if M2 fails)
+## Appendix B. MicroPython (primary runtime)
 
-Trigger: Ed25519 could not be made to work on Toit within budget (M2), or RMT IR
-carrier proved unworkable. Then implement the ENTIRE firmware in MicroPython.
-Everything in sections 1, 3, 4 (algorithm), and 5 (timings/frames) is identical.
+Implement the ENTIRE firmware in MicroPython under `mp/`. Everything in
+sections 1, 3, 4 (algorithm), and 5 (timings/frames) is identical to the old
+Toit plan; only the language and host tooling differ.
 
 Flashing (board is N16R8 = octal SPIRAM; pick the matching build):
 ```bash

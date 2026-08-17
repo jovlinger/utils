@@ -76,6 +76,7 @@ from constants import (
     PIN_PAD_CHAR,
     SHORTHAND_DIRECT_CHARS,
     TILE_CACHE_PATH,
+    is_vox_meta_line,
     parse_alias_line,
     parse_layer_header,
     UNIT_RE,
@@ -349,12 +350,10 @@ def read_layers(path: Path) -> Dict[str, Layer]:
 
     for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw_line.rstrip("\n")
-        stripped_line = line.strip()
-        if not stripped_line or stripped_line.startswith("#"):
-            continue
-        alias = parse_alias_line(line.strip())
-        if alias is not None:
-            aliases[alias.source] = alias.target
+        if is_vox_meta_line(line):
+            alias = parse_alias_line(line.strip())
+            if alias is not None:
+                aliases[alias.source] = alias.target
             continue
         header = parse_layer_header(line)
         if header is not None:
@@ -479,7 +478,7 @@ def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxS
 
 
 def is_label_char(char: str) -> bool:
-    return "a" <= char <= "z"
+    return ("a" <= char <= "z") or ("0" <= char <= "9")
 
 
 def write_binary_stl(path: Path, triangles: Sequence[Tri], name: str = "tile") -> None:
@@ -553,12 +552,19 @@ _LETTER_TILE_CACHE: Dict[str, List[Tri]] = {}
 _LETTER_FOOTPRINT_CACHE: Dict[str, List[LetterFootprintBox]] = {}
 
 
+def label_tile_key(letter: str) -> str:
+    """Canonical on-disk / cache key: digits stay digits; letters go uppercase."""
+    if "0" <= letter <= "9":
+        return letter
+    return letter.upper()
+
+
 def letter_tile_path(letter: str) -> Path:
-    return LETTER_TILES_DIR / f"{letter.upper()}.stl"
+    return LETTER_TILES_DIR / f"{label_tile_key(letter)}.stl"
 
 
 def load_letter_tile(letter: str) -> List[Tri]:
-    key = letter.upper()
+    key = label_tile_key(letter)
     cached = _LETTER_TILE_CACHE.get(key)
     if cached is not None:
         return cached
@@ -578,7 +584,7 @@ def letter_xy_scale(config: RenderConfig) -> float:
 
 
 def letter_tile_footprint_boxes(letter: str, *, label_height_frac: float = DEFAULT_LABEL_HEIGHT_FRAC) -> List[LetterFootprintBox]:
-    key = letter.upper()
+    key = label_tile_key(letter)
     cached = _LETTER_FOOTPRINT_CACHE.get(key)
     if cached is not None:
         return cached

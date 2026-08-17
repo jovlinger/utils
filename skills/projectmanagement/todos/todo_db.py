@@ -10,13 +10,165 @@ import struct
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+
+import todo_objid
 
 JsonDict = Dict[str, Any]
 
 HOME_TODO_DIR_NAME: str = ".todo"
-SCHEMA_VERSION: int = 6
+SCHEMA_VERSION: int = 9
 _RESOLVED_TODO_DIR: Optional[Path] = None
+
+
+def migrate_record_v6(todo: JsonDict) -> JsonDict:
+    """Fold legacy field names (Chunks, Subtickets) into WorkItems, Subtodos.
+
+    Also migrates the singular ``Parent`` dict to a ``Parent`` list of
+    ``{Id, Branch}`` refs (element 0 is the structural/fork parent used for the
+    log diff base and merge; later entries are context-only references set by
+    ``set --parent``), and strips the machine-specific ``Scope.path_to_project``
+    (the repo name identifies the repo; CWD is the concrete location on this
+    machine). This is the record-shape half of the version-6 migration; the
+    table-shape half lives in ``migrate()`` below. Registered in
+    ``RECORD_MIGRATIONS[6]`` and reused by ``todo.normalize_todo_schema`` so
+    both the migration sweep and ordinary reads share one implementation.
+    """
+    if "Chunks" in todo and "WorkItems" not in todo:
+        todo["WorkItems"] = todo.pop("Chunks")
+    if "Subtickets" in todo and "Subtodos" not in todo:
+        todo["Subtodos"] = todo.pop("Subtickets")
+    parent = todo.get("Parent")
+    if isinstance(parent, dict):
+        todo["Parent"] = [parent]
+    scope = todo.get("Scope")
+    if isinstance(scope, dict):
+        scope.pop("path_to_project", None)
+    return todo
+
+
+def migrate_record_v7(todo: JsonDict) -> JsonDict:
+    """Fold the legacy flat ``Tags`` (list of strings) into plural ``Tag`` elements.
+
+    Each legacy tag becomes ``{"raw": <downcased, stripped>, "manual": True}``
+    (a hand-set tag, same provenance as one added via ``tagadd``); duplicates
+    (after downcasing) collapse to one element, first-seen order kept. Merges
+    into any ``Tag`` elements already present rather than clobbering them, so
+    a record migrated more than once (or hand-seeded with both shapes) stays
+    additive. The old ``Tags`` key is always dropped. Registered in
+    ``RECORD_MIGRATIONS[7]``.
+    """
+    tags = todo.pop("Tags", None)
+    if not isinstance(tags, list):
+        return todo
+    existing = todo.get("Tag")
+    elements: List[JsonDict] = list(existing) if isinstance(existing, list) else []
+    seen_raws = {
+        e["raw"] for e in elements if isinstance(e, dict) and isinstance(e.get("raw"), str)
+    }
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        raw = tag.strip().lower()
+        if raw and raw not in seen_raws:
+            elements.append({"raw": raw, "manual": True})
+            seen_raws.add(raw)
+    if elements:
+        todo["Tag"] = elements
+    return todo
+
+
+# State-key renames introduced in schema v8: nouns over gerunds. Case-sensitive;
+# the uppercase Subtodos back-link marker "INFO" (a relationship link inserted by
+# `set --parent`, not a todo State) is deliberately absent so it is never touched.
+_STATE_RENAMES_V8: Dict[str, str] = {
+    "pre": "groom",
+    "pre-init": "groom",
+    "init": "ready",
+    "info": "fact",
+}
+
+
+def migrate_record_v8(todo: JsonDict) -> JsonDict:
+    """Rename state keys to nouns: pre/pre-init -> groom, init -> ready, info -> fact.
+
+    Rewrites only the todo's own single-key ``State`` object. The Subtodos
+    back-link marker ``State == "INFO"`` (the follow-only link `set --parent`
+    inserts, excluded from merge-completeness) is a relationship marker, not the
+    ``info`` state, and is case-distinct from it -- left untouched.
+    """
+    state = todo.get("State")
+    if isinstance(state, dict) and len(state) == 1:
+        ((key, value),) = state.items()
+        renamed = _STATE_RENAMES_V8.get(key)
+        if renamed is not None:
+            todo["State"] = {renamed: value}
+    return todo
+
+
+def migrate_record_v9(todo: JsonDict) -> JsonDict:
+    """Stamp an objid onto every nested object, plus the ``_nextobjid`` cursor.
+
+    Backfills the permalink handles for records written before objids existed
+    (see ``todo_objid``). Ordinary writes stamp at the write choke point, so
+    this only has to catch what is already in the store; it is idempotent, so a
+    record that has been swept re-sweeps to itself and reports no change.
+    """
+    todo_objid.stamp_objids(todo)
+    return todo
+
+
+# Record transform keyed by the SCHEMA_VERSION it produces. A version whose
+# change was table-only (see `migrate()`) registers no entry here -- a no-op
+# on the record axis. Keep this in ascending-version order for readability;
+# `migrate_record` sorts explicitly so declaration order does not matter.
+RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
+    6: migrate_record_v6,
+    7: migrate_record_v7,
+    8: migrate_record_v8,
+    9: migrate_record_v9,
+}
+
+
+def migrate_record(todo: JsonDict) -> JsonDict:
+    """Bring *todo* up to SCHEMA_VERSION and stamp ``todo["_schema"]``.
+
+    Applies every ``RECORD_MIGRATIONS[v]`` with ``v > todo.get("_schema", 0)``
+    and ``v <= SCHEMA_VERSION``, ascending, then stamps
+    ``todo["_schema"] = SCHEMA_VERSION``. Idempotent: a record already at
+    SCHEMA_VERSION runs no transforms and is returned with the same stamp.
+    """
+    current = todo.get("_schema", 0)
+    if not isinstance(current, int):
+        current = 0
+    for version in sorted(v for v in RECORD_MIGRATIONS if current < v <= SCHEMA_VERSION):
+        todo = RECORD_MIGRATIONS[version](todo)
+    todo["_schema"] = SCHEMA_VERSION
+    return todo
+
+
+def get_data_version(conn: sqlite3.Connection) -> int:
+    """Return the store's record-sweep marker (0 when unset).
+
+    Distinct from the ``schema_version`` table, which tracks TABLE structure
+    and auto-applies on every connect (see ``migrate()``); this tracks how far
+    the RECORDS themselves have been swept by ``migrate_record``, and only
+    advances when something explicitly calls ``set_data_version`` (the
+    migration sweep). Cheap: one indexed-free SELECT on a one-row table.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    return int(row["version"]) if row else 0
+
+
+def set_data_version(conn: sqlite3.Connection, version: int) -> None:
+    """Persist the store's record-sweep marker."""
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO data_version(version) VALUES (?)", (version,))
+    else:
+        conn.execute("UPDATE data_version SET version = ?", (version,))
 
 
 def repo_identity_from_url(url: str) -> Optional[str]:
@@ -79,15 +231,40 @@ def _home_todo_dir() -> Path:
     return Path.home() / HOME_TODO_DIR_NAME
 
 
+def _ancestors_within_home(start: Path) -> List[Path]:
+    """*start* and its ancestors up to and including $HOME, closest-first.
+
+    The walk stays inside the $HOME subtree and never rises above it. When
+    *start* is not under $HOME (unusual), only *start* itself is returned; the
+    caller still appends $HOME/.todo as the universal fallback.
+    """
+    home = Path.home()
+    dirs: List[Path] = [start]
+    if home in start.parents:
+        current = start
+        while current != home:
+            current = current.parent
+            dirs.append(current)
+    return dirs
+
+
 def _todo_dir_candidates(git_root: Optional[Path]) -> List[Path]:
-    """Ordered todo directory candidates for one CLI invocation."""
+    """Ordered todo directory candidates for one CLI invocation.
+
+    ``$TODO_DIR`` (verbatim) first, then ``.todo`` at each level from the repo's
+    main-checkout root upward to and including $HOME, then $HOME/.todo as the
+    final fallback. The walk stops at $HOME and never goes above it, so a store
+    at any ancestor between the repo and home is found before falling through.
+    """
     candidates: List[Path] = []
     todo_dir_env = os.environ.get("TODO_DIR")
     if todo_dir_env:
         candidates.append(Path(todo_dir_env))
     if git_root is not None:
-        candidates.append(git_root / HOME_TODO_DIR_NAME)
-    candidates.append(_home_todo_dir())
+        candidates.extend(d / HOME_TODO_DIR_NAME for d in _ancestors_within_home(git_root))
+    home_todo = _home_todo_dir()
+    if home_todo not in candidates:
+        candidates.append(home_todo)
     return candidates
 
 
@@ -118,13 +295,15 @@ def _candidate_is_populated(candidate: Path) -> bool:
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     """Resolve the todo directory once per process.
 
-    Search order: ``$TODO_DIR``, ``<main-checkout-root>/.todo/``, ``$HOME/.todo/``.
-    The repo anchor is the MAIN checkout root (not the current worktree), so all
-    worktrees of a repo share one store. The first candidate that already holds
-    a store (``config.json``, ``sqlite.db``, or ``storage/``) wins; otherwise the
-    default create location is the first entry in that list that applies
-    (``$TODO_DIR``, else main-checkout ``.todo``, else home). All paths (db,
-    worktrees, storage) live under the chosen directory for the rest of the call.
+    Search order: ``$TODO_DIR``, then ``.todo`` at each level from the
+    ``<main-checkout-root>`` upward to and including ``$HOME`` (the walk stops at
+    ``$HOME``), then ``$HOME/.todo``. The repo anchor is the MAIN checkout root
+    (not the current worktree), so all worktrees of a repo share one store. The
+    first candidate that already holds a store (``config.json``, ``sqlite.db``,
+    or ``storage/``) wins; otherwise the default create location is the first
+    entry that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
+    All paths (db, worktrees, storage) live under the chosen directory for the
+    rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:

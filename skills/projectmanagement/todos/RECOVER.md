@@ -68,7 +68,7 @@ finds back into the record instead of only displaying them.
 - **This is the sanctioned exception to "done items are immutable history."**
   Recovery repairs the done prefix on purpose. Everywhere else, leave done items
   alone.
-- **Route every write through `todo.py`** (`set-json-path`, `set --state`). Do not
+- **Route every write through `todo.py`** (`set-json-path`, `set <id> --state`). Do not
   hand-edit `TODO.json`, sqlite, or git objects. Reads that must inspect real
   commits use raw `git` (that is what this runbook does); the ticket itself is
   still only touched via the CLI.
@@ -247,7 +247,7 @@ transitional or cross-repo todos -- note them, do not force them away.
 Record the gap honestly instead of guessing:
 
 - Leave the item sha-less and append a short note to the ticket `Body`
-  (`todo.py set --body=...`) naming what could not be linked and why (branch
+  (`todo.py set <id> --body=...`) naming what could not be linked and why (branch
   gone, squashed history, work done on `dev`).
 - If the whole branch is unrecoverable but a commit window is known, capture the
   window (first/last sha of the window) as `BaseSha` and a single `code` item,
