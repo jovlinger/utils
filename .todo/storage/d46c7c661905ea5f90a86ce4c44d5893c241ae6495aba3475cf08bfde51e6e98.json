@@ -662,6 +662,14 @@
   "State": {
     "done": {}
   },
+  "Subtodos": [
+    {
+      "Branch": "59b05854-postingest-scan-albums-",
+      "Id": "59b0585438f9f268b154c9f522053c8956f191ec7397228dfdf2f90868202e49",
+      "State": "INFO",
+      "Summary": "postingest: scan albums inside discography/container folders"
+    }
+  ],
   "Summary": {
     "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1": [
       [
@@ -1337,5 +1345,5 @@
     }
   ],
   "create_dt": "2026-07-18T06:26:50Z",
-  "update_dt": "2026-07-18T18:03:49Z"
+  "update_dt": "2026-07-20T22:15:44Z"
 }

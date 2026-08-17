@@ -51,14 +51,16 @@ DIR  VA - Verve Remixed: The First Ladies 2013
   ->  VA - Verve Remixed- The First Ladies 2013
 ```
 
-Apply from `files/` (not bare `mv`):
+Apply from `files/` with **`shadup mv`** (not bare `mv`):
 
 ```bash
-cd /mnt/sdb2/music/flac/files
-shadup mv --dry-run \
+SHADIR=/mnt/sdb2/music/flac
+DB=$HOME/Music/shasrv/shadup.db
+cd "$SHADIR/files"
+shadup -v --shadir "$SHADIR" --db "$DB" mv --dry-run \
   "VA - Verve Remixed: The First Ladies 2013" \
   "VA - Verve Remixed- The First Ladies 2013"
-shadup mv \
+shadup --shadir "$SHADIR" --db "$DB" mv \
   "VA - Verve Remixed: The First Ladies 2013" \
   "VA - Verve Remixed- The First Ladies 2013"
 ```
@@ -93,8 +95,11 @@ DIR  Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD
 ```
 
 ```bash
-cd /mnt/sdb2/music/flac/files
-shadup mv "Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD" "Roxy Music - Avalon"
+SHADIR=/mnt/sdb2/music/flac
+DB=$HOME/Music/shasrv/shadup.db
+cd "$SHADIR/files"
+shadup --shadir "$SHADIR" --db "$DB" mv \
+  "Roxy.Music.Avalon.1982.UIGY-9672.SHM-SACD.DSD" "Roxy Music - Avalon"
 ```
 
 Same pattern for siblings:
@@ -202,14 +207,29 @@ form already used on disk; do not reintroduce `:`.
 
 ---
 
+## Year-prefix / scene mislabels (musicology will not fix)
+
+`parse_album_dirname` splits on the first ` - `; a leading year becomes the
+**artist**. Scene names without ` - ` yield `(None, None, …)`. Sidecars may be
+wrong or empty; the basename stays. This skill must notice, collate, and
+propose `shadup mv` renames.
+
+| On disk | parse artist | Target (illustrative) |
+|---------|--------------|------------------------|
+| `1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56` | `1996` | `Herbie Mann - Verve Jazz Masters 56` |
+| `2005 - Café Del Mar - 25th Anniversary 1980-2005 [3CD]` | `2005` | `Cafe Del Mar - 25th Anniversary` |
+| `10-tony martinez … porque soy rumbero flac` | `(none)` | `Tony Martinez … - Porque Soy Rumbero` (from cue/meta) |
+
+Do **not** keep `YYYY - …` as a browsing form. Year → tag.
+
 ## Cue-driven collection
 
 Album: `1973 - Verve Jazzclub - Verve Records Jazz Box [10LP]`
 
 Use sidecar priority first; raw cue is for track `FILE` / multi-performer layout
-when higher tiers lack tracks. Kind = collection/VA. Keep year + series prefix
-from dirname when browsing tokens help.
-
+when higher tiers lack tracks. Kind = collection/VA. **Drop** the leading year
+from the dirname (year → tag); keep series only if it aids browsing without
+impersonating the artist (`VA - Verve Jazzclub - …` or a primary-artist form).
 ---
 
 ## Classical subtitle
