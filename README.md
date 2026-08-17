@@ -22,7 +22,7 @@ Also useful for combining poorly-organized photo collections with many duplicate
 
 skills
 
-Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/todos`), thermo update playbooks, vox circuit validation, and related SKILL.md packages.
+Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/todos`), FLAC/Samba rename playbooks (`correct-flac-names`), musicology tag grooming (`groom-musicology-tags`), thermo update playbooks, vox circuit validation, and related SKILL.md packages.
 
 #### skills/projectmanagement/todos
 
@@ -74,6 +74,12 @@ Internet-facing Flask rendezvous: zones POST state and receive commands; the con
 [thermo/onboard](thermo/onboard/README.md)
 
 Zone firmware and deploy: shared Python in `common/`, hardware backends (Pi Zero 2 W, Pico2W, ESP32-S3), per-room `zones/`, and `install/` dispatch. Host tests via `make -C thermo/onboard test`.
+
+##### thermo/onboard/.docker-import/ui
+
+thermo/onboard/.docker-import/ui
+
+Minimal HTML UI that proxies onboard or DMZ Flask APIs (`/ui/context`, `/ui/command`) for manual control and debugging.
 
 ### thermo/scribble
 
