@@ -2,6 +2,10 @@
 
 Dependency-free `.vox` layer to ASCII STL converter.
 
+Printed thermo HAT board (Pico side):
+
+![Thermo HAT board](.www/thermo.jpg)
+
 ## Usage
 
 ```bash
