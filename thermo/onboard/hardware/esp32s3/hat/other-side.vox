@@ -12,13 +12,15 @@
 # Legend: X=solid substrate, *=ESP32-S3 header pad, .=empty/air, a-z=embossed labels.
 # This first file captures only host-board pads; no module pads or traces yet.
 
-# up == the protrusion
 
-layer base (7, 13, 24)
+# up == the protrusion
+# this view has pins projecting out, so it is esp side in
+
+layer base (7, 13, 24, letter_style=negative)
        XXXXXXXXXXXXX
 GND    X*XXXXXXXXX*X 3V3
-GPIO43 X*XXXXXXXXX*X 3V3
-GPIO44 X*XXXXXXXXX*X RST
+TX     X*XXXXXXXXX*X 3V3
+RX     X*XXXXXXXXX*X RST
 GPIO1  X*XXXXXXXXX*X GPIO4
 GPIO2  X*XXXXXXXXX*X GPIO5
 GPIO42 X*XXXXOOOXX*X GPIO6
@@ -35,10 +37,14 @@ GPIO48 X*XXXXXXXXX*X GPIO10
 GPIO47 X*XXXXXXXXX*X GPIO11
 GPIO21 X*XXXXXXXXX*X GPIO12
 GPIO20 X*XXXXXXXXX*X GPIO13
-GPIO19 X*XXXXXXXXX*X GPIO14
-GND    X*XXXXXXXXX*X 5V
-GND    X*XXXXXXXXX*X GND
+GPIO19 X*XXXuXXuXX*X GPIO14
+GND    X*XXXsXXsXX*X 5V
+GND    X*XXXbXXbXX*X GND
        XXXXXXXXXXXXX
+
+
+net alias TX = GPIO43
+net alias RX = GPIO44
 
 
 alias V -> | = 3V3
@@ -48,8 +54,8 @@ alias G -> | = GND
 layer trace (7, 13, 24)
        .............
 GND    .*--┐.up.┌-*. 3V3
-GPIO43 ....|side|... 3V3
-GPIO44 ....|....|... RST
+TX     ....|side|... 3V3
+RX     ..g.|....|.v. RST
 GPIO1  ....└-┐┌-┘... GPIO4
 GPIO2  ......||..... GPIO5
 GPIO42 ......OOO--*. GPIO6  IR RX target .c8= GPIO6, .c7 = 3V3  .c6 = GND
@@ -67,8 +73,8 @@ GPIO47 ...p.. e..... GPIO11
 GPIO21 ...3...r..... GPIO12
 GPIO20 ...2...m..... GPIO13
 GPIO19 ...s...o..... GPIO14
-GND    .*.3......... 5V
-GND    .*....usb..*. GND
+GND    ...3......... 5V
+GND    .....usb..... GND
        .............
 
 # scratch

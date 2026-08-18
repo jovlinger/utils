@@ -36,9 +36,10 @@ when present. During STL generation, the `base` layer becomes a plate and
 - `+` is treated as a four-way cross.
 - `*` and `O` create raised pad boxes. Pads accept traces from any side, but
   adjacent pad cells such as `OO` do not connect directly to each other.
-- Lowercase `a` through `z` render embossed uppercase letters, one monospace
-  letter per cell. They do not connect electrically. Letter shapes come from
-  pre-rendered smoothed Hershey vector tiles in `vox2stl/tiles/letters/`.
+- Lowercase `a` through `z` and digits `0` through `9` render embossed
+  uppercase / numeral glyphs, one monospace cell each. They do not connect
+  electrically. Shapes come from pre-rendered smoothed Hershey Simplex tiles
+  in `vox2stl/tiles/letters/`.
 
 For hand editing, `voxtool.py correct` rewrites ASCII trace shorthand in place:
 

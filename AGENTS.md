@@ -1,5 +1,21 @@
 # Agent Notes
 
+## Absolute P0: expedience NEVER trumps rules
+
+Broken tools, slow paths, missing shebangs, “just this once,” or any other
+snag does **not** authorize skipping these notes, user rules, or an explicit
+user instruction. Fix the **compliant** path (e.g. recreate `.venv`, use
+`detest` / `.venv/bin/pytest`) or stop and ask (see P1). Do **not** invent a
+faster noncompliant workaround.
+
+## Absolute P0: relevant skills are mandatory
+
+Skills are written for the agent, not for the human operator. If a skill
+applies (todos, correct-flac-names, groom-musicology-tags,
+CASE skill, …), **read it and follow it** — including its
+poll/lifecycle loop and tool commands. Knowing a skill exists and freehanding
+anyway is a P0 violation. Do not treat skills as optional background docs.
+
 ## Clear instructions: do not ask, just do
 
 When the user gives a clear instruction, execute it. Do **not** ask for

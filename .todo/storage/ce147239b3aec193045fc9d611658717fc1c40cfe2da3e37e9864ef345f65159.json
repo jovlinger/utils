@@ -663,7 +663,9 @@
     "path_from_root": "vox2stl"
   },
   "State": {
-    "done": {}
+    "merged": {
+      "merged_into": "master"
+    }
   },
   "Subtodos": [
     {
@@ -1403,5 +1405,5 @@
   "_nextobjid": 13,
   "_schema": 9,
   "create_dt": "2026-07-18T14:08:24Z",
-  "update_dt": "2026-07-20T01:48:37Z"
+  "update_dt": "2026-07-21T01:09:09Z"
 }

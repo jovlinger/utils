@@ -17,5 +17,7 @@ make binlinks
 | `shadup` | `shadup/shadup` -- content-addressed store CLI |
 | `importtags` | `shadup/importtags` -- import metatool sidecar tags into shadup DB |
 | `todo` | `skills/projectmanagement/todos/todo.py` -- branch-bound todo ticket CLI |
+| `manage` | `thermo/dmz/manage` -- DMZ HTTP CLI |
+| `onboardctl` | `thermo/onboard/onboardctl/onboardctl` -- direct onboard debug CLI (bypasses DMZ) |
 
 Agent notes (e.g. do not symlink `ingest.py`): [`AGENTS.md`](AGENTS.md).

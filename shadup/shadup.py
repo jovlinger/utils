@@ -99,39 +99,46 @@ def _format_pretty_path(path: str) -> str:
 
 
 def _emit_lspath_machine(
-    entries: list[tuple[str, str, list[str], bool]],
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
 ) -> None:
-    for path, shasum, tags, deleted in entries:
-        out_csv([path, shasum, json.dumps(tags), "1" if deleted else "0"])
+    for path, shasum, tags, deleted, start, end in entries:
+        out_csv([path, shasum, json.dumps(tags), "1" if deleted else "0", start, end or ""])
 
 
 def _emit_lspath_pretty(
-    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
+    show_deleted: bool,
 ) -> None:
     formatted = [
-        (_format_pretty_path(path), shasum, tags, deleted)
-        for path, shasum, tags, deleted in entries
+        (_format_pretty_path(path), shasum, tags, deleted, start, end or "")
+        for path, shasum, tags, deleted, start, end in entries
     ]
-    max_path = max(len(path) for path, _s, _t, _d in formatted)
-    tag_strs = [json.dumps(tags, sort_keys=True) for _p, _s, tags, _d in formatted]
+    max_path = max(len(path) for path, _s, _t, _d, _st, _en in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _p, _s, tags, _d, _st, _en in formatted]
     max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
-    for (path, shasum, tags, deleted), tstr in zip(formatted, tag_strs, strict=True):
+    for (path, shasum, tags, deleted, start, end), tstr in zip(
+        formatted, tag_strs, strict=True
+    ):
         if show_deleted:
             out(
-                "{path} {tags} {deleted} {shasum}",
+                "{path} {tags} {deleted} {start} {end} {shasum}",
                 0,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
                 deleted="X" if deleted else ".",
+                start=start,
+                end=end,
                 shasum=shasum,
                 kind="data",
             )
         else:
             out(
-                "{path} {tags} {shasum}",
+                "{path} {tags} {start} {end} {shasum}",
                 0,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
+                start=start,
+                end=end,
                 shasum=shasum,
                 kind="data",
             )
@@ -158,42 +165,47 @@ def _emit_ls_alltags_pretty(rows: list[tuple[str, list[str]]]) -> None:
 
 
 def _emit_lshash_machine(
-    entries: list[tuple[str, str, list[str], bool]],
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
 ) -> None:
-    for shasum, path, tags, deleted in entries:
-        out_csv([shasum, path, json.dumps(tags), "1" if deleted else "0"])
+    for shasum, path, tags, deleted, start, end in entries:
+        out_csv([shasum, path, json.dumps(tags), "1" if deleted else "0", start, end or ""])
 
 
 def _emit_lshash_pretty(
-    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
+    show_deleted: bool,
 ) -> None:
     formatted = [
-        (shasum, _format_pretty_path(path), tags, deleted)
-        for shasum, path, tags, deleted in entries
+        (shasum, _format_pretty_path(path), tags, deleted, start, end or "")
+        for shasum, path, tags, deleted, start, end in entries
     ]
-    max_path = max(len(path) for _s, path, _t, _d in formatted)
-    tag_strs = [json.dumps(tags, sort_keys=True) for _s, _p, tags, _d in formatted]
+    max_path = max(len(path) for _s, path, _t, _d, _st, _en in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _s, _p, tags, _d, _st, _en in formatted]
     max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
-    for (shasum, path, _tags, deleted), tstr in zip(
+    for (shasum, path, _tags, deleted, start, end), tstr in zip(
         formatted, tag_strs, strict=True
     ):
         if show_deleted:
             out(
-                "{shasum} {path} {tags} {deleted}",
+                "{shasum} {path} {tags} {deleted} {start} {end}",
                 0,
                 shasum=shasum,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
                 deleted="X" if deleted else ".",
+                start=start,
+                end=end,
                 kind="data",
             )
         else:
             out(
-                "{shasum} {path} {tags}",
+                "{shasum} {path} {tags} {start} {end}",
                 0,
                 shasum=shasum,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
+                start=start,
+                end=end,
                 kind="data",
             )
 
@@ -1062,12 +1074,8 @@ def _upsert_active_stored_file(
         )
         if canonical is not None:
             abs_root, root_rel, rel_dir, filename = canonical
-        else:
-            files_root = canonical_files_root(shadir)
-            if os.path.abspath(abs_root) != files_root:
-                raise SystemExit(
-                    f"store: root {abs_root!r} is not under {files_root!r}"
-                )
+        # else: classic store outside ${shadir}/files keeps ingest root;
+        # doctor normalizes rows that live under files/.
     now = rfc3339_now()
     conn.execute(
         """
@@ -1850,24 +1858,25 @@ def extract_from_db(
 
 def list_db_entries(
     conn: sqlite3.Connection, show_deleted: bool
-) -> list[tuple[str, str, bool]]:
-    """Return stored (path, shasum, deleted) entries as normalized relative paths."""
+) -> list[tuple[str, str, bool, str, str | None]]:
+    """Return stored (path, shasum, deleted, start, end) as normalized relative paths."""
     if show_deleted:
         rows = conn.execute(
-            "SELECT shasum, root_rel, dirpath, filename, deleted FROM stored_files"
+            "SELECT shasum, root_rel, dirpath, filename, deleted, start, end "
+            "FROM stored_files"
         ).fetchall()
     else:
         rows = conn.execute(
             f"""
-            SELECT shasum, root_rel, dirpath, filename, deleted
+            SELECT shasum, root_rel, dirpath, filename, deleted, start, end
             FROM stored_files
             WHERE {_ACTIVE_STORED_FILES_WHERE}
             """
         ).fetchall()
-    entries: list[tuple[str, str, bool]] = []
-    for shasum, root_rel, dirpath, filename, deleted in rows:
+    entries: list[tuple[str, str, bool, str, str | None]] = []
+    for shasum, root_rel, dirpath, filename, deleted, start, end in rows:
         path = os.path.normpath(os.path.join(root_rel, dirpath, filename))
-        entries.append((path, shasum, bool(deleted)))
+        entries.append((path, shasum, bool(deleted), start, end))
     return entries
 
 
@@ -1920,8 +1929,8 @@ def _path_matches_ls_prefixes(list_path: str, prefixes: list[str]) -> bool:
 
 def list_children(
     conn: sqlite3.Connection, prefixes: list[str], recursive: bool, show_deleted: bool
-) -> list[tuple[str, str, bool]]:
-    """Return (path, shasum, deleted) entries under prefixes, optionally recursively."""
+) -> list[tuple[str, str, bool, str, str | None]]:
+    """Return (path, shasum, deleted, start, end) under prefixes, optionally recursively."""
     entries = list_db_entries(conn, show_deleted)
     if not prefixes:
         return sorted(set(entries))
@@ -1931,17 +1940,18 @@ def list_children(
         if os.path.isabs(prefix):
             continue
         normalized.append(os.path.normpath(prefix))
-    results: dict[str, tuple[str, bool]] = {}
-    for path, shasum, deleted in entries:
+    results: dict[str, tuple[str, bool, str, str | None]] = {}
+    for path, shasum, deleted, start, end in entries:
         for prefix in normalized:
             if path_matches_ls_query(path, prefix):
                 if recursive:
-                    results[path] = (shasum, deleted)
+                    results[path] = (shasum, deleted, start, end)
                     break
-                results[path] = (shasum, deleted)
+                results[path] = (shasum, deleted, start, end)
                 break
     return sorted(
-        (path, shasum, deleted) for path, (shasum, deleted) in results.items()
+        (path, shasum, deleted, start, end)
+        for path, (shasum, deleted, start, end) in results.items()
     )
 
 
@@ -2372,7 +2382,7 @@ def handle_ls(
             return
 
         cwd = os.getcwd()
-        file_entries: list[tuple[str, str, bool]] = []
+        file_entries: list[tuple[str, str, bool, str, str | None]] = []
         dir_prefixes: list[str] = []
         for p in normalized:
             abs_p = os.path.normpath(os.path.join(cwd, p))
@@ -2393,20 +2403,20 @@ def handle_ls(
                 else:
                     dir_prefixes.append(p)
 
-        seen_paths: dict[str, tuple[str, bool]] = {}
-        for path, shasum, deleted in file_entries:
-            seen_paths[path] = (shasum, deleted)
-        tagged: list[tuple[str, str, list[str], bool]] = [
-            (path, shasum, sorted(get_tags(conn, shasum)), deleted)
-            for path, (shasum, deleted) in sorted(seen_paths.items())
+        seen_paths: dict[str, tuple[str, bool, str, str | None]] = {}
+        for path, shasum, deleted, start, end in file_entries:
+            seen_paths[path] = (shasum, deleted, start, end)
+        tagged: list[tuple[str, str, list[str], bool, str, str | None]] = [
+            (path, shasum, sorted(get_tags(conn, shasum)), deleted, start, end)
+            for path, (shasum, deleted, start, end) in sorted(seen_paths.items())
         ]
         if mindup > 1 and tagged:
             grouped: dict[str, list[str]] = {}
-            for path, shasum, _tags, _deleted in tagged:
+            for path, shasum, _tags, _deleted, _start, _end in tagged:
                 grouped.setdefault(shasum, []).append(path)
             dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
             dir_counts: dict[str, int] = {}
-            for path, shasum, _tags, _deleted in tagged:
+            for path, shasum, _tags, _deleted, _start, _end in tagged:
                 if shasum not in dup_shasums:
                     continue
                 dirpath = os.path.dirname(path)
@@ -2428,16 +2438,16 @@ def handle_ls(
         conn, prefixes, recursive=recursive, show_deleted=show_deleted
     )
     tagged = [
-        (path, shasum, sorted(get_tags(conn, shasum)), deleted)
-        for path, shasum, deleted in entries
+        (path, shasum, sorted(get_tags(conn, shasum)), deleted, start, end)
+        for path, shasum, deleted, start, end in entries
     ]
     if mindup > 1 and tagged:
         grouped: dict[str, list[str]] = {}
-        for path, shasum, _tags, _deleted in tagged:
+        for path, shasum, _tags, _deleted, _start, _end in tagged:
             grouped.setdefault(shasum, []).append(path)
         dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
         dir_counts: dict[str, int] = {}
-        for path, shasum, _tags, _deleted in tagged:
+        for path, shasum, _tags, _deleted, _start, _end in tagged:
             if shasum not in dup_shasums:
                 continue
             dirpath = os.path.dirname(path)
@@ -2472,7 +2482,7 @@ def handle_lshash(
         return
     if mindup > 1:
         counts: dict[str, int] = {}
-        for _path, shasum, _deleted in entries:
+        for _path, shasum, _deleted, _start, _end in entries:
             counts[shasum] = counts.get(shasum, 0) + 1
         entries = [e for e in entries if counts[e[1]] >= mindup]
         if not entries:
@@ -2486,10 +2496,10 @@ def handle_lshash(
             tag_cache[shasum] = cached
         return cached
 
-    tagged: list[tuple[str, str, list[str], bool]] = sorted(
+    tagged: list[tuple[str, str, list[str], bool, str, str | None]] = sorted(
         (
-            (shasum, path, _tags(shasum), deleted)
-            for path, shasum, deleted in entries
+            (shasum, path, _tags(shasum), deleted, start, end)
+            for path, shasum, deleted, start, end in entries
         ),
         key=lambda row: (row[0], row[1]),
     )

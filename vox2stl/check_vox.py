@@ -19,8 +19,10 @@ from constants import (
     VoxAlias,
     correct_vox_shorthand_text,
     effective_trace_char,
+    is_vox_meta_line,
     parse_alias_line,
     parse_layer_header,
+    parse_net_alias_line,
     parse_vox_aliases_text,
     trace_arms,
 )
@@ -76,14 +78,13 @@ ARMS_BY_CHAR: Mapping[str, FrozenSet[str]] = {
     BOX_V: frozenset({"N", "S"}),
 }
 
-ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyzX*O.-|+/\\?T^v<> +-")
+ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789X*O.-|+/\\?T^v<> +-")
 ALLOWED_CHARS.update(BOX_CHARS)
 TRACE_LAYER_NAME = "trace"
 ROW_LABEL_RE = re.compile(r"^\s*(\S+)")
 BOX_ASSERT_CHARS = "".join(re.escape(char) for char in sorted(BOX_CHARS))
 TRACE_COL_ASSERT_RE = re.compile(r"c(\d+)=(-\*|\*-|\||\+|-|[" + BOX_ASSERT_CHARS + r"])")
 TRACE_NET_ASSERT_RE = re.compile(r"\.c(\d+)\s*=\s*([A-Za-z0-9_:-]+)")
-NET_ALIAS_RE = re.compile(r"^net\s+alias\s+([A-Za-z0-9_:-]+)\s*=\s*([A-Za-z0-9_:-]+)$")
 INTENT_NET_RE = re.compile(r"^#\s*net\s+(\S+)\s+(.+)$")
 INTENT_DISJOINT_RE = re.compile(r"^#\s*disjoint\s+(.+)$")
 INTENT_ENDPOINT_RE = re.compile(r"^([A-Za-z0-9_:-]+)\.c(\d+)$")
@@ -96,13 +97,6 @@ def is_copper_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
 
 def is_pad_char(char: str, aliases: Mapping[str, VoxAlias]) -> bool:
     return effective_trace_char(char, aliases) in PAD_CHARS
-
-
-def parse_net_alias_line(line: str) -> Optional[Tuple[str, str]]:
-    match = NET_ALIAS_RE.match(line)
-    if match is None:
-        return None
-    return match.group(1), match.group(2)
 
 
 def parse_net_aliases_text(text: str) -> Dict[str, str]:
@@ -224,10 +218,7 @@ def read_layers(path: Path) -> Dict[str, Layer]:
     current: Optional[Layer] = None
     for line_no, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.rstrip("\n")
-        if not line or line.startswith("#"):
-            continue
-        stripped = line.strip()
-        if parse_alias_line(stripped) is not None or parse_net_alias_line(stripped) is not None:
+        if is_vox_meta_line(line):
             continue
         header = parse_layer_header(line)
         if header is not None:

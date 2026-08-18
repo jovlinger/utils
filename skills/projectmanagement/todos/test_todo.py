@@ -733,6 +733,43 @@ class StateTests(TodoCase):
         doc = self.todo("doctor", self.tid)
         self.assertEqual(doc.returncode, 0, doc.stdout)
 
+    def test_set_done_removes_linked_worktree(self) -> None:
+        tid = self.mint()
+        branch = f"{tid[:8]}-leaf"
+        self.write_ticket(branch, tid)
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        self._git("branch", "master")
+        self._git("checkout", "-q", "master")
+        wt = self._db_dir / "worktrees" / "test-repo" / branch
+        wt.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", str(wt), branch)
+        self.assertTrue(wt.is_dir())
+        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(wt.exists())
+        listed = self._git("worktree", "list", "--porcelain")
+        self.assertNotIn(str(wt), listed.stdout)
+
+    def test_set_done_refuses_dirty_linked_worktree(self) -> None:
+        tid = self.mint()
+        branch = f"{tid[:8]}-leaf"
+        self.write_ticket(branch, tid)
+        self._git("remote", "add", "origin", "git@github.com:jovlinger/utils.git")
+        self._git("branch", "master")
+        self._git("checkout", "-q", "master")
+        wt = self._db_dir / "worktrees" / "test-repo" / branch
+        wt.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", str(wt), branch)
+        (wt / "dirt.txt").write_text("nope\n", encoding="utf-8")
+        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dirty", proc.stderr)
+        self.assertTrue(wt.is_dir())
+        # State must not have advanced when teardown is blocked.
+        got = self.todo("get-json-path", tid[:8], "State")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(json.loads(got.stdout), {"init": {}})
+
 
 class WaitTests(TodoCase):
     def test_wait_for_done_succeeds_immediately(self) -> None:

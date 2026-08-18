@@ -676,6 +676,20 @@
       "State": "merged",
       "Summary": "ESP32 /dmz/ping: signed one-shot DMZ sensor long-poll + log response",
       "objid": "0003"
+    },
+    {
+      "Branch": "a3fce7c0-onboardctl-direct-onboa",
+      "Id": "a3fce7c0e62e2208fbc3952024f11be8e1962280e80cdd87b3bd55461ba34a69",
+      "State": "INFO",
+      "Summary": "onboardctl: direct onboard sibling CLI to manage",
+      "objid": "000d"
+    },
+    {
+      "Branch": "eba1629d",
+      "Id": "eba1629d2ddf418f84e251ca8b9452185eaa0dab70037ff8c1e6e1ea0b4b3aed",
+      "State": "INFO",
+      "Summary": "ESP32-S3: dump Toit, port debug runtime to MicroPython",
+      "objid": "000e"
     }
   ],
   "Summary": {
@@ -1395,8 +1409,8 @@
       "summary": "Deploy and curl-verify /dmz/ping auth succeeds (or epoch >= 1.7e9 with clear status)"
     }
   ],
-  "_nextobjid": 13,
+  "_nextobjid": 15,
   "_schema": 9,
   "create_dt": "2026-07-14T16:36:14Z",
-  "update_dt": "2026-07-19T04:39:47Z"
+  "update_dt": "2026-08-07T19:03:01Z"
 }
