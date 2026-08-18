@@ -2,12 +2,12 @@
 name: correct-flac-names
 description: >-
   Correct album directory and track filenames under a FLAC store so names are
-  accurate and Samba/VFAT-safe (notably sanitizing ':'). Catches mislabels
-  musicology leaves behind (year-as-artist `1996 - …`, scene junk like
-  `10-tony…`); notice, collate, propose `shadup mv` fixes. All renames MUST use
-  `shadup mv` (never bare `mv`). Use when renaming FLAC albums, fixing illegal
-  path characters, reconciling cue/SPECS/meta titles, or when the user mentions
-  correct flac names / vfat / samba naming.
+  accurate and Samba/VFAT-safe (notably sanitizing ':'). Compilations must not
+  use VA / Various Artists in the dirname: artist is the movie, DJ (DJ-Kicks),
+  or series (Verve Remixed, Hotel Costes, Café del Mar); kind is a various;*
+  tag. Catches year-as-artist and scene junk. All renames MUST use shadup mv.
+  Use when renaming FLAC albums, fixing illegal path characters, leftover
+  VA - prefixes, or when the user mentions correct flac names / vfat / samba.
 disable-model-invocation: true
 ---
 
@@ -73,8 +73,10 @@ Do **not** put `:` back into names for MusicBrainz-style subtitles
 (`DJ-Kicks: Kid Loco` → `DJ-Kicks- Kid Loco` or `DJ-Kicks - Kid Loco`). Prefer
 forms already common in the tree (many albums already use `-` for this).
 
-Tag namespaces in shadup/musicology use `;` (not `:`): `artist;name`,
-`album;title`. Colon in tags is legacy; see `../bin/musicology/fix_johan_colon_tags.py`.
+Tag namespaces in shadup/musicology use `;` (not `:`): `artist;pulpfiction`,
+`various;soundtrack`. Compilations: **never** `VA -` in the dirname and never
+`artist;variousartists` in tags — see **Collections / series** and
+`../groom-musicology-tags`.
 
 ## Data sources (gather candidates)
 
@@ -107,20 +109,22 @@ name; useful for track `FILE` basenames and as a last resort):
 
 ## Conflict resolution
 
-When choosing the semantic name:
-
 1. Walk the **sidecar priority** above; stop at the first tier with a usable
    artist/album (and tracks when renaming files).
 2. Within the same tier only: **most common**, else **least verbose**.
 3. Prefer any filled sidecar over a noisy dirname (`…[24bit…]`, `-GP-FLAC`,
    Usenet/scene dotted forms like `Roxy.Music.Avalon.1982.UIGY-….SACD.DSD`).
 4. Never pick a candidate that fails P0 after sanitize.
+5. **Compilations:** do **not** take sidecar `metadata.artist` = `Various
+   Artists` / `VA` as the dirname artist. Use
+   `tag_classify.va_rename_target(dirname)` (and combined `various;*` +
+   `artist;*` slugs as a check). Johan sidecars that still say VA are stale
+   for naming.
 
 ## Naming conventions by kind
 
 Detect kind from genres/tags, cue performer layout, or dirname cues
-(`VA -` / `Various` only when it is a true multi-artist collection;
-`Verve Jazzclub`; composer-first classical). Guest features ≠ VA.
+(`VA -` in a dirname is a leftover to strip; kind is a `various;*` tag). Guest features ≠ compilation.
 
 ### Pop / rock (default)
 
@@ -239,53 +243,51 @@ on three dirname variants **before** musicscan learned to retry `The`.
 Catalog spelling with `The` stays in sidecars. `musicscan` must try with and
 without `The` so Discogs/MB keep matching after the strip.
 
-### Collections / VA / series
+### Collections / series (no `VA -`)
 
 ```
-VA - Series - Title
-Artist - Album
+Movie - Soundtrack title
+DJ Name - DJ-Kicks
+Verve Remixed - The First Ladies
+Hotel Costes - Hotel Costes 5
+Cream Anthems
 ```
 
-**Not** a target form: `YYYY - Series - Artist - Title`. Leading release years
-in the basename are mislabels (year → tag), even when the rest is a real series
-like Verve Jazzclub or Café Del Mar. Live offenders still on disk:
+**Never** prefix compilations with `VA -` or `Various Artists`. Kind lives
+only in tags (`various;soundtrack` / `various;curated` / `various;collection`).
+The directory **artist** (human-readable, not a slug) is:
 
-```text
-1996 - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56
-  ->  Herbie Mann - Verve Jazz Masters 56
-      # or VA - Verve Jazzclub - Herbie Mann - Verve Jazz Masters 56
-      # if series browsing is the intent; never keep leading YYYY -
+| Kind | Dirname artist | Dirname album | Tag artist (slug) |
+|------|----------------|---------------|-------------------|
+| Soundtrack | Movie (`Pulp Fiction`, `8 Mile`) | Remaining title (`Music From the Motion Picture`, `OST`) | `artist;pulpfiction` |
+| Curated mix | DJ (`DJ Cam`, `Morcheeba`) or series (`Verve Remixed`, `Cafe Del Mar`) | Series or volume (`DJ-Kicks`, `The First Ladies`) | `artist;djcam` / `artist;ververemixed` |
+| Collection (default) | Compilation / series title | Title or subtitle | slug of that title |
 
-2005 - Café Del Mar - 25th Anniversary 1980-2005 [3CD]
-  ->  Cafe Del Mar - 25th Anniversary
-      # match tidy peers already in-tree (Cafe Del Mar - 25th Anniversary (3-CD))
-```
+Helper: `shadup/tag_classify.py` → `va_rename_target("VA - …")`.
 
-Use **`VA -` only for true collections / compilations** — multi-artist
-anthologies where there is no single primary artist (soundtracks with many
-acts, label samplers, `DJ-Kicks` curated comps, `Verve Remixed`, etc.).
-Example already in the tree: `VA - DJ-Kicks- DJ Cam`.
+Do **not** strip leading `The` from **movie** titles (`The Blues Brothers`,
+`The Adventures of Priscilla…`). Do strip `The` from **band** artists
+(`Pogues`, not `The Pogues`).
 
-Do **not** use `VA -` when a main artist brings in guests or collaborators
-(features, duets, “with …”). Those stay filed under the main artist:
-`Artist - Album` (e.g. Pixies / The Pogues albums — never `VA - Pixies - …`).
+True compilations still must not steal a single-artist identity: Pixies /
+Pogues best-ofs stay under the artist (strip a misplaced `VA -`).
+Single-artist Verve Jazz Masters volumes stay under the performer
+(`George Shearing - Verve Jazz Masters 57`), not the series.
 
-Same for **single-artist “best of” / anthology** releases: keep the artist
-(stripped), not `VA`. Live example:
-
-| On disk now | Homogeneous target |
-|-------------|--------------------|
-| `The Pogues - The Rest of the Best` | `Pogues - The Rest of the Best` |
+| Leftover on disk | Target |
+|------------------|--------|
+| `VA - Pulp Fiction- Music From the Motion Picture` | `Pulp Fiction - Music From the Motion Picture` |
+| `VA - DJ-Kicks- DJ Cam` | `DJ Cam - DJ-Kicks` |
+| `VA - Verve Remixed- The First Ladies` | `Verve Remixed - The First Ladies` |
 | `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` |
 
-(MusicBrainz artist is `The Pogues` — store that in sidecars; strip `The` /
-misplaced `VA -` from the dirname. Album title may keep leading `The`.)
+MusicBrainz may still say `Various Artists` in sidecars; that is **not** the
+folder name. After dirname changes, `postingest --force_retag` (no
+`--force_provider`) so combined `artist;*` matches the new folder.
 
 - Keep series tokens that aid browsing **only when they are not a year prefix**;
   drop ripper noise (`-GP-FLAC`, `[FLAC]`, bare `flac` suffixes), years-in-title,
   and edition brackets — same denoise rules as pop/rock (year → tag).
-- Tree convention: short `VA`, not MusicBrainz `Various Artists`, in the
-  dirname (still VFAT-sanitize the title).
 
 ### Musicology will not rename these for you
 
@@ -332,13 +334,13 @@ Copy and track:
 
 ```
 Correct FLAC names:
-- [ ] Scope albums (illegal chars + year-prefix / scene-junk mislabels)
+- [ ] Scope albums (illegal chars + leftover `VA -` + year-prefix / scene-junk)
 - [ ] Notice musicology-mishandled shapes (year-as-artist, unparsable scene names)
 - [ ] Gather candidates (cue / SPECS / .meta.* / export-json)
-- [ ] Resolve conflicts + pick convention
+- [ ] Compilations: movie / DJ / series as artist — never `VA -`
 - [ ] Denoise title (drop encoding/year/edition brackets; year → tag)
 - [ ] Harmonize multi-disc album strings within each set
-- [ ] Strip The /, The on artist; VFAT-sanitize every segment
+- [ ] Strip The /, The on **band** artists only; VFAT-sanitize every segment
 - [ ] Resolve target collisions with DUP / DUP DUP / …
 - [ ] Emit rename plan (dir + files); dry-run with `shadup mv --dry-run` first
 - [ ] Propose plan to user (apply only when asked); **`shadup mv` only**; refresh _tags
@@ -353,6 +355,8 @@ find "$FILES" -mindepth 1 -maxdepth 1 -name '*:*'
 find "$FILES" -mindepth 1 -maxdepth 3 \( -name '*:*' -o -name '*\?*' -o -name '*"*' \) ! -path '*/_tags/*'
 # Year-as-artist / leading-year mislabels (musicology treats YYYY as artist)
 find "$FILES" -mindepth 1 -maxdepth 2 -type d \( -name '19[0-9][0-9] - *' -o -name '20[0-9][0-9] - *' \) ! -path '*/_tags/*'
+# Leftover compilation prefix (must not remain)
+find "$FILES" -mindepth 1 -maxdepth 1 -type d \( -name 'VA - *' -o -name 'VA-*' -o -name 'Various Artists - *' \)
 # Scene / ripper junk (no "Artist - Album" shape; often lowercase, dashed, trailing flac)
 find "$FILES" -mindepth 1 -maxdepth 1 -type d -name '*flac' ! -name '* - *'
 ```
@@ -439,11 +443,12 @@ Summarize: albums scanned, illegal names found, renames proposed/applied
 
 ## Related code
 
+- `shadup/tag_classify.py` — `va_rename_target`, compilation kind + display names
+- `skills/groom-musicology-tags` — `various;*` / `artist;*` tags; postingest `--force_retag`
 - `../bin/musicology/` — `scan.py` (`_lookup_with_artist_variants`),
   `audio.py` (`strip_dirname_artist_the`, `artist_lookup_variants`,
   `parse_album_dirname`, `parse_track_filename`), `metatool.py`, providers,
   sidecars
-- `../bin/musicology/fix_johan_colon_tags.py` — legacy `:` in tags
 - `shadup/shadup.py` — `mv` (disk rename + `stored_files` start/end history),
   `_sanitize_tag_mirror_segment`, `tag_mirror_relpath`, `refresh-extracted-tags`
   (note: `:` in tags is treated as a **namespace** separator for mirrors; album

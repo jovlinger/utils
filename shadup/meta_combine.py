@@ -2,9 +2,10 @@
 """Build ``.meta.combined.json`` from provider sidecars + synonym maps.
 
 Canonical tags are VFAT-safe ``type;value`` strings (artist, album, year, genre,
-collection). Freeform provider tags/genres go through
+collection, various). Freeform provider tags/genres go through
 ``skills/groom-musicology-tags/synonyms/<provider>.json``; artist/album/year
-fields are emitted directly as typed tags.
+fields are emitted as typed tags. Johan sidecars are skipped unless the
+caller lists ``johan`` in *providers*.
 """
 
 from __future__ import annotations
@@ -14,25 +15,23 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+import tag_classify as tc
+
 COMBINED_NAME = ".meta.combined.json"
 COMBINED_SCHEMA = 1
 PROVIDER_SIDE_RE = re.compile(r"^\.meta\.([A-Za-z0-9_-]+)\.json$")
 VFAT_BAD = re.compile(r'[:|<>"/\\?*\x00-\x1f]')
 
-YEAR_RE = re.compile(r"^(?:(?:19|20)\d{2}s?|[0-9]{2}s)$", re.I)
-
 UTILS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SYNONYMS_DIR = UTILS_ROOT / "skills" / "groom-musicology-tags" / "synonyms"
 
 SCAN_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
-# Included in combine when the sidecar exists (hand-edited; not musicscan).
-EXTRA_COMBINE_PROVIDERS = ("johan",)
+# Hand-edited; not combined unless *providers* names it explicitly.
+SKIP_COMBINE_PROVIDERS = frozenset({"johan"})
 
 
 def slug(s: str) -> str:
-    s = s.lower().replace("&", " and ")
-    s = re.sub(r"[^a-z0-9]+", "", s)
-    return s or "empty"
+    return tc.slug(s)
 
 
 def is_vfat_safe(tag: str) -> bool:
@@ -69,37 +68,44 @@ def map_raw_tag(
     *,
     provider: str,
     doc: Mapping[str, Any],
+    artist_slugs: Optional[set[str]] = None,
 ) -> Optional[str]:
     """Map one freeform tag/genre string to ``type;value``, or None to skip."""
     s = raw.strip()
     if not s:
         return None
     mapping = doc.get("map") or {}
+    mapped: Optional[str] = None
     if s in mapping:
-        return str(mapping[s])
-    low = s.lower()
-    if low in mapping:
-        return str(mapping[low])
+        mapped = str(mapping[s])
+    else:
+        low = s.lower()
+        if low in mapping:
+            mapped = str(mapping[low])
     dropped = _dropped_raws(doc)
-    if s in dropped or low in dropped:
+    if mapped is None and (s in dropped or s.lower() in dropped):
         return None
-    # Fallback heuristics (same spirit as build_synonym_maps.classify).
-    compact = low.replace(" ", "")
-    if YEAR_RE.match(compact) or re.fullmatch(r"(?:19|20)\d{2}", low):
-        return f"year;{slug(low)}"
-    return f"genre;{slug(s)}"
+    if mapped is None:
+        mapped = tc.classify_raw(s, artist_slugs=artist_slugs)
+    if mapped is None:
+        return None
+    return tc.canonicalize_tag(mapped, artist_slugs=artist_slugs)
 
 
 def _year_token(raw: Any) -> Optional[str]:
     if raw is None:
         return None
     if isinstance(raw, int):
-        return str(raw)
+        yv = tc.year_value(str(raw))
+        return yv or str(raw)
     if not isinstance(raw, str):
         return None
     s = raw.strip()
     if not s:
         return None
+    yv = tc.year_value(s)
+    if yv:
+        return yv
     m = re.search(r"(19|20)\d{2}", s)
     return m.group(0) if m else slug(s)
 
@@ -117,9 +123,20 @@ def tags_from_provider_sidecar(
     doc = load_synonym_doc(provider, synonyms_dir)
     out: list[str] = []
     seen: set[str] = set()
+    artist_raw = md.get("artist")
+    artist_slugs: set[str] = set()
+    if isinstance(artist_raw, str) and artist_raw.strip():
+        if not tc.is_va_artist_name(artist_raw):
+            artist_slugs.add(slug(artist_raw))
+            alias = tc.artist_canonical(artist_raw)
+            if alias:
+                artist_slugs.add(alias)
 
     def add(tag: Optional[str]) -> None:
-        if not tag or not is_vfat_safe(tag):
+        if not tag:
+            return
+        tag = tc.canonicalize_tag(tag, artist_slugs=artist_slugs) or tag
+        if not is_vfat_safe(tag):
             return
         if tag not in seen:
             seen.add(tag)
@@ -131,17 +148,16 @@ def tags_from_provider_sidecar(
             continue
         for v in vals:
             if isinstance(v, str):
-                add(map_raw_tag(v, provider=provider, doc=doc))
+                add(map_raw_tag(v, provider=provider, doc=doc, artist_slugs=artist_slugs))
 
-    artist = md.get("artist")
-    if isinstance(artist, str) and artist.strip():
-        add(f"artist;{slug(artist)}")
+    if isinstance(artist_raw, str) and artist_raw.strip() and not tc.is_va_artist_name(artist_raw):
+        add(f"artist;{slug(artist_raw)}")
     album = md.get("album")
     if isinstance(album, str) and album.strip():
         add(f"album;{slug(album)}")
     year = _year_token(md.get("year"))
     if year:
-        add(f"year;{slug(year)}" if not year.isdigit() else f"year;{year}")
+        add(f"year;{year}")
 
     return out
 
@@ -226,8 +242,10 @@ def combine_from_providers(
     seen: set[str] = set()
     used: list[str] = []
     for name, path in list_provider_sidecars(album_dir):
-        # Always merge johan when present; otherwise respect *providers* filter.
-        if wanted is not None and name not in wanted and name != "johan":
+        if wanted is not None:
+            if name not in wanted:
+                continue
+        elif name in SKIP_COMBINE_PROVIDERS:
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -242,6 +260,12 @@ def combine_from_providers(
             if tag not in seen:
                 seen.add(tag)
                 tags.append(tag)
+    extras = []
+    try:
+        extras.append(album_dir.name)
+    except Exception:
+        pass
+    tags = tc.apply_various_policy(tags, album_dir.name, extras=extras)
     tags.sort()
     return {
         "schema": COMBINED_SCHEMA,
@@ -264,9 +288,10 @@ def combine_union_children(
     children_used: list[str] = []
 
     def add(tag: str) -> None:
-        if is_vfat_safe(tag) and tag not in seen:
-            seen.add(tag)
-            tags.append(tag)
+        canon = tc.canonicalize_tag(tag) or tag
+        if is_vfat_safe(canon) and canon not in seen:
+            seen.add(canon)
+            tags.append(canon)
 
     for tag in base_tags or []:
         add(tag)
@@ -284,6 +309,7 @@ def combine_union_children(
         for tag in payload.get("tags") or []:
             if isinstance(tag, str):
                 add(tag)
+    tags = tc.apply_various_policy(tags, album_dir.name)
     tags.sort()
     return {
         "schema": COMBINED_SCHEMA,

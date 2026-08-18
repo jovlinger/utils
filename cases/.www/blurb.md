@@ -1,0 +1,1 @@
+Agent-oriented troubleshooting CASE files: symptoms, evidence (and anti-evidence), layman analysis, remediation you can adapt, then discussion.

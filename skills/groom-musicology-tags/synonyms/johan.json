@@ -6,15 +6,16 @@
     "album",
     "year",
     "genre",
-    "collection"
+    "collection",
+    "various"
   ],
   "value_slug": "lowercase alphanumeric only (strip spaces/punct)",
   "field_roles": {
-    "metadata.genres": "Hand labels, already compact -> genre;*",
-    "metadata.tags": "Hand labels -> classify",
-    "metadata.artist": "often already slugged -> artist;value",
-    "metadata.album": "direct -> album;slug(value)",
-    "metadata.year": "direct -> year;value"
+    "metadata.genres": "UNUSED at combine time (johan sidecars skipped)",
+    "metadata.tags": "UNUSED at combine time (johan sidecars skipped)",
+    "metadata.artist": "UNUSED at combine time",
+    "metadata.album": "UNUSED at combine time",
+    "metadata.year": "UNUSED at combine time"
   },
   "map": {
     "abstract": "genre;abstract",

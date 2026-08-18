@@ -12,7 +12,7 @@ File: `.meta.<provider>.json`
 
 | Field | JSON path | Emits |
 |-------|-----------|--------|
-| Artist | `$.metadata.artist` | `artist;{slug}` |
+| Artist | `$.metadata.artist` | `artist;{slug}` unless VA / Various Artists (dropped) |
 | Album | `$.metadata.album` | `album;{slug}` |
 | Year | `$.metadata.year` | `year;{YYYY}` (take first 4 digits if ISO date) |
 | Genres | `$.metadata.genres[*]` | via synonym map |
@@ -73,6 +73,6 @@ Provider splits sorted tag pairs: first N → `metadata.genres`, rest →
 
 ## Johan (local)
 
-No upstream API. Fields are hand-edited via `metatool`. Treat values as already
-near-canonical; map typos (`scandinivia` → `collection;scandinavia`) in
-`synonyms/johan.json`.
+No upstream API. Fields are hand-edited via `metatool`. **Combine ignores
+`.meta.johan.json`** until hand labels are re-namespaced. The map in
+`synonyms/johan.json` is retained for that later pass.
