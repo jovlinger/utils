@@ -40,7 +40,7 @@ Before `init` / before implementation agents fan out, the ticket should have:
 
 | Output | Notes |
 |--------|-------|
-| `Summary.raw` | Human title |
+| `Summary.raw` | Human title. Optimize purely for clarity -- do not reorder or pad it to game the auto-derived Branch label (below). |
 | `Body.raw` | Description / WHY |
 | `LongSummary.raw` | Optional. A reader-first summary of `Body`, and the text the summary embedding is computed from (below) |
 | `AC` | Concrete acceptance criteria |
@@ -48,6 +48,14 @@ Before `init` / before implementation agents fan out, the ticket should have:
 | Tiered WorkItems | Head of list small enough for one trackable unit (`frequentcommits`) |
 | Child plan | For each planned subtodo: independence, integration order, sequential vs authorized parallel |
 | Unresolved decisions | Listed for the user -- do not guess product calls with a HICAP planner |
+
+Branch label defaults to the first 4 non-stopword words of `Summary.raw`
+(`kebab_branch_name`), which is a mechanical default, not a requirement. Weak
+guidance: if that default buries the todo's most distinctive aspect (e.g. a
+clear summary happens to lead with generic words), the grooming agent has
+leeway to override the Branch label directly rather than reshaping the
+summary -- `set-json-path <id> Branch` (and mirror in `Scope.branch`) while
+still `groom`, or `init --branch <name>` at promotion time.
 
 Seed WorkItems while still `groom` (store-only):
 

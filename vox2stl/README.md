@@ -2,6 +2,15 @@
 
 Dependency-free `.vox` layer to ASCII STL converter.
 
+Printed thermo HAT board (traces away from pico):
+
+![Thermo HAT board](.www/thermo.jpg)
+
+The dark filament is "conductive".  It is. sort of. at some insane
+ohm/mm at this trace size. It's basically an insulator, so next step
+is to cover this with copper tape, but it technically did print a
+circuit trace. (and I got all prematurely excited to print 3d traces). 
+
 ## Usage
 
 ```bash
