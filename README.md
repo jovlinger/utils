@@ -20,8 +20,6 @@ Also useful for combining poorly-organized photo collections with many duplicate
 
 ## skills
 
-skills
-
 Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/todos`), FLAC/Samba rename playbooks (`correct-flac-names`), musicology tag grooming (`groom-musicology-tags`), the CASE skill (`case`), thermo update playbooks, vox circuit validation, and related SKILL.md packages.
 
 #### skills/projectmanagement/todos
@@ -29,6 +27,24 @@ Cursor agent skills and project tooling: branch-bound todos (`projectmanagement/
 [skills/projectmanagement/todos](skills/projectmanagement/todos/SKILL.md)
 
 Branch-bound task tickets via the `todo` CLI (on PATH through binlinks): one ticket per git branch, stored in `~/.todo/sqlite.db` by default. Entry skill [`SKILL.md`](skills/projectmanagement/todos/SKILL.md); details in sibling [`GROOMING.md`](skills/projectmanagement/todos/GROOMING.md), [`WORKING.md`](skills/projectmanagement/todos/WORKING.md), and [`IMPLEMENTATION.md`](skills/projectmanagement/todos/IMPLEMENTATION.md).
+
+#### skills/projectmanagement/case
+
+[skills/case](skills/case/SKILL.md)
+
+During the development of thermo, I had little infrastructure, so the project was held together with baling wire and chewing gum.
+This is the gum. When the same errors keep happening in different permutations, its helpful not to have to triage. 
+
+This is just a file format that makes reusing previous triage lessons
+easier. Four agent-targeted bullet points: 
+
+- Symptom, 
+- Corroborating Evidence, 
+- Problem explanation, 
+- Common solution. 
+
+The payoff per word in this skill is extremely high.
+
 
 ## spinme
 
