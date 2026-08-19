@@ -153,6 +153,12 @@ Multi-disc pair — same album string, one disc-marker style:
 |-------|-------|
 | `Beatles - The Beatles - 1967-1970 (CD1)` / `… (The Blue Album), Disc 2 of 2` | `Beatles - The Beatles 1967-1970 (The Blue Album) CD1` / `… CD2` |
 
+## Canonical dirname (spaces, no `_`)
+
+Album folders: `<artist name> - <album name> <extras>`. Separator is ` - `.
+Extras (`CD1`, `DUP`) after the title with a space. Never `_` in the folder name
+(`Kind_Of_Blue` → `Kind of Blue`; `Album_CD1` → `Album CD1`).
+
 ## Collisions → `DUP`
 
 If the target exists, append ` DUP` (again if needed): `Album`, `Album DUP`,
@@ -187,16 +193,16 @@ Helper: `tag_classify.va_rename_target`.
 
 ## Series already sanitized in-tree
 
-Existing pattern to match:
+Existing pattern to match (` - ` between parts; no `_`):
 
 - `DJ Cam - DJ-Kicks`
-- `Erlend Øye - DJ-Kicks- Erlend Øye`
+- `Erlend Øye - DJ-Kicks - Erlend Øye`
 - `Hotel Costes - Hotel Costes 5`
 - `Cafe Del Mar - Volume 15 Quince`
 
 MusicBrainz may still say `DJ-Kicks: Kid Loco` or `Various Artists`. Prefer
-the hyphenated series form already used on disk; do not reintroduce `:` or
-`VA -`.
+`DJ-Kicks - Kid Loco` (spaces around the subtitle hyphen); do not reintroduce
+`:`, `VA -`, or `_`.
 
 ---
 
@@ -229,9 +235,9 @@ the series, not `VA` and not `1996`: `Verve Jazzclub - Verve Records Jazz Box`.
 ## Classical subtitle
 
 **Before (meta):** `Puccini: Greatest Hits`  
-**In-tree form:** `Giacomo Puccini - Puccini- Greatest Hits`
+**In-tree form:** `Giacomo Puccini - Puccini - Greatest Hits`
 
-Sanitize `:` → `-`; keep composer-forward dirname convention.
+Sanitize `:` → ` - `; keep composer-forward dirname convention. No `_`.
 
 ---
 
