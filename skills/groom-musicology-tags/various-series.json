@@ -1,0 +1,85 @@
+{
+  "types": ["soundtrack", "curated", "collection"],
+  "va_artist_slugs": ["va", "various", "variousartist", "variousartists"],
+  "soundtrack_title": [
+    "soundtrack",
+    "\\bost\\b",
+    "motion picture",
+    "original score",
+    "music from and inspired",
+    "music from the"
+  ],
+  "soundtrack_overrides": [
+    "guardians of the galaxy",
+    "priscilla",
+    "truth about charlie"
+  ],
+  "curated": [
+    {
+      "id": "djkicks",
+      "match": "dj[-_ ]?kicks",
+      "artist": "djkicks_dj"
+    },
+    {
+      "id": "backtomine",
+      "match": "back to mine",
+      "artist": "parens"
+    },
+    {
+      "id": "hotelcostes",
+      "match": "h[oô]tel costes",
+      "artist": "fixed:hotelcostes"
+    },
+    {
+      "id": "cafedelmar",
+      "match": "caf[eé] del mar",
+      "artist": "fixed:cafedelmar"
+    },
+    {
+      "id": "ververemixed",
+      "match": "verve\\s*,*\\s*remixed",
+      "artist": "fixed:ververemixed"
+    },
+    {
+      "id": "vervejazzmasters",
+      "match": "verve jazz masters|verve introducing jazz",
+      "artist": "fixed:vervejazzmasters",
+      "requires_va": true
+    },
+    {
+      "id": "vervejazzclub",
+      "match": "verve jazzclub",
+      "artist": "fixed:vervejazzclub"
+    },
+    {
+      "id": "saintgermain",
+      "match": "saint-?germain",
+      "artist": "fixed:saintgermaindesprecafe"
+    },
+    {
+      "id": "supperclub",
+      "match": "supperclub",
+      "artist": "fixed:supperclub"
+    },
+    {
+      "id": "gitanesjazz",
+      "match": "gitanes jazz",
+      "artist": "fixed:gitanesjazz"
+    },
+    {
+      "id": "kdsessions",
+      "match": "k\\s*&\\s*d sessions",
+      "artist": "fixed:kdsessions"
+    },
+    {
+      "id": "novabossa",
+      "match": "nova bossa",
+      "artist": "fixed:novabossa"
+    },
+    {
+      "id": "buddhabar",
+      "match": "buddh?a\\s*bar",
+      "artist": "fixed:buddahbar"
+    }
+  ]
+}
