@@ -302,5 +302,60 @@ class FocusOpensTest(unittest.TestCase):
         self.assertTrue(todo_web._holds({"objid": "0001"}, "0001"))
 
 
+class ObjidBadgeTest(unittest.TestCase):
+    """Every objid-bearing box/section shows its own objid, small and visible
+    (debug/permalink aid), and never in a static fold rendition -- same scope
+    as `_box_attrs`."""
+
+    def test_work_item_objid_is_visible(self) -> None:
+        item = {"kind": "task", "summary": "step one", "done": False, "objid": "0101"}
+        top = _top(_page(_todo({"working": {}}, [item])))
+        self.assertIn('<span class="objid-tag mono">0101</span>', top)
+
+    def test_summary_objid_is_visible(self) -> None:
+        # _todo() stamps Summary with objid "0000".
+        top = _top(_page(_todo({"working": {}}, [])))
+        self.assertIn('<span class="objid-tag mono">0000</span>', top)
+
+    def test_body_objid_is_visible(self) -> None:
+        page = _page({**_todo({"working": {}}, []), "Body": {"raw": "text", "objid": "0099"}})
+        self.assertIn('<span class="objid-tag mono">0099</span>', _top(page))
+
+    def test_subtodo_and_parent_objid_are_visible(self) -> None:
+        child_ref = {"Id": "13e5" + "0" * 60, "Branch": "13e5-x", "objid": "0006"}
+        todo = {
+            **_todo({"working": {}}, []),
+            "Subtodos": [child_ref],
+            "Parent": [{**child_ref, "objid": "0007"}],
+        }
+        top = _top(todo_web.render_todo_page(Path("."), todo))
+        self.assertIn('<span class="objid-tag mono">0006</span>', top)
+        self.assertIn('<span class="objid-tag mono">0007</span>', top)
+
+    def test_meta_row_objid_is_visible(self) -> None:
+        todo = {**_todo({"working": {}}, []), "Scope": {"objid": "0009", "path_from_root": "x"}}
+        self.assertIn(
+            '<span class="objid-tag mono">0009</span>', _section_of(_page(todo), "Fields")
+        )
+
+    def test_a_list_shaped_section_carries_no_badge_of_its_own(self) -> None:
+        # Work items has no container-level objid -- only its elements do
+        # (tested above), so exactly one badge should appear: the item's.
+        item = {"kind": "task", "summary": "step one", "done": False, "objid": "0101"}
+        section = _section_of(_page(_todo({"working": {}}, [item])), "Work items")
+        self.assertEqual(1, section.count("objid-tag"))
+
+    def test_static_fold_rendition_never_shows_a_badge(self) -> None:
+        big = {
+            "Id": "13e5" + "0" * 60,
+            "Branch": "13e5-child",
+            "State": {"done": {}},
+            "Summary": {"raw": "child", "objid": "0000"},
+            "WorkItems": [{"kind": "task", "summary": "x", "done": False, "objid": "0101"}],
+        }
+        static = todo_web._static_repr_html(Path("."), big, "")
+        self.assertNotIn("objid-tag", static)
+
+
 if __name__ == "__main__":
     unittest.main()
