@@ -1775,6 +1775,24 @@ def resolve_stopwords(
     return discovered
 
 
+def _solo_term_id_prefix_hit(terms: Sequence[str], tickets: Dict[str, JsonDict]) -> Optional[str]:
+    """Ticket id uniquely selected by *terms* as a bare hex Id prefix.
+
+    Only engages for a single search term shaped like a selector (4+ lowercase
+    hex chars) -- the same shape ``resolve_ticket_by_id`` accepts. Zero or more
+    than one match is not an error here, unlike the selector resolver: it just
+    means the term is not, in fact, an id prefix on this corpus, so ordinary
+    ranked search decides instead.
+    """
+    if len(terms) != 1:
+        return None
+    term = terms[0]
+    if len(term) < 4 or not re.fullmatch(r"[0-9a-f]+", term):
+        return None
+    matches = [tid for tid in tickets if id_matches(tid, term)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def search_tickets(
     root: Path,
     terms: Sequence[str],
@@ -1801,6 +1819,12 @@ def search_tickets(
     element (manual or automatic) whose ``raw`` is in it -- callers pass
     already-downcased tag text, matching how ``Tag.raw`` is always stored.
     Both filters apply before ranking, so the limit counts matches only.
+
+    A solo term that uniquely prefix-matches one ticket's Id (see
+    ``_solo_term_id_prefix_hit``) is pinned first regardless of its
+    vector/lexical score -- a bare id prefix otherwise has no lexical or
+    semantic overlap with Summary/Body text and would not reliably surface on
+    its own.
     """
     names = resolve_embedder_names(embedder_names)
     embedders: List[tuple[str, todo_embed.Embedder]] = []
@@ -1836,6 +1860,8 @@ def search_tickets(
         tickets[ticket_id] = parsed
         locations[ticket_id] = (repo_path, branch)
         raws[ticket_id] = _raw_map(parsed)
+
+    prefix_hit = _solo_term_id_prefix_hit(terms, tickets)
 
     prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
     stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
@@ -1943,7 +1969,12 @@ def search_tickets(
 
     fused = _rrf_fuse(rankings)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
-    return [tickets[tid] for tid, _score in ranked[:limit]]
+    ordered_ids = [tid for tid, _score in ranked]
+    if prefix_hit is not None:
+        # Pinned first: an id prefix has no lexical/semantic score of its own,
+        # so it may otherwise be absent from `fused` entirely (see _rrf_fuse).
+        ordered_ids = [prefix_hit] + [tid for tid in ordered_ids if tid != prefix_hit]
+    return [tickets[tid] for tid in ordered_ids[:limit]]
 
 
 def _prompt_section(todo: JsonDict) -> str:
@@ -5458,7 +5489,10 @@ class SearchCommand(CorpusQueryCommand):
         "plus lexical overlap. Multiple terms are searched google-style: each term "
         "is embedded and matched independently and the per-term scores add. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
-        "unquoted words (bh 791) match individually. Results hide FINAL (done, "
+        "unquoted words (bh 791) match individually. A single term that uniquely "
+        "prefix-matches one ticket's Id (4+ hex chars, same shape as a selector) "
+        "is pinned first regardless of its own lexical/semantic score. Results "
+        "hide FINAL (done, "
         "merged) by default; pass -s to show all states or --states=<expr> (UPPERCASE "
         "macros ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state "
         "names) to filter. --embedder takes a comma list "

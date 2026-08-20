@@ -15,6 +15,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import todo  # noqa: E402  (direct import: unit coverage for _solo_term_id_prefix_hit)
 import todo_search  # noqa: E402
 from test_todo import TodoCase  # noqa: E402  (temp-repo + subprocess harness)
 
@@ -237,6 +238,70 @@ class EmbedderOffSwitchTest(TodoCase):
         proc = self.todo("search", "quokka")
         self.assertNotEqual(0, proc.returncode)
         self.assertIn("embedder", proc.stderr)
+
+
+class SoloTermIdPrefixHitTest(unittest.TestCase):
+    """Unit coverage for the helper search_tickets consults for a solo term."""
+
+    IDS = {"cafefeed" + "0" * 56: {}, "deadbeef" + "0" * 56: {}}
+
+    def test_unique_prefix_match_is_returned(self) -> None:
+        hit = todo._solo_term_id_prefix_hit(["cafefeed"], self.IDS)
+        self.assertEqual("cafefeed" + "0" * 56, hit)
+
+    def test_full_id_also_matches(self) -> None:
+        full = "cafefeed" + "0" * 56
+        self.assertEqual(full, todo._solo_term_id_prefix_hit([full], self.IDS))
+
+    def test_no_match_returns_none(self) -> None:
+        self.assertIsNone(todo._solo_term_id_prefix_hit(["ffffffff"], self.IDS))
+
+    def test_ambiguous_match_returns_none(self) -> None:
+        ids = {"aaaa1111" + "0" * 56: {}, "aaaa2222" + "0" * 56: {}}
+        self.assertIsNone(todo._solo_term_id_prefix_hit(["aaaa"], ids))
+
+    def test_multiple_terms_never_engage_the_prefix_path(self) -> None:
+        # A second term would otherwise win uniquely -- proving it is the term
+        # COUNT, not the match, that disqualifies this query.
+        self.assertIsNone(todo._solo_term_id_prefix_hit(["cafefeed", "widget"], self.IDS))
+
+    def test_short_term_is_not_attempted(self) -> None:
+        # Below the 4-hex-char selector convention -- too easy to collide by chance.
+        self.assertIsNone(todo._solo_term_id_prefix_hit(["caf"], self.IDS))
+
+    def test_non_hex_term_is_not_attempted(self) -> None:
+        self.assertIsNone(todo._solo_term_id_prefix_hit(["quokka"], self.IDS))
+
+
+class SoloTermIdPrefixSearchTest(TodoCase):
+    """End-to-end: `search` pins a unique id-prefix hit first."""
+
+    def _set_config(self, **keys) -> None:
+        config = json.loads((self._db_dir / "config.json").read_text(encoding="utf-8"))
+        config.update(keys)
+        (self._db_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def test_unique_id_prefix_hit_is_pinned_first(self) -> None:
+        # Lexical and vector ranking are both off, so the hit can only come
+        # from the id-prefix path -- nothing else could surface a bare hex
+        # token that shares no word with any Summary.
+        self._set_config(embedder=None)
+        target = "cafefeed" + "0" * 56
+        self.write_ticket(f"{target[:8]}-target", target, summary="zzz unrelated summary text")
+        for n in range(3):
+            filler = f"1234000{n}" + "0" * 56
+            self.write_ticket(f"{filler[:8]}-filler{n}", filler, summary="widget maintenance")
+        proc = self.todo("search", "cafefeed")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        first_line = proc.stdout.strip().splitlines()[0]
+        self.assertIn("cafefeed", first_line, f"expected id hit pinned first:\n{proc.stdout}")
+
+    def test_prefix_matching_nothing_falls_back_without_error(self) -> None:
+        self._set_config(embedder=None)
+        self.write_ticket("target", "cafefeed" + "0" * 56, summary="widget one")
+        proc = self.todo("search", "deadbeef")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("deadbeef", proc.stdout)
 
 
 class StopwordDiscoveryCliTest(TodoCase):
