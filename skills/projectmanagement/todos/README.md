@@ -1,9 +1,18 @@
 # Todos
 
+**TL;DR:** the by formalizing an agentic workflow (typically a programming or research task) into a structured object that
+captures both state and supporting information, the command-line tool `todo.py` can effectively coordinate agents of
+various capabilities, managing the information that each needs to do its task.  In turn, the intiating agent draws upon
+a skill to use the todo tool.
+
+
 ## context
 
-This is the (for me) logical end point of a note-taking tool-aided skill.
-It also served as a case study of where to draw the line between agent and tool (CLI command, normally). 
+This is the (for me) logical end point of a note-taking tool-aided skill, and simultaneously an experiment in how to
+integrate agents of various capabilities.  We have a choice of agents of various capabilities, in general on a spectrum
+from smart and slow (Fable) to fast and stupid (Haiku).  At the very far end, there are plain programatic tools, like
+grep and find.  This project has served as a case study of where to draw the line between smart agent, fast agent, and
+tool (CLI command, normally), and how to integrate them.
 
 I needed a low-interface tool to capture "let's work on this later" with minimal required context switch from the task
 at hand. 
@@ -27,12 +36,11 @@ agent uses the `todo` tool to build the document, and the implementing MIDCAP ag
 steps to implement the solution.  At the end, the HICAP agent also reviews the results. 
 
 This arrangement allows the highest impact for expensive tokens, and provides a backstop for lesser, 
-cheaper agents' output to be verified against a written goal.
+cheaper agents' output to be verified against a written goal. The tool is mechanism, the agent is policy. 
 
 Todos as tool-assisted PLAN.md work well.
 
 ## What is not yet there.
-
 
 But the associative memory of fact-based todos to allow an agent to ask itself "what do I know about ESP32 controllers"
 is not quite ready yet.  The facts are meant to be associatively retrievable via cosine angle vector embeddings, but I
