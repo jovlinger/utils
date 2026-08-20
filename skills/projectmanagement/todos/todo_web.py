@@ -296,6 +296,27 @@ def _objids_within(value: Any) -> List[str]:
     return found
 
 
+def _first_objid(value: Any) -> str:
+    """The objid a permalink into *value* would scroll to -- the same one
+    ``_section_attrs`` stamps as ``id="obj-<...>"``, so a visible badge and the
+    section's own anchor never disagree about which object is "this one"."""
+    ids = _objids_within(value)
+    return ids[0] if ids else ""
+
+
+def _objid_badge(objid: str, *, interactive: bool) -> str:
+    """Small label exposing an object's own objid, so a permalink
+    (``/<todoid>/objid/<objid>``) can be read straight off the rendered page
+    instead of only via view-source / inspect element.
+
+    Static reprs never show it, mirroring ``_box_attrs``: a foreign todo's
+    objids are not addressable from this page anyway.
+    """
+    if not (interactive and objid):
+        return ""
+    return f'<span class="objid-tag mono">{html.escape(str(objid))}</span>'
+
+
 def _holds(value: Any, focus_objid: str) -> bool:
     """True when *focus_objid* names something inside *value*.
 
@@ -412,7 +433,8 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
     mark = "[x]" if item["done"] else "[ ]"
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(item, interactive=interactive)}{attrs}>'
-        f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
+        + _objid_badge(item["objid"], interactive=interactive)
+        + f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
         + _clamped(item["summary"], "wi-sum", interactive=interactive)
         + f"{todo_html}{sep}{sha_html}"
         "</div>"
@@ -434,7 +456,8 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
         id_html = f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(sub, interactive=interactive)}{attrs}>'
-        f"{id_html}"
+        + _objid_badge(sub["objid"], interactive=interactive)
+        + f"{id_html}"
         + _clamped(sub["summary"], "st-sum", interactive=interactive)
         + f'<div class="st-state">{html.escape(sub["state"])}</div>'
         "</div>"
@@ -487,7 +510,8 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(p, interactive=interactive)}{attrs}>'
-        f"{id_html}"
+        + _objid_badge(p["objid"], interactive=interactive)
+        + f"{id_html}"
         + _clamped(p["summary"], "st-sum", interactive=interactive)
         + f'<div class="st-state">{html.escape(p["state"])}</div>'
         f"{branch}"
@@ -540,6 +564,7 @@ def _section(
     *,
     interactive: bool = True,
     attrs: str = "",
+    objid: str = "",
     text: str = "",
     items: int = 0,
     hint: str = "",
@@ -549,7 +574,10 @@ def _section(
 
     *text* and *items* are the CONTENT's size, from the source strings rather
     than the rendered html. *hint* overrides the header's size advertisement
-    (a list says '19 items'; prose defaults to its line count).
+    (a list says '19 items'; prose defaults to its line count). *objid* is the
+    section's OWN objid (Summary/Body/LongSummary each carry one on their
+    top-level dict) -- a list-shaped section (Work items, Subtodos, Parent) has
+    none of its own, only its elements do, which already show their own badge.
 
     Native <details> rather than a bespoke toggle: it brings its own keyboard
     and click handling, and "open the section holding the permalink target" is
@@ -559,7 +587,7 @@ def _section(
     The static rendition in the fold (interactive=False) never grows toggles --
     it is a read-only repr of another todo, not a page you navigate.
     """
-    heading = f"<h2>{title}</h2>"
+    heading = f"<h2>{title}</h2>" + _objid_badge(objid, interactive=interactive)
     oversized = len(text) > _COLLAPSE_CHARS or items > _COLLAPSE_ITEMS
     if not interactive or not oversized:
         return f'<section class="part"{attrs}>{heading}{inner}</section>'
@@ -590,9 +618,10 @@ def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "
         else:
             rendered = f'<div class="val">{html.escape(str(value))}</div>'
         attrs = _section_attrs(value, interactive=interactive)
+        badge = _objid_badge(_first_objid(value), interactive=interactive)
         rows.append(
             f'<div class="meta-row"{attrs}>'
-            f'<h3 class="meta-key">{html.escape(str(key))}</h3>{rendered}</div>'
+            f'<h3 class="meta-key">{html.escape(str(key))}</h3>{badge}{rendered}</div>'
         )
     if not rows:
         return ""
@@ -678,6 +707,7 @@ def _sections_html(
         f'<pre class="val body">{html.escape(long_summary)}</pre>',
         interactive=interactive,
         attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
+        objid=_first_objid(todo.get("LongSummary")),
         text=long_summary,
         is_open=_holds(todo.get("LongSummary"), focus_objid),
     ) if long_summary else ""
@@ -696,6 +726,7 @@ def _sections_html(
             f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
             interactive=interactive,
             attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
+            objid=_first_objid(todo.get("Summary")),
             text=summary,
             is_open=_holds(todo.get("Summary"), focus_objid),
         )
@@ -705,6 +736,7 @@ def _sections_html(
             f'<pre class="val body">{html.escape(body)}</pre>',
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
+            objid=_first_objid(todo.get("Body")),
             text=body,
             is_open=_holds(todo.get("Body"), focus_objid),
         )
@@ -850,7 +882,13 @@ _STYLE = """<style>
   .none { color: #8c959f; font-size: 12px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .wi, .st { border: 1px solid #d8dee4; border-radius: 6px; padding: 8px; width: 200px;
-             background: #fff; }
+             background: #fff; position: relative; }
+  /* Debug/permalink aid: an object's own objid, small so it never competes
+     with the content it labels. Absolute in a box (a true corner); inline
+     next to a section/meta-row heading, which has no "corner" of its own. */
+  .objid-tag { font-size: 9px; color: #8c959f; font-family: ui-monospace, SFMono-Regular,
+               Menlo, monospace; margin-left: 6px; }
+  .wi .objid-tag, .st .objid-tag { position: absolute; top: 4px; right: 6px; margin-left: 0; }
   .wi { cursor: pointer; }
   .wi.static, .st.static { cursor: default; }
   /* Where a permalink landed: a marked section, alongside .active for boxes. */
