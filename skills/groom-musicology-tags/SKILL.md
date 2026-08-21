@@ -124,9 +124,20 @@ evaluation; raw paths are for re-deriving or debugging.
 
 ### 3. Propose synonyms (co-occurrence)
 
-Offline proposer — does **not** rewrite maps by default. Uses album-aligned
-provider bags (discogs / lastfm / musicbrainz) to suggest synonym clusters and
-to flag axis non-synonyms (`80s` ↛ `90s`, year ↛ genre).
+Offline proposer — does **not** rewrite maps by default.
+
+**Signals** (same album):
+
+- Cross-provider co-occurrence → synonym evidence when slugs match or are
+  near (containment / shared prefix). Strongest case: both providers share the
+  same slug (e.g. Discogs `Rock` + Last.fm `rock`, ~246/299 albums).
+- Bare cross-provider pairs with *unrelated* slugs are often still orthogonal
+  facets (Discogs `Electronic` × Last.fm `80s`) — not synonyms.
+- Within-provider co-occurrence → orthogonality (a provider rarely lists
+  redundant synonyms; e.g. Last.fm `90s` + `alternative` on one album).
+
+Axes (year vs genre, etc.) are expected to fall out as within-heavy pairs —
+not from hard-coded year/artist regexes in the proposer.
 
 ```bash
 python3 skills/groom-musicology-tags/scripts/propose_synonyms.py \

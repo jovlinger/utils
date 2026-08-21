@@ -4,43 +4,36 @@
 Does **not** rewrite ``synonyms/*.json`` by default. Emits a reviewable report
 (and optional map-patch proposals for keys absent from the current maps).
 
-## I/O contract
+## Statistical signals (validated on the FLAC corpus)
 
-**Inputs**
-- ``root``: FLAC files tree (``/mnt/sdb2/music/flac/files``). Scans album dirs
-  for ``.meta.<provider>.json``; skips ``_tags/``, skips ``combined`` / ``johan``.
-- Per album, bag = ``metadata.genres`` ∪ ``metadata.tags`` (strings) per provider.
-- Optional ``--synonyms-dir``: existing maps as priors (already-mapped keys are
-  not proposed for overwrite unless ``--force-mapped``).
+On the same album:
 
-**Positive synonym evidence** (``candidates``)
-- Cross-provider pairs with **equal slugs** after ``tag_classify.slug``,
-  same axis, support ≥ ``--min-support`` (e.g. ``Country Rock`` ↔ ``country rock``).
+- **Cross-provider** co-occurrence of two labels (provider A has *x*, provider B
+  has *y*) is a signal **for synonymy** — especially when ``slug(x) == slug(y)``
+  (246/299 multi-provider albums share at least one identical slug). Different
+  slugs are weaker: many cross edges are still facet mixes (Discogs genre ×
+  Last.fm decade), so we require a high ``cross / (cross+within)`` fraction and
+  minimum cross support.
+- **Within-provider** co-occurrence (both labels in one provider's bag) is a
+  signal for **orthogonality** — a provider rarely emits redundant synonyms on
+  one album; those pairs are facets (``90s``+``alternative``, ``chillout``+
+  ``femalevocalists``). Within-heavy pairs are emitted as ``non_synonyms``.
 
-**Related-but-not-synonym** (``related``)
-- Same-axis pairs with high PMI/Jaccard but **different** slugs (e.g.
-  ``Downtempo`` ↔ ``chillout``). Review-only; never clustered into map patches.
+Axes such as year vs genre are **not** hard-coded; they are expected to arise
+as within-heavy (orthogonal) structure. ``tag_classify`` is only used to
+propose a ``type;value`` string for accepted synonym clusters.
 
-**Axis / non-synonym evidence** (``non_synonyms``)
-- ``tag_classify.year_value`` / ``artist_canonical`` assign an axis
-  (``year`` / ``artist`` / ``genre``). Different axes → never synonym.
-- Same axis ``year`` or ``artist`` with different canonical values → never
-  synonym (``80s`` ↛ ``90s``; ``leonardcohen`` ↛ ``tomwaits``).
+## Outputs (``--out``)
 
-**Outputs** (``--out`` directory)
-- ``report.json``: candidates, related, non_synonyms, clusters, stats.
-- ``report.tsv``: flat synonym-candidate rows for review.
-- ``map_patch.json`` (if ``--write-patch``): per-provider ``{raw: type;value}``
-  from synonym clusters only (no overwrite unless ``--force-mapped``).
-
-Runtime postingest stays map + heuristic; this tool is offline groom only.
+- ``report.json``: candidates, non_synonyms, clusters, stats
+- ``report.tsv``: synonym-candidate rows
+- ``map_patch.json`` (``--write-patch``): additions only unless ``--force-mapped``
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -56,25 +49,34 @@ if str(SHADUP) not in sys.path:
 import tag_classify as tc  # noqa: E402
 
 PROVIDERS = ("discogs", "lastfm", "musicbrainz")
-Axis = str  # year | artist | genre
-
-
-@dataclass(frozen=True)
-class Label:
-    provider: str
-    raw: str
-
-    @property
-    def key(self) -> str:
-        return f"{self.provider}:{self.raw}"
 
 
 @dataclass
-class LabelStats:
-    axis: Axis
-    canon: str  # type;value proposal from heuristics
-    slug: str
+class PairStats:
+    cross: int = 0  # albums with labels from different providers
+    within: int = 0  # albums with both labels in one provider bag
+    cross_examples: list[dict] = field(default_factory=list)
+    within_examples: list[dict] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return self.cross + self.within
+
+    @property
+    def cross_frac(self) -> Optional[float]:
+        if self.total == 0:
+            return None
+        return self.cross / self.total
+
+
+@dataclass
+class SlugInfo:
+    """Aggregate raw forms per provider for one slug."""
+
     albums: set[str] = field(default_factory=set)
+    raws: dict[str, Counter] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )  # provider -> Counter[raw]
 
 
 def iter_album_dirs(root: Path) -> Iterator[Path]:
@@ -84,10 +86,11 @@ def iter_album_dirs(root: Path) -> Iterator[Path]:
         yield p
 
 
-def load_album_bags(
+def load_album_provider_bags(
     album: Path, providers: Iterable[str] = PROVIDERS
-) -> dict[str, set[str]]:
-    bags: dict[str, set[str]] = {}
+) -> dict[str, dict[str, str]]:
+    """Return provider -> {slug: one raw string}."""
+    bags: dict[str, dict[str, str]] = {}
     for prov in providers:
         path = album / f".meta.{prov}.json"
         if not path.is_file():
@@ -96,59 +99,20 @@ def load_album_bags(
             md = json.loads(path.read_text(encoding="utf-8")).get("metadata") or {}
         except (OSError, json.JSONDecodeError):
             continue
-        raws: set[str] = set()
+        slug_to_raw: dict[str, str] = {}
         for field_name in ("genres", "tags"):
             for item in md.get(field_name) or []:
                 if isinstance(item, str) and item.strip():
-                    raws.add(item.strip())
-        if raws:
-            bags[prov] = raws
+                    raw = item.strip()
+                    sl = tc.slug(raw)
+                    slug_to_raw.setdefault(sl, raw)
+        if slug_to_raw:
+            bags[prov] = slug_to_raw
     return bags
 
 
-def axis_and_canon(raw: str) -> tuple[Axis, str]:
-    """Return (axis, proposed type;value) using tag_classify priors."""
-    yv = tc.year_value(raw)
-    if yv:
-        return "year", f"year;{yv}"
-    alias = tc.artist_canonical(raw)
-    if alias:
-        return "artist", f"artist;{alias}"
-    mapped = tc.classify_raw(raw)
-    if mapped is None:
-        return "genre", f"genre;{tc.slug(raw)}"
-    typ, _, val = mapped.partition(";")
-    if typ == "year":
-        return "year", mapped
-    if typ == "artist":
-        return "artist", mapped
-    if typ == "collection":
-        return "genre", mapped  # treat as genre-axis for synonymy
-    return "genre", mapped if mapped else f"genre;{tc.slug(raw)}"
-
-
-def is_non_synonym(a: LabelStats, b: LabelStats) -> Optional[str]:
-    """Return reason string if *a* and *b* must not merge; else None."""
-    if a.axis != b.axis:
-        return f"axis_mismatch:{a.axis}!={b.axis}"
-    if a.axis in {"year", "artist"} and a.canon != b.canon:
-        return f"same_axis_different_value:{a.canon}!={b.canon}"
-    return None
-
-
-def pmi(co: int, na: int, nb: int, n_albums: int) -> float:
-    if co <= 0 or na <= 0 or nb <= 0 or n_albums <= 0:
-        return float("-inf")
-    # Pointwise PMI with album as unit
-    return math.log2((co * n_albums) / (na * nb))
-
-
-def jaccard(a: set[str], b: set[str]) -> float:
-    if not a and not b:
-        return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return inter / union if union else 0.0
+def pair_key(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a < b else (b, a)
 
 
 class UnionFind:
@@ -184,161 +148,270 @@ def load_existing_maps(synonyms_dir: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+def propose_canon_for_slug(slug: str, raw_samples: list[str]) -> str:
+    """Map a slug cluster to type;value via tag_classify on a sample raw."""
+    for raw in raw_samples:
+        mapped = tc.classify_raw(raw)
+        if mapped:
+            return tc.canonicalize_tag(mapped) or mapped
+    mapped = tc.classify_raw(slug)
+    if mapped:
+        return tc.canonicalize_tag(mapped) or mapped
+    return f"genre;{slug}"
+
+
+def near_slug(a: str, b: str) -> bool:
+    """Weak string prior: containment or shared long prefix (not required)."""
+    if a == b:
+        return True
+    if a in b or b in a:
+        return True
+    if len(a) >= 4 and len(b) >= 4 and a[:4] == b[:4]:
+        return True
+    return False
+
+
 def propose(
     root: Path,
     *,
-    min_support: int = 2,
-    min_pmi: float = 1.0,
-    min_jaccard: float = 0.15,
+    min_cross: int = 3,
+    min_within: int = 3,
+    synonym_cross_frac: float = 0.65,
+    ortho_cross_frac: float = 0.35,
     synonyms_dir: Optional[Path] = None,
     force_mapped: bool = False,
 ) -> dict:
-    label_stats: dict[str, LabelStats] = {}
-    album_labels: list[tuple[str, dict[str, set[str]]]] = []
+    """Score slug pairs from cross- vs within-provider album co-occurrence."""
+    pairs: dict[tuple[str, str], PairStats] = defaultdict(PairStats)
+    slug_info: dict[str, SlugInfo] = defaultdict(SlugInfo)
+    multi_provider_albums = 0
+    same_slug_agree_albums = 0
 
     for album in iter_album_dirs(root):
-        bags = load_album_bags(album)
-        if len(bags) < 2:
+        bags = load_album_provider_bags(album)
+        if not bags:
             continue
         album_id = album.name
-        album_labels.append((album_id, bags))
-        for prov, raws in bags.items():
-            for raw in raws:
-                key = f"{prov}:{raw}"
-                if key not in label_stats:
-                    axis, canon = axis_and_canon(raw)
-                    label_stats[key] = LabelStats(
-                        axis=axis, canon=canon, slug=tc.slug(raw)
-                    )
-                label_stats[key].albums.add(album_id)
 
-    n_albums = len(album_labels)
-    pair_co: Counter[tuple[str, str]] = Counter()
+        # slug inventory
+        for prov, slug_raws in bags.items():
+            for sl, raw in slug_raws.items():
+                info = slug_info[sl]
+                info.albums.add(album_id)
+                info.raws[prov][raw] += 1
 
-    for _album_id, bags in album_labels:
-        # Cross-provider pairs only (ordered by provider name for stability)
+        # within-provider orthogonality evidence
+        for prov, slug_raws in bags.items():
+            slugs = sorted(slug_raws)
+            for i, a in enumerate(slugs):
+                for b in slugs[i + 1 :]:
+                    key = pair_key(a, b)
+                    st = pairs[key]
+                    st.within += 1
+                    if len(st.within_examples) < 3:
+                        st.within_examples.append(
+                            {
+                                "album": album_id,
+                                "provider": prov,
+                                "raw_a": slug_raws[a],
+                                "raw_b": slug_raws[b],
+                            }
+                        )
+
+        if len(bags) < 2:
+            continue
+        multi_provider_albums += 1
+
+        # same-slug agreement across providers
+        inter: Optional[set[str]] = None
+        for slug_raws in bags.values():
+            s = set(slug_raws)
+            inter = s if inter is None else inter & s
+        if inter:
+            same_slug_agree_albums += 1
+
+        # cross-provider synonym evidence (album-unique unordered pairs)
         provs = sorted(bags)
+        seen_cross: set[tuple[str, str]] = set()
         for i, pa in enumerate(provs):
             for pb in provs[i + 1 :]:
-                for ra in bags[pa]:
-                    for rb in bags[pb]:
-                        ka, kb = f"{pa}:{ra}", f"{pb}:{rb}"
-                        if ka > kb:
-                            ka, kb = kb, ka
-                        pair_co[(ka, kb)] += 1
+                for a, raw_a in bags[pa].items():
+                    for b, raw_b in bags[pb].items():
+                        if a == b:
+                            continue  # identical slug — trivial synonym
+                        key = pair_key(a, b)
+                        if key in seen_cross:
+                            continue
+                        seen_cross.add(key)
+                        st = pairs[key]
+                        st.cross += 1
+                        if len(st.cross_examples) < 3:
+                            st.cross_examples.append(
+                                {
+                                    "album": album_id,
+                                    "a": f"{pa}:{raw_a}",
+                                    "b": f"{pb}:{raw_b}",
+                                }
+                            )
+        for key in seen_cross:
+            pass  # counted above once per key
 
     candidates: list[dict] = []
-    related: list[dict] = []
     non_synonyms: list[dict] = []
     uf = UnionFind()
 
-    for (ka, kb), co in pair_co.items():
-        if co < min_support:
-            continue
-        sa, sb = label_stats[ka], label_stats[kb]
-        reason = is_non_synonym(sa, sb)
-        na, nb = len(sa.albums), len(sb.albums)
-        score_pmi = pmi(co, na, nb, n_albums)
-        score_jac = jaccard(sa.albums, sb.albums)
-        slug_eq = sa.slug == sb.slug and sa.slug != "empty"
+    for (a, b), st in pairs.items():
+        frac = st.cross_frac
         row = {
-            "a": ka,
-            "b": kb,
-            "support": co,
-            "pmi": None if score_pmi == float("-inf") else round(score_pmi, 4),
-            "jaccard": round(score_jac, 4),
-            "slug_equal": slug_eq,
-            "canon_a": sa.canon,
-            "canon_b": sb.canon,
-            "axis_a": sa.axis,
-            "axis_b": sb.axis,
+            "a": a,
+            "b": b,
+            "cross": st.cross,
+            "within": st.within,
+            "cross_frac": None if frac is None else round(frac, 4),
+            "near_slug": near_slug(a, b),
+            "cross_examples": st.cross_examples,
+            "within_examples": st.within_examples,
         }
-        if reason:
-            row["reason"] = reason
+
+        # Orthogonal: within-heavy (provider listed both as distinct facets)
+        if st.within >= min_within and (frac is None or frac <= ortho_cross_frac):
+            row["reason"] = "within_provider_orthogonal"
             non_synonyms.append(row)
             continue
-        if slug_eq:
-            proposed = f"{sa.axis};{sa.slug}" if sa.axis != "genre" else f"genre;{sa.slug}"
+
+        # Synonym: cross-heavy. Different slugs need a near-slug string prior —
+        # bare cross_frac is polluted by Discogs-genre × Last.fm-decade pairs.
+        if (
+            st.cross >= min_cross
+            and frac is not None
+            and frac >= synonym_cross_frac
+            and near_slug(a, b)
+        ):
+            proposed_a = propose_canon_for_slug(
+                a, [raw for ctr in slug_info[a].raws.values() for raw in ctr]
+            )
+            proposed_b = propose_canon_for_slug(
+                b, [raw for ctr in slug_info[b].raws.values() for raw in ctr]
+            )
+            # containment → longer descriptive slug often wins (alternativerock)
+            core = a if len(a) >= len(b) else b
+            proposed = propose_canon_for_slug(
+                core, [raw for ctr in slug_info[core].raws.values() for raw in ctr]
+            )
+            if proposed_a == proposed_b:
+                proposed = proposed_a
             row["proposed"] = proposed
             candidates.append(row)
-            uf.union(ka, kb)
-        elif score_pmi >= min_pmi and score_jac >= min_jaccard:
-            row["note"] = "cooccur_not_slug"
-            related.append(row)
+            uf.union(a, b)
+            continue
+
+        # Cross-heavy but not near-slug: likely facet mix across providers
+        # (e.g. Electronic × 80s). Keep out of synonym clusters.
+        if (
+            st.cross >= min_cross
+            and frac is not None
+            and frac >= synonym_cross_frac
+            and not near_slug(a, b)
+        ):
+            row["reason"] = "cross_heavy_not_near_slug"
+            non_synonyms.append(row)
+            continue
 
     # Clusters from synonym edges
     clusters_map: dict[str, list[str]] = defaultdict(list)
-    for key in label_stats:
-        if key in uf.parent or any(
-            key in (c["a"], c["b"]) for c in candidates
-        ):
-            clusters_map[uf.find(key)].append(key)
-    # Only clusters touched by at least one candidate edge
-    touched = {uf.find(c["a"]) for c in candidates} | {
-        uf.find(c["b"]) for c in candidates
-    }
+    for a, b in ((r["a"], r["b"]) for r in candidates):
+        clusters_map[uf.find(a)].append(a)
+        clusters_map[uf.find(b)].append(b)
+
     clusters: list[dict] = []
-    for root_key in sorted(touched):
-        members = sorted(set(clusters_map[root_key]))
+    for root_slug, members in clusters_map.items():
+        members = sorted(set(members))
         if len(members) < 2:
             continue
-        canons = [label_stats[m].canon for m in members]
-        # Majority / shortest slug genre
-        proposed = Counter(canons).most_common(1)[0][0]
-        slugs = {label_stats[m].slug for m in members}
-        if len(slugs) == 1:
-            axis = label_stats[members[0]].axis
-            s = next(iter(slugs))
-            proposed = f"{axis};{s}" if axis != "genre" else f"genre;{s}"
-        clusters.append(
-            {
-                "members": members,
-                "proposed": proposed,
-                "size": len(members),
-            }
-        )
+        # pick canon from most album-frequent member
+        members.sort(key=lambda s: (-len(slug_info[s].albums), s))
+        head = members[0]
+        raws = [raw for ctr in slug_info[head].raws.values() for raw in ctr]
+        proposed = propose_canon_for_slug(head, raws)
+        clusters.append({"members": members, "proposed": proposed, "size": len(members)})
 
     existing = load_existing_maps(synonyms_dir or DEFAULT_SYNONYMS)
     map_patch: dict[str, dict[str, str]] = {p: {} for p in PROVIDERS}
     for cluster in clusters:
         proposed = cluster["proposed"]
-        for member in cluster["members"]:
-            prov, _, raw = member.partition(":")
-            cur = existing.get(prov, {}).get(raw)
-            if cur is None or force_mapped:
-                if cur is None or cur != proposed:
-                    map_patch[prov][raw] = proposed
-            elif cur != proposed:
-                # conflict noted on cluster
-                cluster.setdefault("conflicts", []).append(
-                    {"provider": prov, "raw": raw, "mapped": cur, "proposed": proposed}
-                )
+        for sl in cluster["members"]:
+            info = slug_info[sl]
+            for prov, ctr in info.raws.items():
+                for raw, _n in ctr.items():
+                    cur = existing.get(prov, {}).get(raw)
+                    if cur is None or (force_mapped and cur != proposed):
+                        if cur is None or cur != proposed:
+                            map_patch[prov][raw] = proposed
+                    elif cur != proposed:
+                        cluster.setdefault("conflicts", []).append(
+                            {
+                                "provider": prov,
+                                "raw": raw,
+                                "mapped": cur,
+                                "proposed": proposed,
+                            }
+                        )
 
-    # Drop empty provider patches
     map_patch = {p: m for p, m in map_patch.items() if m}
 
-    candidates.sort(key=lambda r: (-r["support"], -(r["pmi"] or -99), r["a"], r["b"]))
-    related.sort(key=lambda r: (-r["support"], -(r["pmi"] or -99), r["a"], r["b"]))
-    non_synonyms.sort(key=lambda r: (-r["support"], r["a"], r["b"]))
+    candidates.sort(
+        key=lambda r: (-r["cross"], -(r["cross_frac"] or 0), r["a"], r["b"])
+    )
+    non_synonyms.sort(
+        key=lambda r: (-r["within"], r["cross_frac"] or 0, r["a"], r["b"])
+    )
     clusters.sort(key=lambda c: (-c["size"], c["proposed"]))
+
+    # Same-slug trivial synonyms: every slug seen under ≥2 providers
+    same_slug_multi: list[dict] = []
+    for sl, info in slug_info.items():
+        provs_present = [p for p in PROVIDERS if info.raws.get(p)]
+        if len(provs_present) < 2:
+            continue
+        proposed = propose_canon_for_slug(
+            sl, [raw for ctr in info.raws.values() for raw in ctr]
+        )
+        same_slug_multi.append(
+            {
+                "slug": sl,
+                "providers": provs_present,
+                "albums": len(info.albums),
+                "proposed": proposed,
+                "raws": {p: ctr.most_common(3) for p, ctr in info.raws.items()},
+            }
+        )
+        # ensure map patch covers raw variants toward same canon
+        for prov, ctr in info.raws.items():
+            for raw, _n in ctr.items():
+                cur = existing.get(prov, {}).get(raw)
+                if cur is None or (force_mapped and cur != proposed):
+                    if cur != proposed:
+                        map_patch.setdefault(prov, {})[raw] = proposed
+
+    same_slug_multi.sort(key=lambda r: -r["albums"])
 
     return {
         "stats": {
-            "multi_provider_albums": n_albums,
-            "labels": len(label_stats),
-            "pair_edges_ge_min_support": sum(
-                1 for _k, c in pair_co.items() if c >= min_support
-            ),
+            "multi_provider_albums": multi_provider_albums,
+            "same_slug_agree_albums": same_slug_agree_albums,
+            "slugs": len(slug_info),
+            "pairs_scored": len(pairs),
             "candidates": len(candidates),
-            "related": len(related),
             "non_synonyms": len(non_synonyms),
             "clusters": len(clusters),
-            "min_support": min_support,
-            "min_pmi": min_pmi,
-            "min_jaccard": min_jaccard,
+            "same_slug_multi_provider": len(same_slug_multi),
+            "min_cross": min_cross,
+            "min_within": min_within,
+            "synonym_cross_frac": synonym_cross_frac,
+            "ortho_cross_frac": ortho_cross_frac,
         },
+        "same_slug_multi_provider": same_slug_multi,
         "candidates": candidates,
-        "related": related,
         "non_synonyms": non_synonyms,
         "clusters": clusters,
         "map_patch": map_patch,
@@ -350,22 +423,18 @@ def write_report(doc: dict, out: Path, *, write_patch: bool) -> None:
     (out / "report.json").write_text(
         json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    lines = [
-        "support\tpmi\tjaccard\tslug_equal\tproposed\ta\tb\tcanon_a\tcanon_b"
-    ]
+    lines = ["cross\twithin\tcross_frac\tnear_slug\tproposed\ta\tb"]
     for r in doc["candidates"]:
         lines.append(
             "\t".join(
                 [
-                    str(r["support"]),
-                    str(r["pmi"]),
-                    str(r["jaccard"]),
-                    str(r["slug_equal"]),
+                    str(r["cross"]),
+                    str(r["within"]),
+                    str(r["cross_frac"]),
+                    str(r["near_slug"]),
                     r.get("proposed", ""),
                     r["a"],
                     r["b"],
-                    r["canon_a"],
-                    r["canon_b"],
                 ]
             )
         )
@@ -379,52 +448,42 @@ def write_report(doc: dict, out: Path, *, write_patch: bool) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("root", type=Path, help="FLAC files root")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--min-cross", type=int, default=3)
+    p.add_argument("--min-within", type=int, default=3)
     p.add_argument(
-        "root",
-        type=Path,
-        help="FLAC files root (album dirs with .meta.*.json)",
+        "--synonym-cross-frac",
+        type=float,
+        default=0.65,
+        help="Min cross/(cross+within) to call synonym",
     )
     p.add_argument(
-        "--out",
-        type=Path,
-        required=True,
-        help="Directory for report.json / report.tsv / map_patch.json",
+        "--ortho-cross-frac",
+        type=float,
+        default=0.35,
+        help="Max cross/(cross+within) to call within-orthogonal",
     )
-    p.add_argument("--min-support", type=int, default=2)
-    p.add_argument("--min-pmi", type=float, default=1.0)
-    p.add_argument("--min-jaccard", type=float, default=0.15)
-    p.add_argument(
-        "--synonyms-dir",
-        type=Path,
-        default=DEFAULT_SYNONYMS,
-        help="Existing synonym maps (default: skill synonyms/)",
-    )
-    p.add_argument(
-        "--write-patch",
-        action="store_true",
-        help="Also write map_patch.json (additions only)",
-    )
-    p.add_argument(
-        "--force-mapped",
-        action="store_true",
-        help="Allow patch entries that overwrite existing map keys",
-    )
+    p.add_argument("--synonyms-dir", type=Path, default=DEFAULT_SYNONYMS)
+    p.add_argument("--write-patch", action="store_true")
+    p.add_argument("--force-mapped", action="store_true")
     args = p.parse_args(argv)
 
     doc = propose(
         args.root,
-        min_support=args.min_support,
-        min_pmi=args.min_pmi,
-        min_jaccard=args.min_jaccard,
+        min_cross=args.min_cross,
+        min_within=args.min_within,
+        synonym_cross_frac=args.synonym_cross_frac,
+        ortho_cross_frac=args.ortho_cross_frac,
         synonyms_dir=args.synonyms_dir,
         force_mapped=args.force_mapped,
     )
     write_report(doc, args.out, write_patch=args.write_patch)
     s = doc["stats"]
     print(
-        f"albums={s['multi_provider_albums']} labels={s['labels']} "
-        f"candidates={s['candidates']} related={s['related']} "
-        f"non_synonyms={s['non_synonyms']} clusters={s['clusters']} → {args.out}"
+        f"multi={s['multi_provider_albums']} same_slug_agree={s['same_slug_agree_albums']} "
+        f"candidates={s['candidates']} non_synonyms={s['non_synonyms']} "
+        f"clusters={s['clusters']} → {args.out}"
     )
     return 0
 
