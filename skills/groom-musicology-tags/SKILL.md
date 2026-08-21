@@ -6,7 +6,8 @@ description: >-
   Various Artists as an artist tag: use various;soundtrack|curated|collection
   and put the movie, DJ, or series in artist;*. Use when grooming .meta.*.json
   tags, building shadup _tags mirrors, proposing cross-provider synonym maps
-  from co-occurrence, or preparing tag data for mechanistic eval.
+  from co-occurrence or via a cheap linguistic agent on a normalized vocab, or
+  preparing tag data for mechanistic eval.
 disable-model-invocation: true
 ---
 
@@ -103,6 +104,7 @@ Groom tags:
 - [ ] Rescan inventory (optional if corpus changed)
 - [ ] Confirm extraction paths still match providers.py
 - [ ] Propose cross-provider synonyms from co-occurrence (review report)
+- [ ] Alternate: agent synonym sets from normalized vocab (review patch)
 - [ ] Extend / correct per-provider synonym maps
 - [ ] Spot-check: map(raw) is VFAT-safe and typed
 - [ ] Hand off maps to mechanistic emitter (no new LLM synonyms at runtime)
@@ -150,6 +152,38 @@ Review `report.json` / `report.tsv` (and optional `map_patch.json`). Merge
 accepted keys into `synonyms/<provider>.json` or `OVERRIDES` in
 `build_synonym_maps.py`. Never apply the patch blindly. Then rebuild drafts if
 needed and postingest with `--force_retag` (not `--force_provider`).
+
+### 3b. Alternate: cheap linguistic agent synonym sets
+
+Pull all tags into a set with **minimal** normalization (casefold, hyphen/space
+unify, plural peel only when both forms exist — no Porter stem). Then task a
+cheap linguistic agent to partition batches into synonym sets.
+
+```bash
+# 1) vocab
+python3 skills/groom-musicology-tags/scripts/tag_vocab.py \
+  --inventory skills/groom-musicology-tags/inventory \
+  --out /tmp/tag-vocab.json
+
+# 2) prepare batches + PROMPT for an agent (Cursor / human / API)
+python3 skills/groom-musicology-tags/scripts/agent_synonym_sets.py prepare \
+  --vocab /tmp/tag-vocab.json \
+  --out /tmp/tag-syn-batches
+
+# 3a) Cursor/human: for each batch-*.json, follow PROMPT.md → responses/
+# 3b) or cheap API:
+# OPENAI_API_KEY=… python3 …/agent_synonym_sets.py run --batches /tmp/tag-syn-batches --backend openai
+# python3 …/agent_synonym_sets.py run --batches /tmp/tag-syn-batches --backend ollama --model llama3.2
+
+# 4) merge → map_patch (review; do not auto-commit into synonyms/)
+python3 skills/groom-musicology-tags/scripts/agent_synonym_sets.py merge \
+  --vocab /tmp/tag-vocab.json \
+  --responses /tmp/tag-syn-batches/responses \
+  --out /tmp/tag-syn-agent-out
+```
+
+Agent contract: [prompts/synonym-cluster-agent.md](prompts/synonym-cluster-agent.md).
+This path invents groupings offline only; postingest stays map + heuristic.
 
 ### 4. Synonym maps
 
