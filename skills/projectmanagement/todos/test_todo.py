@@ -991,6 +991,41 @@ class DoctorTests(TodoCase):
         findings = json.loads(proc.stdout)["findings"]
         self.assertTrue(any("wait dependency cycle" in finding for finding in findings))
 
+    def test_doctor_never_reconciles_a_tracked_subtodo_even_when_merged(self) -> None:
+        """Regression guard: a real (add-subtodo) tracked child stays skipped.
+
+        Unlike an INFO-only `set --parent` backlink, a child registered via
+        add-subtodo and later merge-subtodo carries a non-INFO Subtodos entry on
+        its parent, so doctor's PR reconciliation must still refuse to touch it.
+        """
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent feature")
+        parent_id = self.tid
+        parent_branch = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+        child_id = self.mint()
+        add = self.todo(
+            "add-subtodo", parent_id[:8], f"--id={child_id}", f"--branch={child_id[:8]}-child",
+            "--summary=child",
+        )
+        self.assertEqual(add.returncode, 0, add.stderr)
+        self.assertEqual(self.todo("set", child_id[:8], "--state", "done").returncode, 0)
+        merge = self.todo("wait-and-merge", child_id[:8], "--timeout=0", "--interval=0")
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+
+        # Confirm the parent's Subtodos entry for this child is genuinely tracked
+        # (non-INFO) before asserting doctor leaves it alone.
+        parent = json.loads(self.todo("read", parent_id[:8]).stdout)
+        self.assertEqual(parent["Subtodos"][0]["State"], "merged")
+
+        doc = self.todo("doctor", child_id[:8])
+        self.assertEqual(doc.returncode, 0, doc.stdout)
+        pr = json.loads(doc.stdout)["pr"]
+        self.assertFalse(pr["checked"])
+        self.assertIn("subtodo", pr["skipped"])
+        child_state = json.loads(self.todo("get-json-path", child_id[:8], "State").stdout)
+        self.assertEqual(child_state, {"merged": {"merged_into": parent_branch}})
+
 
 class LogTests(TodoCase):
     def test_log_renders_parent_and_subtodo_tree(self) -> None:
@@ -2500,15 +2535,49 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
         self.assertEqual(item["State"], {"merged": {"pr": 12345}})
 
     def test_subtodo_merged_is_never_touched(self) -> None:
-        """A subtodo's `merged` means parent-absorbed; a PR must not overwrite it."""
+        """A TRACKED subtodo's `merged` means parent-absorbed; a PR must not overwrite it."""
         item = self._todo(
             {"merged": {"merged_into": "parent-branch"}},
             Parent=[{"Id": "b" * 64, "Branch": "bbbbbbbb-parent"}],
         )
-        out = self._reconcile(item, MERGED_PR)
+        parent = {
+            "Id": "b" * 64,
+            "Branch": "bbbbbbbb-parent",
+            "Subtodos": [{"Id": item["Id"], "State": "working"}],
+        }
+        with unittest.mock.patch.object(
+            todo, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
+        ):
+            out = self._reconcile(item, MERGED_PR)
         self.assertFalse(out["checked"])
         self.assertIn("subtodo", out["skipped"])
         self.assertEqual(item["State"], {"merged": {"merged_into": "parent-branch"}})
+
+    def test_info_backlink_child_is_reconciled_normally(self) -> None:
+        """An INFO-only back-link (`set --parent`) is not a tracked subtodo.
+
+        Its Parent ref looks identical to a real subtodo's, but the parent's own
+        Subtodos entry for this child says INFO -- follow-only, not mergeable --
+        so reconciliation must proceed exactly as it would with no Parent at all.
+        """
+        item = self._todo(
+            {"merged": {"pr": 12345}},
+            Parent=[{"Id": "b" * 64, "Branch": "bbbbbbbb-parent"}],
+        )
+        parent = {
+            "Id": "b" * 64,
+            "Branch": "bbbbbbbb-parent",
+            "Subtodos": [{"Id": item["Id"], "State": todo.SUBTODO_STATE_INFO}],
+        }
+        with unittest.mock.patch.object(
+            todo, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
+        ):
+            out = self._reconcile(item, MERGED_PR, dry_run=False)
+        self.assertTrue(out["checked"])
+        self.assertEqual(out["to"], "merged")
+        self.assertEqual(
+            item["State"], {"merged": {"merged_into": "dev", "merge_commit": "abc1234", "pr": 12345}}
+        )
 
     def test_non_terminal_state_is_not_checked(self) -> None:
         out = self._reconcile(self._todo({"working": {}}), OPEN_PR)

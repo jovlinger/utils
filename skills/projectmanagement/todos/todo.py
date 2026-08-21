@@ -2361,6 +2361,47 @@ def reestablish_backlinks(root: Path, child: JsonDict, *, dry_run: bool = False)
     return repairs
 
 
+def child_is_tracked_subtodo(root: Path, child: JsonDict) -> bool:
+    """Whether *child* is a genuinely TRACKED subtodo of any of its Parent refs.
+
+    A child's own `Parent` refs look identical whether the link is a real,
+    mergeable subtodo (created via `add-subtodo`) or a purely informational
+    back-link (created via `set --parent` / `reestablish_backlinks`); the
+    distinction lives only on the *parent's* own Subtodos[].State for this
+    child's entry -- SUBTODO_STATE_INFO means follow-only, anything else means
+    the parent must still merge this child (see `unmerged_subtodos`, the
+    parent-side version of this same rule).
+
+    Best-effort and skip-on-failure, mirroring `reestablish_backlinks`:
+    unresolvable and cross-repo parents are simply skipped rather than raising.
+    Returns False when no parent resolves to a non-INFO entry for this child,
+    including when Parent is empty or every parent ref fails to resolve.
+    """
+    child_id = str(child.get("Id") or "")
+    current = repo_key(root)
+    for ref in child.get("Parent") or []:
+        if not isinstance(ref, dict):
+            continue
+        parent_id = str(ref.get("Id") or "")
+        if not parent_id:
+            continue
+        try:
+            loc, parent = resolve_ticket_by_id(root, parent_id)
+        except TodoError:
+            continue
+        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
+        if parent_repo and parent_repo not in ("worktree", current):
+            continue  # cross-repo parent: not authoritative here
+        for entry in parent.get("Subtodos") or []:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("Id") or "") != child_id:
+                continue
+            if entry.get("State") != SUBTODO_STATE_INFO:
+                return True
+    return False
+
+
 def upsert_subtodo(parent: JsonDict, child: JsonDict) -> None:
     """Insert or refresh a Subtodos entry on *parent*."""
     entry = subtodo_entry_from_child(child)
@@ -4787,18 +4828,22 @@ def gh_pr_for_todo(todo: JsonDict, root: Path) -> tuple[Optional[JsonDict], Opti
 
 
 def reconcile_pr_state(root: Path, todo: JsonDict, *, dry_run: bool) -> JsonDict:
-    """Reconcile a ROOT todo's terminal disposition against its PR's fate on GitHub.
+    """Reconcile a todo's terminal disposition against its PR's fate on GitHub.
 
-    Only root todos are considered: a subtodo's ``merged`` records absorption by
-    its parent, which has nothing to do with a PR and must never be overwritten
-    here. Returns a summary dict; ``changed`` is True only when State moved (and
-    was written, unless *dry_run*).
+    Skipped only for a genuinely TRACKED subtodo (created via `add-subtodo`):
+    its ``merged`` records absorption into its parent's branch via
+    `merge-subtodo`, which has nothing to do with a PR and must never be
+    overwritten here. A todo whose `Parent` is only an informational back-link
+    (`set --parent`) is NOT a tracked subtodo and is reconciled normally --
+    having *any* `Parent` entry is not by itself grounds to skip; see
+    `child_is_tracked_subtodo`. Returns a summary dict; ``changed`` is True
+    only when State moved (and was written, unless *dry_run*).
     """
     out: JsonDict = {"checked": False, "changed": False}
     name = current_state_name(todo)
     if name not in _PR_RECONCILABLE:
         return out
-    if todo.get("Parent"):
+    if child_is_tracked_subtodo(root, todo):
         out["skipped"] = "subtodo: `merged` here means parent-absorbed, not a PR"
         return out
     pr, skip = gh_pr_for_todo(todo, root)
