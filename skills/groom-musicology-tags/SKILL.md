@@ -5,7 +5,8 @@ description: >-
   (artist, album, year, genre, collection, various). Skip johan. No VA /
   Various Artists as an artist tag: use various;soundtrack|curated|collection
   and put the movie, DJ, or series in artist;*. Use when grooming .meta.*.json
-  tags, building shadup _tags mirrors, or preparing tag data for mechanistic eval.
+  tags, building shadup _tags mirrors, proposing cross-provider synonym maps
+  from co-occurrence, or preparing tag data for mechanistic eval.
 disable-model-invocation: true
 ---
 
@@ -101,6 +102,7 @@ Maps: [synonyms/](synonyms/) (`raw` → `type;value`, plus `dropped`).
 Groom tags:
 - [ ] Rescan inventory (optional if corpus changed)
 - [ ] Confirm extraction paths still match providers.py
+- [ ] Propose cross-provider synonyms from co-occurrence (review report)
 - [ ] Extend / correct per-provider synonym maps
 - [ ] Spot-check: map(raw) is VFAT-safe and typed
 - [ ] Hand off maps to mechanistic emitter (no new LLM synonyms at runtime)
@@ -120,7 +122,25 @@ See [extraction-paths.md](extraction-paths.md) for sidecar fields and (when
 `--include-raw`) upstream API JSON paths. Prefer **sidecar** paths for
 evaluation; raw paths are for re-deriving or debugging.
 
-### 3. Synonym maps
+### 3. Propose synonyms (co-occurrence)
+
+Offline proposer — does **not** rewrite maps by default. Uses album-aligned
+provider bags (discogs / lastfm / musicbrainz) to suggest synonym clusters and
+to flag axis non-synonyms (`80s` ↛ `90s`, year ↛ genre).
+
+```bash
+python3 skills/groom-musicology-tags/scripts/propose_synonyms.py \
+  /mnt/sdb2/music/flac/files \
+  --out /tmp/synonym-proposals \
+  --write-patch
+```
+
+Review `report.json` / `report.tsv` (and optional `map_patch.json`). Merge
+accepted keys into `synonyms/<provider>.json` or `OVERRIDES` in
+`build_synonym_maps.py`. Never apply the patch blindly. Then rebuild drafts if
+needed and postingest with `--force_retag` (not `--force_provider`).
+
+### 4. Synonym maps
 
 For each new raw string:
 
@@ -138,7 +158,7 @@ python3 skills/groom-musicology-tags/scripts/build_synonym_maps.py
 Then **review** `dropped` and fix misclassified rows by editing the JSON
 (or the override tables in the script).
 
-### 4. Mechanistic evaluation contract
+### 5. Mechanistic evaluation contract
 
 Given one album directory:
 
