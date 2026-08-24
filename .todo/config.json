@@ -1,3 +1,18 @@
 {
+  "search_stopwords": [
+    "a",
+    "and",
+    "as",
+    "for",
+    "in",
+    "is",
+    "no",
+    "not",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with"
+  ],
   "todo_storage": "file://$TODOBASEDIR/storage"
 }

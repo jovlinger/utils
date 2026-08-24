@@ -67,9 +67,10 @@ The todo is a structured document, much like a highly worked jira ticket. With s
 on this todo (both implementation and fork/join of subtodos), acceptance criteria, status, and also summary for parent
 Todo (if any) to report in /its/ join step. 
 
-**Capability tiers** Every piece of work is tagged with what level agent should implement it.  (`[HICAP] (Fable)`,
-`[MIDCAP] (Opus/Sonnet)`, `[LOCAP] (Haiku)`) In general: planning and reviewing is HICAP, implementation is MIDCAP, and
-reporting is LOCAP.
+**Capability tiers** Every piece of work is tagged with what level agent should implement it.  (`[HICAP]`,
+`[MIDCAP]`, `[LOCAP]`). Claude anchors stay Opus / Sonnet / Haiku; the Cursor model map lives in
+[`GROOMING.md`](GROOMING.md#capability-tiers). In general: planning and reviewing is HICAP, implementation is MIDCAP,
+and reporting is LOCAP.
 
 **Independent work** Once groomed (again, ticket analogy), a todo should be self-contained. The reason we burn HICAP
 tokens for this is to predict questions that might arise during implementation and answer them proactively.

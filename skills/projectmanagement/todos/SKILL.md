@@ -3,10 +3,11 @@ name: todos
 description: >-
   Branch-bound todo task tickets managed through the todo.py CLI (one ticket
   per git branch). TRIGGER: the user says "TODO", "todo", "ticket", "branch
-  task", or asks to track/manage task state -- invoke immediately. Route ALL
-  ticket access through todo.py; never read or write TODO.json or a backend by
-  hand. Load detailed references on demand via the intent router below -- do
-  not preload the full CLI/schema/runbook unless needed.
+  task", "HICAP", "MIDCAP", "LOCAP", "groom", or asks to track/manage task
+  state -- invoke immediately. Route ALL ticket access through todo.py; never
+  read or write TODO.json or a backend by hand. Load detailed references on
+  demand via the intent router below -- do not preload the full CLI/schema/runbook
+  unless needed.
 disable-model-invocation: false
 ---
 
@@ -18,6 +19,62 @@ Associative memory for pruned contexts: a task ticket bound to a git branch.
 One branch carries **zero or one** ticket, addressed through `todo.py` by
 explicit `Id` (no current-branch selector). Storage backend selection is a
 tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
+
+## Roles and capability tiers (read first)
+
+| Role | Who | Job |
+|------|-----|-----|
+| Groomer | HICAP (sparingly) | Mint, decompose, write AC/Body/LongSummary, tag tiers, decide WorkItem vs subtodo -- do **not** implement or `init` unless asked to work |
+| Worker | MIDCAP / LOCAP | Execute one WorkItem at a time on the todo branch in a dedicated worktree |
+| Orchestrator | Parent context | Bookkeeping, child launch, synthesis after merge |
+
+| Tier | Meaning | Claude examples (keep) |
+|------|---------|------------------------|
+| HICAP | Flagship reasoning; spend sparingly | Opus-class (e.g. Opus 5, Fable 5) |
+| MIDCAP | Default workhorse | Sonnet-class (e.g. Sonnet 5) |
+| LOCAP | Small/fast/cheap | Haiku-class (e.g. Haiku 4.5) |
+
+Tag WorkItems / subtodos `[HICAP]` / `[MIDCAP]` / `[LOCAP]`. Full tier rules and
+the Cursor model map: [`GROOMING.md`](GROOMING.md#capability-tiers).
+
+## Intent router
+
+Load **only** what the user intent needs:
+
+| Intent | Open |
+|--------|------|
+| make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) |
+| start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
+| command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
+
+## Everyday quick reference
+
+```bash
+TODO=skills/projectmanagement/todos/todo.py
+
+# make / groom (store-only; no branch, no init yet)
+ID=$("$TODO" mint)
+"$TODO" set "$ID" --summary="..." --body="..." --ac="..."
+"$TODO" work-item-add "$ID" --summary="[MIDCAP] ..."
+# stay in State groom until the user asks to work
+
+# promote when ready to work
+"$TODO" init --id "$ID" --stay-on-parent
+
+# work loop (inside the todo worktree -- see WORKING.md)
+"$TODO" prompt "$ID"
+"$TODO" set "$ID" --state working
+"$TODO" work-item-read "$ID"          # poll; follow WORKING.md dispatch
+"$TODO" work-item-done "$ID" -m "..." # or add-subtodo / merge after git merge
+
+# finish (WORKING.md section 6 -- includes worktree remove after set done)
+"$TODO" doctor "$ID"                  # must be ok
+"$TODO" set "$ID" --state done --actual-summary="..."
+```
+
+Authoritative finish, child integration, and worktree teardown:
+[`WORKING.md`](WORKING.md). Full command table:
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands).
 
 ## Domain model (compact)
 
@@ -45,41 +102,6 @@ tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
 6. **Sequential default** -- work subtodos one at a time unless the user asks for
    parallel or grooming authorizes independent research fan-out
    ([`GROOMING.md`](GROOMING.md#workitem-vs-subtodo)).
-
-## Intent router
-
-Load **only** what the user intent needs:
-
-| Intent | Open |
-|--------|------|
-| make / groom / plan / decompose / size / tier | [`GROOMING.md`](GROOMING.md) |
-| start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
-| command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
-
-## Everyday quick reference
-
-```bash
-TODO=skills/projectmanagement/todos/todo.py
-
-# make -> later work
-ID=$("$TODO" mint)
-"$TODO" set "$ID" --summary="..." --body="..." --ac="..."
-"$TODO" init --id "$ID" --stay-on-parent
-
-# work loop (inside the todo worktree -- see WORKING.md)
-"$TODO" prompt "$ID"
-"$TODO" set "$ID" --state working
-"$TODO" work-item-read "$ID"          # poll; follow WORKING.md dispatch
-"$TODO" work-item-done "$ID" -m "..." # or add-subtodo / merge after git merge
-
-# finish (WORKING.md section 6 -- includes worktree remove after set done)
-"$TODO" doctor "$ID"                  # must be ok
-"$TODO" set "$ID" --state done --actual-summary="..."
-```
-
-Authoritative finish, child integration, and worktree teardown:
-[`WORKING.md`](WORKING.md). Full command table:
-[`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands).
 
 Related: `frequentcommits` (WorkItem sizing policy); `bookmark-management`;
 `project-lifecycle` (separate `TODOs.md` -- do not merge formats without user direction).
