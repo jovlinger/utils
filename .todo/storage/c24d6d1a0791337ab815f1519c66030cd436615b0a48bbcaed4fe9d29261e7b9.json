@@ -1,0 +1,139 @@
+{
+  "AC": "Given a configured geographic scope, the tool emits one row per (geography, property type in {SFH, condo, 2-unit, 3-unit, 4-unit}) carrying: n properties, median price, median per-unit price, median estimated monthly rent per unit, monthly rent/price ratio, annual gross yield, and a named provenance plus confidence for BOTH the price and the rent figure. Property type is classified from DOR/assessor use codes, not guessed from text. Every data source is public-record or licensed, or is explicitly flagged as scraped with a recorded ToS determination. Reproducible from a clean checkout: 'make test' passes; one documented command regenerates every output from the cached raw pulls; raw pulls are archived locally so results still reproduce after upstream URLs rotate. Cells below a configured minimum-n are reported as low-confidence rather than silently averaged.",
+  "Body": {
+    "objid": "0002",
+    "raw": "Compute expected gross rent-to-price ratios for Greater Boston residential property, segmented by property type (single-family, condo, 2-unit, 3-unit, 4-unit), so that rental yield can be compared across towns and neighborhoods. Output feeds personal investment screening, not a redistributed data product.\n\n## Research findings (2026-08)\n\n**Zillow has no usable per-property API.** The public ZWSID Web Services API was retired 2021-09-30. Zestimate and Rent Zestimate are not exposed through Bridge Interactive (Zillow's MLS-partner channel), which is itself gated on MLS affiliation. Third-party resellers (Zillapi and similar) re-expose Zestimate/rentZestimate on a credit basis; they carry the same ToS exposure one layer removed and are not a compliance shield.\n\n**Zillow Research bulk CSVs are free, keyless, and immediately useful for aggregates.** `https://files.zillowstatic.com/research/public_csvs/zhvi/Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv` (ZHVI, ZIP level, monthly from 2000) and `.../zori/Zip_zori_uc_sfrcondomfr_sm_month.csv` (ZORI observed rent index, ZIP level, monthly from 2015) yield a ZIP-by-ZIP rent/value ratio with zero scraping. Limits: ZHVI is single-family+condo blended while ZORI is all-homes including multifamily, so numerator and denominator do not describe the same population, and neither segments 2/3/4-unit. Attribution is expected; redistribution as a data product is restricted by Zillow's data terms.\n\n**Redfin Data Center** publishes market-level TSV (median sale price, days on market, inventory) weekly and monthly, subject to MLS redistribution restrictions. Useful for sale-side calibration, not for per-unit multifamily.\n\n**MassGIS L3 Standardized Assessors' Parcels is the strongest free per-property source** and is arguably better than any listing scrape for this problem. Statewide file geodatabase plus per-municipality shapefile downloads; the `L3_ASSESS` table carries `USE_CODE` (DOR state use code), `LS_PRICE` / `LS_DATE` (last sale), `UNITS`, `RES_AREA`, `TOTAL_VAL`, `BLDG_VAL`, `LOT_SIZE`, `STYLE`, `YEAR_BUILT`, joined to parcel polygons by `LOC_ID`, with `L3_UC_LUT` translating use codes. DOR codes map directly onto the requested segmentation: 101 single-family, 102 condo, 104 two-family, 105 three-family, 111/112 multi-unit (4-8 units). This gives property-type classification, unit counts, and actual recorded sale prices with no ToS problem and no anti-bot arms race. Caveats: `LS_PRICE` is last-sale rather than current asking, the assessment vintage lags by fiscal year (`FY` field), Boston was historically standardized separately from the original statewide effort, and arm's-length filtering is required (nominal $1 / $100 intra-family transfers are common). The DOR LA3 sales reports behind the Bureau of Local Assessment statewide property sales viewer are the companion source for recent arm's-length sales.\n\n**Rental estimates are the harder half.** Options in descending fidelity and cost: RentCast REST API (`/avm/rent/long-term` returns a rent estimate plus comparable rental listings with distance and correlation; `/avm/value` does the sale side; 50 free calls/month then metered around $0.20/call at low tiers) is licensed, per-address, and the only option here giving real per-address comps without scraping. HUD Fair Market Rent and Small Area FMR (free official API, by bedroom count, ZIP-level via crosswalk) is a defensible floor and sanity check, but it is a payment standard, not a market rent. Census ACS B25031 median gross rent by bedrooms is free and tract-level but lags one to two years and reflects in-place rather than asking rents. Zillow ZORI is free and ZIP-level but has no bedroom or property-type cut. Craigslist has had no API since 2012, runs aggressive anti-bot defenses, and 3Taps v. Craigslist makes it the worst legal choice in this space.\n\n**Multifamily per-unit rent is the structural gap in every source.** No free source answers \"expected rent for one unit in a Somerville triple-decker\" directly. Per-unit bedroom counts are generally absent from assessor extracts (`UNITS` and total `RES_AREA` are present; the bedroom mix of the non-primary units is not). Any per-unit rent for 2/3/4-family stock therefore has to be modeled, e.g. rent per square foot derived from single-unit comps applied to `RES_AREA / UNITS`, or a bedroom count imputed from mean unit area.\n\n**\"Greater Boston\" has at least five incompatible definitions.** MAPC's 101 cities and towns (22 cities, 79 towns, roughly inside I-495, about 1,422 sq mi) is the tightest and is municipality-keyed, so it joins cleanly onto MassGIS municipal parcel downloads. The Census Boston-Cambridge-Newton MA-NH MSA (CBSA 14460) is county-based, crosses into New Hampshire, and pulls in Plymouth and Essex county exurbs. The Boston NECTA is town-based and larger than MAPC, adding the Merrimack Valley, Taunton, and southern New Hampshire. Boston Indicators uses the Essex/Middlesex/Norfolk/Suffolk/Plymouth county set. The Greater Boston Association of Realtors uses a smaller map that excludes Quincy and Braintree. MAPC's 101 is the recommended default because it is municipality-keyed and matches the parcel-data grain, but this is a product call.\n\n## Legal and ToS position\n\nDirection taken: **prefer licensed and public-record sources over scraping consumer listing portals.** hiQ v. LinkedIn (9th Cir. 2022) together with Van Buren (2021) means logged-out scraping of public pages is not a CFAA violation, and Meta v. Bright Data (N.D. Cal. 2024) held that Meta's terms did not bind logged-out scraping of public pages. None of that disposes of breach-of-contract exposure once an account has been created and terms accepted, which is exactly how hiQ ultimately lost; nor of copyright in listing photos and descriptions; nor of state privacy law where owner names ride along; nor of trespass-to-chattels at high request volume. Zillow, Redfin, and Realtor.com all prohibit automated collection in their terms and run active anti-bot defenses. MassGIS parcel data, HUD FMR, and Census ACS carry none of this, and a paid API such as RentCast converts the remaining exposure into a contract that permits the use. Scraping stays on the table only as an explicitly flagged fallback: logged-out, robots.txt-respecting, rate-limited, never behind a login, never collecting owner personal data.\n\n## Open decisions (need user input)\n\n1. **Geographic scope.** MAPC 101 (recommended), Census MSA 14460, Boston NECTA, a county set, or a hand-picked town/ZIP list? Does it include New Hampshire? Does it include Worcester and Providence commuter towns?\n2. **Rental estimate methodology.** Free index-only (ZORI + HUD FMR + ACS), licensed per-address comps (RentCast, metered), scraped actual rental listings, or a blend with per-source confidence? This is the main cost decision and it sets the ceiling on precision.\n3. **Budget.** Is any paid data spend authorized, and to what monthly ceiling? A per-address RentCast pass over MAPC-101 is on the order of hundreds of thousands of parcels, so index-level or sampled queries are the only affordable shapes absent a bulk license.\n4. **Multifamily per-unit denominator.** Divide sale price by unit count flat, weight by per-unit living area, or model the bedroom mix from `RES_AREA / UNITS`? And should an owner-occupied unit be excluded from the rent numerator, given that owner-occupied triple-decker economics differ materially from a full-rental?\n5. **Sale price basis.** Current asking prices (listing-derived, needs a listing source and ongoing refresh) or recorded arm's-length sales from parcel and LA3 data (free, clean, backward-looking)? The AC says \"listing prices\", but sales data is what is actually free and unencumbered.\n6. **Refresh cadence.** One-shot analysis, monthly (matching ZHVI/ZORI publication and the MassGIS assessment vintage), or continuous?\n7. **Output format.** CSV/Parquet tables, SQLite, a Markdown or HTML report with rankings, static charts, or an interactive map? Any GeoJSON requirement for the parcel geometry?\n8. **Ratio convention.** Monthly gross rent over price (the \"1% rule\" form), annual gross yield, or net yield after taxes, insurance, vacancy, and maintenance? Net requires an expense model, though assessor data does supply tax rates and assessed values, so it is reachable.\n9. **Project name and location.** Default proposal: `utils/rentratio/`, with the standard Makefile (`binlinks`, `test`, `all-tests`), `requirements.txt`, project-local `.venv`, and `.www/blurb.md`.\n\n## Child plan\n\nWork items 3, 4, and 5 (the three source-domain spikes: MassGIS parcels, rent sources, sale-price sources) are genuinely independent fact-finding domains touching unrelated CLIs, file formats, and APIs, and each lands a branch-bound notes-plus-fixtures artifact. They are the one authorized parallel fan-out in this plan, and only after the decisions in item 1 are recorded. Integration order into the parent: MassGIS first (it defines the record grain), then sale-price sources, then rent sources; the parent stays synthesis-only and reads children via git merge plus `todo.py read`, not chat memory. Everything else is sequential parent-local work in stack order."
+  },
+  "Branch": "c24d6d1a-boston-rent-price-ratio",
+  "Id": "c24d6d1a0791337ab815f1519c66030cd436615b0a48bbcaed4fe9d29261e7b9",
+  "LongSummary": {
+    "objid": "0004",
+    "raw": "A data pipeline that computes gross rent-to-price ratios for Greater Boston residential real estate, segmented by property type: single-family homes, condos, and 2-, 3-, and 4-unit multifamily. The point is investment screening \u2014 finding which towns and neighborhoods offer the best rental yield per dollar of purchase price \u2014 so the deliverable is a table of (geography x property type) rows carrying median price, median per-unit price, median estimated monthly rent, and the resulting monthly rent/price ratio and annual gross yield.\n\nGrooming research settled the source question in a direction different from the original \"scrape Zillow\" framing. Zillow's public ZWSID API was retired in 2021 and neither Zestimate nor Rent Zestimate is available through Bridge Interactive, so per-property Zillow data is reachable only by scraping or by paying a reseller. Instead, the sale-price and property-type side comes from MassGIS L3 Standardized Assessors' Parcels: a free statewide file geodatabase whose `L3_ASSESS` table carries DOR state use codes (101 single-family, 102 condo, 104 two-family, 105 three-family, 111/112 four-to-eight-unit), `UNITS`, `RES_AREA`, `LS_PRICE` and `LS_DATE` for last sale, and assessed values, joined to parcel geometry by `LOC_ID`. Zillow Research's free keyless bulk CSVs (ZHVI for home values, ZORI for observed rents, both at ZIP level) and the Redfin Data Center TSVs supply market-level calibration. Rent estimation draws on some combination of HUD Fair Market Rent and Small Area FMR, Census ACS B25031 median gross rent by bedroom count, Zillow ZORI, and the licensed RentCast `/avm/rent/long-term` API for real per-address rental comps.\n\nTwo hard problems are known going in. First, no source publishes per-unit rent for 2/3/4-family stock \u2014 assessor extracts give total living area and unit count but not the bedroom mix of individual units \u2014 so per-unit rent must be modeled, most plausibly as rent per square foot from single-unit comps applied to `RES_AREA / UNITS`. Second, \"Greater Boston\" has at least five incompatible definitions: the MAPC 101 cities and towns inside I-495, the Census Boston-Cambridge-Newton MA-NH MSA (CBSA 14460) which reaches into New Hampshire, the town-based Boston NECTA, the five-county Boston Indicators set, and the Greater Boston Association of Realtors map that excludes Quincy and Braintree. MAPC 101 is the recommended default because it is municipality-keyed and joins cleanly onto per-municipality parcel downloads.\n\nThe legal posture is deliberate: prefer public-record and licensed sources over scraping consumer listing portals. hiQ v. LinkedIn and Van Buren mean logged-out public-page scraping is not a CFAA violation, and Meta v. Bright Data found platform terms did not bind logged-out scraping, but breach-of-contract, copyright in listing photos and descriptions, state privacy law over owner names, and trespass-to-chattels at volume all survive those cases. Zillow, Redfin, and Realtor.com all prohibit automated collection and run anti-bot defenses. MassGIS, HUD, and Census data carry none of that exposure. Scraping remains only an explicitly flagged, logged-out, rate-limited fallback.\n\nNine product decisions are open and deliberately not guessed during grooming: geographic scope, rent-estimation methodology, paid-data budget ceiling, the multifamily per-unit denominator (flat unit count vs area-weighted vs modeled bedroom mix, and whether to exclude an owner-occupied unit), whether prices are current asking or recorded arm's-length sales, refresh cadence, output format, whether the ratio is gross or net of taxes/insurance/vacancy/maintenance, and the project directory name. The default proposal is a new `utils/rentratio/` project following the repo's standard Makefile conventions (`binlinks`, `test`, `all-tests`) with a project-local `.venv`."
+  },
+  "Scope": {
+    "branch": "c24d6d1a-boston-rent-price-ratio",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0003",
+    "path_from_root": "rentratio"
+  },
+  "State": {
+    "groom": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Greater Boston real estate rent-to-price ratio scraper"
+  },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0005",
+      "summary": "[LOCAP] Record the user's answers to the nine open decisions into Body/AC and a checked-in scope config (municipality or ZIP list, ratio convention, rent-source order, paid-data budget ceiling, output format). BLOCKED until the user answers; nothing below should start on guessed product calls."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0006",
+      "summary": "[MIDCAP] Scaffold utils/rentratio/: Makefile with binlinks/test/all-tests per the repo convention, requirements.txt, project-local .venv via ../create_pipenv.sh, .gitignore for the raw-data cache, .www/blurb.md, and one smoke test so 'make test' is green from empty."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0007",
+      "summary": "[MIDCAP] Spike MassGIS L3 parcels (candidate parallel subtodo). Download the statewide FGDB plus one municipality shapefile, load L3_ASSESS / L3_UC_LUT / L3_TAXPAR_POLY with geopandas or pyogrio, and report fill rates for USE_CODE, UNITS, RES_AREA, LS_PRICE, LS_DATE, TOTAL_VAL, FY across a sample of MAPC towns including Boston, Somerville, Quincy, and one exurb. Land notes plus a small checked-in fixture."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0008",
+      "summary": "[MIDCAP] Spike the rent sources (candidate parallel subtodo). Pull HUD FMR/SAFMR via the official API, Census ACS B25031 by bedroom count, and the Zillow ZORI ZIP CSV; get a RentCast free-tier key and capture one real /avm/rent/long-term and one /avm/value response for a Somerville three-family. Report coverage, bedroom granularity, lag, cost per call, and license for each."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0009",
+      "summary": "[MIDCAP] Spike the sale-price sources (candidate parallel subtodo). Pull the Zillow ZHVI ZIP CSV and the Redfin Data Center TSV, and evaluate the DOR LA3 statewide sales reports for recent arm's-length transactions. Decide whether any live listing source is needed at all, and record the ToS position for each source examined."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000a",
+      "summary": "[HICAP] Write the source-selection decision doc: pick the price source and the rent source per property type, name the fallback chain and its confidence semantics, and record the license/ToS determination per source with reasoning. This is the architecture gate -- no ingestion code lands before it."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000b",
+      "summary": "[HICAP] Land the ingestion exemplar: one Source interface (fetch -> archive raw bytes in a content-addressed local cache -> normalize to a PropertyRecord frame), implemented once for MassGIS parcels, with schema validation and guard tests against the checked-in fixture. Establishes the pattern the remaining sources copy."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000c",
+      "summary": "[MIDCAP] Roll out the remaining sources against the exemplar interface, one source per commit with its own fixture test: Zillow ZHVI CSV, Zillow ZORI CSV, HUD FMR/SAFMR, Census ACS B25031, and RentCast if budgeted."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000d",
+      "summary": "[MIDCAP] Implement geographic scoping: municipality and ZIP filters driven by the scope config, a ZIP-to-municipality crosswalk, and the ratified region definition (MAPC 101 town list by default) as a checked-in data file with provenance."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000e",
+      "summary": "[MIDCAP] Implement property-type classification: DOR use code to {sfh, condo, 2unit, 3unit, 4unit, other} mapping table, reconciliation against the UNITS field where they disagree, and arm's-length sale filtering that drops nominal and intra-family transfers and sales outside the configured recency window."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000f",
+      "summary": "[HICAP] Land the multifamily per-unit rent model: derive rent per square foot from single-unit comps and apply it to RES_AREA / UNITS (or the ratified alternative), attach an explicit provenance and confidence field to every estimate, and pin the arithmetic with tests over hand-computed cases. This is the hardest modeling call in the project -- no free source gives per-unit rent for 2/3/4-family stock directly."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0010",
+      "summary": "[MIDCAP] Implement the rent-source fallback chain and blending: per-address comps where budgeted, ZIP-level index next, HUD FMR as the floor, each tagged with its confidence tier. Include request budgeting and on-disk caching so a metered API cannot be run away with, plus a dry-run mode that reports projected call counts and cost before spending."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0011",
+      "summary": "[MIDCAP] Implement the ratio layer: per-unit price, monthly rent over price, annual gross yield, and the net variant if ratified (tax rate from assessor data; insurance, vacancy, and maintenance assumptions in config). Aggregate to (geography x property type) with n, median, and interquartile range, and flag cells under the minimum-n threshold."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0012",
+      "summary": "[LOCAP] Run the full pipeline over the ratified scope and report row counts, per-source coverage gaps, and every (geography x property type) cell below the minimum-n threshold. Run-and-report only: escalate the fix, not the re-run, if the numbers look wrong."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0013",
+      "summary": "[MIDCAP] Implement the report output in the ratified format(s): ranked tables by yield, per-town and per-type breakdown, provenance and confidence columns, and a written methodology and limitations section that states the rent-modeling assumptions and the data vintages in plain language."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0014",
+      "summary": "[MIDCAP] Implement visualization if ratified: choropleth of yield by town or ZIP per property type using the parcel geometry, plus a rent-versus-price scatter with property type encoded. Skip entirely if the user chose tables-only output."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0015",
+      "summary": "[LOCAP] Ground-truth sanity check: hand-verify ten properties spanning all five property types against current public listings, record the delta per property, and report whether the pipeline's rent and price estimates land inside a defensible band."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0016",
+      "summary": "[MIDCAP] Write utils/rentratio/README.md (usage, source inventory, refresh procedure, and the required Zillow/Redfin/MassGIS attribution and license notices) plus .www/blurb.md, then run 'make index' at the utils root to regenerate the repo README."
+    }
+  ],
+  "_nextobjid": 23,
+  "create_dt": "2026-08-23T21:28:24Z",
+  "update_dt": "2026-08-23T21:35:12Z"
+}
