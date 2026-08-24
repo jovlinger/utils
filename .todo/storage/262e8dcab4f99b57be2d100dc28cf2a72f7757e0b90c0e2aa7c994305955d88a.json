@@ -1,0 +1,102 @@
+{
+  "AC": "Can authenticate to Ameriprise; can read account balances; can read positions; can read transaction history; skill/tool documented for agent use",
+  "Body": {
+    "objid": "0002",
+    "raw": "Create a skill or tool for programmatic access to Ameriprise brokerage/investment\naccounts for agent use: positions, balances, and transaction history. Order\nplacement is OUT of the current AC (see D1).\n\n## Research findings (2026-08 grooming pass)\n\n**No public API.** Ameriprise publishes no developer API. Third-party access is\nvia aggregators only; Plaid does list \"Ameriprise Financial - My Financial\nAccounts\", but self-hosting a Plaid integration needs a Plaid account with\nproduction access and is read-only aggregation anyway. Treat Plaid as a last\nresort, not a shortcut.\n\n**A sanctioned machine path exists: OFX Direct Connect.** Ameriprise's own\nQuicken FAQ (ameriprise.com/customer-service/quicken-faqs) documents Direct\nConnect for brokerage accounts, no fee, up to 90 days of activity, plus Web\nConnect (manual QFX download from the secure site). Direct Connect requires a\nONE-TIME identity verification: the user enters their online User ID and password\non an Ameriprise verification page to enable the download method. This is the\ncheapest, most durable and most defensible path, and OFX returns exactly what the\nAC asks for: INVSTMTRS transactions, INCPOS positions, INVBAL balances.\n\n- `ofxtools` (csingley) ships the FI profile:\n  url `https://www25.ameriprise.com/AMPFWeb/ofxdl/us/download?request_type=nl_desktopdownload`,\n  version 211, org `AMPF`, fid `3102` (alt `13573`), brokerid `ameriprise.com`.\n  A separate entry covers the Ameriprise MasterCard at `ofx.ameriprise.com`\n  (org `Ameriprise MasterCard`, fid `12910`).\n- `ofxtools` is pure stdlib, Python 3.10+, deliberately complete on the OFX\n  investment message set, and its `ofxget` CLI already stores passwords in the\n  system keyring. It is the obvious dependency.\n- **RISK, unproven:** whether that endpoint still answers a third-party client.\n  form8949.com states Ameriprise \"hosts an OFX server. However, they restrict\n  access to the server such that we cannot retrieve your data on your behalf.\"\n  Historical Moneydance/GnuCash reports show OFX error 2000 and\n  `PROFMSGSRQV1`-unsupported failures. Quicken community threads show Ameriprise\n  Direct Connect working for Quicken clients (with periodic breakage), so the\n  server is live for *some* clients. Settle this by spike before building.\n- Direct Connect MFA is `CLIENTUID`-based (Intuit's OFX MFA scheme), not an OTP\n  prompt: some institutions bind a UUID per client install, and some accept only\n  a UUID minted by real Quicken. `ofxtools` defaults `appid=QWIN`,\n  `appver=2700`, i.e. the working path probably requires identifying as Quicken\n  (see L2).\n\n**Web portal 2FA is mandatory and unavoidable on the browser path.** Ameriprise\nrequires 2-Step Verification for all secure-site access. Second factors: the\nAmeriprise Financial app push notification, a THIRD-PARTY AUTHENTICATOR APP\n(TOTP), or SMS/automated voice 6-digit OTP; passkeys/FIDO2 security keys are\noffered as a passwordless first factor. Only the third-party authenticator\nautomates cleanly: enroll a TOTP secret once, keep it in the same secret store as\nthe password, compute codes locally with `pyotp`. App push, SMS and voice all\nneed a human or an SMS bridge. Repeated wrong codes SUSPEND online access, so\nretry logic must be conservative (see L3).\n\n**Mobile app reverse engineering: deprioritized.** A 2026 financial app should be\nassumed to use certificate pinning plus platform attestation (Play Integrity /\nApp Attest). Bypass means Frida/objection instrumentation on a rooted device or a\npatched APK: high effort, brittle against app updates, and a materially worse\nToS/CFAA posture than the sanctioned OFX path. Revisit only if OFX and the portal\nboth fail.\n\n**Existing OSS: nothing Ameriprise-specific.** Prior art worth modelling the\nlayout on: `eebette/bank_scrapers` (per-institution Playwright drivers; notably\nalready has a Fidelity NetBenefits driver, relevant to sibling todo `96314836`),\n`thrashr888/till` (CLI plus per-source Playwright plugins, OS keychain\ncredentials, local SQLite), `wnstnb/foliome` (Playwright with config-driven\nreaders).\n\n## Legal / ToS constraints (acknowledge, do not assume away)\n\n- **L1.** Ameriprise Terms of Use (ameriprise.com/legal/website-rules) prohibit\n  \"unauthorized use of Ameriprise's Website and systems, including ...\n  unauthorized entry into Ameriprise's systems, misuse of passwords\" and reserve\n  termination of access at sole discretion, without notice. Reading one's OWN\n  accounts with one's OWN credentials is the benign case, but automated access is\n  nowhere affirmatively blessed.\n- **L2.** The OFX path's practical need to present `appid=QWIN` is client\n  impersonation. Every OSS OFX client does it (GnuCash/AqBanking, Moneydance,\n  ofxtools defaults) and Ameriprise charges no fee for Direct Connect, but it is a\n  deliberate risk the user must accept (D5).\n- **L3.** The failure mode is account access SUSPENSION, not merely an error:\n  repeated bad one-time codes or denied push prompts lock online access. Hard\n  guardrails: no credential guessing, at most one OTP attempt per login, low\n  request frequency, and no unattended retry loop on auth failure.\n- **L4.** Writes raise the stakes categorically - a bug moves money or places an\n  order. Excluded from the AC by default (D1).\n\n## Open decisions - BLOCKING, user input needed (do not guess)\n\n- **D1. Read-only or read-write?** The AC as written is read-only\n  (balances/positions/transactions); the original body floated \"potentially\n  placing orders\". Recommendation: read-only for v1, a separate todo for any\n  trading capability. CONFIRM.\n- **D2. Which account types are in scope?** Brokerage / SPS Advantage only, or\n  also the Ameriprise MasterCard (separate OFX endpoint and fid), RiverSource\n  annuities (riversource.com, separate portal), managed/wrap accounts? Each extra\n  type adds an endpoint or a whole portal.\n- **D3. Credential and TOTP-secret storage:** system keyring (`ofxget` already\n  supports it), `pass`/GPG, 1Password CLI (`op read`), or an env/secret file?\n  No precedent exists in this repo - nothing here stores third-party credentials\n  today, so this sets one.\n- **D4. 2FA contract when a code IS required:** fully unattended via a stored\n  TOTP secret (requires the user to enroll a third-party authenticator app and\n  hand the tool the shared secret), or interactive prompt / `--otp` flag with a\n  human in the loop, or both with unattended as opt-in?\n- **D5. Risk acceptance:** is Quicken emulation (`appid=QWIN`) for Direct Connect\n  acceptable, and is Playwright automation of the user's own secure-site login\n  acceptable? If neither is, the only remaining paths are parsing manually\n  exported Web Connect QFX / tax CSV files, or Plaid.\n- **D6. Layout and naming** (currently provisional in `Scope.path_from_root`): a\n  new top-level `brokerage/` project (per-institution drivers, shared normalizer,\n  its own `.venv/` per AGENTS.md) plus a thin `skills/brokerage-access/SKILL.md`,\n  shared with the Fidelity 401k todo? Or an Ameriprise-only project and skill?\n- **D7. Persistence:** print JSON per invocation, or also persist a local SQLite\n  history? Direct Connect exposes only a 90-day window, so history not captured\n  is history lost.\n\n## Decomposition note\n\nAll work stays as parent-local WorkItems; no subtodos. The phases are\nsequentially gated - the OFX spike decides whether the browser driver is written\nat all - and each item is a single-subsystem commit with no independent\nbranch-bound artifact to farm out. Sibling todo `96314836` (Fidelity 401k\nNetBenefits) is the natural consumer of whatever is extracted as shared\n(credential store, TOTP handling, normalized schema, CLI shell); cross-link, do\nnot nest.\n\n## USER DECISION (2026-08-23): playwright-mcp as human proxy\n\nAccess approach decided: use playwright-mcp to interact with the Ameriprise portal as a normal human proxy, NOT as automated scraping. The agent drives the browser on behalf of the user, with the user able to intervene for 2FA or unusual flows. This:\n- Resolves D5 (risk acceptance): yes to Playwright, framed as human-proxied interaction\n- Deprioritizes OFX Direct Connect: still worth a spike, but playwright-mcp is the primary path\n- Changes the auth model: human remains in the loop for 2FA, reducing lockout risk\n- Aligns with Fidelity 401k approach (96314836) for consistency"
+  },
+  "Branch": "262e8dca-ameriprise-account-acce",
+  "Id": "262e8dcab4f99b57be2d100dc28cf2a72f7757e0b90c0e2aa7c994305955d88a",
+  "LongSummary": {
+    "objid": "0004",
+    "raw": "Programmatic read access to the owner's own Ameriprise Financial brokerage and\ninvestment accounts - balances, positions, and transaction history - exposed to\nagents as a CLI plus a SKILL.md. Ameriprise publishes no developer API, so\ngrooming research settled on OFX Direct Connect as the primary path: Ameriprise's\nown Quicken FAQ documents fee-free Direct Connect for brokerage accounts with a\n90-day activity window, and the ofxtools Python library already ships the\nconnection profile (url www25.ameriprise.com/AMPFWeb/ofxdl, org AMPF, fid 3102 or\n13573, brokerid ameriprise.com, OFX version 211) along with full investment\nmessage set support for INVSTMTRQ transactions, INCPOS positions and INVBAL\nbalances.\n\nTwo things are unproven and gate the build. First, whether that OFX endpoint\nstill answers a third-party client at all: form8949.com reports that Ameriprise\nrestricts server access, and GnuCash and Moneydance users have hit OFX error 2000\nand PROFMSGSRQV1-unsupported failures, while Quicken users do get working\ndownloads. Second, whether the server demands an Intuit-style CLIENTUID and an\nappid=QWIN Quicken identity. Direct Connect additionally requires a one-time\nidentity verification the user performs by hand on the Ameriprise secure site.\nThe first WorkItem is therefore a probe, not an implementation. Ranked alternates\nare browser automation of the secure site with Playwright (modelled on\neebette/bank_scrapers and thrashr888/till), then parsing manually exported Web\nConnect QFX or tax CSV files, then Plaid. Mobile app reverse engineering is\ndeliberately excluded: certificate pinning plus platform attestation make it\nbrittle, and its terms-of-service posture is far worse than the sanctioned path.\n\nAmeriprise requires 2-Step Verification on every secure-site login. The only\ncleanly automatable factor is a third-party authenticator app, meaning a stored\nTOTP secret evaluated locally with pyotp; app push notifications, SMS and voice\ncodes all need a human in the loop. Repeated bad codes suspend online access, so\nauth retry must be conservative rather than persistent, and Ameriprise's Terms of\nUse nowhere bless automated access even to one's own accounts.\n\nOrder placement is out of scope - the acceptance criteria are read-only. Grooming\ndeliberately left seven decisions with the user instead of guessing them:\nread-only versus read-write, which account types count (brokerage and SPS\nAdvantage versus the separately-hosted Ameriprise MasterCard, RiverSource\nannuities, and managed accounts), where the password and TOTP secret live\n(system keyring, pass, or 1Password) given this repo stores no third-party\ncredentials today, whether 2FA runs unattended or prompts, whether Quicken\nemulation and browser automation of one's own login are acceptable risks, the\nproject layout, and whether transaction history is persisted locally since Direct\nConnect only exposes 90 days.\n\nSibling todo 96314836 wants the same capability for a Fidelity 401k through\nNetBenefits. The credential store, TOTP handling, normalized\naccount/position/transaction schema and CLI shell are the intended shared pieces,\nwhich is why a `brokerage/` project holding per-institution drivers is the\nprovisional layout rather than an Ameriprise-only tool."
+  },
+  "Scope": {
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0003",
+    "path_from_root": "brokerage"
+  },
+  "State": {
+    "groom": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Ameriprise account access skill/tool"
+  },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0005",
+      "summary": "[HICAP] Decision gate: get D1-D7 answered by the user (read-only vs read-write, account types in scope, credential store, 2FA contract, ToS risk acceptance, layout, persistence), record the answers in Body, then re-groom the items below to match. No code before this closes."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0006",
+      "summary": "[MIDCAP] Spike A - probe the Ameriprise OFX endpoint. ofxget scan plus a profile request against www25.ameriprise.com/AMPFWeb/ofxdl (org AMPF, fid 3102 and 13573, version 211, brokerid ameriprise.com), and the ofx.ameriprise.com MasterCard entry if D2 includes it. Record per attempt: HTTP status, OFX status code, whether PROFMSGSRQV1 answers, whether CLIENTUID is demanded, whether appid=QWIN is required. Commit findings as a notes file. Escalate to HICAP if failures are ambiguous rather than flat refusals."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0007",
+      "summary": "[MIDCAP] Spike A2 (user in the loop, expect a userneeded pause) - have the user complete Ameriprise's one-time Quicken Direct Connect identity verification on the secure site, then re-run signon plus one INVSTMTRQ against a real acctid. Outcome is the go/no-go on OFX vs the browser fallback; record the verdict in the notes file."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0008",
+      "summary": "[MIDCAP] Fixtures - capture a redacted sample of whatever the winning path returns (an INVSTMTRS response, or a Web Connect QFX / tax CSV exported by hand from the secure site) under a fixtures dir, with account numbers, names and dollar amounts scrubbed. Fast tests must never need live credentials."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0009",
+      "summary": "[HICAP] Exemplar - one normalizer module mapping OFX INVSTMTRS, INVPOSLIST and INVBAL into dataclasses (Account, Balance, Position, Transaction) with stable field names and Decimal money, plus a golden-file test over the redacted fixture. Land the pattern once here; roll out further transaction subtypes as separate MIDCAP items."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000a",
+      "summary": "[MIDCAP] Secret access seam per D3 - one resolver that fetches user id, password and (if D4 requires) the TOTP secret from the chosen store, with no plaintext credential ever written to the repo, the todo store, or a log. Include a test using a fake provider."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000b",
+      "summary": "[MIDCAP] Auth flow per D4 - TOTP code generation (pyotp) for unattended runs plus an interactive/--otp path for a human, and persisted CLIENTUID and session reuse so a successful login is not re-earned every invocation. Hard rule from L3: at most one OTP attempt per login, and no retry loop on auth failure (repeated bad codes suspend online access)."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000c",
+      "summary": "[MIDCAP] CONDITIONAL, only if Spike A/A2 fail - Playwright secure-site driver that logs in, clears 2-Step Verification, and pulls balances, positions and transactions, preferring the site's own export/download over DOM scraping, feeding the same normalizer. Model the layout on eebette/bank_scrapers and thrashr888/till."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000d",
+      "summary": "[MIDCAP] CLI surface - subcommands accounts, balances, positions, transactions with --json output over the normalizer. Project .venv created via ./create_pipenv.sh per AGENTS.md; Makefile test target runs fixtures-only fast tests, all-tests covers the live network/credential path."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000e",
+      "summary": "[LOCAP] Run and report - make test in the project, plus a grep-level check that no fixture, log or committed file carries a real account number, password or TOTP secret. Escalate the fix, not the re-run, on red."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000f",
+      "summary": "[MIDCAP] Skill doc per D6 - write SKILL.md covering agent-facing invocation, the one-time setup preconditions (Direct Connect identity verification, authenticator-app enrollment, secret store population), the L1-L4 ToS and lockout guardrails, and each known failure mode with what it means."
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0010",
+      "summary": "[MIDCAP] Extract the institution-independent pieces (secret resolver, TOTP, normalized schema, CLI shell) behind a stable seam and write down the reuse contract for the Fidelity 401k todo 96314836; add an INFO cross-link, not a tracked subtodo."
+    }
+  ],
+  "_nextobjid": 17,
+  "create_dt": "2026-08-23T21:28:24Z",
+  "update_dt": "2026-08-23T21:51:42Z"
+}
