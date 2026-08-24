@@ -10,16 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from imgcomp.export import render_png
 from imgcomp.naive import NaiveCompositor
-from imgcomp.primitives import Circle, ImageObject
-from imgcomp.wrappers import Group, Translate
+from imgcomp.primitives import ImageObject
+from imgcomp.shapes import Circle
+from imgcomp.wrappers import Color, Translate
 from PIL import Image
 
 
 class MarkupHandle(Circle):
-    def __init__(self, radius: float, color: tuple[int, int, int, int]) -> None:
-        super().__init__(radius, color)
+    def __init__(self, radius: float) -> None:
+        super().__init__(radius)
         self.touches: list[tuple[float, float]] = []
 
     def on_touch(self, x: float, y: float) -> None:
@@ -33,12 +33,15 @@ def test_markup_scene_exports_and_dispatches(tmp_path: Path) -> None:
             [(40, 40, 40, 255), (40, 40, 40, 255)],
         ]
     )
-    handle = MarkupHandle(1.0, (255, 0, 0, 255))
-    scene = Group((underlay, Translate(handle, 1.0, 0.0)))
+    handle = MarkupHandle(1.0)
+    scene = [
+        underlay,
+        Color(Translate(handle, 1.0, 0.0), (255, 0, 0, 255)),
+    ]
     comp = NaiveCompositor(4, 4)
 
     out = tmp_path / "markup.png"
-    render_png(comp, scene, out)
+    comp.render_png(scene, out)
     saved = Image.open(out)
     assert saved.size == (4, 4)
     assert saved.getpixel((3, 2)) == (255, 0, 0, 255)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from array import array
+from pathlib import Path
 from typing import Iterable, Iterator, List, Sequence
 
 from imgcomp.rgba import RGBA, TRANSPARENT
@@ -39,6 +40,22 @@ class Surface(ABC):
         for y in range(self.height):
             for x in range(self.width):
                 yield x, y, self.get_pixel(x, y)
+
+    def rgba_bytes(self) -> bytes:
+        """Return raw RGBA bytes (row-major, top row first)."""
+        if hasattr(self, "to_bytes"):
+            return self.to_bytes()  # type: ignore[attr-defined]
+        rows = bytearray()
+        for _x, _y, color in self.iter_pixels():
+            rows.extend(color)
+        return bytes(rows)
+
+    def write_png(self, path: Path | str) -> None:
+        """Write this straight RGBA surface to PNG."""
+        from PIL import Image
+
+        image = Image.frombytes("RGBA", (self.width, self.height), self.rgba_bytes())
+        image.save(path)
 
 
 class ArraySurface(Surface):

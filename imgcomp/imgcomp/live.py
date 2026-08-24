@@ -129,7 +129,7 @@ def _surface_to_photo(
     image = Image.frombytes(
         "RGBA",
         (surface.width, surface.height),
-        _surface_bytes(surface),
+        surface.rgba_bytes(),
     )
     scale = min(1.0, max_display_side / max(image.width, image.height))
     display_w = max(1, int(round(image.width * scale)))
@@ -138,12 +138,3 @@ def _surface_to_photo(
         image = image.resize((display_w, display_h), Image.Resampling.NEAREST)
     safe_scale = scale if scale > 0.0 else 1.0
     return ImageTk.PhotoImage(image), safe_scale, 0.0, 0.0
-
-
-def _surface_bytes(surface: Surface) -> bytes:
-    if hasattr(surface, "to_bytes"):
-        return surface.to_bytes()  # type: ignore[attr-defined]
-    rows = bytearray()
-    for _x, _y, color in surface.iter_pixels():
-        rows.extend(color)
-    return bytes(rows)

@@ -7,9 +7,10 @@ import inspect
 from imgcomp.compositor import Compositor
 from imgcomp.naive import NaiveCompositor
 from imgcomp.object import Object
-from imgcomp.primitives import Circle
-from imgcomp.rgba import TRANSPARENT
+from imgcomp.rgba import TRANSPARENT, WHITE
+from imgcomp.shapes import Circle
 from imgcomp.surface import ArraySurface, Surface
+from imgcomp.wrappers import Color
 
 
 def test_object_and_surface_are_abstract() -> None:
@@ -28,7 +29,11 @@ def test_compositor_viewport_to_root_local_uses_center() -> None:
     assert comp.viewport_to_root_local(5.5, 4.5) == (0.5, 0.5)
 
 
-def test_circle_sample_and_hit_are_independent() -> None:
-    circle = Circle(radius=2.0, color=(255, 0, 0, 255), hit_radius=5.0)
-    assert circle.sample(4.0, 0.0) == TRANSPARENT
-    assert circle.hit(4.0, 0.0) is True
+def test_geometry_is_white_until_color_sets_it() -> None:
+    circle = Circle(2.0)
+    assert circle.sample(0.0, 0.0) == WHITE
+    colored = Color(circle, (255, 0, 0, 255))
+    comp = NaiveCompositor(10, 10)
+    assert comp.render([colored]).get_pixel(5, 5) == (255, 0, 0, 255)
+    assert circle.sample(2.1, 0.0) == TRANSPARENT
+    assert circle.hit(2.1, 0.0) is False

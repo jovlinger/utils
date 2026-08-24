@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Optional
 
 from imgcomp.object import Object
+from imgcomp.scene import Scene, as_z_list
 from imgcomp.surface import Surface
 
 EventKind = Literal["touch", "drag", "scroll"]
@@ -43,16 +45,20 @@ class Compositor(ABC):
         return (vx - self._width / 2.0, vy - self._height / 2.0)
 
     @abstractmethod
-    def render(self, root: Object) -> Surface:
+    def render(self, root: Scene) -> Surface:
         """Paint root into a new surface."""
 
+    def render_png(self, root: Scene, path: Path | str) -> None:
+        """Render root at full viewport resolution and write PNG."""
+        self.render(root).write_png(path)
+
     @abstractmethod
-    def pick(self, root: Object, vx: float, vy: float) -> Optional[PickResult]:
+    def pick(self, root: Scene, vx: float, vy: float) -> Optional[PickResult]:
         """Return the topmost hit in depth-first paint order, or None."""
 
     def dispatch_event(
         self,
-        root: Object,
+        root: Scene,
         kind: EventKind,
         vx: float,
         vy: float,

@@ -1,4 +1,4 @@
-"""Computed and loaded leaf objects."""
+"""Loaded leaf objects (non-SDF)."""
 
 from __future__ import annotations
 
@@ -9,31 +9,6 @@ from typing import Sequence
 from imgcomp.object import Object
 from imgcomp.rgba import RGBA, TRANSPARENT
 from imgcomp.surface import ArraySurface
-
-
-class Circle(Object):
-    """Filled disk in local space; optional larger hit radius."""
-
-    def __init__(
-        self,
-        radius: float,
-        color: RGBA,
-        *,
-        hit_radius: float | None = None,
-    ) -> None:
-        if radius < 0.0:
-            raise ValueError("radius must be non-negative")
-        self.radius = radius
-        self.color = color
-        self.hit_radius = radius if hit_radius is None else hit_radius
-
-    def sample(self, x: float, y: float) -> RGBA:
-        if math.hypot(x, y) <= self.radius:
-            return self.color
-        return TRANSPARENT
-
-    def hit(self, x: float, y: float) -> bool:
-        return math.hypot(x, y) <= self.hit_radius
 
 
 class ImageObject(Object):

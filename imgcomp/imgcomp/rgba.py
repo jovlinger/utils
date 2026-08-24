@@ -7,6 +7,7 @@ from typing import Tuple
 RGBA = Tuple[int, int, int, int]
 
 TRANSPARENT: RGBA = (0, 0, 0, 0)
+WHITE: RGBA = (255, 255, 255, 255)
 
 
 def clamp_channel(value: float) -> int:
