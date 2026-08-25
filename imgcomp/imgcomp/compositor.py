@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.surface import Surface
 
@@ -18,7 +18,7 @@ EventKind = Literal["touch", "drag", "scroll"]
 class PickResult:
     """Topmost hit object and its local center-based coordinates."""
 
-    target: Object
+    target: Shape
     local_x: float
     local_y: float
 

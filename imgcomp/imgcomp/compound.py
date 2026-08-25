@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from imgcomp.shapes import SDFShape
+from collections.abc import Sequence
+
+from imgcomp.shape import Shape
 from imgcomp.sdf import (
     IntersectSDF,
+    SDF,
     SubtractSDF,
     UnionSDF,
     fatten as fatten_sdf,
@@ -12,15 +15,44 @@ from imgcomp.sdf import (
     stretch as stretch_sdf,
     thin as thin_sdf,
 )
+from imgcomp.shapes import SDFShape
 
 
-class Union(SDFShape):
-    """Geometric union of two SDF shapes."""
+def _union_members(*args: Shape | Sequence[Shape]) -> tuple[Shape, ...]:
+    if len(args) == 1 and isinstance(args[0], (list, tuple)):
+        members = tuple(args[0])
+    else:
+        members = args  # type: ignore[assignment]
+    if not members:
+        raise ValueError("Union requires at least one member")
+    for member in members:
+        if not isinstance(member, Shape):
+            raise TypeError("Union members must be Shape instances")
+    return members
 
-    def __init__(self, left: SDFShape, right: SDFShape) -> None:
-        super().__init__(UnionSDF(left.sdf, right.sdf))
-        self.left = left
-        self.right = right
+
+def _union_sdf(shapes: Sequence[SDFShape]) -> SDF:
+    sdf = shapes[0].sdf
+    for shape in shapes[1:]:
+        sdf = UnionSDF(sdf, shape.sdf)
+    return sdf
+
+
+class Union(Shape):
+    """Combine members; geometry-only SDFShapes or painted scene objects."""
+
+    def __init__(self, *members: Shape | Sequence[Shape]) -> None:
+        self.members = _union_members(*members)
+        if all(isinstance(member, SDFShape) for member in self.members):
+            self.sdf = _union_sdf(self.members)  # type: ignore[arg-type]
+        else:
+            self.sdf = None
+
+    def sample(self, x: float, y: float) -> tuple[int, int, int, int]:
+        raise NotImplementedError("Union geometry is resolved by imgcomp.probe")
+
+    def hit(self, x: float, y: float) -> bool:
+        raise NotImplementedError("Union geometry is resolved by imgcomp.probe")
 
 
 class Intersect(SDFShape):
@@ -78,8 +110,8 @@ class StretchShape(SDFShape):
         self.scale_y = scale_y
 
 
-def union(left: SDFShape, right: SDFShape) -> Union:
-    return Union(left, right)
+def union(*members: Shape | Sequence[Shape]) -> Union:
+    return Union(*members)
 
 
 def intersect(left: SDFShape, right: SDFShape) -> Intersect:

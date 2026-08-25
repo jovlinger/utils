@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from imgcomp.compositor import Compositor, PickResult
-from imgcomp.probe import hit_color, pick_target
+from imgcomp.probe import color_at, pick_target
 from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.surface import ArraySurface, Surface
@@ -38,7 +38,7 @@ class NaiveCompositor(Compositor):
         """Walk closest-to-furthest; src-over each hit; stop when opaque."""
         accum: RGBA = TRANSPARENT
         for obj in reversed(layers):
-            layer = hit_color(obj, x, y)
+            layer = color_at(obj, x, y)
             if layer is None:
                 continue
             accum = src_over(layer, accum)

@@ -1,45 +1,40 @@
-"""Hit and color probing for naive per-pixel compositing."""
+"""Color probing for naive per-pixel compositing."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from imgcomp.object import Object
-from imgcomp.rgba import RGBA, modulate
+from imgcomp.compound import Union
+from imgcomp.rgba import RGBA, TRANSPARENT, modulate, src_over
+from imgcomp.shape import Shape
 from imgcomp.wrappers import Color, ColorMod, Rotate, Stretch, Translate
 
 
-def hit_at(obj: Object, x: float, y: float) -> bool:
-    """Return True when local coordinate (x, y) hits the object."""
+def color_at(obj: Shape, x: float, y: float) -> Optional[RGBA]:
+    """Return straight RGBA when (x, y) hits, else None."""
+    if isinstance(obj, Union):
+        accum: RGBA = TRANSPARENT
+        for member in reversed(obj.members):
+            layer = color_at(member, x, y)
+            if layer is None:
+                continue
+            accum = src_over(layer, accum)
+            if accum[3] >= 255:
+                break
+        return accum if accum[3] > 0 else None
     if isinstance(obj, Translate):
-        return hit_at(obj.child, x - obj.tx, y - obj.ty)
+        return color_at(obj.child, x - obj.tx, y - obj.ty)
     if isinstance(obj, Rotate):
         cx, cy = obj._to_child(x, y)
-        return hit_at(obj.child, cx, cy)
+        return color_at(obj.child, cx, cy)
     if isinstance(obj, Stretch):
-        return hit_at(obj.child, x / obj.scale_x, y / obj.scale_y)
+        return color_at(obj.child, x / obj.scale_x, y / obj.scale_y)
     if isinstance(obj, Color):
-        return hit_at(obj.child, x, y)
-    if isinstance(obj, ColorMod):
-        return hit_at(obj.child, x, y)
-    return obj.hit(x, y)
-
-
-def hit_color(obj: Object, x: float, y: float) -> Optional[RGBA]:
-    """Combine hit and color: return straight RGBA when hit, else None."""
-    if isinstance(obj, Translate):
-        return hit_color(obj.child, x - obj.tx, y - obj.ty)
-    if isinstance(obj, Rotate):
-        cx, cy = obj._to_child(x, y)
-        return hit_color(obj.child, cx, cy)
-    if isinstance(obj, Stretch):
-        return hit_color(obj.child, x / obj.scale_x, y / obj.scale_y)
-    if isinstance(obj, Color):
-        if not hit_at(obj.child, x, y):
+        if color_at(obj.child, x, y) is None:
             return None
         return obj.color
     if isinstance(obj, ColorMod):
-        base = hit_color(obj.child, x, y)
+        base = color_at(obj.child, x, y)
         if base is None:
             return None
         return modulate(base, obj.r_mul, obj.g_mul, obj.b_mul, obj.a_mul)
@@ -51,8 +46,14 @@ def hit_color(obj: Object, x: float, y: float) -> Optional[RGBA]:
     return color
 
 
-def pick_target(obj: Object, x: float, y: float) -> Optional[tuple[Object, float, float]]:
-    """Return the leaf object and its local coords when (x, y) hits."""
+def pick_target(obj: Shape, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+    """Return the leaf shape and its local coords when (x, y) hits."""
+    if isinstance(obj, Union):
+        for member in reversed(obj.members):
+            picked = pick_target(member, x, y)
+            if picked is not None:
+                return picked
+        return None
     if isinstance(obj, Translate):
         return pick_target(obj.child, x - obj.tx, y - obj.ty)
     if isinstance(obj, Rotate):

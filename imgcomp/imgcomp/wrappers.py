@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import math
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.rgba import RGBA, modulate
 
 
-class Translate(Object):
+class Translate(Shape):
     """Place the child center at (tx, ty) in parent space."""
 
-    def __init__(self, child: Object, tx: float, ty: float) -> None:
+    def __init__(self, child: Shape, tx: float, ty: float) -> None:
         self.child = child
         self.tx = tx
         self.ty = ty
@@ -32,10 +32,10 @@ class Translate(Object):
         self.child.on_scroll(x - self.tx, y - self.ty, delta)
 
 
-class Rotate(Object):
+class Rotate(Shape):
     """Rotate the child about the local origin (degrees, +y down)."""
 
-    def __init__(self, child: Object, degrees: float) -> None:
+    def __init__(self, child: Shape, degrees: float) -> None:
         self.child = child
         self.degrees = degrees
         self._cos = math.cos(math.radians(degrees))
@@ -67,10 +67,10 @@ class Rotate(Object):
         self.child.on_scroll(cx, cy, delta)
 
 
-class Stretch(Object):
+class Stretch(Shape):
     """Non-uniform scale of the child about the local origin (+y down)."""
 
-    def __init__(self, child: Object, scale_x: float, scale_y: float) -> None:
+    def __init__(self, child: Shape, scale_x: float, scale_y: float) -> None:
         if scale_x == 0.0 or scale_y == 0.0:
             raise ValueError("scale_x and scale_y must be non-zero")
         self.child = child
@@ -93,10 +93,10 @@ class Stretch(Object):
         self.child.on_scroll(x / self.scale_x, y / self.scale_y, delta)
 
 
-class Color(Object):
+class Color(Shape):
     """Apply a solid straight RGBA wherever the child is visible."""
 
-    def __init__(self, child: Object, color: RGBA) -> None:
+    def __init__(self, child: Shape, color: RGBA) -> None:
         self.child = child
         self.color = color
 
@@ -116,12 +116,12 @@ class Color(Object):
         self.child.on_scroll(x, y, delta)
 
 
-class ColorMod(Object):
+class ColorMod(Shape):
     """Multiply straight RGBA channels on samples from the child."""
 
     def __init__(
         self,
-        child: Object,
+        child: Shape,
         *,
         r_mul: float = 1.0,
         g_mul: float = 1.0,

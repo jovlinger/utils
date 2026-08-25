@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from imgcomp.naive import NaiveCompositor
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.rgba import RGBA, TRANSPARENT
 from imgcomp.shapes import Circle
 from imgcomp.wrappers import Color, Translate
@@ -37,7 +37,7 @@ def test_translate_percolates_local_touch_coords() -> None:
     assert target.touches == [(0.0, 0.0)]
 
 
-class _HitOnly(Object):
+class _HitOnly(Shape):
     def __init__(self) -> None:
         self.scrolled = False
 

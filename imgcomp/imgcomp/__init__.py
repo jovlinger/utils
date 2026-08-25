@@ -18,7 +18,7 @@ from imgcomp.compound import (
 )
 from imgcomp.compositor import Compositor
 from imgcomp.naive import NaiveCompositor
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.primitives import ImageObject
 from imgcomp.rgba import RGBA, TRANSPARENT, WHITE, src_over
 from imgcomp.scene import Scene, as_scene, as_z_list
@@ -37,7 +37,7 @@ __all__ = [
     "Infinite",
     "ImageObject",
     "NaiveCompositor",
-    "Object",
+    "Shape",
     "Oval",
     "RGBA",
     "Rectangle",

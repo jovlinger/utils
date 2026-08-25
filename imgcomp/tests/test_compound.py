@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from imgcomp.compound import Fatten, Intersect, StretchShape, Subtract, Thin, Union
 from imgcomp.naive import NaiveCompositor
-from imgcomp.shapes import Circle, Rectangle
+from imgcomp.shapes import Circle, Oval, Rectangle
 from imgcomp.wrappers import Color, Stretch
 
 
@@ -17,6 +17,55 @@ def test_union_renders_both_regions_one_color() -> None:
     surface = comp.render([shape])
     assert surface.get_pixel(10, 5) == (0, 0, 255, 255)
     assert surface.get_pixel(13, 5) == (0, 0, 255, 255)
+
+
+def test_union_accepts_shape_list() -> None:
+    comp = NaiveCompositor(20, 10)
+    shape = Color(
+        Union([Circle(2.0), Rectangle(4.0, 1.0)]),
+        (0, 0, 255, 255),
+    )
+    surface = comp.render([shape])
+    assert surface.get_pixel(10, 5) == (0, 0, 255, 255)
+    assert surface.get_pixel(13, 5) == (0, 0, 255, 255)
+
+
+def test_union_accepts_three_nargs() -> None:
+    comp = NaiveCompositor(20, 20)
+    shape = Color(
+        Union(Circle(2.0), Rectangle(6.0, 2.0), Oval(3.0, 2.0)),
+        (0, 0, 255, 255),
+    )
+    surface = comp.render([shape])
+    assert surface.get_pixel(10, 10) == (0, 0, 255, 255)
+    assert surface.get_pixel(15, 10) == (0, 0, 255, 255)
+
+
+from imgcomp.wrappers import Color, Translate
+
+
+def test_union_composites_colored_members() -> None:
+    comp = NaiveCompositor(40, 40)
+    shape = Union(
+        Color(Translate(Circle(5.0), 8.0, 0.0), (255, 0, 0, 255)),
+        Color(Translate(Circle(5.0), -8.0, 0.0), (0, 255, 0, 255)),
+    )
+    surface = comp.render([shape])
+    assert surface.get_pixel(28, 20) == (255, 0, 0, 255)
+    assert surface.get_pixel(12, 20) == (0, 255, 0, 255)
+
+
+def test_union_method_composes_colored_members() -> None:
+    comp = NaiveCompositor(40, 40)
+    shape = (
+        Circle(5.0)
+        .translate(8.0, 0.0)
+        .color((255, 0, 0, 255))
+        .union(Circle(5.0).translate(-8.0, 0.0).color((0, 255, 0, 255)))
+    )
+    surface = comp.render([shape])
+    assert surface.get_pixel(28, 20) == (255, 0, 0, 255)
+    assert surface.get_pixel(12, 20) == (0, 255, 0, 255)
 
 
 def test_subtract_carves_hole_from_rectangle() -> None:
