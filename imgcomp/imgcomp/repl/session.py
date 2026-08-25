@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
 from imgcomp.naive import NaiveCompositor
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.repl.api_v0 import api_namespace
 from imgcomp.repl.cache import LayerCache
 from imgcomp.rgba import RGBA, TRANSPARENT
@@ -60,11 +60,11 @@ class ReplSession:
         assert self._cache is not None
         return self._cache
 
-    def show(self, *shapes: Object) -> None:
+    def show(self, *shapes: Shape) -> None:
         self.scene = list(shapes)
         self._bindings["scene"] = self.scene
 
-    def add(self, shape: Object) -> None:
+    def add(self, shape: Shape) -> None:
         layers = list(as_z_list(self.scene))
         layers.append(shape)
         self.scene = layers
@@ -124,7 +124,7 @@ class ReplSession:
             return None
         target = picked.target
         for name, value in self._bindings.items():
-            if isinstance(value, Object) and (
+            if isinstance(value, Shape) and (
                 value is target or _contains_object(value, target)
             ):
                 return name
@@ -139,15 +139,15 @@ class ReplSession:
         return surface.get_pixel(x, y)
 
 
-def _contains_object(root: Object, target: Object) -> bool:
+def _contains_object(root: Shape, target: Shape) -> bool:
     if root is target:
         return True
     child = getattr(root, "child", None)
-    if isinstance(child, Object) and _contains_object(child, target):
+    if isinstance(child, Shape) and _contains_object(child, target):
         return True
     members = getattr(root, "members", None)
     if isinstance(members, Sequence):
         for member in members:
-            if isinstance(member, Object) and _contains_object(member, target):
+            if isinstance(member, Shape) and _contains_object(member, target):
                 return True
     return False

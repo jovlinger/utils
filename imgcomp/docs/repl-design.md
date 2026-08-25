@@ -170,8 +170,8 @@ imgcomp/
    naive re-render (assert speedup ratio or time budget on a fixed size).
 4. No Tk required for tests; optional demo hook via existing `LivePreview`.
 
-## Open product decisions (do not invent)
+## Product decisions (descoped at merge)
 
-1. Learner language: Python subset vs toy syntax.
-2. Default host: Tk vs terminal+PNG vs both.
-3. Lesson modules vs free-explore-first.
+Deferred out of this ticket's acceptance; spike ships a Python-exec v0 API and
+headless render. Host (Tk LivePreview vs PNG) and lesson coupling can be chosen
+in a follow-on without blocking the layer-cache REPL core.

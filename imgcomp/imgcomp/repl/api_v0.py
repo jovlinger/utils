@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.rgba import RGBA
 from imgcomp.shapes import Circle, Oval, Rectangle
 from imgcomp.wrappers import Color, Rotate, Stretch, Translate
@@ -20,20 +20,20 @@ def oval(radius_x: float, radius_y: float) -> Oval:
     return Oval(radius_x, radius_y)
 
 
-def color(shape: Object, r: int, g: int, b: int, a: int = 255) -> Color:
+def color(shape: Shape, r: int, g: int, b: int, a: int = 255) -> Color:
     rgba: RGBA = (r, g, b, a)
     return Color(shape, rgba)
 
 
-def move(shape: Object, x: float, y: float) -> Translate:
+def move(shape: Shape, x: float, y: float) -> Translate:
     return Translate(shape, x, y)
 
 
-def turn(shape: Object, degrees: float) -> Rotate:
+def turn(shape: Shape, degrees: float) -> Rotate:
     return Rotate(shape, degrees)
 
 
-def stretch(shape: Object, scale_x: float, scale_y: float) -> Stretch:
+def stretch(shape: Shape, scale_x: float, scale_y: float) -> Stretch:
     return Stretch(shape, scale_x, scale_y)
 
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Dict, Hashable, List, Optional, Tuple
 
-from imgcomp.object import Object
-from imgcomp.probe import hit_color
+from imgcomp.shape import Shape
+from imgcomp.probe import color_at
 from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.shapes import Circle, Infinite, Oval, Rectangle, SDFShape
@@ -13,7 +13,7 @@ from imgcomp.surface import ArraySurface, Surface
 from imgcomp.wrappers import Color, ColorMod, Rotate, Stretch, Translate
 
 
-def content_key(obj: Object) -> Tuple[Hashable, ...]:
+def content_key(obj: Shape) -> Tuple[Hashable, ...]:
     """Structural key for cache identity (parameters that affect pixels)."""
     if isinstance(obj, Translate):
         return ("translate", obj.tx, obj.ty, content_key(obj.child))
@@ -69,25 +69,25 @@ class LayerCache:
         self.height = height
         self.clear()
 
-    def rasterize_object(self, obj: Object) -> ArraySurface:
+    def rasterize_shape(self, obj: Shape) -> ArraySurface:
         """Paint one object alone into a transparent viewport-sized surface."""
         surface = ArraySurface(self.width, self.height)
         for y in range(self.height):
             for x in range(self.width):
                 local_x = x + 0.5 - self.width / 2.0
                 local_y = y + 0.5 - self.height / 2.0
-                color = hit_color(obj, local_x, local_y)
+                color = color_at(obj, local_x, local_y)
                 if color is not None:
                     surface.set_pixel(x, y, color)
         return surface
 
-    def layer_surface(self, obj: Object) -> ArraySurface:
+    def layer_surface(self, obj: Shape) -> ArraySurface:
         key = content_key(obj)
         cached = self._layers.get(key)
         if cached is not None:
             self.hits += 1
             return cached
-        surface = self.rasterize_object(obj)
+        surface = self.rasterize_shape(obj)
         self._layers[key] = surface
         self.misses += 1
         return surface
