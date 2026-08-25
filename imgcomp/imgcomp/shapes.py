@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.rgba import TRANSPARENT, WHITE
 from imgcomp.sdf import (
     CircleSDF,
@@ -12,7 +12,7 @@ from imgcomp.sdf import (
 )
 
 
-class SDFShape(Object):
+class SDFShape(Shape):
     """White-filled geometry from an SDF."""
 
     def __init__(self, sdf: SDF) -> None:
@@ -53,7 +53,7 @@ class Oval(SDFShape):
         self.radius_y = radius_y
 
 
-class Infinite(Object):
+class Infinite(Shape):
     """Full-plane geometry of infinite extent; use as a background layer."""
 
     def sample(self, x: float, y: float) -> tuple[int, int, int, int]:

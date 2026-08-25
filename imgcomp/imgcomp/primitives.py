@@ -6,12 +6,12 @@ import math
 from pathlib import Path
 from typing import Sequence
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.rgba import RGBA, TRANSPARENT
 from imgcomp.surface import ArraySurface
 
 
-class ImageObject(Object):
+class ImageObject(Shape):
     """Bitmap sampled in center-based local coordinates."""
 
     def __init__(self, surface: ArraySurface) -> None:

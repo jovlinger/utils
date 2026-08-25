@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from imgcomp.compositor import Compositor
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 from imgcomp.surface import Surface
 
 
@@ -32,14 +32,14 @@ class LivePreview:
     def __init__(
         self,
         compositor: Compositor,
-        root_object: Object,
+        root_shape: Shape,
         *,
         title: str = "imgcomp preview",
         max_display_side: int = 800,
         on_frame: Optional[Callable[[Surface], None]] = None,
     ) -> None:
         self._compositor = compositor
-        self._root_object = root_object
+        self._root_shape = root_shape
         self._title = title
         self._max_display_side = max_display_side
         self._on_frame = on_frame
@@ -67,7 +67,7 @@ class LivePreview:
 
     def refresh(self) -> None:
         """Re-render the scene and update the preview image."""
-        self._surface = self._compositor.render(self._root_object)
+        self._surface = self._compositor.render(self._root_shape)
         if self._on_frame is not None:
             self._on_frame(self._surface)
         self._photo, self._scale, self._offset_x, self._offset_y = _surface_to_photo(
@@ -83,7 +83,7 @@ class LivePreview:
 
     def _on_touch(self, event: tk.Event) -> None:
         vx, vy = self._viewport_from_display(float(event.x), float(event.y))
-        self._compositor.dispatch_event(self._root_object, "touch", vx, vy)
+        self._compositor.dispatch_event(self._root_shape, "touch", vx, vy)
         self._drag_last = (vx, vy)
 
     def _on_drag(self, event: tk.Event) -> None:
@@ -93,7 +93,7 @@ class LivePreview:
             return
         last_x, last_y = self._drag_last
         self._compositor.dispatch_event(
-            self._root_object,
+            self._root_shape,
             "drag",
             vx,
             vy,
@@ -112,7 +112,7 @@ class LivePreview:
         vx, vy = self._viewport_from_display(float(event.x), float(event.y))
         delta = float(getattr(event, "delta", 0.0))
         self._compositor.dispatch_event(
-            self._root_object,
+            self._root_shape,
             "scroll",
             vx,
             vy,

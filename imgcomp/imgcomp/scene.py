@@ -1,23 +1,23 @@
-"""Normalize a scene root to a z-ordered object list (back to front)."""
+"""Normalize a scene root to a z-ordered shape list (back to front)."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from imgcomp.object import Object
+from imgcomp.shape import Shape
 
-Scene = Object | Sequence[Object]
+Scene = Shape | Sequence[Shape]
 
 
-def as_z_list(root: Scene) -> tuple[Object, ...]:
+def as_z_list(root: Scene) -> tuple[Shape, ...]:
     """Return scene layers ordered furthest (index 0) to closest (index -1)."""
-    if isinstance(root, Object):
+    if isinstance(root, Shape):
         return (root,)
     if isinstance(root, (str, bytes)):
-        raise TypeError("scene root must be an Object or a sequence of Object")
+        raise TypeError("scene root must be a Shape or a sequence of Shape")
     return tuple(root)
 
 
-def as_scene(root: Scene) -> tuple[Object, ...]:
+def as_scene(root: Scene) -> tuple[Shape, ...]:
     """Alias for as_z_list kept for compositor entry points."""
     return as_z_list(root)
