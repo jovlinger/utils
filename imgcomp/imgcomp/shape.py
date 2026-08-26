@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from imgcomp.rgba import RGBA
 
 
 class Shape(ABC):
-    """Maps center-based local pixel coordinates to color and hit tests."""
+    """Maps center-based local pixel coordinates to color (None = miss)."""
 
     @abstractmethod
-    def sample(self, x: float, y: float) -> RGBA:
-        """Return straight RGBA at local coordinate (x, y)."""
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        """Return straight RGBA when (x, y) hits, else None."""
 
-    @abstractmethod
-    def hit(self, x: float, y: float) -> bool:
-        """Return True when local coordinate is inside the hit region."""
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        """Return the leaf shape and its local coords when (x, y) hits."""
+        if not self.color_at(x, y):
+            return None
+        return self, x, y
 
     def translate(self, tx: float, ty: float) -> Shape:
         """Return a new shape translated to (tx, ty); does not modify self."""

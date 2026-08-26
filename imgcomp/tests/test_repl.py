@@ -1,4 +1,4 @@
-"""Tests for visual REPL session and layer cache."""
+"""Tests for visual REPL session and caches."""
 
 from __future__ import annotations
 
@@ -60,8 +60,16 @@ def test_cached_render_matches_naive() -> None:
             assert cached.get_pixel(x, y) == naive.get_pixel(x, y)
 
 
+def test_repl_render_defaults_to_uncached() -> None:
+    session = ReplSession(16, 16)
+    session.run_line("show(color(circle(4), 1, 2, 3))")
+    session.render()
+    assert session.cache is not None
+    assert session.cache.stats()["misses"] == 0
+
+
 def test_moving_layer_faster_with_cache_than_full_naive() -> None:
-    """Repeated frames with one mover: layer cache beats full naive re-render."""
+    """Repeated frames with one mover: quad cache beats full naive re-render."""
     width, height = 80, 60
     frames = 8
     session = ReplSession(width, height)
@@ -72,7 +80,6 @@ def test_moving_layer_faster_with_cache_than_full_naive() -> None:
         session.run_line(f"show(bg, move(fg, {tx}, 0))")
 
     build_scene(0.0)
-    # Warm cache with background.
     session.render(use_cache=True)
 
     t0 = time.perf_counter()
@@ -87,5 +94,4 @@ def test_moving_layer_faster_with_cache_than_full_naive() -> None:
         session.render(use_cache=False)
     naive_dt = time.perf_counter() - t1
 
-    # Cache should be clearly faster when only the front layer moves.
     assert cached_dt < naive_dt * 0.85

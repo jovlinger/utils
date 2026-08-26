@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Tuple
 
+from imgcomp.native_math import src_over_channels
+
 RGBA = Tuple[int, int, int, int]
 
 TRANSPARENT: RGBA = (0, 0, 0, 0)
@@ -32,6 +34,9 @@ def modulate(color: RGBA, r_mul: float, g_mul: float, b_mul: float, a_mul: float
 
 def src_over(dst: RGBA, src: RGBA) -> RGBA:
     """Composite src over dst using straight alpha."""
+    native = src_over_channels(dst[0], dst[1], dst[2], dst[3], src[0], src[1], src[2], src[3])
+    if native is not None:
+        return native  # type: ignore[return-value]
     sr, sg, sb, sa = src
     dr, dg, db, da = dst
     if sa <= 0:

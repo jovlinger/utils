@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from imgcomp.shape import Shape
-from imgcomp.rgba import TRANSPARENT, WHITE
+from imgcomp.rgba import RGBA, WHITE
 from imgcomp.sdf import (
     CircleSDF,
     OvalSDF,
@@ -18,13 +20,10 @@ class SDFShape(Shape):
     def __init__(self, sdf: SDF) -> None:
         self.sdf = sdf
 
-    def sample(self, x: float, y: float) -> tuple[int, int, int, int]:
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
         if self.sdf.distance(x, y) <= 0.0:
             return WHITE
-        return TRANSPARENT
-
-    def hit(self, x: float, y: float) -> bool:
-        return self.sdf.distance(x, y) <= 0.0
+        return None
 
 
 class Circle(SDFShape):
@@ -56,8 +55,5 @@ class Oval(SDFShape):
 class Infinite(Shape):
     """Full-plane geometry of infinite extent; use as a background layer."""
 
-    def sample(self, x: float, y: float) -> tuple[int, int, int, int]:
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
         return WHITE
-
-    def hit(self, x: float, y: float) -> bool:
-        return True

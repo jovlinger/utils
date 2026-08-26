@@ -30,12 +30,11 @@ def test_compositor_viewport_to_root_local_uses_center() -> None:
 
 def test_geometry_is_white_until_color_sets_it() -> None:
     circle = Circle(2.0)
-    assert circle.sample(0.0, 0.0) == WHITE
+    assert circle.color_at(0.0, 0.0) == WHITE
     colored = circle.color((255, 0, 0, 255))
     comp = NaiveCompositor(10, 10)
     assert comp.render([colored]).get_pixel(5, 5) == (255, 0, 0, 255)
-    assert circle.sample(2.1, 0.0) == TRANSPARENT
-    assert circle.hit(2.1, 0.0) is False
+    assert circle.color_at(2.1, 0.0) is None
 
 
 def test_shape_operator_methods_chain_like_wrappers() -> None:
@@ -52,5 +51,5 @@ def test_operator_methods_return_new_shapes_without_mutating_self() -> None:
     painted = circle.color((255, 0, 0, 255))
     assert moved is not circle
     assert painted is not circle
-    assert circle.sample(0.0, 0.0) == WHITE
-    assert circle.hit(2.9, 0.0) is True
+    assert circle.color_at(0.0, 0.0) == WHITE
+    assert circle.color_at(2.9, 0.0) == WHITE

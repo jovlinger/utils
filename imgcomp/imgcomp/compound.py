@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Optional
 
+from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.shape import Shape
 from imgcomp.sdf import (
     IntersectSDF,
@@ -48,11 +50,21 @@ class Union(Shape):
         else:
             self.sdf = None
 
-    def sample(self, x: float, y: float) -> tuple[int, int, int, int]:
-        raise NotImplementedError("Union geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        accum: RGBA = TRANSPARENT
+        for member in reversed(self.members):
+            if not (layer := member.color_at(x, y)):
+                continue
+            accum = src_over(layer, accum)
+            if accum[3] >= 255:
+                break
+        return accum if accum[3] > 0 else None
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("Union geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        for member in reversed(self.members):
+            if (picked := member.pick_target(x, y)):
+                return picked
+        return None
 
 
 class Intersect(SDFShape):

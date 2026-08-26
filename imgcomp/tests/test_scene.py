@@ -25,4 +25,4 @@ def test_shared_geometry_referenced_from_multiple_places() -> None:
     surface = comp.render(scene)
     assert surface.get_pixel(150, 150) == (255, 0, 0, 255)
     assert surface.get_pixel(50, 50) == (0, 0, 255, 255)
-    assert shared.sample(0.0, 0.0) == WHITE
+    assert shared.color_at(0.0, 0.0) == WHITE

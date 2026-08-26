@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 from imgcomp.shape import Shape
 from imgcomp.rgba import RGBA, modulate
@@ -16,11 +17,11 @@ class Translate(Shape):
         self.tx = tx
         self.ty = ty
 
-    def sample(self, x: float, y: float) -> RGBA:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        return self.child.color_at(x - self.tx, y - self.ty)
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        return self.child.pick_target(x - self.tx, y - self.ty)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x - self.tx, y - self.ty)
@@ -47,11 +48,13 @@ class Rotate(Shape):
     def _from_child(self, x: float, y: float) -> tuple[float, float]:
         return (x * self._cos - y * self._sin, x * self._sin + y * self._cos)
 
-    def sample(self, x: float, y: float) -> RGBA:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        cx, cy = self._to_child(x, y)
+        return self.child.color_at(cx, cy)
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        cx, cy = self._to_child(x, y)
+        return self.child.pick_target(cx, cy)
 
     def on_touch(self, x: float, y: float) -> None:
         cx, cy = self._to_child(x, y)
@@ -77,11 +80,11 @@ class Stretch(Shape):
         self.scale_x = scale_x
         self.scale_y = scale_y
 
-    def sample(self, x: float, y: float) -> RGBA:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        return self.child.color_at(x / self.scale_x, y / self.scale_y)
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        return self.child.pick_target(x / self.scale_x, y / self.scale_y)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x / self.scale_x, y / self.scale_y)
@@ -100,11 +103,13 @@ class Color(Shape):
         self.child = child
         self.color = color
 
-    def sample(self, x: float, y: float) -> RGBA:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        if not self.child.color_at(x, y):
+            return None
+        return self.color
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        return self.child.pick_target(x, y)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)
@@ -117,7 +122,7 @@ class Color(Shape):
 
 
 class ColorMod(Shape):
-    """Multiply straight RGBA channels on samples from the child."""
+    """Multiply straight RGBA channels on colors from the child."""
 
     def __init__(
         self,
@@ -134,11 +139,13 @@ class ColorMod(Shape):
         self.b_mul = b_mul
         self.a_mul = a_mul
 
-    def sample(self, x: float, y: float) -> RGBA:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        if not (base := self.child.color_at(x, y)):
+            return None
+        return modulate(base, self.r_mul, self.g_mul, self.b_mul, self.a_mul)
 
-    def hit(self, x: float, y: float) -> bool:
-        raise NotImplementedError("wrapper geometry is resolved by imgcomp.probe")
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        return self.child.pick_target(x, y)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)

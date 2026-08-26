@@ -7,6 +7,7 @@ from array import array
 from pathlib import Path
 from typing import Iterable, Iterator, List, Sequence
 
+from imgcomp.native_math import set_pixel_rgba
 from imgcomp.rgba import RGBA, TRANSPARENT
 
 
@@ -77,6 +78,10 @@ class ArraySurface(Surface):
     def height(self) -> int:
         return self._height
 
+    def pixel_buffer(self) -> array[int]:
+        """Return the underlying RGBA byte buffer (row-major, four bytes per pixel)."""
+        return self._data
+
     def _offset(self, x: int, y: int) -> int:
         if x < 0 or y < 0 or x >= self._width or y >= self._height:
             raise IndexError(f"pixel out of bounds: ({x}, {y})")
@@ -93,6 +98,8 @@ class ArraySurface(Surface):
 
     def set_pixel(self, x: int, y: int, color: RGBA) -> None:
         offset = self._offset(x, y)
+        if set_pixel_rgba(self._data, offset, color[0], color[1], color[2], color[3]):
+            return
         self._data[offset : offset + 4] = array("B", color)
 
     def fill(self, color: RGBA) -> None:

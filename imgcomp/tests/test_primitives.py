@@ -7,48 +7,48 @@ from imgcomp.rgba import WHITE
 from imgcomp.shapes import Circle, Infinite, Oval, Rectangle
 
 
-def test_circle_hit_uses_radius_from_center() -> None:
+def test_circle_color_at_uses_radius_from_center() -> None:
     circle = Circle(3.0)
-    assert circle.sample(0.0, 0.0) == WHITE
-    assert circle.hit(2.9, 0.0) is True
-    assert circle.hit(3.1, 0.0) is False
+    assert circle.color_at(0.0, 0.0) == WHITE
+    assert circle.color_at(2.9, 0.0) == WHITE
+    assert circle.color_at(3.1, 0.0) is None
 
 
-def test_image_hit_uses_full_aabb_including_transparent_texels() -> None:
+def test_image_color_at_misses_outside_and_transparent_texels() -> None:
     image = ImageObject.from_rgba_rows(
         [
             [(255, 0, 0, 255), (0, 0, 0, 0)],
             [(0, 0, 0, 0), (0, 0, 255, 255)],
         ]
     )
-    assert image.hit(0.0, 0.0) is True
-    assert image.hit(0.6, -0.4) is True
-    assert image.hit(1.1, 0.0) is False
+    assert image.color_at(-0.5, -0.5) == (255, 0, 0, 255)
+    assert image.color_at(0.5, -0.5) is None
+    assert image.color_at(1.1, 0.0) is None
 
 
-def test_image_sample_reads_center_based_texel() -> None:
+def test_image_color_at_reads_center_based_texel() -> None:
     image = ImageObject.from_rgba_rows([[(10, 20, 30, 40)]])
-    assert image.sample(0.0, 0.0) == (10, 20, 30, 40)
+    assert image.color_at(0.0, 0.0) == (10, 20, 30, 40)
 
 
-def test_rectangle_hits_center_and_corners() -> None:
+def test_rectangle_color_at_center_and_corners() -> None:
     rect = Rectangle(4.0, 2.0)
-    assert rect.hit(0.0, 0.0) is True
-    assert rect.hit(4.0, 2.0) is True
-    assert rect.hit(4.1, 0.0) is False
+    assert rect.color_at(0.0, 0.0) == WHITE
+    assert rect.color_at(4.0, 2.0) == WHITE
+    assert rect.color_at(4.1, 0.0) is None
 
 
 def test_oval_is_wider_than_tall_on_x_axis() -> None:
     oval = Oval(5.0, 2.0)
-    assert oval.hit(4.9, 0.0) is True
-    assert oval.hit(0.0, 1.9) is True
-    assert oval.hit(0.0, 2.1) is False
+    assert oval.color_at(4.9, 0.0) == WHITE
+    assert oval.color_at(0.0, 1.9) == WHITE
+    assert oval.color_at(0.0, 2.1) is None
 
 
-def test_infinite_hits_everywhere_and_samples_white() -> None:
+def test_infinite_color_at_everywhere_is_white() -> None:
     bg = Infinite()
-    assert bg.hit(-1e6, 1e6) is True
-    assert bg.sample(0.0, 0.0) == WHITE
+    assert bg.color_at(-1e6, 1e6) == WHITE
+    assert bg.color_at(0.0, 0.0) == WHITE
 
 
 def test_infinite_background_fills_viewport() -> None:

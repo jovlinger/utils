@@ -17,7 +17,9 @@ from imgcomp.compound import (
     union,
 )
 from imgcomp.compositor import Compositor
+from imgcomp.content_key import content_key
 from imgcomp.naive import NaiveCompositor
+from imgcomp.quad_cache import QuadCache
 from imgcomp.shape import Shape
 from imgcomp.primitives import ImageObject
 from imgcomp.rgba import RGBA, TRANSPARENT, WHITE, src_over
@@ -37,6 +39,7 @@ __all__ = [
     "Infinite",
     "ImageObject",
     "NaiveCompositor",
+    "QuadCache",
     "Shape",
     "Oval",
     "RGBA",
@@ -56,6 +59,7 @@ __all__ = [
     "WHITE",
     "as_scene",
     "as_z_list",
+    "content_key",
     "fatten",
     "intersect",
     "rotate",

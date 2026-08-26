@@ -1,6 +1,7 @@
-"""Visual REPL core: edit-eval-draw over imgcomp with layer caching."""
+"""Visual REPL core: edit-eval-draw over imgcomp."""
 
-from imgcomp.repl.cache import LayerCache, content_key
+from imgcomp.content_key import content_key
+from imgcomp.repl.cache import LayerCache
 from imgcomp.repl.session import EvalResult, ReplSession
 
 __all__ = [

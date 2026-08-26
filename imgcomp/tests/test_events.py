@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from imgcomp.naive import NaiveCompositor
 from imgcomp.shape import Shape
-from imgcomp.rgba import RGBA, TRANSPARENT
+from imgcomp.rgba import RGBA
 from imgcomp.shapes import Circle
 from imgcomp.wrappers import Color, Translate
 
@@ -41,11 +41,8 @@ class _HitOnly(Shape):
     def __init__(self) -> None:
         self.scrolled = False
 
-    def sample(self, x: float, y: float) -> RGBA:
-        return TRANSPARENT
-
-    def hit(self, x: float, y: float) -> bool:
-        return True
+    def color_at(self, x: float, y: float) -> RGBA | None:
+        return (255, 255, 255, 255)
 
     def on_scroll(self, x: float, y: float, delta: float) -> None:
         self.scrolled = True

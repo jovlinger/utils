@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61", "Cython>=3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imgcomp"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "Cython>=3.0",
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["imgcomp*"]

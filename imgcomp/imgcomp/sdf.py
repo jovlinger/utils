@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Protocol
 
+from imgcomp.native_math import circle_distance, oval_distance, rectangle_distance
+
 
 class SDF(Protocol):
     """Maps center-based local coordinates to signed distance in pixels."""
@@ -22,6 +24,9 @@ class CircleSDF:
         self.radius = radius
 
     def distance(self, x: float, y: float) -> float:
+        native = circle_distance(x, y, self.radius)
+        if native is not None:
+            return native
         return math.hypot(x, y) - self.radius
 
 
@@ -35,6 +40,9 @@ class RectangleSDF:
         self.half_height = half_height
 
     def distance(self, x: float, y: float) -> float:
+        native = rectangle_distance(x, y, self.half_width, self.half_height)
+        if native is not None:
+            return native
         qx = abs(x) - self.half_width
         qy = abs(y) - self.half_height
         outside = math.hypot(max(qx, 0.0), max(qy, 0.0))
@@ -52,6 +60,9 @@ class OvalSDF:
         self.radius_y = max(radius_y, 1e-9)
 
     def distance(self, x: float, y: float) -> float:
+        native = oval_distance(x, y, self.radius_x, self.radius_y)
+        if native is not None:
+            return native
         nx = x / self.radius_x
         ny = y / self.radius_y
         scale = min(self.radius_x, self.radius_y)

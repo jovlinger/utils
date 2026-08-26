@@ -68,8 +68,7 @@ class Compositor(ABC):
         delta: float = 0.0,
     ) -> bool:
         """Route an event to the topmost hit object. Return True if handled."""
-        picked = self.pick(root, vx, vy)
-        if picked is None:
+        if not (picked := self.pick(root, vx, vy)):
             return False
         target = picked.target
         local_x = picked.local_x

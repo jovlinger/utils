@@ -24,8 +24,7 @@ def _nontransparent_pixels(image: Image.Image) -> int:
 
 def _foreground_pixels(image: Image.Image, *, background: RGBA = GALLERY_BACKGROUND) -> list[tuple[int, int, int]]:
     rgb = image.convert("RGB")
-    loaded = rgb.load()
-    if loaded is None:
+    if not (loaded := rgb.load()):
         return []
     pixels: list[tuple[int, int, int]] = []
     bg = background[:3]

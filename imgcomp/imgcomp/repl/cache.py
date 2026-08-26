@@ -2,47 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Dict, Hashable, List, Optional, Tuple
+from typing import Dict, Hashable, List, Tuple
 
-from imgcomp.shape import Shape
-from imgcomp.probe import color_at
+from imgcomp.content_key import content_key
 from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.scene import Scene, as_z_list
-from imgcomp.shapes import Circle, Infinite, Oval, Rectangle, SDFShape
+from imgcomp.shape import Shape
 from imgcomp.surface import ArraySurface, Surface
-from imgcomp.wrappers import Color, ColorMod, Rotate, Stretch, Translate
-
-
-def content_key(obj: Shape) -> Tuple[Hashable, ...]:
-    """Structural key for cache identity (parameters that affect pixels)."""
-    if isinstance(obj, Translate):
-        return ("translate", obj.tx, obj.ty, content_key(obj.child))
-    if isinstance(obj, Rotate):
-        return ("rotate", obj.degrees, content_key(obj.child))
-    if isinstance(obj, Stretch):
-        return ("stretch", obj.scale_x, obj.scale_y, content_key(obj.child))
-    if isinstance(obj, Color):
-        return ("color", obj.color, content_key(obj.child))
-    if isinstance(obj, ColorMod):
-        return (
-            "colormod",
-            obj.r_mul,
-            obj.g_mul,
-            obj.b_mul,
-            obj.a_mul,
-            content_key(obj.child),
-        )
-    if isinstance(obj, Circle):
-        return ("circle", obj.radius)
-    if isinstance(obj, Rectangle):
-        return ("rect", obj.half_width, obj.half_height)
-    if isinstance(obj, Oval):
-        return ("oval", obj.radius_x, obj.radius_y)
-    if isinstance(obj, Infinite):
-        return ("infinite",)
-    if isinstance(obj, SDFShape):
-        return ("sdfshape", id(obj.sdf), type(obj).__name__)
-    return ("object", type(obj).__name__, id(obj))
 
 
 class LayerCache:
@@ -76,7 +42,7 @@ class LayerCache:
             for x in range(self.width):
                 local_x = x + 0.5 - self.width / 2.0
                 local_y = y + 0.5 - self.height / 2.0
-                color = color_at(obj, local_x, local_y)
+                color = obj.color_at(local_x, local_y)
                 if color is not None:
                     surface.set_pixel(x, y, color)
         return surface

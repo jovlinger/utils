@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 from imgcomp.shape import Shape
-from imgcomp.rgba import RGBA, TRANSPARENT
+from imgcomp.rgba import RGBA
 from imgcomp.surface import ArraySurface
 
 
@@ -48,16 +48,15 @@ class ImageObject(Shape):
             rows.append(row)
         return cls.from_rgba_rows(rows)
 
-    def sample(self, x: float, y: float) -> RGBA:
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        """Return straight RGBA at the texel, or None on miss / transparent."""
         half_w = self._surface.width / 2.0
         half_h = self._surface.height / 2.0
         tx = int(math.floor(x + half_w))
         ty = int(math.floor(y + half_h))
         if tx < 0 or ty < 0 or tx >= self._surface.width or ty >= self._surface.height:
-            return TRANSPARENT
-        return self._surface.get_pixel(tx, ty)
-
-    def hit(self, x: float, y: float) -> bool:
-        half_w = self._surface.width / 2.0
-        half_h = self._surface.height / 2.0
-        return abs(x) <= half_w and abs(y) <= half_h
+            return None
+        color = self._surface.get_pixel(tx, ty)
+        if color[3] <= 0:
+            return None
+        return color
