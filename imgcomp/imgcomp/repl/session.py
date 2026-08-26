@@ -1,4 +1,4 @@
-"""Edit-eval-draw session over imgcomp with optional quadtree cache."""
+"""Edit-eval-draw session over imgcomp."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
 from imgcomp.naive import NaiveCompositor
-from imgcomp.quad_cache import QuadCache
+from imgcomp.repl.cache import LayerCache
 from imgcomp.shape import Shape
 from imgcomp.repl.api_v0 import api_namespace
 from imgcomp.rgba import RGBA, TRANSPARENT
@@ -27,8 +27,8 @@ class EvalResult:
 class ReplSession:
     """Restricted Python exec loop bound to an imgcomp scene.
 
-    Caching is off by default (single-shot evals). Pass ``use_cache=True`` on
-    ``render`` for animation-style reuse via the compositor quadtree cache.
+    ``render(use_cache=True)`` composites via per-layer ``LayerCache`` instead
+    of full naive re-walk.
     """
 
     width: int
@@ -37,11 +37,11 @@ class ReplSession:
     last_error: Optional[str] = None
     _bindings: Dict[str, Any] = field(default_factory=dict)
     _naive: Optional[NaiveCompositor] = None
-    _cached: Optional[NaiveCompositor] = None
+    _layer_cache: Optional[LayerCache] = None
 
     def __post_init__(self) -> None:
-        self._naive = NaiveCompositor(self.width, self.height, cache=False)
-        self._cached = NaiveCompositor(self.width, self.height, cache=True)
+        self._naive = NaiveCompositor(self.width, self.height)
+        self._layer_cache = LayerCache(self.width, self.height)
         self._reset_bindings()
 
     def _reset_bindings(self) -> None:
@@ -60,10 +60,10 @@ class ReplSession:
         self._bindings = ns
 
     @property
-    def cache(self) -> Optional[QuadCache]:
-        """Quadtree cache used when ``render(use_cache=True)``."""
-        assert self._cached is not None
-        return self._cached.cache
+    def cache(self) -> LayerCache:
+        """Layer cache used when ``render(use_cache=True)``."""
+        assert self._layer_cache is not None
+        return self._layer_cache
 
     def show(self, *shapes: Shape) -> None:
         self.scene = list(shapes)
@@ -117,9 +117,11 @@ class ReplSession:
             self._bindings[key] = value
 
     def render(self, *, use_cache: bool = False) -> Surface:
-        comp = self._cached if use_cache else self._naive
-        assert comp is not None
-        return comp.render(self.scene)
+        if use_cache:
+            assert self._layer_cache is not None
+            return self._layer_cache.render(self.scene)
+        assert self._naive is not None
+        return self._naive.render(self.scene)
 
     def pick_name(self, vx: float, vy: float) -> Optional[str]:
         assert self._naive is not None

@@ -1,12 +1,10 @@
-"""Pure-Python per-pixel compositor with optional quadtree tile cache."""
+"""Pure-Python per-pixel compositor."""
 
 from __future__ import annotations
 
 from typing import Optional, Sequence
 
 from imgcomp.compositor import Compositor, PickResult
-from imgcomp.paint_cache import PaintSpecializationCache, try_paint_layers
-from imgcomp.quad_cache import QuadCache
 from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.shape import Shape
@@ -14,58 +12,11 @@ from imgcomp.surface import ArraySurface, Surface
 
 
 class NaiveCompositor(Compositor):
-    """For each viewport pixel, walk the z-list and accumulate hit colors.
-
-    Pass ``cache=True`` to memoize leaf tiles by structural z-list keys. Cache
-    is off by default: single-shot renders do not benefit; animation does.
-
-    Paint specialization (PIC): on first paint of a flattenable scene, Python
-    builds a typed IR; later paints with the same content key stay in Cython.
-    """
-
-    def __init__(
-        self,
-        width: int,
-        height: int,
-        *,
-        cache: bool = False,
-        cache_tile: int = 16,
-    ) -> None:
-        super().__init__(width, height)
-        self._paint_cache = PaintSpecializationCache()
-        self._quad_cache: Optional[QuadCache] = (
-            QuadCache(width, height, min_tile=cache_tile, paint_cache=self._paint_cache)
-            if cache
-            else None
-        )
-
-    @property
-    def cache(self) -> Optional[QuadCache]:
-        """Active quadtree cache, or None when caching is disabled."""
-        return self._quad_cache
-
-    @property
-    def paint_cache(self) -> PaintSpecializationCache:
-        """Polymorphic specialization cache for typed paint IRs."""
-        return self._paint_cache
+    """For each viewport pixel, walk the z-list and accumulate hit colors."""
 
     def render(self, root: Scene) -> Surface:
-        if self._quad_cache is not None:
-            return self._quad_cache.render(root)
         layers = as_z_list(root)
         surface = ArraySurface(self.width, self.height)
-        if try_paint_layers(
-            self.width,
-            self.height,
-            0,
-            0,
-            self.width,
-            self.height,
-            layers,
-            surface,
-            self._paint_cache,
-        ):
-            return surface
         for y in range(self.height):
             local_y = y + 0.5 - self.height / 2.0
             for x in range(self.width):

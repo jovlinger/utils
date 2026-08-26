@@ -1,12 +1,7 @@
-"""Tests for visual REPL session and caches."""
+"""Tests for visual REPL session and layer cache."""
 
 from __future__ import annotations
 
-import time
-
-import pytest
-
-from imgcomp.paint_cache import paint_extension_available
 from imgcomp.repl import LayerCache, ReplSession
 from imgcomp.shapes import Circle
 from imgcomp.wrappers import Color, Translate
@@ -20,7 +15,6 @@ def test_run_line_builds_scene_and_renders() -> None:
     assert result.ok
     assert session.last_error is None
     surface = session.render()
-    # Red circle center is near (30, 20) in viewport pixels for 40x40.
     assert surface.get_pixel(30, 20) == (255, 0, 0, 255)
 
 
@@ -43,7 +37,6 @@ def test_layer_cache_reuses_unchanged_layer() -> None:
     assert cache.misses == 2
     assert cache.hits == 0
 
-    # Move only the front layer; background key unchanged.
     scene2 = [bg, Translate(Color(Circle(4.0), (255, 0, 0, 255)), 5.0, 0.0)]
     cache.render(scene2)
     assert cache.hits == 1
@@ -67,36 +60,4 @@ def test_repl_render_defaults_to_uncached() -> None:
     session = ReplSession(16, 16)
     session.run_line("show(color(circle(4), 1, 2, 3))")
     session.render()
-    assert session.cache is not None
     assert session.cache.stats()["misses"] == 0
-
-
-def test_moving_layer_faster_with_cache_than_full_naive() -> None:
-    """Repeated frames with one mover: quad cache beats full naive re-render."""
-    if paint_extension_available():
-        pytest.skip("specialized full paint is faster than quad overhead on small scenes")
-    width, height = 80, 60
-    frames = 8
-    session = ReplSession(width, height)
-    session.run_line("bg = color(circle(28), 30, 30, 50)")
-    session.run_line("fg = color(circle(6), 255, 0, 0)")
-
-    def build_scene(tx: float) -> None:
-        session.run_line(f"show(bg, move(fg, {tx}, 0))")
-
-    build_scene(0.0)
-    session.render(use_cache=True)
-
-    t0 = time.perf_counter()
-    for i in range(frames):
-        build_scene(float(i))
-        session.render(use_cache=True)
-    cached_dt = time.perf_counter() - t0
-
-    t1 = time.perf_counter()
-    for i in range(frames):
-        build_scene(float(i))
-        session.render(use_cache=False)
-    naive_dt = time.perf_counter() - t1
-
-    assert cached_dt < naive_dt * 0.85
