@@ -33,6 +33,9 @@ Python-level cache, not quad/PIC.
 
 | Branch | Strategy |
 |--------|----------|
-| `pic-paint-quad-off` | PIC typed paint, no quad |
-| `pic-paint-quad-on` | PIC + quad tile cache |
-| `naive-cython-leaf` | This spine + Cython SDF distance patched in `__init__` |
+| `imgcomp-naive-cache-zlist-per-cell` | Flat grid per-cell z-list slices |
+| `imgcomp-recursive-zlist-color-at` | Z-list recursion inside ``color_at`` |
+| `imgcomp-layer-paint-farthest-first` | Each z-list item paints full viewport |
+| `imgcomp-pic-paint-quad-off` | PIC typed paint, no quad |
+| `imgcomp-pic-paint-quad-on` | PIC + quad tile cache |
+| `imgcomp-naive-cython-leaf` | This spine + Cython SDF distance patched in ``__init__`` |
