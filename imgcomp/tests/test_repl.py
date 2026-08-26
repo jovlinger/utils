@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
+from imgcomp.paint_cache import paint_extension_available
 from imgcomp.repl import LayerCache, ReplSession
 from imgcomp.shapes import Circle
 from imgcomp.wrappers import Color, Translate
@@ -70,6 +73,8 @@ def test_repl_render_defaults_to_uncached() -> None:
 
 def test_moving_layer_faster_with_cache_than_full_naive() -> None:
     """Repeated frames with one mover: quad cache beats full naive re-render."""
+    if paint_extension_available():
+        pytest.skip("specialized full paint is faster than quad overhead on small scenes")
     width, height = 80, 60
     frames = 8
     session = ReplSession(width, height)

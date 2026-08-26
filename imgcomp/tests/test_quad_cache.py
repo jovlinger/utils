@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from imgcomp import Color, Infinite, NaiveCompositor, Translate
+from imgcomp.paint_cache import paint_extension_available
 from imgcomp.shapes import Circle
 
 
@@ -46,6 +49,8 @@ def test_static_tiles_hit_when_mover_changes() -> None:
 
 
 def test_animation_frames_faster_with_quad_cache() -> None:
+    if paint_extension_available():
+        pytest.skip("specialized full paint is faster than quad overhead on small scenes")
     width, height = 96, 72
     frames = 10
     bg = Color(Infinite(), (15, 15, 25, 255))

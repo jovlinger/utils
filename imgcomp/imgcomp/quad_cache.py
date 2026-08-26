@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from array import array
-from typing import Dict, Hashable, Sequence, Tuple
+from typing import Dict, Hashable, Optional, Sequence, Tuple
 
 from imgcomp.content_key import Aabb, region_content_key, shapes_for_tile
+from imgcomp.paint_cache import PaintSpecializationCache, try_paint_layers_to_buffer
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.shape import Shape
 from imgcomp.surface import ArraySurface, Surface
@@ -20,7 +21,14 @@ class QuadCache:
     only tiles whose contributing z-list changes are re-rasterized.
     """
 
-    def __init__(self, width: int, height: int, *, min_tile: int = 16) -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        *,
+        min_tile: int = 16,
+        paint_cache: Optional[PaintSpecializationCache] = None,
+    ) -> None:
         if width <= 0 or height <= 0:
             raise ValueError("width and height must be positive")
         if min_tile <= 0:
@@ -29,6 +37,7 @@ class QuadCache:
         self.height = height
         self.min_tile = min_tile
         self._tiles: Dict[TileKey, array[int]] = {}
+        self._paint_cache = paint_cache if paint_cache is not None else PaintSpecializationCache()
         self.hits: int = 0
         self.misses: int = 0
 
@@ -110,6 +119,19 @@ class QuadCache:
         tile_w = x1 - x0
         tile_h = y1 - y0
         pixels: array[int] = array("B", [0]) * (tile_w * tile_h * 4)
+        if try_paint_layers_to_buffer(
+            self.width,
+            self.height,
+            x0,
+            y0,
+            x1,
+            y1,
+            contributors,
+            pixels,
+            self._paint_cache,
+        ):
+            return pixels
+
         half_w = self.width / 2.0
         half_h = self.height / 2.0
         index = 0
