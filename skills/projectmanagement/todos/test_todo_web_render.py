@@ -68,7 +68,8 @@ class StateSectionTest(unittest.TestCase):
     def test_multiline_note_keeps_its_paragraphs(self) -> None:
         page = _page(_todo({"userneeded": {"note": NOTE}}, []))
         section = page.split("<h2>State</h2>", 1)[1].split("</section>", 1)[0]
-        self.assertIn('<pre class="val body">', section)  # prose, not a one-liner div
+        self.assertIn('class="md-field"', section)
+        self.assertIn("DECISION NEEDED", section)
 
     def test_state_without_metadata_still_renders_the_section(self) -> None:
         # Uniformity: a section that appears only sometimes is one a reader
@@ -300,6 +301,54 @@ class FocusOpensTest(unittest.TestCase):
         # The guard that keeps an unfocused page from opening every section.
         self.assertFalse(todo_web._holds({"objid": "0001"}, ""))
         self.assertTrue(todo_web._holds({"objid": "0001"}, "0001"))
+
+
+class MarkdownPreviewTest(unittest.TestCase):
+    """Per-field Raw/Preview toggles and the inline md renderer."""
+
+    def test_body_carries_md_toggle(self) -> None:
+        body = "## Why\n\n**bold** and `code`"
+        todo = {
+            "Id": TID,
+            "Branch": "b",
+            "State": {"groom": {}},
+            "Summary": {"raw": "s"},
+            "Body": {"raw": body},
+            "WorkItems": [],
+        }
+        page = _page(todo)
+        section = page.split("<h2>Body</h2>", 1)[1].split("</section>", 1)[0]
+        self.assertIn('class="md-field"', section)
+        self.assertIn('class="md-toggle"', section)
+        self.assertIn("## Why", section)
+        self.assertIn("function mdRender", page)
+
+    def test_ac_field_has_md_toggle(self) -> None:
+        todo = {
+            "Id": TID,
+            "Branch": "b",
+            "State": {"groom": {}},
+            "Summary": {"raw": "s"},
+            "AC": "- [ ] first\n- [ ] second",
+            "WorkItems": [],
+        }
+        page = _page(todo)
+        fields = page.split("<h2>Fields</h2>", 1)[1].split("</section>", 1)[0]
+        self.assertIn('class="meta-key">AC</h3>', fields)
+        self.assertIn('class="md-field"', fields)
+
+    def test_static_repr_has_no_md_toggle(self) -> None:
+        child = {
+            "Id": "c" * 64,
+            "Summary": {"raw": "child"},
+            "Body": {"raw": "# Title\n\npara"},
+            "State": {"ready": {}},
+            "WorkItems": [],
+            "Subtodos": [],
+        }
+        html = todo_web._static_repr_html(Path("."), child)
+        self.assertNotIn("md-toggle", html)
+        self.assertIn("# Title", html)
 
 
 if __name__ == "__main__":
