@@ -14,5 +14,6 @@
     "to",
     "with"
   ],
-  "todo_storage": "file://$TODOBASEDIR/storage"
+  "todo_storage": "file://$TODOBASEDIR/storage",
+  "embedder": null
 }

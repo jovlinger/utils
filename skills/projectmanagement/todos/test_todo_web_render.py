@@ -304,7 +304,7 @@ class FocusOpensTest(unittest.TestCase):
 
 
 class MarkdownPreviewTest(unittest.TestCase):
-    """Per-field Raw/Preview toggles and the inline md renderer."""
+    """Per-field Raw/Preview toggles; preview renders in the lower fold pane."""
 
     def test_body_carries_md_toggle(self) -> None:
         body = "## Why\n\n**bold** and `code`"
@@ -320,8 +320,10 @@ class MarkdownPreviewTest(unittest.TestCase):
         section = page.split("<h2>Body</h2>", 1)[1].split("</section>", 1)[0]
         self.assertIn('class="md-field"', section)
         self.assertIn('class="md-toggle"', section)
+        self.assertIn('data-md-label="Body"', section)
+        self.assertNotIn('class="md-preview"', section)
         self.assertIn("## Why", section)
-        self.assertIn("function mdRender", page)
+        self.assertIn("function showMdPreview", page)
 
     def test_ac_field_has_md_toggle(self) -> None:
         todo = {

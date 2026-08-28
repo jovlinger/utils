@@ -225,11 +225,11 @@ class EmbedderOffSwitchTest(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertGreater(self._embedding_count(), 0)
 
-    def test_absent_key_keeps_the_default(self) -> None:
+    def test_absent_key_disables_embedders(self) -> None:
         self._seed()
         proc = self.todo("search", "quokka")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertGreater(self._embedding_count(), 0, "default is every embedder")
+        self.assertEqual(0, self._embedding_count(), "default is lexical-only")
 
     def test_a_nonsense_value_is_an_error_not_a_silent_default(self) -> None:
         self._seed()
