@@ -11,8 +11,15 @@ from tests.stack_bench import (
     ack_stacklang,
     bench_triple,
     float_step_sum_c,
+    float_step_sum_incr_le_wb_stacklang,
     float_step_sum_python,
     float_step_sum_stacklang,
+    float_step_sum_while_stacklang,
+    int_step_sum_c,
+    int_step_sum_incr_le_wb_stacklang,
+    int_step_sum_python,
+    int_step_sum_stacklang,
+    int_step_sum_while_stacklang,
     mandelbrot_ascii,
     mandelbrot_sum_c,
     mandelbrot_sum_python,
@@ -46,7 +53,7 @@ def test_ackermann_result_and_timing(capsys) -> None:
 @pytest.mark.slow
 def test_float_step_sum_result_and_timing(capsys) -> None:
     stop = 9.5
-    step = 0.001
+    step = 0.0001
     expected = float_step_sum_python(stop=stop, step=step)
     result = bench_triple(
         "float_step_sum",
@@ -60,6 +67,116 @@ def test_float_step_sum_result_and_timing(capsys) -> None:
     assert result.c_value == pytest.approx(expected)
     out = capsys.readouterr().out
     assert "float_step_sum:" in out
+    assert result.python_s > 0.0
+    assert result.stacklang_s is not None and result.stacklang_s > 0.0
+    assert result.c_s is not None and result.c_s > 0.0
+
+
+@pytest.mark.slow
+def test_float_step_sum_while_result_and_timing(capsys) -> None:
+    stop = 9.5
+    step = 0.0001
+    expected = float_step_sum_python(stop=stop, step=step)
+    result = bench_triple(
+        "float_step_sum_while",
+        lambda: float_step_sum_python(stop=stop, step=step),
+        lambda: float_step_sum_while_stacklang(stop=stop, step=step),
+        lambda: float_step_sum_c(stop=stop, step=step),
+        repeat=10,
+    )
+    assert result.python_value == pytest.approx(expected)
+    assert result.stacklang_value == pytest.approx(expected)
+    assert result.c_value == pytest.approx(expected)
+    out = capsys.readouterr().out
+    assert "float_step_sum_while:" in out
+    assert result.python_s > 0.0
+    assert result.stacklang_s is not None and result.stacklang_s > 0.0
+    assert result.c_s is not None and result.c_s > 0.0
+
+
+@pytest.mark.slow
+def test_float_step_sum_incr_le_wb_result_and_timing(capsys) -> None:
+    stop = 9.5
+    step = 0.0001
+    expected = float_step_sum_python(stop=stop, step=step)
+    result = bench_triple(
+        "float_step_sum_incr_le_wb",
+        lambda: float_step_sum_python(stop=stop, step=step),
+        lambda: float_step_sum_incr_le_wb_stacklang(stop=stop, step=step),
+        lambda: float_step_sum_c(stop=stop, step=step),
+        repeat=10,
+    )
+    assert result.python_value == pytest.approx(expected)
+    assert result.stacklang_value == pytest.approx(expected)
+    assert result.c_value == pytest.approx(expected)
+    out = capsys.readouterr().out
+    assert "float_step_sum_incr_le_wb:" in out
+    assert result.python_s > 0.0
+    assert result.stacklang_s is not None and result.stacklang_s > 0.0
+    assert result.c_s is not None and result.c_s > 0.0
+
+
+@pytest.mark.slow
+def test_int_step_sum_result_and_timing(capsys) -> None:
+    stop = 95000
+    step = 1
+    expected = int_step_sum_python(stop=stop, step=step)
+    result = bench_triple(
+        "int_step_sum",
+        lambda: int_step_sum_python(stop=stop, step=step),
+        lambda: int_step_sum_stacklang(stop=stop, step=step),
+        lambda: int_step_sum_c(stop=stop, step=step),
+        repeat=10,
+    )
+    assert result.python_value == expected
+    assert result.stacklang_value == expected
+    assert result.c_value == expected
+    out = capsys.readouterr().out
+    assert "int_step_sum:" in out
+    assert result.python_s > 0.0
+    assert result.stacklang_s is not None and result.stacklang_s > 0.0
+    assert result.c_s is not None and result.c_s > 0.0
+
+
+@pytest.mark.slow
+def test_int_step_sum_while_result_and_timing(capsys) -> None:
+    stop = 95000
+    step = 1
+    expected = int_step_sum_python(stop=stop, step=step)
+    result = bench_triple(
+        "int_step_sum_while",
+        lambda: int_step_sum_python(stop=stop, step=step),
+        lambda: int_step_sum_while_stacklang(stop=stop, step=step),
+        lambda: int_step_sum_c(stop=stop, step=step),
+        repeat=10,
+    )
+    assert result.python_value == expected
+    assert result.stacklang_value == expected
+    assert result.c_value == expected
+    out = capsys.readouterr().out
+    assert "int_step_sum_while:" in out
+    assert result.python_s > 0.0
+    assert result.stacklang_s is not None and result.stacklang_s > 0.0
+    assert result.c_s is not None and result.c_s > 0.0
+
+
+@pytest.mark.slow
+def test_int_step_sum_incr_le_wb_result_and_timing(capsys) -> None:
+    stop = 95000
+    step = 1
+    expected = int_step_sum_python(stop=stop, step=step)
+    result = bench_triple(
+        "int_step_sum_incr_le_wb",
+        lambda: int_step_sum_python(stop=stop, step=step),
+        lambda: int_step_sum_incr_le_wb_stacklang(stop=stop, step=step),
+        lambda: int_step_sum_c(stop=stop, step=step),
+        repeat=10,
+    )
+    assert result.python_value == expected
+    assert result.stacklang_value == expected
+    assert result.c_value == expected
+    out = capsys.readouterr().out
+    assert "int_step_sum_incr_le_wb:" in out
     assert result.python_s > 0.0
     assert result.stacklang_s is not None and result.stacklang_s > 0.0
     assert result.c_s is not None and result.c_s > 0.0
