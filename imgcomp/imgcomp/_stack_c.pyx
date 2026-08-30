@@ -15,9 +15,42 @@ Each registered ``OpHandler`` carries its ``op_id`` after ``register_op``.
 The data stack and compiled program streams are C arrays; Python objects remain
 only in the pre-eval source lists, ``str_pool`` (for ``printf``), and
 registration metadata.
+
+LOCAP runbook (agent-2, boundary-relaxed)
+-----------------------------------------
+These optimizations intentionally relax Python/C invariants *during* ``run_op``
+and restore them on re-entry. They need not be expressible as normal cdef
+handlers; spot-check generated ``_stack_c.c`` after edits.
+
+1. **nogil fast interpreter** (``interpret_gil_free``): For bodies marked
+   ``WordBuf.gil_free`` at compile time, the hot dispatch loop runs with
+   ``with nogil:`` using unchecked stack ops (``u_push_*`` / ``u_pop_*``) that
+   skip ``except?`` / ``PyErr_Occurred`` per pop. Overflow/underflow are not
+   checked on every push/pop inside nogil; ``run_op`` finally asserts
+   ``0 <= data_sp <= MAX_DATA``.
+
+2. **``gil_free`` marking** (``finalize_gil_free_flags``): After all bodies
+   compile, DFS memoizes whether a buffer uses only nogil-safe tags and only
+   calls gil-free children (``TAG_CALL_WB``, ``TAG_WHILE_BUFS``). Any
+   ``TAG_CALL_FN``, ``TAG_LIT_STR``, ``TAG_IF_NZERO``, or ``TAG_WHILE_IDS``
+   forces slow path.
+
+3. **Loop nesting without frames**: ``*_incr_le`` and ``run_while_loop_bufs``
+   call ``interpret_gil_free`` directly in their inner loops when the target
+   buffer is gil-free, avoiding per-iteration ``run_wordbuf`` RefNanny +
+   ``call_depth`` inc/dec.
+
+4. **Manual C spot edits** (if Cython regresses): In ``run_wordbuf`` / hot
+   switch, confirm no ``__Pyx_RefNannySetupContext`` inside the nogil interpreter
+   (it should be a plain C loop). Strip duplicate error branches on fused tags.
+   Re-run ``make build-ext`` and slow benchmarks.
+
+5. **Re-entry contract**: ``run_op`` sets ``eval_started``, zeros ``call_depth``,
+   runs the program, then clears ``eval_started`` and checks stack depth. Python
+   may observe a consistent VM only after ``run_op`` returns.
 """
 
-from libc.stdint cimport int64_t, uint64_t, uintptr_t
+from libc.stdint cimport int64_t, int8_t, uint64_t, uintptr_t
 from libc.string cimport memcpy
 
 DEF MAX_DATA = 4096
@@ -69,8 +102,23 @@ DEF TAG_OVER_I_GT = 34    # replace top with (top > second)
 DEF TAG_OVER_F_GT = 35    # replace top with (top > second)
 DEF TAG_I_GT_C_REV = 36   # push c > top (top stays)
 DEF TAG_F_GT_C_REV = 37   # push c > top (top stays)
+
+# Fast-interpreter status (nogil path; raised at GIL boundary).
+DEF WB_OK = 0
+DEF WB_ERR_STACK_OVERFLOW = 1
+DEF WB_ERR_STACK_UNDERFLOW = 2
+DEF WB_ERR_BAD_TAG = 3
+
+# gil_free DFS memo slots (per op_id).
+DEF GIL_UNKNOWN = -1
+DEF GIL_NO = 0
+DEF GIL_YES = 1
+DEF GIL_VISITING = 2
+
+
 cdef struct WordBuf:
     int hi
+    bint gil_free
     uint64_t elems[MAX_BODY_WORDS]
 
 
@@ -96,6 +144,7 @@ cdef int call_depth = 0
 
 cdef bint eval_started = False
 
+cdef int8_t gil_free_memo[MAX_OPS]
 
 
 cdef class OpHandler:
@@ -163,6 +212,196 @@ cdef inline double word_to_float(uint64_t bits) noexcept nogil:
     memcpy(&value, &bits, sizeof(double))
     return value
 
+
+# --- Unchecked nogil stack ops (LOCAP: invariants restored at run_op exit) ---
+
+
+cdef inline void u_push_u64(uint64_t value) noexcept nogil:
+    global data_sp, data_stack, data_stack_op_lit
+    data_stack[data_sp] = value
+    data_stack_op_lit[data_sp] = 0
+    data_sp += 1
+
+
+cdef inline uint64_t u_pop_u64() noexcept nogil:
+    global data_sp, data_stack
+    data_sp -= 1
+    return data_stack[data_sp]
+
+
+cdef inline void u_push_int(int64_t value) noexcept nogil:
+    u_push_u64(<uint64_t>value)
+
+
+cdef inline int64_t u_pop_int() noexcept nogil:
+    return <int64_t>u_pop_u64()
+
+
+cdef inline void u_push_float(double value) noexcept nogil:
+    u_push_u64(word_from_float(value))
+
+
+cdef inline double u_pop_float() noexcept nogil:
+    return word_to_float(u_pop_u64())
+
+
+cdef inline void u_push_op_literal(int op_id) noexcept nogil:
+    u_push_u64(<uint64_t>op_id)
+    global data_stack_op_lit
+    data_stack_op_lit[data_sp - 1] = 1
+
+
+cdef inline void u_f_add_at_depth(int depth) noexcept nogil:
+    global data_sp, data_stack
+    cdef double delta = u_pop_float()
+    cdef int idx = data_sp - 1 - depth
+    cdef double acc
+    cdef uint64_t bits = data_stack[idx]
+    memcpy(&acc, &bits, sizeof(double))
+    acc += delta
+    memcpy(&bits, &acc, sizeof(double))
+    data_stack[idx] = bits
+
+
+cdef inline void u_i_add_at_depth(int depth) noexcept nogil:
+    global data_sp, data_stack
+    cdef int64_t delta = u_pop_int()
+    cdef int idx = data_sp - 1 - depth
+    data_stack[idx] = <uint64_t>(<int64_t>data_stack[idx] + delta)
+
+
+cdef inline int insn_words(uint64_t tag) noexcept nogil:
+    if tag == TAG_WHILE_BUFS or tag == TAG_WHILE_IDS:
+        return 3
+    if tag == TAG_CALL_FN:
+        return 2
+    if (
+        tag == TAG_LIT_INT
+        or tag == TAG_LIT_FLOAT
+        or tag == TAG_LIT_STR
+        or tag == TAG_LIT_OP
+        or tag == TAG_CALL_WB
+        or tag == TAG_IF_NZERO
+    ):
+        return 2
+    if tag >= TAG_I_ADD_C and tag <= TAG_F_GT_C_REV:
+        if tag == TAG_OVER_I_GT or tag == TAG_OVER_F_GT:
+            return 1
+        return 2
+    return 1
+
+
+cdef inline bint tag_needs_gil(uint64_t tag) noexcept nogil:
+    return (
+        tag == TAG_CALL_FN
+        or tag == TAG_LIT_STR
+        or tag == TAG_IF_NZERO
+        or tag == TAG_WHILE_IDS
+    )
+
+
+cdef int wordbuf_ptr_to_op_id(WordBuf* buf) noexcept nogil:
+    cdef int i
+    for i in range(num_ops):
+        if op_table[i].is_wordbuf and &op_table[i].buf == buf:
+            return i
+    return -1
+
+
+cdef void reset_gil_free_memo() noexcept nogil:
+    cdef int i
+    for i in range(MAX_OPS):
+        gil_free_memo[i] = GIL_UNKNOWN
+
+
+cdef int8_t buf_gil_free_dfs(int op_id) noexcept nogil:
+    cdef WordBuf* buf = &op_table[op_id].buf
+    cdef int bpc = 0
+    cdef uint64_t tag
+    cdef int child_id
+    cdef int8_t child_ok
+
+    if gil_free_memo[op_id] == GIL_YES:
+        return GIL_YES
+    if gil_free_memo[op_id] == GIL_NO:
+        return GIL_NO
+    if gil_free_memo[op_id] == GIL_VISITING:
+        return GIL_NO
+
+    gil_free_memo[op_id] = GIL_VISITING
+    while bpc < buf.hi:
+        tag = buf.elems[bpc]
+        if tag_needs_gil(tag):
+            gil_free_memo[op_id] = GIL_NO
+            buf.gil_free = False
+            return GIL_NO
+        if tag == TAG_CALL_WB:
+            child_id = wordbuf_ptr_to_op_id(<WordBuf*><uintptr_t>buf.elems[bpc + 1])
+            if child_id < 0:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+            child_ok = buf_gil_free_dfs(child_id)
+            if child_ok != GIL_YES:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+        elif tag == TAG_WHILE_BUFS:
+            child_id = wordbuf_ptr_to_op_id(
+                <WordBuf*><uintptr_t>buf.elems[bpc + 1]
+            )
+            if child_id < 0:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+            child_ok = buf_gil_free_dfs(child_id)
+            if child_ok != GIL_YES:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+            child_id = wordbuf_ptr_to_op_id(
+                <WordBuf*><uintptr_t>buf.elems[bpc + 2]
+            )
+            if child_id < 0:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+            child_ok = buf_gil_free_dfs(child_id)
+            if child_ok != GIL_YES:
+                gil_free_memo[op_id] = GIL_NO
+                buf.gil_free = False
+                return GIL_NO
+        bpc += insn_words(tag)
+
+    gil_free_memo[op_id] = GIL_YES
+    buf.gil_free = True
+    return GIL_YES
+
+
+cdef int finalize_gil_free_flags() except -1:
+    cdef int op_id
+    reset_gil_free_memo()
+    for op_id in range(num_ops):
+        if op_table[op_id].is_wordbuf:
+            buf_gil_free_dfs(op_id)
+    return 0
+
+
+cdef void raise_wb_error(int code) except *:
+    if code == WB_ERR_STACK_OVERFLOW:
+        raise RuntimeError("data stack overflow")
+    if code == WB_ERR_STACK_UNDERFLOW:
+        raise RuntimeError("data stack underflow")
+    if code == WB_ERR_BAD_TAG:
+        raise RuntimeError("corrupt instruction tag in gil-free interpreter")
+    raise RuntimeError(f"interpreter error {code}")
+
+
+cdef void assert_stack_sane() except *:
+    if data_sp < 0 or data_sp > MAX_DATA:
+        raise RuntimeError(
+            f"data stack invariant violated after eval (sp={data_sp})"
+        )
 
 
 cdef inline int data_push_uint(uint64_t value) except -1:
@@ -477,7 +716,9 @@ cdef int compile_all_bodies() except -1:
         return 0
     for op_id in range(num_ops):
         if op_table[op_id].is_wordbuf:
+            op_table[op_id].buf.gil_free = False
             compile_body_to_wordbuf(op_id, &op_table[op_id].buf)
+    finalize_gil_free_flags()
     bodies_compiled = True
 
 
@@ -486,18 +727,18 @@ cdef int _op_lit_op() except -1:
     raise RuntimeError("lit_op cannot be invoked directly")
 
 
-cdef int _op_dup() except -1:
+cdef inline int exec_dup() except -1:
     cdef uint64_t value = data_stack[data_sp - 1]
     cdef bint is_lit = data_stack_op_lit[data_sp - 1]
     data_push_uint(value)
     data_stack_op_lit[data_sp - 1] = is_lit
 
 
-cdef int _op_drop() except -1:
+cdef inline int exec_drop() except -1:
     data_pop_uint()
 
 
-cdef int _op_swap() except -1:
+cdef inline int exec_swap() except -1:
     cdef uint64_t a = data_stack[data_sp - 1]
     cdef uint64_t b = data_stack[data_sp - 2]
     cdef bint a_lit = data_stack_op_lit[data_sp - 1]
@@ -508,14 +749,14 @@ cdef int _op_swap() except -1:
     data_stack_op_lit[data_sp - 2] = a_lit
 
 
-cdef int _op_over() except -1:
+cdef inline int exec_over() except -1:
     cdef uint64_t value = data_stack[data_sp - 2]
     cdef bint is_lit = data_stack_op_lit[data_sp - 2]
     data_push_uint(value)
     data_stack_op_lit[data_sp - 1] = is_lit
 
 
-cdef int _op_rot() except -1:
+cdef inline int exec_rot() except -1:
     global data_sp
     cdef uint64_t a = data_stack[data_sp - 1]
     cdef uint64_t b = data_stack[data_sp - 2]
@@ -532,56 +773,112 @@ cdef int _op_rot() except -1:
     data_stack_op_lit[data_sp - 1] = a_lit
 
 
-cdef int _op_i_add() except -1:
+cdef inline int exec_i_add() except -1:
     cdef int64_t b = data_pop_int()
     cdef int64_t a = data_pop_int()
     data_push_int(a + b)
 
 
-cdef int _op_i_sub() except -1:
+cdef inline int exec_i_sub() except -1:
     cdef int64_t b = data_pop_int()
     cdef int64_t a = data_pop_int()
     data_push_int(a - b)
 
 
-cdef int _op_i_eq() except -1:
+cdef inline int exec_i_eq() except -1:
     cdef int64_t b = data_pop_int()
     cdef int64_t a = data_pop_int()
     data_push_int(1 if a == b else 0)
 
 
-cdef int _op_i_gt() except -1:
+cdef inline int exec_i_gt() except -1:
     cdef int64_t b = data_pop_int()
     cdef int64_t a = data_pop_int()
     data_push_int(1 if a > b else 0)
 
 
-cdef int _op_i_to_f() except -1:
+cdef inline int exec_i_to_f() except -1:
     data_push_float(<double>data_pop_int())
 
 
-cdef int _op_f_add() except -1:
+cdef inline int exec_f_add() except -1:
     cdef double b = data_pop_float()
     cdef double a = data_pop_float()
     data_push_float(a + b)
 
 
-cdef int _op_f_sub() except -1:
+cdef inline int exec_f_sub() except -1:
     cdef double b = data_pop_float()
     cdef double a = data_pop_float()
     data_push_float(a - b)
 
 
-cdef int _op_f_mul() except -1:
+cdef inline int exec_f_mul() except -1:
     cdef double b = data_pop_float()
     cdef double a = data_pop_float()
     data_push_float(a * b)
 
 
-cdef int _op_f_gt() except -1:
+cdef inline int exec_f_gt() except -1:
     cdef double b = data_pop_float()
     cdef double a = data_pop_float()
     data_push_int(1 if a > b else 0)
+
+
+cdef int _op_dup() except -1:
+    return exec_dup()
+
+
+cdef int _op_drop() except -1:
+    return exec_drop()
+
+
+cdef int _op_swap() except -1:
+    return exec_swap()
+
+
+cdef int _op_over() except -1:
+    return exec_over()
+
+
+cdef int _op_rot() except -1:
+    return exec_rot()
+
+
+cdef int _op_i_add() except -1:
+    return exec_i_add()
+
+
+cdef int _op_i_sub() except -1:
+    return exec_i_sub()
+
+
+cdef int _op_i_eq() except -1:
+    return exec_i_eq()
+
+
+cdef int _op_i_gt() except -1:
+    return exec_i_gt()
+
+
+cdef int _op_i_to_f() except -1:
+    return exec_i_to_f()
+
+
+cdef int _op_f_add() except -1:
+    return exec_f_add()
+
+
+cdef int _op_f_sub() except -1:
+    return exec_f_sub()
+
+
+cdef int _op_f_mul() except -1:
+    return exec_f_mul()
+
+
+cdef int _op_f_gt() except -1:
+    return exec_f_gt()
 
 
 cdef inline int f_add_at_depth(int depth) except -1:
@@ -645,10 +942,32 @@ cdef int _op_int_incr_le() except -1:
     cdef int64_t incr = data_pop_int()
     cdef int64_t imax = data_pop_int()
     cdef int64_t i = data_pop_int()
-    while i <= imax:
-        data_push_int(i)
-        run_quoted_body(body_id)
-        i += incr
+    cdef WordBuf* body_buf
+    cdef op_fn_t body_fn
+    cdef int err = WB_OK
+    if op_table[body_id].is_wordbuf:
+        body_buf = &op_table[body_id].buf
+        if body_buf.gil_free:
+            with nogil:
+                while i <= imax:
+                    u_push_int(i)
+                    err = interpret_gil_free(body_buf)
+                    if err != WB_OK:
+                        break
+                    i += incr
+            if err != WB_OK:
+                raise_wb_error(err)
+        else:
+            while i <= imax:
+                data_push_int(i)
+                run_wordbuf(body_buf)
+                i += incr
+    else:
+        body_fn = op_table[body_id].fn
+        while i <= imax:
+            data_push_int(i)
+            body_fn()
+            i += incr
 
 
 cdef int run_while_loop(int whilefn_id, int body_id) except -1:
@@ -660,6 +979,13 @@ cdef int run_while_loop(int whilefn_id, int body_id) except -1:
 
 
 cdef int run_while_loop_bufs(WordBuf* whilefn, WordBuf* body) except -1:
+    cdef int err
+    if whilefn.gil_free and body.gil_free:
+        with nogil:
+            err = run_while_bufs_nogil(whilefn, body)
+        if err != WB_OK:
+            raise_wb_error(err)
+        return 0
     while True:
         run_wordbuf(whilefn)
         if data_pop_int() == 0:
@@ -672,14 +998,296 @@ cdef int _op_while() except -1:
     raise RuntimeError("while cannot be invoked directly")
 
 
+cdef int interpret_gil_free(WordBuf* buf) noexcept nogil:
+    """Nogil tagged interpreter; unchecked stack (LOCAP)."""
+    global data_sp, data_stack, data_stack_op_lit
+    cdef int bpc = 0
+    cdef uint64_t tag
+    cdef int err
+    cdef uint64_t a
+    cdef uint64_t b
+    cdef uint64_t c
+    cdef bint a_lit
+    cdef bint b_lit
+    cdef bint c_lit
+    cdef int depth
+    cdef double fb
+    cdef int64_t ib
+
+    while bpc < buf.hi:
+        if data_sp >= MAX_DATA:
+            return WB_ERR_STACK_OVERFLOW
+        tag = buf.elems[bpc]
+        if tag == TAG_LIT_INT:
+            u_push_int(<int64_t>buf.elems[bpc + 1])
+            bpc += 2
+        elif tag == TAG_LIT_FLOAT:
+            u_push_float(word_to_float(buf.elems[bpc + 1]))
+            bpc += 2
+        elif tag == TAG_LIT_OP:
+            u_push_op_literal(<int>buf.elems[bpc + 1])
+            bpc += 2
+        elif tag == TAG_CALL_WB:
+            err = interpret_gil_free(<WordBuf*><uintptr_t>buf.elems[bpc + 1])
+            if err != WB_OK:
+                return err
+            bpc += 2
+        elif tag == TAG_WHILE_BUFS:
+            err = run_while_bufs_nogil(
+                <WordBuf*><uintptr_t>buf.elems[bpc + 1],
+                <WordBuf*><uintptr_t>buf.elems[bpc + 2],
+            )
+            if err != WB_OK:
+                return err
+            bpc += 3
+        elif tag == TAG_DUP:
+            if data_sp <= 0:
+                return WB_ERR_STACK_UNDERFLOW
+            a = data_stack[data_sp - 1]
+            a_lit = data_stack_op_lit[data_sp - 1]
+            u_push_u64(a)
+            data_stack_op_lit[data_sp - 1] = a_lit
+            bpc += 1
+        elif tag == TAG_DROP:
+            if data_sp <= 0:
+                return WB_ERR_STACK_UNDERFLOW
+            data_sp -= 1
+            bpc += 1
+        elif tag == TAG_SWAP:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            a = data_stack[data_sp - 1]
+            b = data_stack[data_sp - 2]
+            a_lit = data_stack_op_lit[data_sp - 1]
+            b_lit = data_stack_op_lit[data_sp - 2]
+            data_stack[data_sp - 1] = b
+            data_stack[data_sp - 2] = a
+            data_stack_op_lit[data_sp - 1] = b_lit
+            data_stack_op_lit[data_sp - 2] = a_lit
+            bpc += 1
+        elif tag == TAG_OVER:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            a = data_stack[data_sp - 2]
+            a_lit = data_stack_op_lit[data_sp - 2]
+            u_push_u64(a)
+            data_stack_op_lit[data_sp - 1] = a_lit
+            bpc += 1
+        elif tag == TAG_ROT:
+            if data_sp < 3:
+                return WB_ERR_STACK_UNDERFLOW
+            a = data_stack[data_sp - 1]
+            b = data_stack[data_sp - 2]
+            c = data_stack[data_sp - 3]
+            a_lit = data_stack_op_lit[data_sp - 1]
+            b_lit = data_stack_op_lit[data_sp - 2]
+            c_lit = data_stack_op_lit[data_sp - 3]
+            data_sp -= 3
+            u_push_u64(b)
+            data_stack_op_lit[data_sp - 1] = b_lit
+            u_push_u64(c)
+            data_stack_op_lit[data_sp - 1] = c_lit
+            u_push_u64(a)
+            data_stack_op_lit[data_sp - 1] = a_lit
+            bpc += 1
+        elif tag == TAG_I_ADD:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(u_pop_int() + u_pop_int())
+            bpc += 1
+        elif tag == TAG_I_SUB:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            ib = u_pop_int()
+            u_push_int(u_pop_int() - ib)
+            bpc += 1
+        elif tag == TAG_I_GT:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            ib = u_pop_int()
+            u_push_int(1 if u_pop_int() > ib else 0)
+            bpc += 1
+        elif tag == TAG_I_EQ:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            ib = u_pop_int()
+            u_push_int(1 if u_pop_int() == ib else 0)
+            bpc += 1
+        elif tag == TAG_I_TO_F:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_float(<double>u_pop_int())
+            bpc += 1
+        elif tag == TAG_F_ADD:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            fb = u_pop_float()
+            u_push_float(u_pop_float() + fb)
+            bpc += 1
+        elif tag == TAG_F_SUB:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            fb = u_pop_float()
+            u_push_float(u_pop_float() - fb)
+            bpc += 1
+        elif tag == TAG_F_MUL:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            fb = u_pop_float()
+            u_push_float(u_pop_float() * fb)
+            bpc += 1
+        elif tag == TAG_F_GT:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            fb = u_pop_float()
+            u_push_int(1 if u_pop_float() > fb else 0)
+            bpc += 1
+        elif tag == TAG_I_ADD_AT:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            depth = <int>u_pop_int()
+            if depth < 0 or depth >= data_sp:
+                return WB_ERR_STACK_UNDERFLOW
+            u_i_add_at_depth(depth)
+            bpc += 1
+        elif tag == TAG_F_ADD_AT:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            depth = <int>u_pop_int()
+            if depth < 0 or depth >= data_sp:
+                return WB_ERR_STACK_UNDERFLOW
+            u_f_add_at_depth(depth)
+            bpc += 1
+        elif tag == TAG_I_ADD_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(u_pop_int() + <int64_t>buf.elems[bpc + 1])
+            bpc += 2
+        elif tag == TAG_I_SUB_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(u_pop_int() - <int64_t>buf.elems[bpc + 1])
+            bpc += 2
+        elif tag == TAG_F_ADD_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_float(u_pop_float() + word_to_float(buf.elems[bpc + 1]))
+            bpc += 2
+        elif tag == TAG_F_MUL_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_float(u_pop_float() * word_to_float(buf.elems[bpc + 1]))
+            bpc += 2
+        elif tag == TAG_I_ADD_AT_D:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            depth = <int>buf.elems[bpc + 1]
+            if depth < 0 or depth >= data_sp:
+                return WB_ERR_STACK_UNDERFLOW
+            u_i_add_at_depth(depth)
+            bpc += 2
+        elif tag == TAG_F_ADD_AT_D:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            depth = <int>buf.elems[bpc + 1]
+            if depth < 0 or depth >= data_sp:
+                return WB_ERR_STACK_UNDERFLOW
+            u_f_add_at_depth(depth)
+            bpc += 2
+        elif tag == TAG_I_GT_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(1 if u_pop_int() > <int64_t>buf.elems[bpc + 1] else 0)
+            bpc += 2
+        elif tag == TAG_I_EQ_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(1 if u_pop_int() == <int64_t>buf.elems[bpc + 1] else 0)
+            bpc += 2
+        elif tag == TAG_F_GT_C:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(
+                1 if u_pop_float() > word_to_float(buf.elems[bpc + 1]) else 0
+            )
+            bpc += 2
+        elif tag == TAG_OVER_I_GT:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            data_stack[data_sp - 1] = <uint64_t>(
+                1
+                if <int64_t>data_stack[data_sp - 1]
+                > <int64_t>data_stack[data_sp - 2]
+                else 0
+            )
+            data_stack_op_lit[data_sp - 1] = 0
+            bpc += 1
+        elif tag == TAG_OVER_F_GT:
+            if data_sp < 2:
+                return WB_ERR_STACK_UNDERFLOW
+            data_stack[data_sp - 1] = <uint64_t>(
+                1
+                if word_to_float(data_stack[data_sp - 1])
+                > word_to_float(data_stack[data_sp - 2])
+                else 0
+            )
+            data_stack_op_lit[data_sp - 1] = 0
+            bpc += 1
+        elif tag == TAG_I_GT_C_REV:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(
+                1
+                if <int64_t>buf.elems[bpc + 1]
+                > <int64_t>data_stack[data_sp - 1]
+                else 0
+            )
+            bpc += 2
+        elif tag == TAG_F_GT_C_REV:
+            if data_sp < 1:
+                return WB_ERR_STACK_UNDERFLOW
+            u_push_int(
+                1
+                if word_to_float(buf.elems[bpc + 1])
+                > word_to_float(data_stack[data_sp - 1])
+                else 0
+            )
+            bpc += 2
+        else:
+            return WB_ERR_BAD_TAG
+    return WB_OK
+
+
+cdef int run_while_bufs_nogil(WordBuf* whilefn, WordBuf* body) noexcept nogil:
+    cdef int err
+    while True:
+        err = interpret_gil_free(whilefn)
+        if err != WB_OK:
+            return err
+        if u_pop_int() == 0:
+            break
+        err = interpret_gil_free(body)
+        if err != WB_OK:
+            return err
+    return WB_OK
+
+
 cdef int run_wordbuf(WordBuf* buf) except -1:
     """Interpret a tagged compiled WordBuf with a local PC."""
     global call_depth
     cdef int bpc = 0
     cdef uint64_t tag
+    cdef int err
     call_depth += 1
     if call_depth >= MAX_CALL_DEPTH:
         raise RuntimeError("call stack overflow")
+    if buf.gil_free:
+        with nogil:
+            err = interpret_gil_free(buf)
+        if err != WB_OK:
+            raise_wb_error(err)
+        call_depth -= 1
+        return 0
     while bpc < buf.hi:
         tag = buf.elems[bpc]
         if tag == TAG_CALL_FN:
@@ -714,46 +1322,46 @@ cdef int run_wordbuf(WordBuf* buf) except -1:
             if data_pop_int() != 0:
                 run_quoted_body(<int>buf.elems[bpc - 1])
         elif tag == TAG_DUP:
-            _op_dup()
+            exec_dup()
             bpc += 1
         elif tag == TAG_DROP:
-            _op_drop()
+            exec_drop()
             bpc += 1
         elif tag == TAG_SWAP:
-            _op_swap()
+            exec_swap()
             bpc += 1
         elif tag == TAG_OVER:
-            _op_over()
+            exec_over()
             bpc += 1
         elif tag == TAG_ROT:
-            _op_rot()
+            exec_rot()
             bpc += 1
         elif tag == TAG_I_ADD:
-            _op_i_add()
+            exec_i_add()
             bpc += 1
         elif tag == TAG_I_SUB:
-            _op_i_sub()
+            exec_i_sub()
             bpc += 1
         elif tag == TAG_I_GT:
-            _op_i_gt()
+            exec_i_gt()
             bpc += 1
         elif tag == TAG_I_EQ:
-            _op_i_eq()
+            exec_i_eq()
             bpc += 1
         elif tag == TAG_I_TO_F:
-            _op_i_to_f()
+            exec_i_to_f()
             bpc += 1
         elif tag == TAG_F_ADD:
-            _op_f_add()
+            exec_f_add()
             bpc += 1
         elif tag == TAG_F_SUB:
-            _op_f_sub()
+            exec_f_sub()
             bpc += 1
         elif tag == TAG_F_MUL:
-            _op_f_mul()
+            exec_f_mul()
             bpc += 1
         elif tag == TAG_F_GT:
-            _op_f_gt()
+            exec_f_gt()
             bpc += 1
         elif tag == TAG_I_ADD_AT:
             _op_i_add_at()
@@ -846,10 +1454,32 @@ cdef int _op_float_incr_le() except -1:
     cdef double incr = data_pop_float()
     cdef double imax = data_pop_float()
     cdef double i = data_pop_float()
-    while i <= imax:
-        data_push_float(i)
-        run_quoted_body(body_id)
-        i += incr
+    cdef WordBuf* body_buf
+    cdef op_fn_t body_fn
+    cdef int err = WB_OK
+    if op_table[body_id].is_wordbuf:
+        body_buf = &op_table[body_id].buf
+        if body_buf.gil_free:
+            with nogil:
+                while i <= imax:
+                    u_push_float(i)
+                    err = interpret_gil_free(body_buf)
+                    if err != WB_OK:
+                        break
+                    i += incr
+            if err != WB_OK:
+                raise_wb_error(err)
+        else:
+            while i <= imax:
+                data_push_float(i)
+                run_wordbuf(body_buf)
+                i += incr
+    else:
+        body_fn = op_table[body_id].fn
+        while i <= imax:
+            data_push_float(i)
+            body_fn()
+            i += incr
 
 
 # Surface handlers exported for register_op("name", dup).
@@ -925,8 +1555,10 @@ def reset_vm() -> None:
     bodies_compiled = False
     op_names[:] = []
     op_bodies_src[:] = []
+    reset_gil_free_memo()
     for i in range(MAX_OPS):
         op_table[i].buf.hi = 0
+        op_table[i].buf.gil_free = False
         op_table[i].is_wordbuf = False
         op_table[i].fn = NULL
     call_depth = 0
@@ -966,3 +1598,4 @@ def run_op(str name) -> None:
         run_wordbuf(&op_table[op_id].buf)
     finally:
         eval_started = False
+        assert_stack_sane()
