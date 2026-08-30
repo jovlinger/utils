@@ -53,7 +53,7 @@ def test_ackermann_result_and_timing(capsys) -> None:
 @pytest.mark.slow
 def test_float_step_sum_result_and_timing(capsys) -> None:
     stop = 9.5
-    step = 0.0001
+    step = 0.00001
     expected = float_step_sum_python(stop=stop, step=step)
     result = bench_triple(
         "float_step_sum",
@@ -75,7 +75,7 @@ def test_float_step_sum_result_and_timing(capsys) -> None:
 @pytest.mark.slow
 def test_float_step_sum_while_result_and_timing(capsys) -> None:
     stop = 9.5
-    step = 0.0001
+    step = 0.00001
     expected = float_step_sum_python(stop=stop, step=step)
     result = bench_triple(
         "float_step_sum_while",
@@ -92,12 +92,14 @@ def test_float_step_sum_while_result_and_timing(capsys) -> None:
     assert result.python_s > 0.0
     assert result.stacklang_s is not None and result.stacklang_s > 0.0
     assert result.c_s is not None and result.c_s > 0.0
+    # Ratchet: the tagged/fused wordbuf interpreter must beat pure Python.
+    assert result.stacklang_s < result.python_s
 
 
 @pytest.mark.slow
 def test_float_step_sum_incr_le_wb_result_and_timing(capsys) -> None:
     stop = 9.5
-    step = 0.0001
+    step = 0.00001
     expected = float_step_sum_python(stop=stop, step=step)
     result = bench_triple(
         "float_step_sum_incr_le_wb",
@@ -118,7 +120,7 @@ def test_float_step_sum_incr_le_wb_result_and_timing(capsys) -> None:
 
 @pytest.mark.slow
 def test_int_step_sum_result_and_timing(capsys) -> None:
-    stop = 95000
+    stop = 950000
     step = 1
     expected = int_step_sum_python(stop=stop, step=step)
     result = bench_triple(
@@ -140,7 +142,7 @@ def test_int_step_sum_result_and_timing(capsys) -> None:
 
 @pytest.mark.slow
 def test_int_step_sum_while_result_and_timing(capsys) -> None:
-    stop = 95000
+    stop = 950000
     step = 1
     expected = int_step_sum_python(stop=stop, step=step)
     result = bench_triple(
@@ -162,7 +164,7 @@ def test_int_step_sum_while_result_and_timing(capsys) -> None:
 
 @pytest.mark.slow
 def test_int_step_sum_incr_le_wb_result_and_timing(capsys) -> None:
-    stop = 95000
+    stop = 950000
     step = 1
     expected = int_step_sum_python(stop=stop, step=step)
     result = bench_triple(
