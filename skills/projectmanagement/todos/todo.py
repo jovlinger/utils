@@ -18,9 +18,10 @@ import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Sequence
+from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence
 
 import todo_db
 import todo_objid
@@ -1796,6 +1797,212 @@ def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
 # Reciprocal-rank-fusion constant; larger flattens the contribution curve.
 _RRF_K = 60
 
+# Search query prefix operators (no space between operator and value).
+_SEARCH_TIME_OPERATORS = frozenset(
+    {"tc_before", "tc_after", "tu_before", "tu_after"}
+)
+_RFC3339_Z_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+_RFC3339_DATE_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+_RFC3339_DATE_SLASH_RE = re.compile(r"\A\d{4}/\d{2}/\d{2}\Z")
+
+
+@dataclass(frozen=True)
+class SearchTimeFilters:
+    """Inclusive RFC3339 Z bounds on create_dt / update_dt from search terms."""
+
+    create_before: Optional[str] = None
+    create_after: Optional[str] = None
+    update_before: Optional[str] = None
+    update_after: Optional[str] = None
+
+    def active(self) -> bool:
+        """True when at least one bound is set."""
+        return (
+            self.create_before is not None
+            or self.create_after is not None
+            or self.update_before is not None
+            or self.update_after is not None
+        )
+
+
+def _normalize_search_date(value: str) -> str:
+    """Accept ``YYYY-MM-DD`` or ``YYYY/MM/DD``; return hyphenated date."""
+    if _RFC3339_DATE_SLASH_RE.match(value):
+        return value.replace("/", "-")
+    return value
+
+
+def _parse_search_timestamp(value: str, *, bound: str) -> str:
+    """Validate *value* and return an RFC3339 Z string for comparison.
+
+    Accepts a full timestamp (``2026-01-01T00:00:00Z``) or a date-only value
+    (``2026-01-01`` or ``2026/01/01``). Date-only *after* bounds start at
+    00:00:00Z that day; date-only *before* bounds end at 23:59:59Z that day.
+    """
+    if _RFC3339_Z_RE.match(value):
+        return value
+    date_value = _normalize_search_date(value)
+    if _RFC3339_DATE_RE.match(date_value):
+        if bound == "after":
+            return f"{date_value}T00:00:00Z"
+        if bound == "before":
+            return f"{date_value}T23:59:59Z"
+    raise TodoError(
+        f"invalid search timestamp {value!r}; expected YYYY-MM-DD, YYYY/MM/DD, "
+        "or YYYY-MM-DDTHH:MM:SSZ"
+    )
+
+
+def parse_search_query(
+    terms: Sequence[str],
+) -> tuple[List[str], SearchTimeFilters]:
+    """Split *terms* into text matchers and colon-based time-filter operators.
+
+    Recognized operators (glued to the value, no space): ``tc_before:``,
+    ``tc_after:``, ``tu_before:``, ``tu_after:`` each followed by RFC3339 Z or a
+    date-only ``YYYY-MM-DD``. Any other token is a normal search term (including strings that
+    happen to contain a colon but do not match a known operator prefix).
+    """
+    text_terms: List[str] = []
+    create_before: Optional[str] = None
+    create_after: Optional[str] = None
+    update_before: Optional[str] = None
+    update_after: Optional[str] = None
+    for term in terms:
+        if ":" not in term:
+            text_terms.append(term)
+            continue
+        prefix, _, value = term.partition(":")
+        if prefix not in _SEARCH_TIME_OPERATORS:
+            text_terms.append(term)
+            continue
+        if not value:
+            raise TodoError(f"search operator {prefix!r} requires a value after ':'")
+        bound = "before" if prefix.endswith("_before") else "after"
+        timestamp = _parse_search_timestamp(value, bound=bound)
+        if prefix == "tc_before":
+            create_before = timestamp
+        elif prefix == "tc_after":
+            create_after = timestamp
+        elif prefix == "tu_before":
+            update_before = timestamp
+        else:
+            update_after = timestamp
+    return text_terms, SearchTimeFilters(
+        create_before=create_before,
+        create_after=create_after,
+        update_before=update_before,
+        update_after=update_after,
+    )
+
+
+def _ticket_matches_time_filters(
+    ticket: JsonDict, filters: SearchTimeFilters
+) -> bool:
+    """True when *ticket* satisfies every set bound in *filters*."""
+    create_dt = str(ticket.get("create_dt") or "")
+    update_dt = str(ticket.get("update_dt") or "")
+    if filters.create_before is not None:
+        if not create_dt or create_dt > filters.create_before:
+            return False
+    if filters.create_after is not None:
+        if not create_dt or create_dt < filters.create_after:
+            return False
+    if filters.update_before is not None:
+        if not update_dt or update_dt > filters.update_before:
+            return False
+    if filters.update_after is not None:
+        if not update_dt or update_dt < filters.update_after:
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class SearchTicketsResult:
+    """Ranked search hits plus how many matches the state filter hid."""
+
+    hits: List[JsonDict]
+    hidden_by_status: int
+
+
+def _ticket_matches_tag_filter(ticket: JsonDict, tags: Optional[frozenset]) -> bool:
+    if tags is None:
+        return True
+    return bool(
+        {
+            e["raw"]
+            for e in (ticket.get("Tag") or [])
+            if isinstance(e, dict) and isinstance(e.get("raw"), str)
+        }
+        & tags
+    )
+
+
+def _partition_search_candidates(
+    store: todo_store.TodoStore,
+    *,
+    states: Optional[frozenset],
+    tags: Optional[frozenset],
+    time_filters: SearchTimeFilters,
+) -> tuple[Dict[str, JsonDict], Dict[str, JsonDict], Dict[str, tuple[str, str]]]:
+    """Split store tickets into visible vs status-hidden search pools."""
+    visible: Dict[str, JsonDict] = {}
+    hidden: Dict[str, JsonDict] = {}
+    locations: Dict[str, tuple[str, str]] = {}
+    for repo_path, branch, parsed in store.list_located():
+        parsed = normalize_todo_schema(parsed)
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if not _ticket_matches_tag_filter(parsed, tags):
+            continue
+        if not _ticket_matches_time_filters(parsed, time_filters):
+            continue
+        locations[ticket_id] = (repo_path, branch)
+        state = current_state_name(parsed) or ""
+        if states is not None and state not in states:
+            hidden[ticket_id] = parsed
+        else:
+            visible[ticket_id] = parsed
+    return visible, hidden, locations
+
+
+def _text_search_match_ids(
+    tickets: Mapping[str, JsonDict],
+    raws: Mapping[str, Dict[str, str]],
+    text_terms: Sequence[str],
+    prepared: Sequence[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]],
+    stored_by_fingerprint: Mapping[str, Mapping[tuple[str, str], List[List[float]]]],
+    *,
+    persist_stopwords: bool,
+) -> set[str]:
+    """Ticket ids that match *text_terms* under the same rankers as search."""
+    if not text_terms or not tickets:
+        return set()
+
+    rankings: List[Dict[str, float]] = []
+    for _name, _embedder, fingerprint, term_vecs in prepared:
+        stored = stored_by_fingerprint[fingerprint]
+        for _term, query_vec in term_vecs:
+            scores: Dict[str, float] = {}
+            for tid in tickets:
+                best = 0.0
+                for field_path in raws.get(tid, {}):
+                    chunks = stored.get((tid, field_path)) or []
+                    for chunk in chunks:
+                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
+                if best > 0.0:
+                    scores[tid] = best
+            rankings.append(scores)
+
+    index = todo_search.LexicalIndex(
+        {tid: " ".join(raws[tid].values()) for tid in tickets}
+    )
+    index.use_stopwords(resolve_stopwords(index, persist=persist_stopwords))
+    rankings.append(index.score(text_terms))
+    fused = _rrf_fuse(rankings)
+    return {tid for tid, score in fused.items() if score > 0.0}
+
 
 def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
     """Reciprocal rank fusion: sum 1/(k+rank) across rankers, scale-free."""
@@ -1884,7 +2091,7 @@ def search_tickets(
     dry_run: bool = False,
     states: Optional[frozenset] = None,
     tags: Optional[frozenset] = None,
-) -> List[JsonDict]:
+) -> SearchTicketsResult:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
 
     ``terms`` is a list of independent search terms (google-style): each term is
@@ -1901,7 +2108,15 @@ def search_tickets(
     element (manual or automatic) whose ``raw`` is in it -- callers pass
     already-downcased tag text, matching how ``Tag.raw`` is always stored.
     Both filters apply before ranking, so the limit counts matches only.
+
+    Search terms may include colon-based time operators (no space before the
+    value): ``tc_before:``, ``tc_after:``, ``tu_before:``, ``tu_after:`` each
+    followed by an RFC3339 Z timestamp. They are ANDed with each other and with
+    text terms. Space-separated text terms are google-style OR: each term is its
+    own matcher and matching more terms ranks higher; a doc matching only one
+    term can still appear.
     """
+    text_terms, time_filters = parse_search_query(terms)
     names = resolve_embedder_names(embedder_names)
     embedders: List[tuple[str, todo_embed.Embedder]] = []
     for name in names:
@@ -1914,35 +2129,36 @@ def search_tickets(
             ) from exc
 
     store = todo_store.get_store()
-    tickets: Dict[str, JsonDict] = {}
-    raws: Dict[str, Dict[str, str]] = {}
-    locations: Dict[str, tuple[str, str]] = {}
-    for repo_path, branch, parsed in store.list_located():
-        parsed = normalize_todo_schema(parsed)  # legacy state keys -> current nouns
-        ticket_id = str(parsed.get("Id", ""))
-        if not ticket_id:
-            continue
-        if states is not None and (current_state_name(parsed) or "") not in states:
-            continue
-        if tags is not None and not (
-            {
-                e["raw"]
-                for e in (parsed.get("Tag") or [])
-                if isinstance(e, dict) and isinstance(e.get("raw"), str)
-            }
-            & tags
-        ):
-            continue
-        tickets[ticket_id] = parsed
-        locations[ticket_id] = (repo_path, branch)
-        raws[ticket_id] = _raw_map(parsed)
+    tickets, hidden_tickets, locations = _partition_search_candidates(
+        store, states=states, tags=tags, time_filters=time_filters
+    )
+    raws: Dict[str, Dict[str, str]] = {
+        ticket_id: _raw_map(parsed) for ticket_id, parsed in tickets.items()
+    }
+    hidden_raws: Dict[str, Dict[str, str]] = {
+        ticket_id: _raw_map(parsed) for ticket_id, parsed in hidden_tickets.items()
+    }
+
+    if not text_terms:
+        ranked_ids = sorted(
+            tickets.keys(),
+            key=lambda tid: (
+                str(tickets[tid].get("update_dt") or ""),
+                str(tickets[tid].get("create_dt") or ""),
+            ),
+            reverse=True,
+        )
+        return SearchTicketsResult(
+            hits=[tickets[tid] for tid in ranked_ids[:limit]],
+            hidden_by_status=len(hidden_tickets),
+        )
 
     prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
     stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
     for name, embedder in embedders:
         try:
             fingerprint = embedder.fingerprint()
-            term_vecs = [(term, embedder.embed(term)) for term in terms]
+            term_vecs = [(term, embedder.embed(term)) for term in text_terms]
         except (ValueError, RuntimeError) as exc:
             raise TodoError(f"embedder {name!r} failed: {exc}") from exc
         prepared.append((name, embedder, fingerprint, term_vecs))
@@ -2036,14 +2252,27 @@ def search_tickets(
         {tid: " ".join(raws[tid].values()) for tid in tickets}
     )
     index.use_stopwords(resolve_stopwords(index, persist=not dry_run))
-    rankings.append(index.score(terms))
+    rankings.append(index.score(text_terms))
 
     if refreshing_embeddings:
         print("Done", file=sys.stderr, flush=True)
 
     fused = _rrf_fuse(rankings)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
-    return [tickets[tid] for tid, _score in ranked[:limit]]
+    hidden_by_status = len(
+        _text_search_match_ids(
+            hidden_tickets,
+            hidden_raws,
+            text_terms,
+            prepared,
+            stored_by_fingerprint,
+            persist_stopwords=not dry_run,
+        )
+    )
+    return SearchTicketsResult(
+        hits=[tickets[tid] for tid, _score in ranked[:limit]],
+        hidden_by_status=hidden_by_status,
+    )
 
 
 def _prompt_section(todo: JsonDict) -> str:
@@ -5362,7 +5591,8 @@ class WebCommand(EnvironmentCommand):
                     terms = query.split()
                 if terms:
                     try:
-                        return run_search(root, terms)
+                        rows, _hidden = run_search(root, terms)
+                        return rows
                     except TodoError as exc:
                         raise todo_web.TodoWebError(str(exc)) from exc
             return [todo_row(todo) for todo in list_todos()]
@@ -5536,14 +5766,15 @@ def run_search(
     dry_run: bool = False,
     states: Optional[frozenset] = None,
     tags: Optional[frozenset] = None,
-) -> List[JsonDict]:
+) -> tuple[List[JsonDict], int]:
     """Ranked search as structured rows (relevance-rank order preserved).
 
     Shared by the 'search' subcommand and the web viewer so both go through the
     same vector-search backend without duplicating it. ``terms`` is the list of
-    google-style search terms (see ``search_tickets``).
+    google-style search terms (see ``search_tickets``). Returns ``(rows,
+    hidden_by_status)``.
     """
-    hits = search_tickets(
+    result = search_tickets(
         root,
         terms,
         limit=limit,
@@ -5552,7 +5783,7 @@ def run_search(
         states=states,
         tags=tags,
     )
-    return [todo_row(todo) for todo in hits]
+    return [todo_row(todo) for todo in result.hits], result.hidden_by_status
 
 
 class SearchCommand(CorpusQueryCommand):
@@ -5560,10 +5791,15 @@ class SearchCommand(CorpusQueryCommand):
     doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
         "Search ranks todos by reciprocal-rank fusion over one or more embedders "
-        "plus lexical overlap. Multiple terms are searched google-style: each term "
-        "is embedded and matched independently and the per-term scores add. A term "
+        "plus lexical overlap. Multiple text terms are searched google-style (OR): "
+        "each term is embedded and matched independently and matching more terms "
+        "ranks higher; a doc matching only one term can still appear. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
-        "unquoted words (bh 791) match individually. Results hide FINAL (done, "
+        "unquoted words (bh 791) match individually. Colon operators (no space "
+        "before the value) filter by time and are ANDed with text terms: "
+        "tc_before:/tc_after: on create_dt, tu_before:/tu_after: on update_dt, "
+        "each followed by RFC3339 Z (e.g. tc_after:2026-01-01T00:00:00Z). "
+        "Results hide FINAL (done, "
         "merged) by default; pass -s to show all states or --states=<expr> (UPPERCASE "
         "macros ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state "
         "names) to filter. --embedder takes a comma list "
@@ -5585,9 +5821,10 @@ class SearchCommand(CorpusQueryCommand):
             nargs="+",
             metavar="TERM",
             help=(
-                "one or more search terms (google-style): each is embedded and "
-                'matched on its own and the scores add. Quote a phrase ("bh 791") '
-                "to make it a single term; unquoted words (bh 791) match individually"
+                "one or more search terms (google-style OR): each text term is "
+                "embedded and matched on its own; matching more terms ranks higher. "
+                'Quote a phrase ("bh 791") to make it a single term. Time filters: '
+                "tc_before:/tc_after:/tu_before:/tu_after:<RFC3339Z> (no space, ANDed)"
             ),
         )
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
@@ -5630,7 +5867,7 @@ class SearchCommand(CorpusQueryCommand):
             if self.tag
             else None
         )
-        rows = run_search(
+        rows, hidden_by_status = run_search(
             root,
             self.query,
             limit=self.limit,
@@ -5641,6 +5878,8 @@ class SearchCommand(CorpusQueryCommand):
         )
         for line in _format_rows(rows, columns):
             print(line)
+        if hidden_by_status:
+            print(f"... {hidden_by_status} hidden by status", file=sys.stderr)
         return 0
 
 

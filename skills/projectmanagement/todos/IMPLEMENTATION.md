@@ -245,8 +245,15 @@ Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 ### Search ranking
 
 `search` fuses (reciprocal rank) one ranking per selected embedder with **one**
-lexical ranking over all terms. The lexical half is IDF-weighted full-text, in
+lexical ranking over all text terms. The lexical half is IDF-weighted full-text, in
 `todo_search.py`:
+
+**Query syntax**
+
+| Piece | Behavior |
+|-------|----------|
+| Text terms | Space-separated (each CLI argv is one term; the web box uses `shlex`). **OR**, google-style: each term is its own matcher; a doc matching only one term can appear; matching more terms ranks higher. Quote a phrase to keep it one term |
+| Time operators | `tc_before:`, `tc_after:`, `tu_before:`, `tu_after:` each glued to an RFC3339 `Z` timestamp or a date-only `YYYY-MM-DD` / `YYYY/MM/DD` (no space). Filter `create_dt` / `update_dt` inclusively. Date-only *after* starts at 00:00:00Z that day; date-only *before* ends at 23:59:59Z. **AND** with each other and with text terms. Operator-only queries list matches sorted by `update_dt` desc. Matches excluded by the default state filter are counted on stderr as ``... N hidden by status`` |
 
 | Piece | Behavior |
 |-------|----------|
