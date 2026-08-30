@@ -1,0 +1,105 @@
+{
+  "AC": "1. Written pedagogy brief: how to teach programming to a gifted ~12yo with visual concreteness; map methods to REPL affordances.\n2. Explicit mapping from imgcomp primitives to learner-visible concepts (canvas, object, transform, event, frame).\n3. REPL design sketch: edit-eval-draw loop, layer cache for ~30fps, minimal learner API.\n4. Spike: ReplSession + LayerCache with tests (eval, cache reuse, naive parity, moving-layer speedup).\n5. Unresolved host/language product locks descoped (documented); not required to close this ticket.",
+  "ActualSummary": "Landed pedagogy brief, primitive map, REPL design, and imgcomp.repl (ReplSession + LayerCache) on master. Host/language product locks were descoped; spike uses Python-exec v0 and headless cache. Fast-forward merged branch cbc3e615-imgcomp-coding-pedagogy into master.",
+  "BaseSha": "56090909736d49b7fbf4d126cad0eb936fab82b6",
+  "Body": {
+    "objid": "0002",
+    "raw": "WHY\nTeach programming to a gifted ~12-year-old using concrete visuals, not abstract-first syntax drills. imgcomp is the visual bedrock: lessons become rectangles on a canvas, sorting animations, interactive markup -- whatever makes the idea tangible. Pedagogy research leads; lesson topics (canvas shapes, animated sort, etc.) are background examples, not the product.\n\nGOAL\nDesign and eventually build a ductile, responsive REPL layered on imgcomp so the learner can type, see, tweak, and feel immediate feedback. With caching (and related compositing work), target ~30fps for live preview / animation loops so interaction stays fluid.\n\nOUT OF SCOPE (for now)\nFull curriculum writing, classroom multi-student tooling, non-imgcomp graphics backends. Prefer evolving lessons on top of this REPL once the teaching model and feedback loop are clear.\n\nCONSTRAINTS\n- Center-based imgcomp scene graph (Shape / wrappers / SDF / NaiveCompositor) stays the render substrate.\n- Stay ASCII-clean in human-readable project prose.\n- Research first: how gifted middle-schoolers learn to code well; what REPL affordances matter (error warmth, undo, live binding of names to drawn objects, small steps).\n\nPRODUCT DECISIONS (descoped at merge to master)\nLearner language surface, host UX (Tk vs PNG), and lesson-module coupling were left open; spike ships Python-exec v0 + headless layer cache. Follow-ons may lock those without reopening pedagogy research."
+  },
+  "Branch": "cbc3e615-imgcomp-coding-pedagogy",
+  "Id": "cbc3e615e67a58d1d4f2f247f447856d02db88bb8630e2823af5a622ba5f57c6",
+  "LongSummary": {
+    "objid": "0003",
+    "raw": "Research-and-build ticket for teaching a gifted twelve-year-old to code with imgcomp as the visual bedrock. Delivered pedagogy brief, primitive-to-learner map, REPL design, and an imgcomp.repl spike (ReplSession, v0 API, LayerCache toward ~30fps). Host/language product locks were descoped at merge; follow-ons can choose Tk vs PNG and Python-subset details later. Scope is utils/imgcomp."
+  },
+  "Scope": {
+    "branch": "cbc3e615-imgcomp-coding-pedagogy",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0009",
+    "path_from_root": "imgcomp"
+  },
+  "State": {
+    "done": {
+      "last_commit": "f26c3fb0ee0985a59ad3d5fd1a759e94da654a0e"
+    }
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "imgcomp coding pedagogy: research + ductile visual REPL"
+  },
+  "Tag": [
+    {
+      "manual": true,
+      "objid": "0004",
+      "raw": "long-lived"
+    },
+    {
+      "manual": true,
+      "objid": "0005",
+      "raw": "pedagogy"
+    },
+    {
+      "manual": true,
+      "objid": "0006",
+      "raw": "research"
+    },
+    {
+      "manual": true,
+      "objid": "0007",
+      "raw": "imgcomp"
+    }
+  ],
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Add imgcomp pedagogy brief for gifted ~12yo visual REPL teaching.\n\nDocuments constructionism, agency, live coding, concreteness fading, and\ndebugging-as-curriculum, mapped to REPL affordances on imgcomp.",
+      "objid": "000f",
+      "sha": "6a46f4bd47d38c84e8a70d966c7bab0d30e1cd6b",
+      "summary": "[HICAP] Pedagogy brief: gifted ~12yo programming + visual concreteness; map methods to REPL affordances"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Document imgcomp primitive-to-learner concept map.\n\nTables cover scene, SDF leaves, Color/wrappers, compounds, pick/events, and\nthe day-one mental model for the visual REPL.",
+      "objid": "0010",
+      "sha": "b3276350cf2b26bad2f992a7e0901073cdd46f05",
+      "summary": "[MIDCAP] Map imgcomp primitives to learner concepts (canvas/object/transform/event/frame)"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Add imgcomp REPL design sketch for edit-eval-draw and layer cache.\n\nCovers session loop, v0 learner API, cache invalidation toward ~30fps,\nhost adapters, error warmth, and spike acceptance criteria.",
+      "objid": "0011",
+      "sha": "d303ee55c4dd3a18647af8ab0a741a53a38fae8f",
+      "summary": "[HICAP] REPL design sketch: edit-eval-draw loop, cache/invalidate for ~30fps, minimal learner API"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Spike imgcomp ReplSession with v0 API and layer cache.\n\nAdds imgcomp.repl (session, api_v0, LayerCache), headless tests for\nedit-eval-draw, cache reuse, naive parity, and faster moving-layer frames.",
+      "objid": "0012",
+      "sha": "9aa7de40dd1cdbc06d87a22046079c35a96ed247",
+      "summary": "[MIDCAP] Spike: imgcomp LivePreview + re-eval path with dirty-region or layer cache prototype"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Cannot record product-decision answers: none locked yet.\n\nTried: completed pedagogy brief, primitive map, REPL design, and ReplSession\nlayer-cache spike (sha on prior work items). Body still lists three open calls.\n\nFound: no user ratification of (1) learner language, (2) host UX, (3) lessons\nvs free-explore.\n\nOptions:\n(a) Lock answers in chat; LOCAP item re-opened or new WorkItem to write them\n    into Body/LongSummary.\n(b) Defer indefinitely; descope AC item 5 / drop this WorkItem.\n(c) Pick defaults now (Python subset + headless PNG primary + free-explore\n    first) -- only if you authorize inventing them.",
+      "objid": "0013",
+      "sha": "0000000000000000000000000000000000000000",
+      "summary": "[LOCAP] Record unresolved product decisions answers once user locks language/host UX"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Reconcile imgcomp.repl with Shape/color_at; descope host/language locks.\n\nUpdates REPL imports for master API, notes deferred product decisions in\nrepl-design.md, and closes the blocked-tail invariant for merge.",
+      "objid": "0015",
+      "sha": "f26c3fb0ee0985a59ad3d5fd1a759e94da654a0e",
+      "summary": "[LOCAP] Descope unresolved product locks; reconcile REPL with master Shape rename"
+    }
+  ],
+  "_nextobjid": 22,
+  "create_dt": "2026-08-24T22:58:05Z",
+  "update_dt": "2026-08-25T19:56:37Z"
+}

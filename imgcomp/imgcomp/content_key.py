@@ -67,7 +67,7 @@ def content_key(obj: Shape) -> Tuple[Hashable, ...]:
     if isinstance(obj, ImageObject):
         return ("image", obj.width, obj.height, id(obj))
     if isinstance(obj, SDFShape):
-        return ("sdfshape", id(obj.sdf), type(obj).__name__)
+        return ("sdfshape", type(obj).__name__, id(obj))
     return ("object", type(obj).__name__, id(obj))
 
 
