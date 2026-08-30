@@ -92,8 +92,10 @@ into feature-branch history. Keep code work in linked worktrees only.
 
 ## Worktree setup
 
-`todo.py ensure_worktree` is a **STUB** (prints intended path only). Create and
-remove worktrees with git.
+`todo.py ensure_worktree <id> [--init]` runs `git worktree add` at the conventional
+path when the todo branch exists. Pass `--init` to promote a groom todo first
+(same as `init --id <id> --stay-on-parent` when the branch is missing; noop when
+it already exists). Without `--init`, run `init` manually first.
 
 **On entry** (before `set <id> --state working`, `work-item-done`, or code edits):
 
@@ -101,12 +103,9 @@ remove worktrees with git.
 # 1) Main checkout on DEFAULT_BRANCH
 git -C "$MAIN" branch --show-current   # must equal $DEFAULT_BRANCH
 
-# 2) If needed, create/reuse worktree (never move an existing one)
-BRANCH=$(todo.py get-json-path <id> Branch | jq -r .)
-# intended path: $(todo.py basedir)/worktrees/<repo-path>/$BRANCH
-# or: todo.py ensure_worktree <id>   # prints intended path; does not create
-git worktree add <path> "$BRANCH"    # skip if git worktree list already shows it
-cd <path>
+# 2) Init branch (if groom) and create/reuse worktree
+todo ensure_worktree <id> --init
+cd "$(todo ensure_worktree <id> | jq -r .worktree)"
 
 # 3) Verify CWD is the linked worktree of the todo branch
 test "$(git rev-parse --show-toplevel)" != "$MAIN"

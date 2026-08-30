@@ -15,6 +15,9 @@ disable-model-invocation: false
 
 status: living document - entry skill (router)
 
+**Cursor agents:** before working a ticket, read [`CURSOR.md`](CURSOR.md) (tier
+dispatch, do not stop mid-loop, worktree rules restated for Cursor).
+
 Associative memory for pruned contexts: a task ticket bound to a git branch.
 One branch carries **zero or one** ticket, addressed through `todo.py` by
 explicit `Id` (no current-branch selector). Storage backend selection is a
@@ -43,6 +46,7 @@ Load **only** what the user intent needs:
 
 | Intent | Open |
 |--------|------|
+| **Cursor: work / proceed / continue a ticket** | [`CURSOR.md`](CURSOR.md) **first**, then [`WORKING.md`](WORKING.md) |
 | make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) |
 | start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
 | command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
@@ -58,8 +62,12 @@ ID=$("$TODO" mint)
 "$TODO" work-item-add "$ID" --summary="[MIDCAP] ..."
 # stay in State groom until the user asks to work
 
-# promote when ready to work
+# promote when ready to work (branch only; worktree is separate)
 "$TODO" init --id "$ID" --stay-on-parent
+
+# one-shot: init branch if needed, then linked worktree (preferred at work start)
+"$TODO" ensure_worktree "$ID" --init
+cd "$("$TODO" ensure_worktree "$ID" | jq -r .worktree)"
 
 # work loop (inside the todo worktree -- see WORKING.md)
 "$TODO" prompt "$ID"

@@ -238,15 +238,56 @@ class MintSetInitFlowTests(TodoCase):
         self.assertTrue(self._branch_exists(out["Branch"]))
         self.assertEqual(list(self._read_id(out["Id"])["State"].keys()), ["ready"])
 
-    def test_ensure_worktree_is_stub(self) -> None:
+    def test_ensure_worktree_fails_when_branch_missing(self) -> None:
         tid = self.mint()
-        self.todo("set", tid, "--summary", "persist the local db")
+        self.todo("set", tid, "--summary", "groom only")
         proc = self.todo("ensure_worktree", tid)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("does not exist", proc.stderr)
+
+    def test_ensure_worktree_init_promotes_groom_and_creates(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        tid = self.mint()
+        self.todo("set", tid, "--summary", "groom todo for init flag")
+        proc = self.todo("ensure_worktree", tid, "--init")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertFalse(out["created"])
-        self.assertTrue(out["stub"])
+        self.assertTrue(out["inited"])
+        self.assertTrue(out["created"])
+        self.assertEqual(list(self._read_id(tid)["State"].keys()), ["ready"])
+        again = self.todo("ensure_worktree", tid, "--init")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        out2 = json.loads(again.stdout)
+        self.assertFalse(out2["inited"])
+        self.assertFalse(out2["created"])
+
+    def test_ensure_worktree_creates_and_reuses(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        payload = self.init_ok("--summary", "worktree todo", "--stay-on-parent")
+        branch = payload["Branch"]
+        proc = self.todo("ensure_worktree", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertTrue(out["created"])
         self.assertIn("worktrees", out["worktree"])
+        wt = Path(out["worktree"])
+        self.assertTrue(wt.is_dir())
+        self.assertEqual(
+            subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=ENV,
+            ).stdout.strip(),
+            branch,
+        )
+        again = self.todo("ensure_worktree", self.tid)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        out2 = json.loads(again.stdout)
+        self.assertFalse(out2["created"])
+        self.assertEqual(out2["worktree"], out["worktree"])
 
 
 class ReadTests(TodoCase):
@@ -1067,14 +1108,6 @@ class SearchTests(TodoCase):
         self.assertIn(oauth_id[:8], proc.stdout)
         self.assertNotIn(other_id[:8], proc.stdout)
 
-    def test_search_id_prefix_finds_ticket_without_vector_match(self) -> None:
-        tid = self.mint()
-        prefix = tid[:8]
-        self.write_ticket(f"{prefix}-id", tid, summary="nothing about the prefix in prose")
-        proc = self.todo("search", prefix, "--embedder", "apple", "--dry-run")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn(prefix, proc.stdout)
-
     def test_search_multiple_terms_match_each_doc_individually(self) -> None:
         # Google-style: each space-separated term is its own matcher, so a doc
         # matching only one term still surfaces (scores add across terms); a doc
@@ -1604,7 +1637,7 @@ class WebViewerTests(TodoCase):
         proc = self.todo("web", "--dump-html")  # no selector -> search landing page
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
-        self.assertIn("search todos (id prefix or lexical)", out)  # search box placeholder
+        self.assertIn("search todos (vector search)", out)  # search box placeholder
         self.assertIn("Alpha todo", out)
         self.assertIn("Beta todo", out)
         self.assertIn(alpha, out)  # ids embedded for client-side links

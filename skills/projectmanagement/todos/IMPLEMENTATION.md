@@ -167,11 +167,10 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 
 | Command | Status | Behavior today |
 |---------|--------|----------------|
-| `ensure_worktree <todoid>` | **STUB** | Resolves todo and prints the *intended* path under `<todo-dir>/worktrees/<repo>/<branch>` with `created=false`. Does **not** run `git worktree add` |
+| `ensure_worktree <todoid> [--init] [--no-commit]` | live | With `--init`, promotes a groom todo when its git branch is missing (same as `init --id … --stay-on-parent`; noop when the branch exists). Then creates or reuses a linked worktree via `git worktree add`. Without `--init`, exit 1 when the branch does not exist yet. Prints `inited`, `created`, and `worktree` |
 
-Worktree create/remove remains a **manual** procedure in
-[`WORKING.md`](WORKING.md#worktree-setup). Do not treat `ensure_worktree` as
-having created a checkout.
+Worktree removal remains manual on finish (see [`WORKING.md`](WORKING.md#6-finish-and-remove-the-worktree)).
+Do not assume a worktree exists until `ensure_worktree` succeeds.
 
 ### Minimal examples (verified forms)
 
@@ -268,7 +267,7 @@ Config keys, per todo dir in `config.json`:
 |-----|---------|
 | `search_stopwords` | The discovered list. Written on the first search that finds one, then reused verbatim -- so a hand-edited list is honored. Derived data: `clear-search-data ALL` drops it and the next search rediscovers it against the corpus as it stands then (which is how a list that has gone stale gets corrected) |
 | `search_stopword_min_idf` | Cut-off for discovery (default `0.3`, i.e. a term in roughly 74%+ of todos) |
-| `embedder` | Absent or **`null` = none** (default): lexical IDF and id-prefix search only; nothing instantiates an embedder, so no NLCE sidecar spawns and no vector is backfilled. A string (comma list) or list re-enables vector search. `--embedder` always overrides; any other value type errors |
+| `embedder` | Absent = every non-hidden embedder. **`null` = none**, leaving lexical IDF as the only ranker: nothing instantiates an embedder, so no NLCE sidecar spawns and no vector is backfilled. A string (comma list) or list selects. `--embedder` always overrides; any other value type errors |
 
 `--dry-run` discovers stopwords for that run but persists nothing, matching how
 it already refuses to backfill vectors.
@@ -570,7 +569,7 @@ Non-normative. Do **not** put these in current dispatch tables.
 | Item | Notes |
 |------|-------|
 | `todo.py new` | Mentioned historically as alias for `init` with JSON seed -- **not implemented** |
-| `ensure_worktree` automation | STUB today; future may create/remove trees |
+| `ensure_worktree` automation | `--init` promotes groom branch when missing; then `git worktree add` under `<todo-dir>/worktrees/...` |
 | `waiting` state / dependency graph | In `VALID_STATES` / macros but not settable via `--state`; design deferred |
 | `N/a` state | Present but not settable via `--note`/`--state` workflow |
 | Stack across branches | Deferred |

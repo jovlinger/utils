@@ -75,8 +75,8 @@ DEFAULT_STATE_FILTER = "ALL,-FINAL"
 #   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
 #                            derived data, dropped by clear-search-data
 #   search_stopword_min_idf  the IDF below which a term is a stopword here
-#   embedder                 null or absent turns vector search OFF; a name/list
-#                            or --embedder re-enables embedders for search
+#   embedder                 present-and-null turns vector search OFF for this
+#                            store, leaving lexical IDF as the only ranker
 SEARCH_STOPWORDS_KEY = "search_stopwords"
 SEARCH_STOPWORD_MIN_IDF_KEY = "search_stopword_min_idf"
 SEARCH_EMBEDDER_KEY = "embedder"
@@ -839,11 +839,6 @@ def id_matches(ticket_id: str, query: str) -> bool:
     return False
 
 
-# A single search term that is only hex selects by Id prefix (same rule as read/web
-# permalinks), not by vector similarity -- people type "e35e" expecting that todo.
-_ID_PREFIX_QUERY = re.compile(r"\A[0-9a-fA-F]{4,}\Z")
-
-
 def branch_name_hint(query: str) -> str:
     """Leading token used in Branch naming (first eight id chars)."""
     token: str = query.split("-", 1)[0]
@@ -990,6 +985,106 @@ def worktree_path_for_branch(root: Path, branch: str) -> Optional[Path]:
     if not branch:
         return None
     return linked_worktrees_by_branch(root).get(branch)
+
+
+def intended_worktree_path(root: Path, branch: str) -> Path:
+    """Return the conventional linked worktree path for *branch*."""
+    return Path(todo_db.todo_dir()) / "worktrees" / repo_key(root) / branch
+
+
+def resolve_ticket_branch(ticket: JsonDict, *, branch: Optional[str] = None) -> str:
+    """Return the git branch name for *ticket* (label on record, not existence)."""
+    ticket_id = str(ticket["Id"])
+    return branch or str(ticket.get("Branch") or "") or kebab_branch_name(
+        ticket_id, _raw_of(ticket, "Summary") or ""
+    )
+
+
+def promote_groom_todo(
+    root: Path,
+    ticket: JsonDict,
+    *,
+    branch: Optional[str] = None,
+    stay_on_parent: bool = True,
+    no_commit: bool = False,
+) -> JsonDict:
+    """Create the git branch for a groom ticket and move it to ``ready``."""
+    ticket_id = str(ticket["Id"])
+    branch_name = resolve_ticket_branch(ticket, branch=branch)
+    if branch_exists(root, branch_name):
+        raise TodoError(f"branch {branch_name!r} already exists")
+    parent_branch = current_branch(root)
+    run_git(root, "checkout", "-b", branch_name)
+    base = head_sha(root)
+    if base:
+        ticket["BaseSha"] = base
+    ticket["Branch"] = branch_name
+    if isinstance(ticket.get("Scope"), dict):
+        ticket["Scope"]["branch"] = branch_name
+    set_state(ticket, "ready")
+    write_todo_worktree(root, ticket)
+    if not no_commit:
+        commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
+    if stay_on_parent and parent_branch:
+        run_git(root, "checkout", parent_branch)
+    return ticket
+
+
+def maybe_init_todo_branch(
+    root: Path,
+    ticket: JsonDict,
+    *,
+    stay_on_parent: bool = True,
+    no_commit: bool = False,
+) -> tuple[JsonDict, bool]:
+    """Run ``init`` promote when the ticket branch is absent; else noop.
+
+    Returns ``(ticket, inited)`` where ``inited`` is True when a new branch was
+    created.
+    """
+    branch_name = resolve_ticket_branch(ticket)
+    if branch_name and branch_exists(root, branch_name):
+        return ticket, False
+    ticket = promote_groom_todo(
+        root,
+        ticket,
+        branch=branch_name or None,
+        stay_on_parent=stay_on_parent,
+        no_commit=no_commit,
+    )
+    return ticket, True
+
+
+def ensure_todo_worktree(root: Path, todo: JsonDict) -> JsonDict:
+    """Create or reuse the linked worktree for *todo*'s branch.
+
+    Returns a JSON-serializable payload with ``worktree`` and ``created``.
+    Raises TodoError when the ticket has no Branch, the branch is missing in
+    git (promote with ``init`` first), or ``git worktree add`` fails.
+    """
+    branch = str(todo.get("Branch") or "")
+    if not branch:
+        raise TodoError("ticket missing Branch; run todo init --id <selector> first")
+    if not branch_exists(root, branch):
+        ticket_id = str(todo.get("Id") or "")[:8]
+        hint = f"todo init --id {ticket_id}" if ticket_id else "todo init"
+        raise TodoError(f"branch {branch!r} does not exist; run {hint} first")
+
+    intended = intended_worktree_path(root, branch)
+    existing = worktree_path_for_branch(root, branch)
+    if existing is not None:
+        return {"worktree": str(existing), "created": False}
+
+    if intended.is_dir() and not (intended / ".git").exists():
+        raise TodoError(
+            f"worktree path {intended} exists but is not a git worktree; "
+            "remove or rename it, then retry"
+        )
+
+    main = todo_db.main_checkout_root(root) or root
+    intended.parent.mkdir(parents=True, exist_ok=True)
+    run_git(main, "worktree", "add", str(intended), branch)
+    return {"worktree": str(intended), "created": True}
 
 
 def assert_todo_worktree_removable(root: Path, branch: str) -> None:
@@ -1720,21 +1815,23 @@ def resolve_embedder_names(requested: Optional[Sequence[str]]) -> List[str]:
     ==========================  ==========================================
     ``config.json``             search runs with
     ==========================  ==========================================
-    (key absent)                NO embedder -- lexical IDF only (default)
+    (key absent)                every non-hidden embedder -- the default
     ``"embedder": null``        NO embedder: lexical IDF is the only ranker
     ``"embedder": "apple"``     that embedder (comma list, like --embedder)
     ``"embedder": ["a", "b"]``  those embedders
     ==========================  ==========================================
 
-    Vector search remains available: set ``embedder`` in config or pass
-    ``--embedder`` explicitly. The default skips instantiation entirely, so
-    nothing spawns the macOS NLCE sidecar and search stays fast and hermetic.
+    The null case is the point: it skips instantiation entirely, so nothing
+    spawns the macOS NLCE sidecar, nothing backfills a vector, and search stays
+    fast and hermetic on a machine that cannot embed at all. It is a store-level
+    policy rather than a flag because "this checkout does not do vectors" is a
+    property of the checkout.
     """
     if requested:
         return list(requested)
     todo_dir = todo_db.todo_dir()
     if not todo_store.config_has(todo_dir, SEARCH_EMBEDDER_KEY):
-        return []
+        return todo_embed.default_embedder_names()
     configured = todo_store.config_value_raw(todo_dir, SEARCH_EMBEDDER_KEY)
     if configured is None:
         return []
@@ -3368,26 +3465,14 @@ class InitCommand(TodoCreateCommand):
     def _promote(self, root: Path, ticket: JsonDict) -> int:
         """Give an existing groom todo a git branch and move it to `ready`."""
         ticket_id = str(ticket["Id"])
-        branch = self.branch or str(ticket.get("Branch") or "") or kebab_branch_name(
-            ticket_id, _raw_of(ticket, "Summary") or ""
+        ticket = promote_groom_todo(
+            root,
+            ticket,
+            branch=self.branch,
+            stay_on_parent=self.stay_on_parent,
+            no_commit=self.no_commit,
         )
-        if branch_exists(root, branch):
-            raise TodoError(f"branch {branch!r} already exists")
-        parent_branch = current_branch(root)
-        run_git(root, "checkout", "-b", branch)
-        base = head_sha(root)  # branch's initial sha (invariant #5)
-        if base:
-            ticket["BaseSha"] = base
-        ticket["Branch"] = branch
-        if isinstance(ticket.get("Scope"), dict):
-            ticket["Scope"]["branch"] = branch
-        set_state(ticket, "ready")
-        write_todo_worktree(root, ticket)
-        if not self.no_commit:
-            commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
-        if self.stay_on_parent and parent_branch:
-            run_git(root, "checkout", parent_branch)
-        print(json.dumps({"Id": ticket_id, "Branch": branch}, indent=2))
+        print(json.dumps({"Id": ticket_id, "Branch": ticket["Branch"]}, indent=2))
         return 0
 
     def _create_fresh(self, root: Path) -> int:
@@ -3466,38 +3551,55 @@ class InitCommand(TodoCreateCommand):
 
 class EnsureWorktreeCommand(SubtodoCommand):
     command_names = ("ensure_worktree",)
-    doc_short: ClassVar[str] = "Ensure a working tree exists for a todo (STUB)"
+    doc_short: ClassVar[str] = "Ensure a linked git worktree exists for a todo"
     doc_long: ClassVar[str] = (
-        "Ensure-worktree will materialize a git working tree for the todo's branch so code can be "
-        "worked on it -- creating it if absent and printing its path -- and is meant to be called "
-        "implicitly whenever a flow needs to touch code. The working tree may become ephemeral "
-        "(created on demand, discarded when idle) in a later revision. STUB: for now it only "
-        "resolves the todo and prints the INTENDED worktree path (under "
-        "<todo-dir>/worktrees/<repo>/<branch>) with created=false; it does not run `git worktree "
-        "add` yet. Selector is a 4+ hex Id prefix or the full digest."
+        "Ensure-worktree materializes a git working tree for the todo's branch under "
+        "<todo-dir>/worktrees/<repo>/<branch>, creating it with `git worktree add` "
+        "when absent. Idempotent when the branch already has a linked worktree. "
+        "Fails (exit 1) when the ticket has no Branch or the branch does not exist "
+        "yet unless --init is passed. With --init, runs the same promote as "
+        "`init --id <selector> --stay-on-parent` when the branch is missing (noop "
+        "when it already exists), then ensures the worktree. Selector is a 4+ hex "
+        "Id prefix or the full digest."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ensure_worktree arguments."""
         parser.add_argument("todoid", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "--init",
+            action="store_true",
+            help="promote groom todo (todo init) when its git branch is missing; noop otherwise",
+        )
+        parser.add_argument(
+            "--no-commit",
+            action="store_true",
+            help="with --init, skip the chore(todo) commit on the new branch",
+        )
 
     def do(self) -> int:
-        """STUB: print the intended worktree path for the todo without creating it."""
+        """Create or reuse the linked worktree for the todo's branch."""
         root = self.root()
+        if self.init and read_todo_worktree(root) is not None:
+            raise TodoError("todo already exists on current branch; resume it instead of init")
         _loc, todo = resolve_ticket_by_id(root, self.todoid)
-        branch = str(todo.get("Branch") or "")
-        # STUB: real impl will `git worktree add` at this path (idempotent) and may
-        # treat the tree as ephemeral. Convention: <todo-dir>/worktrees/<repo>/<branch>.
-        intended = Path(todo_db.todo_dir()) / "worktrees" / repo_key(root) / branch
+        inited = False
+        if self.init:
+            todo, inited = maybe_init_todo_branch(
+                root,
+                todo,
+                stay_on_parent=True,
+                no_commit=self.no_commit,
+            )
+        payload = ensure_todo_worktree(root, todo)
         print(
             json.dumps(
                 {
                     "Id": str(todo["Id"])[:8],
-                    "Branch": branch,
-                    "worktree": str(intended),
-                    "created": False,
-                    "stub": True,
+                    "Branch": str(todo.get("Branch") or ""),
+                    "inited": inited,
+                    **payload,
                 },
                 indent=2,
             )
@@ -5193,7 +5295,7 @@ class WebCommand(EnvironmentCommand):
         "a read-only rendition below the split. Clicking anything rewrites the address bar to "
         "that item's permalink, so what is on screen is always copyable. With a selector (a 4+ "
         "hex Id prefix) the printed URL opens straight onto that todo; without one the page is a "
-        "lexical search (the same ranking as 'todo search') over every todo, showing update-time "
+        "vector search (the same ranking as 'todo search') over every todo, showing update-time "
         "and State columns, with an empty query listing all. It also serves permalinks: "
         "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
         "(see 'resolveurl' for the grammar)."
@@ -5246,7 +5348,7 @@ class WebCommand(EnvironmentCommand):
         def search_rows(query: str) -> List[JsonDict]:
             """Structured rows for the viewer's search box.
 
-            A non-empty query runs the same lexical search as `todo search`
+            A non-empty query runs the same vector search as `todo search`
             (rank order preserved); an empty query lists every todo. The box has
             no shell, so it is split with ``shlex`` -- a quoted phrase becomes one
             term, mirroring the CLI (unbalanced quotes fall back to whitespace
@@ -5440,32 +5542,7 @@ def run_search(
     Shared by the 'search' subcommand and the web viewer so both go through the
     same vector-search backend without duplicating it. ``terms`` is the list of
     google-style search terms (see ``search_tickets``).
-
-    A single all-hex term (4+ chars) is treated as an Id prefix lookup first,
-    matching ``read`` and permalink selectors, before vector ranking runs.
     """
-    if len(terms) == 1 and _ID_PREFIX_QUERY.match(terms[0]):
-        query = terms[0].lower()
-        id_hits: List[JsonDict] = []
-        for _loc, todo in find_todos_by_id(root, query):
-            todo = normalize_todo_schema(todo)
-            if states is not None and (current_state_name(todo) or "") not in states:
-                continue
-            if tags is not None and not (
-                {
-                    e["raw"]
-                    for e in (todo.get("Tag") or [])
-                    if isinstance(e, dict) and isinstance(e.get("raw"), str)
-                }
-                & tags
-            ):
-                continue
-            id_hits.append(todo)
-            if len(id_hits) >= limit:
-                break
-        if id_hits:
-            return [todo_row(todo) for todo in id_hits]
-
     hits = search_tickets(
         root,
         terms,
@@ -5480,7 +5557,7 @@ def run_search(
 
 class SearchCommand(CorpusQueryCommand):
     command_names = ("search",)
-    doc_short: ClassVar[str] = "Search todos (lexical IDF)"
+    doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
         "Search ranks todos by reciprocal-rank fusion over one or more embedders "
         "plus lexical overlap. Multiple terms are searched google-style: each term "
