@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Hashable, Sequence
+from typing import Any, Hashable
 
-from imgcomp import _stack_c as _cy
 from imgcomp import _stacklang_render_c as _slr
 from imgcomp import stack_c as sc
-from imgcomp.intersect_cache import intersect_cache_session
+from imgcomp.compound import Union, ZList
+from imgcomp.intersect_cache import cached_intersected_by, intersect_cache_session
 from imgcomp.rgba import RGBA, TRANSPARENT, src_over
 from imgcomp.scene import Scene, as_z_list
 from imgcomp.shape import AABB, Bounds, Shape, StackLangBody
 from imgcomp.surface import ArraySurface, Surface
 from imgcomp.shapes import set_using_stacklang
-from imgcomp.stack_type import PrePost, flatten_authoring
+from imgcomp.stack_type import PrePost, flatten_authoring, strip_prepost
 from imgcomp.stacklang_debug import log_py_to_c
+
+from imgcomp.quadtree_blob import mmap_quadtree, serialize_quadtree
 
 
 @dataclass(frozen=True)
@@ -25,26 +28,14 @@ class SceneLayer:
     index: int
     shape: Shape
     color_stacklang: StackLangBody
-    paint_op_id: int = -1
-
-    @property
-    def global_bounds(self) -> Bounds | None:
-        return self.shape.bounds()
-
-    @property
-    def global_aabb(self) -> AABB | None:
-        bounds = self.global_bounds
-        if bounds is None:
-            return None
-        return bounds.to_aabb()
 
 
 @dataclass(frozen=True)
 class QuadNode:
-    """Quadtree node: either a leaf bucket of layers or four children."""
+    """Quadtree node: either a leaf ZList bucket or four children."""
 
     bounds: AABB
-    layers: tuple[SceneLayer, ...] | None = None
+    zlist: ZList | None = None
     children: tuple[QuadNode, QuadNode, QuadNode, QuadNode] | None = None
 
 
@@ -79,74 +70,33 @@ def _stacklang_key(stacklang: StackLangBody) -> tuple[Any, ...]:
 
 @dataclass
 class _CullIntern:
-    """Intern culled scene layers and z-lists for identical quadtree cells."""
+    """Intern culled ZList shapes for identical quadtree cells."""
 
-    _layers: dict[tuple[int, tuple[Hashable, ...]], SceneLayer] = field(
-        default_factory=dict
-    )
-    _zlists: dict[tuple[tuple[int, tuple[Hashable, ...]], ...], tuple[SceneLayer, ...]] = (
-        field(default_factory=dict)
-    )
+    _zlists: dict[tuple[tuple[Hashable, ...], ...], ZList] = field(default_factory=dict)
 
-    def culled_layer(self, layer: SceneLayer, bounds: AABB) -> SceneLayer | None:
-        from imgcomp.intersect_cache import cached_intersected_by
-
-        culled_shape = cached_intersected_by(layer.shape, bounds)
-        if culled_shape is None:
-            return None
-        if culled_shape is layer.shape:
-            return layer
-        content = culled_shape.cachekey()
-        key = (layer.index, content)
-        cached = self._layers.get(key)
-        if cached is not None:
-            return cached
-        cached = SceneLayer(
-            index=layer.index,
-            shape=culled_shape,
-            color_stacklang=culled_shape.color_at_stacklang(),
-        )
-        self._layers[key] = cached
-        return cached
-
-    def layers_for_bounds(
+    def zlist_for_bounds(
         self, layers: Sequence[SceneLayer], bounds: AABB
-    ) -> tuple[SceneLayer, ...]:
-        selected: list[SceneLayer] = []
+    ) -> ZList | None:
+        members: list[Shape] = []
         for layer in layers:
-            if (culled := self.culled_layer(layer, bounds)) is not None:
-                selected.append(culled)
-        zlist_key = tuple((layer.index, layer.shape.cachekey()) for layer in selected)
+            culled_shape = cached_intersected_by(layer.shape, bounds)
+            if culled_shape is not None:
+                members.append(culled_shape)
+        if not members:
+            return None
+        zlist_key = tuple(member.cachekey() for member in members)
         cached = self._zlists.get(zlist_key)
         if cached is not None:
             return cached
-        cached = tuple(selected)
+        cached = ZList(*members)
         self._zlists[zlist_key] = cached
         return cached
 
 
-def _culled_scene_layer(
-    layer: SceneLayer, bounds: AABB, intern: _CullIntern
-) -> SceneLayer | None:
-    """Return a layer view restricted to shapes that may hit ``bounds``."""
-    return intern.culled_layer(layer, bounds)
-
-
-def _layers_for_bounds(
-    layers: Sequence[SceneLayer],
-    bounds: AABB,
-    intern: _CullIntern,
-) -> tuple[SceneLayer, ...]:
-    return intern.layers_for_bounds(layers, bounds)
-
-
-def _max_union_members(layers: Sequence[SceneLayer]) -> int:
-    """Largest Union arity among layer roots (0 if none)."""
-    from imgcomp.compound import Union
-
+def _max_union_members(zlist: ZList) -> int:
+    """Largest Union arity among z-list layer roots (0 if none)."""
     count = 0
-    for layer in layers:
-        shape = layer.shape
+    for shape in zlist.members:
         if isinstance(shape, Union):
             count = max(count, len(shape.members))
     return count
@@ -158,7 +108,7 @@ def build_quadtree(
     *,
     max_depth: int = 8,
     max_per_leaf: int = 4,
-    min_size: float = 4.0,
+    min_size: float = 16.0,
     intern: _CullIntern | None = None,
 ) -> QuadNode:
     """Build a quadtree over scene layer roots (back-to-front z-order preserved)."""
@@ -172,17 +122,19 @@ def build_quadtree(
                 min_size=min_size,
                 intern=_CullIntern(),
             )
-    here = _layers_for_bounds(layers, bounds, intern)
+    here = intern.zlist_for_bounds(layers, bounds)
+    if here is None:
+        return QuadNode(bounds=bounds, zlist=ZList())
     width = bounds.xmax - bounds.xmin
     height = bounds.ymax - bounds.ymin
     heavy_union = _max_union_members(here) > max_per_leaf
     if (
         max_depth <= 0
-        or (len(here) <= max_per_leaf and not heavy_union)
+        or (len(here.members) <= max_per_leaf and not heavy_union)
         or width <= min_size
         or height <= min_size
     ):
-        return QuadNode(bounds=bounds, layers=here)
+        return QuadNode(bounds=bounds, zlist=here)
 
     mid_x = (bounds.xmin + bounds.xmax) / 2.0
     mid_y = (bounds.ymin + bounds.ymax) / 2.0
@@ -194,18 +146,18 @@ def build_quadtree(
     return QuadNode(
         bounds=bounds,
         children=(
-            build_quadtree(here, nw, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
-            build_quadtree(here, ne, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
-            build_quadtree(here, sw, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
-            build_quadtree(here, se, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
+            build_quadtree(layers, nw, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
+            build_quadtree(layers, ne, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
+            build_quadtree(layers, sw, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
+            build_quadtree(layers, se, max_depth=child_depth, max_per_leaf=max_per_leaf, min_size=min_size, intern=intern),
         ),
     )
 
 
-def z_list_at_point(node: QuadNode, gx: float, gy: float) -> tuple[SceneLayer, ...]:
-    """Return culled scene layers at a global point."""
-    if node.layers is not None:
-        return node.layers
+def z_list_at_point(node: QuadNode, gx: float, gy: float) -> ZList | None:
+    """Return culled z-list shape at a global point."""
+    if node.zlist is not None:
+        return node.zlist
     assert node.children is not None
     for child in node.children:
         if (
@@ -213,54 +165,52 @@ def z_list_at_point(node: QuadNode, gx: float, gy: float) -> tuple[SceneLayer, .
             and child.bounds.ymin <= gy <= child.bounds.ymax
         ):
             return z_list_at_point(child, gx, gy)
-    return ()
+    return None
 
 
-def _iter_leaf_layers(node: QuadNode) -> list[SceneLayer]:
-    if node.layers is not None:
-        return list(node.layers)
+def _iter_leaf_zlists(node: QuadNode) -> list[ZList]:
+    if node.zlist is not None:
+        return [node.zlist]
     assert node.children is not None
-    leaves: list[SceneLayer] = []
+    leaves: list[ZList] = []
     for child in node.children:
-        leaves.extend(_iter_leaf_layers(child))
+        leaves.extend(_iter_leaf_zlists(child))
     return leaves
 
 
-def _finalize_paint_op_ids(
+def _finalize_member_op_ids(
     node: QuadNode,
-    default_op_ids: Sequence[int],
-    culled_op_ids: dict[tuple[Any, ...], int],
+    member_op_ids: dict[tuple[Hashable, ...], int],
 ) -> QuadNode:
-    if node.layers is not None:
-        layers = tuple(
-            _with_paint_op_id(layer, default_op_ids, culled_op_ids) for layer in node.layers
-        )
-        return QuadNode(bounds=node.bounds, layers=layers)
+    if node.zlist is not None:
+        members: list[Shape] = []
+        for member in node.zlist.members:
+            op_id = member_op_ids.get(member.cachekey(), -1)
+            if member.paint_op_id != op_id:
+                member.paint_op_id = op_id
+            members.append(member)
+        zlist = ZList(*members) if members else ZList()
+        return QuadNode(bounds=node.bounds, zlist=zlist)
     assert node.children is not None
     return QuadNode(
         bounds=node.bounds,
         children=tuple(
-            _finalize_paint_op_ids(child, default_op_ids, culled_op_ids)
-            for child in node.children
+            _finalize_member_op_ids(child, member_op_ids) for child in node.children
         ),
     )
 
 
-def _with_paint_op_id(
-    layer: SceneLayer,
-    default_op_ids: Sequence[int],
-    culled_op_ids: dict[tuple[Any, ...], int],
-) -> SceneLayer:
-    key = _stacklang_key(layer.color_stacklang)
-    op_id = culled_op_ids.get(key, default_op_ids[layer.index])
-    if layer.paint_op_id == op_id:
-        return layer
-    return SceneLayer(
-        index=layer.index,
-        shape=layer.shape,
-        color_stacklang=layer.color_stacklang,
-        paint_op_id=op_id,
-    )
+def _unique_members(zlists: Sequence[ZList]) -> list[Shape]:
+    members: list[Shape] = []
+    seen: set[tuple[Hashable, ...]] = set()
+    for zlist in zlists:
+        for member in zlist.members:
+            key = member.cachekey()
+            if key in seen:
+                continue
+            seen.add(key)
+            members.append(member)
+    return members
 
 
 def color_at_layer(layer: SceneLayer, gx: float, gy: float) -> RGBA | None:
@@ -270,22 +220,12 @@ def color_at_layer(layer: SceneLayer, gx: float, gy: float) -> RGBA | None:
 
 def accumulate_layers(
     layers: Sequence[SceneLayer],
-    z_list: Sequence[SceneLayer],
+    z_list: ZList,
     gx: float,
     gy: float,
 ) -> RGBA:
     """Composite scene layers back-to-front (reference path)."""
-    present = {layer.index for layer in z_list}
-    accum: RGBA = TRANSPARENT
-    for layer_index in range(len(layers) - 1, -1, -1):
-        if layer_index not in present:
-            continue
-        if not (hit := color_at_layer(layers[layer_index], gx, gy)):
-            continue
-        accum = src_over(hit, accum)
-        if accum[3] >= 255:
-            break
-    return accum
+    return z_list.color_at(gx, gy) or TRANSPARENT
 
 
 def _vm_body(
@@ -319,6 +259,12 @@ def _vm_body(
     index = 0
     while index < len(stacklang):
         token = stacklang[index]
+        if isinstance(token, ZList):
+            raise NotImplementedError("ZList VM compositing is handled in C")
+        if isinstance(token, sc.OpHandler):
+            body.append(token)
+            index += 1
+            continue
         if isinstance(token, Shape):
             pending_shape_index = len(shape_objects)
             shape_objects.append(token)
@@ -456,14 +402,11 @@ def _vm_body(
 def _register_render_vm(
     width: int,
     height: int,
-    layers: Sequence[SceneLayer],
-    *,
-    extra_layers: Sequence[SceneLayer] = (),
-) -> tuple[list[int], list[Shape], dict[tuple[Any, ...], int]]:
-    """Register float_incr_le pixel loops and per-layer surface-lang bodies."""
+    zlists: Sequence[ZList],
+) -> tuple[dict[tuple[Hashable, ...], int], list[Shape]]:
+    """Register per-member shape color_at VM bodies."""
     sc.reset_vm()
     sc.register_base_ops()
-    set_gy = sc.register_op("slr_set_gy", _slr.slr_set_gy)
     dup_xy = sc.register_op("slr_dup_xy", _slr.slr_dup_xy)
     dup_anchor_push_xy = sc.register_op("slr_dup_anchor_push_xy", _slr.slr_dup_anchor_push_xy)
     float_max2 = sc.register_op("slr_float_max2", _slr.slr_float_max2)
@@ -486,86 +429,43 @@ def _register_render_vm(
     sdf_fill_white = sc.register_op("slr_sdf_fill_white", _slr.slr_sdf_fill_white)
     python_color_at = sc.register_op("slr_python_color_at", _slr.slr_python_color_at)
     python_distance = sc.register_op("slr_python_distance", _slr.slr_python_distance)
-    paint = sc.register_op("slr_paint_pixel", _slr.slr_paint_pixel)
 
-    layer_op_ids: list[int] = []
+    vm_kwargs = dict(
+        dup_xy=dup_xy,
+        dup_anchor_push_xy=dup_anchor_push_xy,
+        float_max2=float_max2,
+        float_neg=float_neg,
+        offset_xy_sub=offset_xy_sub,
+        rgba_solid_if_hit=rgba_solid_if_hit,
+        circle_distance=circle_distance,
+        rectangle_distance=rectangle_distance,
+        oval_distance=oval_distance,
+        fill_white=fill_white,
+        rgba_transparent=rgba_transparent,
+        push_transparent_accum=push_transparent_accum,
+        dup_anchor_xy=dup_anchor_xy,
+        drop_hit_xy=drop_hit_xy,
+        anchorize_rgba=anchorize_rgba,
+        src_over_layer=src_over_layer,
+        sdf_fill_white=sdf_fill_white,
+        python_color_at=python_color_at,
+        python_distance=python_distance,
+    )
     shape_objects: list[Shape] = []
-    program_op_ids: dict[tuple[Any, ...], int] = {}
-    for layer_index, layer in enumerate(layers):
-        key = _stacklang_key(layer.color_stacklang)
-        body = _vm_body(
-            layer.color_stacklang,
-            owner=layer.shape,
-            shape_objects=shape_objects,
-            dup_xy=dup_xy,
-            dup_anchor_push_xy=dup_anchor_push_xy,
-            float_max2=float_max2,
-            float_neg=float_neg,
-            offset_xy_sub=offset_xy_sub,
-            rgba_solid_if_hit=rgba_solid_if_hit,
-            circle_distance=circle_distance,
-            rectangle_distance=rectangle_distance,
-            oval_distance=oval_distance,
-            fill_white=fill_white,
-            rgba_transparent=rgba_transparent,
-            push_transparent_accum=push_transparent_accum,
-            dup_anchor_xy=dup_anchor_xy,
-            drop_hit_xy=drop_hit_xy,
-            anchorize_rgba=anchorize_rgba,
-            src_over_layer=src_over_layer,
-            sdf_fill_white=sdf_fill_white,
-            python_color_at=python_color_at,
-            python_distance=python_distance,
-        )
-        op_id = sc.register_op(f"layer_{layer_index}", body).op_id
-        layer_op_ids.append(op_id)
-        program_op_ids[key] = op_id
-
-    for extra_index, layer in enumerate(extra_layers):
-        key = _stacklang_key(layer.color_stacklang)
-        if key in program_op_ids:
+    member_op_ids: dict[tuple[Hashable, ...], int] = {}
+    for member_index, member in enumerate(_unique_members(zlists)):
+        key = member.cachekey()
+        if key in member_op_ids:
             continue
         body = _vm_body(
-            layer.color_stacklang,
-            owner=layer.shape,
+            member.color_at_stacklang(),
+            owner=member,
             shape_objects=shape_objects,
-            dup_xy=dup_xy,
-            dup_anchor_push_xy=dup_anchor_push_xy,
-            float_max2=float_max2,
-            float_neg=float_neg,
-            offset_xy_sub=offset_xy_sub,
-            rgba_solid_if_hit=rgba_solid_if_hit,
-            circle_distance=circle_distance,
-            rectangle_distance=rectangle_distance,
-            oval_distance=oval_distance,
-            fill_white=fill_white,
-            rgba_transparent=rgba_transparent,
-            push_transparent_accum=push_transparent_accum,
-            dup_anchor_xy=dup_anchor_xy,
-            drop_hit_xy=drop_hit_xy,
-            anchorize_rgba=anchorize_rgba,
-            src_over_layer=src_over_layer,
-            sdf_fill_white=sdf_fill_white,
-            python_color_at=python_color_at,
-            python_distance=python_distance,
+            **vm_kwargs,
         )
-        program_op_ids[key] = sc.register_op(f"layer_cull_{extra_index}", body).op_id
+        member_op_ids[key] = sc.register_op(f"member_{member_index}", body).op_id
 
-    half_w = width / 2.0
-    half_h = height / 2.0
-    gx0 = 0.5 - half_w
-    gx1 = (width - 1) + 0.5 - half_w
-    gy0 = 0.5 - half_h
-    gy1 = (height - 1) + 0.5 - half_h
-    col_loop = sc.register_op(
-        "render_col",
-        [set_gy, gx0, gx1, 1.0, sc.lit_op, paint, sc.float_incr_le],
-    )
-    sc.register_op(
-        "render",
-        [gy0, gy1, 1.0, sc.lit_op, col_loop, sc.float_incr_le],
-    )
-    return layer_op_ids, shape_objects, program_op_ids
+    return member_op_ids, shape_objects
 
 
 def render(
@@ -574,35 +474,37 @@ def render(
     height: int,
     *,
     max_depth: int = 8,
+    min_size: float = 16.0,
 ) -> Surface:
-    """Stacklang render: surf graph, quadtree z-lists, float_incr_le pixel walk."""
+    """Stacklang render: surf graph, quadtree z-lists, C leaf-cell batch paint."""
     render_layers = prepare_scene(scene)
     viewport = viewport_aabb(width, height)
-    tree = build_quadtree(render_layers, viewport, max_depth=max_depth)
-    leaf_layers = _iter_leaf_layers(tree)
+    tree = build_quadtree(render_layers, viewport, max_depth=max_depth, min_size=min_size)
+    leaf_zlists = _iter_leaf_zlists(tree)
+    unique_zlists: list[ZList] = []
+    seen: set[tuple[Hashable, ...]] = set()
+    for zlist in leaf_zlists:
+        key = zlist.cachekey()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_zlists.append(zlist)
     surface = ArraySurface(width, height, fill=TRANSPARENT)
-    layer_op_ids, shape_objects, program_op_ids = _register_render_vm(
-        width,
-        height,
-        render_layers,
-        extra_layers=leaf_layers,
-    )
-    tree = _finalize_paint_op_ids(tree, layer_op_ids, program_op_ids)
+    member_op_ids, shape_objects = _register_render_vm(width, height, unique_zlists)
+    tree = _finalize_member_op_ids(tree, member_op_ids)
+    quadtree_mm = mmap_quadtree(serialize_quadtree(tree))
     _slr.bind_render(
         surface.pixel_buffer(),
         width,
         height,
-        tree,
-        list(render_layers),
-        layer_op_ids,
+        quadtree_mm,
         shape_objects,
-        len(render_layers),
     )
-    log_py_to_c("run_op", op="render", width=width, height=height, layers=len(render_layers))
+    log_py_to_c("render_quadtree", width=width, height=height, layers=len(render_layers))
     set_using_stacklang(True)
     try:
-        _cy.run_op("render")
+        _slr.render_quadtree()
     finally:
         set_using_stacklang(False)
-    log_py_to_c("run_op_return", op="render", width=width, height=height)
+    log_py_to_c("render_quadtree_return", width=width, height=height)
     return surface

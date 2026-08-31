@@ -43,6 +43,69 @@ def _union_from_members(
     return Union(*members)
 
 
+def _zlist_from_members(
+    members: list[Shape],
+    *,
+    original: ZList | None = None,
+) -> Optional[Shape]:
+    if not members:
+        return None
+    if original is not None and len(members) == len(original.members) and all(
+        culled is member for culled, member in zip(members, original.members)
+    ):
+        return original
+    return ZList(*members)
+
+
+class ZList(Shape):
+    """Back-to-front scene z-list compressed into one compositing program."""
+
+    def __init__(self, *members: Shape) -> None:
+        self.members = tuple(members)
+        self.paint_op_id: int = -1
+
+    def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        assert_not_stacklang("color_at")
+        accum: RGBA = TRANSPARENT
+        for member in reversed(self.members):
+            if not (layer := member.color_at(x, y)):
+                continue
+            accum = src_over(layer, accum)
+            if accum[3] >= 255:
+                break
+        return accum if accum[3] > 0 else None
+
+    def color_at_stacklang(self) -> StackLangBody:
+        """Expanded at VM registration into one src_over walk with opaque stop."""
+        return [self]
+
+    def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
+        for member in reversed(self.members):
+            if (picked := member.pick_target(x, y)):
+                return picked
+        return None
+
+    def AABB(self) -> Optional[AABB]:
+        return AABB.union(member.AABB() for member in self.members)
+
+    def bounds(self) -> Optional[Bounds]:
+        return Bounds.union_envelope(member.bounds() for member in self.members)
+
+    def maybe_intersect_rect(self, rect: AABB) -> bool:
+        return any(member.maybe_intersect_rect(rect) for member in self.members)
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("zlist", tuple(member.cachekey() for member in self.members))
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        members = [
+            culled
+            for member in self.members
+            if (culled := cached_intersected_by(member, rect)) is not None
+        ]
+        return _zlist_from_members(members, original=self)
+
+
 class Union(Shape):
     """Combine members; geometry-only SDFShapes or painted scene objects."""
 

@@ -8,6 +8,7 @@ from imgcomp.compound import (
     Subtract,
     Thin,
     Union,
+    ZList,
 )
 from imgcomp.compositor import Compositor
 from imgcomp.content_key import content_key
@@ -47,6 +48,7 @@ __all__ = [
     "TRANSPARENT",
     "Translate",
     "Union",
+    "ZList",
     "WHITE",
     "as_scene",
     "as_z_list",

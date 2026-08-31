@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from imgcomp.compound import Intersect, Subtract, Union
+from imgcomp.compound import Intersect, Subtract, Union, ZList
 from imgcomp.shape import AABB
 from imgcomp.shapes import Circle, Rectangle
 from imgcomp.wrappers import Rotate
@@ -52,11 +52,11 @@ def test_quadtree_interns_identical_zlists() -> None:
     layers = prepare_scene(fractal_gallery_scene("spirograph", size=192, profile="fast"))
     tree = build_quadtree(layers, viewport_aabb(192, 192))
 
-    zlists: list[tuple] = []
+    zlists: list[ZList] = []
 
     def walk(node) -> None:
-        if node.layers is not None:
-            zlists.append(node.layers)
+        if node.zlist is not None:
+            zlists.append(node.zlist)
             return
         assert node.children is not None
         for child in node.children:

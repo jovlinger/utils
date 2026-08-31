@@ -6,7 +6,7 @@
 # cython: cdivision=True
 """Stacklang render VM ops: pixel loops, z-list composite, color_at surface lang."""
 
-from libc.math cimport fabs, fmax, fmin, sqrt
+from libc.math cimport ceil, fabs, fmax, fmin, floor, sqrt
 
 from imgcomp._stack_c cimport (
     OpHandler,
@@ -14,6 +14,8 @@ from imgcomp._stack_c cimport (
     data_peek_bottom_float,
     data_pop_float,
     data_push_float,
+    data_push_int,
+    data_pop_int,
 )
 from imgcomp._stack_c import invoke_body_id
 from imgcomp.stacklang_debug import log_c_to_py
@@ -25,39 +27,137 @@ cdef int _buf_height = 0
 cdef double _half_w = 0.0
 cdef double _half_h = 0.0
 cdef double _current_gy = 0.0
-cdef object _tree = None
-cdef list _layers = None
-cdef list _layer_op_ids = None
 cdef list _shape_objects = None
-cdef int _num_layers = 0
+
+
+cdef struct CQuadNode:
+    double xmin
+    double ymin
+    double xmax
+    double ymax
+    int member_ops_offset
+    int first_child
+    unsigned char member_op_count
+    unsigned char _pad[7]
+
+
+cdef const unsigned char[:] _quadtree_blob = None
+cdef CQuadNode* _quad_nodes = NULL
+cdef int _quad_node_count = 0
+cdef const int* _leaf_op_ids = NULL
+cdef int _leaf_op_count = 0
+
+DEF _QTRE_MAGIC = 0x51545245
+DEF _QTRE_VERSION = 2
+DEF _QTRE_HEADER_SIZE = 16
+DEF _QTRE_NODE_SIZE = 48
+
+
+cdef void _release_quadtree() noexcept:
+    global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+    _quadtree_blob = None
+    _quad_nodes = NULL
+    _quad_node_count = 0
+    _leaf_op_ids = NULL
+    _leaf_op_count = 0
+
+
+cdef unsigned int _read_u32(const unsigned char[:] view, Py_ssize_t offset) noexcept:
+    return (
+        <unsigned int>view[offset]
+        | (<unsigned int>view[offset + 1] << 8)
+        | (<unsigned int>view[offset + 2] << 16)
+        | (<unsigned int>view[offset + 3] << 24)
+    )
+
+
+cdef void _bind_quadtree_blob(object blob) except *:
+    cdef const unsigned char[:] view = blob
+    cdef unsigned int magic
+    cdef unsigned int version
+    cdef unsigned int node_count
+    cdef unsigned int leaf_op_count
+    cdef Py_ssize_t expected
+    global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+    _release_quadtree()
+    if view is None or view.shape[0] < _QTRE_HEADER_SIZE:
+        raise ValueError("quadtree blob too small for header")
+    magic = _read_u32(view, 0)
+    version = _read_u32(view, 4)
+    node_count = _read_u32(view, 8)
+    leaf_op_count = _read_u32(view, 12)
+    if magic != _QTRE_MAGIC:
+        raise ValueError(f"bad quadtree magic: {magic:#x}")
+    if version != _QTRE_VERSION:
+        raise ValueError(f"unsupported quadtree version: {version}")
+    expected = (
+        _QTRE_HEADER_SIZE
+        + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+        + <Py_ssize_t>leaf_op_count * sizeof(int)
+    )
+    if view.shape[0] != expected:
+        raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")
+    _quadtree_blob = view
+    _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+    _quad_node_count = <int>node_count
+    if leaf_op_count > 0:
+        _leaf_op_ids = <const int*>(
+            <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+        )
+        _leaf_op_count = <int>leaf_op_count
+    else:
+        _leaf_op_ids = NULL
+        _leaf_op_count = 0
+
+
+cdef inline int _leaf_index_at_point(double gx, double gy) noexcept:
+    cdef int node_idx = 0
+    cdef CQuadNode node
+    cdef CQuadNode child
+    cdef int i
+    cdef int child_idx
+    if _quad_node_count == 0:
+        return -1
+    while True:
+        node = _quad_nodes[node_idx]
+        if node.first_child < 0:
+            if node.member_op_count == 0:
+                return -1
+            return node_idx
+        child_idx = -1
+        for i in range(4):
+            child = _quad_nodes[node.first_child + i]
+            if (
+                child.xmin <= gx <= child.xmax
+                and child.ymin <= gy <= child.ymax
+            ):
+                child_idx = node.first_child + i
+                break
+        if child_idx < 0:
+            return -1
+        node_idx = child_idx
 
 
 def bind_render(
     pixels,
     int width,
     int height,
-    object tree,
-    list layers,
-    list layer_op_ids,
+    object quadtree_blob,
     list shape_objects,
-    int num_layers,
 ) -> None:
-    """Attach surface, quadtree, scene layers, and per-layer VM op ids."""
+    """Attach surface and mmap'd quadtree blob for C z-list compositing."""
     cdef unsigned char[:] view = pixels
     if view.shape[0] != width * height * 4:
         raise ValueError("pixel buffer size mismatch")
     global _pixels, _buf_width, _buf_height, _half_w, _half_h
-    global _tree, _layers, _layer_op_ids, _shape_objects, _num_layers
+    global _shape_objects
     _pixels = view
     _buf_width = width
     _buf_height = height
     _half_w = width / 2.0
     _half_h = height / 2.0
-    _tree = tree
-    _layers = layers
-    _layer_op_ids = layer_op_ids
     _shape_objects = shape_objects
-    _num_layers = num_layers
+    _bind_quadtree_blob(quadtree_blob)
 
 
 cdef inline void write_rgba(int px, int py, unsigned char r, unsigned char g, unsigned char b, unsigned char a) noexcept:
@@ -399,19 +499,27 @@ cdef int _op_slr_set_gy() except -1:
     _current_gy = data_pop_float()
 
 
-cdef int _op_slr_paint_pixel() except -1:
-    """Stack gx -- . Z-list lookup at (_current_gy, gx), composite, paint."""
-    cdef double gx = data_pop_float()
-    cdef double gy = _current_gy
-    cdef int px = <int>(gx + _half_w - 0.5)
-    cdef int py = <int>(gy + _half_h - 0.5)
-    cdef object z_list
-    cdef int layer_index
+cdef int _op_slr_continue_if_not_opaque() except -1:
+    """Stack gy gx dr dg db da -- gy gx dr dg db da flag .
+
+    Push 1 when accum alpha < 255 (keep compositing), else 0.
+    """
+    cdef double da = data_pop_float()
+    data_push_float(da)
+    data_push_int(1 if da < 255.0 else 0)
+
+
+cdef inline void _composite_leaf_pixel(
+    double gy,
+    double gx,
+    CQuadNode* leaf,
+    double* ar,
+    double* ag,
+    double* ab,
+    double* aa,
+) except *:
+    cdef int member_index
     cdef int op_id
-    cdef double ar = 0.0
-    cdef double ag = 0.0
-    cdef double ab = 0.0
-    cdef double aa = 0.0
     cdef double lr
     cdef double lg
     cdef double lb
@@ -420,35 +528,104 @@ cdef int _op_slr_paint_pixel() except -1:
     cdef double out_g
     cdef double out_b
     cdef double out_a
+    ar[0] = 0.0
+    ag[0] = 0.0
+    ab[0] = 0.0
+    aa[0] = 0.0
+    for member_index in range(leaf.member_op_count - 1, -1, -1):
+        op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+        if op_id < 0:
+            continue
+        invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+        src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)
+        ar[0] = out_r
+        ag[0] = out_g
+        ab[0] = out_b
+        aa[0] = out_a
+        if aa[0] >= 255.0:
+            break
+
+
+cdef void _paint_leaf_cell(CQuadNode* leaf) except *:
+    """Paint every pixel center inside a quadtree leaf AABB."""
+    cdef int px_start
+    cdef int px_end
+    cdef int py_start
+    cdef int py_end
+    cdef int px
+    cdef int py
+    cdef double gx
+    cdef double gy
+    cdef double ar
+    cdef double ag
+    cdef double ab
+    cdef double aa
+    if leaf.member_op_count == 0:
+        return
+    px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+    if px_start < 0:
+        px_start = 0
+    px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+    if px_end >= _buf_width:
+        px_end = _buf_width - 1
+    if px_start > px_end:
+        return
+    py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+    if py_start < 0:
+        py_start = 0
+    py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+    if py_end >= _buf_height:
+        py_end = _buf_height - 1
+    if py_start > py_end:
+        return
+    for py in range(py_start, py_end + 1):
+        gy = py + 0.5 - _half_h
+        for px in range(px_start, px_end + 1):
+            gx = px + 0.5 - _half_w
+            _composite_leaf_pixel(gy, gx, leaf, &ar, &ag, &ab, &aa)
+            write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
+
+
+cdef void _render_quadtree_cells(int node_idx) except *:
+    cdef CQuadNode node
+    cdef int child_index
+    if node_idx < 0 or node_idx >= _quad_node_count:
+        return
+    node = _quad_nodes[node_idx]
+    if node.first_child >= 0:
+        for child_index in range(4):
+            _render_quadtree_cells(node.first_child + child_index)
+        return
+    _paint_leaf_cell(&node)
+
+
+def render_quadtree() -> None:
+    """Walk quadtree leaves and paint each cell's pixels in batch."""
+    if _quad_node_count > 0:
+        _render_quadtree_cells(0)
+
+
+cdef int _op_slr_paint_pixel() except -1:
+    """Stack gx -- . Legacy per-pixel path via quadtree point lookup."""
+    cdef double gx = data_pop_float()
+    cdef double gy = _current_gy
+    cdef int px = <int>(gx + _half_w - 0.5)
+    cdef int py = <int>(gy + _half_h - 0.5)
+    cdef int leaf_idx
+    cdef CQuadNode leaf
+    cdef double ar
+    cdef double ag
+    cdef double ab
+    cdef double aa
     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:
         return 0
-    log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
-    z_list = z_list_at_point(_tree, gx, gy)
-    present = {layer.index: layer for layer in z_list}
-    for layer_index in range(_num_layers - 1, -1, -1):
-        if layer_index not in present:
-            continue
-        layer = present[layer_index]
-        op_id = layer.paint_op_id
-        if op_id < 0:
-            op_id = _layer_op_ids[layer_index]
-        invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
-        # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
-        src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)
-        ar = out_r
-        ag = out_g
-        ab = out_b
-        aa = out_a
-        if aa >= 255.0:
-            break
+    leaf_idx = _leaf_index_at_point(gx, gy)
+    if leaf_idx < 0:
+        return 0
+    leaf = _quad_nodes[leaf_idx]
+    _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)
     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
     return 0
-
-
-def z_list_at_point(object tree, double gx, double gy):
-    from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point
-
-    return _z_list_at_point(tree, gx, gy)
 
 
 slr_set_gy = _handler(_op_slr_set_gy)
@@ -468,6 +645,7 @@ slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
 slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
 slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
 slr_src_over_layer = _handler(_op_slr_src_over_layer)
+slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)
 slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
 slr_python_distance = _handler(_op_slr_python_distance)
 slr_python_color_at = _handler(_op_slr_python_color_at)

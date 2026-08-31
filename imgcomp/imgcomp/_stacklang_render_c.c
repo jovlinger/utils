@@ -1775,6 +1775,25 @@ struct __pyx_memoryviewslice_obj;
  * cdef class OpHandler:
 */
 typedef int (*__pyx_t_7imgcomp_8_stack_c_op_fn_t)(void);
+struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode;
+
+/* "imgcomp/_stacklang_render_c.pyx":33
+ * 
+ * 
+ * cdef struct CQuadNode:             # <<<<<<<<<<<<<<
+ *     double xmin
+ *     double ymin
+*/
+struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode {
+  double xmin;
+  double ymin;
+  double xmax;
+  double ymax;
+  int member_ops_offset;
+  int first_child;
+  unsigned char member_op_count;
+  unsigned char _pad[7];
+};
 
 /* "imgcomp/_stack_c.pxd":8
  * ctypedef int (*op_fn_t)() except -1
@@ -2760,6 +2779,20 @@ static void __Pyx_RaiseUnboundLocalError(const char *varname);
 /* DivInt[long].proto */
 static CYTHON_INLINE long __Pyx_div_long(long, long, int b_is_constant);
 
+/* WriteUnraisableException.proto */
+static void __Pyx_WriteUnraisable(const char *name, int clineno,
+                                  int lineno, const char *filename,
+                                  int full_traceback, int nogil);
+
+/* CIntToPyUnicode.proto */
+#define __Pyx_PyUnicode_From_unsigned_int(value, width, padding_char, format_char) (\
+    ((format_char) == ('c')) ?\
+        __Pyx_uchar___Pyx_PyUnicode_From_unsigned_int(value, width, padding_char) :\
+        __Pyx____Pyx_PyUnicode_From_unsigned_int(value, width, padding_char, format_char)\
+    )
+static CYTHON_INLINE PyObject* __Pyx_uchar___Pyx_PyUnicode_From_unsigned_int(unsigned int value, Py_ssize_t width, char padding_char);
+static CYTHON_INLINE PyObject* __Pyx____Pyx_PyUnicode_From_unsigned_int(unsigned int value, Py_ssize_t width, char padding_char, char format_char);
+
 /* FloatExceptionCheck.proto */
 #define __PYX_CHECK_FLOAT_EXCEPTION(value, error_value)\
     ((error_value) == (error_value) ?\
@@ -2778,26 +2811,6 @@ CYTHON_UNUSED static int __Pyx_CheckVectorcallKwarg(PyObject *kwnames, Py_ssize_
 CYTHON_UNUSED static PyObject *__Pyx_MakeKwargDict(PyObject **keys, PyObject **values, Py_ssize_t n);
 CYTHON_UNUSED static int __Pyx_CheckVectorcallKwarg(PyObject **kwnames, Py_ssize_t i);
 #endif
-
-/* PyDictContains.proto */
-static CYTHON_INLINE int __Pyx_PyDict_ContainsTF(PyObject* item, PyObject* dict, int eq) {
-    int result = PyDict_Contains(dict, item);
-    return unlikely(result < 0) ? result : (result == (eq == Py_EQ));
-}
-
-/* DictGetItem.proto */
-#if !CYTHON_COMPILING_IN_PYPY
-static PyObject *__Pyx_PyDict_GetItem(PyObject *d, PyObject* key);
-#define __Pyx_PyObject_Dict_GetItem(obj, name)\
-    (likely(__Pyx_PyAnyDict_CheckExact(obj)) ?\
-     __Pyx_PyDict_GetItem(obj, name) : PyObject_GetItem(obj, name))
-#else
-#define __Pyx_PyDict_GetItem(d, key) PyObject_GetItem(d, key)
-#define __Pyx_PyObject_Dict_GetItem(obj, name)  PyObject_GetItem(obj, name)
-#endif
-
-/* ImportFrom.export */
-static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name);
 
 /* AllocateExtensionType.proto */
 static PyObject *__Pyx_AllocateExtensionType(PyTypeObject *t, int is_final);
@@ -2913,6 +2926,9 @@ static PyTypeObject *__Pyx_ImportType_3_3_0(PyObject* module, const char *module
 
 /* FunctionImport.proto */
 static int __Pyx_ImportFunction_3_3_0(PyObject *module, const char *funcname, void (**f)(void), const char *sig);
+
+/* ImportFrom.export */
+static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name);
 
 /* dict_setdefault.proto (used by FetchCommonType) */
 static CYTHON_INLINE PyObject *__Pyx_PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *default_value);
@@ -3168,6 +3184,9 @@ static int __Pyx_ValidateAndInit_memviewslice(
 /* ObjectToMemviewSlice.proto */
 static CYTHON_INLINE __Pyx_memviewslice __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char(PyObject *, int writable_flag);
 
+/* ObjectToMemviewSlice.proto */
+static CYTHON_INLINE __Pyx_memviewslice __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char__const__(PyObject *, int writable_flag);
+
 /* MemviewSliceCopy.proto */
 static __Pyx_memviewslice
 __pyx_memoryview_copy_new_contig(const __Pyx_memviewslice *from_mvs,
@@ -3178,15 +3197,18 @@ __pyx_memoryview_copy_new_contig(const __Pyx_memviewslice *from_mvs,
 /* CIntFromPy.proto */
 static CYTHON_INLINE int __Pyx_PyLong_As_int(PyObject *);
 
-/* CIntFromPy.proto */
-static CYTHON_INLINE unsigned char __Pyx_PyLong_As_unsigned_char(PyObject *);
-
 /* PyObjectVectorcallMethodKwds.proto (used by CIntToPy) */
 #if CYTHON_VECTORCALL
 #define __Pyx_Object_VectorcallMethodKwds PyObject_VectorcallMethod
 #else
 static PyObject *__Pyx_Object_VectorcallMethodKwds(PyObject *name, PyObject *const *args, size_t nargsf, PyObject *kwnames);
 #endif
+
+/* CIntToPy.proto */
+static CYTHON_INLINE PyObject* __Pyx_PyLong_From_unsigned_int(unsigned int value);
+
+/* CIntFromPy.proto */
+static CYTHON_INLINE unsigned char __Pyx_PyLong_As_unsigned_char(PyObject *);
 
 /* CIntToPy.proto */
 static CYTHON_INLINE PyObject* __Pyx_PyLong_From_int(int value);
@@ -3303,6 +3325,8 @@ static PyObject *__pyx_memoryviewslice__get_base(struct __pyx_memoryviewslice_ob
 
 /* Module declarations from "imgcomp._stack_c" */
 static struct __pyx_obj_7imgcomp_8_stack_c_OpHandler *(*__pyx_f_7imgcomp_8_stack_c__handler)(__pyx_t_7imgcomp_8_stack_c_op_fn_t); /*proto*/
+static int (*__pyx_f_7imgcomp_8_stack_c_data_push_int)(int64_t); /*proto*/
+static int64_t (*__pyx_f_7imgcomp_8_stack_c_data_pop_int)(void); /*proto*/
 static int (*__pyx_f_7imgcomp_8_stack_c_data_push_float)(double); /*proto*/
 static double (*__pyx_f_7imgcomp_8_stack_c_data_pop_float)(void); /*proto*/
 static double (*__pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float)(int); /*proto*/
@@ -3314,11 +3338,12 @@ static int __pyx_v_7imgcomp_19_stacklang_render_c__buf_height;
 static double __pyx_v_7imgcomp_19_stacklang_render_c__half_w;
 static double __pyx_v_7imgcomp_19_stacklang_render_c__half_h;
 static double __pyx_v_7imgcomp_19_stacklang_render_c__current_gy;
-static PyObject *__pyx_v_7imgcomp_19_stacklang_render_c__tree = 0;
-static PyObject *__pyx_v_7imgcomp_19_stacklang_render_c__layers = 0;
-static PyObject *__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids = 0;
 static PyObject *__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects = 0;
-static int __pyx_v_7imgcomp_19_stacklang_render_c__num_layers;
+static __Pyx_memviewslice __pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob = { 0, 0, { 0 }, { 0 }, { 0 } };
+static struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *__pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes;
+static int __pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count;
+static int const *__pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids;
+static int __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_count;
 static PyObject *__pyx_collections_abc_Sequence = 0;
 static PyObject *generic = 0;
 static PyObject *strided = 0;
@@ -3327,6 +3352,10 @@ static PyObject *contiguous = 0;
 static PyObject *indirect_contiguous = 0;
 static int __pyx_memoryview_thread_locks_used;
 static PyThread_type_lock __pyx_memoryview_thread_locks[8];
+static void __pyx_f_7imgcomp_19_stacklang_render_c__release_quadtree(void); /*proto*/
+static unsigned int __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__Pyx_memviewslice, Py_ssize_t); /*proto*/
+static void __pyx_f_7imgcomp_19_stacklang_render_c__bind_quadtree_blob(PyObject *); /*proto*/
+static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c__leaf_index_at_point(double, double); /*proto*/
 static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int, int, unsigned char, unsigned char, unsigned char, unsigned char); /*proto*/
 static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(double); /*proto*/
 static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(double, double, double, double); /*proto*/
@@ -3354,6 +3383,10 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void);
 static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void); /*proto*/
 static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void); /*proto*/
 static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_set_gy(void); /*proto*/
+static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_continue_if_not_opaque(void); /*proto*/
+static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c__composite_leaf_pixel(double, double, struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *, double *, double *, double *, double *); /*proto*/
+static void __pyx_f_7imgcomp_19_stacklang_render_c__paint_leaf_cell(struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *); /*proto*/
+static void __pyx_f_7imgcomp_19_stacklang_render_c__render_quadtree_cells(int); /*proto*/
 static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void); /*proto*/
 static int __pyx_array_allocate_buffer(struct __pyx_array_obj *); /*proto*/
 static struct __pyx_array_obj *__pyx_array_new(PyObject *, Py_ssize_t, char *, char const *, char *); /*proto*/
@@ -3394,6 +3427,7 @@ static void __pyx_memoryview__slice_assign_scalar(char *, Py_ssize_t *, Py_ssize
 static PyObject *__pyx_unpickle_Enum__set_state(struct __pyx_MemviewEnum_obj *, PyObject *); /*proto*/
 /* #### Code section: typeinfo ### */
 static const __Pyx_TypeInfo __Pyx_TypeInfo_unsigned_char = { "unsigned char", NULL, sizeof(unsigned char), { 0 }, 0, __PYX_IS_UNSIGNED(unsigned char) ? 'U' : 'I', __PYX_IS_UNSIGNED(unsigned char), 0 };
+static const __Pyx_TypeInfo __Pyx_TypeInfo_unsigned_char__const__ = { "const unsigned char", NULL, sizeof(unsigned char const ), { 0 }, 0, __PYX_IS_UNSIGNED(unsigned char const ) ? 'U' : 'I', __PYX_IS_UNSIGNED(unsigned char const ), 0 };
 /* #### Code section: before_global_var ### */
 #define __Pyx_MODULE_NAME "imgcomp._stacklang_render_c"
 extern int __pyx_module_is_main_imgcomp___stacklang_render_c;
@@ -3464,8 +3498,8 @@ static void __pyx_memoryviewslice___pyx_pf_15View_dot_MemoryView_16_memoryviewsl
 static PyObject *__pyx_pf___pyx_memoryviewslice___reduce_cython__(CYTHON_UNUSED struct __pyx_memoryviewslice_obj *__pyx_v_self); /* proto */
 static PyObject *__pyx_pf___pyx_memoryviewslice_2__setstate_cython__(CYTHON_UNUSED struct __pyx_memoryviewslice_obj *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state); /* proto */
 static PyObject *__pyx_pf_15View_dot_MemoryView___pyx_unpickle_Enum(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v___pyx_type, long __pyx_v___pyx_checksum, PyObject *__pyx_v___pyx_state); /* proto */
-static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_pixels, int __pyx_v_width, int __pyx_v_height, PyObject *__pyx_v_tree, PyObject *__pyx_v_layers, PyObject *__pyx_v_layer_op_ids, PyObject *__pyx_v_shape_objects, int __pyx_v_num_layers); /* proto */
-static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_2z_list_at_point(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_tree, double __pyx_v_gx, double __pyx_v_gy); /* proto */
+static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_pixels, int __pyx_v_width, int __pyx_v_height, PyObject *__pyx_v_quadtree_blob, PyObject *__pyx_v_shape_objects); /* proto */
+static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_2render_quadtree(CYTHON_UNUSED PyObject *__pyx_self); /* proto */
 static PyObject *__pyx_tp_new__initialisation_array(PyObject *o, 
 #if CYTHON_VECTORCALL_TPNEW
     PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames
@@ -3600,9 +3634,9 @@ namespace {
     __Pyx_CachedCFunction __pyx_umethod_PyDict_Type_pop;
     __Pyx_CachedCFunction __pyx_umethod_PyDict_Type_values;
     PyObject *__pyx_slice[1];
-    PyObject *__pyx_tuple[4];
+    PyObject *__pyx_tuple[3];
     PyObject *__pyx_codeobj_tab[2];
-    PyObject *__pyx_string_tab[150];
+    PyObject *__pyx_string_tab[149];
     PyObject *__pyx_number_tab[3];
 /* #### Code section: module_state_contents ### */
 /* PyFrozenDict.module_state_decls */
@@ -3652,114 +3686,114 @@ static __pyx_mstatetype __pyx_mstate_global_static =
 static __pyx_mstatetype * const __pyx_mstate_global = &__pyx_mstate_global_static;
 #endif
 /* #### Code section: constant_name_defines ### */
-#define __pyx_kp_u_at_0x __pyx_string_tab[0]
-#define __pyx_kp_u_object __pyx_string_tab[1]
-#define __pyx_kp_u__3 __pyx_string_tab[2]
-#define __pyx_kp_u__2 __pyx_string_tab[3]
-#define __pyx_kp_u_MemoryView_of __pyx_string_tab[4]
-#define __pyx_kp_u_contiguous_and_direct __pyx_string_tab[5]
-#define __pyx_kp_u_contiguous_and_indirect __pyx_string_tab[6]
-#define __pyx_kp_u_strided_and_direct_or_indirect __pyx_string_tab[7]
-#define __pyx_kp_u_strided_and_direct __pyx_string_tab[8]
-#define __pyx_kp_u_strided_and_indirect __pyx_string_tab[9]
-#define __pyx_kp_u__4 __pyx_string_tab[10]
-#define __pyx_kp_u_ __pyx_string_tab[11]
-#define __pyx_kp_u_Cannot_assign_to_read_only_memor __pyx_string_tab[12]
-#define __pyx_kp_u_Invalid_mode_expected_c_or_fortr __pyx_string_tab[13]
-#define __pyx_kp_u_Invalid_shape_in_axis __pyx_string_tab[14]
-#define __pyx_kp_u_Note_that_Cython_is_deliberately __pyx_string_tab[15]
-#define __pyx_kp_u_add_note __pyx_string_tab[16]
-#define __pyx_kp_u_collections_abc __pyx_string_tab[17]
-#define __pyx_kp_u_disable __pyx_string_tab[18]
-#define __pyx_kp_u_enable __pyx_string_tab[19]
-#define __pyx_kp_u_gc __pyx_string_tab[20]
-#define __pyx_kp_u_imgcomp__stacklang_render_c_pyx __pyx_string_tab[21]
-#define __pyx_kp_u_isenabled __pyx_string_tab[22]
-#define __pyx_kp_u_no_default___reduce___due_to_non __pyx_string_tab[23]
-#define __pyx_kp_u_pixel_buffer_size_mismatch __pyx_string_tab[24]
-#define __pyx_kp_u_shape_index_out_of_range __pyx_string_tab[25]
-#define __pyx_kp_u_unable_to_allocate_array_data __pyx_string_tab[26]
-#define __pyx_kp_u_unable_to_allocate_shape_and_str __pyx_string_tab[27]
-#define __pyx_n_u_ASCII __pyx_string_tab[28]
-#define __pyx_n_u_Ellipsis __pyx_string_tab[29]
-#define __pyx_n_u_None __pyx_string_tab[30]
-#define __pyx_n_u_Sequence __pyx_string_tab[31]
-#define __pyx_n_u_View_MemoryView __pyx_string_tab[32]
-#define __pyx_n_u_Pyx_PyDict_NextRef __pyx_string_tab[33]
-#define __pyx_n_u_annotate __pyx_string_tab[34]
-#define __pyx_n_u_class __pyx_string_tab[35]
-#define __pyx_n_u_class_getitem __pyx_string_tab[36]
-#define __pyx_n_u_dict __pyx_string_tab[37]
-#define __pyx_n_u_func __pyx_string_tab[38]
-#define __pyx_n_u_getstate __pyx_string_tab[39]
-#define __pyx_n_u_import __pyx_string_tab[40]
-#define __pyx_n_u_main __pyx_string_tab[41]
-#define __pyx_n_u_module __pyx_string_tab[42]
-#define __pyx_n_u_name_2 __pyx_string_tab[43]
-#define __pyx_n_u_new __pyx_string_tab[44]
-#define __pyx_n_u_pyx_checksum __pyx_string_tab[45]
-#define __pyx_n_u_pyx_state __pyx_string_tab[46]
-#define __pyx_n_u_pyx_type __pyx_string_tab[47]
-#define __pyx_n_u_pyx_unpickle_Enum __pyx_string_tab[48]
-#define __pyx_n_u_pyx_vtable __pyx_string_tab[49]
-#define __pyx_n_u_qualname __pyx_string_tab[50]
-#define __pyx_n_u_reduce __pyx_string_tab[51]
-#define __pyx_n_u_reduce_cython __pyx_string_tab[52]
-#define __pyx_n_u_reduce_ex __pyx_string_tab[53]
-#define __pyx_n_u_set_name __pyx_string_tab[54]
-#define __pyx_n_u_setstate __pyx_string_tab[55]
-#define __pyx_n_u_setstate_cython __pyx_string_tab[56]
-#define __pyx_n_u_test __pyx_string_tab[57]
-#define __pyx_n_u_is_coroutine __pyx_string_tab[58]
-#define __pyx_n_u_z_list_at_point_2 __pyx_string_tab[59]
-#define __pyx_n_u_abc __pyx_string_tab[60]
-#define __pyx_n_u_allocate_buffer __pyx_string_tab[61]
-#define __pyx_n_u_asyncio_coroutines __pyx_string_tab[62]
-#define __pyx_n_u_base __pyx_string_tab[63]
-#define __pyx_n_u_bind_render __pyx_string_tab[64]
-#define __pyx_n_u_c __pyx_string_tab[65]
-#define __pyx_n_u_cline_in_traceback __pyx_string_tab[66]
-#define __pyx_n_u_color_at __pyx_string_tab[67]
-#define __pyx_n_u_count __pyx_string_tab[68]
-#define __pyx_n_u_distance __pyx_string_tab[69]
-#define __pyx_n_u_dtype_is_object __pyx_string_tab[70]
-#define __pyx_n_u_encode __pyx_string_tab[71]
-#define __pyx_n_u_enumerate __pyx_string_tab[72]
-#define __pyx_n_u_error __pyx_string_tab[73]
-#define __pyx_n_u_flags __pyx_string_tab[74]
-#define __pyx_n_u_format __pyx_string_tab[75]
-#define __pyx_n_u_fortran __pyx_string_tab[76]
-#define __pyx_n_u_gx __pyx_string_tab[77]
-#define __pyx_n_u_gy __pyx_string_tab[78]
-#define __pyx_n_u_height __pyx_string_tab[79]
-#define __pyx_n_u_id __pyx_string_tab[80]
-#define __pyx_n_u_idx __pyx_string_tab[81]
-#define __pyx_n_u_imgcomp__stack_c __pyx_string_tab[82]
-#define __pyx_n_u_imgcomp__stacklang_render_c __pyx_string_tab[83]
-#define __pyx_n_u_imgcomp_stacklang_debug __pyx_string_tab[84]
-#define __pyx_n_u_imgcomp_stacklang_render __pyx_string_tab[85]
-#define __pyx_n_u_index __pyx_string_tab[86]
-#define __pyx_n_u_invoke_body_id __pyx_string_tab[87]
-#define __pyx_n_u_items __pyx_string_tab[88]
-#define __pyx_n_u_itemsize __pyx_string_tab[89]
-#define __pyx_n_u_layer_op_ids __pyx_string_tab[90]
-#define __pyx_n_u_layers __pyx_string_tab[91]
-#define __pyx_n_u_log_c_to_py __pyx_string_tab[92]
-#define __pyx_n_u_memview __pyx_string_tab[93]
-#define __pyx_n_u_mode __pyx_string_tab[94]
-#define __pyx_n_u_name __pyx_string_tab[95]
-#define __pyx_n_u_ndim __pyx_string_tab[96]
-#define __pyx_n_u_num_layers __pyx_string_tab[97]
-#define __pyx_n_u_obj __pyx_string_tab[98]
-#define __pyx_n_u_pack __pyx_string_tab[99]
-#define __pyx_n_u_paint_op_id __pyx_string_tab[100]
+#define __pyx_kp_u__5 __pyx_string_tab[0]
+#define __pyx_kp_u_at_0x __pyx_string_tab[1]
+#define __pyx_kp_u_object __pyx_string_tab[2]
+#define __pyx_kp_u_x_2 __pyx_string_tab[3]
+#define __pyx_kp_u__3 __pyx_string_tab[4]
+#define __pyx_kp_u__2 __pyx_string_tab[5]
+#define __pyx_kp_u_MemoryView_of __pyx_string_tab[6]
+#define __pyx_kp_u_contiguous_and_direct __pyx_string_tab[7]
+#define __pyx_kp_u_contiguous_and_indirect __pyx_string_tab[8]
+#define __pyx_kp_u_strided_and_direct_or_indirect __pyx_string_tab[9]
+#define __pyx_kp_u_strided_and_direct __pyx_string_tab[10]
+#define __pyx_kp_u_strided_and_indirect __pyx_string_tab[11]
+#define __pyx_kp_u__4 __pyx_string_tab[12]
+#define __pyx_kp_u_ __pyx_string_tab[13]
+#define __pyx_kp_u_Cannot_assign_to_read_only_memor __pyx_string_tab[14]
+#define __pyx_kp_u_Invalid_mode_expected_c_or_fortr __pyx_string_tab[15]
+#define __pyx_kp_u_Invalid_shape_in_axis __pyx_string_tab[16]
+#define __pyx_kp_u_Note_that_Cython_is_deliberately __pyx_string_tab[17]
+#define __pyx_kp_u_add_note __pyx_string_tab[18]
+#define __pyx_kp_u_bad_quadtree_magic __pyx_string_tab[19]
+#define __pyx_kp_u_collections_abc __pyx_string_tab[20]
+#define __pyx_kp_u_disable __pyx_string_tab[21]
+#define __pyx_kp_u_enable __pyx_string_tab[22]
+#define __pyx_kp_u_gc __pyx_string_tab[23]
+#define __pyx_kp_u_imgcomp__stacklang_render_c_pyx __pyx_string_tab[24]
+#define __pyx_kp_u_isenabled __pyx_string_tab[25]
+#define __pyx_kp_u_no_default___reduce___due_to_non __pyx_string_tab[26]
+#define __pyx_kp_u_pixel_buffer_size_mismatch __pyx_string_tab[27]
+#define __pyx_kp_u_quadtree_blob_size_mismatch __pyx_string_tab[28]
+#define __pyx_kp_u_quadtree_blob_too_small_for_head __pyx_string_tab[29]
+#define __pyx_kp_u_shape_index_out_of_range __pyx_string_tab[30]
+#define __pyx_kp_u_unable_to_allocate_array_data __pyx_string_tab[31]
+#define __pyx_kp_u_unable_to_allocate_shape_and_str __pyx_string_tab[32]
+#define __pyx_kp_u_unsupported_quadtree_version __pyx_string_tab[33]
+#define __pyx_n_u_ASCII __pyx_string_tab[34]
+#define __pyx_n_u_Ellipsis __pyx_string_tab[35]
+#define __pyx_n_u_None __pyx_string_tab[36]
+#define __pyx_n_u_Sequence __pyx_string_tab[37]
+#define __pyx_n_u_View_MemoryView __pyx_string_tab[38]
+#define __pyx_n_u_Pyx_PyDict_NextRef __pyx_string_tab[39]
+#define __pyx_n_u_annotate __pyx_string_tab[40]
+#define __pyx_n_u_class __pyx_string_tab[41]
+#define __pyx_n_u_class_getitem __pyx_string_tab[42]
+#define __pyx_n_u_dict __pyx_string_tab[43]
+#define __pyx_n_u_func __pyx_string_tab[44]
+#define __pyx_n_u_getstate __pyx_string_tab[45]
+#define __pyx_n_u_import __pyx_string_tab[46]
+#define __pyx_n_u_main __pyx_string_tab[47]
+#define __pyx_n_u_module __pyx_string_tab[48]
+#define __pyx_n_u_name_2 __pyx_string_tab[49]
+#define __pyx_n_u_new __pyx_string_tab[50]
+#define __pyx_n_u_pyx_checksum __pyx_string_tab[51]
+#define __pyx_n_u_pyx_state __pyx_string_tab[52]
+#define __pyx_n_u_pyx_type __pyx_string_tab[53]
+#define __pyx_n_u_pyx_unpickle_Enum __pyx_string_tab[54]
+#define __pyx_n_u_pyx_vtable __pyx_string_tab[55]
+#define __pyx_n_u_qualname __pyx_string_tab[56]
+#define __pyx_n_u_reduce __pyx_string_tab[57]
+#define __pyx_n_u_reduce_cython __pyx_string_tab[58]
+#define __pyx_n_u_reduce_ex __pyx_string_tab[59]
+#define __pyx_n_u_set_name __pyx_string_tab[60]
+#define __pyx_n_u_setstate __pyx_string_tab[61]
+#define __pyx_n_u_setstate_cython __pyx_string_tab[62]
+#define __pyx_n_u_test __pyx_string_tab[63]
+#define __pyx_n_u_is_coroutine __pyx_string_tab[64]
+#define __pyx_n_u_abc __pyx_string_tab[65]
+#define __pyx_n_u_allocate_buffer __pyx_string_tab[66]
+#define __pyx_n_u_asyncio_coroutines __pyx_string_tab[67]
+#define __pyx_n_u_base __pyx_string_tab[68]
+#define __pyx_n_u_bind_render __pyx_string_tab[69]
+#define __pyx_n_u_c __pyx_string_tab[70]
+#define __pyx_n_u_cline_in_traceback __pyx_string_tab[71]
+#define __pyx_n_u_color_at __pyx_string_tab[72]
+#define __pyx_n_u_count __pyx_string_tab[73]
+#define __pyx_n_u_distance __pyx_string_tab[74]
+#define __pyx_n_u_dtype_is_object __pyx_string_tab[75]
+#define __pyx_n_u_encode __pyx_string_tab[76]
+#define __pyx_n_u_enumerate __pyx_string_tab[77]
+#define __pyx_n_u_error __pyx_string_tab[78]
+#define __pyx_n_u_flags __pyx_string_tab[79]
+#define __pyx_n_u_format __pyx_string_tab[80]
+#define __pyx_n_u_fortran __pyx_string_tab[81]
+#define __pyx_n_u_gx __pyx_string_tab[82]
+#define __pyx_n_u_gy __pyx_string_tab[83]
+#define __pyx_n_u_height __pyx_string_tab[84]
+#define __pyx_n_u_id __pyx_string_tab[85]
+#define __pyx_n_u_idx __pyx_string_tab[86]
+#define __pyx_n_u_imgcomp__stack_c __pyx_string_tab[87]
+#define __pyx_n_u_imgcomp__stacklang_render_c __pyx_string_tab[88]
+#define __pyx_n_u_imgcomp_stacklang_debug __pyx_string_tab[89]
+#define __pyx_n_u_index __pyx_string_tab[90]
+#define __pyx_n_u_invoke_body_id __pyx_string_tab[91]
+#define __pyx_n_u_items __pyx_string_tab[92]
+#define __pyx_n_u_itemsize __pyx_string_tab[93]
+#define __pyx_n_u_log_c_to_py __pyx_string_tab[94]
+#define __pyx_n_u_memview __pyx_string_tab[95]
+#define __pyx_n_u_mode __pyx_string_tab[96]
+#define __pyx_n_u_name __pyx_string_tab[97]
+#define __pyx_n_u_ndim __pyx_string_tab[98]
+#define __pyx_n_u_obj __pyx_string_tab[99]
+#define __pyx_n_u_pack __pyx_string_tab[100]
 #define __pyx_n_u_pixels __pyx_string_tab[101]
 #define __pyx_n_u_pop __pyx_string_tab[102]
-#define __pyx_n_u_px __pyx_string_tab[103]
-#define __pyx_n_u_py __pyx_string_tab[104]
-#define __pyx_n_u_python_color_at __pyx_string_tab[105]
-#define __pyx_n_u_python_distance __pyx_string_tab[106]
-#define __pyx_n_u_register __pyx_string_tab[107]
+#define __pyx_n_u_python_color_at __pyx_string_tab[103]
+#define __pyx_n_u_python_distance __pyx_string_tab[104]
+#define __pyx_n_u_quadtree_blob __pyx_string_tab[105]
+#define __pyx_n_u_register __pyx_string_tab[106]
+#define __pyx_n_u_render_quadtree __pyx_string_tab[107]
 #define __pyx_n_u_return __pyx_string_tab[108]
 #define __pyx_n_u_setdefault __pyx_string_tab[109]
 #define __pyx_n_u_shape __pyx_string_tab[110]
@@ -3767,41 +3801,40 @@ static __pyx_mstatetype * const __pyx_mstate_global = &__pyx_mstate_global_stati
 #define __pyx_n_u_size __pyx_string_tab[112]
 #define __pyx_n_u_slr_anchorize_rgba __pyx_string_tab[113]
 #define __pyx_n_u_slr_circle_distance __pyx_string_tab[114]
-#define __pyx_n_u_slr_drop_hit_xy __pyx_string_tab[115]
-#define __pyx_n_u_slr_dup_anchor_push_xy __pyx_string_tab[116]
-#define __pyx_n_u_slr_dup_anchor_xy __pyx_string_tab[117]
-#define __pyx_n_u_slr_dup_xy __pyx_string_tab[118]
-#define __pyx_n_u_slr_fill_white __pyx_string_tab[119]
-#define __pyx_n_u_slr_float_max2 __pyx_string_tab[120]
-#define __pyx_n_u_slr_float_neg __pyx_string_tab[121]
-#define __pyx_n_u_slr_offset_xy_sub __pyx_string_tab[122]
-#define __pyx_n_u_slr_oval_distance __pyx_string_tab[123]
-#define __pyx_n_u_slr_paint_pixel __pyx_string_tab[124]
-#define __pyx_n_u_slr_push_transparent_accum __pyx_string_tab[125]
-#define __pyx_n_u_slr_python_color_at __pyx_string_tab[126]
-#define __pyx_n_u_slr_python_distance __pyx_string_tab[127]
-#define __pyx_n_u_slr_rectangle_distance __pyx_string_tab[128]
-#define __pyx_n_u_slr_rgba_solid_if_hit __pyx_string_tab[129]
-#define __pyx_n_u_slr_rgba_transparent __pyx_string_tab[130]
-#define __pyx_n_u_slr_sdf_fill_white __pyx_string_tab[131]
-#define __pyx_n_u_slr_set_gy __pyx_string_tab[132]
-#define __pyx_n_u_slr_src_over_layer __pyx_string_tab[133]
-#define __pyx_n_u_start __pyx_string_tab[134]
-#define __pyx_n_u_step __pyx_string_tab[135]
-#define __pyx_n_u_stop __pyx_string_tab[136]
-#define __pyx_n_u_struct __pyx_string_tab[137]
-#define __pyx_n_u_tree __pyx_string_tab[138]
+#define __pyx_n_u_slr_continue_if_not_opaque __pyx_string_tab[115]
+#define __pyx_n_u_slr_drop_hit_xy __pyx_string_tab[116]
+#define __pyx_n_u_slr_dup_anchor_push_xy __pyx_string_tab[117]
+#define __pyx_n_u_slr_dup_anchor_xy __pyx_string_tab[118]
+#define __pyx_n_u_slr_dup_xy __pyx_string_tab[119]
+#define __pyx_n_u_slr_fill_white __pyx_string_tab[120]
+#define __pyx_n_u_slr_float_max2 __pyx_string_tab[121]
+#define __pyx_n_u_slr_float_neg __pyx_string_tab[122]
+#define __pyx_n_u_slr_offset_xy_sub __pyx_string_tab[123]
+#define __pyx_n_u_slr_oval_distance __pyx_string_tab[124]
+#define __pyx_n_u_slr_paint_pixel __pyx_string_tab[125]
+#define __pyx_n_u_slr_push_transparent_accum __pyx_string_tab[126]
+#define __pyx_n_u_slr_python_color_at __pyx_string_tab[127]
+#define __pyx_n_u_slr_python_distance __pyx_string_tab[128]
+#define __pyx_n_u_slr_rectangle_distance __pyx_string_tab[129]
+#define __pyx_n_u_slr_rgba_solid_if_hit __pyx_string_tab[130]
+#define __pyx_n_u_slr_rgba_transparent __pyx_string_tab[131]
+#define __pyx_n_u_slr_sdf_fill_white __pyx_string_tab[132]
+#define __pyx_n_u_slr_set_gy __pyx_string_tab[133]
+#define __pyx_n_u_slr_src_over_layer __pyx_string_tab[134]
+#define __pyx_n_u_start __pyx_string_tab[135]
+#define __pyx_n_u_step __pyx_string_tab[136]
+#define __pyx_n_u_stop __pyx_string_tab[137]
+#define __pyx_n_u_struct __pyx_string_tab[138]
 #define __pyx_n_u_unpack __pyx_string_tab[139]
 #define __pyx_n_u_update __pyx_string_tab[140]
 #define __pyx_n_u_values __pyx_string_tab[141]
 #define __pyx_n_u_view __pyx_string_tab[142]
 #define __pyx_n_u_width __pyx_string_tab[143]
 #define __pyx_n_u_x __pyx_string_tab[144]
-#define __pyx_n_u_z_list_at_point __pyx_string_tab[145]
-#define __pyx_n_b_O __pyx_string_tab[146]
-#define __pyx_kp_b_double_int_double_void_int_doubl __pyx_string_tab[147]
-#define __pyx_kp_b_iso88591_1F_a __pyx_string_tab[148]
-#define __pyx_kp_b_iso88591_t6_S_b_r_j_a_fBa_gRq_A_a_A_Q __pyx_string_tab[149]
+#define __pyx_n_b_O __pyx_string_tab[145]
+#define __pyx_kp_b_double_int_double_void_int_doubl __pyx_string_tab[146]
+#define __pyx_kp_b_iso88591_t6_S_b_r_j_a_fBa_gRq_Q_q __pyx_string_tab[147]
+#define __pyx_kp_b_iso88591_aq __pyx_string_tab[148]
 #define __pyx_int_0 __pyx_number_tab[0]
 #define __pyx_int_neg_1 __pyx_number_tab[1]
 #define __pyx_int_136983863 __pyx_number_tab[2]
@@ -3832,9 +3865,9 @@ static CYTHON_SMALL_CODE int __pyx_m_clear(PyObject *m) {
   Py_CLEAR(clear_module_state->__pyx_umethod_PyDict_Type_pop.method);
   Py_CLEAR(clear_module_state->__pyx_umethod_PyDict_Type_values.method);
   for (int i=0; i<1; ++i) { Py_CLEAR(clear_module_state->__pyx_slice[i]); }
-  for (int i=0; i<4; ++i) { Py_CLEAR(clear_module_state->__pyx_tuple[i]); }
+  for (int i=0; i<3; ++i) { Py_CLEAR(clear_module_state->__pyx_tuple[i]); }
   for (int i=0; i<2; ++i) { Py_CLEAR(clear_module_state->__pyx_codeobj_tab[i]); }
-  for (int i=0; i<150; ++i) { Py_CLEAR(clear_module_state->__pyx_string_tab[i]); }
+  for (int i=0; i<149; ++i) { Py_CLEAR(clear_module_state->__pyx_string_tab[i]); }
   for (int i=0; i<3; ++i) { Py_CLEAR(clear_module_state->__pyx_number_tab[i]); }
 /* #### Code section: module_state_clear_contents ### */
 /* CommonTypesMetaclass.module_state_clear */
@@ -3871,9 +3904,9 @@ static CYTHON_SMALL_CODE int __pyx_m_traverse(PyObject *m, visitproc visit, void
   Py_VISIT(traverse_module_state->__pyx_umethod_PyDict_Type_pop.method);
   Py_VISIT(traverse_module_state->__pyx_umethod_PyDict_Type_values.method);
   for (int i=0; i<1; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_slice[i]); }
-  for (int i=0; i<4; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_tuple[i]); }
+  for (int i=0; i<3; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_tuple[i]); }
   for (int i=0; i<2; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_codeobj_tab[i]); }
-  for (int i=0; i<150; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_string_tab[i]); }
+  for (int i=0; i<149; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_string_tab[i]); }
   for (int i=0; i<3; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_number_tab[i]); }
 /* #### Code section: module_state_traverse_contents ### */
 /* CommonTypesMetaclass.module_state_traverse */
@@ -18070,7 +18103,913 @@ static PyObject *__pyx_unpickle_Enum__set_state(struct __pyx_MemviewEnum_obj *__
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":35
+/* "imgcomp/_stacklang_render_c.pyx":56
+ * 
+ * 
+ * cdef void _release_quadtree() noexcept:             # <<<<<<<<<<<<<<
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _quadtree_blob = None
+*/
+
+static void __pyx_f_7imgcomp_19_stacklang_render_c__release_quadtree(void) {
+  __Pyx_memviewslice __pyx_t_1 = { 0, 0, { 0 }, { 0 }, { 0 } };
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":58
+ * cdef void _release_quadtree() noexcept:
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _quadtree_blob = None             # <<<<<<<<<<<<<<
+ *     _quad_nodes = NULL
+ *     _quad_node_count = 0
+*/
+  __pyx_t_1 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char__const__(Py_None, 0); if (unlikely(!__pyx_t_1.memview)) __PYX_ERR(0, 58, __pyx_L1_error)
+  __PYX_XCLEAR_MEMVIEW(&__pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob, 1);
+  __pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob = __pyx_t_1;
+  __pyx_t_1.memview = NULL;
+  __pyx_t_1.data = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":59
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _quadtree_blob = None
+ *     _quad_nodes = NULL             # <<<<<<<<<<<<<<
+ *     _quad_node_count = 0
+ *     _leaf_op_ids = NULL
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":60
+ *     _quadtree_blob = None
+ *     _quad_nodes = NULL
+ *     _quad_node_count = 0             # <<<<<<<<<<<<<<
+ *     _leaf_op_ids = NULL
+ *     _leaf_op_count = 0
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":61
+ *     _quad_nodes = NULL
+ *     _quad_node_count = 0
+ *     _leaf_op_ids = NULL             # <<<<<<<<<<<<<<
+ *     _leaf_op_count = 0
+ * 
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":62
+ *     _quad_node_count = 0
+ *     _leaf_op_ids = NULL
+ *     _leaf_op_count = 0             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_count = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":56
+ * 
+ * 
+ * cdef void _release_quadtree() noexcept:             # <<<<<<<<<<<<<<
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _quadtree_blob = None
+*/
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __PYX_XCLEAR_MEMVIEW(&__pyx_t_1, 1);
+  __Pyx_WriteUnraisable("imgcomp._stacklang_render_c._release_quadtree", __pyx_clineno, __pyx_lineno, __pyx_filename, 1, 0);
+  __pyx_L0:;
+
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":65
+ * 
+ * 
+ * cdef unsigned int _read_u32(const unsigned char[:] view, Py_ssize_t offset) noexcept:             # <<<<<<<<<<<<<<
+ *     return (
+ *         <unsigned int>view[offset]
+*/
+
+static unsigned int __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__Pyx_memviewslice __pyx_v_view, Py_ssize_t __pyx_v_offset) {
+  unsigned int __pyx_r;
+  Py_ssize_t __pyx_t_1;
+  Py_ssize_t __pyx_t_2;
+  Py_ssize_t __pyx_t_3;
+  Py_ssize_t __pyx_t_4;
+
+  /* "imgcomp/_stacklang_render_c.pyx":67
+ * cdef unsigned int _read_u32(const unsigned char[:] view, Py_ssize_t offset) noexcept:
+ *     return (
+ *         <unsigned int>view[offset]             # <<<<<<<<<<<<<<
+ *         | (<unsigned int>view[offset + 1] << 8)
+ *         | (<unsigned int>view[offset + 2] << 16)
+*/
+  __pyx_t_1 = __pyx_v_offset;
+
+  /* "imgcomp/_stacklang_render_c.pyx":68
+ *     return (
+ *         <unsigned int>view[offset]
+ *         | (<unsigned int>view[offset + 1] << 8)             # <<<<<<<<<<<<<<
+ *         | (<unsigned int>view[offset + 2] << 16)
+ *         | (<unsigned int>view[offset + 3] << 24)
+*/
+  __pyx_t_2 = (__pyx_v_offset + 1);
+
+  /* "imgcomp/_stacklang_render_c.pyx":69
+ *         <unsigned int>view[offset]
+ *         | (<unsigned int>view[offset + 1] << 8)
+ *         | (<unsigned int>view[offset + 2] << 16)             # <<<<<<<<<<<<<<
+ *         | (<unsigned int>view[offset + 3] << 24)
+ *     )
+*/
+  __pyx_t_3 = (__pyx_v_offset + 2);
+
+  /* "imgcomp/_stacklang_render_c.pyx":70
+ *         | (<unsigned int>view[offset + 1] << 8)
+ *         | (<unsigned int>view[offset + 2] << 16)
+ *         | (<unsigned int>view[offset + 3] << 24)             # <<<<<<<<<<<<<<
+ *     )
+ * 
+*/
+  __pyx_t_4 = (__pyx_v_offset + 3);
+  {
+
+    __pyx_r = (((((unsigned int)(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_1 * __pyx_v_view.strides[0]) )))) | (((unsigned int)(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_2 * __pyx_v_view.strides[0]) )))) << 8)) | (((unsigned int)(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_3 * __pyx_v_view.strides[0]) )))) << 16)) | (((unsigned int)(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_4 * __pyx_v_view.strides[0]) )))) << 24));
+  }
+  goto __pyx_L0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":65
+ * 
+ * 
+ * cdef unsigned int _read_u32(const unsigned char[:] view, Py_ssize_t offset) noexcept:             # <<<<<<<<<<<<<<
+ *     return (
+ *         <unsigned int>view[offset]
+*/
+
+  /* function exit code */
+  __pyx_L0:;
+
+  return __pyx_r;
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":74
+ * 
+ * 
+ * cdef void _bind_quadtree_blob(object blob) except *:             # <<<<<<<<<<<<<<
+ *     cdef const unsigned char[:] view = blob
+ *     cdef unsigned int magic
+*/
+
+static void __pyx_f_7imgcomp_19_stacklang_render_c__bind_quadtree_blob(PyObject *__pyx_v_blob) {
+  __Pyx_memviewslice __pyx_v_view = { 0, 0, { 0 }, { 0 }, { 0 } };
+  unsigned int __pyx_v_magic;
+  unsigned int __pyx_v_version;
+  unsigned int __pyx_v_node_count;
+  unsigned int __pyx_v_leaf_op_count;
+  Py_ssize_t __pyx_v_expected;
+  __Pyx_RefNannyDeclarations
+  __Pyx_memviewslice __pyx_t_1 = { 0, 0, { 0 }, { 0 }, { 0 } };
+  int __pyx_t_2;
+  int __pyx_t_3;
+  PyObject *__pyx_t_4 = NULL;
+  PyObject *__pyx_t_5 = NULL;
+  size_t __pyx_t_6;
+  PyObject *__pyx_t_7 = NULL;
+  PyObject *__pyx_t_8 = NULL;
+  PyObject *__pyx_t_9[4];
+  Py_ssize_t __pyx_t_10;
+  int __pyx_t_11;
+  PyObject *__pyx_t_12 = NULL;
+  Py_ssize_t __pyx_t_13;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("_bind_quadtree_blob", 0);
+
+  /* "imgcomp/_stacklang_render_c.pyx":75
+ * 
+ * cdef void _bind_quadtree_blob(object blob) except *:
+ *     cdef const unsigned char[:] view = blob             # <<<<<<<<<<<<<<
+ *     cdef unsigned int magic
+ *     cdef unsigned int version
+*/
+  __pyx_t_1 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char__const__(__pyx_v_blob, 0); if (unlikely(!__pyx_t_1.memview)) __PYX_ERR(0, 75, __pyx_L1_error)
+  __pyx_v_view = __pyx_t_1;
+  __pyx_t_1.memview = NULL;
+  __pyx_t_1.data = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":82
+ *     cdef Py_ssize_t expected
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _release_quadtree()             # <<<<<<<<<<<<<<
+ *     if view is None or view.shape[0] < _QTRE_HEADER_SIZE:
+ *         raise ValueError("quadtree blob too small for header")
+*/
+  __pyx_f_7imgcomp_19_stacklang_render_c__release_quadtree();
+
+  /* "imgcomp/_stacklang_render_c.pyx":83
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _release_quadtree()
+ *     if view is None or view.shape[0] < _QTRE_HEADER_SIZE:             # <<<<<<<<<<<<<<
+ *         raise ValueError("quadtree blob too small for header")
+ *     magic = _read_u32(view, 0)
+*/
+  __pyx_t_3 = (((PyObject *) __pyx_v_view.memview) == Py_None);
+
+  if (!__pyx_t_3) {
+
+  } else {
+
+    __pyx_t_2 = __pyx_t_3;
+
+    goto __pyx_L4_bool_binop_done;
+  }
+  __pyx_t_3 = ((__pyx_v_view.shape[0]) < 16);
+
+
+  __pyx_t_2 = __pyx_t_3;
+
+  __pyx_L4_bool_binop_done:;
+  if (unlikely(__pyx_t_2)) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":84
+ *     _release_quadtree()
+ *     if view is None or view.shape[0] < _QTRE_HEADER_SIZE:
+ *         raise ValueError("quadtree blob too small for header")             # <<<<<<<<<<<<<<
+ *     magic = _read_u32(view, 0)
+ *     version = _read_u32(view, 4)
+*/
+    __pyx_t_5 = NULL;
+    __pyx_t_6 = 1;
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_5, __pyx_mstate_global->__pyx_kp_u_quadtree_blob_too_small_for_head};
+      __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_ValueError)), __pyx_callargs+__pyx_t_6, (2-__pyx_t_6) | (__pyx_t_6*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
+      __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 84, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+    }
+    __Pyx_Raise(__pyx_t_4, 0, 0, 0);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __PYX_ERR(0, 84, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":83
+ *     global _quadtree_blob, _quad_nodes, _quad_node_count, _leaf_op_ids, _leaf_op_count
+ *     _release_quadtree()
+ *     if view is None or view.shape[0] < _QTRE_HEADER_SIZE:             # <<<<<<<<<<<<<<
+ *         raise ValueError("quadtree blob too small for header")
+ *     magic = _read_u32(view, 0)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":85
+ *     if view is None or view.shape[0] < _QTRE_HEADER_SIZE:
+ *         raise ValueError("quadtree blob too small for header")
+ *     magic = _read_u32(view, 0)             # <<<<<<<<<<<<<<
+ *     version = _read_u32(view, 4)
+ *     node_count = _read_u32(view, 8)
+*/
+  __pyx_v_magic = __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__pyx_v_view, 0);
+
+  /* "imgcomp/_stacklang_render_c.pyx":86
+ *         raise ValueError("quadtree blob too small for header")
+ *     magic = _read_u32(view, 0)
+ *     version = _read_u32(view, 4)             # <<<<<<<<<<<<<<
+ *     node_count = _read_u32(view, 8)
+ *     leaf_op_count = _read_u32(view, 12)
+*/
+  __pyx_v_version = __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__pyx_v_view, 4);
+
+  /* "imgcomp/_stacklang_render_c.pyx":87
+ *     magic = _read_u32(view, 0)
+ *     version = _read_u32(view, 4)
+ *     node_count = _read_u32(view, 8)             # <<<<<<<<<<<<<<
+ *     leaf_op_count = _read_u32(view, 12)
+ *     if magic != _QTRE_MAGIC:
+*/
+  __pyx_v_node_count = __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__pyx_v_view, 8);
+
+  /* "imgcomp/_stacklang_render_c.pyx":88
+ *     version = _read_u32(view, 4)
+ *     node_count = _read_u32(view, 8)
+ *     leaf_op_count = _read_u32(view, 12)             # <<<<<<<<<<<<<<
+ *     if magic != _QTRE_MAGIC:
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+*/
+  __pyx_v_leaf_op_count = __pyx_f_7imgcomp_19_stacklang_render_c__read_u32(__pyx_v_view, 12);
+
+  /* "imgcomp/_stacklang_render_c.pyx":89
+ *     node_count = _read_u32(view, 8)
+ *     leaf_op_count = _read_u32(view, 12)
+ *     if magic != _QTRE_MAGIC:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+ *     if version != _QTRE_VERSION:
+*/
+  __pyx_t_2 = (__pyx_v_magic != 0x51545245);
+
+  if (unlikely(__pyx_t_2)) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":90
+ *     leaf_op_count = _read_u32(view, 12)
+ *     if magic != _QTRE_MAGIC:
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")             # <<<<<<<<<<<<<<
+ *     if version != _QTRE_VERSION:
+ *         raise ValueError(f"unsupported quadtree version: {version}")
+*/
+    __pyx_t_5 = NULL;
+    __pyx_t_7 = __Pyx_PyLong_From_unsigned_int(__pyx_v_magic); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 90, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_7);
+    __pyx_t_8 = __Pyx_PyObject_Format(__pyx_t_7, __pyx_mstate_global->__pyx_kp_u_x_2); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 90, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_8);
+    __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
+    __pyx_t_7 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_bad_quadtree_magic, __pyx_t_8); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 90, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_7);
+    __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
+    __pyx_t_6 = 1;
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_5, __pyx_t_7};
+      __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_ValueError)), __pyx_callargs+__pyx_t_6, (2-__pyx_t_6) | (__pyx_t_6*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
+      __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
+      __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 90, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+    }
+    __Pyx_Raise(__pyx_t_4, 0, 0, 0);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __PYX_ERR(0, 90, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":89
+ *     node_count = _read_u32(view, 8)
+ *     leaf_op_count = _read_u32(view, 12)
+ *     if magic != _QTRE_MAGIC:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+ *     if version != _QTRE_VERSION:
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":91
+ *     if magic != _QTRE_MAGIC:
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+ *     if version != _QTRE_VERSION:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"unsupported quadtree version: {version}")
+ *     expected = (
+*/
+  __pyx_t_2 = (__pyx_v_version != 2);
+
+  if (unlikely(__pyx_t_2)) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":92
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+ *     if version != _QTRE_VERSION:
+ *         raise ValueError(f"unsupported quadtree version: {version}")             # <<<<<<<<<<<<<<
+ *     expected = (
+ *         _QTRE_HEADER_SIZE
+*/
+    __pyx_t_7 = NULL;
+    __pyx_t_5 = __Pyx_PyUnicode_From_unsigned_int(__pyx_v_version, 0, ' ', 'd'); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 92, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_5);
+    __pyx_t_8 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_unsupported_quadtree_version, __pyx_t_5); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 92, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_8);
+    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+    __pyx_t_6 = 1;
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_7, __pyx_t_8};
+      __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_ValueError)), __pyx_callargs+__pyx_t_6, (2-__pyx_t_6) | (__pyx_t_6*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
+      __Pyx_XDECREF(__pyx_t_7); __pyx_t_7 = 0;
+      __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 92, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+    }
+    __Pyx_Raise(__pyx_t_4, 0, 0, 0);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __PYX_ERR(0, 92, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":91
+ *     if magic != _QTRE_MAGIC:
+ *         raise ValueError(f"bad quadtree magic: {magic:#x}")
+ *     if version != _QTRE_VERSION:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"unsupported quadtree version: {version}")
+ *     expected = (
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":96
+ *         _QTRE_HEADER_SIZE
+ *         + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+ *         + <Py_ssize_t>leaf_op_count * sizeof(int)             # <<<<<<<<<<<<<<
+ *     )
+ *     if view.shape[0] != expected:
+*/
+  __pyx_v_expected = ((16 + (((Py_ssize_t)__pyx_v_node_count) * 48)) + (((Py_ssize_t)__pyx_v_leaf_op_count) * (sizeof(int))));
+
+  /* "imgcomp/_stacklang_render_c.pyx":98
+ *         + <Py_ssize_t>leaf_op_count * sizeof(int)
+ *     )
+ *     if view.shape[0] != expected:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")
+ *     _quadtree_blob = view
+*/
+  __pyx_t_2 = ((__pyx_v_view.shape[0]) != __pyx_v_expected);
+
+  if (unlikely(__pyx_t_2)) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":99
+ *     )
+ *     if view.shape[0] != expected:
+ *         raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")             # <<<<<<<<<<<<<<
+ *     _quadtree_blob = view
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+*/
+    __pyx_t_8 = NULL;
+    __pyx_t_7 = __Pyx_PyUnicode_From_Py_ssize_t((__pyx_v_view.shape[0]), 0, ' ', 'd'); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 99, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_7);
+    __pyx_t_5 = __Pyx_PyUnicode_From_Py_ssize_t(__pyx_v_expected, 0, ' ', 'd'); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 99, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_5);
+    __pyx_t_9[0] = __pyx_mstate_global->__pyx_kp_u_quadtree_blob_size_mismatch;
+    __pyx_t_9[1] = __pyx_t_7;
+    __pyx_t_9[2] = __pyx_mstate_global->__pyx_kp_u__5;
+    __pyx_t_9[3] = __pyx_t_5;
+    __pyx_t_10 = 33;
+    #if __Pyx_PyUnicode_Join_CAN_USE_KIND_AND_LENGTH
+    __pyx_t_10 += __Pyx_PyUnicode_GET_LENGTH(__pyx_t_9[1]) + __Pyx_PyUnicode_GET_LENGTH(__pyx_t_9[3]);
+    #endif
+    __pyx_t_11 = 0;
+    __pyx_t_12 = __Pyx_PyUnicode_Join(__pyx_t_9, 4, __pyx_t_10, __pyx_t_11);
+    if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 99, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_12);
+    __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
+    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+    __pyx_t_6 = 1;
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_8, __pyx_t_12};
+      __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_ValueError)), __pyx_callargs+__pyx_t_6, (2-__pyx_t_6) | (__pyx_t_6*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
+      __Pyx_XDECREF(__pyx_t_8); __pyx_t_8 = 0;
+      __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 99, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+    }
+    __Pyx_Raise(__pyx_t_4, 0, 0, 0);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __PYX_ERR(0, 99, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":98
+ *         + <Py_ssize_t>leaf_op_count * sizeof(int)
+ *     )
+ *     if view.shape[0] != expected:             # <<<<<<<<<<<<<<
+ *         raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")
+ *     _quadtree_blob = view
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":100
+ *     if view.shape[0] != expected:
+ *         raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")
+ *     _quadtree_blob = view             # <<<<<<<<<<<<<<
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+ *     _quad_node_count = <int>node_count
+*/
+  __PYX_XCLEAR_MEMVIEW(&__pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob, 1);
+  __PYX_INC_MEMVIEW(&__pyx_v_view, 1);
+  __pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob = __pyx_v_view;
+
+  /* "imgcomp/_stacklang_render_c.pyx":101
+ *         raise ValueError(f"quadtree blob size mismatch: {view.shape[0]} != {expected}")
+ *     _quadtree_blob = view
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)             # <<<<<<<<<<<<<<
+ *     _quad_node_count = <int>node_count
+ *     if leaf_op_count > 0:
+*/
+  __pyx_t_13 = 0;
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes = ((struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *)(((char *)(&(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_13 * __pyx_v_view.strides[0]) ))))) + 16));
+
+  /* "imgcomp/_stacklang_render_c.pyx":102
+ *     _quadtree_blob = view
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+ *     _quad_node_count = <int>node_count             # <<<<<<<<<<<<<<
+ *     if leaf_op_count > 0:
+ *         _leaf_op_ids = <const int*>(
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count = ((int)__pyx_v_node_count);
+
+  /* "imgcomp/_stacklang_render_c.pyx":103
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+ *     _quad_node_count = <int>node_count
+ *     if leaf_op_count > 0:             # <<<<<<<<<<<<<<
+ *         _leaf_op_ids = <const int*>(
+ *             <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+*/
+  __pyx_t_2 = (__pyx_v_leaf_op_count > 0);
+
+  if (__pyx_t_2) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":105
+ *     if leaf_op_count > 0:
+ *         _leaf_op_ids = <const int*>(
+ *             <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE             # <<<<<<<<<<<<<<
+ *         )
+ *         _leaf_op_count = <int>leaf_op_count
+*/
+    __pyx_t_13 = 0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":104
+ *     _quad_node_count = <int>node_count
+ *     if leaf_op_count > 0:
+ *         _leaf_op_ids = <const int*>(             # <<<<<<<<<<<<<<
+ *             <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+ *         )
+*/
+    __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids = ((int const *)((((char *)(&(*((unsigned char const  *) ( /* dim=0 */ (__pyx_v_view.data + __pyx_t_13 * __pyx_v_view.strides[0]) ))))) + 16) + (((Py_ssize_t)__pyx_v_node_count) * 48)));
+
+    /* "imgcomp/_stacklang_render_c.pyx":107
+ *             <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+ *         )
+ *         _leaf_op_count = <int>leaf_op_count             # <<<<<<<<<<<<<<
+ *     else:
+ *         _leaf_op_ids = NULL
+*/
+    __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_count = ((int)__pyx_v_leaf_op_count);
+
+    /* "imgcomp/_stacklang_render_c.pyx":103
+ *     _quad_nodes = <CQuadNode*>(<char *>&view[0] + _QTRE_HEADER_SIZE)
+ *     _quad_node_count = <int>node_count
+ *     if leaf_op_count > 0:             # <<<<<<<<<<<<<<
+ *         _leaf_op_ids = <const int*>(
+ *             <char *>&view[0] + _QTRE_HEADER_SIZE + <Py_ssize_t>node_count * _QTRE_NODE_SIZE
+*/
+    goto __pyx_L9;
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":109
+ *         _leaf_op_count = <int>leaf_op_count
+ *     else:
+ *         _leaf_op_ids = NULL             # <<<<<<<<<<<<<<
+ *         _leaf_op_count = 0
+ * 
+*/
+  /*else*/ {
+    __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids = NULL;
+
+    /* "imgcomp/_stacklang_render_c.pyx":110
+ *     else:
+ *         _leaf_op_ids = NULL
+ *         _leaf_op_count = 0             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+    __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_count = 0;
+  }
+  __pyx_L9:;
+
+  /* "imgcomp/_stacklang_render_c.pyx":74
+ * 
+ * 
+ * cdef void _bind_quadtree_blob(object blob) except *:             # <<<<<<<<<<<<<<
+ *     cdef const unsigned char[:] view = blob
+ *     cdef unsigned int magic
+*/
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __PYX_XCLEAR_MEMVIEW(&__pyx_t_1, 1);
+  __Pyx_XDECREF(__pyx_t_4);
+  __Pyx_XDECREF(__pyx_t_5);
+  __Pyx_XDECREF(__pyx_t_7);
+  __Pyx_XDECREF(__pyx_t_8);
+  __Pyx_XDECREF(__pyx_t_12);
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c._bind_quadtree_blob", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_L0:;
+  __PYX_XCLEAR_MEMVIEW(&__pyx_v_view, 1);
+
+
+
+
+
+
+  __Pyx_RefNannyFinishContext();
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":113
+ * 
+ * 
+ * cdef inline int _leaf_index_at_point(double gx, double gy) noexcept:             # <<<<<<<<<<<<<<
+ *     cdef int node_idx = 0
+ *     cdef CQuadNode node
+*/
+
+static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c__leaf_index_at_point(double __pyx_v_gx, double __pyx_v_gy) {
+  int __pyx_v_node_idx;
+  struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode __pyx_v_node;
+  struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode __pyx_v_child;
+  int __pyx_v_i;
+  int __pyx_v_child_idx;
+  int __pyx_r;
+  int __pyx_t_1;
+  int __pyx_t_2;
+  int __pyx_t_3;
+
+  /* "imgcomp/_stacklang_render_c.pyx":114
+ * 
+ * cdef inline int _leaf_index_at_point(double gx, double gy) noexcept:
+ *     cdef int node_idx = 0             # <<<<<<<<<<<<<<
+ *     cdef CQuadNode node
+ *     cdef CQuadNode child
+*/
+  __pyx_v_node_idx = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":119
+ *     cdef int i
+ *     cdef int child_idx
+ *     if _quad_node_count == 0:             # <<<<<<<<<<<<<<
+ *         return -1
+ *     while True:
+*/
+  __pyx_t_1 = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count == 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":120
+ *     cdef int child_idx
+ *     if _quad_node_count == 0:
+ *         return -1             # <<<<<<<<<<<<<<
+ *     while True:
+ *         node = _quad_nodes[node_idx]
+*/
+    {
+
+      __pyx_r = -1;
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":119
+ *     cdef int i
+ *     cdef int child_idx
+ *     if _quad_node_count == 0:             # <<<<<<<<<<<<<<
+ *         return -1
+ *     while True:
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":121
+ *     if _quad_node_count == 0:
+ *         return -1
+ *     while True:             # <<<<<<<<<<<<<<
+ *         node = _quad_nodes[node_idx]
+ *         if node.first_child < 0:
+*/
+  while (1) {
+
+    /* "imgcomp/_stacklang_render_c.pyx":122
+ *         return -1
+ *     while True:
+ *         node = _quad_nodes[node_idx]             # <<<<<<<<<<<<<<
+ *         if node.first_child < 0:
+ *             if node.member_op_count == 0:
+*/
+    __pyx_v_node = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes[__pyx_v_node_idx]);
+
+    /* "imgcomp/_stacklang_render_c.pyx":123
+ *     while True:
+ *         node = _quad_nodes[node_idx]
+ *         if node.first_child < 0:             # <<<<<<<<<<<<<<
+ *             if node.member_op_count == 0:
+ *                 return -1
+*/
+    __pyx_t_1 = (__pyx_v_node.first_child < 0);
+
+    if (__pyx_t_1) {
+
+
+      /* "imgcomp/_stacklang_render_c.pyx":124
+ *         node = _quad_nodes[node_idx]
+ *         if node.first_child < 0:
+ *             if node.member_op_count == 0:             # <<<<<<<<<<<<<<
+ *                 return -1
+ *             return node_idx
+*/
+      __pyx_t_1 = (__pyx_v_node.member_op_count == 0);
+
+      if (__pyx_t_1) {
+
+
+        /* "imgcomp/_stacklang_render_c.pyx":125
+ *         if node.first_child < 0:
+ *             if node.member_op_count == 0:
+ *                 return -1             # <<<<<<<<<<<<<<
+ *             return node_idx
+ *         child_idx = -1
+*/
+        {
+
+          __pyx_r = -1;
+        }
+        goto __pyx_L0;
+
+        /* "imgcomp/_stacklang_render_c.pyx":124
+ *         node = _quad_nodes[node_idx]
+ *         if node.first_child < 0:
+ *             if node.member_op_count == 0:             # <<<<<<<<<<<<<<
+ *                 return -1
+ *             return node_idx
+*/
+      }
+
+      /* "imgcomp/_stacklang_render_c.pyx":126
+ *             if node.member_op_count == 0:
+ *                 return -1
+ *             return node_idx             # <<<<<<<<<<<<<<
+ *         child_idx = -1
+ *         for i in range(4):
+*/
+      {
+
+        __pyx_r = __pyx_v_node_idx;
+      }
+      goto __pyx_L0;
+
+      /* "imgcomp/_stacklang_render_c.pyx":123
+ *     while True:
+ *         node = _quad_nodes[node_idx]
+ *         if node.first_child < 0:             # <<<<<<<<<<<<<<
+ *             if node.member_op_count == 0:
+ *                 return -1
+*/
+    }
+
+    /* "imgcomp/_stacklang_render_c.pyx":127
+ *                 return -1
+ *             return node_idx
+ *         child_idx = -1             # <<<<<<<<<<<<<<
+ *         for i in range(4):
+ *             child = _quad_nodes[node.first_child + i]
+*/
+    __pyx_v_child_idx = -1;
+
+    /* "imgcomp/_stacklang_render_c.pyx":128
+ *             return node_idx
+ *         child_idx = -1
+ *         for i in range(4):             # <<<<<<<<<<<<<<
+ *             child = _quad_nodes[node.first_child + i]
+ *             if (
+*/
+    for (__pyx_t_2 = 0; __pyx_t_2 < 4; __pyx_t_2+=1) {
+      __pyx_v_i = __pyx_t_2;
+
+      /* "imgcomp/_stacklang_render_c.pyx":129
+ *         child_idx = -1
+ *         for i in range(4):
+ *             child = _quad_nodes[node.first_child + i]             # <<<<<<<<<<<<<<
+ *             if (
+ *                 child.xmin <= gx <= child.xmax
+*/
+      __pyx_v_child = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes[(__pyx_v_node.first_child + __pyx_v_i)]);
+
+      /* "imgcomp/_stacklang_render_c.pyx":131
+ *             child = _quad_nodes[node.first_child + i]
+ *             if (
+ *                 child.xmin <= gx <= child.xmax             # <<<<<<<<<<<<<<
+ *                 and child.ymin <= gy <= child.ymax
+ *             ):
+*/
+      __pyx_t_3 = (__pyx_v_child.xmin <= __pyx_v_gx);
+      if (__pyx_t_3) {
+        __pyx_t_3 = (__pyx_v_gx <= __pyx_v_child.xmax);
+      }
+      if (__pyx_t_3) {
+
+      } else {
+
+        __pyx_t_1 = __pyx_t_3;
+
+        goto __pyx_L11_bool_binop_done;
+      }
+
+      /* "imgcomp/_stacklang_render_c.pyx":132
+ *             if (
+ *                 child.xmin <= gx <= child.xmax
+ *                 and child.ymin <= gy <= child.ymax             # <<<<<<<<<<<<<<
+ *             ):
+ *                 child_idx = node.first_child + i
+*/
+      __pyx_t_3 = (__pyx_v_child.ymin <= __pyx_v_gy);
+      if (__pyx_t_3) {
+        __pyx_t_3 = (__pyx_v_gy <= __pyx_v_child.ymax);
+      }
+
+      __pyx_t_1 = __pyx_t_3;
+
+      __pyx_L11_bool_binop_done:;
+
+      /* "imgcomp/_stacklang_render_c.pyx":130
+ *         for i in range(4):
+ *             child = _quad_nodes[node.first_child + i]
+ *             if (             # <<<<<<<<<<<<<<
+ *                 child.xmin <= gx <= child.xmax
+ *                 and child.ymin <= gy <= child.ymax
+*/
+      if (__pyx_t_1) {
+
+
+        /* "imgcomp/_stacklang_render_c.pyx":134
+ *                 and child.ymin <= gy <= child.ymax
+ *             ):
+ *                 child_idx = node.first_child + i             # <<<<<<<<<<<<<<
+ *                 break
+ *         if child_idx < 0:
+*/
+        __pyx_v_child_idx = (__pyx_v_node.first_child + __pyx_v_i);
+
+        /* "imgcomp/_stacklang_render_c.pyx":135
+ *             ):
+ *                 child_idx = node.first_child + i
+ *                 break             # <<<<<<<<<<<<<<
+ *         if child_idx < 0:
+ *             return -1
+*/
+        goto __pyx_L9_break;
+
+        /* "imgcomp/_stacklang_render_c.pyx":130
+ *         for i in range(4):
+ *             child = _quad_nodes[node.first_child + i]
+ *             if (             # <<<<<<<<<<<<<<
+ *                 child.xmin <= gx <= child.xmax
+ *                 and child.ymin <= gy <= child.ymax
+*/
+      }
+    }
+    __pyx_L9_break:;
+
+    /* "imgcomp/_stacklang_render_c.pyx":136
+ *                 child_idx = node.first_child + i
+ *                 break
+ *         if child_idx < 0:             # <<<<<<<<<<<<<<
+ *             return -1
+ *         node_idx = child_idx
+*/
+    __pyx_t_1 = (__pyx_v_child_idx < 0);
+
+    if (__pyx_t_1) {
+
+
+      /* "imgcomp/_stacklang_render_c.pyx":137
+ *                 break
+ *         if child_idx < 0:
+ *             return -1             # <<<<<<<<<<<<<<
+ *         node_idx = child_idx
+ * 
+*/
+      {
+
+        __pyx_r = -1;
+      }
+      goto __pyx_L0;
+
+      /* "imgcomp/_stacklang_render_c.pyx":136
+ *                 child_idx = node.first_child + i
+ *                 break
+ *         if child_idx < 0:             # <<<<<<<<<<<<<<
+ *             return -1
+ *         node_idx = child_idx
+*/
+    }
+
+    /* "imgcomp/_stacklang_render_c.pyx":138
+ *         if child_idx < 0:
+ *             return -1
+ *         node_idx = child_idx             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+    __pyx_v_node_idx = __pyx_v_child_idx;
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":113
+ * 
+ * 
+ * cdef inline int _leaf_index_at_point(double gx, double gy) noexcept:             # <<<<<<<<<<<<<<
+ *     cdef int node_idx = 0
+ *     cdef CQuadNode node
+*/
+
+  /* function exit code */
+  __pyx_r = 0;
+  __pyx_L0:;
+
+
+
+
+
+
+  return __pyx_r;
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":141
  * 
  * 
  * def bind_render(             # <<<<<<<<<<<<<<
@@ -18086,7 +19025,7 @@ PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-PyDoc_STRVAR(__pyx_doc_7imgcomp_19_stacklang_render_c_bind_render, "Attach surface, quadtree, scene layers, and per-layer VM op ids.");
+PyDoc_STRVAR(__pyx_doc_7imgcomp_19_stacklang_render_c_bind_render, "Attach surface and mmap\047d quadtree blob for C z-list compositing.");
 static PyMethodDef __pyx_mdef_7imgcomp_19_stacklang_render_c_1bind_render = {"bind_render", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_7imgcomp_19_stacklang_render_c_1bind_render, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_7imgcomp_19_stacklang_render_c_bind_render};
 static PyObject *__pyx_pw_7imgcomp_19_stacklang_render_c_1bind_render(PyObject *__pyx_self, 
 #if CYTHON_VECTORCALL
@@ -18098,16 +19037,13 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   PyObject *__pyx_v_pixels = 0;
   int __pyx_v_width;
   int __pyx_v_height;
-  PyObject *__pyx_v_tree = 0;
-  PyObject *__pyx_v_layers = 0;
-  PyObject *__pyx_v_layer_op_ids = 0;
+  PyObject *__pyx_v_quadtree_blob = 0;
   PyObject *__pyx_v_shape_objects = 0;
-  int __pyx_v_num_layers;
   #if !CYTHON_VECTORCALL
   CYTHON_UNUSED Py_ssize_t __pyx_nargs;
   #endif
   CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
-  PyObject* values[8] = {0,0,0,0,0,0,0,0};
+  PyObject* values[5] = {0,0,0,0,0};
   int __pyx_lineno = 0;
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
@@ -18123,83 +19059,62 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   #endif
   __pyx_kwvalues = __Pyx_KwValues_FASTCALL(__pyx_args, __pyx_nargs);
   {
-    PyObject ** const __pyx_pyargnames[] = {&__pyx_mstate_global->__pyx_n_u_pixels,&__pyx_mstate_global->__pyx_n_u_width,&__pyx_mstate_global->__pyx_n_u_height,&__pyx_mstate_global->__pyx_n_u_tree,&__pyx_mstate_global->__pyx_n_u_layers,&__pyx_mstate_global->__pyx_n_u_layer_op_ids,&__pyx_mstate_global->__pyx_n_u_shape_objects,&__pyx_mstate_global->__pyx_n_u_num_layers,0};
+    PyObject ** const __pyx_pyargnames[] = {&__pyx_mstate_global->__pyx_n_u_pixels,&__pyx_mstate_global->__pyx_n_u_width,&__pyx_mstate_global->__pyx_n_u_height,&__pyx_mstate_global->__pyx_n_u_quadtree_blob,&__pyx_mstate_global->__pyx_n_u_shape_objects,0};
     const Py_ssize_t __pyx_kwds_len = (__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
-    if (unlikely(__pyx_kwds_len < 0)) __PYX_ERR(0, 35, __pyx_L3_error)
+    if (unlikely(__pyx_kwds_len < 0)) __PYX_ERR(0, 141, __pyx_L3_error)
     if (__pyx_kwds_len > 0) {
       switch (__pyx_nargs) {
-        case  8:
-        values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 35, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
-        case  7:
-        values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 35, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
-        case  6:
-        values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 35, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
         case  5:
         values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 35, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 141, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  4:
         values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 35, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 141, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  3:
         values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 35, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 141, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  2:
         values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 35, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 141, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  1:
         values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 35, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 141, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  0: break;
         default: goto __pyx_L5_argtuple_error;
       }
       const Py_ssize_t kwd_pos_args = __pyx_nargs;
-      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "bind_render", 0) < (0)) __PYX_ERR(0, 35, __pyx_L3_error)
-      for (Py_ssize_t i = __pyx_nargs; i < 8; i++) {
-        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("bind_render", 1, 8, 8, i); __PYX_ERR(0, 35, __pyx_L3_error) }
+      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "bind_render", 0) < (0)) __PYX_ERR(0, 141, __pyx_L3_error)
+      for (Py_ssize_t i = __pyx_nargs; i < 5; i++) {
+        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("bind_render", 1, 5, 5, i); __PYX_ERR(0, 141, __pyx_L3_error) }
       }
-    } else if (unlikely(__pyx_nargs != 8)) {
+    } else if (unlikely(__pyx_nargs != 5)) {
       goto __pyx_L5_argtuple_error;
     } else {
       values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 35, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 141, __pyx_L3_error)
       values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 35, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 141, __pyx_L3_error)
       values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 35, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 141, __pyx_L3_error)
       values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 35, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 141, __pyx_L3_error)
       values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 35, __pyx_L3_error)
-      values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 35, __pyx_L3_error)
-      values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 35, __pyx_L3_error)
-      values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 35, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 141, __pyx_L3_error)
     }
     __pyx_v_pixels = values[0];
-    __pyx_v_width = __Pyx_PyLong_As_int(values[1]); if (unlikely((__pyx_v_width == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 37, __pyx_L3_error)
-    __pyx_v_height = __Pyx_PyLong_As_int(values[2]); if (unlikely((__pyx_v_height == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 38, __pyx_L3_error)
-    __pyx_v_tree = values[3];
-    __pyx_v_layers = ((PyObject*)values[4]);
-    __pyx_v_layer_op_ids = ((PyObject*)values[5]);
-    __pyx_v_shape_objects = ((PyObject*)values[6]);
-    __pyx_v_num_layers = __Pyx_PyLong_As_int(values[7]); if (unlikely((__pyx_v_num_layers == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 43, __pyx_L3_error)
+    __pyx_v_width = __Pyx_PyLong_As_int(values[1]); if (unlikely((__pyx_v_width == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 143, __pyx_L3_error)
+    __pyx_v_height = __Pyx_PyLong_As_int(values[2]); if (unlikely((__pyx_v_height == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 144, __pyx_L3_error)
+    __pyx_v_quadtree_blob = values[3];
+    __pyx_v_shape_objects = ((PyObject*)values[4]);
   }
   goto __pyx_L6_skip;
   __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("bind_render", 1, 8, 8, __pyx_nargs); __PYX_ERR(0, 35, __pyx_L3_error)
+  __Pyx_RaiseArgtupleInvalid("bind_render", 1, 5, 5, __pyx_nargs); __PYX_ERR(0, 141, __pyx_L3_error)
   __pyx_L6_skip:;
   goto __pyx_L4_argument_unpacking_done;
   __pyx_L3_error:;
@@ -18210,10 +19125,8 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  if (unlikely(!__Pyx_ArgTypeTest(((PyObject *)__pyx_v_layers), (&PyList_Type), 1, "layers", 1))) __PYX_ERR(0, 40, __pyx_L1_error)
-  if (unlikely(!__Pyx_ArgTypeTest(((PyObject *)__pyx_v_layer_op_ids), (&PyList_Type), 1, "layer_op_ids", 1))) __PYX_ERR(0, 41, __pyx_L1_error)
-  if (unlikely(!__Pyx_ArgTypeTest(((PyObject *)__pyx_v_shape_objects), (&PyList_Type), 1, "shape_objects", 1))) __PYX_ERR(0, 42, __pyx_L1_error)
-  __pyx_r = __pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(__pyx_self, __pyx_v_pixels, __pyx_v_width, __pyx_v_height, __pyx_v_tree, __pyx_v_layers, __pyx_v_layer_op_ids, __pyx_v_shape_objects, __pyx_v_num_layers);
+  if (unlikely(!__Pyx_ArgTypeTest(((PyObject *)__pyx_v_shape_objects), (&PyList_Type), 1, "shape_objects", 1))) __PYX_ERR(0, 146, __pyx_L1_error)
+  __pyx_r = __pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(__pyx_self, __pyx_v_pixels, __pyx_v_width, __pyx_v_height, __pyx_v_quadtree_blob, __pyx_v_shape_objects);
 
   /* function exit code */
   goto __pyx_L0;
@@ -18230,12 +19143,11 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   __pyx_L7_cleaned_up:;
 
 
-
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_pixels, int __pyx_v_width, int __pyx_v_height, PyObject *__pyx_v_tree, PyObject *__pyx_v_layers, PyObject *__pyx_v_layer_op_ids, PyObject *__pyx_v_shape_objects, int __pyx_v_num_layers) {
+static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_pixels, int __pyx_v_width, int __pyx_v_height, PyObject *__pyx_v_quadtree_blob, PyObject *__pyx_v_shape_objects) {
   __Pyx_memviewslice __pyx_v_view = { 0, 0, { 0 }, { 0 }, { 0 } };
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
@@ -18249,20 +19161,20 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("bind_render", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":46
+  /* "imgcomp/_stacklang_render_c.pyx":149
  * ) -> None:
- *     """Attach surface, quadtree, scene layers, and per-layer VM op ids."""
+ *     """Attach surface and mmap'd quadtree blob for C z-list compositing."""
  *     cdef unsigned char[:] view = pixels             # <<<<<<<<<<<<<<
  *     if view.shape[0] != width * height * 4:
  *         raise ValueError("pixel buffer size mismatch")
 */
-  __pyx_t_1 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char(__pyx_v_pixels, PyBUF_WRITABLE); if (unlikely(!__pyx_t_1.memview)) __PYX_ERR(0, 46, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char(__pyx_v_pixels, PyBUF_WRITABLE); if (unlikely(!__pyx_t_1.memview)) __PYX_ERR(0, 149, __pyx_L1_error)
   __pyx_v_view = __pyx_t_1;
   __pyx_t_1.memview = NULL;
   __pyx_t_1.data = NULL;
 
-  /* "imgcomp/_stacklang_render_c.pyx":47
- *     """Attach surface, quadtree, scene layers, and per-layer VM op ids."""
+  /* "imgcomp/_stacklang_render_c.pyx":150
+ *     """Attach surface and mmap'd quadtree blob for C z-list compositing."""
  *     cdef unsigned char[:] view = pixels
  *     if view.shape[0] != width * height * 4:             # <<<<<<<<<<<<<<
  *         raise ValueError("pixel buffer size mismatch")
@@ -18273,12 +19185,12 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
   if (unlikely(__pyx_t_2)) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":48
+    /* "imgcomp/_stacklang_render_c.pyx":151
  *     cdef unsigned char[:] view = pixels
  *     if view.shape[0] != width * height * 4:
  *         raise ValueError("pixel buffer size mismatch")             # <<<<<<<<<<<<<<
  *     global _pixels, _buf_width, _buf_height, _half_w, _half_h
- *     global _tree, _layers, _layer_op_ids, _shape_objects, _num_layers
+ *     global _shape_objects
 */
     __pyx_t_4 = NULL;
     __pyx_t_5 = 1;
@@ -18286,15 +19198,15 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
       PyObject *__pyx_callargs[2] = {__pyx_t_4, __pyx_mstate_global->__pyx_kp_u_pixel_buffer_size_mismatch};
       __pyx_t_3 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_ValueError)), __pyx_callargs+__pyx_t_5, (2-__pyx_t_5) | (__pyx_t_5*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
       __Pyx_XDECREF(__pyx_t_4); __pyx_t_4 = 0;
-      if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 48, __pyx_L1_error)
+      if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 151, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_3);
     }
     __Pyx_Raise(__pyx_t_3, 0, 0, 0);
     __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
-    __PYX_ERR(0, 48, __pyx_L1_error)
+    __PYX_ERR(0, 151, __pyx_L1_error)
 
-    /* "imgcomp/_stacklang_render_c.pyx":47
- *     """Attach surface, quadtree, scene layers, and per-layer VM op ids."""
+    /* "imgcomp/_stacklang_render_c.pyx":150
+ *     """Attach surface and mmap'd quadtree blob for C z-list compositing."""
  *     cdef unsigned char[:] view = pixels
  *     if view.shape[0] != width * height * 4:             # <<<<<<<<<<<<<<
  *         raise ValueError("pixel buffer size mismatch")
@@ -18302,9 +19214,9 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":51
+  /* "imgcomp/_stacklang_render_c.pyx":154
  *     global _pixels, _buf_width, _buf_height, _half_w, _half_h
- *     global _tree, _layers, _layer_op_ids, _shape_objects, _num_layers
+ *     global _shape_objects
  *     _pixels = view             # <<<<<<<<<<<<<<
  *     _buf_width = width
  *     _buf_height = height
@@ -18313,8 +19225,8 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
   __PYX_INC_MEMVIEW(&__pyx_v_view, 1);
   __pyx_v_7imgcomp_19_stacklang_render_c__pixels = __pyx_v_view;
 
-  /* "imgcomp/_stacklang_render_c.pyx":52
- *     global _tree, _layers, _layer_op_ids, _shape_objects, _num_layers
+  /* "imgcomp/_stacklang_render_c.pyx":155
+ *     global _shape_objects
  *     _pixels = view
  *     _buf_width = width             # <<<<<<<<<<<<<<
  *     _buf_height = height
@@ -18322,7 +19234,7 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__buf_width = __pyx_v_width;
 
-  /* "imgcomp/_stacklang_render_c.pyx":53
+  /* "imgcomp/_stacklang_render_c.pyx":156
  *     _pixels = view
  *     _buf_width = width
  *     _buf_height = height             # <<<<<<<<<<<<<<
@@ -18331,65 +19243,29 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__buf_height = __pyx_v_height;
 
-  /* "imgcomp/_stacklang_render_c.pyx":54
+  /* "imgcomp/_stacklang_render_c.pyx":157
  *     _buf_width = width
  *     _buf_height = height
  *     _half_w = width / 2.0             # <<<<<<<<<<<<<<
  *     _half_h = height / 2.0
- *     _tree = tree
+ *     _shape_objects = shape_objects
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__half_w = (((double)__pyx_v_width) / 2.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":55
+  /* "imgcomp/_stacklang_render_c.pyx":158
  *     _buf_height = height
  *     _half_w = width / 2.0
  *     _half_h = height / 2.0             # <<<<<<<<<<<<<<
- *     _tree = tree
- *     _layers = layers
+ *     _shape_objects = shape_objects
+ *     _bind_quadtree_blob(quadtree_blob)
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__half_h = (((double)__pyx_v_height) / 2.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":56
+  /* "imgcomp/_stacklang_render_c.pyx":159
  *     _half_w = width / 2.0
  *     _half_h = height / 2.0
- *     _tree = tree             # <<<<<<<<<<<<<<
- *     _layers = layers
- *     _layer_op_ids = layer_op_ids
-*/
-  __Pyx_INCREF(__pyx_v_tree);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__tree);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__tree, __pyx_v_tree);
-  __Pyx_GIVEREF(__pyx_v_tree);
-
-  /* "imgcomp/_stacklang_render_c.pyx":57
- *     _half_h = height / 2.0
- *     _tree = tree
- *     _layers = layers             # <<<<<<<<<<<<<<
- *     _layer_op_ids = layer_op_ids
- *     _shape_objects = shape_objects
-*/
-  __Pyx_INCREF(__pyx_v_layers);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__layers);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__layers, __pyx_v_layers);
-  __Pyx_GIVEREF(__pyx_v_layers);
-
-  /* "imgcomp/_stacklang_render_c.pyx":58
- *     _tree = tree
- *     _layers = layers
- *     _layer_op_ids = layer_op_ids             # <<<<<<<<<<<<<<
- *     _shape_objects = shape_objects
- *     _num_layers = num_layers
-*/
-  __Pyx_INCREF(__pyx_v_layer_op_ids);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids, __pyx_v_layer_op_ids);
-  __Pyx_GIVEREF(__pyx_v_layer_op_ids);
-
-  /* "imgcomp/_stacklang_render_c.pyx":59
- *     _layers = layers
- *     _layer_op_ids = layer_op_ids
  *     _shape_objects = shape_objects             # <<<<<<<<<<<<<<
- *     _num_layers = num_layers
+ *     _bind_quadtree_blob(quadtree_blob)
  * 
 */
   __Pyx_INCREF(__pyx_v_shape_objects);
@@ -18397,16 +19273,16 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
   __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects, __pyx_v_shape_objects);
   __Pyx_GIVEREF(__pyx_v_shape_objects);
 
-  /* "imgcomp/_stacklang_render_c.pyx":60
- *     _layer_op_ids = layer_op_ids
+  /* "imgcomp/_stacklang_render_c.pyx":160
+ *     _half_h = height / 2.0
  *     _shape_objects = shape_objects
- *     _num_layers = num_layers             # <<<<<<<<<<<<<<
+ *     _bind_quadtree_blob(quadtree_blob)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_v_7imgcomp_19_stacklang_render_c__num_layers = __pyx_v_num_layers;
+  __pyx_f_7imgcomp_19_stacklang_render_c__bind_quadtree_blob(__pyx_v_quadtree_blob); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 160, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":35
+  /* "imgcomp/_stacklang_render_c.pyx":141
  * 
  * 
  * def bind_render(             # <<<<<<<<<<<<<<
@@ -18430,7 +19306,7 @@ static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_bind_render(CYTHON_UNUS
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":63
+/* "imgcomp/_stacklang_render_c.pyx":163
  * 
  * 
  * cdef inline void write_rgba(int px, int py, unsigned char r, unsigned char g, unsigned char b, unsigned char a) noexcept:             # <<<<<<<<<<<<<<
@@ -18442,7 +19318,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
   int __pyx_v_offset;
   Py_ssize_t __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":64
+  /* "imgcomp/_stacklang_render_c.pyx":164
  * 
  * cdef inline void write_rgba(int px, int py, unsigned char r, unsigned char g, unsigned char b, unsigned char a) noexcept:
  *     cdef int offset = (py * _buf_width + px) * 4             # <<<<<<<<<<<<<<
@@ -18451,7 +19327,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
 */
   __pyx_v_offset = (((__pyx_v_py * __pyx_v_7imgcomp_19_stacklang_render_c__buf_width) + __pyx_v_px) * 4);
 
-  /* "imgcomp/_stacklang_render_c.pyx":65
+  /* "imgcomp/_stacklang_render_c.pyx":165
  * cdef inline void write_rgba(int px, int py, unsigned char r, unsigned char g, unsigned char b, unsigned char a) noexcept:
  *     cdef int offset = (py * _buf_width + px) * 4
  *     _pixels[offset] = r             # <<<<<<<<<<<<<<
@@ -18461,7 +19337,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
   __pyx_t_1 = __pyx_v_offset;
   *((unsigned char *) ( /* dim=0 */ (__pyx_v_7imgcomp_19_stacklang_render_c__pixels.data + __pyx_t_1 * __pyx_v_7imgcomp_19_stacklang_render_c__pixels.strides[0]) )) = __pyx_v_r;
 
-  /* "imgcomp/_stacklang_render_c.pyx":66
+  /* "imgcomp/_stacklang_render_c.pyx":166
  *     cdef int offset = (py * _buf_width + px) * 4
  *     _pixels[offset] = r
  *     _pixels[offset + 1] = g             # <<<<<<<<<<<<<<
@@ -18471,7 +19347,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
   __pyx_t_1 = (__pyx_v_offset + 1);
   *((unsigned char *) ( /* dim=0 */ (__pyx_v_7imgcomp_19_stacklang_render_c__pixels.data + __pyx_t_1 * __pyx_v_7imgcomp_19_stacklang_render_c__pixels.strides[0]) )) = __pyx_v_g;
 
-  /* "imgcomp/_stacklang_render_c.pyx":67
+  /* "imgcomp/_stacklang_render_c.pyx":167
  *     _pixels[offset] = r
  *     _pixels[offset + 1] = g
  *     _pixels[offset + 2] = b             # <<<<<<<<<<<<<<
@@ -18481,7 +19357,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
   __pyx_t_1 = (__pyx_v_offset + 2);
   *((unsigned char *) ( /* dim=0 */ (__pyx_v_7imgcomp_19_stacklang_render_c__pixels.data + __pyx_t_1 * __pyx_v_7imgcomp_19_stacklang_render_c__pixels.strides[0]) )) = __pyx_v_b;
 
-  /* "imgcomp/_stacklang_render_c.pyx":68
+  /* "imgcomp/_stacklang_render_c.pyx":168
  *     _pixels[offset + 1] = g
  *     _pixels[offset + 2] = b
  *     _pixels[offset + 3] = a             # <<<<<<<<<<<<<<
@@ -18491,7 +19367,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
   __pyx_t_1 = (__pyx_v_offset + 3);
   *((unsigned char *) ( /* dim=0 */ (__pyx_v_7imgcomp_19_stacklang_render_c__pixels.data + __pyx_t_1 * __pyx_v_7imgcomp_19_stacklang_render_c__pixels.strides[0]) )) = __pyx_v_a;
 
-  /* "imgcomp/_stacklang_render_c.pyx":63
+  /* "imgcomp/_stacklang_render_c.pyx":163
  * 
  * 
  * cdef inline void write_rgba(int px, int py, unsigned char r, unsigned char g, unsigned char b, unsigned char a) noexcept:             # <<<<<<<<<<<<<<
@@ -18504,7 +19380,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(int 
 
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":71
+/* "imgcomp/_stacklang_render_c.pyx":171
  * 
  * 
  * cdef inline unsigned char clamp_u8(double value) noexcept:             # <<<<<<<<<<<<<<
@@ -18516,7 +19392,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
   unsigned char __pyx_r;
   int __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":72
+  /* "imgcomp/_stacklang_render_c.pyx":172
  * 
  * cdef inline unsigned char clamp_u8(double value) noexcept:
  *     if value <= 0.0:             # <<<<<<<<<<<<<<
@@ -18528,7 +19404,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
   if (__pyx_t_1) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":73
+    /* "imgcomp/_stacklang_render_c.pyx":173
  * cdef inline unsigned char clamp_u8(double value) noexcept:
  *     if value <= 0.0:
  *         return 0             # <<<<<<<<<<<<<<
@@ -18541,7 +19417,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":72
+    /* "imgcomp/_stacklang_render_c.pyx":172
  * 
  * cdef inline unsigned char clamp_u8(double value) noexcept:
  *     if value <= 0.0:             # <<<<<<<<<<<<<<
@@ -18550,7 +19426,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":74
+  /* "imgcomp/_stacklang_render_c.pyx":174
  *     if value <= 0.0:
  *         return 0
  *     if value >= 255.0:             # <<<<<<<<<<<<<<
@@ -18562,7 +19438,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
   if (__pyx_t_1) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":75
+    /* "imgcomp/_stacklang_render_c.pyx":175
  *         return 0
  *     if value >= 255.0:
  *         return 255             # <<<<<<<<<<<<<<
@@ -18575,7 +19451,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":74
+    /* "imgcomp/_stacklang_render_c.pyx":174
  *     if value <= 0.0:
  *         return 0
  *     if value >= 255.0:             # <<<<<<<<<<<<<<
@@ -18584,7 +19460,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":76
+  /* "imgcomp/_stacklang_render_c.pyx":176
  *     if value >= 255.0:
  *         return 255
  *     return <unsigned char>int(value + 0.5)             # <<<<<<<<<<<<<<
@@ -18597,7 +19473,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
   }
   goto __pyx_L0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":71
+  /* "imgcomp/_stacklang_render_c.pyx":171
  * 
  * 
  * cdef inline unsigned char clamp_u8(double value) noexcept:             # <<<<<<<<<<<<<<
@@ -18611,7 +19487,7 @@ static CYTHON_INLINE unsigned char __pyx_f_7imgcomp_19_stacklang_render_c_clamp_
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":79
+/* "imgcomp/_stacklang_render_c.pyx":179
  * 
  * 
  * cdef inline void push_rgba_float(double r, double g, double b, double a) except *:             # <<<<<<<<<<<<<<
@@ -18625,47 +19501,47 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":80
+  /* "imgcomp/_stacklang_render_c.pyx":180
  * 
  * cdef inline void push_rgba_float(double r, double g, double b, double a) except *:
  *     data_push_float(r)             # <<<<<<<<<<<<<<
  *     data_push_float(g)
  *     data_push_float(b)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_r); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 80, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_r); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 180, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":81
+  /* "imgcomp/_stacklang_render_c.pyx":181
  * cdef inline void push_rgba_float(double r, double g, double b, double a) except *:
  *     data_push_float(r)
  *     data_push_float(g)             # <<<<<<<<<<<<<<
  *     data_push_float(b)
  *     data_push_float(a)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_g); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 81, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_g); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 181, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":82
+  /* "imgcomp/_stacklang_render_c.pyx":182
  *     data_push_float(r)
  *     data_push_float(g)
  *     data_push_float(b)             # <<<<<<<<<<<<<<
  *     data_push_float(a)
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_b); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 82, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_b); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 182, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":83
+  /* "imgcomp/_stacklang_render_c.pyx":183
  *     data_push_float(g)
  *     data_push_float(b)
  *     data_push_float(a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_a); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 83, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_a); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 183, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":79
+  /* "imgcomp/_stacklang_render_c.pyx":179
  * 
  * 
  * cdef inline void push_rgba_float(double r, double g, double b, double a) except *:             # <<<<<<<<<<<<<<
@@ -18681,7 +19557,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float
 
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":86
+/* "imgcomp/_stacklang_render_c.pyx":186
  * 
  * 
  * cdef inline void pop_rgba_float(double* r, double* g, double* b, double* a) except *:             # <<<<<<<<<<<<<<
@@ -18695,51 +19571,51 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_pop_rgba_float(
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":87
+  /* "imgcomp/_stacklang_render_c.pyx":187
  * 
  * cdef inline void pop_rgba_float(double* r, double* g, double* b, double* a) except *:
  *     a[0] = data_pop_float()             # <<<<<<<<<<<<<<
  *     b[0] = data_pop_float()
  *     g[0] = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 87, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 187, __pyx_L1_error)
   (__pyx_v_a[0]) = __pyx_t_1;
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":88
+  /* "imgcomp/_stacklang_render_c.pyx":188
  * cdef inline void pop_rgba_float(double* r, double* g, double* b, double* a) except *:
  *     a[0] = data_pop_float()
  *     b[0] = data_pop_float()             # <<<<<<<<<<<<<<
  *     g[0] = data_pop_float()
  *     r[0] = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 88, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 188, __pyx_L1_error)
   (__pyx_v_b[0]) = __pyx_t_1;
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":89
+  /* "imgcomp/_stacklang_render_c.pyx":189
  *     a[0] = data_pop_float()
  *     b[0] = data_pop_float()
  *     g[0] = data_pop_float()             # <<<<<<<<<<<<<<
  *     r[0] = data_pop_float()
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 89, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 189, __pyx_L1_error)
   (__pyx_v_g[0]) = __pyx_t_1;
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":90
+  /* "imgcomp/_stacklang_render_c.pyx":190
  *     b[0] = data_pop_float()
  *     g[0] = data_pop_float()
  *     r[0] = data_pop_float()             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 90, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 190, __pyx_L1_error)
   (__pyx_v_r[0]) = __pyx_t_1;
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":86
+  /* "imgcomp/_stacklang_render_c.pyx":186
  * 
  * 
  * cdef inline void pop_rgba_float(double* r, double* g, double* b, double* a) except *:             # <<<<<<<<<<<<<<
@@ -18755,7 +19631,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_pop_rgba_float(
 
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":93
+/* "imgcomp/_stacklang_render_c.pyx":193
  * 
  * 
  * cdef inline void src_over(             # <<<<<<<<<<<<<<
@@ -18769,7 +19645,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
   double __pyx_v_out_a;
   int __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":110
+  /* "imgcomp/_stacklang_render_c.pyx":210
  *     cdef double dst_a
  *     cdef double out_a
  *     if sa <= 0.0:             # <<<<<<<<<<<<<<
@@ -18781,7 +19657,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
   if (__pyx_t_1) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":111
+    /* "imgcomp/_stacklang_render_c.pyx":211
  *     cdef double out_a
  *     if sa <= 0.0:
  *         or_[0] = dr             # <<<<<<<<<<<<<<
@@ -18790,7 +19666,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_or_[0]) = __pyx_v_dr;
 
-    /* "imgcomp/_stacklang_render_c.pyx":112
+    /* "imgcomp/_stacklang_render_c.pyx":212
  *     if sa <= 0.0:
  *         or_[0] = dr
  *         og[0] = dg             # <<<<<<<<<<<<<<
@@ -18799,7 +19675,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_og[0]) = __pyx_v_dg;
 
-    /* "imgcomp/_stacklang_render_c.pyx":113
+    /* "imgcomp/_stacklang_render_c.pyx":213
  *         or_[0] = dr
  *         og[0] = dg
  *         ob[0] = db             # <<<<<<<<<<<<<<
@@ -18808,7 +19684,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_ob[0]) = __pyx_v_db;
 
-    /* "imgcomp/_stacklang_render_c.pyx":114
+    /* "imgcomp/_stacklang_render_c.pyx":214
  *         og[0] = dg
  *         ob[0] = db
  *         oa[0] = da             # <<<<<<<<<<<<<<
@@ -18817,7 +19693,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_oa[0]) = __pyx_v_da;
 
-    /* "imgcomp/_stacklang_render_c.pyx":115
+    /* "imgcomp/_stacklang_render_c.pyx":215
  *         ob[0] = db
  *         oa[0] = da
  *         return             # <<<<<<<<<<<<<<
@@ -18828,7 +19704,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":110
+    /* "imgcomp/_stacklang_render_c.pyx":210
  *     cdef double dst_a
  *     cdef double out_a
  *     if sa <= 0.0:             # <<<<<<<<<<<<<<
@@ -18837,7 +19713,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":116
+  /* "imgcomp/_stacklang_render_c.pyx":216
  *         oa[0] = da
  *         return
  *     if sa >= 255.0:             # <<<<<<<<<<<<<<
@@ -18849,7 +19725,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
   if (__pyx_t_1) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":117
+    /* "imgcomp/_stacklang_render_c.pyx":217
  *         return
  *     if sa >= 255.0:
  *         or_[0] = sr             # <<<<<<<<<<<<<<
@@ -18858,7 +19734,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_or_[0]) = __pyx_v_sr;
 
-    /* "imgcomp/_stacklang_render_c.pyx":118
+    /* "imgcomp/_stacklang_render_c.pyx":218
  *     if sa >= 255.0:
  *         or_[0] = sr
  *         og[0] = sg             # <<<<<<<<<<<<<<
@@ -18867,7 +19743,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_og[0]) = __pyx_v_sg;
 
-    /* "imgcomp/_stacklang_render_c.pyx":119
+    /* "imgcomp/_stacklang_render_c.pyx":219
  *         or_[0] = sr
  *         og[0] = sg
  *         ob[0] = sb             # <<<<<<<<<<<<<<
@@ -18876,7 +19752,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_ob[0]) = __pyx_v_sb;
 
-    /* "imgcomp/_stacklang_render_c.pyx":120
+    /* "imgcomp/_stacklang_render_c.pyx":220
  *         og[0] = sg
  *         ob[0] = sb
  *         oa[0] = sa             # <<<<<<<<<<<<<<
@@ -18885,7 +19761,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_oa[0]) = __pyx_v_sa;
 
-    /* "imgcomp/_stacklang_render_c.pyx":121
+    /* "imgcomp/_stacklang_render_c.pyx":221
  *         ob[0] = sb
  *         oa[0] = sa
  *         return             # <<<<<<<<<<<<<<
@@ -18896,7 +19772,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":116
+    /* "imgcomp/_stacklang_render_c.pyx":216
  *         oa[0] = da
  *         return
  *     if sa >= 255.0:             # <<<<<<<<<<<<<<
@@ -18905,7 +19781,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":122
+  /* "imgcomp/_stacklang_render_c.pyx":222
  *         oa[0] = sa
  *         return
  *     src_a = sa / 255.0             # <<<<<<<<<<<<<<
@@ -18914,7 +19790,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   __pyx_v_src_a = (__pyx_v_sa / 255.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":123
+  /* "imgcomp/_stacklang_render_c.pyx":223
  *         return
  *     src_a = sa / 255.0
  *     dst_a = da / 255.0             # <<<<<<<<<<<<<<
@@ -18923,7 +19799,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   __pyx_v_dst_a = (__pyx_v_da / 255.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":124
+  /* "imgcomp/_stacklang_render_c.pyx":224
  *     src_a = sa / 255.0
  *     dst_a = da / 255.0
  *     out_a = src_a + dst_a * (1.0 - src_a)             # <<<<<<<<<<<<<<
@@ -18932,7 +19808,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   __pyx_v_out_a = (__pyx_v_src_a + (__pyx_v_dst_a * (1.0 - __pyx_v_src_a)));
 
-  /* "imgcomp/_stacklang_render_c.pyx":125
+  /* "imgcomp/_stacklang_render_c.pyx":225
  *     dst_a = da / 255.0
  *     out_a = src_a + dst_a * (1.0 - src_a)
  *     if out_a <= 0.0:             # <<<<<<<<<<<<<<
@@ -18944,7 +19820,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
   if (__pyx_t_1) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":126
+    /* "imgcomp/_stacklang_render_c.pyx":226
  *     out_a = src_a + dst_a * (1.0 - src_a)
  *     if out_a <= 0.0:
  *         or_[0] = 0.0             # <<<<<<<<<<<<<<
@@ -18953,7 +19829,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_or_[0]) = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":127
+    /* "imgcomp/_stacklang_render_c.pyx":227
  *     if out_a <= 0.0:
  *         or_[0] = 0.0
  *         og[0] = 0.0             # <<<<<<<<<<<<<<
@@ -18962,7 +19838,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_og[0]) = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":128
+    /* "imgcomp/_stacklang_render_c.pyx":228
  *         or_[0] = 0.0
  *         og[0] = 0.0
  *         ob[0] = 0.0             # <<<<<<<<<<<<<<
@@ -18971,7 +19847,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_ob[0]) = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":129
+    /* "imgcomp/_stacklang_render_c.pyx":229
  *         og[0] = 0.0
  *         ob[0] = 0.0
  *         oa[0] = 0.0             # <<<<<<<<<<<<<<
@@ -18980,7 +19856,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
     (__pyx_v_oa[0]) = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":130
+    /* "imgcomp/_stacklang_render_c.pyx":230
  *         ob[0] = 0.0
  *         oa[0] = 0.0
  *         return             # <<<<<<<<<<<<<<
@@ -18991,7 +19867,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":125
+    /* "imgcomp/_stacklang_render_c.pyx":225
  *     dst_a = da / 255.0
  *     out_a = src_a + dst_a * (1.0 - src_a)
  *     if out_a <= 0.0:             # <<<<<<<<<<<<<<
@@ -19000,7 +19876,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":131
+  /* "imgcomp/_stacklang_render_c.pyx":231
  *         oa[0] = 0.0
  *         return
  *     or_[0] = (sr * src_a + dr * dst_a * (1.0 - src_a)) / out_a             # <<<<<<<<<<<<<<
@@ -19009,7 +19885,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   (__pyx_v_or_[0]) = (((__pyx_v_sr * __pyx_v_src_a) + ((__pyx_v_dr * __pyx_v_dst_a) * (1.0 - __pyx_v_src_a))) / __pyx_v_out_a);
 
-  /* "imgcomp/_stacklang_render_c.pyx":132
+  /* "imgcomp/_stacklang_render_c.pyx":232
  *         return
  *     or_[0] = (sr * src_a + dr * dst_a * (1.0 - src_a)) / out_a
  *     og[0] = (sg * src_a + dg * dst_a * (1.0 - src_a)) / out_a             # <<<<<<<<<<<<<<
@@ -19018,7 +19894,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   (__pyx_v_og[0]) = (((__pyx_v_sg * __pyx_v_src_a) + ((__pyx_v_dg * __pyx_v_dst_a) * (1.0 - __pyx_v_src_a))) / __pyx_v_out_a);
 
-  /* "imgcomp/_stacklang_render_c.pyx":133
+  /* "imgcomp/_stacklang_render_c.pyx":233
  *     or_[0] = (sr * src_a + dr * dst_a * (1.0 - src_a)) / out_a
  *     og[0] = (sg * src_a + dg * dst_a * (1.0 - src_a)) / out_a
  *     ob[0] = (sb * src_a + db * dst_a * (1.0 - src_a)) / out_a             # <<<<<<<<<<<<<<
@@ -19027,7 +19903,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   (__pyx_v_ob[0]) = (((__pyx_v_sb * __pyx_v_src_a) + ((__pyx_v_db * __pyx_v_dst_a) * (1.0 - __pyx_v_src_a))) / __pyx_v_out_a);
 
-  /* "imgcomp/_stacklang_render_c.pyx":134
+  /* "imgcomp/_stacklang_render_c.pyx":234
  *     og[0] = (sg * src_a + dg * dst_a * (1.0 - src_a)) / out_a
  *     ob[0] = (sb * src_a + db * dst_a * (1.0 - src_a)) / out_a
  *     oa[0] = out_a * 255.0             # <<<<<<<<<<<<<<
@@ -19036,7 +19912,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 */
   (__pyx_v_oa[0]) = (__pyx_v_out_a * 255.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":93
+  /* "imgcomp/_stacklang_render_c.pyx":193
  * 
  * 
  * cdef inline void src_over(             # <<<<<<<<<<<<<<
@@ -19052,7 +19928,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_src_over(double
 
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":137
+/* "imgcomp/_stacklang_render_c.pyx":237
  * 
  * 
  * cdef inline int shape_index() except -1:             # <<<<<<<<<<<<<<
@@ -19076,18 +19952,18 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("shape_index", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":138
+  /* "imgcomp/_stacklang_render_c.pyx":238
  * 
  * cdef inline int shape_index() except -1:
  *     cdef int idx = <int>data_pop_float()             # <<<<<<<<<<<<<<
  *     if idx < 0 or idx >= len(_shape_objects):
  *         raise IndexError("shape index out of range")
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 138, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 238, __pyx_L1_error)
   __pyx_v_idx = ((int)__pyx_t_1);
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":139
+  /* "imgcomp/_stacklang_render_c.pyx":239
  * cdef inline int shape_index() except -1:
  *     cdef int idx = <int>data_pop_float()
  *     if idx < 0 or idx >= len(_shape_objects):             # <<<<<<<<<<<<<<
@@ -19108,9 +19984,9 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
   __Pyx_INCREF(__pyx_t_4);
   if (unlikely(__pyx_t_4 == Py_None)) {
     PyErr_SetString(PyExc_TypeError, "object of type \047NoneType\047 has no len()");
-    __PYX_ERR(0, 139, __pyx_L1_error)
+    __PYX_ERR(0, 239, __pyx_L1_error)
   }
-  __pyx_t_5 = __Pyx_PyList_GET_SIZE(__pyx_t_4); if (unlikely(__pyx_t_5 == ((Py_ssize_t)-1))) __PYX_ERR(0, 139, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyList_GET_SIZE(__pyx_t_4); if (unlikely(__pyx_t_5 == ((Py_ssize_t)-1))) __PYX_ERR(0, 239, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __pyx_t_3 = (__pyx_v_idx >= __pyx_t_5);
 
@@ -19122,7 +19998,7 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
   if (unlikely(__pyx_t_2)) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":140
+    /* "imgcomp/_stacklang_render_c.pyx":240
  *     cdef int idx = <int>data_pop_float()
  *     if idx < 0 or idx >= len(_shape_objects):
  *         raise IndexError("shape index out of range")             # <<<<<<<<<<<<<<
@@ -19135,14 +20011,14 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
       PyObject *__pyx_callargs[2] = {__pyx_t_6, __pyx_mstate_global->__pyx_kp_u_shape_index_out_of_range};
       __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)(((PyTypeObject*)PyExc_IndexError)), __pyx_callargs+__pyx_t_7, (2-__pyx_t_7) | (__pyx_t_7*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
       __Pyx_XDECREF(__pyx_t_6); __pyx_t_6 = 0;
-      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 140, __pyx_L1_error)
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 240, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_4);
     }
     __Pyx_Raise(__pyx_t_4, 0, 0, 0);
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __PYX_ERR(0, 140, __pyx_L1_error)
+    __PYX_ERR(0, 240, __pyx_L1_error)
 
-    /* "imgcomp/_stacklang_render_c.pyx":139
+    /* "imgcomp/_stacklang_render_c.pyx":239
  * cdef inline int shape_index() except -1:
  *     cdef int idx = <int>data_pop_float()
  *     if idx < 0 or idx >= len(_shape_objects):             # <<<<<<<<<<<<<<
@@ -19151,7 +20027,7 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":141
+  /* "imgcomp/_stacklang_render_c.pyx":241
  *     if idx < 0 or idx >= len(_shape_objects):
  *         raise IndexError("shape index out of range")
  *     return idx             # <<<<<<<<<<<<<<
@@ -19164,7 +20040,7 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
   }
   goto __pyx_L0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":137
+  /* "imgcomp/_stacklang_render_c.pyx":237
  * 
  * 
  * cdef inline int shape_index() except -1:             # <<<<<<<<<<<<<<
@@ -19185,7 +20061,7 @@ static CYTHON_INLINE int __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(void
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":144
+/* "imgcomp/_stacklang_render_c.pyx":244
  * 
  * 
  * cdef inline void invoke_rgba_at(double gy, double gx, int op_id, double* r, double* g, double* b, double* a) except *:             # <<<<<<<<<<<<<<
@@ -19209,27 +20085,27 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("invoke_rgba_at", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":147
+  /* "imgcomp/_stacklang_render_c.pyx":247
  *     cdef double drop_gx
  *     cdef double drop_gy
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     invoke_body_id(op_id)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 147, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 247, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":148
+  /* "imgcomp/_stacklang_render_c.pyx":248
  *     cdef double drop_gy
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     invoke_body_id(op_id)
  *     pop_rgba_float(r, g, b, a)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 148, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 248, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":149
+  /* "imgcomp/_stacklang_render_c.pyx":249
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     invoke_body_id(op_id)             # <<<<<<<<<<<<<<
@@ -19237,9 +20113,9 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(
  *     drop_gx = data_pop_float()
 */
   __pyx_t_3 = NULL;
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_invoke_body_id); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 149, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_invoke_body_id); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 249, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_5 = __Pyx_PyLong_From_int(__pyx_v_op_id); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 149, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyLong_From_int(__pyx_v_op_id); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 249, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __pyx_t_6 = 1;
   #if CYTHON_UNPACK_METHODS
@@ -19259,41 +20135,41 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(
     __Pyx_XDECREF(__pyx_t_3); __pyx_t_3 = 0;
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 149, __pyx_L1_error)
+    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 249, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
   }
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":150
+  /* "imgcomp/_stacklang_render_c.pyx":250
  *     data_push_float(gx)
  *     invoke_body_id(op_id)
  *     pop_rgba_float(r, g, b, a)             # <<<<<<<<<<<<<<
  *     drop_gx = data_pop_float()
  *     drop_gy = data_pop_float()
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_pop_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 150, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_pop_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 250, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":151
+  /* "imgcomp/_stacklang_render_c.pyx":251
  *     invoke_body_id(op_id)
  *     pop_rgba_float(r, g, b, a)
  *     drop_gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     drop_gy = data_pop_float()
  * 
 */
-  __pyx_t_7 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_7, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 151, __pyx_L1_error)
+  __pyx_t_7 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_7, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 251, __pyx_L1_error)
   __pyx_v_drop_gx = __pyx_t_7;
 
-  /* "imgcomp/_stacklang_render_c.pyx":152
+  /* "imgcomp/_stacklang_render_c.pyx":252
  *     pop_rgba_float(r, g, b, a)
  *     drop_gx = data_pop_float()
  *     drop_gy = data_pop_float()             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_7 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_7, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 152, __pyx_L1_error)
+  __pyx_t_7 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_7, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 252, __pyx_L1_error)
   __pyx_v_drop_gy = __pyx_t_7;
 
-  /* "imgcomp/_stacklang_render_c.pyx":144
+  /* "imgcomp/_stacklang_render_c.pyx":244
  * 
  * 
  * cdef inline void invoke_rgba_at(double gy, double gx, int op_id, double* r, double* g, double* b, double* a) except *:             # <<<<<<<<<<<<<<
@@ -19316,7 +20192,7 @@ static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(
   __Pyx_RefNannyFinishContext();
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":155
+/* "imgcomp/_stacklang_render_c.pyx":255
  * 
  * 
  * cdef int _op_slr_dup_anchor_push_xy() except -1:             # <<<<<<<<<<<<<<
@@ -19335,87 +20211,87 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_push_xy(voi
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":157
+  /* "imgcomp/_stacklang_render_c.pyx":257
  * cdef int _op_slr_dup_anchor_push_xy() except -1:
  *     """Stack gy gx dist -- gy gx dist gy gx . Duplicate anchor under distance."""
  *     cdef double dist = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 157, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 257, __pyx_L1_error)
   __pyx_v_dist = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":158
+  /* "imgcomp/_stacklang_render_c.pyx":258
  *     """Stack gy gx dist -- gy gx dist gy gx . Duplicate anchor under distance."""
  *     cdef double dist = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 158, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 258, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":159
+  /* "imgcomp/_stacklang_render_c.pyx":259
  *     cdef double dist = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 159, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 259, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":160
+  /* "imgcomp/_stacklang_render_c.pyx":260
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     data_push_float(dist)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 160, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 260, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":161
+  /* "imgcomp/_stacklang_render_c.pyx":261
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     data_push_float(dist)
  *     data_push_float(gy)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 161, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 261, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":162
+  /* "imgcomp/_stacklang_render_c.pyx":262
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     data_push_float(dist)             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 162, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 262, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":163
+  /* "imgcomp/_stacklang_render_c.pyx":263
  *     data_push_float(gx)
  *     data_push_float(dist)
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 163, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 263, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":164
+  /* "imgcomp/_stacklang_render_c.pyx":264
  *     data_push_float(dist)
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 164, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 264, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":155
+  /* "imgcomp/_stacklang_render_c.pyx":255
  * 
  * 
  * cdef int _op_slr_dup_anchor_push_xy() except -1:             # <<<<<<<<<<<<<<
@@ -19437,7 +20313,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_push_xy(voi
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":167
+/* "imgcomp/_stacklang_render_c.pyx":267
  * 
  * 
  * cdef int _op_slr_float_max2() except -1:             # <<<<<<<<<<<<<<
@@ -19457,77 +20333,77 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_max2(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":169
+  /* "imgcomp/_stacklang_render_c.pyx":269
  * cdef int _op_slr_float_max2() except -1:
  *     """Stack gy gx d1 d2 -- gy gx max(d1, d2) ."""
  *     cdef double d2 = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double d1 = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 169, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 269, __pyx_L1_error)
   __pyx_v_d2 = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":170
+  /* "imgcomp/_stacklang_render_c.pyx":270
  *     """Stack gy gx d1 d2 -- gy gx max(d1, d2) ."""
  *     cdef double d2 = data_pop_float()
  *     cdef double d1 = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 170, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 270, __pyx_L1_error)
   __pyx_v_d1 = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":171
+  /* "imgcomp/_stacklang_render_c.pyx":271
  *     cdef double d2 = data_pop_float()
  *     cdef double d1 = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 171, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 271, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":172
+  /* "imgcomp/_stacklang_render_c.pyx":272
  *     cdef double d1 = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 172, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 272, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":173
+  /* "imgcomp/_stacklang_render_c.pyx":273
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     data_push_float(fmax(d1, d2))
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 173, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 273, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":174
+  /* "imgcomp/_stacklang_render_c.pyx":274
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     data_push_float(fmax(d1, d2))
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 174, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 274, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":175
+  /* "imgcomp/_stacklang_render_c.pyx":275
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     data_push_float(fmax(d1, d2))             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(fmax(__pyx_v_d1, __pyx_v_d2)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 175, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(fmax(__pyx_v_d1, __pyx_v_d2)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 275, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":167
+  /* "imgcomp/_stacklang_render_c.pyx":267
  * 
  * 
  * cdef int _op_slr_float_max2() except -1:             # <<<<<<<<<<<<<<
@@ -19550,7 +20426,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_max2(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":178
+/* "imgcomp/_stacklang_render_c.pyx":278
  * 
  * 
  * cdef int _op_slr_float_neg() except -1:             # <<<<<<<<<<<<<<
@@ -19567,27 +20443,27 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_neg(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":180
+  /* "imgcomp/_stacklang_render_c.pyx":280
  * cdef int _op_slr_float_neg() except -1:
  *     """Stack d -- -d ."""
  *     cdef double d = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(-d)
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 180, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 280, __pyx_L1_error)
   __pyx_v_d = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":181
+  /* "imgcomp/_stacklang_render_c.pyx":281
  *     """Stack d -- -d ."""
  *     cdef double d = data_pop_float()
  *     data_push_float(-d)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((-__pyx_v_d)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 181, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((-__pyx_v_d)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 281, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":178
+  /* "imgcomp/_stacklang_render_c.pyx":278
  * 
  * 
  * cdef int _op_slr_float_neg() except -1:             # <<<<<<<<<<<<<<
@@ -19607,7 +20483,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_neg(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":184
+/* "imgcomp/_stacklang_render_c.pyx":284
  * 
  * 
  * cdef int _op_slr_offset_xy_sub() except -1:             # <<<<<<<<<<<<<<
@@ -19627,67 +20503,67 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_offset_xy_sub(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":186
+  /* "imgcomp/_stacklang_render_c.pyx":286
  * cdef int _op_slr_offset_xy_sub() except -1:
  *     """Stack gy gx gy gx tx ty -- gy gx gy' gx' . Subtract tx,ty from top coords."""
  *     cdef double ty = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double tx = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 186, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 286, __pyx_L1_error)
   __pyx_v_ty = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":187
+  /* "imgcomp/_stacklang_render_c.pyx":287
  *     """Stack gy gx gy gx tx ty -- gy gx gy' gx' . Subtract tx,ty from top coords."""
  *     cdef double ty = data_pop_float()
  *     cdef double tx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 187, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 287, __pyx_L1_error)
   __pyx_v_tx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":188
+  /* "imgcomp/_stacklang_render_c.pyx":288
  *     cdef double ty = data_pop_float()
  *     cdef double tx = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy - ty)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 188, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 288, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":189
+  /* "imgcomp/_stacklang_render_c.pyx":289
  *     cdef double tx = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy - ty)
  *     data_push_float(gx - tx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 189, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 289, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":190
+  /* "imgcomp/_stacklang_render_c.pyx":290
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy - ty)             # <<<<<<<<<<<<<<
  *     data_push_float(gx - tx)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_gy - __pyx_v_ty)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 190, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_gy - __pyx_v_ty)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 290, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":191
+  /* "imgcomp/_stacklang_render_c.pyx":291
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy - ty)
  *     data_push_float(gx - tx)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_gx - __pyx_v_tx)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 191, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_gx - __pyx_v_tx)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 291, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":184
+  /* "imgcomp/_stacklang_render_c.pyx":284
  * 
  * 
  * cdef int _op_slr_offset_xy_sub() except -1:             # <<<<<<<<<<<<<<
@@ -19710,7 +20586,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_offset_xy_sub(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":194
+/* "imgcomp/_stacklang_render_c.pyx":294
  * 
  * 
  * cdef int _op_slr_rgba_solid_if_hit() except -1:             # <<<<<<<<<<<<<<
@@ -19737,127 +20613,127 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit(void
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":199
+  /* "imgcomp/_stacklang_render_c.pyx":299
  *     If child alpha > 0, push solid (sr,sg,sb,sa); else transparent.
  *     """
  *     cdef double sa = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double sb = data_pop_float()
  *     cdef double sg = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 199, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 299, __pyx_L1_error)
   __pyx_v_sa = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":200
+  /* "imgcomp/_stacklang_render_c.pyx":300
  *     """
  *     cdef double sa = data_pop_float()
  *     cdef double sb = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double sg = data_pop_float()
  *     cdef double sr = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 300, __pyx_L1_error)
   __pyx_v_sb = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":201
+  /* "imgcomp/_stacklang_render_c.pyx":301
  *     cdef double sa = data_pop_float()
  *     cdef double sb = data_pop_float()
  *     cdef double sg = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double sr = data_pop_float()
  *     cdef double ca = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 201, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 301, __pyx_L1_error)
   __pyx_v_sg = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":202
+  /* "imgcomp/_stacklang_render_c.pyx":302
  *     cdef double sb = data_pop_float()
  *     cdef double sg = data_pop_float()
  *     cdef double sr = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double ca = data_pop_float()
  *     cdef double cb = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 202, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 302, __pyx_L1_error)
   __pyx_v_sr = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":203
+  /* "imgcomp/_stacklang_render_c.pyx":303
  *     cdef double sg = data_pop_float()
  *     cdef double sr = data_pop_float()
  *     cdef double ca = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double cb = data_pop_float()
  *     cdef double cg = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 203, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 303, __pyx_L1_error)
   __pyx_v_ca = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":204
+  /* "imgcomp/_stacklang_render_c.pyx":304
  *     cdef double sr = data_pop_float()
  *     cdef double ca = data_pop_float()
  *     cdef double cb = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double cg = data_pop_float()
  *     cdef double cr = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 204, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 304, __pyx_L1_error)
   __pyx_v_cb = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":205
+  /* "imgcomp/_stacklang_render_c.pyx":305
  *     cdef double ca = data_pop_float()
  *     cdef double cb = data_pop_float()
  *     cdef double cg = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double cr = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 205, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 305, __pyx_L1_error)
   __pyx_v_cg = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":206
+  /* "imgcomp/_stacklang_render_c.pyx":306
  *     cdef double cb = data_pop_float()
  *     cdef double cg = data_pop_float()
  *     cdef double cr = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 206, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 306, __pyx_L1_error)
   __pyx_v_cr = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":207
+  /* "imgcomp/_stacklang_render_c.pyx":307
  *     cdef double cg = data_pop_float()
  *     cdef double cr = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 207, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 307, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":208
+  /* "imgcomp/_stacklang_render_c.pyx":308
  *     cdef double cr = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 208, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 308, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":209
+  /* "imgcomp/_stacklang_render_c.pyx":309
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     if ca > 0.0:
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 309, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":210
+  /* "imgcomp/_stacklang_render_c.pyx":310
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     if ca > 0.0:
  *         push_rgba_float(sr, sg, sb, sa)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 210, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 310, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":211
+  /* "imgcomp/_stacklang_render_c.pyx":311
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     if ca > 0.0:             # <<<<<<<<<<<<<<
@@ -19869,16 +20745,16 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit(void
   if (__pyx_t_3) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":212
+    /* "imgcomp/_stacklang_render_c.pyx":312
  *     data_push_float(gx)
  *     if ca > 0.0:
  *         push_rgba_float(sr, sg, sb, sa)             # <<<<<<<<<<<<<<
  *     else:
  *         push_rgba_float(0.0, 0.0, 0.0, 0.0)
 */
-    __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_sr, __pyx_v_sg, __pyx_v_sb, __pyx_v_sa); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 212, __pyx_L1_error)
+    __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_sr, __pyx_v_sg, __pyx_v_sb, __pyx_v_sa); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 312, __pyx_L1_error)
 
-    /* "imgcomp/_stacklang_render_c.pyx":211
+    /* "imgcomp/_stacklang_render_c.pyx":311
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     if ca > 0.0:             # <<<<<<<<<<<<<<
@@ -19888,7 +20764,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit(void
     goto __pyx_L3;
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":214
+  /* "imgcomp/_stacklang_render_c.pyx":314
  *         push_rgba_float(sr, sg, sb, sa)
  *     else:
  *         push_rgba_float(0.0, 0.0, 0.0, 0.0)             # <<<<<<<<<<<<<<
@@ -19896,11 +20772,11 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit(void
  * 
 */
   /*else*/ {
-    __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 214, __pyx_L1_error)
+    __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 314, __pyx_L1_error)
   }
   __pyx_L3:;
 
-  /* "imgcomp/_stacklang_render_c.pyx":194
+  /* "imgcomp/_stacklang_render_c.pyx":294
  * 
  * 
  * cdef int _op_slr_rgba_solid_if_hit() except -1:             # <<<<<<<<<<<<<<
@@ -19929,7 +20805,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit(void
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":217
+/* "imgcomp/_stacklang_render_c.pyx":317
  * 
  * 
  * cdef int _op_slr_dup_xy() except -1:             # <<<<<<<<<<<<<<
@@ -19947,67 +20823,67 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_xy(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":219
+  /* "imgcomp/_stacklang_render_c.pyx":319
  * cdef int _op_slr_dup_xy() except -1:
  *     """Stack gy gx -- gy gx gy gx . Copy coords for later restore."""
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 219, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 319, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":220
+  /* "imgcomp/_stacklang_render_c.pyx":320
  *     """Stack gy gx -- gy gx gy gx . Copy coords for later restore."""
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 220, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 320, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":221
+  /* "imgcomp/_stacklang_render_c.pyx":321
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     data_push_float(gy)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 221, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 321, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":222
+  /* "imgcomp/_stacklang_render_c.pyx":322
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 222, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 322, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":223
+  /* "imgcomp/_stacklang_render_c.pyx":323
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 223, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 323, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":224
+  /* "imgcomp/_stacklang_render_c.pyx":324
  *     data_push_float(gx)
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 224, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 324, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":217
+  /* "imgcomp/_stacklang_render_c.pyx":317
  * 
  * 
  * cdef int _op_slr_dup_xy() except -1:             # <<<<<<<<<<<<<<
@@ -20028,7 +20904,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_xy(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":227
+/* "imgcomp/_stacklang_render_c.pyx":327
  * 
  * 
  * cdef int _op_slr_circle_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20048,37 +20924,37 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_circle_distance(void) 
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":229
+  /* "imgcomp/_stacklang_render_c.pyx":329
  * cdef int _op_slr_circle_distance() except -1:
  *     """Stack gy gx gy gx radius -- gy gx dist ."""
  *     cdef double radius = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 229, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 329, __pyx_L1_error)
   __pyx_v_radius = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":230
+  /* "imgcomp/_stacklang_render_c.pyx":330
  *     """Stack gy gx gy gx radius -- gy gx dist ."""
  *     cdef double radius = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef double dist = sqrt(gx * gx + gy * gy) - radius
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 230, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 330, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":231
+  /* "imgcomp/_stacklang_render_c.pyx":331
  *     cdef double radius = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double dist = sqrt(gx * gx + gy * gy) - radius
  *     data_push_float(dist)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 231, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 331, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":232
+  /* "imgcomp/_stacklang_render_c.pyx":332
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     cdef double dist = sqrt(gx * gx + gy * gy) - radius             # <<<<<<<<<<<<<<
@@ -20087,17 +20963,17 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_circle_distance(void) 
 */
   __pyx_v_dist = (sqrt(((__pyx_v_gx * __pyx_v_gx) + (__pyx_v_gy * __pyx_v_gy))) - __pyx_v_radius);
 
-  /* "imgcomp/_stacklang_render_c.pyx":233
+  /* "imgcomp/_stacklang_render_c.pyx":333
  *     cdef double gy = data_pop_float()
  *     cdef double dist = sqrt(gx * gx + gy * gy) - radius
  *     data_push_float(dist)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 233, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 333, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":227
+  /* "imgcomp/_stacklang_render_c.pyx":327
  * 
  * 
  * cdef int _op_slr_circle_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20120,7 +20996,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_circle_distance(void) 
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":236
+/* "imgcomp/_stacklang_render_c.pyx":336
  * 
  * 
  * cdef int _op_slr_rectangle_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20144,47 +21020,47 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":238
+  /* "imgcomp/_stacklang_render_c.pyx":338
  * cdef int _op_slr_rectangle_distance() except -1:
  *     """Stack gy gx gy gx half_w half_h -- gy gx dist ."""
  *     cdef double half_h = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double half_w = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 238, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 338, __pyx_L1_error)
   __pyx_v_half_h = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":239
+  /* "imgcomp/_stacklang_render_c.pyx":339
  *     """Stack gy gx gy gx half_w half_h -- gy gx dist ."""
  *     cdef double half_h = data_pop_float()
  *     cdef double half_w = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 239, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 339, __pyx_L1_error)
   __pyx_v_half_w = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":240
+  /* "imgcomp/_stacklang_render_c.pyx":340
  *     cdef double half_h = data_pop_float()
  *     cdef double half_w = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef double qx = fabs(gx) - half_w
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 240, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 340, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":241
+  /* "imgcomp/_stacklang_render_c.pyx":341
  *     cdef double half_w = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double qx = fabs(gx) - half_w
  *     cdef double qy = fabs(gy) - half_h
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 241, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 341, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":242
+  /* "imgcomp/_stacklang_render_c.pyx":342
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     cdef double qx = fabs(gx) - half_w             # <<<<<<<<<<<<<<
@@ -20193,7 +21069,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
 */
   __pyx_v_qx = (fabs(__pyx_v_gx) - __pyx_v_half_w);
 
-  /* "imgcomp/_stacklang_render_c.pyx":243
+  /* "imgcomp/_stacklang_render_c.pyx":343
  *     cdef double gy = data_pop_float()
  *     cdef double qx = fabs(gx) - half_w
  *     cdef double qy = fabs(gy) - half_h             # <<<<<<<<<<<<<<
@@ -20202,7 +21078,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
 */
   __pyx_v_qy = (fabs(__pyx_v_gy) - __pyx_v_half_h);
 
-  /* "imgcomp/_stacklang_render_c.pyx":244
+  /* "imgcomp/_stacklang_render_c.pyx":344
  *     cdef double qx = fabs(gx) - half_w
  *     cdef double qy = fabs(gy) - half_h
  *     cdef double outside = sqrt(fmax(qx, 0.0) * fmax(qx, 0.0) + fmax(qy, 0.0) * fmax(qy, 0.0))             # <<<<<<<<<<<<<<
@@ -20211,7 +21087,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
 */
   __pyx_v_outside = sqrt(((fmax(__pyx_v_qx, 0.0) * fmax(__pyx_v_qx, 0.0)) + (fmax(__pyx_v_qy, 0.0) * fmax(__pyx_v_qy, 0.0))));
 
-  /* "imgcomp/_stacklang_render_c.pyx":245
+  /* "imgcomp/_stacklang_render_c.pyx":345
  *     cdef double qy = fabs(gy) - half_h
  *     cdef double outside = sqrt(fmax(qx, 0.0) * fmax(qx, 0.0) + fmax(qy, 0.0) * fmax(qy, 0.0))
  *     cdef double inside = fmin(fmax(qx, qy), 0.0)             # <<<<<<<<<<<<<<
@@ -20220,17 +21096,17 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
 */
   __pyx_v_inside = fmin(fmax(__pyx_v_qx, __pyx_v_qy), 0.0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":246
+  /* "imgcomp/_stacklang_render_c.pyx":346
  *     cdef double outside = sqrt(fmax(qx, 0.0) * fmax(qx, 0.0) + fmax(qy, 0.0) * fmax(qy, 0.0))
  *     cdef double inside = fmin(fmax(qx, qy), 0.0)
  *     data_push_float(outside + inside)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_outside + __pyx_v_inside)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 246, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float((__pyx_v_outside + __pyx_v_inside)); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 346, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":236
+  /* "imgcomp/_stacklang_render_c.pyx":336
  * 
  * 
  * cdef int _op_slr_rectangle_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20257,7 +21133,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance(voi
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":249
+/* "imgcomp/_stacklang_render_c.pyx":349
  * 
  * 
  * cdef int _op_slr_oval_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20281,47 +21157,47 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":251
+  /* "imgcomp/_stacklang_render_c.pyx":351
  * cdef int _op_slr_oval_distance() except -1:
  *     """Stack gy gx gy gx radius_x radius_y -- gy gx dist ."""
  *     cdef double radius_y = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double radius_x = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 251, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 351, __pyx_L1_error)
   __pyx_v_radius_y = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":252
+  /* "imgcomp/_stacklang_render_c.pyx":352
  *     """Stack gy gx gy gx radius_x radius_y -- gy gx dist ."""
  *     cdef double radius_y = data_pop_float()
  *     cdef double radius_x = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 252, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 352, __pyx_L1_error)
   __pyx_v_radius_x = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":253
+  /* "imgcomp/_stacklang_render_c.pyx":353
  *     cdef double radius_y = data_pop_float()
  *     cdef double radius_x = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef double nx = gx / radius_x
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 253, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 353, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":254
+  /* "imgcomp/_stacklang_render_c.pyx":354
  *     cdef double radius_x = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double nx = gx / radius_x
  *     cdef double ny = gy / radius_y
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 254, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 354, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":255
+  /* "imgcomp/_stacklang_render_c.pyx":355
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     cdef double nx = gx / radius_x             # <<<<<<<<<<<<<<
@@ -20330,7 +21206,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
 */
   __pyx_v_nx = (__pyx_v_gx / __pyx_v_radius_x);
 
-  /* "imgcomp/_stacklang_render_c.pyx":256
+  /* "imgcomp/_stacklang_render_c.pyx":356
  *     cdef double gy = data_pop_float()
  *     cdef double nx = gx / radius_x
  *     cdef double ny = gy / radius_y             # <<<<<<<<<<<<<<
@@ -20339,7 +21215,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
 */
   __pyx_v_ny = (__pyx_v_gy / __pyx_v_radius_y);
 
-  /* "imgcomp/_stacklang_render_c.pyx":257
+  /* "imgcomp/_stacklang_render_c.pyx":357
  *     cdef double nx = gx / radius_x
  *     cdef double ny = gy / radius_y
  *     cdef double scale = fmin(radius_x, radius_y)             # <<<<<<<<<<<<<<
@@ -20348,7 +21224,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
 */
   __pyx_v_scale = fmin(__pyx_v_radius_x, __pyx_v_radius_y);
 
-  /* "imgcomp/_stacklang_render_c.pyx":258
+  /* "imgcomp/_stacklang_render_c.pyx":358
  *     cdef double ny = gy / radius_y
  *     cdef double scale = fmin(radius_x, radius_y)
  *     cdef double dist = (sqrt(nx * nx + ny * ny) - 1.0) * scale             # <<<<<<<<<<<<<<
@@ -20357,17 +21233,17 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
 */
   __pyx_v_dist = ((sqrt(((__pyx_v_nx * __pyx_v_nx) + (__pyx_v_ny * __pyx_v_ny))) - 1.0) * __pyx_v_scale);
 
-  /* "imgcomp/_stacklang_render_c.pyx":259
+  /* "imgcomp/_stacklang_render_c.pyx":359
  *     cdef double scale = fmin(radius_x, radius_y)
  *     cdef double dist = (sqrt(nx * nx + ny * ny) - 1.0) * scale
  *     data_push_float(dist)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 259, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 359, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":249
+  /* "imgcomp/_stacklang_render_c.pyx":349
  * 
  * 
  * cdef int _op_slr_oval_distance() except -1:             # <<<<<<<<<<<<<<
@@ -20394,7 +21270,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":262
+/* "imgcomp/_stacklang_render_c.pyx":362
  * 
  * 
  * cdef int _op_slr_fill_white() except -1:             # <<<<<<<<<<<<<<
@@ -20412,56 +21288,56 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_fill_white(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":264
+  /* "imgcomp/_stacklang_render_c.pyx":364
  * cdef int _op_slr_fill_white() except -1:
  *     """Stack gy gx -- gy gx r g b a . Opaque WHITE everywhere."""
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 264, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 364, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":265
+  /* "imgcomp/_stacklang_render_c.pyx":365
  *     """Stack gy gx -- gy gx r g b a . Opaque WHITE everywhere."""
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 265, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 365, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":266
+  /* "imgcomp/_stacklang_render_c.pyx":366
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     push_rgba_float(255.0, 255.0, 255.0, 255.0)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 266, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 366, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":267
+  /* "imgcomp/_stacklang_render_c.pyx":367
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     push_rgba_float(255.0, 255.0, 255.0, 255.0)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 267, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 367, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":268
+  /* "imgcomp/_stacklang_render_c.pyx":368
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     push_rgba_float(255.0, 255.0, 255.0, 255.0)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(255.0, 255.0, 255.0, 255.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 268, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(255.0, 255.0, 255.0, 255.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 368, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":262
+  /* "imgcomp/_stacklang_render_c.pyx":362
  * 
  * 
  * cdef int _op_slr_fill_white() except -1:             # <<<<<<<<<<<<<<
@@ -20482,7 +21358,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_fill_white(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":271
+/* "imgcomp/_stacklang_render_c.pyx":371
  * 
  * 
  * cdef int _op_slr_rgba_transparent() except -1:             # <<<<<<<<<<<<<<
@@ -20500,56 +21376,56 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_transparent(void)
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":273
+  /* "imgcomp/_stacklang_render_c.pyx":373
  * cdef int _op_slr_rgba_transparent() except -1:
  *     """Stack gy gx -- gy gx r g b a . Push transparent accum onto stack."""
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 273, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 373, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":274
+  /* "imgcomp/_stacklang_render_c.pyx":374
  *     """Stack gy gx -- gy gx r g b a . Push transparent accum onto stack."""
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 274, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 374, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":275
+  /* "imgcomp/_stacklang_render_c.pyx":375
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     push_rgba_float(0.0, 0.0, 0.0, 0.0)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 275, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 375, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":276
+  /* "imgcomp/_stacklang_render_c.pyx":376
  *     cdef double gy = data_pop_float()
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     push_rgba_float(0.0, 0.0, 0.0, 0.0)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 276, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 376, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":277
+  /* "imgcomp/_stacklang_render_c.pyx":377
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     push_rgba_float(0.0, 0.0, 0.0, 0.0)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 277, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 377, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":271
+  /* "imgcomp/_stacklang_render_c.pyx":371
  * 
  * 
  * cdef int _op_slr_rgba_transparent() except -1:             # <<<<<<<<<<<<<<
@@ -20570,7 +21446,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_transparent(void)
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":280
+/* "imgcomp/_stacklang_render_c.pyx":380
  * 
  * 
  * cdef int _op_slr_push_transparent_accum() except -1:             # <<<<<<<<<<<<<<
@@ -20584,16 +21460,16 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_push_transparent_accum
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":282
+  /* "imgcomp/_stacklang_render_c.pyx":382
  * cdef int _op_slr_push_transparent_accum() except -1:
  *     """Stack gy gx -- gy gx 0 0 0 0 . Keep anchor xy, push transparent accum."""
  *     push_rgba_float(0.0, 0.0, 0.0, 0.0)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 282, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(0.0, 0.0, 0.0, 0.0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 382, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":280
+  /* "imgcomp/_stacklang_render_c.pyx":380
  * 
  * 
  * cdef int _op_slr_push_transparent_accum() except -1:             # <<<<<<<<<<<<<<
@@ -20612,7 +21488,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_push_transparent_accum
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":285
+/* "imgcomp/_stacklang_render_c.pyx":385
  * 
  * 
  * cdef int _op_slr_dup_anchor_xy() except -1:             # <<<<<<<<<<<<<<
@@ -20630,47 +21506,47 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_xy(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":287
+  /* "imgcomp/_stacklang_render_c.pyx":387
  * cdef int _op_slr_dup_anchor_xy() except -1:
  *     """Stack gy gx ... -- gy gx ... gy gx . Copy bottom anchor xy to top."""
  *     cdef double gy = data_peek_bottom_float(0)             # <<<<<<<<<<<<<<
  *     cdef double gx = data_peek_bottom_float(1)
  *     data_push_float(gy)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float(0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 287, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float(0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 387, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":288
+  /* "imgcomp/_stacklang_render_c.pyx":388
  *     """Stack gy gx ... -- gy gx ... gy gx . Copy bottom anchor xy to top."""
  *     cdef double gy = data_peek_bottom_float(0)
  *     cdef double gx = data_peek_bottom_float(1)             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float(1); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 288, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float(1); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 388, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":289
+  /* "imgcomp/_stacklang_render_c.pyx":389
  *     cdef double gy = data_peek_bottom_float(0)
  *     cdef double gx = data_peek_bottom_float(1)
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 289, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 389, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":290
+  /* "imgcomp/_stacklang_render_c.pyx":390
  *     cdef double gx = data_peek_bottom_float(1)
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 290, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 390, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":285
+  /* "imgcomp/_stacklang_render_c.pyx":385
  * 
  * 
  * cdef int _op_slr_dup_anchor_xy() except -1:             # <<<<<<<<<<<<<<
@@ -20691,7 +21567,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_xy(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":293
+/* "imgcomp/_stacklang_render_c.pyx":393
  * 
  * 
  * cdef int _op_slr_drop_hit_xy() except -1:             # <<<<<<<<<<<<<<
@@ -20711,107 +21587,107 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_drop_hit_xy(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":295
+  /* "imgcomp/_stacklang_render_c.pyx":395
  * cdef int _op_slr_drop_hit_xy() except -1:
  *     """Stack ... gy gx r g b a -- ... r g b a . Drop hit coords under top RGBA."""
  *     cdef double a = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 295, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 395, __pyx_L1_error)
   __pyx_v_a = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":296
+  /* "imgcomp/_stacklang_render_c.pyx":396
  *     """Stack ... gy gx r g b a -- ... r g b a . Drop hit coords under top RGBA."""
  *     cdef double a = data_pop_float()
  *     cdef double b = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 296, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 396, __pyx_L1_error)
   __pyx_v_b = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":297
+  /* "imgcomp/_stacklang_render_c.pyx":397
  *     cdef double a = data_pop_float()
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double r = data_pop_float()
  *     data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 297, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 397, __pyx_L1_error)
   __pyx_v_g = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":298
+  /* "imgcomp/_stacklang_render_c.pyx":398
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_pop_float()
  *     data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 298, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 398, __pyx_L1_error)
   __pyx_v_r = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":299
+  /* "imgcomp/_stacklang_render_c.pyx":399
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()
  *     data_pop_float()             # <<<<<<<<<<<<<<
  *     data_pop_float()
  *     data_push_float(r)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 299, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 399, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":300
+  /* "imgcomp/_stacklang_render_c.pyx":400
  *     cdef double r = data_pop_float()
  *     data_pop_float()
  *     data_pop_float()             # <<<<<<<<<<<<<<
  *     data_push_float(r)
  *     data_push_float(g)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 300, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 400, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":301
+  /* "imgcomp/_stacklang_render_c.pyx":401
  *     data_pop_float()
  *     data_pop_float()
  *     data_push_float(r)             # <<<<<<<<<<<<<<
  *     data_push_float(g)
  *     data_push_float(b)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_r); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 301, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_r); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 401, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":302
+  /* "imgcomp/_stacklang_render_c.pyx":402
  *     data_pop_float()
  *     data_push_float(r)
  *     data_push_float(g)             # <<<<<<<<<<<<<<
  *     data_push_float(b)
  *     data_push_float(a)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_g); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 302, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_g); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 402, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":303
+  /* "imgcomp/_stacklang_render_c.pyx":403
  *     data_push_float(r)
  *     data_push_float(g)
  *     data_push_float(b)             # <<<<<<<<<<<<<<
  *     data_push_float(a)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_b); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 303, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_b); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 403, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":304
+  /* "imgcomp/_stacklang_render_c.pyx":404
  *     data_push_float(g)
  *     data_push_float(b)
  *     data_push_float(a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_a); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 304, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_a); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 404, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":293
+  /* "imgcomp/_stacklang_render_c.pyx":393
  * 
  * 
  * cdef int _op_slr_drop_hit_xy() except -1:             # <<<<<<<<<<<<<<
@@ -20834,7 +21710,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_drop_hit_xy(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":307
+/* "imgcomp/_stacklang_render_c.pyx":407
  * 
  * 
  * cdef int _op_slr_src_over_layer() except -1:             # <<<<<<<<<<<<<<
@@ -20864,107 +21740,107 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_src_over_layer(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":312
+  /* "imgcomp/_stacklang_render_c.pyx":412
  *     Match ``src_over(layer, accum)`` in ``imgcomp.compound.Union.color_at``.
  *     """
  *     cdef double ma = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double mb = data_pop_float()
  *     cdef double mg = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 312, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 412, __pyx_L1_error)
   __pyx_v_ma = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":313
+  /* "imgcomp/_stacklang_render_c.pyx":413
  *     """
  *     cdef double ma = data_pop_float()
  *     cdef double mb = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double mg = data_pop_float()
  *     cdef double mr = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 313, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 413, __pyx_L1_error)
   __pyx_v_mb = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":314
+  /* "imgcomp/_stacklang_render_c.pyx":414
  *     cdef double ma = data_pop_float()
  *     cdef double mb = data_pop_float()
  *     cdef double mg = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double mr = data_pop_float()
  *     cdef double aa = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 314, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 414, __pyx_L1_error)
   __pyx_v_mg = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":315
+  /* "imgcomp/_stacklang_render_c.pyx":415
  *     cdef double mb = data_pop_float()
  *     cdef double mg = data_pop_float()
  *     cdef double mr = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double aa = data_pop_float()
  *     cdef double ab = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 315, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 415, __pyx_L1_error)
   __pyx_v_mr = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":316
+  /* "imgcomp/_stacklang_render_c.pyx":416
  *     cdef double mg = data_pop_float()
  *     cdef double mr = data_pop_float()
  *     cdef double aa = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double ab = data_pop_float()
  *     cdef double ag = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 316, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 416, __pyx_L1_error)
   __pyx_v_aa = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":317
+  /* "imgcomp/_stacklang_render_c.pyx":417
  *     cdef double mr = data_pop_float()
  *     cdef double aa = data_pop_float()
  *     cdef double ab = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double ag = data_pop_float()
  *     cdef double ar = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 317, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 417, __pyx_L1_error)
   __pyx_v_ab = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":318
+  /* "imgcomp/_stacklang_render_c.pyx":418
  *     cdef double aa = data_pop_float()
  *     cdef double ab = data_pop_float()
  *     cdef double ag = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double ar = data_pop_float()
  *     cdef double gx = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 318, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 418, __pyx_L1_error)
   __pyx_v_ag = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":319
+  /* "imgcomp/_stacklang_render_c.pyx":419
  *     cdef double ab = data_pop_float()
  *     cdef double ag = data_pop_float()
  *     cdef double ar = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 319, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 419, __pyx_L1_error)
   __pyx_v_ar = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":320
+  /* "imgcomp/_stacklang_render_c.pyx":420
  *     cdef double ag = data_pop_float()
  *     cdef double ar = data_pop_float()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef double out_r
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 320, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 420, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":321
+  /* "imgcomp/_stacklang_render_c.pyx":421
  *     cdef double ar = data_pop_float()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double out_r
  *     cdef double out_g
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 321, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 421, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":326
+  /* "imgcomp/_stacklang_render_c.pyx":426
  *     cdef double out_b
  *     cdef double out_a
  *     src_over(ar, ag, ab, aa, mr, mg, mb, ma, &out_r, &out_g, &out_b, &out_a)             # <<<<<<<<<<<<<<
@@ -20973,36 +21849,36 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_src_over_layer(void) {
 */
   __pyx_f_7imgcomp_19_stacklang_render_c_src_over(__pyx_v_ar, __pyx_v_ag, __pyx_v_ab, __pyx_v_aa, __pyx_v_mr, __pyx_v_mg, __pyx_v_mb, __pyx_v_ma, (&__pyx_v_out_r), (&__pyx_v_out_g), (&__pyx_v_out_b), (&__pyx_v_out_a));
 
-  /* "imgcomp/_stacklang_render_c.pyx":327
+  /* "imgcomp/_stacklang_render_c.pyx":427
  *     cdef double out_a
  *     src_over(ar, ag, ab, aa, mr, mg, mb, ma, &out_r, &out_g, &out_b, &out_a)
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     push_rgba_float(out_r, out_g, out_b, out_a)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 327, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 427, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":328
+  /* "imgcomp/_stacklang_render_c.pyx":428
  *     src_over(ar, ag, ab, aa, mr, mg, mb, ma, &out_r, &out_g, &out_b, &out_a)
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     push_rgba_float(out_r, out_g, out_b, out_a)
  * 
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 328, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 428, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":329
+  /* "imgcomp/_stacklang_render_c.pyx":429
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     push_rgba_float(out_r, out_g, out_b, out_a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_out_r, __pyx_v_out_g, __pyx_v_out_b, __pyx_v_out_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 329, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_out_r, __pyx_v_out_g, __pyx_v_out_b, __pyx_v_out_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 429, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":307
+  /* "imgcomp/_stacklang_render_c.pyx":407
  * 
  * 
  * cdef int _op_slr_src_over_layer() except -1:             # <<<<<<<<<<<<<<
@@ -21035,7 +21911,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_src_over_layer(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":332
+/* "imgcomp/_stacklang_render_c.pyx":432
  * 
  * 
  * cdef int _op_slr_anchorize_rgba() except -1:             # <<<<<<<<<<<<<<
@@ -21054,76 +21930,76 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_anchorize_rgba(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":334
+  /* "imgcomp/_stacklang_render_c.pyx":434
  * cdef int _op_slr_anchorize_rgba() except -1:
  *     """Stack gy gx wy wx r g b a -- gy gx r g b a . Drop translated work coords."""
  *     cdef double a = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 334, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 434, __pyx_L1_error)
   __pyx_v_a = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":335
+  /* "imgcomp/_stacklang_render_c.pyx":435
  *     """Stack gy gx wy wx r g b a -- gy gx r g b a . Drop translated work coords."""
  *     cdef double a = data_pop_float()
  *     cdef double b = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 335, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 435, __pyx_L1_error)
   __pyx_v_b = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":336
+  /* "imgcomp/_stacklang_render_c.pyx":436
  *     cdef double a = data_pop_float()
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double r = data_pop_float()
  *     data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 336, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 436, __pyx_L1_error)
   __pyx_v_g = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":337
+  /* "imgcomp/_stacklang_render_c.pyx":437
  *     cdef double b = data_pop_float()
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()             # <<<<<<<<<<<<<<
  *     data_pop_float()
  *     data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 337, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 437, __pyx_L1_error)
   __pyx_v_r = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":338
+  /* "imgcomp/_stacklang_render_c.pyx":438
  *     cdef double g = data_pop_float()
  *     cdef double r = data_pop_float()
  *     data_pop_float()             # <<<<<<<<<<<<<<
  *     data_pop_float()
  *     push_rgba_float(r, g, b, a)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 338, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 438, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":339
+  /* "imgcomp/_stacklang_render_c.pyx":439
  *     cdef double r = data_pop_float()
  *     data_pop_float()
  *     data_pop_float()             # <<<<<<<<<<<<<<
  *     push_rgba_float(r, g, b, a)
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 339, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 439, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":340
+  /* "imgcomp/_stacklang_render_c.pyx":440
  *     data_pop_float()
  *     data_pop_float()
  *     push_rgba_float(r, g, b, a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 340, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 440, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":332
+  /* "imgcomp/_stacklang_render_c.pyx":432
  * 
  * 
  * cdef int _op_slr_anchorize_rgba() except -1:             # <<<<<<<<<<<<<<
@@ -21146,7 +22022,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_anchorize_rgba(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":343
+/* "imgcomp/_stacklang_render_c.pyx":443
  * 
  * 
  * cdef int _op_slr_python_distance() except -1:             # <<<<<<<<<<<<<<
@@ -21177,37 +22053,37 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("_op_slr_python_distance", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":345
+  /* "imgcomp/_stacklang_render_c.pyx":445
  * cdef int _op_slr_python_distance() except -1:
  *     """Stack gy gx gy gx shape -- gy gx dist . Slow path: shape.distance(gx, gy)."""
  *     cdef int idx = shape_index()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 345, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 445, __pyx_L1_error)
   __pyx_v_idx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":346
+  /* "imgcomp/_stacklang_render_c.pyx":446
  *     """Stack gy gx gy gx shape -- gy gx dist . Slow path: shape.distance(gx, gy)."""
  *     cdef int idx = shape_index()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef object shape = _shape_objects[idx]
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 346, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 446, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_2;
 
-  /* "imgcomp/_stacklang_render_c.pyx":347
+  /* "imgcomp/_stacklang_render_c.pyx":447
  *     cdef int idx = shape_index()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef object shape = _shape_objects[idx]
  *     log_c_to_py("python_distance", idx=idx, gx=gx, gy=gy, shape=shape)
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 347, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 447, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_2;
 
-  /* "imgcomp/_stacklang_render_c.pyx":348
+  /* "imgcomp/_stacklang_render_c.pyx":448
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
  *     cdef object shape = _shape_objects[idx]             # <<<<<<<<<<<<<<
@@ -21216,14 +22092,14 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
 */
   if (unlikely(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects == Py_None)) {
     PyErr_SetString(PyExc_TypeError, "\047NoneType\047 object is not subscriptable");
-    __PYX_ERR(0, 348, __pyx_L1_error)
+    __PYX_ERR(0, 448, __pyx_L1_error)
   }
   __pyx_t_3 = __Pyx_PyList_GET_ITEM(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects, __pyx_v_idx);
   __Pyx_INCREF(__pyx_t_3);
   __pyx_v_shape = __pyx_t_3;
   __pyx_t_3 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":349
+  /* "imgcomp/_stacklang_render_c.pyx":449
  *     cdef double gy = data_pop_float()
  *     cdef object shape = _shape_objects[idx]
  *     log_c_to_py("python_distance", idx=idx, gx=gx, gy=gy, shape=shape)             # <<<<<<<<<<<<<<
@@ -21231,13 +22107,13 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
  *     data_push_float(dist)
 */
   __pyx_t_4 = NULL;
-  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_mstate_global->__pyx_n_u_log_c_to_py); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 349, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_mstate_global->__pyx_n_u_log_c_to_py); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 449, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
-  __pyx_t_6 = __Pyx_PyLong_From_int(__pyx_v_idx); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 349, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyLong_From_int(__pyx_v_idx); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 449, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 349, __pyx_L1_error)
+  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 449, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 349, __pyx_L1_error)
+  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 449, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_8);
   __pyx_t_9 = 1;
   #if CYTHON_UNPACK_METHODS
@@ -21255,13 +22131,13 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
     PyObject *__pyx_callargs[6] = {__pyx_t_4, __pyx_mstate_global->__pyx_n_u_python_distance, __pyx_t_6, __pyx_t_7, __pyx_t_8, __pyx_v_shape};
     #if CYTHON_VECTORCALL
     __pyx_t_10 = __pyx_mstate_global->__pyx_tuple[2];
-    if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 349, __pyx_L1_error)
+    if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 449, __pyx_L1_error)
     __Pyx_INCREF(__pyx_t_10);
     #else
     {
       PyObject *__pyx_temp[4] = {__pyx_mstate_global->__pyx_n_u_idx, __pyx_mstate_global->__pyx_n_u_gx, __pyx_mstate_global->__pyx_n_u_gy, __pyx_mstate_global->__pyx_n_u_shape};
       __pyx_t_10 = __Pyx_MakeKwargDict(__pyx_temp, __pyx_callargs+2, 4);
-      if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 349, __pyx_L1_error)
+      if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 449, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_10);
     }
     #endif
@@ -21272,12 +22148,12 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
     __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
     __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
-    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 349, __pyx_L1_error)
+    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 449, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
   }
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":350
+  /* "imgcomp/_stacklang_render_c.pyx":450
  *     cdef object shape = _shape_objects[idx]
  *     log_c_to_py("python_distance", idx=idx, gx=gx, gy=gy, shape=shape)
  *     cdef double dist = shape.distance(gx, gy)             # <<<<<<<<<<<<<<
@@ -21286,9 +22162,9 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
 */
   __pyx_t_5 = __pyx_v_shape;
   __Pyx_INCREF(__pyx_t_5);
-  __pyx_t_10 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 350, __pyx_L1_error)
+  __pyx_t_10 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 450, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_10);
-  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 350, __pyx_L1_error)
+  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 450, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_8);
   __pyx_t_9 = 0;
   {
@@ -21297,24 +22173,24 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
     __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
     __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
     __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
-    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 350, __pyx_L1_error)
+    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 450, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
   }
-  __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 350, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 450, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
   __pyx_v_dist = __pyx_t_2;
 
-  /* "imgcomp/_stacklang_render_c.pyx":351
+  /* "imgcomp/_stacklang_render_c.pyx":451
  *     log_c_to_py("python_distance", idx=idx, gx=gx, gy=gy, shape=shape)
  *     cdef double dist = shape.distance(gx, gy)
  *     data_push_float(dist)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 351, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_dist); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 451, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":343
+  /* "imgcomp/_stacklang_render_c.pyx":443
  * 
  * 
  * cdef int _op_slr_python_distance() except -1:             # <<<<<<<<<<<<<<
@@ -21346,7 +22222,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance(void) 
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":354
+/* "imgcomp/_stacklang_render_c.pyx":454
  * 
  * 
  * cdef int _op_slr_sdf_fill_white() except -1:             # <<<<<<<<<<<<<<
@@ -21367,17 +22243,17 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":356
+  /* "imgcomp/_stacklang_render_c.pyx":456
  * cdef int _op_slr_sdf_fill_white() except -1:
  *     """Stack gy gx dist -- gy gx r g b a . Opaque WHITE inside, transparent outside."""
  *     cdef double dist = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double r = 0.0
  *     cdef double g = 0.0
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 356, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 456, __pyx_L1_error)
   __pyx_v_dist = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":357
+  /* "imgcomp/_stacklang_render_c.pyx":457
  *     """Stack gy gx dist -- gy gx r g b a . Opaque WHITE inside, transparent outside."""
  *     cdef double dist = data_pop_float()
  *     cdef double r = 0.0             # <<<<<<<<<<<<<<
@@ -21386,7 +22262,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
   __pyx_v_r = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":358
+  /* "imgcomp/_stacklang_render_c.pyx":458
  *     cdef double dist = data_pop_float()
  *     cdef double r = 0.0
  *     cdef double g = 0.0             # <<<<<<<<<<<<<<
@@ -21395,7 +22271,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
   __pyx_v_g = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":359
+  /* "imgcomp/_stacklang_render_c.pyx":459
  *     cdef double r = 0.0
  *     cdef double g = 0.0
  *     cdef double b = 0.0             # <<<<<<<<<<<<<<
@@ -21404,7 +22280,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
   __pyx_v_b = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":360
+  /* "imgcomp/_stacklang_render_c.pyx":460
  *     cdef double g = 0.0
  *     cdef double b = 0.0
  *     cdef double a = 0.0             # <<<<<<<<<<<<<<
@@ -21413,7 +22289,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
   __pyx_v_a = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":361
+  /* "imgcomp/_stacklang_render_c.pyx":461
  *     cdef double b = 0.0
  *     cdef double a = 0.0
  *     if dist <= 0.0:             # <<<<<<<<<<<<<<
@@ -21425,7 +22301,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
   if (__pyx_t_2) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":362
+    /* "imgcomp/_stacklang_render_c.pyx":462
  *     cdef double a = 0.0
  *     if dist <= 0.0:
  *         r = 255.0             # <<<<<<<<<<<<<<
@@ -21434,7 +22310,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
     __pyx_v_r = 255.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":363
+    /* "imgcomp/_stacklang_render_c.pyx":463
  *     if dist <= 0.0:
  *         r = 255.0
  *         g = 255.0             # <<<<<<<<<<<<<<
@@ -21443,7 +22319,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
     __pyx_v_g = 255.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":364
+    /* "imgcomp/_stacklang_render_c.pyx":464
  *         r = 255.0
  *         g = 255.0
  *         b = 255.0             # <<<<<<<<<<<<<<
@@ -21452,7 +22328,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
     __pyx_v_b = 255.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":365
+    /* "imgcomp/_stacklang_render_c.pyx":465
  *         g = 255.0
  *         b = 255.0
  *         a = 255.0             # <<<<<<<<<<<<<<
@@ -21461,7 +22337,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
     __pyx_v_a = 255.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":361
+    /* "imgcomp/_stacklang_render_c.pyx":461
  *     cdef double b = 0.0
  *     cdef double a = 0.0
  *     if dist <= 0.0:             # <<<<<<<<<<<<<<
@@ -21470,16 +22346,16 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":366
+  /* "imgcomp/_stacklang_render_c.pyx":466
  *         b = 255.0
  *         a = 255.0
  *     push_rgba_float(r, g, b, a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 366, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 466, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":354
+  /* "imgcomp/_stacklang_render_c.pyx":454
  * 
  * 
  * cdef int _op_slr_sdf_fill_white() except -1:             # <<<<<<<<<<<<<<
@@ -21503,7 +22379,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":369
+/* "imgcomp/_stacklang_render_c.pyx":469
  * 
  * 
  * cdef int _op_slr_python_color_at() except -1:             # <<<<<<<<<<<<<<
@@ -21539,37 +22415,37 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("_op_slr_python_color_at", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":371
+  /* "imgcomp/_stacklang_render_c.pyx":471
  * cdef int _op_slr_python_color_at() except -1:
  *     """Stack gy gx shape -- gy gx r g b a . Slow path: shape.color_at(gx, gy)."""
  *     cdef int idx = shape_index()             # <<<<<<<<<<<<<<
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 371, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_19_stacklang_render_c_shape_index(); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 471, __pyx_L1_error)
   __pyx_v_idx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":372
+  /* "imgcomp/_stacklang_render_c.pyx":472
  *     """Stack gy gx shape -- gy gx r g b a . Slow path: shape.color_at(gx, gy)."""
  *     cdef int idx = shape_index()
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = data_pop_float()
  *     cdef object shape
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 372, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 472, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_2;
 
-  /* "imgcomp/_stacklang_render_c.pyx":373
+  /* "imgcomp/_stacklang_render_c.pyx":473
  *     cdef int idx = shape_index()
  *     cdef double gx = data_pop_float()
  *     cdef double gy = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef object shape
  *     cdef object rgba
 */
-  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 373, __pyx_L1_error)
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_2, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 473, __pyx_L1_error)
   __pyx_v_gy = __pyx_t_2;
 
-  /* "imgcomp/_stacklang_render_c.pyx":380
+  /* "imgcomp/_stacklang_render_c.pyx":480
  *     cdef double b
  *     cdef double a
  *     shape = _shape_objects[idx]             # <<<<<<<<<<<<<<
@@ -21578,14 +22454,14 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
 */
   if (unlikely(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects == Py_None)) {
     PyErr_SetString(PyExc_TypeError, "\047NoneType\047 object is not subscriptable");
-    __PYX_ERR(0, 380, __pyx_L1_error)
+    __PYX_ERR(0, 480, __pyx_L1_error)
   }
   __pyx_t_3 = __Pyx_PyList_GET_ITEM(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects, __pyx_v_idx);
   __Pyx_INCREF(__pyx_t_3);
   __pyx_v_shape = __pyx_t_3;
   __pyx_t_3 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":381
+  /* "imgcomp/_stacklang_render_c.pyx":481
  *     cdef double a
  *     shape = _shape_objects[idx]
  *     log_c_to_py("python_color_at", idx=idx, gx=gx, gy=gy, shape=shape)             # <<<<<<<<<<<<<<
@@ -21593,13 +22469,13 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
  *     if rgba is None:
 */
   __pyx_t_4 = NULL;
-  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_mstate_global->__pyx_n_u_log_c_to_py); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 381, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_mstate_global->__pyx_n_u_log_c_to_py); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 481, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
-  __pyx_t_6 = __Pyx_PyLong_From_int(__pyx_v_idx); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 381, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyLong_From_int(__pyx_v_idx); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 481, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 381, __pyx_L1_error)
+  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 481, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 381, __pyx_L1_error)
+  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 481, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_8);
   __pyx_t_9 = 1;
   #if CYTHON_UNPACK_METHODS
@@ -21617,13 +22493,13 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
     PyObject *__pyx_callargs[6] = {__pyx_t_4, __pyx_mstate_global->__pyx_n_u_python_color_at, __pyx_t_6, __pyx_t_7, __pyx_t_8, __pyx_v_shape};
     #if CYTHON_VECTORCALL
     __pyx_t_10 = __pyx_mstate_global->__pyx_tuple[2];
-    if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 381, __pyx_L1_error)
+    if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 481, __pyx_L1_error)
     __Pyx_INCREF(__pyx_t_10);
     #else
     {
       PyObject *__pyx_temp[4] = {__pyx_mstate_global->__pyx_n_u_idx, __pyx_mstate_global->__pyx_n_u_gx, __pyx_mstate_global->__pyx_n_u_gy, __pyx_mstate_global->__pyx_n_u_shape};
       __pyx_t_10 = __Pyx_MakeKwargDict(__pyx_temp, __pyx_callargs+2, 4);
-      if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 381, __pyx_L1_error)
+      if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 481, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_10);
     }
     #endif
@@ -21634,12 +22510,12 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
     __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
     __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
-    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 381, __pyx_L1_error)
+    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 481, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
   }
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":382
+  /* "imgcomp/_stacklang_render_c.pyx":482
  *     shape = _shape_objects[idx]
  *     log_c_to_py("python_color_at", idx=idx, gx=gx, gy=gy, shape=shape)
  *     rgba = shape.color_at(gx, gy)             # <<<<<<<<<<<<<<
@@ -21648,9 +22524,9 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
 */
   __pyx_t_5 = __pyx_v_shape;
   __Pyx_INCREF(__pyx_t_5);
-  __pyx_t_10 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 382, __pyx_L1_error)
+  __pyx_t_10 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 482, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_10);
-  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 382, __pyx_L1_error)
+  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 482, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_8);
   __pyx_t_9 = 0;
   {
@@ -21659,13 +22535,13 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
     __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
     __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
     __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
-    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 382, __pyx_L1_error)
+    if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 482, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
   }
   __pyx_v_rgba = __pyx_t_3;
   __pyx_t_3 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":383
+  /* "imgcomp/_stacklang_render_c.pyx":483
  *     log_c_to_py("python_color_at", idx=idx, gx=gx, gy=gy, shape=shape)
  *     rgba = shape.color_at(gx, gy)
  *     if rgba is None:             # <<<<<<<<<<<<<<
@@ -21676,7 +22552,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
   if (__pyx_t_11) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":384
+    /* "imgcomp/_stacklang_render_c.pyx":484
  *     rgba = shape.color_at(gx, gy)
  *     if rgba is None:
  *         r = g = b = 0.0             # <<<<<<<<<<<<<<
@@ -21687,7 +22563,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
     __pyx_v_g = 0.0;
     __pyx_v_b = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":385
+    /* "imgcomp/_stacklang_render_c.pyx":485
  *     if rgba is None:
  *         r = g = b = 0.0
  *         a = 0.0             # <<<<<<<<<<<<<<
@@ -21696,7 +22572,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
 */
     __pyx_v_a = 0.0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":383
+    /* "imgcomp/_stacklang_render_c.pyx":483
  *     log_c_to_py("python_color_at", idx=idx, gx=gx, gy=gy, shape=shape)
  *     rgba = shape.color_at(gx, gy)
  *     if rgba is None:             # <<<<<<<<<<<<<<
@@ -21706,7 +22582,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
     goto __pyx_L3;
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":387
+  /* "imgcomp/_stacklang_render_c.pyx":487
  *         a = 0.0
  *     else:
  *         r = rgba[0]             # <<<<<<<<<<<<<<
@@ -21714,83 +22590,83 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
  *         b = rgba[2]
 */
   /*else*/ {
-    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 0, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 387, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 0, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 487, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
-    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 387, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 487, __pyx_L1_error)
     __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
     __pyx_v_r = __pyx_t_2;
 
-    /* "imgcomp/_stacklang_render_c.pyx":388
+    /* "imgcomp/_stacklang_render_c.pyx":488
  *     else:
  *         r = rgba[0]
  *         g = rgba[1]             # <<<<<<<<<<<<<<
  *         b = rgba[2]
  *         a = rgba[3]
 */
-    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 1, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 388, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 1, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 488, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
-    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 388, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 488, __pyx_L1_error)
     __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
     __pyx_v_g = __pyx_t_2;
 
-    /* "imgcomp/_stacklang_render_c.pyx":389
+    /* "imgcomp/_stacklang_render_c.pyx":489
  *         r = rgba[0]
  *         g = rgba[1]
  *         b = rgba[2]             # <<<<<<<<<<<<<<
  *         a = rgba[3]
  *     data_push_float(gy)
 */
-    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 2, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 389, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 2, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 489, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
-    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 389, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 489, __pyx_L1_error)
     __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
     __pyx_v_b = __pyx_t_2;
 
-    /* "imgcomp/_stacklang_render_c.pyx":390
+    /* "imgcomp/_stacklang_render_c.pyx":490
  *         g = rgba[1]
  *         b = rgba[2]
  *         a = rgba[3]             # <<<<<<<<<<<<<<
  *     data_push_float(gy)
  *     data_push_float(gx)
 */
-    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 3, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 390, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_GetItemInt(__pyx_v_rgba, 3, long, 1, __Pyx_PyLong_From_long, 0, 0, 1, __Pyx_ReferenceSharing_OwnStrongReference); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 490, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_3);
-    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 390, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyFloat_AsDouble(__pyx_t_3); if (unlikely((__pyx_t_2 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 490, __pyx_L1_error)
     __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
     __pyx_v_a = __pyx_t_2;
   }
   __pyx_L3:;
 
-  /* "imgcomp/_stacklang_render_c.pyx":391
+  /* "imgcomp/_stacklang_render_c.pyx":491
  *         b = rgba[2]
  *         a = rgba[3]
  *     data_push_float(gy)             # <<<<<<<<<<<<<<
  *     data_push_float(gx)
  *     push_rgba_float(r, g, b, a)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 391, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gy); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 491, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":392
+  /* "imgcomp/_stacklang_render_c.pyx":492
  *         a = rgba[3]
  *     data_push_float(gy)
  *     data_push_float(gx)             # <<<<<<<<<<<<<<
  *     push_rgba_float(r, g, b, a)
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 392, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_gx); if (unlikely(__pyx_t_1 == ((int)-1))) __PYX_ERR(0, 492, __pyx_L1_error)
 
 
-  /* "imgcomp/_stacklang_render_c.pyx":393
+  /* "imgcomp/_stacklang_render_c.pyx":493
  *     data_push_float(gy)
  *     data_push_float(gx)
  *     push_rgba_float(r, g, b, a)             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 393, __pyx_L1_error)
+  __pyx_f_7imgcomp_19_stacklang_render_c_push_rgba_float(__pyx_v_r, __pyx_v_g, __pyx_v_b, __pyx_v_a); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 493, __pyx_L1_error)
 
-  /* "imgcomp/_stacklang_render_c.pyx":369
+  /* "imgcomp/_stacklang_render_c.pyx":469
  * 
  * 
  * cdef int _op_slr_python_color_at() except -1:             # <<<<<<<<<<<<<<
@@ -21826,7 +22702,7 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at(void) 
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":396
+/* "imgcomp/_stacklang_render_c.pyx":496
  * 
  * 
  * cdef int _op_slr_set_gy() except -1:             # <<<<<<<<<<<<<<
@@ -21841,17 +22717,17 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_set_gy(void) {
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":399
+  /* "imgcomp/_stacklang_render_c.pyx":499
  *     """Stack gy -- . Remember row gy for nested gx paint loops."""
  *     global _current_gy
  *     _current_gy = data_pop_float()             # <<<<<<<<<<<<<<
  * 
  * 
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 399, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 499, __pyx_L1_error)
   __pyx_v_7imgcomp_19_stacklang_render_c__current_gy = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":396
+  /* "imgcomp/_stacklang_render_c.pyx":496
  * 
  * 
  * cdef int _op_slr_set_gy() except -1:             # <<<<<<<<<<<<<<
@@ -21870,26 +22746,97 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_set_gy(void) {
   return __pyx_r;
 }
 
-/* "imgcomp/_stacklang_render_c.pyx":402
+/* "imgcomp/_stacklang_render_c.pyx":502
  * 
  * 
- * cdef int _op_slr_paint_pixel() except -1:             # <<<<<<<<<<<<<<
- *     """Stack gx -- . Z-list lookup at (_current_gy, gx), composite, paint."""
- *     cdef double gx = data_pop_float()
+ * cdef int _op_slr_continue_if_not_opaque() except -1:             # <<<<<<<<<<<<<<
+ *     """Stack gy gx dr dg db da -- gy gx dr dg db da flag .
+ * 
 */
 
-static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
-  double __pyx_v_gx;
-  double __pyx_v_gy;
-  int __pyx_v_px;
-  int __pyx_v_py;
-  PyObject *__pyx_v_z_list = 0;
-  int __pyx_v_layer_index;
+static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_continue_if_not_opaque(void) {
+  double __pyx_v_da;
+  int __pyx_r;
+  double __pyx_t_1;
+  int __pyx_t_2;
+  int64_t __pyx_t_3;
+  int __pyx_t_4;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":507
+ *     Push 1 when accum alpha < 255 (keep compositing), else 0.
+ *     """
+ *     cdef double da = data_pop_float()             # <<<<<<<<<<<<<<
+ *     data_push_float(da)
+ *     data_push_int(1 if da < 255.0 else 0)
+*/
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 507, __pyx_L1_error)
+  __pyx_v_da = __pyx_t_1;
+
+  /* "imgcomp/_stacklang_render_c.pyx":508
+ *     """
+ *     cdef double da = data_pop_float()
+ *     data_push_float(da)             # <<<<<<<<<<<<<<
+ *     data_push_int(1 if da < 255.0 else 0)
+ * 
+*/
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_float(__pyx_v_da); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 508, __pyx_L1_error)
+
+
+  /* "imgcomp/_stacklang_render_c.pyx":509
+ *     cdef double da = data_pop_float()
+ *     data_push_float(da)
+ *     data_push_int(1 if da < 255.0 else 0)             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+  __pyx_t_4 = (__pyx_v_da < 255.0);
+
+  if (__pyx_t_4) {
+
+    __pyx_t_3 = 1;
+  } else {
+
+    __pyx_t_3 = 0;
+  }
+
+  __pyx_t_2 = __pyx_f_7imgcomp_8_stack_c_data_push_int(__pyx_t_3); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 509, __pyx_L1_error)
+
+
+
+  /* "imgcomp/_stacklang_render_c.pyx":502
+ * 
+ * 
+ * cdef int _op_slr_continue_if_not_opaque() except -1:             # <<<<<<<<<<<<<<
+ *     """Stack gy gx dr dg db da -- gy gx dr dg db da flag .
+ * 
+*/
+
+  /* function exit code */
+  __pyx_r = 0;
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c._op_slr_continue_if_not_opaque", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = -1;
+  __pyx_L0:;
+
+
+  return __pyx_r;
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":512
+ * 
+ * 
+ * cdef inline void _composite_leaf_pixel(             # <<<<<<<<<<<<<<
+ *     double gy,
+ *     double gx,
+*/
+
+static CYTHON_INLINE void __pyx_f_7imgcomp_19_stacklang_render_c__composite_leaf_pixel(double __pyx_v_gy, double __pyx_v_gx, struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *__pyx_v_leaf, double *__pyx_v_ar, double *__pyx_v_ag, double *__pyx_v_ab, double *__pyx_v_aa) {
+  int __pyx_v_member_index;
   int __pyx_v_op_id;
-  double __pyx_v_ar;
-  double __pyx_v_ag;
-  double __pyx_v_ab;
-  double __pyx_v_aa;
   double __pyx_v_lr;
   double __pyx_v_lg;
   double __pyx_v_lb;
@@ -21898,44 +22845,865 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
   double __pyx_v_out_g;
   double __pyx_v_out_b;
   double __pyx_v_out_a;
-  PyObject *__pyx_v_present = NULL;
-  PyObject *__pyx_v_layer = NULL;
-  PyObject *__pyx_7genexpr__pyx_v_layer = NULL;
-  int __pyx_r;
-  __Pyx_RefNannyDeclarations
-  double __pyx_t_1;
+  int __pyx_t_1;
   int __pyx_t_2;
-  int __pyx_t_3;
-  PyObject *__pyx_t_4 = NULL;
-  PyObject *__pyx_t_5 = NULL;
-  PyObject *__pyx_t_6 = NULL;
-  PyObject *__pyx_t_7 = NULL;
-  PyObject *__pyx_t_8 = NULL;
-  PyObject *__pyx_t_9 = NULL;
-  PyObject *__pyx_t_10 = NULL;
-  size_t __pyx_t_11;
-  PyObject *__pyx_t_12 = NULL;
-  Py_ssize_t __pyx_t_13;
-  PyObject *(*__pyx_t_14)(PyObject *);
-  int __pyx_t_15;
-  int __pyx_t_16;
   int __pyx_lineno = 0;
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
-  __Pyx_RefNannySetupContext("_op_slr_paint_pixel", 0);
 
-  /* "imgcomp/_stacklang_render_c.pyx":404
+  /* "imgcomp/_stacklang_render_c.pyx":531
+ *     cdef double out_b
+ *     cdef double out_a
+ *     ar[0] = 0.0             # <<<<<<<<<<<<<<
+ *     ag[0] = 0.0
+ *     ab[0] = 0.0
+*/
+  (__pyx_v_ar[0]) = 0.0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":532
+ *     cdef double out_a
+ *     ar[0] = 0.0
+ *     ag[0] = 0.0             # <<<<<<<<<<<<<<
+ *     ab[0] = 0.0
+ *     aa[0] = 0.0
+*/
+  (__pyx_v_ag[0]) = 0.0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":533
+ *     ar[0] = 0.0
+ *     ag[0] = 0.0
+ *     ab[0] = 0.0             # <<<<<<<<<<<<<<
+ *     aa[0] = 0.0
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):
+*/
+  (__pyx_v_ab[0]) = 0.0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":534
+ *     ag[0] = 0.0
+ *     ab[0] = 0.0
+ *     aa[0] = 0.0             # <<<<<<<<<<<<<<
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+*/
+  (__pyx_v_aa[0]) = 0.0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":535
+ *     ab[0] = 0.0
+ *     aa[0] = 0.0
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):             # <<<<<<<<<<<<<<
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+ *         if op_id < 0:
+*/
+  for (__pyx_t_1 = (__pyx_v_leaf->member_op_count - 1); __pyx_t_1 > -1; __pyx_t_1-=1) {
+    __pyx_v_member_index = __pyx_t_1;
+
+    /* "imgcomp/_stacklang_render_c.pyx":536
+ *     aa[0] = 0.0
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]             # <<<<<<<<<<<<<<
+ *         if op_id < 0:
+ *             continue
+*/
+    __pyx_v_op_id = (__pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids[(__pyx_v_leaf->member_ops_offset + __pyx_v_member_index)]);
+
+    /* "imgcomp/_stacklang_render_c.pyx":537
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+ *         if op_id < 0:             # <<<<<<<<<<<<<<
+ *             continue
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+*/
+    __pyx_t_2 = (__pyx_v_op_id < 0);
+
+    if (__pyx_t_2) {
+
+
+      /* "imgcomp/_stacklang_render_c.pyx":538
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+ *         if op_id < 0:
+ *             continue             # <<<<<<<<<<<<<<
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+ *         src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)
+*/
+      goto __pyx_L3_continue;
+
+      /* "imgcomp/_stacklang_render_c.pyx":537
+ *     for member_index in range(leaf.member_op_count - 1, -1, -1):
+ *         op_id = _leaf_op_ids[leaf.member_ops_offset + member_index]
+ *         if op_id < 0:             # <<<<<<<<<<<<<<
+ *             continue
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+*/
+    }
+
+    /* "imgcomp/_stacklang_render_c.pyx":539
+ *         if op_id < 0:
+ *             continue
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)             # <<<<<<<<<<<<<<
+ *         src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)
+ *         ar[0] = out_r
+*/
+    __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(__pyx_v_gy, __pyx_v_gx, __pyx_v_op_id, (&__pyx_v_lr), (&__pyx_v_lg), (&__pyx_v_lb), (&__pyx_v_la)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 539, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":540
+ *             continue
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+ *         src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)             # <<<<<<<<<<<<<<
+ *         ar[0] = out_r
+ *         ag[0] = out_g
+*/
+    __pyx_f_7imgcomp_19_stacklang_render_c_src_over(__pyx_v_lr, __pyx_v_lg, __pyx_v_lb, __pyx_v_la, (__pyx_v_ar[0]), (__pyx_v_ag[0]), (__pyx_v_ab[0]), (__pyx_v_aa[0]), (&__pyx_v_out_r), (&__pyx_v_out_g), (&__pyx_v_out_b), (&__pyx_v_out_a));
+
+    /* "imgcomp/_stacklang_render_c.pyx":541
+ *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
+ *         src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)
+ *         ar[0] = out_r             # <<<<<<<<<<<<<<
+ *         ag[0] = out_g
+ *         ab[0] = out_b
+*/
+    (__pyx_v_ar[0]) = __pyx_v_out_r;
+
+    /* "imgcomp/_stacklang_render_c.pyx":542
+ *         src_over(lr, lg, lb, la, ar[0], ag[0], ab[0], aa[0], &out_r, &out_g, &out_b, &out_a)
+ *         ar[0] = out_r
+ *         ag[0] = out_g             # <<<<<<<<<<<<<<
+ *         ab[0] = out_b
+ *         aa[0] = out_a
+*/
+    (__pyx_v_ag[0]) = __pyx_v_out_g;
+
+    /* "imgcomp/_stacklang_render_c.pyx":543
+ *         ar[0] = out_r
+ *         ag[0] = out_g
+ *         ab[0] = out_b             # <<<<<<<<<<<<<<
+ *         aa[0] = out_a
+ *         if aa[0] >= 255.0:
+*/
+    (__pyx_v_ab[0]) = __pyx_v_out_b;
+
+    /* "imgcomp/_stacklang_render_c.pyx":544
+ *         ag[0] = out_g
+ *         ab[0] = out_b
+ *         aa[0] = out_a             # <<<<<<<<<<<<<<
+ *         if aa[0] >= 255.0:
+ *             break
+*/
+    (__pyx_v_aa[0]) = __pyx_v_out_a;
+
+    /* "imgcomp/_stacklang_render_c.pyx":545
+ *         ab[0] = out_b
+ *         aa[0] = out_a
+ *         if aa[0] >= 255.0:             # <<<<<<<<<<<<<<
+ *             break
+ * 
+*/
+    __pyx_t_2 = ((__pyx_v_aa[0]) >= 255.0);
+
+    if (__pyx_t_2) {
+
+
+      /* "imgcomp/_stacklang_render_c.pyx":546
+ *         aa[0] = out_a
+ *         if aa[0] >= 255.0:
+ *             break             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+      goto __pyx_L4_break;
+
+      /* "imgcomp/_stacklang_render_c.pyx":545
+ *         ab[0] = out_b
+ *         aa[0] = out_a
+ *         if aa[0] >= 255.0:             # <<<<<<<<<<<<<<
+ *             break
+ * 
+*/
+    }
+    __pyx_L3_continue:;
+  }
+  __pyx_L4_break:;
+
+  /* "imgcomp/_stacklang_render_c.pyx":512
+ * 
+ * 
+ * cdef inline void _composite_leaf_pixel(             # <<<<<<<<<<<<<<
+ *     double gy,
+ *     double gx,
+*/
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c._composite_leaf_pixel", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_L0:;
+
+
+
+
+
+
+
+
+
+
+
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":549
+ * 
+ * 
+ * cdef void _paint_leaf_cell(CQuadNode* leaf) except *:             # <<<<<<<<<<<<<<
+ *     """Paint every pixel center inside a quadtree leaf AABB."""
+ *     cdef int px_start
+*/
+
+static void __pyx_f_7imgcomp_19_stacklang_render_c__paint_leaf_cell(struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode *__pyx_v_leaf) {
+  int __pyx_v_px_start;
+  int __pyx_v_px_end;
+  int __pyx_v_py_start;
+  int __pyx_v_py_end;
+  int __pyx_v_px;
+  int __pyx_v_py;
+  double __pyx_v_gx;
+  double __pyx_v_gy;
+  double __pyx_v_ar;
+  double __pyx_v_ag;
+  double __pyx_v_ab;
+  double __pyx_v_aa;
+  int __pyx_t_1;
+  long __pyx_t_2;
+  long __pyx_t_3;
+  int __pyx_t_4;
+  long __pyx_t_5;
+  long __pyx_t_6;
+  int __pyx_t_7;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":563
+ *     cdef double ab
+ *     cdef double aa
+ *     if leaf.member_op_count == 0:             # <<<<<<<<<<<<<<
+ *         return
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+*/
+  __pyx_t_1 = (__pyx_v_leaf->member_op_count == 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":564
+ *     cdef double aa
+ *     if leaf.member_op_count == 0:
+ *         return             # <<<<<<<<<<<<<<
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+ *     if px_start < 0:
+*/
+    {
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":563
+ *     cdef double ab
+ *     cdef double aa
+ *     if leaf.member_op_count == 0:             # <<<<<<<<<<<<<<
+ *         return
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":565
+ *     if leaf.member_op_count == 0:
+ *         return
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)             # <<<<<<<<<<<<<<
+ *     if px_start < 0:
+ *         px_start = 0
+*/
+  __pyx_v_px_start = ((int)ceil(((__pyx_v_leaf->xmin + __pyx_v_7imgcomp_19_stacklang_render_c__half_w) - 0.5)));
+
+  /* "imgcomp/_stacklang_render_c.pyx":566
+ *         return
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+ *     if px_start < 0:             # <<<<<<<<<<<<<<
+ *         px_start = 0
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+*/
+  __pyx_t_1 = (__pyx_v_px_start < 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":567
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+ *     if px_start < 0:
+ *         px_start = 0             # <<<<<<<<<<<<<<
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+ *     if px_end >= _buf_width:
+*/
+    __pyx_v_px_start = 0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":566
+ *         return
+ *     px_start = <int>ceil(leaf.xmin + _half_w - 0.5)
+ *     if px_start < 0:             # <<<<<<<<<<<<<<
+ *         px_start = 0
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":568
+ *     if px_start < 0:
+ *         px_start = 0
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)             # <<<<<<<<<<<<<<
+ *     if px_end >= _buf_width:
+ *         px_end = _buf_width - 1
+*/
+  __pyx_v_px_end = ((int)floor(((__pyx_v_leaf->xmax + __pyx_v_7imgcomp_19_stacklang_render_c__half_w) - 0.5)));
+
+  /* "imgcomp/_stacklang_render_c.pyx":569
+ *         px_start = 0
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+ *     if px_end >= _buf_width:             # <<<<<<<<<<<<<<
+ *         px_end = _buf_width - 1
+ *     if px_start > px_end:
+*/
+  __pyx_t_1 = (__pyx_v_px_end >= __pyx_v_7imgcomp_19_stacklang_render_c__buf_width);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":570
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+ *     if px_end >= _buf_width:
+ *         px_end = _buf_width - 1             # <<<<<<<<<<<<<<
+ *     if px_start > px_end:
+ *         return
+*/
+    __pyx_v_px_end = (__pyx_v_7imgcomp_19_stacklang_render_c__buf_width - 1);
+
+    /* "imgcomp/_stacklang_render_c.pyx":569
+ *         px_start = 0
+ *     px_end = <int>floor(leaf.xmax + _half_w - 0.5)
+ *     if px_end >= _buf_width:             # <<<<<<<<<<<<<<
+ *         px_end = _buf_width - 1
+ *     if px_start > px_end:
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":571
+ *     if px_end >= _buf_width:
+ *         px_end = _buf_width - 1
+ *     if px_start > px_end:             # <<<<<<<<<<<<<<
+ *         return
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+*/
+  __pyx_t_1 = (__pyx_v_px_start > __pyx_v_px_end);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":572
+ *         px_end = _buf_width - 1
+ *     if px_start > px_end:
+ *         return             # <<<<<<<<<<<<<<
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+ *     if py_start < 0:
+*/
+    {
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":571
+ *     if px_end >= _buf_width:
+ *         px_end = _buf_width - 1
+ *     if px_start > px_end:             # <<<<<<<<<<<<<<
+ *         return
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":573
+ *     if px_start > px_end:
+ *         return
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)             # <<<<<<<<<<<<<<
+ *     if py_start < 0:
+ *         py_start = 0
+*/
+  __pyx_v_py_start = ((int)ceil(((__pyx_v_leaf->ymin + __pyx_v_7imgcomp_19_stacklang_render_c__half_h) - 0.5)));
+
+  /* "imgcomp/_stacklang_render_c.pyx":574
+ *         return
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+ *     if py_start < 0:             # <<<<<<<<<<<<<<
+ *         py_start = 0
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+*/
+  __pyx_t_1 = (__pyx_v_py_start < 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":575
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+ *     if py_start < 0:
+ *         py_start = 0             # <<<<<<<<<<<<<<
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+ *     if py_end >= _buf_height:
+*/
+    __pyx_v_py_start = 0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":574
+ *         return
+ *     py_start = <int>ceil(leaf.ymin + _half_h - 0.5)
+ *     if py_start < 0:             # <<<<<<<<<<<<<<
+ *         py_start = 0
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":576
+ *     if py_start < 0:
+ *         py_start = 0
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)             # <<<<<<<<<<<<<<
+ *     if py_end >= _buf_height:
+ *         py_end = _buf_height - 1
+*/
+  __pyx_v_py_end = ((int)floor(((__pyx_v_leaf->ymax + __pyx_v_7imgcomp_19_stacklang_render_c__half_h) - 0.5)));
+
+  /* "imgcomp/_stacklang_render_c.pyx":577
+ *         py_start = 0
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+ *     if py_end >= _buf_height:             # <<<<<<<<<<<<<<
+ *         py_end = _buf_height - 1
+ *     if py_start > py_end:
+*/
+  __pyx_t_1 = (__pyx_v_py_end >= __pyx_v_7imgcomp_19_stacklang_render_c__buf_height);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":578
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+ *     if py_end >= _buf_height:
+ *         py_end = _buf_height - 1             # <<<<<<<<<<<<<<
+ *     if py_start > py_end:
+ *         return
+*/
+    __pyx_v_py_end = (__pyx_v_7imgcomp_19_stacklang_render_c__buf_height - 1);
+
+    /* "imgcomp/_stacklang_render_c.pyx":577
+ *         py_start = 0
+ *     py_end = <int>floor(leaf.ymax + _half_h - 0.5)
+ *     if py_end >= _buf_height:             # <<<<<<<<<<<<<<
+ *         py_end = _buf_height - 1
+ *     if py_start > py_end:
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":579
+ *     if py_end >= _buf_height:
+ *         py_end = _buf_height - 1
+ *     if py_start > py_end:             # <<<<<<<<<<<<<<
+ *         return
+ *     for py in range(py_start, py_end + 1):
+*/
+  __pyx_t_1 = (__pyx_v_py_start > __pyx_v_py_end);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":580
+ *         py_end = _buf_height - 1
+ *     if py_start > py_end:
+ *         return             # <<<<<<<<<<<<<<
+ *     for py in range(py_start, py_end + 1):
+ *         gy = py + 0.5 - _half_h
+*/
+    {
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":579
+ *     if py_end >= _buf_height:
+ *         py_end = _buf_height - 1
+ *     if py_start > py_end:             # <<<<<<<<<<<<<<
+ *         return
+ *     for py in range(py_start, py_end + 1):
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":581
+ *     if py_start > py_end:
+ *         return
+ *     for py in range(py_start, py_end + 1):             # <<<<<<<<<<<<<<
+ *         gy = py + 0.5 - _half_h
+ *         for px in range(px_start, px_end + 1):
+*/
+
+  __pyx_t_2 = (__pyx_v_py_end + 1);
+  __pyx_t_3 = __pyx_t_2;
+
+  for (__pyx_t_4 = __pyx_v_py_start; __pyx_t_4 < __pyx_t_3; __pyx_t_4+=1) {
+    __pyx_v_py = __pyx_t_4;
+
+    /* "imgcomp/_stacklang_render_c.pyx":582
+ *         return
+ *     for py in range(py_start, py_end + 1):
+ *         gy = py + 0.5 - _half_h             # <<<<<<<<<<<<<<
+ *         for px in range(px_start, px_end + 1):
+ *             gx = px + 0.5 - _half_w
+*/
+    __pyx_v_gy = ((__pyx_v_py + 0.5) - __pyx_v_7imgcomp_19_stacklang_render_c__half_h);
+
+    /* "imgcomp/_stacklang_render_c.pyx":583
+ *     for py in range(py_start, py_end + 1):
+ *         gy = py + 0.5 - _half_h
+ *         for px in range(px_start, px_end + 1):             # <<<<<<<<<<<<<<
+ *             gx = px + 0.5 - _half_w
+ *             _composite_leaf_pixel(gy, gx, leaf, &ar, &ag, &ab, &aa)
+*/
+
+    __pyx_t_5 = (__pyx_v_px_end + 1);
+    __pyx_t_6 = __pyx_t_5;
+
+    for (__pyx_t_7 = __pyx_v_px_start; __pyx_t_7 < __pyx_t_6; __pyx_t_7+=1) {
+      __pyx_v_px = __pyx_t_7;
+
+      /* "imgcomp/_stacklang_render_c.pyx":584
+ *         gy = py + 0.5 - _half_h
+ *         for px in range(px_start, px_end + 1):
+ *             gx = px + 0.5 - _half_w             # <<<<<<<<<<<<<<
+ *             _composite_leaf_pixel(gy, gx, leaf, &ar, &ag, &ab, &aa)
+ *             write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
+*/
+      __pyx_v_gx = ((__pyx_v_px + 0.5) - __pyx_v_7imgcomp_19_stacklang_render_c__half_w);
+
+      /* "imgcomp/_stacklang_render_c.pyx":585
+ *         for px in range(px_start, px_end + 1):
+ *             gx = px + 0.5 - _half_w
+ *             _composite_leaf_pixel(gy, gx, leaf, &ar, &ag, &ab, &aa)             # <<<<<<<<<<<<<<
+ *             write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
+ * 
+*/
+      __pyx_f_7imgcomp_19_stacklang_render_c__composite_leaf_pixel(__pyx_v_gy, __pyx_v_gx, __pyx_v_leaf, (&__pyx_v_ar), (&__pyx_v_ag), (&__pyx_v_ab), (&__pyx_v_aa)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 585, __pyx_L1_error)
+
+      /* "imgcomp/_stacklang_render_c.pyx":586
+ *             gx = px + 0.5 - _half_w
+ *             _composite_leaf_pixel(gy, gx, leaf, &ar, &ag, &ab, &aa)
+ *             write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+      __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(__pyx_v_px, __pyx_v_py, __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ar), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ag), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ab), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_aa));
+    }
+
+  }
+
+
+  /* "imgcomp/_stacklang_render_c.pyx":549
+ * 
+ * 
+ * cdef void _paint_leaf_cell(CQuadNode* leaf) except *:             # <<<<<<<<<<<<<<
+ *     """Paint every pixel center inside a quadtree leaf AABB."""
+ *     cdef int px_start
+*/
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c._paint_leaf_cell", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_L0:;
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":589
+ * 
+ * 
+ * cdef void _render_quadtree_cells(int node_idx) except *:             # <<<<<<<<<<<<<<
+ *     cdef CQuadNode node
+ *     cdef int child_index
+*/
+
+static void __pyx_f_7imgcomp_19_stacklang_render_c__render_quadtree_cells(int __pyx_v_node_idx) {
+  struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode __pyx_v_node;
+  int __pyx_v_child_index;
+  int __pyx_t_1;
+  int __pyx_t_2;
+  int __pyx_t_3;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":592
+ *     cdef CQuadNode node
+ *     cdef int child_index
+ *     if node_idx < 0 or node_idx >= _quad_node_count:             # <<<<<<<<<<<<<<
+ *         return
+ *     node = _quad_nodes[node_idx]
+*/
+  __pyx_t_2 = (__pyx_v_node_idx < 0);
+
+  if (!__pyx_t_2) {
+
+  } else {
+
+    __pyx_t_1 = __pyx_t_2;
+
+    goto __pyx_L4_bool_binop_done;
+  }
+  __pyx_t_2 = (__pyx_v_node_idx >= __pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count);
+
+
+  __pyx_t_1 = __pyx_t_2;
+
+  __pyx_L4_bool_binop_done:;
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":593
+ *     cdef int child_index
+ *     if node_idx < 0 or node_idx >= _quad_node_count:
+ *         return             # <<<<<<<<<<<<<<
+ *     node = _quad_nodes[node_idx]
+ *     if node.first_child >= 0:
+*/
+    {
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":592
+ *     cdef CQuadNode node
+ *     cdef int child_index
+ *     if node_idx < 0 or node_idx >= _quad_node_count:             # <<<<<<<<<<<<<<
+ *         return
+ *     node = _quad_nodes[node_idx]
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":594
+ *     if node_idx < 0 or node_idx >= _quad_node_count:
+ *         return
+ *     node = _quad_nodes[node_idx]             # <<<<<<<<<<<<<<
+ *     if node.first_child >= 0:
+ *         for child_index in range(4):
+*/
+  __pyx_v_node = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes[__pyx_v_node_idx]);
+
+  /* "imgcomp/_stacklang_render_c.pyx":595
+ *         return
+ *     node = _quad_nodes[node_idx]
+ *     if node.first_child >= 0:             # <<<<<<<<<<<<<<
+ *         for child_index in range(4):
+ *             _render_quadtree_cells(node.first_child + child_index)
+*/
+  __pyx_t_1 = (__pyx_v_node.first_child >= 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":596
+ *     node = _quad_nodes[node_idx]
+ *     if node.first_child >= 0:
+ *         for child_index in range(4):             # <<<<<<<<<<<<<<
+ *             _render_quadtree_cells(node.first_child + child_index)
+ *         return
+*/
+    for (__pyx_t_3 = 0; __pyx_t_3 < 4; __pyx_t_3+=1) {
+      __pyx_v_child_index = __pyx_t_3;
+
+      /* "imgcomp/_stacklang_render_c.pyx":597
+ *     if node.first_child >= 0:
+ *         for child_index in range(4):
+ *             _render_quadtree_cells(node.first_child + child_index)             # <<<<<<<<<<<<<<
+ *         return
+ *     _paint_leaf_cell(&node)
+*/
+      __pyx_f_7imgcomp_19_stacklang_render_c__render_quadtree_cells((__pyx_v_node.first_child + __pyx_v_child_index)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 597, __pyx_L1_error)
+    }
+
+    /* "imgcomp/_stacklang_render_c.pyx":598
+ *         for child_index in range(4):
+ *             _render_quadtree_cells(node.first_child + child_index)
+ *         return             # <<<<<<<<<<<<<<
+ *     _paint_leaf_cell(&node)
+ * 
+*/
+    {
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":595
+ *         return
+ *     node = _quad_nodes[node_idx]
+ *     if node.first_child >= 0:             # <<<<<<<<<<<<<<
+ *         for child_index in range(4):
+ *             _render_quadtree_cells(node.first_child + child_index)
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":599
+ *             _render_quadtree_cells(node.first_child + child_index)
+ *         return
+ *     _paint_leaf_cell(&node)             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+  __pyx_f_7imgcomp_19_stacklang_render_c__paint_leaf_cell((&__pyx_v_node)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 599, __pyx_L1_error)
+
+  /* "imgcomp/_stacklang_render_c.pyx":589
+ * 
+ * 
+ * cdef void _render_quadtree_cells(int node_idx) except *:             # <<<<<<<<<<<<<<
+ *     cdef CQuadNode node
+ *     cdef int child_index
+*/
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c._render_quadtree_cells", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_L0:;
+
+
+
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":602
+ * 
+ * 
+ * def render_quadtree() -> None:             # <<<<<<<<<<<<<<
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:
+*/
+
+/* Python wrapper */
+static PyObject *__pyx_pw_7imgcomp_19_stacklang_render_c_3render_quadtree(PyObject *__pyx_self, CYTHON_UNUSED PyObject *unused); /*proto*/
+PyDoc_STRVAR(__pyx_doc_7imgcomp_19_stacklang_render_c_2render_quadtree, "Walk quadtree leaves and paint each cell\047s pixels in batch.");
+static PyMethodDef __pyx_mdef_7imgcomp_19_stacklang_render_c_3render_quadtree = {"render_quadtree", (PyCFunction)__pyx_pw_7imgcomp_19_stacklang_render_c_3render_quadtree, METH_NOARGS, __pyx_doc_7imgcomp_19_stacklang_render_c_2render_quadtree};
+static PyObject *__pyx_pw_7imgcomp_19_stacklang_render_c_3render_quadtree(PyObject *__pyx_self, CYTHON_UNUSED PyObject *unused) {
+  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
+  PyObject *__pyx_r = 0;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("render_quadtree (wrapper)", 0);
+  __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
+  __pyx_r = __pyx_pf_7imgcomp_19_stacklang_render_c_2render_quadtree(__pyx_self);
+
+  /* function exit code */
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_2render_quadtree(CYTHON_UNUSED PyObject *__pyx_self) {
+  PyObject *__pyx_r = NULL;
+  __Pyx_RefNannyDeclarations
+  int __pyx_t_1;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("render_quadtree", 0);
+
+  /* "imgcomp/_stacklang_render_c.pyx":604
+ * def render_quadtree() -> None:
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:             # <<<<<<<<<<<<<<
+ *         _render_quadtree_cells(0)
+ * 
+*/
+  __pyx_t_1 = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count > 0);
+
+  if (__pyx_t_1) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":605
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:
+ *         _render_quadtree_cells(0)             # <<<<<<<<<<<<<<
+ * 
+ * 
+*/
+    __pyx_f_7imgcomp_19_stacklang_render_c__render_quadtree_cells(0); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 605, __pyx_L1_error)
+
+    /* "imgcomp/_stacklang_render_c.pyx":604
+ * def render_quadtree() -> None:
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:             # <<<<<<<<<<<<<<
+ *         _render_quadtree_cells(0)
+ * 
+*/
+  }
+
+  /* "imgcomp/_stacklang_render_c.pyx":602
+ * 
+ * 
+ * def render_quadtree() -> None:             # <<<<<<<<<<<<<<
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:
+*/
+
+  /* function exit code */
+  __pyx_r = Py_None; __Pyx_INCREF(Py_None);
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("imgcomp._stacklang_render_c.render_quadtree", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = NULL;
+  __pyx_L0:;
+  __Pyx_XGIVEREF(__pyx_r);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+/* "imgcomp/_stacklang_render_c.pyx":608
+ * 
+ * 
+ * cdef int _op_slr_paint_pixel() except -1:             # <<<<<<<<<<<<<<
+ *     """Stack gx -- . Legacy per-pixel path via quadtree point lookup."""
+ *     cdef double gx = data_pop_float()
+*/
+
+static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
+  double __pyx_v_gx;
+  double __pyx_v_gy;
+  int __pyx_v_px;
+  int __pyx_v_py;
+  int __pyx_v_leaf_idx;
+  struct __pyx_t_7imgcomp_19_stacklang_render_c_CQuadNode __pyx_v_leaf;
+  double __pyx_v_ar;
+  double __pyx_v_ag;
+  double __pyx_v_ab;
+  double __pyx_v_aa;
+  int __pyx_r;
+  double __pyx_t_1;
+  int __pyx_t_2;
+  int __pyx_t_3;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":610
  * cdef int _op_slr_paint_pixel() except -1:
- *     """Stack gx -- . Z-list lookup at (_current_gy, gx), composite, paint."""
+ *     """Stack gx -- . Legacy per-pixel path via quadtree point lookup."""
  *     cdef double gx = data_pop_float()             # <<<<<<<<<<<<<<
  *     cdef double gy = _current_gy
  *     cdef int px = <int>(gx + _half_w - 0.5)
 */
-  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 404, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_7imgcomp_8_stack_c_data_pop_float(); if (unlikely(__PYX_CHECK_FLOAT_EXCEPTION(__pyx_t_1, ((double)(-1.0))) && PyErr_Occurred())) __PYX_ERR(0, 610, __pyx_L1_error)
   __pyx_v_gx = __pyx_t_1;
 
-  /* "imgcomp/_stacklang_render_c.pyx":405
- *     """Stack gx -- . Z-list lookup at (_current_gy, gx), composite, paint."""
+  /* "imgcomp/_stacklang_render_c.pyx":611
+ *     """Stack gx -- . Legacy per-pixel path via quadtree point lookup."""
  *     cdef double gx = data_pop_float()
  *     cdef double gy = _current_gy             # <<<<<<<<<<<<<<
  *     cdef int px = <int>(gx + _half_w - 0.5)
@@ -21943,66 +23711,30 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
 */
   __pyx_v_gy = __pyx_v_7imgcomp_19_stacklang_render_c__current_gy;
 
-  /* "imgcomp/_stacklang_render_c.pyx":406
+  /* "imgcomp/_stacklang_render_c.pyx":612
  *     cdef double gx = data_pop_float()
  *     cdef double gy = _current_gy
  *     cdef int px = <int>(gx + _half_w - 0.5)             # <<<<<<<<<<<<<<
  *     cdef int py = <int>(gy + _half_h - 0.5)
- *     cdef object z_list
+ *     cdef int leaf_idx
 */
   __pyx_v_px = ((int)((__pyx_v_gx + __pyx_v_7imgcomp_19_stacklang_render_c__half_w) - 0.5));
 
-  /* "imgcomp/_stacklang_render_c.pyx":407
+  /* "imgcomp/_stacklang_render_c.pyx":613
  *     cdef double gy = _current_gy
  *     cdef int px = <int>(gx + _half_w - 0.5)
  *     cdef int py = <int>(gy + _half_h - 0.5)             # <<<<<<<<<<<<<<
- *     cdef object z_list
- *     cdef int layer_index
+ *     cdef int leaf_idx
+ *     cdef CQuadNode leaf
 */
   __pyx_v_py = ((int)((__pyx_v_gy + __pyx_v_7imgcomp_19_stacklang_render_c__half_h) - 0.5));
 
-  /* "imgcomp/_stacklang_render_c.pyx":411
- *     cdef int layer_index
- *     cdef int op_id
- *     cdef double ar = 0.0             # <<<<<<<<<<<<<<
- *     cdef double ag = 0.0
- *     cdef double ab = 0.0
-*/
-  __pyx_v_ar = 0.0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":412
- *     cdef int op_id
- *     cdef double ar = 0.0
- *     cdef double ag = 0.0             # <<<<<<<<<<<<<<
- *     cdef double ab = 0.0
- *     cdef double aa = 0.0
-*/
-  __pyx_v_ag = 0.0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":413
- *     cdef double ar = 0.0
- *     cdef double ag = 0.0
- *     cdef double ab = 0.0             # <<<<<<<<<<<<<<
- *     cdef double aa = 0.0
- *     cdef double lr
-*/
-  __pyx_v_ab = 0.0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":414
- *     cdef double ag = 0.0
- *     cdef double ab = 0.0
- *     cdef double aa = 0.0             # <<<<<<<<<<<<<<
- *     cdef double lr
- *     cdef double lg
-*/
-  __pyx_v_aa = 0.0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":423
- *     cdef double out_b
- *     cdef double out_a
+  /* "imgcomp/_stacklang_render_c.pyx":620
+ *     cdef double ab
+ *     cdef double aa
  *     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:             # <<<<<<<<<<<<<<
  *         return 0
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
 */
   __pyx_t_3 = (__pyx_v_px < 0);
 
@@ -22043,12 +23775,12 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
   if (__pyx_t_2) {
 
 
-    /* "imgcomp/_stacklang_render_c.pyx":424
- *     cdef double out_a
+    /* "imgcomp/_stacklang_render_c.pyx":621
+ *     cdef double aa
  *     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:
  *         return 0             # <<<<<<<<<<<<<<
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
- *     z_list = z_list_at_point(_tree, gx, gy)
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
+ *     if leaf_idx < 0:
 */
     {
 
@@ -22056,391 +23788,87 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
     }
     goto __pyx_L0;
 
-    /* "imgcomp/_stacklang_render_c.pyx":423
- *     cdef double out_b
- *     cdef double out_a
+    /* "imgcomp/_stacklang_render_c.pyx":620
+ *     cdef double ab
+ *     cdef double aa
  *     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:             # <<<<<<<<<<<<<<
  *         return 0
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
 */
   }
 
-  /* "imgcomp/_stacklang_render_c.pyx":425
+  /* "imgcomp/_stacklang_render_c.pyx":622
  *     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:
  *         return 0
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)             # <<<<<<<<<<<<<<
- *     z_list = z_list_at_point(_tree, gx, gy)
- *     present = {layer.index: layer for layer in z_list}
-*/
-  __pyx_t_5 = NULL;
-  __Pyx_GetModuleGlobalName(__pyx_t_6, __pyx_mstate_global->__pyx_n_u_log_c_to_py); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 425, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 425, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_8 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 425, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_8);
-  __pyx_t_9 = __Pyx_PyLong_From_int(__pyx_v_px); if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 425, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_9);
-  __pyx_t_10 = __Pyx_PyLong_From_int(__pyx_v_py); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 425, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_10);
-  __pyx_t_11 = 1;
-  #if CYTHON_UNPACK_METHODS
-  if (unlikely(PyMethod_Check(__pyx_t_6))) {
-    __pyx_t_5 = PyMethod_GET_SELF(__pyx_t_6);
-    assert(__pyx_t_5);
-    PyObject* __pyx__function = PyMethod_GET_FUNCTION(__pyx_t_6);
-    __Pyx_INCREF(__pyx_t_5);
-    __Pyx_INCREF(__pyx__function);
-    __Pyx_DECREF_SET(__pyx_t_6, __pyx__function);
-    __pyx_t_11 = 0;
-  }
-  #endif
-  {
-    PyObject *__pyx_callargs[6] = {__pyx_t_5, __pyx_mstate_global->__pyx_n_u_z_list_at_point, __pyx_t_7, __pyx_t_8, __pyx_t_9, __pyx_t_10};
-    #if CYTHON_VECTORCALL
-    __pyx_t_12 = __pyx_mstate_global->__pyx_tuple[3];
-    if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 425, __pyx_L1_error)
-    __Pyx_INCREF(__pyx_t_12);
-    #else
-    {
-      PyObject *__pyx_temp[4] = {__pyx_mstate_global->__pyx_n_u_gx, __pyx_mstate_global->__pyx_n_u_gy, __pyx_mstate_global->__pyx_n_u_px, __pyx_mstate_global->__pyx_n_u_py};
-      __pyx_t_12 = __Pyx_MakeKwargDict(__pyx_temp, __pyx_callargs+2, 4);
-      if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 425, __pyx_L1_error)
-      __Pyx_GOTREF(__pyx_t_12);
-    }
-    #endif
-    __pyx_t_4 = __Pyx_Object_VectorcallKwds((PyObject*)__pyx_t_6, __pyx_callargs+__pyx_t_11, (2-__pyx_t_11) | (__pyx_t_11*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET), __pyx_t_12);
-    __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
-    __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
-    __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
-    __Pyx_DECREF(__pyx_t_9); __pyx_t_9 = 0;
-    __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
-    __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-    __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
-    if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 425, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-  }
-  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":426
+ *     leaf_idx = _leaf_index_at_point(gx, gy)             # <<<<<<<<<<<<<<
+ *     if leaf_idx < 0:
  *         return 0
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
- *     z_list = z_list_at_point(_tree, gx, gy)             # <<<<<<<<<<<<<<
- *     present = {layer.index: layer for layer in z_list}
- *     for layer_index in range(_num_layers - 1, -1, -1):
 */
-  __pyx_t_6 = NULL;
-  __Pyx_GetModuleGlobalName(__pyx_t_12, __pyx_mstate_global->__pyx_n_u_z_list_at_point); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 426, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_12);
-  __pyx_t_10 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_10)) __PYX_ERR(0, 426, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_10);
-  __pyx_t_9 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 426, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_9);
-  __pyx_t_11 = 1;
-  #if CYTHON_UNPACK_METHODS
-  if (unlikely(PyMethod_Check(__pyx_t_12))) {
-    __pyx_t_6 = PyMethod_GET_SELF(__pyx_t_12);
-    assert(__pyx_t_6);
-    PyObject* __pyx__function = PyMethod_GET_FUNCTION(__pyx_t_12);
-    __Pyx_INCREF(__pyx_t_6);
-    __Pyx_INCREF(__pyx__function);
-    __Pyx_DECREF_SET(__pyx_t_12, __pyx__function);
-    __pyx_t_11 = 0;
+  __pyx_v_leaf_idx = __pyx_f_7imgcomp_19_stacklang_render_c__leaf_index_at_point(__pyx_v_gx, __pyx_v_gy);
+
+  /* "imgcomp/_stacklang_render_c.pyx":623
+ *         return 0
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
+ *     if leaf_idx < 0:             # <<<<<<<<<<<<<<
+ *         return 0
+ *     leaf = _quad_nodes[leaf_idx]
+*/
+  __pyx_t_2 = (__pyx_v_leaf_idx < 0);
+
+  if (__pyx_t_2) {
+
+
+    /* "imgcomp/_stacklang_render_c.pyx":624
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
+ *     if leaf_idx < 0:
+ *         return 0             # <<<<<<<<<<<<<<
+ *     leaf = _quad_nodes[leaf_idx]
+ *     _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)
+*/
+    {
+
+      __pyx_r = 0;
+    }
+    goto __pyx_L0;
+
+    /* "imgcomp/_stacklang_render_c.pyx":623
+ *         return 0
+ *     leaf_idx = _leaf_index_at_point(gx, gy)
+ *     if leaf_idx < 0:             # <<<<<<<<<<<<<<
+ *         return 0
+ *     leaf = _quad_nodes[leaf_idx]
+*/
   }
-  #endif
-  {
-    PyObject *__pyx_callargs[4] = {__pyx_t_6, __pyx_v_7imgcomp_19_stacklang_render_c__tree, __pyx_t_10, __pyx_t_9};
-    __pyx_t_4 = __Pyx_PyObject_FastCall((PyObject*)__pyx_t_12, __pyx_callargs+__pyx_t_11, (4-__pyx_t_11) | (__pyx_t_11*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
-    __Pyx_XDECREF(__pyx_t_6); __pyx_t_6 = 0;
-    __Pyx_DECREF(__pyx_t_10); __pyx_t_10 = 0;
-    __Pyx_DECREF(__pyx_t_9); __pyx_t_9 = 0;
-    __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-    if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 426, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-  }
-  __pyx_v_z_list = __pyx_t_4;
-  __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":427
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
- *     z_list = z_list_at_point(_tree, gx, gy)
- *     present = {layer.index: layer for layer in z_list}             # <<<<<<<<<<<<<<
- *     for layer_index in range(_num_layers - 1, -1, -1):
- *         if layer_index not in present:
-*/
-  { /* enter inner scope */
-    __pyx_t_4 = PyDict_New(); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 427, __pyx_L10_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (likely(PyList_CheckExact(__pyx_v_z_list)) || PyTuple_CheckExact(__pyx_v_z_list)) {
-      __pyx_t_12 = __pyx_v_z_list; __Pyx_INCREF(__pyx_t_12);
-      __pyx_t_13 = 0;
-      __pyx_t_14 = NULL;
-    } else {
-      __pyx_t_13 = -1; __pyx_t_12 = PyObject_GetIter(__pyx_v_z_list); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 427, __pyx_L10_error)
-      __Pyx_GOTREF(__pyx_t_12);
-      __pyx_t_14 = (CYTHON_COMPILING_IN_LIMITED_API) ? PyIter_Next : __Pyx_PyObject_GetIterNextFunc(__pyx_t_12); if (unlikely(!__pyx_t_14)) __PYX_ERR(0, 427, __pyx_L10_error)
-    }
-    for (;;) {
-      if (likely(!__pyx_t_14)) {
-        if (likely(PyList_CheckExact(__pyx_t_12))) {
-          {
-            Py_ssize_t __pyx_temp = __Pyx_PyList_GET_SIZE(__pyx_t_12);
-            #if !CYTHON_ASSUME_SAFE_SIZE
-            if (unlikely((__pyx_temp < 0))) __PYX_ERR(0, 427, __pyx_L10_error)
-            #endif
-            if (__pyx_t_13 >= __pyx_temp) break;
-          }
-          __pyx_t_9 = __Pyx_PyList_GET_ITEM_REF(__pyx_t_12, __pyx_t_13, __Pyx_ReferenceSharing_OwnStrongReference);
-          ++__pyx_t_13;
-        } else {
-          {
-            Py_ssize_t __pyx_temp = __Pyx_PyTuple_GET_SIZE(__pyx_t_12);
-            #if !CYTHON_ASSUME_SAFE_SIZE
-            if (unlikely((__pyx_temp < 0))) __PYX_ERR(0, 427, __pyx_L10_error)
-            #endif
-            if (__pyx_t_13 >= __pyx_temp) break;
-          }
-          #if CYTHON_ASSUME_SAFE_MACROS && !CYTHON_AVOID_BORROWED_REFS
-          __pyx_t_9 = __Pyx_NewRef(PyTuple_GET_ITEM(__pyx_t_12, __pyx_t_13));
-          #else
-          __pyx_t_9 = __Pyx_PySequence_ITEM(__pyx_t_12, __pyx_t_13);
-          #endif
-          ++__pyx_t_13;
-        }
-        if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 427, __pyx_L10_error)
-      } else {
-        __pyx_t_9 = __pyx_t_14(__pyx_t_12);
-        if (unlikely(!__pyx_t_9)) {
-          PyObject* exc_type = PyErr_Occurred();
-          if (exc_type) {
-            if (unlikely(!__Pyx_PyErr_GivenExceptionMatches(exc_type, PyExc_StopIteration))) __PYX_ERR(0, 427, __pyx_L10_error)
-            PyErr_Clear();
-          }
-          break;
-        }
-      }
-      __Pyx_GOTREF(__pyx_t_9);
-      __Pyx_XDECREF_SET(__pyx_7genexpr__pyx_v_layer, __pyx_t_9);
-      __pyx_t_9 = 0;
-      __pyx_t_9 = __Pyx_PyObject_GetAttrStr(__pyx_7genexpr__pyx_v_layer, __pyx_mstate_global->__pyx_n_u_index); if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 427, __pyx_L10_error)
-      __Pyx_GOTREF(__pyx_t_9);
-      if (unlikely(PyDict_SetItem(__pyx_t_4, __pyx_t_9, __pyx_7genexpr__pyx_v_layer))) __PYX_ERR(0, 427, __pyx_L10_error)
-      __Pyx_DECREF(__pyx_t_9); __pyx_t_9 = 0;
-    }
-    __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-    __Pyx_XDECREF(__pyx_7genexpr__pyx_v_layer); __pyx_7genexpr__pyx_v_layer = 0;
-    goto __pyx_L14_exit_scope;
-    __pyx_L10_error:;
-    __Pyx_XDECREF(__pyx_7genexpr__pyx_v_layer); __pyx_7genexpr__pyx_v_layer = 0;
-    goto __pyx_L1_error;
-    __pyx_L14_exit_scope:;
-  } /* exit inner scope */
-  __pyx_v_present = ((PyObject*)__pyx_t_4);
-  __pyx_t_4 = 0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":428
- *     z_list = z_list_at_point(_tree, gx, gy)
- *     present = {layer.index: layer for layer in z_list}
- *     for layer_index in range(_num_layers - 1, -1, -1):             # <<<<<<<<<<<<<<
- *         if layer_index not in present:
- *             continue
-*/
-  for (__pyx_t_15 = (__pyx_v_7imgcomp_19_stacklang_render_c__num_layers - 1); __pyx_t_15 > -1; __pyx_t_15-=1) {
-    __pyx_v_layer_index = __pyx_t_15;
-
-    /* "imgcomp/_stacklang_render_c.pyx":429
- *     present = {layer.index: layer for layer in z_list}
- *     for layer_index in range(_num_layers - 1, -1, -1):
- *         if layer_index not in present:             # <<<<<<<<<<<<<<
- *             continue
- *         layer = present[layer_index]
-*/
-    __pyx_t_4 = __Pyx_PyLong_From_int(__pyx_v_layer_index); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 429, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __pyx_t_2 = (__Pyx_PyDict_ContainsTF(__pyx_t_4, __pyx_v_present, Py_NE)); if (unlikely((__pyx_t_2 < 0))) __PYX_ERR(0, 429, __pyx_L1_error)
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    if (__pyx_t_2) {
-
-
-      /* "imgcomp/_stacklang_render_c.pyx":430
- *     for layer_index in range(_num_layers - 1, -1, -1):
- *         if layer_index not in present:
- *             continue             # <<<<<<<<<<<<<<
- *         layer = present[layer_index]
- *         op_id = layer.paint_op_id
-*/
-      goto __pyx_L15_continue;
-
-      /* "imgcomp/_stacklang_render_c.pyx":429
- *     present = {layer.index: layer for layer in z_list}
- *     for layer_index in range(_num_layers - 1, -1, -1):
- *         if layer_index not in present:             # <<<<<<<<<<<<<<
- *             continue
- *         layer = present[layer_index]
-*/
-    }
-
-    /* "imgcomp/_stacklang_render_c.pyx":431
- *         if layer_index not in present:
- *             continue
- *         layer = present[layer_index]             # <<<<<<<<<<<<<<
- *         op_id = layer.paint_op_id
- *         if op_id < 0:
-*/
-    __pyx_t_4 = __Pyx_PyLong_From_int(__pyx_v_layer_index); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 431, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __pyx_t_12 = __Pyx_PyDict_GetItem(__pyx_v_present, __pyx_t_4); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 431, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_12);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_XDECREF_SET(__pyx_v_layer, __pyx_t_12);
-    __pyx_t_12 = 0;
-
-    /* "imgcomp/_stacklang_render_c.pyx":432
- *             continue
- *         layer = present[layer_index]
- *         op_id = layer.paint_op_id             # <<<<<<<<<<<<<<
- *         if op_id < 0:
- *             op_id = _layer_op_ids[layer_index]
-*/
-    __pyx_t_12 = __Pyx_PyObject_GetAttrStr(__pyx_v_layer, __pyx_mstate_global->__pyx_n_u_paint_op_id); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 432, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_12);
-    __pyx_t_16 = __Pyx_PyLong_As_int(__pyx_t_12); if (unlikely((__pyx_t_16 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 432, __pyx_L1_error)
-    __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-    __pyx_v_op_id = __pyx_t_16;
-
-    /* "imgcomp/_stacklang_render_c.pyx":433
- *         layer = present[layer_index]
- *         op_id = layer.paint_op_id
- *         if op_id < 0:             # <<<<<<<<<<<<<<
- *             op_id = _layer_op_ids[layer_index]
- *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
-*/
-    __pyx_t_2 = (__pyx_v_op_id < 0);
-
-    if (__pyx_t_2) {
-
-
-      /* "imgcomp/_stacklang_render_c.pyx":434
- *         op_id = layer.paint_op_id
- *         if op_id < 0:
- *             op_id = _layer_op_ids[layer_index]             # <<<<<<<<<<<<<<
- *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
- *         # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
-*/
-      if (unlikely(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids == Py_None)) {
-        PyErr_SetString(PyExc_TypeError, "\047NoneType\047 object is not subscriptable");
-        __PYX_ERR(0, 434, __pyx_L1_error)
-      }
-      __pyx_t_16 = __Pyx_PyLong_As_int(__Pyx_PyList_GET_ITEM(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids, __pyx_v_layer_index)); if (unlikely((__pyx_t_16 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 434, __pyx_L1_error)
-      __pyx_v_op_id = __pyx_t_16;
-
-      /* "imgcomp/_stacklang_render_c.pyx":433
- *         layer = present[layer_index]
- *         op_id = layer.paint_op_id
- *         if op_id < 0:             # <<<<<<<<<<<<<<
- *             op_id = _layer_op_ids[layer_index]
- *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
-*/
-    }
-
-    /* "imgcomp/_stacklang_render_c.pyx":435
- *         if op_id < 0:
- *             op_id = _layer_op_ids[layer_index]
- *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)             # <<<<<<<<<<<<<<
- *         # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
- *         src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)
-*/
-    __pyx_f_7imgcomp_19_stacklang_render_c_invoke_rgba_at(__pyx_v_gy, __pyx_v_gx, __pyx_v_op_id, (&__pyx_v_lr), (&__pyx_v_lg), (&__pyx_v_lb), (&__pyx_v_la)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 435, __pyx_L1_error)
-
-    /* "imgcomp/_stacklang_render_c.pyx":437
- *         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
- *         # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
- *         src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)             # <<<<<<<<<<<<<<
- *         ar = out_r
- *         ag = out_g
-*/
-    __pyx_f_7imgcomp_19_stacklang_render_c_src_over(__pyx_v_ar, __pyx_v_ag, __pyx_v_ab, __pyx_v_aa, __pyx_v_lr, __pyx_v_lg, __pyx_v_lb, __pyx_v_la, (&__pyx_v_out_r), (&__pyx_v_out_g), (&__pyx_v_out_b), (&__pyx_v_out_a));
-
-    /* "imgcomp/_stacklang_render_c.pyx":438
- *         # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
- *         src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)
- *         ar = out_r             # <<<<<<<<<<<<<<
- *         ag = out_g
- *         ab = out_b
-*/
-    __pyx_v_ar = __pyx_v_out_r;
-
-    /* "imgcomp/_stacklang_render_c.pyx":439
- *         src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)
- *         ar = out_r
- *         ag = out_g             # <<<<<<<<<<<<<<
- *         ab = out_b
- *         aa = out_a
-*/
-    __pyx_v_ag = __pyx_v_out_g;
-
-    /* "imgcomp/_stacklang_render_c.pyx":440
- *         ar = out_r
- *         ag = out_g
- *         ab = out_b             # <<<<<<<<<<<<<<
- *         aa = out_a
- *         if aa >= 255.0:
-*/
-    __pyx_v_ab = __pyx_v_out_b;
-
-    /* "imgcomp/_stacklang_render_c.pyx":441
- *         ag = out_g
- *         ab = out_b
- *         aa = out_a             # <<<<<<<<<<<<<<
- *         if aa >= 255.0:
- *             break
-*/
-    __pyx_v_aa = __pyx_v_out_a;
-
-    /* "imgcomp/_stacklang_render_c.pyx":442
- *         ab = out_b
- *         aa = out_a
- *         if aa >= 255.0:             # <<<<<<<<<<<<<<
- *             break
+  /* "imgcomp/_stacklang_render_c.pyx":625
+ *     if leaf_idx < 0:
+ *         return 0
+ *     leaf = _quad_nodes[leaf_idx]             # <<<<<<<<<<<<<<
+ *     _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)
  *     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
 */
-    __pyx_t_2 = (__pyx_v_aa >= 255.0);
+  __pyx_v_leaf = (__pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes[__pyx_v_leaf_idx]);
 
-    if (__pyx_t_2) {
-
-
-      /* "imgcomp/_stacklang_render_c.pyx":443
- *         aa = out_a
- *         if aa >= 255.0:
- *             break             # <<<<<<<<<<<<<<
+  /* "imgcomp/_stacklang_render_c.pyx":626
+ *         return 0
+ *     leaf = _quad_nodes[leaf_idx]
+ *     _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)             # <<<<<<<<<<<<<<
  *     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
  *     return 0
 */
-      goto __pyx_L16_break;
+  __pyx_f_7imgcomp_19_stacklang_render_c__composite_leaf_pixel(__pyx_v_gy, __pyx_v_gx, (&__pyx_v_leaf), (&__pyx_v_ar), (&__pyx_v_ag), (&__pyx_v_ab), (&__pyx_v_aa)); if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 626, __pyx_L1_error)
 
-      /* "imgcomp/_stacklang_render_c.pyx":442
- *         ab = out_b
- *         aa = out_a
- *         if aa >= 255.0:             # <<<<<<<<<<<<<<
- *             break
- *     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
-*/
-    }
-    __pyx_L15_continue:;
-  }
-  __pyx_L16_break:;
-
-  /* "imgcomp/_stacklang_render_c.pyx":444
- *         if aa >= 255.0:
- *             break
+  /* "imgcomp/_stacklang_render_c.pyx":627
+ *     leaf = _quad_nodes[leaf_idx]
+ *     _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)
  *     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))             # <<<<<<<<<<<<<<
  *     return 0
  * 
 */
   __pyx_f_7imgcomp_19_stacklang_render_c_write_rgba(__pyx_v_px, __pyx_v_py, __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ar), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ag), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_ab), __pyx_f_7imgcomp_19_stacklang_render_c_clamp_u8(__pyx_v_aa));
 
-  /* "imgcomp/_stacklang_render_c.pyx":445
- *             break
+  /* "imgcomp/_stacklang_render_c.pyx":628
+ *     _composite_leaf_pixel(gy, gx, &leaf, &ar, &ag, &ab, &aa)
  *     write_rgba(px, py, clamp_u8(ar), clamp_u8(ag), clamp_u8(ab), clamp_u8(aa))
  *     return 0             # <<<<<<<<<<<<<<
  * 
@@ -22452,24 +23880,16 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
   }
   goto __pyx_L0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":402
+  /* "imgcomp/_stacklang_render_c.pyx":608
  * 
  * 
  * cdef int _op_slr_paint_pixel() except -1:             # <<<<<<<<<<<<<<
- *     """Stack gx -- . Z-list lookup at (_current_gy, gx), composite, paint."""
+ *     """Stack gx -- . Legacy per-pixel path via quadtree point lookup."""
  *     cdef double gx = data_pop_float()
 */
 
   /* function exit code */
   __pyx_L1_error:;
-  __Pyx_XDECREF(__pyx_t_4);
-  __Pyx_XDECREF(__pyx_t_5);
-  __Pyx_XDECREF(__pyx_t_6);
-  __Pyx_XDECREF(__pyx_t_7);
-  __Pyx_XDECREF(__pyx_t_8);
-  __Pyx_XDECREF(__pyx_t_9);
-  __Pyx_XDECREF(__pyx_t_10);
-  __Pyx_XDECREF(__pyx_t_12);
   __Pyx_AddTraceback("imgcomp._stacklang_render_c._op_slr_paint_pixel", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = -1;
   __pyx_L0:;
@@ -22477,7 +23897,6 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
 
 
 
-  __Pyx_XDECREF(__pyx_v_z_list);
 
 
 
@@ -22485,247 +23904,6 @@ static int __pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel(void) {
 
 
 
-
-
-
-
-
-
-
-  __Pyx_XDECREF(__pyx_v_present);
-  __Pyx_XDECREF(__pyx_v_layer);
-  __Pyx_XDECREF(__pyx_7genexpr__pyx_v_layer);
-
-  __Pyx_RefNannyFinishContext();
-  return __pyx_r;
-}
-
-/* "imgcomp/_stacklang_render_c.pyx":448
- * 
- * 
- * def z_list_at_point(object tree, double gx, double gy):             # <<<<<<<<<<<<<<
- *     from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point
- * 
-*/
-
-/* Python wrapper */
-static PyObject *__pyx_pw_7imgcomp_19_stacklang_render_c_3z_list_at_point(PyObject *__pyx_self, 
-#if CYTHON_VECTORCALL
-PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
-#else
-PyObject *__pyx_args, PyObject *__pyx_kwds
-#endif
-); /*proto*/
-static PyMethodDef __pyx_mdef_7imgcomp_19_stacklang_render_c_3z_list_at_point = {"z_list_at_point", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_7imgcomp_19_stacklang_render_c_3z_list_at_point, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
-static PyObject *__pyx_pw_7imgcomp_19_stacklang_render_c_3z_list_at_point(PyObject *__pyx_self, 
-#if CYTHON_VECTORCALL
-PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
-#else
-PyObject *__pyx_args, PyObject *__pyx_kwds
-#endif
-) {
-  PyObject *__pyx_v_tree = 0;
-  double __pyx_v_gx;
-  double __pyx_v_gy;
-  #if !CYTHON_VECTORCALL
-  CYTHON_UNUSED Py_ssize_t __pyx_nargs;
-  #endif
-  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
-  PyObject* values[3] = {0,0,0};
-  int __pyx_lineno = 0;
-  const char *__pyx_filename = NULL;
-  int __pyx_clineno = 0;
-  PyObject *__pyx_r = 0;
-  __Pyx_RefNannyDeclarations
-  __Pyx_RefNannySetupContext("z_list_at_point (wrapper)", 0);
-  #if !CYTHON_VECTORCALL
-  #if CYTHON_ASSUME_SAFE_SIZE
-  __pyx_nargs = PyTuple_GET_SIZE(__pyx_args);
-  #else
-  __pyx_nargs = PyTuple_Size(__pyx_args); if (unlikely(__pyx_nargs < 0)) return NULL;
-  #endif
-  #endif
-  __pyx_kwvalues = __Pyx_KwValues_FASTCALL(__pyx_args, __pyx_nargs);
-  {
-    PyObject ** const __pyx_pyargnames[] = {&__pyx_mstate_global->__pyx_n_u_tree,&__pyx_mstate_global->__pyx_n_u_gx,&__pyx_mstate_global->__pyx_n_u_gy,0};
-    const Py_ssize_t __pyx_kwds_len = (__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
-    if (unlikely(__pyx_kwds_len < 0)) __PYX_ERR(0, 448, __pyx_L3_error)
-    if (__pyx_kwds_len > 0) {
-      switch (__pyx_nargs) {
-        case  3:
-        values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 448, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
-        case  2:
-        values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 448, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
-        case  1:
-        values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 448, __pyx_L3_error)
-        CYTHON_FALLTHROUGH;
-        case  0: break;
-        default: goto __pyx_L5_argtuple_error;
-      }
-      const Py_ssize_t kwd_pos_args = __pyx_nargs;
-      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "z_list_at_point", 0) < (0)) __PYX_ERR(0, 448, __pyx_L3_error)
-      for (Py_ssize_t i = __pyx_nargs; i < 3; i++) {
-        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("z_list_at_point", 1, 3, 3, i); __PYX_ERR(0, 448, __pyx_L3_error) }
-      }
-    } else if (unlikely(__pyx_nargs != 3)) {
-      goto __pyx_L5_argtuple_error;
-    } else {
-      values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 448, __pyx_L3_error)
-      values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 448, __pyx_L3_error)
-      values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 448, __pyx_L3_error)
-    }
-    __pyx_v_tree = values[0];
-    __pyx_v_gx = __Pyx_PyFloat_AsDouble(values[1]); if (unlikely((__pyx_v_gx == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 448, __pyx_L3_error)
-    __pyx_v_gy = __Pyx_PyFloat_AsDouble(values[2]); if (unlikely((__pyx_v_gy == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 448, __pyx_L3_error)
-  }
-  goto __pyx_L6_skip;
-  __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("z_list_at_point", 1, 3, 3, __pyx_nargs); __PYX_ERR(0, 448, __pyx_L3_error)
-  __pyx_L6_skip:;
-  goto __pyx_L4_argument_unpacking_done;
-  __pyx_L3_error:;
-  for (Py_ssize_t __pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
-    Py_XDECREF(values[__pyx_temp]);
-  }
-  __Pyx_AddTraceback("imgcomp._stacklang_render_c.z_list_at_point", __pyx_clineno, __pyx_lineno, __pyx_filename);
-  __Pyx_RefNannyFinishContext();
-  return NULL;
-  __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_7imgcomp_19_stacklang_render_c_2z_list_at_point(__pyx_self, __pyx_v_tree, __pyx_v_gx, __pyx_v_gy);
-
-  /* function exit code */
-  for (Py_ssize_t __pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
-    Py_XDECREF(values[__pyx_temp]);
-  }
-
-
-  __Pyx_RefNannyFinishContext();
-  return __pyx_r;
-}
-
-static PyObject *__pyx_pf_7imgcomp_19_stacklang_render_c_2z_list_at_point(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_tree, double __pyx_v_gx, double __pyx_v_gy) {
-  PyObject *__pyx_v__z_list_at_point = NULL;
-  PyObject *__pyx_r = NULL;
-  __Pyx_RefNannyDeclarations
-  PyObject *__pyx_t_1 = NULL;
-  PyObject *__pyx_t_2 = NULL;
-  Py_ssize_t __pyx_t_3;
-  PyObject *__pyx_t_4 = NULL;
-  PyObject *__pyx_t_5 = NULL;
-  PyObject *__pyx_t_6 = NULL;
-  PyObject *__pyx_t_7 = NULL;
-  size_t __pyx_t_8;
-  int __pyx_lineno = 0;
-  const char *__pyx_filename = NULL;
-  int __pyx_clineno = 0;
-  __Pyx_RefNannySetupContext("z_list_at_point", 0);
-
-  /* "imgcomp/_stacklang_render_c.pyx":449
- * 
- * def z_list_at_point(object tree, double gx, double gy):
- *     from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point             # <<<<<<<<<<<<<<
- * 
- *     return _z_list_at_point(tree, gx, gy)
-*/
-  {
-    PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_z_list_at_point};
-    __pyx_t_2 = __Pyx_Import(__pyx_mstate_global->__pyx_n_u_imgcomp_stacklang_render, __pyx_imported_names, 1, NULL, 0); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 449, __pyx_L1_error)
-  }
-  __pyx_t_1 = __pyx_t_2;
-  __Pyx_GOTREF(__pyx_t_1);
-  {
-    PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_z_list_at_point};
-    __pyx_t_3 = 0; {
-      __pyx_t_4 = __Pyx_ImportFrom(__pyx_t_1, __pyx_imported_names[__pyx_t_3]); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 449, __pyx_L1_error)
-      __Pyx_GOTREF(__pyx_t_4);
-      switch (__pyx_t_3) {
-        case 0:
-        __Pyx_INCREF(__pyx_t_4);
-        __pyx_v__z_list_at_point = __pyx_t_4;
-        break;
-        default:;
-      }
-      __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    }
-  }
-  __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":451
- *     from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point
- * 
- *     return _z_list_at_point(tree, gx, gy)             # <<<<<<<<<<<<<<
- * 
- * 
-*/
-  __pyx_t_4 = NULL;
-  __Pyx_INCREF(__pyx_v__z_list_at_point);
-  __pyx_t_5 = __pyx_v__z_list_at_point; 
-  __pyx_t_6 = PyFloat_FromDouble(__pyx_v_gx); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 451, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_7 = PyFloat_FromDouble(__pyx_v_gy); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 451, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_8 = 1;
-  #if CYTHON_UNPACK_METHODS
-  if (unlikely(PyMethod_Check(__pyx_t_5))) {
-    __pyx_t_4 = PyMethod_GET_SELF(__pyx_t_5);
-    assert(__pyx_t_4);
-    PyObject* __pyx__function = PyMethod_GET_FUNCTION(__pyx_t_5);
-    __Pyx_INCREF(__pyx_t_4);
-    __Pyx_INCREF(__pyx__function);
-    __Pyx_DECREF_SET(__pyx_t_5, __pyx__function);
-    __pyx_t_8 = 0;
-  }
-  #endif
-  {
-    PyObject *__pyx_callargs[4] = {__pyx_t_4, __pyx_v_tree, __pyx_t_6, __pyx_t_7};
-    __pyx_t_1 = __Pyx_PyObject_FastCall((PyObject*)__pyx_t_5, __pyx_callargs+__pyx_t_8, (4-__pyx_t_8) | (__pyx_t_8*__Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET));
-    __Pyx_XDECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
-    __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
-    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
-    if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 451, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-  }
-  {
-    PyObject *__pyx_temp;
-    {
-      __pyx_temp = __pyx_r;
-      __pyx_r = __pyx_t_1;
-    }
-    __Pyx_XDECREF(__pyx_temp);
-  }
-  __pyx_t_1 = 0;
-  goto __pyx_L0;
-
-  /* "imgcomp/_stacklang_render_c.pyx":448
- * 
- * 
- * def z_list_at_point(object tree, double gx, double gy):             # <<<<<<<<<<<<<<
- *     from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point
- * 
-*/
-
-  /* function exit code */
-  __pyx_L1_error:;
-  __Pyx_XDECREF(__pyx_t_1);
-  __Pyx_XDECREF(__pyx_t_4);
-  __Pyx_XDECREF(__pyx_t_5);
-  __Pyx_XDECREF(__pyx_t_6);
-  __Pyx_XDECREF(__pyx_t_7);
-  __Pyx_AddTraceback("imgcomp._stacklang_render_c.z_list_at_point", __pyx_clineno, __pyx_lineno, __pyx_filename);
-  __pyx_r = NULL;
-  __pyx_L0:;
-  __Pyx_XDECREF(__pyx_v__z_list_at_point);
-  __Pyx_XGIVEREF(__pyx_r);
-  __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 /* #### Code section: module_exttypes ### */
@@ -23855,9 +25033,6 @@ static int __Pyx_modinit_Global_init_code(__pyx_mstatetype *__pyx_mstate) {
   CYTHON_UNUSED_VAR(__pyx_mstate);
   __Pyx_RefNannySetupContext("__Pyx_modinit_Global_init_code", 0);
   /*--- Global init code ---*/
-  __pyx_v_7imgcomp_19_stacklang_render_c__tree = Py_None; Py_INCREF(Py_None);
-  __pyx_v_7imgcomp_19_stacklang_render_c__layers = ((PyObject*)Py_None); Py_INCREF(Py_None);
-  __pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids = ((PyObject*)Py_None); Py_INCREF(Py_None);
   __pyx_v_7imgcomp_19_stacklang_render_c__shape_objects = ((PyObject*)Py_None); Py_INCREF(Py_None);
   __pyx_collections_abc_Sequence = Py_None; Py_INCREF(Py_None);
   generic = Py_None; Py_INCREF(Py_None);
@@ -24125,8 +25300,8 @@ static int __Pyx_modinit_Function_import_code(__pyx_mstatetype *__pyx_mstate) {
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (unlikely(!__pyx_import_signature)) __PYX_ERR(0, 1, __pyx_L1_error)
     #endif
-    const char * __pyx_import_name = __pyx_import_signature + 124;
-    void (**const __pyx_import_pointers[])(void) = {(void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_pop_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_push_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c__handler, (void (**)(void)) NULL};
+    const char * __pyx_import_name = __pyx_import_signature + 153;
+    void (**const __pyx_import_pointers[])(void) = {(void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_peek_bottom_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_pop_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_push_float, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_push_int, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c_data_pop_int, (void (**)(void))&__pyx_f_7imgcomp_8_stack_c__handler, (void (**)(void)) NULL};
     void (**const *__pyx_import_pointer)(void) = __pyx_import_pointers;
     const char *__pyx_import_current_signature = __pyx_import_signature;
     while (*__pyx_import_pointer) {
@@ -24337,6 +25512,7 @@ static CYTHON_SMALL_CODE int __pyx_pymod_exec__stacklang_render_c(PyObject *__py
   int __pyx_t_8;
   Py_ssize_t __pyx_t_9;
   __Pyx_memviewslice __pyx_t_10 = { 0, 0, { 0 }, { 0 }, { 0 } };
+  __Pyx_memviewslice __pyx_t_11 = { 0, 0, { 0 }, { 0 }, { 0 } };
   int __pyx_lineno = 0;
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
@@ -24922,8 +26098,8 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
   if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_pyx_unpickle_Enum, __pyx_t_4) < (0)) __PYX_ERR(1, 4, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":18
- *     data_push_float,
+  /* "imgcomp/_stacklang_render_c.pyx":20
+ *     data_pop_int,
  * )
  * from imgcomp._stack_c import invoke_body_id             # <<<<<<<<<<<<<<
  * from imgcomp.stacklang_debug import log_c_to_py
@@ -24931,22 +26107,22 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
 */
   {
     PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_invoke_body_id};
-    __pyx_t_1 = __Pyx_Import(__pyx_mstate_global->__pyx_n_u_imgcomp__stack_c, __pyx_imported_names, 1, NULL, 0); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 18, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_Import(__pyx_mstate_global->__pyx_n_u_imgcomp__stack_c, __pyx_imported_names, 1, NULL, 0); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 20, __pyx_L1_error)
   }
   __pyx_t_4 = __pyx_t_1;
   __Pyx_GOTREF(__pyx_t_4);
   {
     PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_invoke_body_id};
     __pyx_t_9 = 0; {
-      __pyx_t_5 = __Pyx_ImportFrom(__pyx_t_4, __pyx_imported_names[__pyx_t_9]); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 18, __pyx_L1_error)
+      __pyx_t_5 = __Pyx_ImportFrom(__pyx_t_4, __pyx_imported_names[__pyx_t_9]); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 20, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_5);
-      if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_imported_names[__pyx_t_9], __pyx_t_5) < (0)) __PYX_ERR(0, 18, __pyx_L1_error)
+      if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_imported_names[__pyx_t_9], __pyx_t_5) < (0)) __PYX_ERR(0, 20, __pyx_L1_error)
       __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
     }
   }
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":19
+  /* "imgcomp/_stacklang_render_c.pyx":21
  * )
  * from imgcomp._stack_c import invoke_body_id
  * from imgcomp.stacklang_debug import log_c_to_py             # <<<<<<<<<<<<<<
@@ -24955,35 +26131,35 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
 */
   {
     PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_log_c_to_py};
-    __pyx_t_1 = __Pyx_Import(__pyx_mstate_global->__pyx_n_u_imgcomp_stacklang_debug, __pyx_imported_names, 1, NULL, 0); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 19, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_Import(__pyx_mstate_global->__pyx_n_u_imgcomp_stacklang_debug, __pyx_imported_names, 1, NULL, 0); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 21, __pyx_L1_error)
   }
   __pyx_t_4 = __pyx_t_1;
   __Pyx_GOTREF(__pyx_t_4);
   {
     PyObject* const __pyx_imported_names[] = {__pyx_mstate_global->__pyx_n_u_log_c_to_py};
     __pyx_t_9 = 0; {
-      __pyx_t_5 = __Pyx_ImportFrom(__pyx_t_4, __pyx_imported_names[__pyx_t_9]); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 19, __pyx_L1_error)
+      __pyx_t_5 = __Pyx_ImportFrom(__pyx_t_4, __pyx_imported_names[__pyx_t_9]); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 21, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_5);
-      if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_imported_names[__pyx_t_9], __pyx_t_5) < (0)) __PYX_ERR(0, 19, __pyx_L1_error)
+      if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_imported_names[__pyx_t_9], __pyx_t_5) < (0)) __PYX_ERR(0, 21, __pyx_L1_error)
       __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
     }
   }
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":22
+  /* "imgcomp/_stacklang_render_c.pyx":24
  * 
  * 
  * cdef unsigned char[:] _pixels = None             # <<<<<<<<<<<<<<
  * cdef int _buf_width = 0
  * cdef int _buf_height = 0
 */
-  __pyx_t_10 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char(Py_None, PyBUF_WRITABLE); if (unlikely(!__pyx_t_10.memview)) __PYX_ERR(0, 22, __pyx_L1_error)
+  __pyx_t_10 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char(Py_None, PyBUF_WRITABLE); if (unlikely(!__pyx_t_10.memview)) __PYX_ERR(0, 24, __pyx_L1_error)
   __PYX_XCLEAR_MEMVIEW(&__pyx_v_7imgcomp_19_stacklang_render_c__pixels, 1);
   __pyx_v_7imgcomp_19_stacklang_render_c__pixels = __pyx_t_10;
   __pyx_t_10.memview = NULL;
   __pyx_t_10.data = NULL;
 
-  /* "imgcomp/_stacklang_render_c.pyx":23
+  /* "imgcomp/_stacklang_render_c.pyx":25
  * 
  * cdef unsigned char[:] _pixels = None
  * cdef int _buf_width = 0             # <<<<<<<<<<<<<<
@@ -24992,7 +26168,7 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__buf_width = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":24
+  /* "imgcomp/_stacklang_render_c.pyx":26
  * cdef unsigned char[:] _pixels = None
  * cdef int _buf_width = 0
  * cdef int _buf_height = 0             # <<<<<<<<<<<<<<
@@ -25001,7 +26177,7 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__buf_height = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":25
+  /* "imgcomp/_stacklang_render_c.pyx":27
  * cdef int _buf_width = 0
  * cdef int _buf_height = 0
  * cdef double _half_w = 0.0             # <<<<<<<<<<<<<<
@@ -25010,65 +26186,29 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__half_w = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":26
+  /* "imgcomp/_stacklang_render_c.pyx":28
  * cdef int _buf_height = 0
  * cdef double _half_w = 0.0
  * cdef double _half_h = 0.0             # <<<<<<<<<<<<<<
  * cdef double _current_gy = 0.0
- * cdef object _tree = None
+ * cdef list _shape_objects = None
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__half_h = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":27
+  /* "imgcomp/_stacklang_render_c.pyx":29
  * cdef double _half_w = 0.0
  * cdef double _half_h = 0.0
  * cdef double _current_gy = 0.0             # <<<<<<<<<<<<<<
- * cdef object _tree = None
- * cdef list _layers = None
+ * cdef list _shape_objects = None
+ * 
 */
   __pyx_v_7imgcomp_19_stacklang_render_c__current_gy = 0.0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":28
+  /* "imgcomp/_stacklang_render_c.pyx":30
  * cdef double _half_h = 0.0
  * cdef double _current_gy = 0.0
- * cdef object _tree = None             # <<<<<<<<<<<<<<
- * cdef list _layers = None
- * cdef list _layer_op_ids = None
-*/
-  __Pyx_INCREF(Py_None);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__tree);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__tree, Py_None);
-  __Pyx_GIVEREF(Py_None);
-
-  /* "imgcomp/_stacklang_render_c.pyx":29
- * cdef double _current_gy = 0.0
- * cdef object _tree = None
- * cdef list _layers = None             # <<<<<<<<<<<<<<
- * cdef list _layer_op_ids = None
- * cdef list _shape_objects = None
-*/
-  __Pyx_INCREF(Py_None);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__layers);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__layers, ((PyObject*)Py_None));
-  __Pyx_GIVEREF(Py_None);
-
-  /* "imgcomp/_stacklang_render_c.pyx":30
- * cdef object _tree = None
- * cdef list _layers = None
- * cdef list _layer_op_ids = None             # <<<<<<<<<<<<<<
- * cdef list _shape_objects = None
- * cdef int _num_layers = 0
-*/
-  __Pyx_INCREF(Py_None);
-  __Pyx_XGOTREF(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids);
-  __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__layer_op_ids, ((PyObject*)Py_None));
-  __Pyx_GIVEREF(Py_None);
-
-  /* "imgcomp/_stacklang_render_c.pyx":31
- * cdef list _layers = None
- * cdef list _layer_op_ids = None
  * cdef list _shape_objects = None             # <<<<<<<<<<<<<<
- * cdef int _num_layers = 0
+ * 
  * 
 */
   __Pyx_INCREF(Py_None);
@@ -25076,308 +26216,365 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
   __Pyx_DECREF_SET(__pyx_v_7imgcomp_19_stacklang_render_c__shape_objects, ((PyObject*)Py_None));
   __Pyx_GIVEREF(Py_None);
 
-  /* "imgcomp/_stacklang_render_c.pyx":32
- * cdef list _layer_op_ids = None
- * cdef list _shape_objects = None
- * cdef int _num_layers = 0             # <<<<<<<<<<<<<<
+  /* "imgcomp/_stacklang_render_c.pyx":44
  * 
+ * 
+ * cdef const unsigned char[:] _quadtree_blob = None             # <<<<<<<<<<<<<<
+ * cdef CQuadNode* _quad_nodes = NULL
+ * cdef int _quad_node_count = 0
+*/
+  __pyx_t_11 = __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char__const__(Py_None, 0); if (unlikely(!__pyx_t_11.memview)) __PYX_ERR(0, 44, __pyx_L1_error)
+  __PYX_XCLEAR_MEMVIEW(&__pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob, 1);
+  __pyx_v_7imgcomp_19_stacklang_render_c__quadtree_blob = __pyx_t_11;
+  __pyx_t_11.memview = NULL;
+  __pyx_t_11.data = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":45
+ * 
+ * cdef const unsigned char[:] _quadtree_blob = None
+ * cdef CQuadNode* _quad_nodes = NULL             # <<<<<<<<<<<<<<
+ * cdef int _quad_node_count = 0
+ * cdef const int* _leaf_op_ids = NULL
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_nodes = NULL;
+
+  /* "imgcomp/_stacklang_render_c.pyx":46
+ * cdef const unsigned char[:] _quadtree_blob = None
+ * cdef CQuadNode* _quad_nodes = NULL
+ * cdef int _quad_node_count = 0             # <<<<<<<<<<<<<<
+ * cdef const int* _leaf_op_ids = NULL
+ * cdef int _leaf_op_count = 0
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__quad_node_count = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":47
+ * cdef CQuadNode* _quad_nodes = NULL
+ * cdef int _quad_node_count = 0
+ * cdef const int* _leaf_op_ids = NULL             # <<<<<<<<<<<<<<
+ * cdef int _leaf_op_count = 0
  * 
 */
-  __pyx_v_7imgcomp_19_stacklang_render_c__num_layers = 0;
+  __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_ids = NULL;
 
-  /* "imgcomp/_stacklang_render_c.pyx":35
+  /* "imgcomp/_stacklang_render_c.pyx":48
+ * cdef int _quad_node_count = 0
+ * cdef const int* _leaf_op_ids = NULL
+ * cdef int _leaf_op_count = 0             # <<<<<<<<<<<<<<
+ * 
+ * DEF _QTRE_MAGIC = 0x51545245
+*/
+  __pyx_v_7imgcomp_19_stacklang_render_c__leaf_op_count = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":141
  * 
  * 
  * def bind_render(             # <<<<<<<<<<<<<<
  *     pixels,
  *     int width,
 */
-  __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 35, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 141, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  if (PyDict_SetItem(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_return, __pyx_mstate_global->__pyx_n_u_None) < (0)) __PYX_ERR(0, 35, __pyx_L1_error)
-  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_7imgcomp_19_stacklang_render_c_1bind_render, 0, __pyx_mstate_global->__pyx_n_u_bind_render, NULL, __pyx_mstate_global->__pyx_n_u_imgcomp__stacklang_render_c, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 35, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_return, __pyx_mstate_global->__pyx_n_u_None) < (0)) __PYX_ERR(0, 141, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_7imgcomp_19_stacklang_render_c_1bind_render, 0, __pyx_mstate_global->__pyx_n_u_bind_render, NULL, __pyx_mstate_global->__pyx_n_u_imgcomp__stacklang_render_c, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 141, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_5);
   #endif
   __Pyx_CyFunction_SetAnnotationsDict(__pyx_t_5, __pyx_t_4);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_bind_render, __pyx_t_5) < (0)) __PYX_ERR(0, 35, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_bind_render, __pyx_t_5) < (0)) __PYX_ERR(0, 141, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":448
+  /* "imgcomp/_stacklang_render_c.pyx":602
  * 
  * 
- * def z_list_at_point(object tree, double gx, double gy):             # <<<<<<<<<<<<<<
- *     from imgcomp.stacklang_render import z_list_at_point as _z_list_at_point
- * 
+ * def render_quadtree() -> None:             # <<<<<<<<<<<<<<
+ *     """Walk quadtree leaves and paint each cell's pixels in batch."""
+ *     if _quad_node_count > 0:
 */
-  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_7imgcomp_19_stacklang_render_c_3z_list_at_point, 0, __pyx_mstate_global->__pyx_n_u_z_list_at_point, NULL, __pyx_mstate_global->__pyx_n_u_imgcomp__stacklang_render_c, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 448, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 602, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
+  if (PyDict_SetItem(__pyx_t_5, __pyx_mstate_global->__pyx_n_u_return, __pyx_mstate_global->__pyx_n_u_None) < (0)) __PYX_ERR(0, 602, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_CyFunction_New(&__pyx_mdef_7imgcomp_19_stacklang_render_c_3render_quadtree, 0, __pyx_mstate_global->__pyx_n_u_render_quadtree, NULL, __pyx_mstate_global->__pyx_n_u_imgcomp__stacklang_render_c, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 602, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
-  PyUnstable_Object_EnableDeferredRefcount(__pyx_t_5);
+  PyUnstable_Object_EnableDeferredRefcount(__pyx_t_4);
   #endif
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_z_list_at_point, __pyx_t_5) < (0)) __PYX_ERR(0, 448, __pyx_L1_error)
+  __Pyx_CyFunction_SetAnnotationsDict(__pyx_t_4, __pyx_t_5);
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_render_quadtree, __pyx_t_4) < (0)) __PYX_ERR(0, 602, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":454
+  /* "imgcomp/_stacklang_render_c.pyx":631
  * 
  * 
  * slr_set_gy = _handler(_op_slr_set_gy)             # <<<<<<<<<<<<<<
  * slr_dup_xy = _handler(_op_slr_dup_xy)
  * slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_set_gy)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 454, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_set_gy, __pyx_t_5) < (0)) __PYX_ERR(0, 454, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_set_gy)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 631, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_set_gy, __pyx_t_4) < (0)) __PYX_ERR(0, 631, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":455
+  /* "imgcomp/_stacklang_render_c.pyx":632
  * 
  * slr_set_gy = _handler(_op_slr_set_gy)
  * slr_dup_xy = _handler(_op_slr_dup_xy)             # <<<<<<<<<<<<<<
  * slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)
  * slr_float_max2 = _handler(_op_slr_float_max2)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_xy)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 455, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_xy, __pyx_t_5) < (0)) __PYX_ERR(0, 455, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_xy)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 632, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_xy, __pyx_t_4) < (0)) __PYX_ERR(0, 632, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":456
+  /* "imgcomp/_stacklang_render_c.pyx":633
  * slr_set_gy = _handler(_op_slr_set_gy)
  * slr_dup_xy = _handler(_op_slr_dup_xy)
  * slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)             # <<<<<<<<<<<<<<
  * slr_float_max2 = _handler(_op_slr_float_max2)
  * slr_float_neg = _handler(_op_slr_float_neg)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_push_xy)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 456, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_anchor_push_xy, __pyx_t_5) < (0)) __PYX_ERR(0, 456, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_push_xy)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 633, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_anchor_push_xy, __pyx_t_4) < (0)) __PYX_ERR(0, 633, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":457
+  /* "imgcomp/_stacklang_render_c.pyx":634
  * slr_dup_xy = _handler(_op_slr_dup_xy)
  * slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)
  * slr_float_max2 = _handler(_op_slr_float_max2)             # <<<<<<<<<<<<<<
  * slr_float_neg = _handler(_op_slr_float_neg)
  * slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_max2)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 457, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_float_max2, __pyx_t_5) < (0)) __PYX_ERR(0, 457, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_max2)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 634, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_float_max2, __pyx_t_4) < (0)) __PYX_ERR(0, 634, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":458
+  /* "imgcomp/_stacklang_render_c.pyx":635
  * slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)
  * slr_float_max2 = _handler(_op_slr_float_max2)
  * slr_float_neg = _handler(_op_slr_float_neg)             # <<<<<<<<<<<<<<
  * slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)
  * slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_neg)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 458, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_float_neg, __pyx_t_5) < (0)) __PYX_ERR(0, 458, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_float_neg)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 635, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_float_neg, __pyx_t_4) < (0)) __PYX_ERR(0, 635, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":459
+  /* "imgcomp/_stacklang_render_c.pyx":636
  * slr_float_max2 = _handler(_op_slr_float_max2)
  * slr_float_neg = _handler(_op_slr_float_neg)
  * slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)             # <<<<<<<<<<<<<<
  * slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)
  * slr_circle_distance = _handler(_op_slr_circle_distance)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_offset_xy_sub)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 459, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_offset_xy_sub, __pyx_t_5) < (0)) __PYX_ERR(0, 459, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_offset_xy_sub)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 636, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_offset_xy_sub, __pyx_t_4) < (0)) __PYX_ERR(0, 636, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":460
+  /* "imgcomp/_stacklang_render_c.pyx":637
  * slr_float_neg = _handler(_op_slr_float_neg)
  * slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)
  * slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)             # <<<<<<<<<<<<<<
  * slr_circle_distance = _handler(_op_slr_circle_distance)
  * slr_rectangle_distance = _handler(_op_slr_rectangle_distance)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 460, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rgba_solid_if_hit, __pyx_t_5) < (0)) __PYX_ERR(0, 460, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_solid_if_hit)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 637, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rgba_solid_if_hit, __pyx_t_4) < (0)) __PYX_ERR(0, 637, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":461
+  /* "imgcomp/_stacklang_render_c.pyx":638
  * slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)
  * slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)
  * slr_circle_distance = _handler(_op_slr_circle_distance)             # <<<<<<<<<<<<<<
  * slr_rectangle_distance = _handler(_op_slr_rectangle_distance)
  * slr_oval_distance = _handler(_op_slr_oval_distance)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_circle_distance)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 461, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_circle_distance, __pyx_t_5) < (0)) __PYX_ERR(0, 461, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_circle_distance)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 638, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_circle_distance, __pyx_t_4) < (0)) __PYX_ERR(0, 638, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":462
+  /* "imgcomp/_stacklang_render_c.pyx":639
  * slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)
  * slr_circle_distance = _handler(_op_slr_circle_distance)
  * slr_rectangle_distance = _handler(_op_slr_rectangle_distance)             # <<<<<<<<<<<<<<
  * slr_oval_distance = _handler(_op_slr_oval_distance)
  * slr_fill_white = _handler(_op_slr_fill_white)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 462, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rectangle_distance, __pyx_t_5) < (0)) __PYX_ERR(0, 462, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rectangle_distance)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 639, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rectangle_distance, __pyx_t_4) < (0)) __PYX_ERR(0, 639, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":463
+  /* "imgcomp/_stacklang_render_c.pyx":640
  * slr_circle_distance = _handler(_op_slr_circle_distance)
  * slr_rectangle_distance = _handler(_op_slr_rectangle_distance)
  * slr_oval_distance = _handler(_op_slr_oval_distance)             # <<<<<<<<<<<<<<
  * slr_fill_white = _handler(_op_slr_fill_white)
  * slr_rgba_transparent = _handler(_op_slr_rgba_transparent)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 463, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_oval_distance, __pyx_t_5) < (0)) __PYX_ERR(0, 463, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_oval_distance)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 640, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_oval_distance, __pyx_t_4) < (0)) __PYX_ERR(0, 640, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":464
+  /* "imgcomp/_stacklang_render_c.pyx":641
  * slr_rectangle_distance = _handler(_op_slr_rectangle_distance)
  * slr_oval_distance = _handler(_op_slr_oval_distance)
  * slr_fill_white = _handler(_op_slr_fill_white)             # <<<<<<<<<<<<<<
  * slr_rgba_transparent = _handler(_op_slr_rgba_transparent)
  * slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_fill_white)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 464, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_fill_white, __pyx_t_5) < (0)) __PYX_ERR(0, 464, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_fill_white)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 641, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_fill_white, __pyx_t_4) < (0)) __PYX_ERR(0, 641, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":465
+  /* "imgcomp/_stacklang_render_c.pyx":642
  * slr_oval_distance = _handler(_op_slr_oval_distance)
  * slr_fill_white = _handler(_op_slr_fill_white)
  * slr_rgba_transparent = _handler(_op_slr_rgba_transparent)             # <<<<<<<<<<<<<<
  * slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)
  * slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_transparent)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 465, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rgba_transparent, __pyx_t_5) < (0)) __PYX_ERR(0, 465, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_rgba_transparent)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 642, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_rgba_transparent, __pyx_t_4) < (0)) __PYX_ERR(0, 642, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":466
+  /* "imgcomp/_stacklang_render_c.pyx":643
  * slr_fill_white = _handler(_op_slr_fill_white)
  * slr_rgba_transparent = _handler(_op_slr_rgba_transparent)
  * slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)             # <<<<<<<<<<<<<<
  * slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
  * slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_push_transparent_accum)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 466, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_push_transparent_accum, __pyx_t_5) < (0)) __PYX_ERR(0, 466, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_push_transparent_accum)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 643, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_push_transparent_accum, __pyx_t_4) < (0)) __PYX_ERR(0, 643, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":467
+  /* "imgcomp/_stacklang_render_c.pyx":644
  * slr_rgba_transparent = _handler(_op_slr_rgba_transparent)
  * slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)
  * slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)             # <<<<<<<<<<<<<<
  * slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
  * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_xy)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 467, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_anchor_xy, __pyx_t_5) < (0)) __PYX_ERR(0, 467, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_dup_anchor_xy)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 644, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_dup_anchor_xy, __pyx_t_4) < (0)) __PYX_ERR(0, 644, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":468
+  /* "imgcomp/_stacklang_render_c.pyx":645
  * slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)
  * slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
  * slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)             # <<<<<<<<<<<<<<
  * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
  * slr_src_over_layer = _handler(_op_slr_src_over_layer)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_drop_hit_xy)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 468, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_drop_hit_xy, __pyx_t_5) < (0)) __PYX_ERR(0, 468, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_drop_hit_xy)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 645, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_drop_hit_xy, __pyx_t_4) < (0)) __PYX_ERR(0, 645, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":469
+  /* "imgcomp/_stacklang_render_c.pyx":646
  * slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
  * slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
  * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)             # <<<<<<<<<<<<<<
  * slr_src_over_layer = _handler(_op_slr_src_over_layer)
- * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
+ * slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_anchorize_rgba)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 469, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_anchorize_rgba, __pyx_t_5) < (0)) __PYX_ERR(0, 469, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_anchorize_rgba)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 646, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_anchorize_rgba, __pyx_t_4) < (0)) __PYX_ERR(0, 646, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":470
+  /* "imgcomp/_stacklang_render_c.pyx":647
  * slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
  * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
  * slr_src_over_layer = _handler(_op_slr_src_over_layer)             # <<<<<<<<<<<<<<
+ * slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)
+ * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
+*/
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_src_over_layer)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 647, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_src_over_layer, __pyx_t_4) < (0)) __PYX_ERR(0, 647, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+
+  /* "imgcomp/_stacklang_render_c.pyx":648
+ * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
+ * slr_src_over_layer = _handler(_op_slr_src_over_layer)
+ * slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)             # <<<<<<<<<<<<<<
  * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
  * slr_python_distance = _handler(_op_slr_python_distance)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_src_over_layer)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 470, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_src_over_layer, __pyx_t_5) < (0)) __PYX_ERR(0, 470, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_continue_if_not_opaque)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 648, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_continue_if_not_opaque, __pyx_t_4) < (0)) __PYX_ERR(0, 648, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":471
- * slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
+  /* "imgcomp/_stacklang_render_c.pyx":649
  * slr_src_over_layer = _handler(_op_slr_src_over_layer)
+ * slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)
  * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)             # <<<<<<<<<<<<<<
  * slr_python_distance = _handler(_op_slr_python_distance)
  * slr_python_color_at = _handler(_op_slr_python_color_at)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 471, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_sdf_fill_white, __pyx_t_5) < (0)) __PYX_ERR(0, 471, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_sdf_fill_white)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 649, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_sdf_fill_white, __pyx_t_4) < (0)) __PYX_ERR(0, 649, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":472
- * slr_src_over_layer = _handler(_op_slr_src_over_layer)
+  /* "imgcomp/_stacklang_render_c.pyx":650
+ * slr_continue_if_not_opaque = _handler(_op_slr_continue_if_not_opaque)
  * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
  * slr_python_distance = _handler(_op_slr_python_distance)             # <<<<<<<<<<<<<<
  * slr_python_color_at = _handler(_op_slr_python_color_at)
  * slr_paint_pixel = _handler(_op_slr_paint_pixel)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 472, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_python_distance, __pyx_t_5) < (0)) __PYX_ERR(0, 472, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_distance)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 650, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_python_distance, __pyx_t_4) < (0)) __PYX_ERR(0, 650, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":473
+  /* "imgcomp/_stacklang_render_c.pyx":651
  * slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
  * slr_python_distance = _handler(_op_slr_python_distance)
  * slr_python_color_at = _handler(_op_slr_python_color_at)             # <<<<<<<<<<<<<<
  * slr_paint_pixel = _handler(_op_slr_paint_pixel)
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 473, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_python_color_at, __pyx_t_5) < (0)) __PYX_ERR(0, 473, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_python_color_at)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 651, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_python_color_at, __pyx_t_4) < (0)) __PYX_ERR(0, 651, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "imgcomp/_stacklang_render_c.pyx":474
+  /* "imgcomp/_stacklang_render_c.pyx":652
  * slr_python_distance = _handler(_op_slr_python_distance)
  * slr_python_color_at = _handler(_op_slr_python_color_at)
  * slr_paint_pixel = _handler(_op_slr_paint_pixel)             # <<<<<<<<<<<<<<
 */
-  __pyx_t_5 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 474, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_paint_pixel, __pyx_t_5) < (0)) __PYX_ERR(0, 474, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = ((PyObject *)__pyx_f_7imgcomp_8_stack_c__handler(__pyx_f_7imgcomp_19_stacklang_render_c__op_slr_paint_pixel)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 652, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_slr_paint_pixel, __pyx_t_4) < (0)) __PYX_ERR(0, 652, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
   /* "imgcomp/_stacklang_render_c.pyx":1
  * # cython: language_level=3             # <<<<<<<<<<<<<<
  * # cython: boundscheck=False
  * # cython: wraparound=False
 */
-  __pyx_t_5 = __Pyx_PyDict_NewPresized(0); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 1, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_test, __pyx_t_5) < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+  __pyx_t_4 = __Pyx_PyDict_NewPresized(0); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 1, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_4);
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_test, __pyx_t_4) < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
   /*--- Wrapped vars code ---*/
 
@@ -25386,6 +26583,7 @@ __Pyx_RefNannySetupContext("PyInit__stacklang_render_c", 0);
   __Pyx_XDECREF(__pyx_t_4);
   __Pyx_XDECREF(__pyx_t_5);
   __PYX_XCLEAR_MEMVIEW(&__pyx_t_10, 1);
+  __PYX_XCLEAR_MEMVIEW(&__pyx_t_11, 1);
   if (__pyx_m) {
     if (__pyx_mstate->__pyx_d && stringtab_initialized) {
       __Pyx_AddTraceback("init imgcomp._stacklang_render_c", __pyx_clineno, __pyx_lineno, __pyx_filename);
@@ -25485,7 +26683,7 @@ static int __Pyx_InitCachedConstants(__pyx_mstatetype *__pyx_mstate) {
   if (__Pyx_PyTuple_SET_ITEM(__pyx_mstate_global->__pyx_tuple[1], 0, __pyx_mstate_global->__pyx_slice[0]) != (0)) __PYX_ERR(1, 763, __pyx_L1_error);
   __Pyx_GIVEREF(__pyx_mstate_global->__pyx_tuple[1]);
 
-  /* "imgcomp/_stacklang_render_c.pyx":349
+  /* "imgcomp/_stacklang_render_c.pyx":449
  *     cdef double gy = data_pop_float()
  *     cdef object shape = _shape_objects[idx]
  *     log_c_to_py("python_distance", idx=idx, gx=gx, gy=gy, shape=shape)             # <<<<<<<<<<<<<<
@@ -25494,28 +26692,14 @@ static int __Pyx_InitCachedConstants(__pyx_mstatetype *__pyx_mstate) {
 */
   {
     PyObject* __pyx_temp[4] = {__pyx_mstate_global->__pyx_n_u_idx, __pyx_mstate_global->__pyx_n_u_gx, __pyx_mstate_global->__pyx_n_u_gy, __pyx_mstate_global->__pyx_n_u_shape};
-    __pyx_mstate_global->__pyx_tuple[2] = __Pyx_PyTuple_FromArray(__pyx_temp, 4); if (unlikely(!__pyx_mstate_global->__pyx_tuple[2])) __PYX_ERR(0, 349, __pyx_L1_error)
+    __pyx_mstate_global->__pyx_tuple[2] = __Pyx_PyTuple_FromArray(__pyx_temp, 4); if (unlikely(!__pyx_mstate_global->__pyx_tuple[2])) __PYX_ERR(0, 449, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_mstate_global->__pyx_tuple[2]);
   }
   __Pyx_GIVEREF(__pyx_mstate_global->__pyx_tuple[2]);
-
-  /* "imgcomp/_stacklang_render_c.pyx":425
- *     if px < 0 or py < 0 or px >= _buf_width or py >= _buf_height:
- *         return 0
- *     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)             # <<<<<<<<<<<<<<
- *     z_list = z_list_at_point(_tree, gx, gy)
- *     present = {layer.index: layer for layer in z_list}
-*/
-  {
-    PyObject* __pyx_temp[4] = {__pyx_mstate_global->__pyx_n_u_gx, __pyx_mstate_global->__pyx_n_u_gy, __pyx_mstate_global->__pyx_n_u_px, __pyx_mstate_global->__pyx_n_u_py};
-    __pyx_mstate_global->__pyx_tuple[3] = __Pyx_PyTuple_FromArray(__pyx_temp, 4); if (unlikely(!__pyx_mstate_global->__pyx_tuple[3])) __PYX_ERR(0, 425, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_mstate_global->__pyx_tuple[3]);
-  }
-  __Pyx_GIVEREF(__pyx_mstate_global->__pyx_tuple[3]);
   #if CYTHON_IMMORTAL_CONSTANTS
   {
     PyObject **table = __pyx_mstate->__pyx_tuple;
-    for (Py_ssize_t i=0; i<4; ++i) {
+    for (Py_ssize_t i=0; i<3; ++i) {
       #if PY_VERSION_HEX >= 0x030F0000
       PyUnstable_SetImmortal(table[i]);
       #elif CYTHON_COMPILING_IN_CPYTHON_FREETHREADING
@@ -25572,41 +26756,41 @@ static int __Pyx_InitConstants(__pyx_mstatetype *__pyx_mstate) {
   int __pyx_clineno = 0;
   CYTHON_UNUSED_VAR(__pyx_mstate);
   {
-    const struct { const unsigned int length: 8; } str_length_index[] = {{6},{8},{1},{2},{15},{23},{25},{32},{20},{22},{1},{1},{37},{45},{22},{179},{8},{15},{7},{6},{2},{31},{9},{50},{26},{24},{30},{37},{5},{8},{4},{8},{15},{20},{12},{9},{17},{8},{8},{12},{10},{8},{10},{8},{7},{14},{11},{10},{19},{14},{12},{10},{17},{13},{12},{12},{19},{8},{13},{16},{3},{15},{18},{4},{11},{1},{18},{8},{5},{8},{15},{6},{9},{5},{5},{6},{7},{2},{2},{6},{2},{3},{16},{27},{23},{24},{5},{14},{5},{8},{12},{6},{11},{7},{4},{4},{4},{10},{3},{4},{11},{6},{3},{2},{2},{15},{15},{8},{6},{10},{5},{13},{4},{18},{19},{15},{22},{17},{10},{14},{14},{13},{17},{17},{15},{26},{19},{19},{22},{21},{20},{18},{10},{18},{5},{4},{4},{6},{4},{6},{6},{6},{4},{5},{1},{15}};
-    const struct { const unsigned int length: 8; } bytes_length_index[] = {{1},{186},{24},{108}};
+    const struct { const unsigned int length: 8; } str_length_index[] = {{4},{6},{8},{2},{1},{2},{15},{23},{25},{32},{20},{22},{1},{1},{37},{45},{22},{179},{8},{20},{15},{7},{6},{2},{31},{9},{50},{26},{29},{34},{24},{30},{37},{30},{5},{8},{4},{8},{15},{20},{12},{9},{17},{8},{8},{12},{10},{8},{10},{8},{7},{14},{11},{10},{19},{14},{12},{10},{17},{13},{12},{12},{19},{8},{13},{3},{15},{18},{4},{11},{1},{18},{8},{5},{8},{15},{6},{9},{5},{5},{6},{7},{2},{2},{6},{2},{3},{16},{27},{23},{5},{14},{5},{8},{11},{7},{4},{4},{4},{3},{4},{6},{3},{15},{15},{13},{8},{15},{6},{10},{5},{13},{4},{18},{19},{26},{15},{22},{17},{10},{14},{14},{13},{17},{17},{15},{26},{19},{19},{22},{21},{20},{18},{10},{18},{5},{4},{4},{6},{6},{6},{6},{4},{5},{1}};
+    const struct { const unsigned int length: 8; } bytes_length_index[] = {{1},{242},{95},{22}};
     #ifndef CYTHON_COMPRESS_STRINGS
       #define CYTHON_COMPRESS_STRINGS 90
     #endif
-    #if (CYTHON_COMPRESS_STRINGS) == 1 /* compression: zlib (1171 bytes) */
-static const char cstring[] = "x\332}UKoT7\024\016R\nETHA\355\252\033\243V\n\251`\372\020jQ\205\250h\nj\026\005\nR\267\226\307>\367\216\211\257\355\3701\334\313*\313,g\231e\226\374\034\226Y\362\023\372\023\372\371>\222I@\215\222\231\343\343\343\363\370\316wN\230H\354\207\226\271\371k\222\351\321\354W\366\360/j\\\350\376\321\364\206\271\212=\224\316&]g\227#\023V1\245C1\274\254\326v\272\210)hEj\315\230\271\360\277\367\027ug\226\217~\333\025\326\272\304D\214\272\266,9\026H\250{\316\232\2165}\222K$\271g\227\302h\305\032\247\350.\243\326\343-\\m\313\355\022w\273r!\005a\267\357\262\032\256&\343\270\020\236\020\212\211VG\366\314%bi\001$v\273\264p\226A\247\310\3509\005\221\010\321J~\360\032\212\221e/\236\274\270w\377\301\375>\333@\005\267\310b\236K\203D)\026\320\346Y\233\004\357\251\363\024gl\257b\235\313\314\022\362B\025\036v\353\017\322\202,\213\224\212\300\266\373\232E\322\316r<\327\266\336\036a\322K*\257\237\n\023i&\224\342\260#\351\214)w\316\306\231\230K\245\243\230\033\"[>k\251\233Z\272\306\177\317c\022r\337\010[\363@VQ\340r\346;\224>\030*\353Po%\262I\214\303BeI\2343\225\373\200\326\331{\250\177\251\205\301\255\324V\047\316\275n\311\240\316\252\002*Q\277%\326\350\330\210$\027\023\264\212\300\252\234\n\034\300\277\246\334\207*\016\2051N\002X&B\020\035S\"\211\331\047n\007G\005\344\201\036q\366\370\325\356\336\336\023c\264\217:>s\226^\321A&+\251\220uv\316[\316_t-\376\376@\323\3703j\323K\2528\037\201Ee\250\242@\177.\324\224t\242\246(Ty\203\237*[Y\276q\025\247W\272\361`S\221\032\241m\377\355T6\375\235\025\315\360]\302\003\037$ \027$\367cn\206\323\350\245\210\205\026\203\224\255\327h\014\361\047v\262[\246\202D\361q\220\205\231\334NM9\223d\317\3245\005\265\345\000\032\235\245\022\327R?\223\317\337%\212\245\026\035\271t\001\235\322\226\370[n4\264\"q\357\264E&rj\007\037z-bg\245v\263\263\047q.\"\315\321\356\221YR\232\342\010\360`\354$\315\301;p\324\005\370\224.\333\004\206&\201\226\251\036\004\004\0376\017\272\210\371%\240\320\317\034\205\340BeD\0351\277\240\3258\305u[w\013\322\365\"i\245U;\322{6\320\233""\313\213\347\013t\237\256\316o\024\315s\375\261zx\320\323W\333\245\333G\341Nu\034\361@\2208|\274%#:xu\036\372\330\313\321\270\232K\236\034z\210\335T\026SYH\245\025\330gM\351\356`\207r=by\020(\r\016\372Q\212\336y\337\372\316\017\355\231 \033\217\023h\201jH\000\207R\016\026=\035\247\266\037\225\376c\2043\226$\243\201\013+\027.\340\300C\215N\231\002E\220\340\327\344\262\250T@\"\013\214u\333\365\307\354\307w\334\347\270\370X{\256\030\244J\033\303\337\300A\357\2552\016\374iD\373\323\371\311R]\016\256\252\nA\333\216c\375\365\n\254\343\013\251\014\270\014\220\2301~\351|\364\002\235\0013\245\314M\177s\021\2505\325\272\273\2627\321\325K\365\026(xt\370G\300uU\n?S\256\205*\272\250\252K\305\225\364\353\276\350\030$\322\007\013\206\276&\0210a\344cr\370\013Y\246\024\010K\2574;{\3548B\251\231ba\306\033\255\322\242\2754k\317\225\313e\005\336\201\274\2631\035\226N\253\235\r\250\330\235A\265\2631xg\303\266@\273\371/#\213\371\203i\020\370s\377\047\026\247\301n\376\356\316\270s>e\206\266W\030T\204\303\016\346\236h\037lO\3115C\333Fu\261Z;\226\226\014g\276\030\202\034^9\335\274\376\376\372\316\273\255\017\2337\336\337\370\372\370\307\343\247\047\337\236\210\303+\377\336\332\270z\355\303\346\355\223\255\323\315k\207\351\350\347\325\326\352\233\325\253\343\253\307\363\223k\047\341\335\326\351\3477\217^\037_9\306\375g\375\357\315#q\272\271\265\302\371\326\352v9V\253\337W\242\010\365\352\345\352\340t\363\213\243\307\243\325\227+H_\255\376\356M\377\003\001\273ql";
-    PyObject *data = __Pyx_DecompressString(cstring, 1171, 1);
+    #if (CYTHON_COMPRESS_STRINGS) == 1 /* compression: zlib (1222 bytes) */
+static const char cstring[] = "x\332}U\313\217\024E\030_\314\312r0$kb\324\213\251\r\207\005\003\2431\004\311\0061\212\030\367  $^+5U_w\027[]\325[\217\241\233\023G\216s\234#G\377\034\216{\344O\360O\360W\375\230\307j\234\314t\327\367\250\357\361\373\036\303\216~`LD\366m\313\334\374%\311\370\360F;;a\017~\247\332\371\356OM\257\230+\330\003\351l\324er)0a\025S\332g\325\313lm\047A\210^+R[\312\314\371\377\225\357\362\326\232\017\177|$\254u\221\211\020tiYt\314\223Pw\2345\035\253\373 \027\010\362\324.\204\321\212\325N\321mFm\203\2730u,\217\263\337\343\302\371\350\205=\276\315J\230\232\224C%\032\202+&Z\035\330\023\027\211\305\nX<\352b\345,\003O\221\321s\362\"\022\274\345\370`\325g%\313\236=~v\347\356\375\273}\264\2362r\201\2054\227\006\201R\310\240\315\2236\021\326c\327P\230\261\323\202u.1K\210\013Y4\320\333\276\020+\262,P\314\007v\334\347,\242v\226\343\272\266\345\361\010\223^P\276\375\2530\201fB)\016=\232\013\305\316\223P\321\023\261Z\224Z\2360\351\214\311\372\316\206\231\230K\245\203\230\033\"\233\237\245\324u)]\335|\303C\024\362\314\010[rOV\221\347r\326t\200cPT\326\001\203B$\023\031\207\206J\2228g*\365AXg\357\000\223\205\026\006R\251\255\216\2347\272%\203\334\213\002H\005\375\032\001\351P\213(\253u\204s\343\346\273\242\023\266+\214\3161H\214a\250\034\253Pp\362S\265\024\241US\314\010\243\244%\245>\322\034\017\364\235D\255\230\360^tL\211(f\377!\035\014\345\272\r\035\027\240\024R\323\240Gh\013\307\005\\\002\275\023\366\323\213G\247\247\217\215\321M\320\341\211\263\364\202\316\023YIy:f\233A\341\374Y\327\342\367\013\272\204?\2416>\247\202\363\261\222\200\r\020\345Zo\016%E\035\251\316\014\225\357\340S$+\363\033\2420\335\322u\016-\237j\241m\377v*\231^fE=\274\263{\200\217\000dE\362,\244z\240F+\371\230\373p8%\333hT\235\370c;\351-b\306)\333\000\000f2;U|}\222\375hl1\250\315\004\372v\035J\330\n}}\336\334\213\024r.:p\351<\352\250-\241=\247\342\360\241qD\350\254\324n\266V\ts\021h\216\342\217m*\245\001\227\003\016\314\265\304\000\31034\274\363\034\335\344\222\215h\367(P\"\325\047\rg\303rC\325\260 \010Y\367CM\336;_""\030Q\006\264\031\032q\\\023e[v\025\351\262\212Zi\325\216\2632\033f\205\313]zgv&\321F\242h\236\312\276i\265]\2703$\350T\307a\027\205\017\303\3435\031Wr\311\243C%\260\322\362>\313{,\003\2125X#\364\006\346\372\301\n\215k\232\001\313)\337\221\2342\236\372\227\347A\362T\202\2154\207\370&\231\247\230\274Eq\306\331\356\047\242\177\2148\205\034U00oe\345<\010\356K\224\300\344\034\275D\243L\356zV\376\027\260\t8\027y\035q\327\010\014H\226(\357\032^a-\264]O\246f\264\310\233\024\252\177s7\214\341Thc\370+\030\350\255\025\306\211\210!h\277\333P\226\312L\270\242\310=\330v\034+\265g`\305\357\004\331`v\342\260\235z2\373\317\305\016\215\000:\221\013)S\335Kv\341\335bm\233\313\273\030\365\275\204D\006\211\007\207?\227\214\005\342^3\267\\e^P\305\245\344r\370e\237t\360\022\341\243\\Ft\330AQx\014\0215!:\374|\222\021\343\213~H\r\026\034!M@\235[\346\225V\261j\237*\227\362\302\273\211lo\355M\304\302iuk\017,vs`\215\004\036\367\356\362\330S\3710i\016~\330\260\032\320\022\374\373\261\263\371\375i\n\370\323\3467\354P\203-\377\365\315q\301\374\227\032\032\240\260\331E^\307\274!:\303\010\304\350\352\241\200#;km\221\2718\227i\204\270Q\316\004\257\006\377o\256\374\375\311\336\325\203\017\373G\357\016/\366\017\336\304\267\367\226\207\313\033\313\027\253\253\253\371\273\203w\376\257\303\213k\327\337\276\\]YA\376q\377\275\376V\\\354\037.A\177\272<\312d\261\374y)\362\241\\>_\236_\354\177\266\374\343b\377\363\345\371\352\312\373\275/W\207\037\366\017\336\037|\261\372hutq\355\253\225X\235\377\003SX\227 ";
+    PyObject *data = __Pyx_DecompressString(cstring, 1222, 1);
     #define __Pyx_DecompressString_LZSS_UNUSED
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #elif (CYTHON_COMPRESS_STRINGS) > 0 && (CYTHON_COMPRESS_STRINGS) <= 90 /* compression: lzss (1637 bytes) */
-static const char cstring[] = "\377 at 0x o\377bject>.:\377 <Memory\377View of \377<contigu\377ous and gdir%\001\007\rin\021\005\177strided\"\010o or \004\031><(\t\376A\006>?Canno\377t assign\377 to read\177-only m\240\002\375v\242\000Invali\377d mode, \347exp\305\000|\000\047c\047\376t\001\047fortra\237n\047, gH\000%\005s\357hape\222\000 ax\377is Note \373th\207 Cytho\373n \021\000delib\237eratek\000\320\001c\367ter!\001n PE\337P-484\212\"re\376\264!s subcl\366\246\000es\261!buil\373ti\260\000ypes.\377 If you \223ne\224 \303\000p\316\000%\tt\177hen set\200\000\367e \047\357\002atio\377n_typing\355\047\355$iv\242\000o F\377alse.add}_\231 ecoll\266@\376+\000s.abcdi\177sableen\002\001\377gcimgcom\377p/_stack\377lang_ren\377der_c.py\374\370\000#\003dno de\177fault _\037\000\377duce__ d\275ul\002non-\321@v\367ial\033\000cini\377t__pixel\337 buff\223 si\377ze misma\267tch\323%de\323`u9t\300a\375 geu\217\002\302A\337alloc\326  a\377rray dat\303a.\013\020\236C\360a\315cs.\377ASCIIEll\377ipsisNon\377eSequenc\365e\251\204\001.\256\204\007__Py\375x\001\000Dict_N\377extRef__l\322$\327\000__\247B__\001\005\177getitem\r\001yd0\001\027\000func\035\001t\030\000\272 t1\002imp\313`\3363\001main\003\002od\273ulM\002nam\002\003e\371wT\001\333 _chec\007ksuT\000\n\001?\004\025\001\325@\274\335 \037\001unpi\226@e7_En \005vt\276A\230\001oqualO\005re\217Cb\226Fc\245\204\002\277\001\024\004ex\314\001\202\304`_\203\005\320`\262\006\003\006.\007t\373es\306@_is_c\377oroutine\337_z_li\023\000at__poin\207\000c\245E\375_\346Casynci\373o.*\006sbase\357bind\323dccl\374E\001\234 traceb~\365`color_\231`_ountd]\000a\260@\341d\200\"z\000\364\207\003\303@ode\371e\203 \357\205\002error\377flagsfor\374\324`\277\206\004gxgyhe\377ightidid5x\330\204\004.\331\204\003_c\002\013\342\204\n|#\005\377\204\007debug\005\017\376\232\205\003indexin\377voke_bod\223y_m\000\236`s\242a\352\204\001l\177ayer_op\025\000\375s\007\002slog_c\377_to_pyme\361m\225\210\001\215\210\001\222andim\374\332A\"\003objpac\313kp\276`t;\003\306\205\002sp\177oppxpyp\321C8""\253%\010\004\255%reg\234@\232 \377eturnset\250\257\206\004\312\210\002\317\210\002_\303\212\003s\217\206\001s\375l\363 nchori\237ze_rg\247@\017\000c?ircle_\200E!\001\373dr\307\000hit_x\275y\n\002up_a3\002_\217push\004\017\035\007+\003f_ill_w>\000eo\001\367flo\275`max2\356\004\007neg\212\001off~\235\204\001xy_sub\014\002\007val~\n\222#\215#\274\000{\002\376\274\212\001sparent?_accum\325\001\232,8\010\010\316\t\250\214\001ang\341\014\207!\377_solid_i\203f_\366\000\246!\020\002`\010\272!s\247df_\317\013\334\205\001g\241\"s\377rc_over_\376\372Ctartste\357psto\001\000ruc\177ttreeun\351A\377updateva\357lues\257\214\001wid\367thx\335\205\014Odou\377ble (int\373)\000\005\005void)\277\000int (\032\003)\267\000stZ\001 _\347`x\266\353A_7\340\212\004_8\201\205\005_\377OpHandle\257r *(#\003t\023\021o\337p_fn_k\001at\377a_peek_b\277ottom_\300B\000\006\227\212\001_p\"\001\320A\010\004\217a\031\003\373_h_\003\200\001\330\004\t\377\320\t)\250\021\340\004\013\377\320\013\033\2301\230F\240\377$\240a\200\001\360\022\000\377\006\007\340\004!\240\021\330\377\004\007\200t\2106\220\021\377\220#\220S\230\006\230b\377\240\007\240r\250\021\330\010\277\016\210j\230\001\230\035\000\005\373\330\004\000\000\016\210a\330\004\373\021\220-\000\022\220!\330\004\277\016\210f\220B\220\020\000\016\377\210g\220R\220q\330\004g\014\210A\023\001#\000\024\220\007\000\037\025\220Q\330\004(\000";
-    PyObject *data = __Pyx_DecompressString_LZSS(cstring, 1637, 2248);
+    #elif (CYTHON_COMPRESS_STRINGS) > 0 && (CYTHON_COMPRESS_STRINGS) <= 90 /* compression: lzss (1718 bytes) */
+static const char cstring[] = "\377 !=  at \3770x objec\377t>#x.: <\377MemoryVi\377ew of <c\377ontiguou\377s and di\331r\047\001\007\rin\021\005st\337rided\"\010 o\233r \004\031><(\tA\006>\377?Cannot \377assign t\377o read-o_nly m\240\002v\242\000\377Invalid \377mode, ex\271p\307\000|\000\047c\047t\001\047\377fortran\047\347, gH\000%\005sha\373pe\222\000 axis\377 Note th\376\211 Cython \376\021\000deliber\347atek\000\320\001cte\375r!\001n PEP-\267484\212\"re\266!s\277 subcl\246\000e\375s\261!builti\376\260\000ypes. I\377f you ne\344\224 \303\000p\316\000%\tthe\337n set\200\000e \375\047\357\002ation_\177typing\047\355$\373iv\242\000o Fal\177se.add_\231 \377ebad qua\377dtree ma\377gic: col\371l\314@?\000s.abc\377disablee\375n\002\001gcimgc\377omp/_sta\377cklang_r\377ender_c.\363py\214 #\003dno \377default \375_\037\000duce__\367 du\200\002non-\336\345@vial\033\000ci\377nit__pix\177el buff\247 \367siz\216\000isma\367tch\231\006blob\355 \016\n: \017\013too\335 2\000ll \267@ h\366\356@er\246Edex \347out\223\204\001\320@geu|\316\002\225aalloc\251@\377 array d\017ata.\013\020\361C\303\204\001\240\204\003\275s\"\000supp\241`e\362\275(vp\000\375 : AS\377CIIEllip\377sisNoneS\177equence\232\205\001}.\237\205\007__Pyx\001\000\377Dict_Nex?tRef__\303D\264 \333__\230b__\001\005ge_titem\r\001d0\001\036\027\000func\035\001\030\000\227@\315t1\002im\227\0013\001ma{in\003\002odulM\0027nam\002\003ewT\001\270@\377_checksu\200T\000\n\001?\004\025\001\306`\272@\037\001u\367npi\363@e_EnF \005vt\233a\230\001\306`lO\005\023re\354C\363Fc\226\205\002\277\001\024\004{ex\314\001set_\203\005\307set\262\006\003\006.\007te\375s\243`_is_co\375r\305@ineabc\372\263E_\263casync\367io.\032\006sbas\337ebind\240\204\004cc\365l6\000_\214 trac\377ebackcol\367or_\346`ount_dista\240@d\360\002xj\000\327\210\003\263@odee\363\000\376\320\206\002errorfl\377agsforma\375t\240\207\004gxgyhe\377ightidid5x\245\205\004.\246\205\003_c\002\013\257\205\n\374#\005\314\205\007debugi\377ndexinvo\377ke_body_\344U\000\366@s\372A\237\205\001log\377_c_to_py""\307mem\314\210\001\304\210\001\330And\377imobjpac}k\324\205\002spopp\376#\320\350\005\010\004\352\005\200\207\005_\342\205\001re\341g\206 \344\000\326\206\003\234\207\005ret?urnset\325\206\004\204\211\002j\211\211\002_\377\212\003s\265\206\001sl\314 \377nchorize\347_rg\200@\017\000cir\341c\371`\331%!\001\230\213\002nue\367_if\213\210\001_opa\367que;\001drop\177_hit_xy\n\002\357up_aM\002_pu\343sh\004\017\035\007+\003fil\347l_w>\000I\002flo\177at_max2\227\001\356\010\003neg\244\001off~\200\204\001xy_sub\014\002\357val_\231\tpai\303nt\230\210\003\325\001{\002\220\213\001sp\367are\027\000accu\301m\025\002\321+\010\010\350\t\374\214\001an\371g\373\014\241!_soli\201d\210!\366\000\300!\020\002`\010\324!s\247df_\317\013\277\205\001g\241\"s\377rc_over_\377layersta\377rtstepst\375o\001\000ructun\376\214aupdatev\363al\350 \377\214\001widt\377hxOdoubl\267e (\353\000)\000\005\005v\337oid)\000\376\000 (x\032\003\006\004\220 64_t\026\002\266\005\001 ($\003std\001 \373__\315\207\001obj_7\366\252\213\004_8\376\204\005_OpH\377andler *e(#\003t\023\021\376@fn_\001\376\213\212\001_peek_b\277ottom_\312B\000 \021\003\"\001\332A\010\004\231af\001\014\274@\354#\007\t\001_hz\003\200\001\360\377\014\000\006\007\340\004!\240\377\021\330\004\007\200t\2106\377\220\021\220#\220S\230\006\377\230b\240\007\240r\250\021\377\330\010\016\210j\230\001\230\356\035\000\005\330\004\000\000\016\210a\357\330\004\021\220-\000\022\220!\377\330\004\016\210f\220B\220\376\020\000\016\210g\220R\220q\377\330\004\025\220Q\330\004\027\377\220q\230\001\320\000\031\230\377\021\340\004\007\320\007\030\230\377\002\230!\330\010\036\230a\003\230q";
+    PyObject *data = __Pyx_DecompressString_LZSS(cstring, 1718, 2360);
     #define __Pyx_DecompressString_UNUSED
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #else /* compression: none (2248 bytes) */
-static const char bytes[] = " at 0x object>.: <MemoryView of <contiguous and direct><contiguous and indirect><strided and direct or indirect><strided and direct><strided and indirect>>?Cannot assign to read-only memoryviewInvalid mode, expected \047c\047 or \047fortran\047, got Invalid shape in axis Note that Cython is deliberately stricter than PEP-484 and rejects subclasses of builtin types. If you need to pass subclasses then set the \047annotation_typing\047 directive to False.add_notecollections.abcdisableenablegcimgcomp/_stacklang_render_c.pyxisenabledno default __reduce__ due to non-trivial __cinit__pixel buffer size mismatchshape index out of rangeunable to allocate array data.unable to allocate shape and strides.ASCIIEllipsisNoneSequenceView.MemoryView__Pyx_PyDict_NextRef__annotate____class____class_getitem____dict____func____getstate____import____main____module____name____new____pyx_checksum__pyx_state__pyx_type__pyx_unpickle_Enum__pyx_vtable____qualname____reduce____reduce_cython____reduce_ex____set_name____setstate____setstate_cython____test___is_coroutine_z_list_at_pointabcallocate_bufferasyncio.coroutinesbasebind_renderccline_in_tracebackcolor_atcountdistancedtype_is_objectencodeenumerateerrorflagsformatfortrangxgyheightididximgcomp._stack_cimgcomp._stacklang_render_cimgcomp.stacklang_debugimgcomp.stacklang_renderindexinvoke_body_iditemsitemsizelayer_op_idslayerslog_c_to_pymemviewmodenamendimnum_layersobjpackpaint_op_idpixelspoppxpypython_color_atpython_distanceregisterreturnsetdefaultshapeshape_objectssizeslr_anchorize_rgbaslr_circle_distanceslr_drop_hit_xyslr_dup_anchor_push_xyslr_dup_anchor_xyslr_dup_xyslr_fill_whiteslr_float_max2slr_float_negslr_offset_xy_subslr_oval_distanceslr_paint_pixelslr_push_transparent_accumslr_python_color_atslr_python_distanceslr_rectangle_distanceslr_rgba_solid_if_hitslr_rgba_transparentslr_sdf_fill_whiteslr_set_gyslr_src_over_layerstartstepstopstructtreeunpackupdatevaluesviewwidthxz_list_at_pointOdouble (int)\000double (void)\000int (double)\000str""uct __pyx_obj_7imgcomp_8_stack_c_OpHandler *(__pyx_t_7imgcomp_8_stack_c_op_fn_t)\000data_peek_bottom_float\000data_pop_float\000data_push_float\000_handler\200\001\330\004\t\320\t)\250\021\340\004\013\320\013\033\2301\230F\240$\240a\200\001\360\022\000\006\007\340\004!\240\021\330\004\007\200t\2106\220\021\220#\220S\230\006\230b\240\007\240r\250\021\330\010\016\210j\230\001\230\021\330\004\005\330\004\005\330\004\016\210a\330\004\021\220\021\330\004\022\220!\330\004\016\210f\220B\220a\330\004\016\210g\220R\220q\330\004\014\210A\330\004\016\210a\330\004\024\220A\330\004\025\220Q\330\004\022\220!";
+    #else /* compression: none (2360 bytes) */
+static const char bytes[] = " !=  at 0x object>#x.: <MemoryView of <contiguous and direct><contiguous and indirect><strided and direct or indirect><strided and direct><strided and indirect>>?Cannot assign to read-only memoryviewInvalid mode, expected \047c\047 or \047fortran\047, got Invalid shape in axis Note that Cython is deliberately stricter than PEP-484 and rejects subclasses of builtin types. If you need to pass subclasses then set the \047annotation_typing\047 directive to False.add_notebad quadtree magic: collections.abcdisableenablegcimgcomp/_stacklang_render_c.pyxisenabledno default __reduce__ due to non-trivial __cinit__pixel buffer size mismatchquadtree blob size mismatch: quadtree blob too small for headershape index out of rangeunable to allocate array data.unable to allocate shape and strides.unsupported quadtree version: ASCIIEllipsisNoneSequenceView.MemoryView__Pyx_PyDict_NextRef__annotate____class____class_getitem____dict____func____getstate____import____main____module____name____new____pyx_checksum__pyx_state__pyx_type__pyx_unpickle_Enum__pyx_vtable____qualname____reduce____reduce_cython____reduce_ex____set_name____setstate____setstate_cython____test___is_coroutineabcallocate_bufferasyncio.coroutinesbasebind_renderccline_in_tracebackcolor_atcountdistancedtype_is_objectencodeenumerateerrorflagsformatfortrangxgyheightididximgcomp._stack_cimgcomp._stacklang_render_cimgcomp.stacklang_debugindexinvoke_body_iditemsitemsizelog_c_to_pymemviewmodenamendimobjpackpixelspoppython_color_atpython_distancequadtree_blobregisterrender_quadtreereturnsetdefaultshapeshape_objectssizeslr_anchorize_rgbaslr_circle_distanceslr_continue_if_not_opaqueslr_drop_hit_xyslr_dup_anchor_push_xyslr_dup_anchor_xyslr_dup_xyslr_fill_whiteslr_float_max2slr_float_negslr_offset_xy_subslr_oval_distanceslr_paint_pixelslr_push_transparent_accumslr_python_color_atslr_python_distanceslr_rectangle_distanceslr_rgba_solid_if_hitslr_rgba_transparentslr_sdf_fill_whiteslr_set_gyslr_src_over_layerstartstepstopstructunpackupda""tevaluesviewwidthxOdouble (int)\000double (void)\000int (double)\000int (int64_t)\000int64_t (void)\000struct __pyx_obj_7imgcomp_8_stack_c_OpHandler *(__pyx_t_7imgcomp_8_stack_c_op_fn_t)\000data_peek_bottom_float\000data_pop_float\000data_push_float\000data_push_int\000data_pop_int\000_handler\200\001\360\014\000\006\007\340\004!\240\021\330\004\007\200t\2106\220\021\220#\220S\230\006\230b\240\007\240r\250\021\330\010\016\210j\230\001\230\021\330\004\005\330\004\005\330\004\016\210a\330\004\021\220\021\330\004\022\220!\330\004\016\210f\220B\220a\330\004\016\210g\220R\220q\330\004\025\220Q\330\004\027\220q\230\001\320\000\031\230\021\340\004\007\320\007\030\230\002\230!\330\010\036\230a\230q";
     PyObject *data = NULL;
     #define __Pyx_DecompressString_UNUSED
     #define __Pyx_DecompressString_LZSS_UNUSED
     #endif
     PyObject **stringtab = __pyx_mstate->__pyx_string_tab;
     Py_ssize_t pos = 0;
-    for (int i = 0; i < 146; i++) {
+    for (int i = 0; i < 145; i++) {
       Py_ssize_t bytes_length = str_length_index[i].length;
       PyObject *string = PyUnicode_DecodeUTF8(bytes + pos, bytes_length, NULL);
-      if (likely(string) && i >= 28) PyUnicode_InternInPlace(&string);
+      if (likely(string) && i >= 34) PyUnicode_InternInPlace(&string);
       if (unlikely(!string)) {
         Py_XDECREF(data);
         __PYX_ERR(0, 1, __pyx_L1_error)
@@ -25614,8 +26798,8 @@ static const char bytes[] = " at 0x object>.: <MemoryView of <contiguous and dir
       stringtab[i] = string;
       pos += bytes_length;
     }
-    for (int i = 146; i < 150; i++) {
-      Py_ssize_t bytes_length = bytes_length_index[i-146].length;
+    for (int i = 145; i < 149; i++) {
+      Py_ssize_t bytes_length = bytes_length_index[i-145].length;
       PyObject *string = PyBytes_FromStringAndSize(bytes + pos, bytes_length);
       stringtab[i] = string;
       pos += bytes_length;
@@ -25625,14 +26809,14 @@ static const char bytes[] = " at 0x object>.: <MemoryView of <contiguous and dir
       }
     }
     Py_XDECREF(data);
-    for (Py_ssize_t i = 0; i < 150; i++) {
+    for (Py_ssize_t i = 0; i < 149; i++) {
       if (unlikely(PyObject_Hash(stringtab[i]) == -1)) {
         __PYX_ERR(0, 1, __pyx_L1_error)
       }
     }
     #if CYTHON_IMMORTAL_CONSTANTS
     {
-      PyObject **table = stringtab + 146;
+      PyObject **table = stringtab + 145;
       for (Py_ssize_t i=0; i<4; ++i) {
         #if PY_VERSION_HEX >= 0x030F0000
         PyUnstable_SetImmortal(table[i]);
@@ -25695,12 +26879,12 @@ static const char bytes[] = " at 0x object>.: <MemoryView of <contiguous and dir
 namespace {
 #endif
 typedef struct {
-    unsigned int argcount : 4;
+    unsigned int argcount : 3;
     unsigned int num_posonly_args : 1;
     unsigned int num_kwonly_args : 1;
-    unsigned int nlocals : 4;
+    unsigned int nlocals : 3;
     unsigned int flags : 10;
-    unsigned int first_line : 9;
+    unsigned int first_line : 10;
 } __Pyx_PyCode_New_function_description;
 #ifdef __cplusplus
 } /* anonymous namespace */
@@ -25720,14 +26904,14 @@ static int __Pyx_CreateCodeObjects(__pyx_mstatetype *__pyx_mstate) {
   PyObject* tuple_dedup_map = PyDict_New();
   if (unlikely(!tuple_dedup_map)) return -1;
   {
-    const __Pyx_PyCode_New_function_description descr = {8, 0, 0, 9, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 35};
-    PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_pixels, __pyx_mstate->__pyx_n_u_width, __pyx_mstate->__pyx_n_u_height, __pyx_mstate->__pyx_n_u_tree, __pyx_mstate->__pyx_n_u_layers, __pyx_mstate->__pyx_n_u_layer_op_ids, __pyx_mstate->__pyx_n_u_shape_objects, __pyx_mstate->__pyx_n_u_num_layers, __pyx_mstate->__pyx_n_u_view};
-    __pyx_mstate_global->__pyx_codeobj_tab[0] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_imgcomp__stacklang_render_c_pyx, __pyx_mstate->__pyx_n_u_bind_render, __pyx_mstate->__pyx_kp_b_iso88591_t6_S_b_r_j_a_fBa_gRq_A_a_A_Q, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[0])) goto bad;
+    const __Pyx_PyCode_New_function_description descr = {5, 0, 0, 6, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 141};
+    PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_pixels, __pyx_mstate->__pyx_n_u_width, __pyx_mstate->__pyx_n_u_height, __pyx_mstate->__pyx_n_u_quadtree_blob, __pyx_mstate->__pyx_n_u_shape_objects, __pyx_mstate->__pyx_n_u_view};
+    __pyx_mstate_global->__pyx_codeobj_tab[0] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_imgcomp__stacklang_render_c_pyx, __pyx_mstate->__pyx_n_u_bind_render, __pyx_mstate->__pyx_kp_b_iso88591_t6_S_b_r_j_a_fBa_gRq_Q_q, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[0])) goto bad;
   }
   {
-    const __Pyx_PyCode_New_function_description descr = {3, 0, 0, 4, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 448};
-    PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_tree, __pyx_mstate->__pyx_n_u_gx, __pyx_mstate->__pyx_n_u_gy, __pyx_mstate->__pyx_n_u_z_list_at_point_2};
-    __pyx_mstate_global->__pyx_codeobj_tab[1] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_imgcomp__stacklang_render_c_pyx, __pyx_mstate->__pyx_n_u_z_list_at_point, __pyx_mstate->__pyx_kp_b_iso88591_1F_a, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[1])) goto bad;
+    const __Pyx_PyCode_New_function_description descr = {0, 0, 0, 0, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 602};
+    PyObject* const varnames[] = {0};
+    __pyx_mstate_global->__pyx_codeobj_tab[1] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_imgcomp__stacklang_render_c_pyx, __pyx_mstate->__pyx_n_u_render_quadtree, __pyx_mstate->__pyx_kp_b_iso88591_aq, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[1])) goto bad;
   }
   Py_DECREF(tuple_dedup_map);
   return 0;
@@ -29016,6 +30200,135 @@ static CYTHON_INLINE long __Pyx_div_long(long a, long b, int b_is_constant) {
     return q - adapt_python;
 }
 
+/* WriteUnraisableException */
+static void __Pyx_WriteUnraisable(const char *name, int clineno,
+                                  int lineno, const char *filename,
+                                  int full_traceback, int nogil) {
+    PyObject *old_exc, *old_val, *old_tb;
+    PyObject *ctx;
+    __Pyx_PyThreadState_declare
+    PyGILState_STATE state;
+    if (nogil)
+        state = PyGILState_Ensure();
+    else state = (PyGILState_STATE)0;
+    CYTHON_UNUSED_VAR(clineno);
+    CYTHON_UNUSED_VAR(lineno);
+    CYTHON_UNUSED_VAR(filename);
+    CYTHON_MAYBE_UNUSED_VAR(nogil);
+    __Pyx_PyThreadState_assign
+    __Pyx_ErrFetch(&old_exc, &old_val, &old_tb);
+    if (full_traceback) {
+        Py_XINCREF(old_exc);
+        Py_XINCREF(old_val);
+        Py_XINCREF(old_tb);
+        __Pyx_ErrRestore(old_exc, old_val, old_tb);
+        PyErr_PrintEx(0);
+    }
+    ctx = PyUnicode_FromString(name);
+    __Pyx_ErrRestore(old_exc, old_val, old_tb);
+    if (!ctx) {
+        PyErr_WriteUnraisable(Py_None);
+    } else {
+        PyErr_WriteUnraisable(ctx);
+        Py_DECREF(ctx);
+    }
+    if (nogil)
+        PyGILState_Release(state);
+}
+
+/* CIntToPyUnicode */
+static CYTHON_INLINE PyObject* __Pyx_uchar___Pyx_PyUnicode_From_unsigned_int(unsigned int value, Py_ssize_t width, char padding_char) {
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+    const unsigned int neg_one = (unsigned int) -1, const_zero = (unsigned int) 0;
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic pop
+#endif
+    const int is_unsigned = neg_one > const_zero;
+    if (unlikely(!(is_unsigned || value == 0 || value > 0) ||
+                    !(sizeof(value) <= 2 || value & ~ (unsigned int) 0x01fffff || __Pyx_CheckUnicodeValue((int) value)))) {
+        PyErr_SetString(PyExc_OverflowError, "%c arg not in range(0x110000)");
+        return NULL;
+    }
+    if (width <= 1) {
+        return PyUnicode_FromOrdinal((int) value);
+    }
+    return __Pyx_PyUnicode_FromOrdinal_Padded((int) value, width, padding_char);
+}
+static CYTHON_INLINE PyObject* __Pyx____Pyx_PyUnicode_From_unsigned_int(unsigned int value, Py_ssize_t width, char padding_char, char format_char) {
+    char digits[sizeof(unsigned int)*3+2];
+    char *dpos, *end = digits + sizeof(unsigned int)*3+2;
+    const char *hex_digits = DIGITS_HEX;
+    Py_ssize_t length, ulength;
+    int prepend_sign, last_one_off;
+    unsigned int remaining;
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+    const unsigned int neg_one = (unsigned int) -1, const_zero = (unsigned int) 0;
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic pop
+#endif
+    const int is_unsigned = neg_one > const_zero;
+    if (format_char == 'X') {
+        hex_digits += 16;
+        format_char = 'x';
+    }
+    remaining = value;
+    last_one_off = 0;
+    dpos = end;
+    do {
+        int digit_pos;
+        switch (format_char) {
+        case 'o':
+            digit_pos = abs((int)(remaining % (8*8)));
+            remaining = (unsigned int) (remaining / (8*8));
+            dpos -= 2;
+            memcpy(dpos, DIGIT_PAIRS_8 + digit_pos * 2, 2);
+            last_one_off = (digit_pos < 8);
+            break;
+        case 'd':
+            digit_pos = abs((int)(remaining % (10*10)));
+            remaining = (unsigned int) (remaining / (10*10));
+            dpos -= 2;
+            memcpy(dpos, DIGIT_PAIRS_10 + digit_pos * 2, 2);
+            last_one_off = (digit_pos < 10);
+            break;
+        case 'x':
+            *(--dpos) = hex_digits[abs((int)(remaining % 16))];
+            remaining = (unsigned int) (remaining / 16);
+            break;
+        default:
+            assert(0);
+            break;
+        }
+    } while (unlikely(remaining != 0));
+    assert(!last_one_off || *dpos == '0');
+    dpos += last_one_off;
+    length = end - dpos;
+    ulength = length;
+    prepend_sign = 0;
+    if (!is_unsigned && value <= neg_one) {
+        if (padding_char == ' ' || width <= length + 1) {
+            *(--dpos) = '-';
+            ++length;
+        } else {
+            prepend_sign = 1;
+        }
+        ++ulength;
+    }
+    if (width > ulength) {
+        ulength = width;
+    }
+    if (ulength == 1) {
+        return PyUnicode_FromOrdinal(*dpos);
+    }
+    return __Pyx_PyUnicode_BuildFromAscii(ulength, dpos, (int) length, prepend_sign, padding_char);
+}
+
 /* PyObjectVectorcallKwds */
 #if CYTHON_VECTORCALL
 CYTHON_UNUSED static int __Pyx_CheckVectorcallKwarg(PyObject *kwnames, Py_ssize_t i) {
@@ -29050,64 +30363,6 @@ CYTHON_UNUSED static int __Pyx_CheckVectorcallKwarg(PyObject **kwnames, Py_ssize
     return 0;
 }
 #endif
-
-/* DictGetItem */
-#if !CYTHON_COMPILING_IN_PYPY
-static PyObject *__Pyx_PyDict_GetItem(PyObject *d, PyObject* key) {
-    PyObject *value;
-    if (unlikely(__Pyx_PyDict_GetItemRef(d, key, &value) == 0)) { // no value, no error
-        if (unlikely(PyTuple_Check(key))) {
-            PyObject* args = PyTuple_Pack(1, key);
-            if (likely(args)) {
-                PyErr_SetObject(PyExc_KeyError, args);
-                Py_DECREF(args);
-            }
-        } else {
-            PyErr_SetObject(PyExc_KeyError, key);
-        }
-    }
-    return value;
-}
-#endif
-
-/* ImportFrom */
-static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name) {
-    PyObject* value = __Pyx_PyObject_GetAttrStr(module, name);
-    if (unlikely(!value) && PyErr_ExceptionMatches(PyExc_AttributeError)) {
-        const char* module_name_str = 0;
-        PyObject* module_name = 0;
-        PyObject* module_dot = 0;
-        PyObject* full_name = 0;
-        PyErr_Clear();
-        module_name_str = PyModule_GetName(module);
-        if (unlikely(!module_name_str)) { goto modbad; }
-        module_name = PyUnicode_FromString(module_name_str);
-        if (unlikely(!module_name)) { goto modbad; }
-        module_dot = PyUnicode_Concat(module_name, __pyx_mstate_global->__pyx_kp_u__3);
-        if (unlikely(!module_dot)) { goto modbad; }
-        full_name = PyUnicode_Concat(module_dot, name);
-        if (unlikely(!full_name)) { goto modbad; }
-        #if (CYTHON_COMPILING_IN_PYPY && PYPY_VERSION_NUM  < 0x07030400) ||\
-                CYTHON_COMPILING_IN_GRAAL
-        {
-            PyObject *modules = PyImport_GetModuleDict();
-            if (unlikely(!modules))
-                goto modbad;
-            value = PyObject_GetItem(modules, full_name);
-        }
-        #else
-        value = PyImport_GetModule(full_name);
-        #endif
-      modbad:
-        Py_XDECREF(full_name);
-        Py_XDECREF(module_dot);
-        Py_XDECREF(module_name);
-    }
-    if (unlikely(!value)) {
-        PyErr_Format(PyExc_ImportError, "cannot import name %S", name);
-    }
-    return value;
-}
 
 /* AllocateExtensionType */
 static PyObject *__Pyx_AllocateExtensionType(PyTypeObject *t, int is_final) {
@@ -30075,6 +31330,45 @@ static int __Pyx_ImportFunction_3_3_0(PyObject *module, const char *funcname, vo
     return result;
 }
 #endif
+
+/* ImportFrom */
+static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name) {
+    PyObject* value = __Pyx_PyObject_GetAttrStr(module, name);
+    if (unlikely(!value) && PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        const char* module_name_str = 0;
+        PyObject* module_name = 0;
+        PyObject* module_dot = 0;
+        PyObject* full_name = 0;
+        PyErr_Clear();
+        module_name_str = PyModule_GetName(module);
+        if (unlikely(!module_name_str)) { goto modbad; }
+        module_name = PyUnicode_FromString(module_name_str);
+        if (unlikely(!module_name)) { goto modbad; }
+        module_dot = PyUnicode_Concat(module_name, __pyx_mstate_global->__pyx_kp_u__3);
+        if (unlikely(!module_dot)) { goto modbad; }
+        full_name = PyUnicode_Concat(module_dot, name);
+        if (unlikely(!full_name)) { goto modbad; }
+        #if (CYTHON_COMPILING_IN_PYPY && PYPY_VERSION_NUM  < 0x07030400) ||\
+                CYTHON_COMPILING_IN_GRAAL
+        {
+            PyObject *modules = PyImport_GetModuleDict();
+            if (unlikely(!modules))
+                goto modbad;
+            value = PyObject_GetItem(modules, full_name);
+        }
+        #else
+        value = PyImport_GetModule(full_name);
+        #endif
+      modbad:
+        Py_XDECREF(full_name);
+        Py_XDECREF(module_dot);
+        Py_XDECREF(module_name);
+    }
+    if (unlikely(!value)) {
+        PyErr_Format(PyExc_ImportError, "cannot import name %S", name);
+    }
+    return value;
+}
 
 /* dict_setdefault (used by FetchCommonType) */
 static CYTHON_INLINE PyObject *__Pyx_PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *default_value) {
@@ -32961,6 +34255,29 @@ __pyx_fail:
     return result;
 }
 
+/* ObjectToMemviewSlice */
+static CYTHON_INLINE __Pyx_memviewslice __Pyx_PyObject_to_MemoryviewSlice_ds_unsigned_char__const__(PyObject *obj, int writable_flag) {
+    __Pyx_memviewslice result = __Pyx_MEMSLICE_INIT;
+    __Pyx_BufFmt_StackElem stack[1];
+    int axes_specs[] = { (__Pyx_MEMVIEW_DIRECT | __Pyx_MEMVIEW_STRIDED) };
+    int retcode;
+    if (obj == Py_None) {
+        result.memview = (struct __pyx_memoryview_obj *) Py_None;
+        return result;
+    }
+    retcode = __Pyx_ValidateAndInit_memviewslice(axes_specs, 0,
+                                                 PyBUF_RECORDS_RO | writable_flag, 1,
+                                                 &__Pyx_TypeInfo_unsigned_char__const__, stack,
+                                                 &result, obj);
+    if (unlikely(retcode == -1))
+        goto __pyx_fail;
+    return result;
+__pyx_fail:
+    result.memview = NULL;
+    result.data = NULL;
+    return result;
+}
+
 /* CIntFromPyVerify */
 #define __PYX_VERIFY_RETURN_INT(target_type, func_type, func_value)\
     __PYX__VERIFY_RETURN_INT(target_type, func_type, func_value, 0)
@@ -33354,6 +34671,98 @@ static CYTHON_INLINE int __Pyx_PyLong_As_int(PyObject *x) {
     }
 }
 
+/* PyObjectVectorcallMethodKwds (used by CIntToPy) */
+#if !CYTHON_VECTORCALL
+static PyObject *__Pyx_Object_VectorcallMethodKwds(PyObject *name, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
+    PyObject *result;
+    PyObject *obj = PyObject_GetAttr(args[0], name);
+    if (unlikely(!obj))
+        return NULL;
+    result = __Pyx_Object_VectorcallKwds(obj, args+1, nargsf-1, kwnames);
+    Py_DECREF(obj);
+    return result;
+}
+#endif
+
+/* CIntToPy */
+static CYTHON_INLINE PyObject* __Pyx_PyLong_From_unsigned_int(unsigned int value) {
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+    const unsigned int neg_one = (unsigned int) -1, const_zero = (unsigned int) 0;
+#ifdef __Pyx_HAS_GCC_DIAGNOSTIC
+#pragma GCC diagnostic pop
+#endif
+    const int is_unsigned = neg_one > const_zero;
+    if (is_unsigned) {
+        if (sizeof(unsigned int) < sizeof(long)) {
+            return PyLong_FromLong((long) value);
+        } else if (sizeof(unsigned int) <= sizeof(unsigned long)) {
+            return PyLong_FromUnsignedLong((unsigned long) value);
+#if !CYTHON_COMPILING_IN_PYPY
+        } else if (sizeof(unsigned int) <= sizeof(unsigned PY_LONG_LONG)) {
+            return PyLong_FromUnsignedLongLong((unsigned PY_LONG_LONG) value);
+#endif
+        }
+    } else {
+        if (sizeof(unsigned int) <= sizeof(long)) {
+            return PyLong_FromLong((long) value);
+        } else if (sizeof(unsigned int) <= sizeof(PY_LONG_LONG)) {
+            return PyLong_FromLongLong((PY_LONG_LONG) value);
+        }
+    }
+    {
+        unsigned char *bytes = (unsigned char *)&value;
+#if !CYTHON_COMPILING_IN_LIMITED_API && PY_VERSION_HEX >= 0x030d00A4
+        if (is_unsigned) {
+            return PyLong_FromUnsignedNativeBytes(bytes, sizeof(value), -1);
+        } else {
+            return PyLong_FromNativeBytes(bytes, sizeof(value), -1);
+        }
+#elif !CYTHON_COMPILING_IN_LIMITED_API && PY_VERSION_HEX < 0x030d0000
+        int one = 1; int little = (int)*(unsigned char *)&one;
+        return _PyLong_FromByteArray(bytes, sizeof(unsigned int),
+                                     little, !is_unsigned);
+#else
+        int one = 1; int little = (int)*(unsigned char *)&one;
+        PyObject *result = NULL, *kwds = NULL;
+        PyObject *py_bytes = NULL, *order_str = NULL, *from_bytes_str = NULL;;
+        py_bytes = PyBytes_FromStringAndSize((char*)bytes, sizeof(unsigned int));
+        if (!py_bytes) goto limited_bad;
+        from_bytes_str = PyUnicode_FromStringAndSize("from_bytes", 10);
+        if (!from_bytes_str) goto limited_bad;
+        order_str = PyUnicode_FromString(little ? "little" : "big");
+        if (!order_str) goto limited_bad;
+        {
+            PyObject *args[] = { (PyObject*)&PyLong_Type, py_bytes, order_str, Py_True };
+            if (!is_unsigned) {
+                PyObject *signed_str = PyUnicode_FromStringAndSize("signed", 6);
+                if (!signed_str) goto limited_bad;
+#if CYTHON_VECTORCALL
+                kwds = PyTuple_Pack(1, signed_str);
+#else
+                {
+                    PyObject *keys[] = {signed_str};
+                    PyObject *values[] = {Py_True};
+                    kwds = __Pyx_MakeKwargDict(keys, values, 1);
+                }
+#endif
+                Py_DECREF(signed_str);
+                if (unlikely(!kwds)) goto limited_bad;
+            }
+            result = __Pyx_Object_VectorcallMethodKwds(from_bytes_str, args, 3 | __Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET, kwds);
+        }
+        limited_bad:
+        Py_XDECREF(kwds);
+        Py_XDECREF(order_str);
+        Py_XDECREF(py_bytes);
+        Py_XDECREF(from_bytes_str);
+        return result;
+#endif
+    }
+}
+
 /* CIntFromPy */
 static unsigned char __Pyx_LargePyLong___Pyx_PyLong_As_unsigned_char(PyObject *x);
 static unsigned char __Pyx_raise_neg_overflow___Pyx_PyLong_As_unsigned_char(void) {
@@ -33654,19 +35063,6 @@ static CYTHON_INLINE unsigned char __Pyx_PyLong_As_unsigned_char(PyObject *x) {
         return __Pyx_NonPyLong___Pyx_PyLong_As_unsigned_char(x);
     }
 }
-
-/* PyObjectVectorcallMethodKwds (used by CIntToPy) */
-#if !CYTHON_VECTORCALL
-static PyObject *__Pyx_Object_VectorcallMethodKwds(PyObject *name, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
-    PyObject *result;
-    PyObject *obj = PyObject_GetAttr(args[0], name);
-    if (unlikely(!obj))
-        return NULL;
-    result = __Pyx_Object_VectorcallKwds(obj, args+1, nargsf-1, kwnames);
-    Py_DECREF(obj);
-    return result;
-}
-#endif
 
 /* CIntToPy */
 static CYTHON_INLINE PyObject* __Pyx_PyLong_From_int(int value) {

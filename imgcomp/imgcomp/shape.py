@@ -135,6 +135,8 @@ class Bounds:
 class Shape(ABC):
     """Maps center-based local pixel coordinates to color (None = miss)."""
 
+    paint_op_id: int = -1
+
     @abstractmethod
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
         """Return straight RGBA when (x, y) hits, else None."""
