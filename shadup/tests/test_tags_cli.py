@@ -66,6 +66,17 @@ def test_tag_add_then_rm_via_path(tmp_path: Path) -> None:
     assert _db_tags(shadir, shasum) == ["alpha"]
 
 
+def test_tag_add_canonicalizes_typed_tags(tmp_path: Path) -> None:
+    """tag-add lowercases ``type;value`` slugs and collapses case duplicates."""
+    cwd, shadir, stored_link, shasum = _setup_stored(tmp_path)
+
+    _run(cwd, shadir, ["tag-add", str(stored_link), "artist;Placebo", "genre;Rock"])
+    assert _db_tags(shadir, shasum) == ["artist;placebo", "genre;rock"]
+
+    _run(cwd, shadir, ["tag-add", str(stored_link), "artist;placebo"])
+    assert _db_tags(shadir, shasum) == ["artist;placebo", "genre;rock"]
+
+
 def test_tag_add_via_regular_file(tmp_path: Path) -> None:
     """tag-add on a regular file hashes it on-the-fly."""
     shadir = tmp_path / "store"
