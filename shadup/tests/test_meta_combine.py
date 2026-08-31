@@ -145,8 +145,8 @@ def test_years_not_genres_and_artist_slug_merge(tmp_path: Path) -> None:
         year="1968",
     )
     doc = mc.combine_from_providers(album, synonyms_dir=syn, providers=["lastfm"])
-    assert "year;00s" in doc["tags"]
-    assert "year;90s" in doc["tags"]
+    assert "year;200x" in doc["tags"]
+    assert "year;199x" in doc["tags"]
     assert "genre;00s" not in doc["tags"]
     assert "genre;leonardcohen" not in doc["tags"]
     assert "genre;leonard cohen" not in doc["tags"]
@@ -256,7 +256,7 @@ def test_hotel_costes_series_without_va_prefix(tmp_path: Path) -> None:
     )
     assert "various;curated" in doc["tags"]
     assert "artist;hotelcostes" in doc["tags"]
-    assert "artist;stphanepompougnac" in doc["tags"]
+    assert "artist;stphanepompougnac" not in doc["tags"]
 
 
 def test_single_artist_verve_jazz_masters_is_not_various(tmp_path: Path) -> None:

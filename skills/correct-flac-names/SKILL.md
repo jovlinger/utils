@@ -292,7 +292,8 @@ The directory **artist** (human-readable, not a slug) is:
 | Curated mix | DJ (`DJ Cam`, `Morcheeba`) or series (`Verve Remixed`, `Cafe Del Mar`) | Series or volume (`DJ-Kicks`, `The First Ladies`) | `artist;djcam` / `artist;ververemixed` |
 | Collection (default) | Compilation / series title | Title or subtitle | slug of that title |
 
-Helper: `shadup/tag_classify.py` → `va_rename_target("VA - …")`.
+Helper: `shadup/tag_classify.py` → `va_rename_target`, `series_folder_target`,
+`album_rename_target` (VA leftovers and curator-prefixed series dirs).
 
 Do **not** strip leading `The` from **movie** titles (`The Blues Brothers`,
 `The Adventures of Priscilla…`). Do strip `The` from **band** artists
@@ -309,6 +310,7 @@ Single-artist Verve Jazz Masters volumes stay under the performer
 | `VA - DJ-Kicks- DJ Cam` | `DJ Cam - DJ-Kicks` |
 | `VA - Verve Remixed- The First Ladies` | `Verve Remixed - The First Ladies` |
 | `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` |
+| `Stephane Pompougnac - Hotel Costes - Quatre` | `Hotel Costes - Quatre` |
 
 MusicBrainz may still say `Various Artists` in sidecars; that is **not** the
 folder name. After dirname changes, `postingest --force_retag` (no
@@ -476,7 +478,8 @@ Summarize: albums scanned, illegal names found, renames proposed/applied
 
 ## Related code
 
-- `shadup/tag_classify.py` — `va_rename_target`, compilation kind + display names
+- `shadup/tag_classify.py` — `va_rename_target`, `series_folder_target`,
+  `album_rename_target`, compilation kind + display names
 - `skills/groom-musicology-tags` — `various;*` / `artist;*` tags; postingest `--force_retag`
 - `../bin/musicology/` — `scan.py` (`_lookup_with_artist_variants`),
   `audio.py` (`strip_dirname_artist_the`, `artist_lookup_variants`,

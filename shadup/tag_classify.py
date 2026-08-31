@@ -58,6 +58,12 @@ ARTIST_ALIASES: dict[str, str] = {
 
 # Compact decade / year tokens after stripping punct (``90's`` → ``90s``).
 _YEAR_COMPACT = re.compile(r"^(?:(?:19|20)\d{2}s?|\d{2}s)$", re.I)
+_YEAR_FOUR = re.compile(r"^(19|20)\d{2}$")
+_YEAR_FOUR_DECADE = re.compile(r"^(19|20)(\d)0s$")
+_YEAR_TWO_DECADE = re.compile(r"^(\d{2})s$")
+
+# Slugs that are intentionally repeated syllables — do not collapse (Duran Duran).
+_REPEAT_PROTECTED = frozenset({"duranduran", "froufrou"})
 _VA_DIR_RE = re.compile(
     r"^(?:VA|Various(?:\s+Artists)?)\s*[-–—:]\s*",
     re.I,
@@ -106,14 +112,51 @@ _various_cfg_cache: dict[tuple[str, int], dict[str, Any]] = {}
 def slug(s: str) -> str:
     s = s.lower().replace("&", " and ")
     s = re.sub(r"[^a-z0-9]+", "", s)
-    return s or "empty"
+    s = s or "empty"
+    return collapse_repeated_slug(s)
+
+
+def collapse_repeated_slug(s: str) -> str:
+    """Collapse accidental doubled/tripled slugs (``blurblur`` → ``blur``).
+
+    Protected names (``duranduran``, ``froufrou``) are left unchanged.
+    """
+    if s in _REPEAT_PROTECTED:
+        return s
+    for n in range(1, len(s) // 2 + 1):
+        if len(s) % n:
+            continue
+        unit = s[:n]
+        reps = len(s) // n
+        if reps >= 2 and unit * reps == s:
+            if unit in _REPEAT_PROTECTED:
+                return s
+            return unit
+    return s
 
 
 def year_value(raw: str) -> Optional[str]:
-    """Return canonical year/decade token, or None if *raw* is not a year tag."""
+    """Return canonical year token, or None if *raw* is not a year tag.
+
+    Four-digit release years stay as ``YYYY``. Decades normalize to ``YYYx``
+    (``80s`` / ``1980s`` → ``198x``, ``00s`` → ``200x``, ``2010s`` → ``201x``).
+    """
     compact = re.sub(r"[^a-z0-9]+", "", raw.strip().lower())
-    if compact and _YEAR_COMPACT.fullmatch(compact):
+    if not compact or not _YEAR_COMPACT.fullmatch(compact):
+        return None
+    m = _YEAR_FOUR.fullmatch(compact)
+    if m:
         return compact
+    m = _YEAR_FOUR_DECADE.fullmatch(compact)
+    if m:
+        return f"{m.group(1)}{m.group(2)}x"
+    m = _YEAR_TWO_DECADE.fullmatch(compact)
+    if m:
+        dd = int(m.group(1))
+        decade_digit = dd // 10
+        if dd >= 30:
+            return f"19{decade_digit}x"
+        return f"20{decade_digit}x"
     return None
 
 
@@ -151,8 +194,9 @@ def canonicalize_tag(
 ) -> Optional[str]:
     """Normalize one ``type;value`` (also accepts ``:`` / ``/``) to slugged form.
 
-    Years (``00s``, ``90's``, ``1980s``, ``2001``) become ``year;*`` even if a
-    synonym map previously stored them as ``genre;*``. Artist-name values that
+    Years (``00s``, ``90's``, ``1980s``, ``2001``) become ``year;YYYY`` or
+    ``year;YYYx`` even if a synonym map previously stored them as ``genre;*``.
+    Artist-name values that
     match *artist_slugs* or :data:`ARTIST_ALIASES` become ``artist;*``.
     """
     split = split_type_value(tag)
@@ -400,6 +444,19 @@ def apply_various_policy(
     add(f"various;{kind}")
     if artist and artist not in va_slugs:
         add(f"artist;{artist}")
+    if kind == "curated" and artist in SERIES_DISPLAY:
+        # Series compilations (Hotel Costes, Cafe Del Mar, …): curator/DJ
+        # performer from provider metadata is not a second artist tag.
+        series_slug = artist
+        out = [
+            tag
+            for tag in out
+            if not (
+                tag.startswith("artist;")
+                and tag.split(";", 1)[1] not in va_slugs
+                and tag.split(";", 1)[1] != series_slug
+            )
+        ]
     out.sort()
     return out
 
@@ -539,6 +596,67 @@ def va_folder_parts(
         left, right = remainder.split(" - ", 1)
         return _clean_spaces(left), _clean_spaces(right)
     return remainder, remainder
+
+
+def series_folder_parts(
+    dir_name: str,
+    *,
+    cfg: Optional[Mapping[str, Any]] = None,
+) -> Optional[tuple[str, str]]:
+    """Return ``(series, album)`` when a curator-prefixed series dir should rename.
+
+  Example: ``Stephane Pompougnac - Hotel Costes - Quatre`` →
+  ``(Hotel Costes, Quatre)``. Dirs that already start with the series name
+  return None.
+    """
+    if dir_looks_va(dir_name):
+        return None
+    cfg = cfg or load_various_config()
+    classified = classify_various(dir_name, cfg=cfg)
+    if classified is None:
+        return None
+    kind, artist_slug = classified
+    if kind != "curated" or artist_slug not in SERIES_DISPLAY:
+        return None
+    series = SERIES_DISPLAY[artist_slug]
+    remainder = _clean_spaces(dir_name)
+    m = re.search(re.escape(series), remainder, re.I)
+    if not m:
+        return None
+    before = remainder[: m.start()].strip(" -–—")
+    after = remainder[m.end() :].strip(" -–—")
+    if not before:
+        return None
+    album = after or remainder
+    album = re.sub(r"(?i)\bk\s*&\s*d sessions\b", " ", album)
+    album = re.sub(r"[™®]", "", album)
+    album = re.sub(r"(?i)\bpresent(?:s|ed)?\s+", "", album)
+    album = re.sub(r"(?i)[-_]?\d*b?\d*khz\b", "", album)
+    album = _clean_spaces(album)
+    superscript = {"²": "2", "³": "3", "¹": "1"}
+    if album in superscript:
+        album = superscript[album]
+    if not album or slug(album) in {"the", "empty"}:
+        return None
+    return series, album
+
+
+def series_folder_target(dir_name: str) -> Optional[str]:
+    """New ``Series - Album`` basename for curator-prefixed series dirs."""
+    parts = series_folder_parts(dir_name)
+    if parts is None:
+        return None
+    artist, album = parts
+    artist = vfat_segment(artist)
+    album = vfat_segment(album)
+    if artist.lower() == album.lower():
+        return artist
+    return f"{artist} - {album}"
+
+
+def album_rename_target(dir_name: str) -> Optional[str]:
+    """Proposed album dirname, or None if the current name is already canonical."""
+    return va_rename_target(dir_name) or series_folder_target(dir_name)
 
 
 def va_rename_target(dir_name: str) -> Optional[str]:

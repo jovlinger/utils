@@ -28,9 +28,9 @@ preference (movie / DJ / series), never `VA -`.
 |-------|------------|
 | Namespace | Every tag is `type;value`. Unqualified tags (`90s`, `VA`) are leftovers — do not emit them. |
 | Separator | `;` only. Never `:` or `\|` (VFAT). `_tags/` becomes `type/value`. |
-| Value slug | Always lowercase alphanumeric. Strip spaces and punct: `Leonard Cohen` and `leonardcohen` merge to `leonardcohen`. |
+| Value slug | Always lowercase alphanumeric. Strip spaces/punct. Collapse accidental repeats (`blurblur` → `blur`; protect `duranduran`). |
 | Johan | **Ignore** `.meta.johan.json` at combine time (unless `providers` explicitly lists `johan`). |
-| Years | `00s`, `90s`, `90's`, `1980s`, `2001` → `year;*`, never `genre;00s`. |
+| Years | `00s`, `90s`, `90's`, `1980s`, `2001` → `year;YYYx` (decades) or `year;YYYY` (release years), never `genre;00s`. |
 | Artist-as-genre | Last.fm (etc.) performer names → `artist;slug`, not `genre;leonardcohen`. |
 | No VA artist | Never emit `artist;va` / `artist;variousartists`. |
 | Compilation kind | `various;soundtrack` / `various;curated` / `various;collection` (default). |
@@ -50,13 +50,14 @@ Tags become directory names under `files/_tags/`. Illegal path chars (`:`, `|`,
 | Not used | `:` (legacy namespace) or `\|` |
 
 Examples: `artist;petergabriel`, `artist;pulpfiction`, `artist;djcam`,
-`artist;ververemixed`, `year;00s`, `genre;poprock`, `various;soundtrack`,
+`artist;ververemixed`, `year;199x`, `year;2001`, `genre;poprock`, `various;soundtrack`,
 `various;curated`, `various;collection`.
 
 ### Years vs genres
 
 Decade/year crowd tags are `year;*`. Runtime `canonicalize_tag` coerces a stale
-`genre;00s` map entry to `year;00s`.
+`genre;00s` map entry to `year;200x`. Release years stay four digits (`year;1994`).
+Decades use `YYYx` (`80s`/`1980s` → `year;198x`, `00s` → `year;200x`, `10s` → `year;201x`).
 
 ### Artist names leaking into genres
 
@@ -71,6 +72,11 @@ one tag, no spaces. Do not keep both `genre;leonard cohen` and
 |------|------|------------|
 | `soundtrack` | OST / motion picture / soundtrack in title (plus a few movie overrides) | Movie (`pulpfiction`, `8mile`) |
 | `curated` | DJ-Kicks, Back to Mine, Verve Remixed, Hotel Costes, Café del Mar, … | DJ (`djcam`) or series (`ververemixed`, `hotelcostes`) |
+
+For fixed series (Hotel Costes, Cafe Del Mar, …), drop curator/DJ performer
+tags from provider metadata — only the series slug remains in `artist;*`.
+Example: `Stephane Pompougnac - Hotel Costes - Quatre` → `artist;hotelcostes`,
+not `artist;stphanepompougnac`.
 | `collection` | Default true compilation | Compilation / series title slug |
 
 Patterns: [various-series.json](various-series.json). Single-artist series

@@ -12,17 +12,28 @@ import tag_classify as tc  # noqa: E402
 
 
 def test_year_value_decades_and_apostrophe() -> None:
-    assert tc.year_value("00s") == "00s"
-    assert tc.year_value("90's") == "90s"
-    assert tc.year_value("1980s") == "1980s"
+    assert tc.year_value("00s") == "200x"
+    assert tc.year_value("90's") == "199x"
+    assert tc.year_value("1980s") == "198x"
+    assert tc.year_value("2010s") == "201x"
     assert tc.year_value("2001") == "2001"
     assert tc.year_value("420") is None
     assert tc.year_value("acid jazz") is None
 
 
+def test_collapse_repeated_slug() -> None:
+    assert tc.collapse_repeated_slug("blurblur") == "blur"
+    assert tc.collapse_repeated_slug("darylhallandjohnoatesdarylhallandjohnoates") == (
+        "darylhallandjohnoates"
+    )
+    assert tc.collapse_repeated_slug("duranduran") == "duranduran"
+    assert tc.collapse_repeated_slug("froufrou") == "froufrou"
+    assert tc.slug("Blur Blur") == "blur"
+
+
 def test_canonicalize_genre_year_and_spaced_artist() -> None:
-    assert tc.canonicalize_tag("genre;00s") == "year;00s"
-    assert tc.canonicalize_tag("genre;90's") == "year;90s"
+    assert tc.canonicalize_tag("genre;00s") == "year;200x"
+    assert tc.canonicalize_tag("genre;90's") == "year;199x"
     assert tc.canonicalize_tag("genre;leonard cohen") == "artist;leonardcohen"
     assert tc.canonicalize_tag("genre;leonardchohen") == "artist;leonardcohen"
     assert tc.canonicalize_tag("genre;leonardcohen") == "artist;leonardcohen"
@@ -30,7 +41,7 @@ def test_canonicalize_genre_year_and_spaced_artist() -> None:
 
 
 def test_classify_raw_own_artist_and_year() -> None:
-    assert tc.classify_raw("00s") == "year;00s"
+    assert tc.classify_raw("00s") == "year;200x"
     assert tc.classify_raw("leonard cohen") == "artist;leonardcohen"
     assert tc.classify_raw("folk", artist_slugs={"leonardcohen"}) == "genre;folk"
     assert tc.classify_raw("Leonard Cohen", artist_slugs={"leonardcohen"}) == (
@@ -78,6 +89,32 @@ def test_va_rename_target_drops_va_prefix() -> None:
     assert tc.va_rename_target("VA - DJ-Kicks- DJ Cam") == "DJ Cam - DJ-Kicks"
     assert tc.va_rename_target("VA - Verve Remixed²") == "Verve Remixed - 2"
     assert tc.va_rename_target("Leonard Cohen - Songs of Leonard Cohen") is None
+
+
+def test_series_folder_target_hotel_costes() -> None:
+    assert tc.series_folder_target("Stephane Pompougnac - Hotel Costes - Quatre") == (
+        "Hotel Costes - Quatre"
+    )
+    assert tc.series_folder_target("Hotel Costes - Hotel Costes 5") is None
+    assert tc.album_rename_target("Stephane Pompougnac - Hotel Costes - Quatre") == (
+        "Hotel Costes - Quatre"
+    )
+
+
+def test_apply_various_drops_curator_for_series() -> None:
+    tags = tc.apply_various_policy(
+        [
+            "artist;stphanepompougnac",
+            "artist;hotelcostes",
+            "album;hotelcostesquatre",
+            "year;2003",
+            "genre;deephouse",
+        ],
+        "Stephane Pompougnac - Hotel Costes - Quatre",
+    )
+    assert "artist;stphanepompougnac" not in tags
+    assert "artist;hotelcostes" in tags
+    assert "various;curated" in tags
 
 
 def test_apply_various_drops_va_artist() -> None:
