@@ -11,6 +11,7 @@ cdef class OpHandler:
     cdef public str name
     cdef public bint takes_operand
     cdef public bint is_body
+    cdef public object stack_type
 
 cdef OpHandler _handler(op_fn_t fn)
 

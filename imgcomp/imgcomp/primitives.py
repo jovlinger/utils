@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Optional, Sequence
 
-from imgcomp.shape import Shape
+from imgcomp.shape import AABB, Shape
 from imgcomp.rgba import RGBA
 from imgcomp.surface import ArraySurface
 
@@ -47,6 +47,11 @@ class ImageObject(Shape):
                 index += 1
             rows.append(row)
         return cls.from_rgba_rows(rows)
+
+    def AABB(self) -> AABB:
+        half_w = self._surface.width / 2.0
+        half_h = self._surface.height / 2.0
+        return AABB(-half_w, -half_h, half_w, half_h)
 
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
         """Return straight RGBA at the texel, or None on miss / transparent."""

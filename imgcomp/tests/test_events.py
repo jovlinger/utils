@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from imgcomp.naive import NaiveCompositor
-from imgcomp.shape import Shape
+from imgcomp.shape import AABB, Shape
 from imgcomp.rgba import RGBA
 from imgcomp.shapes import Circle
 from imgcomp.wrappers import Color, Translate
@@ -43,6 +43,9 @@ class _HitOnly(Shape):
 
     def color_at(self, x: float, y: float) -> RGBA | None:
         return (255, 255, 255, 255)
+
+    def AABB(self) -> None:
+        return None
 
     def on_scroll(self, x: float, y: float, delta: float) -> None:
         self.scrolled = True

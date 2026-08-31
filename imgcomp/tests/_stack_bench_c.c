@@ -1700,6 +1700,7 @@ struct __pyx_obj_7imgcomp_8_stack_c_OpHandler {
   PyObject *name;
   int takes_operand;
   int is_body;
+  PyObject *stack_type;
 };
 
 /* #### Code section: utility_code_proto ### */

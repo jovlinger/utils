@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from imgcomp.shape import Shape
+from imgcomp.affine import Affine
+from imgcomp.shape import AABB, Bounds, Shape, StackLangBody
 from imgcomp.rgba import RGBA, modulate
 
 
@@ -20,8 +21,32 @@ class Translate(Shape):
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
         return self.child.color_at(x - self.tx, y - self.ty)
 
+    def color_at_stacklang(self) -> StackLangBody:
+        child = self.child.color_at_stacklang()
+        body: StackLangBody = ["dup_xy", self.tx, self.ty, "offset_xy_sub", "dup_xy"]
+        if child and child[0] == "dup_xy":
+            body.extend(child[1:])
+        else:
+            body.extend(child)
+        return body
+
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x - self.tx, y - self.ty)
+
+    def AABB(self) -> Optional[AABB]:
+        child = self.child.AABB()
+        if child is None:
+            return None
+        return child.translated(self.tx, self.ty)
+
+    def bounds(self) -> Optional[Bounds]:
+        child = self.child.bounds()
+        if child is None:
+            return None
+        return child.transformed(self.affect())
+
+    def affect(self) -> Affine:
+        return Affine.translate(self.tx, self.ty)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x - self.tx, y - self.ty)
@@ -56,6 +81,21 @@ class Rotate(Shape):
         cx, cy = self._to_child(x, y)
         return self.child.pick_target(cx, cy)
 
+    def AABB(self) -> Optional[AABB]:
+        child = self.child.AABB()
+        if child is None:
+            return None
+        return child.rotated(self.degrees)
+
+    def bounds(self) -> Optional[Bounds]:
+        child = self.child.bounds()
+        if child is None:
+            return None
+        return child.transformed(self.affect())
+
+    def affect(self) -> Affine:
+        return Affine.rotate(self.degrees)
+
     def on_touch(self, x: float, y: float) -> None:
         cx, cy = self._to_child(x, y)
         self.child.on_touch(cx, cy)
@@ -86,6 +126,21 @@ class Stretch(Shape):
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x / self.scale_x, y / self.scale_y)
 
+    def AABB(self) -> Optional[AABB]:
+        child = self.child.AABB()
+        if child is None:
+            return None
+        return child.stretched(self.scale_x, self.scale_y)
+
+    def bounds(self) -> Optional[Bounds]:
+        child = self.child.bounds()
+        if child is None:
+            return None
+        return child.transformed(self.affect())
+
+    def affect(self) -> Affine:
+        return Affine.stretch(self.scale_x, self.scale_y)
+
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x / self.scale_x, y / self.scale_y)
 
@@ -108,8 +163,18 @@ class Color(Shape):
             return None
         return self.color
 
+    def color_at_stacklang(self) -> StackLangBody:
+        r, g, b, a = self.color
+        return [*self.child.color_at_stacklang(), r, g, b, a, "rgba_solid_if_hit"]
+
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x, y)
+
+    def AABB(self) -> Optional[AABB]:
+        return self.child.AABB()
+
+    def bounds(self) -> Optional[Bounds]:
+        return self.child.bounds()
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)
@@ -146,6 +211,12 @@ class ColorMod(Shape):
 
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x, y)
+
+    def AABB(self) -> Optional[AABB]:
+        return self.child.AABB()
+
+    def bounds(self) -> Optional[Bounds]:
+        return self.child.bounds()
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)

@@ -89,6 +89,24 @@ class Affine:
         """Map global -> local via inverse."""
         return self.inverse().transform(gx, gy)
 
+    def transform_aabb(self, box: "AABB") -> "AABB":
+        """Map a local AABB through this affine into global space."""
+        from imgcomp.shape import AABB
+
+        corners = (
+            (box.xmin, box.ymin),
+            (box.xmin, box.ymax),
+            (box.xmax, box.ymin),
+            (box.xmax, box.ymax),
+        )
+        xs: list[float] = []
+        ys: list[float] = []
+        for x, y in corners:
+            gx, gy = self.transform(x, y)
+            xs.append(gx)
+            ys.append(gy)
+        return AABB(min(xs), min(ys), max(xs), max(ys))
+
     def is_identity(self, *, eps: float = 1e-12) -> bool:
         return (
             abs(self.a - 1.0) < eps

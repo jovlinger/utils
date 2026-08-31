@@ -39,6 +39,16 @@ setup(
                 include_dirs=["imgcomp"],
                 extra_compile_args=C_COMPILE_ARGS,
             ),
+            Extension(
+                "imgcomp._stacklang_render_c",
+                ["imgcomp/_stacklang_render_c.pyx"],
+                extra_compile_args=C_COMPILE_ARGS,
+            ),
+            Extension(
+                "tests._simpletest_c",
+                ["tests/_simpletest_c.pyx"],
+                extra_compile_args=C_COMPILE_ARGS,
+            ),
         ],
         compiler_directives=CYTHON_COMPILER_DIRECTIVES,
     ),

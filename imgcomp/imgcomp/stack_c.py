@@ -55,10 +55,17 @@ while_loop: OpHandler
 
 def register_op(name: str, handler: OpHandler | list[Any]) -> OpHandler:
     """Register a cdef handler or a body opcode (token list)."""
+    from imgcomp.stack_type import PrePost
+
+    if isinstance(handler, PrePost):
+        handler = [handler]
     return _cy.register_op(name, handler)
 
 
 def reset_vm() -> None:
+    from imgcomp.stack_type import reset_check_state
+
+    reset_check_state()
     _cy.reset_vm()
 
 
@@ -90,6 +97,26 @@ def register_base_ops() -> None:
     int_incr_le = register_op("int_incr_le", _cy.int_incr_le)
     float_incr_le = register_op("float_incr_le", _cy.float_incr_le)
     while_loop = register_op("while", _cy.while_loop)
+
+
+def set_stack_type_debug(on: bool) -> None:
+    from imgcomp.stack_type import set_stack_type_debug as _set
+
+    _set(on)
+
+
+def stack_type_debug_enabled() -> bool:
+    from imgcomp.stack_type import stack_type_debug_enabled as _enabled
+
+    return _enabled()
+
+
+def get_data_sp() -> int:
+    return _cy.get_data_sp()
+
+
+def get_op(name: str) -> OpHandler:
+    return _cy.get_op_by_name(name)
 
 
 def eval_op(name: str) -> None:

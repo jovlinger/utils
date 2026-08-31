@@ -144,6 +144,10 @@ cdef int call_depth = 0
 
 cdef bint eval_started = False
 
+cdef bint _stack_type_debug = False
+
+cdef int active_call_op_id = -1
+
 cdef int8_t gil_free_memo[MAX_OPS]
 
 
@@ -171,6 +175,7 @@ cdef OpHandler _handler(op_fn_t fn):
     token.name = ""
     token.takes_operand = False
     token.is_body = False
+    token.stack_type = None
     return token
 
 
@@ -191,6 +196,7 @@ cdef OpHandler _make_body_op(int op_id, str name):
     token.name = name
     token.takes_operand = False
     token.is_body = True
+    token.stack_type = None
     return token
 
 
@@ -573,7 +579,9 @@ cdef int compile_body_to_wordbuf(int op_id, WordBuf* buf) except -1:
     Primitive ops get inline-dispatch tags, and adjacent [literal, primitive]
     pairs (plus [literal, over, cmp] triples) fuse into superinstructions.
     """
-    cdef list body = <list>op_bodies_src[op_id]
+    from imgcomp.stack_type import flatten_authoring
+
+    cdef list body = flatten_authoring(<list>op_bodies_src[op_id])
     cdef int i = 0
     cdef OpHandler op
     cdef OpHandler operand_op
@@ -677,9 +685,7 @@ cdef int compile_body_to_wordbuf(int op_id, WordBuf* buf) except -1:
                 wordbuf_push(buf, <uint64_t><uintptr_t>&op_table[op.op_id].buf)
             else:
                 wordbuf_push(buf, TAG_CALL_FN)
-                wordbuf_push(
-                    buf, <uint64_t><uintptr_t><void*>op_table[op.op_id].fn
-                )
+                wordbuf_push(buf, <uint64_t>op.op_id)
             prev_tag = -1
             prev2_tag = -1
             continue
@@ -718,8 +724,22 @@ cdef int compile_all_bodies() except -1:
         if op_table[op_id].is_wordbuf:
             op_table[op_id].buf.gil_free = False
             compile_body_to_wordbuf(op_id, &op_table[op_id].buf)
-    finalize_gil_free_flags()
+    if not _stack_type_debug:
+        finalize_gil_free_flags()
     bodies_compiled = True
+
+
+cdef inline int call_native_op(int op_id) except -1:
+    global active_call_op_id
+    if op_id < 0 or op_id >= num_ops:
+        raise RuntimeError(f"unknown opcode id {op_id}")
+    active_call_op_id = op_id
+    return op_table[op_id].fn()
+
+
+cdef int _op_py_stack_check() except -1:
+    from imgcomp.stack_type import run_stack_check
+    run_stack_check(active_call_op_id, data_sp)
 
 
 cdef int _op_lit_op() except -1:
@@ -1291,7 +1311,7 @@ cdef int run_wordbuf(WordBuf* buf) except -1:
     while bpc < buf.hi:
         tag = buf.elems[bpc]
         if tag == TAG_CALL_FN:
-            (<op_fn_t><void*><uintptr_t>buf.elems[bpc + 1])()
+            call_native_op(<int>buf.elems[bpc + 1])
             bpc += 2
         elif tag == TAG_LIT_INT:
             data_push_int(<int64_t>buf.elems[bpc + 1])
@@ -1506,12 +1526,39 @@ printf = _handler(_op_printf)
 int_incr_le = _handler(_op_int_incr_le)
 float_incr_le = _handler(_op_float_incr_le)
 while_loop = _handler(_op_while)
+py_stack_check = _handler(_op_py_stack_check)
 
 
 cdef inline int dispatch_op(int op_id) except -1:
     if op_id < 0 or op_id >= num_ops:
         raise RuntimeError(f"unknown opcode id {op_id}")
     run_quoted_body(op_id)
+
+
+def invalidate_body_compile() -> None:
+    """Force bodies to recompile (e.g. after toggling stack-type debug)."""
+    global bodies_compiled
+    bodies_compiled = False
+
+
+def set_stack_type_debug(bint enabled) -> None:
+    global _stack_type_debug, bodies_compiled
+    _stack_type_debug = enabled
+    bodies_compiled = False
+
+
+def stack_type_debug_on() -> bool:
+    return bool(_stack_type_debug)
+
+
+def op_name(int op_id) -> str:
+    if op_id < 0 or op_id >= num_ops:
+        raise IndexError(f"opcode id out of range: {op_id}")
+    return op_names[op_id]
+
+
+def get_op_by_name(str name) -> OpHandler:
+    return _make_body_op(lookup_op_id(name), name)
 
 
 def register_op(str name, handler) -> OpHandler:
@@ -1585,6 +1632,10 @@ def pop_float() -> float:
     return data_pop_float()
 
 
+def get_data_sp() -> int:
+    return data_sp
+
+
 def run_op(str name) -> None:
     global call_depth, eval_started
     cdef int op_id
@@ -1599,3 +1650,12 @@ def run_op(str name) -> None:
     finally:
         eval_started = False
         assert_stack_sane()
+
+
+def invoke_body_id(int op_id) -> None:
+    """Run a compiled body opcode by id (nested-safe)."""
+    compile_all_bodies()
+    if op_id < 0 or op_id >= num_ops:
+        raise RuntimeError(f"unknown opcode id {op_id}")
+    run_quoted_body(op_id)
+    assert_stack_sane()

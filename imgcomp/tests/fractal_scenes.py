@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from imgcomp.compound import Union
 from imgcomp.rgba import RGBA
 from imgcomp.shape import Shape
 from imgcomp.shapes import Circle, Infinite, Rectangle
@@ -47,7 +48,7 @@ def sierpinski_carpet(level: int, half_size: float, fill: RGBA) -> Shape:
             parts.append(
                 sierpinski_carpet(level - 1, sub_half, fill).translate(col * step, row * step)
             )
-    return parts[0].union(*parts[1:])
+    return Union(*parts)
 
 
 def phyllotaxis_spiral(dot_count: int, dot_radius: float, spread: float) -> Shape:
@@ -64,7 +65,7 @@ def phyllotaxis_spiral(dot_count: int, dot_radius: float, spread: float) -> Shap
             .translate(x, y)
             .color(_hsv_disk_color(index, dot_count))
         )
-    return dots[0].union(*dots[1:])
+    return Union(*dots)
 
 
 def concentric_ring_fractal(ring_count: int, outer_radius: float) -> Shape:
@@ -78,7 +79,7 @@ def concentric_ring_fractal(ring_count: int, outer_radius: float) -> Shape:
         else:
             geometry = Circle(outer).subtract(Circle(inner))
         rings.append(geometry.color(_hsv_disk_color(index, ring_count, saturation=0.85, value=1.0)))
-    return rings[0].union(*rings[1:])
+    return Union(*rings)
 
 
 def spirograph_rosette(petal_count: int, major_radius: float, minor_radius: float) -> Shape:
@@ -95,7 +96,7 @@ def spirograph_rosette(petal_count: int, major_radius: float, minor_radius: floa
             .translate(x, y)
             .color(_hsv_disk_color(step, steps, saturation=0.9, value=1.0))
         )
-    return dots[0].union(*dots[1:])
+    return Union(*dots)
 
 
 def fractal_gallery_scene(kind: str, *, size: int, profile: str = "fast") -> list[Shape]:

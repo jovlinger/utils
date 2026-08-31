@@ -5,20 +5,53 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from imgcomp.shape import Shape
+from imgcomp.shape import AABB, Shape, StackLangBody
 from imgcomp.rgba import RGBA, WHITE
+
+using_stacklang: bool = False
+
+
+def set_using_stacklang(on: bool) -> None:
+    """Mark whether the stacklang VM is in its native render path."""
+    global using_stacklang
+    using_stacklang = on
+
+
+def _assert_not_using_stacklang(method: str) -> None:
+    assert not using_stacklang, f"{method} must not run during native stacklang render"
+
+
+assert_not_stacklang = _assert_not_using_stacklang
 
 
 class SDFShape(Shape):
     """White-filled geometry; subclasses implement ``distance``."""
 
     def distance(self, x: float, y: float) -> float:
+        _assert_not_using_stacklang("distance")
         raise NotImplementedError(f"{type(self).__name__} must implement distance")
 
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        _assert_not_using_stacklang("color_at")
         if self.distance(x, y) <= 0.0:
             return WHITE
         return None
+
+    def distance_stacklang(self) -> StackLangBody:
+        """Stacklang with gx gy on stack; leaves signed distance on stack.
+
+        Default falls back to ``call_python_method`` on ``distance``. Shapes with
+        native kernels override this and avoid the Python callback.
+        """
+        return ["call_python_method", "distance"]
+
+    def color_at_stacklang(self) -> StackLangBody:
+        """Compose fill from ``distance_stacklang`` via ``sdf_fill_white``.
+
+        ``sdf_fill_white`` leaves opaque ``WHITE`` when distance <= 0, else
+        transparent (matching ``color_at``).
+        """
+        return ["dup_xy", *self.distance_stacklang(), "sdf_fill_white"]
 
 
 class Circle(SDFShape):
@@ -30,7 +63,15 @@ class Circle(SDFShape):
         self.radius = radius
 
     def distance(self, x: float, y: float) -> float:
+        _assert_not_using_stacklang("distance")
         return math.hypot(x, y) - self.radius
+
+    def AABB(self) -> AABB:
+        radius = self.radius
+        return AABB(-radius, -radius, radius, radius)
+
+    def distance_stacklang(self) -> StackLangBody:
+        return [self.radius, "circle_distance"]
 
 
 class Rectangle(SDFShape):
@@ -43,11 +84,18 @@ class Rectangle(SDFShape):
         self.half_height = half_height
 
     def distance(self, x: float, y: float) -> float:
+        _assert_not_using_stacklang("distance")
         qx = abs(x) - self.half_width
         qy = abs(y) - self.half_height
         outside = math.hypot(max(qx, 0.0), max(qy, 0.0))
         inside = min(max(qx, qy), 0.0)
         return outside + inside
+
+    def AABB(self) -> AABB:
+        return AABB(-self.half_width, -self.half_height, self.half_width, self.half_height)
+
+    def distance_stacklang(self) -> StackLangBody:
+        return [self.half_width, self.half_height, "rectangle_distance"]
 
 
 class Oval(SDFShape):
@@ -60,14 +108,28 @@ class Oval(SDFShape):
         self.radius_y = max(radius_y, 1e-9)
 
     def distance(self, x: float, y: float) -> float:
+        _assert_not_using_stacklang("distance")
         nx = x / self.radius_x
         ny = y / self.radius_y
         scale = min(self.radius_x, self.radius_y)
         return (math.hypot(nx, ny) - 1.0) * scale
+
+    def AABB(self) -> AABB:
+        return AABB(-self.radius_x, -self.radius_y, self.radius_x, self.radius_y)
+
+    def distance_stacklang(self) -> StackLangBody:
+        return [self.radius_x, self.radius_y, "oval_distance"]
 
 
 class Infinite(Shape):
     """Full-plane geometry of infinite extent; use as a background layer."""
 
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
+        _assert_not_using_stacklang("color_at")
         return WHITE
+
+    def color_at_stacklang(self) -> StackLangBody:
+        return ["fill_white"]
+
+    def AABB(self) -> Optional[AABB]:
+        return None

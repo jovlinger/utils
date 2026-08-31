@@ -1,4 +1,4 @@
-.PHONY: test all-tests build-ext
+.PHONY: test all-tests build-ext bench
 
 VENV_PYTHON := .venv/bin/python
 BUILD_STAMP := .venv/.stack_c_built
@@ -6,7 +6,7 @@ BUILD_STAMP := .venv/.stack_c_built
 $(VENV_PYTHON): requirements.txt
 	../create_pipenv.sh --sync imgcomp
 
-$(BUILD_STAMP): $(VENV_PYTHON) setup.py imgcomp/_math.pyx imgcomp/_math.pxd imgcomp/affine_simd.c imgcomp/affine_simd.h imgcomp/_stack_c.pyx imgcomp/_stack_c.pxd tests/_stack_bench_c.pyx tests/_math_bench_c.pyx
+$(BUILD_STAMP): $(VENV_PYTHON) setup.py imgcomp/_math.pyx imgcomp/_math.pxd imgcomp/affine_simd.c imgcomp/affine_simd.h imgcomp/_stack_c.pyx imgcomp/_stack_c.pxd imgcomp/_stacklang_render_c.pyx tests/_stack_bench_c.pyx tests/_math_bench_c.pyx tests/_simpletest_c.pyx
 	$(VENV_PYTHON) setup.py build_ext --inplace
 	@touch $(BUILD_STAMP)
 
@@ -17,3 +17,6 @@ test: $(BUILD_STAMP)
 
 all-tests: $(BUILD_STAMP)
 	$(VENV_PYTHON) -m pytest
+
+bench: $(BUILD_STAMP)
+	$(VENV_PYTHON) tests/render_bench.py
