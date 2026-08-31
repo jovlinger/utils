@@ -669,7 +669,15 @@
       "Branch": "59b05854-postingest-scan-albums-",
       "Id": "59b0585438f9f268b154c9f522053c8956f191ec7397228dfdf2f90868202e49",
       "State": "INFO",
-      "Summary": "postingest: scan albums inside discography/container folders"
+      "Summary": "postingest: scan albums inside discography/container folders",
+      "objid": "0006"
+    },
+    {
+      "Branch": "18cb75f1-co-occurrence-synonym-p",
+      "Id": "18cb75f1121b03619d1eb195fe0222bd87df6ee553cd6bb43c221922ee2c1f77",
+      "State": "INFO",
+      "Summary": "Co-occurrence synonym proposer for musicology tags",
+      "objid": "0007"
     }
   ],
   "Summary": {
@@ -1350,8 +1358,8 @@
       "summary": "Author per-provider synonym maps from inventory"
     }
   ],
-  "_nextobjid": 6,
+  "_nextobjid": 8,
   "_schema": 9,
   "create_dt": "2026-07-18T06:26:50Z",
-  "update_dt": "2026-07-20T22:15:44Z"
+  "update_dt": "2026-08-21T05:13:21Z"
 }

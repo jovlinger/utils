@@ -1,0 +1,76 @@
+{
+  "AC": "Done when:\n\n1. Design recorded in this ticket (Body) is agreed enough to implement: inputs, positive synonym signal, axis/non-synonym signal, reviewable output format.\n2. A script under `skills/groom-musicology-tags/scripts/` (name TBD, e.g. `propose_synonyms.py`) reads album sidecars + optional inventory, emits a reviewable candidate report (and optional map-patch proposal) without rewriting committed synonym maps by default.\n3. Report demonstrably surfaces: (a) cross-provider near-duplicates that slug-merge today or should; (b) at least one axis separation class (e.g. decade vs decade, or year-like vs genre) flagged as non-synonym.\n4. Skill.md workflow gains a step: propose \u2192 human review \u2192 edit maps / OVERRIDES \u2192 `build_synonym_maps` / commit \u2192 postingest `--force_retag` (no `--force_provider`).\n5. Tests or a checked-in sample fixture cover one multi-provider album bag \u2192 expected candidate / non-candidate pairs.",
+  "ActualSummary": "Shipped skills/groom-musicology-tags/scripts/propose_synonyms.py: album-aligned discogs/lastfm/musicbrainz bags \u2192 slug-equal synonym candidates + clusters (optional map_patch), related-only high-PMI different-slug pairs, and axis non-synonyms (year\u2260genre, 80s\u226090s). SKILL workflow documents propose\u2192review\u2192retag; fixture tests cover CCR-style overlap. Live smoke on 299 albums: 56 candidates, 144 related, 111 non-synonyms. Branch 18cb75f1-co-occurrence-synonym-p not merged to master yet.",
+  "BaseSha": "d8a86bb678b652f78ada38055a90419cb396e9da",
+  "Body": {
+    "objid": "0002",
+    "raw": "## Why\n\nPer-provider synonym maps under `skills/groom-musicology-tags/synonyms/` are built by independent heuristics (`scripts/build_synonym_maps.py` \u2192 `tag_classify.classify_raw`). They never look across providers on the same album. We already have ~299 albums with \u22652 of discogs/lastfm/musicbrainz tagged, and ~545 unique raw inventory strings \u2014 enough to propose a better map from co-occurrence, and to encode hard non-synonyms (different axes).\n\n## Goal\n\nAdd a **proposer** (not a silent auto-writer) that, from live sidecars under `/mnt/sdb2/music/flac/files/**/.meta.<provider>.json` (skip `_tags/`, skip johan at combine time), suggests:\n\n1. **Synonym / same-canonical candidates** across providers (and within a provider): e.g. Discogs `Country Rock` \u2194 Last.fm `country rock` \u2192 shared `genre;countryrock`.\n2. **Axis / non-synonym separations**: labels that co-occur but live on different dimensions must not collapse \u2014 decade pairs (`80s` vs `90s`), year vs genre (`00s` vs `pop`), artist-as-tag vs genre (`leonard cohen` vs `folk`), mood vs genre when we keep moods out or typed separately later.\n3. **Reviewable output** that a human (or groom pass) merges into `synonyms/*.json` / `OVERRIDES`, then hands off to the existing mechanistic emitter. Runtime stays map+heuristic; no LLM at postingest.\n\n## Sketch (design, not yet built)\n\n### Inputs\n- Album-aligned bags: for each album dir, union of `metadata.genres` + `metadata.tags` per provider (discogs, lastfm, musicbrainz).\n- Existing inventory TSVs and current maps as priors / already-resolved keys.\n- Canonical types from the skill: `artist`, `album`, `year`, `genre`, `collection`, `various`.\n\n### Signals\n- **Positive synonym evidence:** high PMI / Jaccard of (providerA:rawA, providerB:rawB) across albums; plus slug equality / near-slug after strip.\n- **Axis evidence (non-synonym):** pairs that rarely substitute for each other (mutual exclusivity within type, e.g. decades), or that co-occur at high rate *with* many genres (year-like / artist-like fingerprints). Reuse year/artist rules from `tag_classify` as strong priors so the learner does not unlearn `year;80s`.\n- **Drop noise:** extend musicbrainz-style drops (`isrc`, UUIDs, purchase notes) via low album support + high entropy.\n\n### Outputs\n- Report (TSV/JSON): candidate clusters \u2192 proposed `type;value`, confidence, supporting album count, conflicting axis flags.\n- Optional patch file of map key additions keyed by provider \u2014 never overwrite reviewed entries without `--force` / explicit accept list.\n- Golden / fixture albums for regression (CCR Mardi Gras-style multi-provider overlap; VA/soundtrack left to `various-series.json`, out of scope for genre synonymy).\n\n### Non-goals\n- Retraining or replacing `tag_classify` year/VA policy.\n- Auto-committing synonym JSON without review.\n- Re-querying providers (`--force_provider`).\n- Folding johan into combine (still skipped).\n\n## Related\n- Parent / prior: `d46c7c66` Groom musicology tags (done).\n- Skill: `skills/groom-musicology-tags/`\n- Runtime: `shadup/tag_classify.py`, `shadup/meta_combine.py`, postingest `--force_retag`"
+  },
+  "Branch": "18cb75f1-co-occurrence-synonym-p",
+  "Id": "18cb75f1121b03619d1eb195fe0222bd87df6ee553cd6bb43c221922ee2c1f77",
+  "LongSummary": {
+    "objid": "0003",
+    "raw": "Build a co-occurrence synonym proposer for musicology provider tags. Current maps under skills/groom-musicology-tags/synonyms are heuristic-only (build_synonym_maps.py + tag_classify); they do not learn from ~299 albums that carry overlapping discogs/lastfm/musicbrainz genre and tag bags. The todo adds a reviewable proposer that suggests cross-provider synonym clusters toward shared type;value labels, and explicitly marks non-synonyms on other axes (80s vs 90s, year vs genre, artist names leaking into genre). Output patches maps only after human review; postingest stays mechanistic with --force_retag. Parent work: groom-musicology-tags (d46c7c66)."
+  },
+  "Parent": [
+    {
+      "Branch": "d46c7c66-groom-musicology-tags",
+      "Id": "d46c7c661905ea5f90a86ce4c44d5893c241ae6495aba3475cf08bfde51e6e98",
+      "objid": "0004"
+    }
+  ],
+  "Scope": {
+    "branch": "18cb75f1-co-occurrence-synonym-p",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0007",
+    "path_from_root": "skills/groom-musicology-tags"
+  },
+  "State": {
+    "done": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Co-occurrence synonym proposer for musicology tags"
+  },
+  "Tag": [
+    {
+      "manual": true,
+      "objid": "0005",
+      "raw": "musicology"
+    },
+    {
+      "manual": true,
+      "objid": "0006",
+      "raw": "tags"
+    }
+  ],
+  "WorkItems": [
+    {
+      "at_sha": "d8a86bb678b652f78ada38055a90419cb396e9da",
+      "done": true,
+      "kind": "checkpoint",
+      "message": "I/O and signals ratified in ticket Body (sidecar bags, PMI/Jaccard+slug, axis non-synonyms, reviewable report + optional map-patch). Implementation next.",
+      "objid": "000b",
+      "summary": "[MIDCAP] Specify propose_synonyms I/O: sidecar scan, PMI/Jaccard + slug priors, axis non-synonym rules, report schema"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Add propose_synonyms: co-occurrence synonym proposer for musicology tags.\n\nSlug-equal cross-provider pairs become reviewable candidates/clusters and\noptional map patches; high-PMI different-slug pairs stay related-only; year vs\ngenre and decade mismatches are non-synonyms. Document propose\u2192review\u2192retag in\nthe skill; add fixture tests.",
+      "objid": "000c",
+      "sha": "e9081eda98cf0c31e410c6a35166820b062268c1",
+      "summary": "[MIDCAP] Implement scripts/propose_synonyms.py (report + optional map-patch; no overwrite by default)"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "Add propose_synonyms: co-occurrence synonym proposer for musicology tags.\n\nSlug-equal cross-provider pairs become reviewable candidates/clusters and\noptional map patches; high-PMI different-slug pairs stay related-only; year vs\ngenre and decade mismatches are non-synonyms. Document propose\u2192review\u2192retag in\nthe skill; add fixture tests.",
+      "objid": "000d",
+      "sha": "e9081eda98cf0c31e410c6a35166820b062268c1",
+      "summary": "[LOCAP] Fixture tests + SKILL propose\u2192review\u2192retag (landed with propose_synonyms)"
+    }
+  ],
+  "_nextobjid": 14,
+  "create_dt": "2026-08-21T04:48:18Z",
+  "update_dt": "2026-08-21T05:13:31Z"
+}
