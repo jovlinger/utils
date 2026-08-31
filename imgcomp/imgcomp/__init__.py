@@ -8,13 +8,6 @@ from imgcomp.compound import (
     Subtract,
     Thin,
     Union,
-    fatten,
-    intersect,
-    rotate,
-    stretch,
-    subtract,
-    thin,
-    union,
 )
 from imgcomp.compositor import Compositor
 from imgcomp.content_key import content_key
@@ -58,12 +51,5 @@ __all__ = [
     "as_scene",
     "as_z_list",
     "content_key",
-    "fatten",
-    "intersect",
-    "rotate",
     "src_over",
-    "stretch",
-    "subtract",
-    "thin",
-    "union",
 ]

@@ -54,9 +54,9 @@ from libc.stdint cimport int64_t, int8_t, uint64_t, uintptr_t
 from libc.string cimport memcpy
 
 DEF MAX_DATA = 4096
-DEF MAX_OPS = 128
+DEF MAX_OPS = 1024
 DEF MAX_CALL_DEPTH = 256
-DEF MAX_BODY_WORDS = 1024
+DEF MAX_BODY_WORDS = 8192
 
 # Compiled instruction tags. Compile resolves every operand it can: native
 # ops store their fn pointer, body ops and while loops store WordBuf
@@ -441,6 +441,12 @@ cdef inline int data_push_float(double value) except -1:
 
 cdef inline double data_pop_float() except? -1.0:
     return word_to_float(data_pop_uint())
+
+
+cdef inline double data_peek_bottom_float(int index) except *:
+    if index < 0 or index >= data_sp:
+        raise IndexError(f"stack peek index out of range: {index} (sp={data_sp})")
+    return word_to_float(data_stack[index])
 
 
 cdef inline int data_push_op_literal(int op_id) except -1:

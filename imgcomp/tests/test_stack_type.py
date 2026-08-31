@@ -6,6 +6,9 @@ import pytest
 
 from imgcomp import stack_c as sc
 from imgcomp.stack_type import PrePost, StackType, flatten_authoring, set_stack_type_debug
+from tests.fractal_scenes import fractal_gallery_scene
+from tests.bench_render import GALLERY_PROFILE, GALLERY_SIZE
+from tests.simpletest import render_stacklang
 
 
 def test_stack_type_effect_str() -> None:
@@ -52,6 +55,17 @@ def test_area_debug_catches_wrong_pre_height() -> None:
         sc.register_op("area", area)
         with pytest.raises(RuntimeError, match="area.*pre-check"):
             sc.eval_op("area")
+    finally:
+        set_stack_type_debug(False)
+
+
+def test_union_spirograph_stack_debug_renders() -> None:
+    set_stack_type_debug(True)
+    try:
+        scene = fractal_gallery_scene("spirograph", size=GALLERY_SIZE, profile=GALLERY_PROFILE)
+        surface = render_stacklang(scene, GALLERY_SIZE, GALLERY_SIZE)
+        assert surface.width == GALLERY_SIZE
+        assert surface.height == GALLERY_SIZE
     finally:
         set_stack_type_debug(False)
 

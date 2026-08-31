@@ -160,6 +160,16 @@ class Shape(ABC):
             return True
         return bounds.intersects_aabb(rect)
 
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        """Return a shape covering only the portion that may hit ``rect``, or None."""
+        if not self.maybe_intersect_rect(rect):
+            return None
+        return self
+
+    def cachekey(self) -> tuple[Any, ...]:
+        """Recursive structural key for cache identity (parameters that affect pixels)."""
+        return ("object", type(self).__name__, id(self))
+
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         """Return the leaf shape and its local coords when (x, y) hits."""
         if not self.color_at(x, y):

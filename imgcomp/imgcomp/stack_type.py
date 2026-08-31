@@ -126,6 +126,17 @@ def flatten_authoring(tokens: list[Any]) -> list[Any]:
     return out
 
 
+def strip_prepost(tokens: list[Any]) -> list[Any]:
+    """Drop ``PrePost`` wrappers, keeping inner authoring tokens."""
+    out: list[Any] = []
+    for token in tokens:
+        if isinstance(token, PrePost):
+            out.extend(strip_prepost(token.body))
+        else:
+            out.append(token)
+    return out
+
+
 def _check_op(kind: CheckKind, slots: tuple[str, ...], label: str) -> Any:
     from imgcomp import stack_c as sc
 

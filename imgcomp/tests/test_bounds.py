@@ -25,6 +25,49 @@ def test_union_maybe_intersect_skips_gap_between_members() -> None:
     assert not shape.maybe_intersect_rect(gap)
 
 
+def test_union_intersected_by_keeps_only_overlapping_members() -> None:
+    gap = AABB(-1.0, -1.0, 1.0, 1.0)
+    shape = Union(
+        Circle(2.0).translate(-8.0, 0.0),
+        Circle(2.0).translate(8.0, 0.0),
+    )
+    culled = shape.intersected_by(gap)
+    assert culled is None
+
+
+def test_union_cachekey_matches_content_key() -> None:
+    from imgcomp.content_key import content_key
+
+    shape = Union(
+        Circle(2.0).translate(-8.0, 0.0),
+        Circle(2.0).translate(8.0, 0.0),
+    )
+    assert shape.cachekey() == content_key(shape)
+
+
+def test_quadtree_interns_identical_zlists() -> None:
+    from imgcomp.stacklang_render import build_quadtree, prepare_scene, viewport_aabb
+    from tests.fractal_scenes import fractal_gallery_scene
+
+    layers = prepare_scene(fractal_gallery_scene("spirograph", size=192, profile="fast"))
+    tree = build_quadtree(layers, viewport_aabb(192, 192))
+
+    zlists: list[tuple] = []
+
+    def walk(node) -> None:
+        if node.layers is not None:
+            zlists.append(node.layers)
+            return
+        assert node.children is not None
+        for child in node.children:
+            walk(child)
+
+    walk(tree)
+    assert len(zlists) > 1
+    unique = {id(zlist) for zlist in zlists}
+    assert len(unique) < len(zlists)
+
+
 def test_intersect_maybe_intersect_needs_both_operands() -> None:
     query = AABB(3.5, -0.5, 4.5, 0.5)
     shape = Intersect(Circle(5.0), Rectangle(3.0, 3.0))

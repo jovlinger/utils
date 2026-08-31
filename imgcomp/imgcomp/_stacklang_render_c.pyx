@@ -11,6 +11,7 @@ from libc.math cimport fabs, fmax, fmin, sqrt
 from imgcomp._stack_c cimport (
     OpHandler,
     _handler,
+    data_peek_bottom_float,
     data_pop_float,
     data_push_float,
 )
@@ -167,7 +168,17 @@ cdef int _op_slr_float_max2() except -1:
     """Stack gy gx d1 d2 -- gy gx max(d1, d2) ."""
     cdef double d2 = data_pop_float()
     cdef double d1 = data_pop_float()
+    cdef double gx = data_pop_float()
+    cdef double gy = data_pop_float()
+    data_push_float(gy)
+    data_push_float(gx)
     data_push_float(fmax(d1, d2))
+
+
+cdef int _op_slr_float_neg() except -1:
+    """Stack d -- -d ."""
+    cdef double d = data_pop_float()
+    data_push_float(-d)
 
 
 cdef int _op_slr_offset_xy_sub() except -1:
@@ -266,29 +277,67 @@ cdef int _op_slr_rgba_transparent() except -1:
     push_rgba_float(0.0, 0.0, 0.0, 0.0)
 
 
+cdef int _op_slr_push_transparent_accum() except -1:
+    """Stack gy gx -- gy gx 0 0 0 0 . Keep anchor xy, push transparent accum."""
+    push_rgba_float(0.0, 0.0, 0.0, 0.0)
+
+
+cdef int _op_slr_dup_anchor_xy() except -1:
+    """Stack gy gx ... -- gy gx ... gy gx . Copy bottom anchor xy to top."""
+    cdef double gy = data_peek_bottom_float(0)
+    cdef double gx = data_peek_bottom_float(1)
+    data_push_float(gy)
+    data_push_float(gx)
+
+
+cdef int _op_slr_drop_hit_xy() except -1:
+    """Stack ... gy gx r g b a -- ... r g b a . Drop hit coords under top RGBA."""
+    cdef double a = data_pop_float()
+    cdef double b = data_pop_float()
+    cdef double g = data_pop_float()
+    cdef double r = data_pop_float()
+    data_pop_float()
+    data_pop_float()
+    data_push_float(r)
+    data_push_float(g)
+    data_push_float(b)
+    data_push_float(a)
+
+
 cdef int _op_slr_src_over_layer() except -1:
     """Stack gy gx dr dg db da sr sg sb sa -- gy gx r g b a .
 
-    Composite like ``src_over(dst, src)`` in ``imgcomp.rgba`` (member over accum).
+    Match ``src_over(layer, accum)`` in ``imgcomp.compound.Union.color_at``.
     """
-    cdef double sa = data_pop_float()
-    cdef double sb = data_pop_float()
-    cdef double sg = data_pop_float()
-    cdef double sr = data_pop_float()
-    cdef double da = data_pop_float()
-    cdef double db = data_pop_float()
-    cdef double dg = data_pop_float()
-    cdef double dr = data_pop_float()
+    cdef double ma = data_pop_float()
+    cdef double mb = data_pop_float()
+    cdef double mg = data_pop_float()
+    cdef double mr = data_pop_float()
+    cdef double aa = data_pop_float()
+    cdef double ab = data_pop_float()
+    cdef double ag = data_pop_float()
+    cdef double ar = data_pop_float()
     cdef double gx = data_pop_float()
     cdef double gy = data_pop_float()
     cdef double out_r
     cdef double out_g
     cdef double out_b
     cdef double out_a
-    src_over(sr, sg, sb, sa, dr, dg, db, da, &out_r, &out_g, &out_b, &out_a)
+    src_over(ar, ag, ab, aa, mr, mg, mb, ma, &out_r, &out_g, &out_b, &out_a)
     data_push_float(gy)
     data_push_float(gx)
     push_rgba_float(out_r, out_g, out_b, out_a)
+
+
+cdef int _op_slr_anchorize_rgba() except -1:
+    """Stack gy gx wy wx r g b a -- gy gx r g b a . Drop translated work coords."""
+    cdef double a = data_pop_float()
+    cdef double b = data_pop_float()
+    cdef double g = data_pop_float()
+    cdef double r = data_pop_float()
+    data_pop_float()
+    data_pop_float()
+    push_rgba_float(r, g, b, a)
 
 
 cdef int _op_slr_python_distance() except -1:
@@ -375,13 +424,17 @@ cdef int _op_slr_paint_pixel() except -1:
         return 0
     log_c_to_py("z_list_at_point", gx=gx, gy=gy, px=px, py=py)
     z_list = z_list_at_point(_tree, gx, gy)
-    present = {layer.index for layer in z_list}
+    present = {layer.index: layer for layer in z_list}
     for layer_index in range(_num_layers - 1, -1, -1):
         if layer_index not in present:
             continue
-        op_id = _layer_op_ids[layer_index]
+        layer = present[layer_index]
+        op_id = layer.paint_op_id
+        if op_id < 0:
+            op_id = _layer_op_ids[layer_index]
         invoke_rgba_at(gy, gx, op_id, &lr, &lg, &lb, &la)
-        src_over(lr, lg, lb, la, ar, ag, ab, aa, &out_r, &out_g, &out_b, &out_a)
+        # Match accumulate_layers: src_over(hit, accum) -> composite accum over hit.
+        src_over(ar, ag, ab, aa, lr, lg, lb, la, &out_r, &out_g, &out_b, &out_a)
         ar = out_r
         ag = out_g
         ab = out_b
@@ -402,6 +455,7 @@ slr_set_gy = _handler(_op_slr_set_gy)
 slr_dup_xy = _handler(_op_slr_dup_xy)
 slr_dup_anchor_push_xy = _handler(_op_slr_dup_anchor_push_xy)
 slr_float_max2 = _handler(_op_slr_float_max2)
+slr_float_neg = _handler(_op_slr_float_neg)
 slr_offset_xy_sub = _handler(_op_slr_offset_xy_sub)
 slr_rgba_solid_if_hit = _handler(_op_slr_rgba_solid_if_hit)
 slr_circle_distance = _handler(_op_slr_circle_distance)
@@ -409,6 +463,10 @@ slr_rectangle_distance = _handler(_op_slr_rectangle_distance)
 slr_oval_distance = _handler(_op_slr_oval_distance)
 slr_fill_white = _handler(_op_slr_fill_white)
 slr_rgba_transparent = _handler(_op_slr_rgba_transparent)
+slr_push_transparent_accum = _handler(_op_slr_push_transparent_accum)
+slr_dup_anchor_xy = _handler(_op_slr_dup_anchor_xy)
+slr_drop_hit_xy = _handler(_op_slr_drop_hit_xy)
+slr_anchorize_rgba = _handler(_op_slr_anchorize_rgba)
 slr_src_over_layer = _handler(_op_slr_src_over_layer)
 slr_sdf_fill_white = _handler(_op_slr_sdf_fill_white)
 slr_python_distance = _handler(_op_slr_python_distance)

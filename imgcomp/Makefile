@@ -19,4 +19,4 @@ all-tests: $(BUILD_STAMP)
 	$(VENV_PYTHON) -m pytest
 
 bench: $(BUILD_STAMP)
-	$(VENV_PYTHON) tests/render_bench.py
+	$(VENV_PYTHON) tests/bench_render.py

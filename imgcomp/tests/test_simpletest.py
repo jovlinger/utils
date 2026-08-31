@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 from imgcomp.rgba import TRANSPARENT, WHITE
-from tests.render_bench import run_selected
+from tests.bench_render import run_selected
 from tests.simpletest import VIEWPORT, surface_white_count
 
 

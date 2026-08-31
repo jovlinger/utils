@@ -19,3 +19,4 @@ cdef int data_push_int(int64_t value) except -1
 cdef int64_t data_pop_int() except? -1
 cdef int data_push_float(double value) except -1
 cdef double data_pop_float() except? -1.0
+cdef double data_peek_bottom_float(int index) except *

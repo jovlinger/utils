@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Any, Optional
 
 from imgcomp.affine import Affine
+from imgcomp.intersect_cache import cached_intersected_by
 from imgcomp.shape import AABB, Bounds, Shape, StackLangBody
 from imgcomp.rgba import RGBA, modulate
+from imgcomp.stack_type import PrePost, strip_prepost
 
 
 class Translate(Shape):
@@ -22,13 +24,21 @@ class Translate(Shape):
         return self.child.color_at(x - self.tx, y - self.ty)
 
     def color_at_stacklang(self) -> StackLangBody:
-        child = self.child.color_at_stacklang()
-        body: StackLangBody = ["dup_xy", self.tx, self.ty, "offset_xy_sub", "dup_xy"]
-        if child and child[0] == "dup_xy":
-            body.extend(child[1:])
-        else:
-            body.extend(child)
-        return body
+        return [
+            PrePost(
+                [
+                    "dup_xy",
+                    self.tx,
+                    self.ty,
+                    "offset_xy_sub",
+                    *strip_prepost(self.child.color_at_stacklang()),
+                    "anchorize_rgba",
+                ],
+                pre=["gy", "gx"],
+                post=["gy", "gx", "r", "g", "b", "a"],
+                label="translate_color_at",
+            )
+        ]
 
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x - self.tx, y - self.ty)
@@ -47,6 +57,20 @@ class Translate(Shape):
 
     def affect(self) -> Affine:
         return Affine.translate(self.tx, self.ty)
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("translate", self.tx, self.ty, self.child.cachekey())
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.maybe_intersect_rect(rect):
+            return None
+        local_rect = self.affect().inverse().transform_aabb(rect)
+        culled = cached_intersected_by(self.child, local_rect)
+        if culled is None:
+            return None
+        if culled is self.child:
+            return self
+        return Translate(culled, self.tx, self.ty)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x - self.tx, y - self.ty)
@@ -96,6 +120,20 @@ class Rotate(Shape):
     def affect(self) -> Affine:
         return Affine.rotate(self.degrees)
 
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("rotate", self.degrees, self.child.cachekey())
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.maybe_intersect_rect(rect):
+            return None
+        local_rect = self.affect().inverse().transform_aabb(rect)
+        culled = cached_intersected_by(self.child, local_rect)
+        if culled is None:
+            return None
+        if culled is self.child:
+            return self
+        return Rotate(culled, self.degrees)
+
     def on_touch(self, x: float, y: float) -> None:
         cx, cy = self._to_child(x, y)
         self.child.on_touch(cx, cy)
@@ -141,6 +179,20 @@ class Stretch(Shape):
     def affect(self) -> Affine:
         return Affine.stretch(self.scale_x, self.scale_y)
 
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("stretch", self.scale_x, self.scale_y, self.child.cachekey())
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.maybe_intersect_rect(rect):
+            return None
+        local_rect = self.affect().inverse().transform_aabb(rect)
+        culled = cached_intersected_by(self.child, local_rect)
+        if culled is None:
+            return None
+        if culled is self.child:
+            return self
+        return Stretch(culled, self.scale_x, self.scale_y)
+
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x / self.scale_x, y / self.scale_y)
 
@@ -165,7 +217,21 @@ class Color(Shape):
 
     def color_at_stacklang(self) -> StackLangBody:
         r, g, b, a = self.color
-        return [*self.child.color_at_stacklang(), r, g, b, a, "rgba_solid_if_hit"]
+        return [
+            PrePost(
+                [
+                    *strip_prepost(self.child.color_at_stacklang()),
+                    r,
+                    g,
+                    b,
+                    a,
+                    "rgba_solid_if_hit",
+                ],
+                pre=["gy", "gx"],
+                post=["gy", "gx", "r", "g", "b", "a"],
+                label="solid_color",
+            )
+        ]
 
     def pick_target(self, x: float, y: float) -> Optional[tuple[Shape, float, float]]:
         return self.child.pick_target(x, y)
@@ -175,6 +241,17 @@ class Color(Shape):
 
     def bounds(self) -> Optional[Bounds]:
         return self.child.bounds()
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("color", self.color, self.child.cachekey())
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        culled = cached_intersected_by(self.child, rect)
+        if culled is None:
+            return None
+        if culled is self.child:
+            return self
+        return Color(culled, self.color)
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)
@@ -217,6 +294,30 @@ class ColorMod(Shape):
 
     def bounds(self) -> Optional[Bounds]:
         return self.child.bounds()
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return (
+            "colormod",
+            self.r_mul,
+            self.g_mul,
+            self.b_mul,
+            self.a_mul,
+            self.child.cachekey(),
+        )
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        culled = cached_intersected_by(self.child, rect)
+        if culled is None:
+            return None
+        if culled is self.child:
+            return self
+        return ColorMod(
+            culled,
+            r_mul=self.r_mul,
+            g_mul=self.g_mul,
+            b_mul=self.b_mul,
+            a_mul=self.a_mul,
+        )
 
     def on_touch(self, x: float, y: float) -> None:
         self.child.on_touch(x, y)

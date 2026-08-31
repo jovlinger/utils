@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Any, Optional
 
 from imgcomp.shape import AABB, Shape, StackLangBody
 from imgcomp.rgba import RGBA, WHITE
+from imgcomp.stack_type import PrePost
 
 using_stacklang: bool = False
 
@@ -26,6 +27,9 @@ assert_not_stacklang = _assert_not_using_stacklang
 
 class SDFShape(Shape):
     """White-filled geometry; subclasses implement ``distance``."""
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("sdfshape", type(self).__name__, id(self))
 
     def distance(self, x: float, y: float) -> float:
         _assert_not_using_stacklang("distance")
@@ -51,7 +55,14 @@ class SDFShape(Shape):
         ``sdf_fill_white`` leaves opaque ``WHITE`` when distance <= 0, else
         transparent (matching ``color_at``).
         """
-        return ["dup_xy", *self.distance_stacklang(), "sdf_fill_white"]
+        return [
+            PrePost(
+                ["dup_xy", *self.distance_stacklang(), "sdf_fill_white"],
+                pre=["gy", "gx"],
+                post=["gy", "gx", "r", "g", "b", "a"],
+                label="sdf_color_at",
+            )
+        ]
 
 
 class Circle(SDFShape):
@@ -69,6 +80,14 @@ class Circle(SDFShape):
     def AABB(self) -> AABB:
         radius = self.radius
         return AABB(-radius, -radius, radius, radius)
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("circle", self.radius)
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.AABB().intersects(rect):
+            return None
+        return self
 
     def distance_stacklang(self) -> StackLangBody:
         return [self.radius, "circle_distance"]
@@ -94,6 +113,14 @@ class Rectangle(SDFShape):
     def AABB(self) -> AABB:
         return AABB(-self.half_width, -self.half_height, self.half_width, self.half_height)
 
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("rect", self.half_width, self.half_height)
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.AABB().intersects(rect):
+            return None
+        return self
+
     def distance_stacklang(self) -> StackLangBody:
         return [self.half_width, self.half_height, "rectangle_distance"]
 
@@ -117,6 +144,14 @@ class Oval(SDFShape):
     def AABB(self) -> AABB:
         return AABB(-self.radius_x, -self.radius_y, self.radius_x, self.radius_y)
 
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("oval", self.radius_x, self.radius_y)
+
+    def intersected_by(self, rect: AABB) -> Optional[Shape]:
+        if not self.AABB().intersects(rect):
+            return None
+        return self
+
     def distance_stacklang(self) -> StackLangBody:
         return [self.radius_x, self.radius_y, "oval_distance"]
 
@@ -124,12 +159,22 @@ class Oval(SDFShape):
 class Infinite(Shape):
     """Full-plane geometry of infinite extent; use as a background layer."""
 
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("infinite",)
+
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
         _assert_not_using_stacklang("color_at")
         return WHITE
 
     def color_at_stacklang(self) -> StackLangBody:
-        return ["fill_white"]
+        return [
+            PrePost(
+                ["fill_white"],
+                pre=["gy", "gx"],
+                post=["gy", "gx", "r", "g", "b", "a"],
+                label="infinite_color_at",
+            )
+        ]
 
     def AABB(self) -> Optional[AABB]:
         return None

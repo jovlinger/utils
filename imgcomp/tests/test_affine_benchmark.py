@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.affine_bench import bench_compose, bench_transform, print_bench
+from tests.bench_affine import bench_compose, bench_transform, print_bench
 
 
 @pytest.mark.slow

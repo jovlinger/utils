@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from imgcomp.compound import Intersect, Union
 from imgcomp.shapes import Circle, Rectangle
-from imgcomp.stacklang_render import SceneLayer, prepare_scene
+from imgcomp.stacklang_render import prepare_scene
+from imgcomp.stack_type import flatten_authoring
 from imgcomp.wrappers import Color
 
 
@@ -14,12 +15,11 @@ def test_intersect_stays_one_layer_with_compound_root() -> None:
     assert len(layers) == 1
     assert isinstance(layers[0].shape, Color)
     assert isinstance(layers[0].shape.child, Intersect)
-    assert layers[0].color_stacklang == [
+    assert flatten_authoring(layers[0].color_stacklang) == [
         "dup_xy",
         5.0,
         "circle_distance",
         "dup_anchor_push_xy",
-        "dup_xy",
         3.0,
         3.0,
         "rectangle_distance",

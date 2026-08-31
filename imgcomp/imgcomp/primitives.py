@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from imgcomp.shape import AABB, Shape
 from imgcomp.rgba import RGBA
@@ -52,6 +52,9 @@ class ImageObject(Shape):
         half_w = self._surface.width / 2.0
         half_h = self._surface.height / 2.0
         return AABB(-half_w, -half_h, half_w, half_h)
+
+    def cachekey(self) -> tuple[Any, ...]:
+        return ("image", self.width, self.height, id(self))
 
     def color_at(self, x: float, y: float) -> Optional[RGBA]:
         """Return straight RGBA at the texel, or None on miss / transparent."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.stack_bench import (
+from tests.bench_stack import (
     ack_c,
     ack_python,
     ack_stacklang,
