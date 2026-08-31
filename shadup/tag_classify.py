@@ -135,6 +135,33 @@ def collapse_repeated_slug(s: str) -> str:
     return s
 
 
+_RELEASE_YEAR = re.compile(r"^(19|20)\d{2}$")
+
+
+def decade_bucket_from_release_year(raw: Any) -> Optional[str]:
+    """Map a catalog release year to a decade bucket (``1994`` → ``199x``)."""
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        yyyy = raw
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        if _RELEASE_YEAR.fullmatch(s):
+            yyyy = int(s)
+        else:
+            m = re.search(r"(19|20)\d{2}", s)
+            if not m:
+                return None
+            yyyy = int(m.group(0))
+    else:
+        return None
+    if yyyy < 1900 or yyyy > 2099:
+        return None
+    return f"{yyyy // 10}x"
+
+
 def year_value(raw: str) -> Optional[str]:
     """Return canonical year token, or None if *raw* is not a year tag.
 

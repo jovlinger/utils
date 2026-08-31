@@ -295,3 +295,57 @@ def test_combined_stale_on_new_audio(tmp_path: Path) -> None:
     time.sleep(0.05)
     (album / "u.flac").write_bytes(b"y")
     assert mc.combined_is_stale(album, audio_exts={".flac"})
+
+
+def test_derived_decade_from_release_year_and_johan(tmp_path: Path) -> None:
+    album = tmp_path / "Pixies - Doolittle"
+    album.mkdir()
+    syn = tmp_path / "syn"
+    syn.mkdir()
+    (syn / "discogs.json").write_text(
+        json.dumps({"map": {}, "dropped": []}), encoding="utf-8"
+    )
+    _write_provider(
+        album,
+        "discogs",
+        artist="Pixies",
+        album_name="Doolittle",
+        year="1989",
+    )
+    doc = mc.combine_from_providers(album, synonyms_dir=syn, providers=["discogs"])
+    assert "year;1989" in doc["tags"]
+    assert "year;198x" in doc["tags"]
+    johan = json.loads((album / ".meta.johan.json").read_text())
+    assert johan["local"]["derived_tags"] == ["year;198x"]
+
+
+def test_year_zero_dropped(tmp_path: Path) -> None:
+    album = tmp_path / "Bad Year"
+    album.mkdir()
+    syn = tmp_path / "syn"
+    syn.mkdir()
+    (syn / "discogs.json").write_text(
+        json.dumps({"map": {}, "dropped": []}), encoding="utf-8"
+    )
+    _write_provider(album, "discogs", artist="X", album_name="Y", year=0)
+    doc = mc.combine_from_providers(album, synonyms_dir=syn, providers=["discogs"])
+    assert "year;0" not in doc["tags"]
+
+
+def test_read_combined_tags_recanonicalizes(tmp_path: Path) -> None:
+    album = tmp_path / "Placebo - Meds"
+    album.mkdir()
+    (album / ".meta.combined.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "tags": ["artist;Placebo", "genre;Rock", "year;90s"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    tags = mc.read_combined_tags(album)
+    assert "artist;placebo" in tags
+    assert "genre;rock" in tags
+    assert "year;199x" in tags
+    assert "artist;Placebo" not in tags

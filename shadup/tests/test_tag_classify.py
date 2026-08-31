@@ -21,7 +21,18 @@ def test_year_value_decades_and_apostrophe() -> None:
     assert tc.year_value("acid jazz") is None
 
 
-def test_collapse_repeated_slug() -> None:
+def test_decade_bucket_from_release_year() -> None:
+    assert tc.decade_bucket_from_release_year(1994) == "199x"
+    assert tc.decade_bucket_from_release_year("2015") == "201x"
+    assert tc.decade_bucket_from_release_year(2001) == "200x"
+    assert tc.decade_bucket_from_release_year(0) is None
+    assert tc.decade_bucket_from_release_year(1800) is None
+
+
+def test_canonicalize_lowercases_artist_and_genre() -> None:
+    assert tc.canonicalize_tag("artist;Placebo") == "artist;placebo"
+    assert tc.canonicalize_tag("artist;ATB") == "artist;atb"
+    assert tc.canonicalize_tag("genre;Rock") == "genre;rock"
     assert tc.collapse_repeated_slug("blurblur") == "blur"
     assert tc.collapse_repeated_slug("darylhallandjohnoatesdarylhallandjohnoates") == (
         "darylhallandjohnoates"

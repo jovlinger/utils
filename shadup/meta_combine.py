@@ -93,21 +93,131 @@ def map_raw_tag(
 
 
 def _year_token(raw: Any) -> Optional[str]:
+    """Release year only — four-digit ``YYYY`` (never decade buckets or ``0``)."""
     if raw is None:
         return None
     if isinstance(raw, int):
-        yv = tc.year_value(str(raw))
-        return yv or str(raw)
-    if not isinstance(raw, str):
+        yyyy = raw
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if not s or s == "0":
+            return None
+        if re.fullmatch(r"(19|20)\d{2}", s):
+            yyyy = int(s)
+        else:
+            m = re.search(r"(19|20)\d{2}", s)
+            if not m:
+                return None
+            yyyy = int(m.group(0))
+    else:
         return None
-    s = raw.strip()
-    if not s:
+    if yyyy < 1900 or yyyy > 2099:
         return None
-    yv = tc.year_value(s)
-    if yv:
-        return yv
-    m = re.search(r"(19|20)\d{2}", s)
-    return m.group(0) if m else slug(s)
+    return str(yyyy)
+
+
+def canonicalize_tag_list(
+    tags: Iterable[str],
+    *,
+    artist_slugs: Optional[set[str]] = None,
+) -> list[str]:
+    """Normalize and de-duplicate ``type;value`` tags (lowercase slugs)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        canon = tc.canonicalize_tag(tag, artist_slugs=artist_slugs)
+        if not canon or not is_vfat_safe(canon):
+            continue
+        if canon not in seen:
+            seen.add(canon)
+            out.append(canon)
+    return out
+
+
+def derived_decade_tags(tags: Sequence[str]) -> list[str]:
+    """Infer ``year;YYYx`` buckets from ``year;YYYY`` release years in *tags*."""
+    buckets: set[str] = set()
+    for tag in tags:
+        if not tag.startswith("year;"):
+            continue
+        val = tag.split(";", 1)[1]
+        if re.fullmatch(r"(19|20)\d{2}", val):
+            bucket = tc.decade_bucket_from_release_year(val)
+            if bucket:
+                buckets.add(f"year;{bucket}")
+    return sorted(buckets)
+
+
+def _johan_sidecar_path(album_dir: Path) -> Path:
+    return album_dir / ".meta.johan.json"
+
+
+def read_johan_payload(album_dir: Path) -> dict[str, Any]:
+    path = _johan_sidecar_path(album_dir)
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_johan_derived_tags(
+    album_dir: Path,
+    derived: Sequence[str],
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Persist mechanistic tags under ``local.derived_tags`` in``.meta.johan.json``."""
+    path = _johan_sidecar_path(album_dir)
+    payload = read_johan_payload(album_dir)
+    if not payload:
+        payload = empty_provider_sidecar(album_dir, "johan")
+    local = payload.setdefault("local", {})
+    if not isinstance(local, dict):
+        local = {}
+        payload["local"] = local
+    suppress = {
+        t
+        for t in (local.get("derived_suppress") or [])
+        if isinstance(t, str) and t.strip()
+    }
+    filtered = sorted({t for t in derived if t not in suppress})
+    local["derived_tags"] = filtered
+    if dry_run:
+        return
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def johan_derived_tags(album_dir: Path) -> list[str]:
+    payload = read_johan_payload(album_dir)
+    local = payload.get("local")
+    if not isinstance(local, dict):
+        return []
+    raw = local.get("derived_tags") or []
+    if not isinstance(raw, list):
+        return []
+    return canonicalize_tag_list(t for t in raw if isinstance(t, str))
+
+
+def enrich_combined_tags(
+    album_dir: Path,
+    tags: Sequence[str],
+    *,
+    dry_run: bool = False,
+) -> list[str]:
+    """Canonicalize, infer decade buckets from release years, sync johan derived."""
+    merged = canonicalize_tag_list(tags)
+    decades = derived_decade_tags(merged)
+    write_johan_derived_tags(album_dir, decades, dry_run=dry_run)
+    for decade in decades:
+        if decade not in merged:
+            merged.append(decade)
+    merged.sort()
+    return merged
 
 
 def tags_from_provider_sidecar(
@@ -266,7 +376,7 @@ def combine_from_providers(
     except Exception:
         pass
     tags = tc.apply_various_policy(tags, album_dir.name, extras=extras)
-    tags.sort()
+    tags = enrich_combined_tags(album_dir, tags)
     return {
         "schema": COMBINED_SCHEMA,
         "directory": str(album_dir.resolve()),
@@ -310,7 +420,7 @@ def combine_union_children(
             if isinstance(tag, str):
                 add(tag)
     tags = tc.apply_various_policy(tags, album_dir.name)
-    tags.sort()
+    tags = enrich_combined_tags(album_dir, tags)
     return {
         "schema": COMBINED_SCHEMA,
         "directory": str(album_dir.resolve()),
@@ -336,13 +446,9 @@ def read_combined_tags(album_dir: Path) -> list[str]:
     tags = payload.get("tags") or []
     if not isinstance(tags, list):
         return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for tag in tags:
-        if isinstance(tag, str) and is_vfat_safe(tag) and tag not in seen:
-            seen.add(tag)
-            out.append(tag)
-    return out
+    return canonicalize_tag_list(
+        t for t in tags if isinstance(t, str) and is_vfat_safe(t)
+    )
 
 
 def audio_mtime(album_dir: Path, audio_exts: set[str]) -> float:

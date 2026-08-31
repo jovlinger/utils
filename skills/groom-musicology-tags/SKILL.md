@@ -28,9 +28,9 @@ preference (movie / DJ / series), never `VA -`.
 |-------|------------|
 | Namespace | Every tag is `type;value`. Unqualified tags (`90s`, `VA`) are leftovers — do not emit them. |
 | Separator | `;` only. Never `:` or `\|` (VFAT). `_tags/` becomes `type/value`. |
-| Value slug | Always lowercase alphanumeric. Strip spaces/punct. Collapse accidental repeats (`blurblur` → `blur`; protect `duranduran`). |
-| Johan | **Ignore** `.meta.johan.json` at combine time (unless `providers` explicitly lists `johan`). |
-| Years | `00s`, `90s`, `90's`, `1980s`, `2001` → `year;YYYx` (decades) or `year;YYYY` (release years), never `genre;00s`. |
+| Value slug | Always lowercase alphanumeric. Strip spaces/punct. Collapse accidental repeats (`blurblur` → `blur`; protect `duranduran`). `canonicalize_tag` runs on every combined tag and on `importtags` read. |
+| Johan | Hand labels in ``metadata.genres`` / ``metadata.tags`` — **skipped** at combine unless ``providers`` lists ``johan``. Mechanistic supplements live in ``local.derived_tags`` (always merged). |
+| Years | Release years: ``year;YYYY``. Decades: ``year;YYYx`` — from crowd tags **or** inferred from release years into ``local.derived_tags``. |
 | Artist-as-genre | Last.fm (etc.) performer names → `artist;slug`, not `genre;leonardcohen`. |
 | No VA artist | Never emit `artist;va` / `artist;variousartists`. |
 | Compilation kind | `various;soundtrack` / `various;curated` / `various;collection` (default). |
@@ -58,6 +58,13 @@ Examples: `artist;petergabriel`, `artist;pulpfiction`, `artist;djcam`,
 Decade/year crowd tags are `year;*`. Runtime `canonicalize_tag` coerces a stale
 `genre;00s` map entry to `year;200x`. Release years stay four digits (`year;1994`).
 Decades use `YYYx` (`80s`/`1980s` → `year;198x`, `00s` → `year;200x`, `10s` → `year;201x`).
+
+**Derived decades (johan):** after provider union, `meta_combine` infers
+`year;YYYx` from every `year;YYYY` release year, writes them to
+``.meta.johan.json`` → ``local.derived_tags``, and merges into combined.
+Suppress a wrong bucket with ``local.derived_suppress`` (hand edit). Hand
+genres in ``metadata.*`` remain skipped unless ``johan`` is listed in
+``providers``.
 
 ### Artist names leaking into genres
 
