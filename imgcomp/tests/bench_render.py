@@ -67,6 +67,7 @@ class Benchmark:
 class PathResult:
     key: str
     seconds: float
+    iteration_seconds: list[float]
     surface: Surface
 
 
@@ -77,6 +78,7 @@ class BenchmarkResult:
     height: int
     repeat: int
     paths: dict[str, PathResult] = field(default_factory=dict)
+    total_seconds: float = 0.0
     png_path: Path | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -147,8 +149,8 @@ def time_render(
     *,
     repeat: int,
     warmup: int,
-) -> tuple[Surface, float]:
-    """Return the last surface and total seconds for ``repeat`` timed renders."""
+) -> tuple[Surface, float, list[float]]:
+    """Return the last surface, total seconds, and per-iteration times."""
     if repeat < 1:
         raise ValueError("repeat must be >= 1")
     if warmup < 0:
@@ -157,14 +159,15 @@ def time_render(
     for _ in range(warmup):
         render_fn(scene, width, height)
 
-    start = time.perf_counter()
+    iteration_seconds: list[float] = []
     surface: Surface | None = None
     for _ in range(repeat):
+        iter_start = time.perf_counter()
         surface = render_fn(scene, width, height)
-    elapsed = time.perf_counter() - start
+        iteration_seconds.append(time.perf_counter() - iter_start)
     if surface is None:
         raise RuntimeError("render produced no surface")
-    return surface, elapsed
+    return surface, sum(iteration_seconds), iteration_seconds
 
 
 def _describe_stacklang(scene: Scene) -> None:
@@ -184,6 +187,7 @@ def run_benchmark(
     warmup: int = 1,
 ) -> BenchmarkResult:
     """Time each path, then write the showcase PNG outside the timer."""
+    bench_start = time.perf_counter()
     scene = spec.scene()
     result = BenchmarkResult(
         name=spec.name,
@@ -197,7 +201,7 @@ def run_benchmark(
             reset()
             note(f"benchmark {spec.name} {spec.width}x{spec.height}")
             _describe_stacklang(scene)
-        surface, seconds = time_render(
+        surface, seconds, iteration_seconds = time_render(
             path.render,
             scene,
             spec.width,
@@ -205,7 +209,12 @@ def run_benchmark(
             repeat=repeat,
             warmup=warmup,
         )
-        result.paths[path.key] = PathResult(key=path.key, seconds=seconds, surface=surface)
+        result.paths[path.key] = PathResult(
+            key=path.key,
+            seconds=seconds,
+            iteration_seconds=iteration_seconds,
+            surface=surface,
+        )
 
     if spec.name == "simpletest":
         py_surface = result.paths["python"].surface
@@ -220,6 +229,7 @@ def run_benchmark(
     png_path = output_dir / f"{spec.name}.png"
     showcase.write_png(png_path)
     result.png_path = png_path.resolve()
+    result.total_seconds = time.perf_counter() - bench_start
     return result
 
 
@@ -258,13 +268,36 @@ def _save_timings(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _path_total_from_record(path_data: Any) -> float | None:
+    """Read a path total from current or legacy ``timings.json`` records."""
+    if isinstance(path_data, (int, float)):
+        return float(path_data)
+    if isinstance(path_data, dict):
+        total = path_data.get("total_s")
+        if total is not None:
+            return float(total)
+    return None
+
+
+def _format_iter_seconds(key: str, iteration_seconds: Sequence[float]) -> str:
+    inner = ",".join(f"{seconds:.6f}" for seconds in iteration_seconds)
+    return f"{key}_iter_s=[{inner}]"
+
+
 def _result_to_record(result: BenchmarkResult) -> dict[str, Any]:
     record: dict[str, Any] = {
         "width": result.width,
         "height": result.height,
         "repeat": result.repeat,
+        "total_s": result.total_seconds,
         "png": str(result.png_path) if result.png_path else None,
-        "paths": {key: path.seconds for key, path in result.paths.items()},
+        "paths": {
+            key: {
+                "total_s": path.seconds,
+                "iter_s": list(path.iteration_seconds),
+            }
+            for key, path in result.paths.items()
+        },
     }
     if result.extra:
         record["extra"] = result.extra
@@ -274,13 +307,22 @@ def _result_to_record(result: BenchmarkResult) -> dict[str, Any]:
 def _print_result(result: BenchmarkResult, *, previous: dict[str, Any] | None) -> None:
     parts = [f"{result.name}:"]
     for key, path in result.paths.items():
-        line = f"{key}_s={path.seconds:.6f}"
-        if previous and key in previous.get("paths", {}):
-            old = float(previous["paths"][key])
-            if old > 0.0:
+        line = (
+            f"{_format_iter_seconds(key, path.iteration_seconds)} "
+            f"{key}_total_s={path.seconds:.6f}"
+        )
+        if previous is not None:
+            old = _path_total_from_record(previous.get("paths", {}).get(key))
+            if old is not None and old > 0.0:
                 delta = (path.seconds - old) / old * 100.0
                 line += f" ({delta:+.1f}% vs last)"
         parts.append(line)
+    parts.append(f"test_total_s={result.total_seconds:.6f}")
+    if previous is not None:
+        old_total = previous.get("total_s")
+        if old_total is not None and float(old_total) > 0.0:
+            delta = (result.total_seconds - float(old_total)) / float(old_total) * 100.0
+            parts[-1] += f" ({delta:+.1f}% vs last)"
     if "white_px" in result.extra:
         parts.append(f"white_px={result.extra['white_px']}")
     if result.png_path is not None:
