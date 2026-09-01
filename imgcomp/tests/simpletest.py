@@ -3,13 +3,10 @@
 
 from __future__ import annotations
 
-import array
-
 from imgcomp.naive import render_quadtree_python
-from imgcomp.rgba import TRANSPARENT
-from imgcomp.scene import Scene, as_z_list
+from imgcomp.scene import Scene
 from imgcomp.shapes import Circle
-from imgcomp.surface import ArraySurface, Surface
+from imgcomp.surface import Surface
 from tests import _simpletest_c as _st
 
 
@@ -22,35 +19,16 @@ def simpletest_scene() -> list[Circle]:
     return [Circle(CIRCLE_RADIUS)]
 
 
-def circle_radius_from_scene(scene: Scene) -> float:
-    """Return the radius of the first Circle in the scene."""
-    for shape in as_z_list(scene):
-        if isinstance(shape, Circle):
-            return shape.radius
-    raise ValueError("scene must contain a Circle")
-
-
 def render_python(scene: Scene, width: int, height: int, *, min_size: float = 16.0) -> Surface:
     """Render via quadtree leaf-cell batch (pure Python reference path)."""
     return render_quadtree_python(scene, width, height, min_size=min_size)
 
 
 def render_stacklang(scene: Scene, width: int, height: int, *, min_size: float = 16.0) -> Surface:
-    """Render using the stacklang path."""
+    """Render using the stacklang path (tests only; not bench_render on master)."""
     from imgcomp.stacklang_render import render
 
     return render(scene, width, height, min_size=min_size)
-
-
-def render_c(
-    scene: Scene, width: int, height: int, *, min_size: float = 16.0
-) -> Surface:
-    """Render in native C without the stack VM."""
-    radius = circle_radius_from_scene(scene)
-    raw = _st.render_circle_native(width, height, radius)
-    surface = ArraySurface(width, height, fill=TRANSPARENT)
-    surface.pixel_buffer()[:] = array.array("B", raw)
-    return surface
 
 
 def surface_white_count(surface: Surface) -> int:

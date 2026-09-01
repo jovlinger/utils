@@ -19,17 +19,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from imgcomp.stacklang_debug import configure_logging, enabled, note, print_summary, reset, set_enabled
-from imgcomp.stacklang_render import prepare_scene
 from imgcomp.scene import Scene
-from imgcomp.stacklang_render import render
 from imgcomp.surface import Surface
 from tests.fractal_scenes import fractal_gallery_scene
 from tests.simpletest import (
     VIEWPORT,
-    render_c,
     render_python,
-    render_stacklang,
     simpletest_scene,
     surface_white_count,
 )
@@ -41,6 +36,7 @@ GALLERY_PROFILE = "fast"
 DEFAULT_OUTPUT = Path("demo-output")
 TIMINGS_FILE = "timings.json"
 HISTORY_LIMIT = 10
+BENCH_PATH_KEY = "python"
 
 
 @dataclass(frozen=True)
@@ -60,7 +56,7 @@ class Benchmark:
     height: int
     scene: Callable[[], Scene]
     paths: tuple[RenderPath, ...]
-    png_path_key: str = "imgcomp_stacklang"
+    png_path_key: str = "python"
 
 
 @dataclass
@@ -87,20 +83,12 @@ def _gallery_scene(kind: str) -> Scene:
     return fractal_gallery_scene(kind, size=GALLERY_SIZE, profile=GALLERY_PROFILE)
 
 
-def _python_path() -> RenderPath:
-    return RenderPath("python", render_python)
+def bench_render_path() -> RenderPath:
+    return RenderPath(BENCH_PATH_KEY, render_python)
 
 
-def _stacklang_path() -> RenderPath:
-    return RenderPath("imgcomp_stacklang", render_stacklang)
-
-
-def _c_path() -> RenderPath:
-    return RenderPath("c", render_c)
-
-
-def _fractal_paths() -> tuple[RenderPath, ...]:
-    return (_python_path(), _stacklang_path())
+def _bench_paths() -> tuple[RenderPath, ...]:
+    return (bench_render_path(),)
 
 
 BENCHMARKS: dict[str, Benchmark] = {
@@ -109,37 +97,37 @@ BENCHMARKS: dict[str, Benchmark] = {
         width=VIEWPORT,
         height=VIEWPORT,
         scene=simpletest_scene,
-        paths=(_python_path(), _stacklang_path(), _c_path()),
-        png_path_key="imgcomp_stacklang",
+        paths=_bench_paths(),
+        png_path_key=BENCH_PATH_KEY,
     ),
     "carpet": Benchmark(
         name="carpet",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("carpet"),
-        paths=_fractal_paths(),
+        paths=_bench_paths(),
     ),
     "phyllotaxis": Benchmark(
         name="phyllotaxis",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("phyllotaxis"),
-        paths=_fractal_paths(),
+        paths=_bench_paths(),
     ),
     "rings": Benchmark(
         name="rings",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("rings"),
-        paths=_fractal_paths(),
+        paths=_bench_paths(),
     ),
     "spirograph": Benchmark(
         name="spirograph",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("spirograph"),
-        paths=_fractal_paths(),
-        png_path_key="imgcomp_stacklang",
+        paths=_bench_paths(),
+        png_path_key=BENCH_PATH_KEY,
     ),
 }
 
@@ -176,15 +164,6 @@ def time_render(
     return surface, sum(iteration_seconds), iteration_seconds
 
 
-def _describe_stacklang(scene: Scene) -> None:
-    if not enabled():
-        return
-    note("stacklang programs:")
-    for layer in prepare_scene(scene):
-        shape_name = type(layer.shape).__name__
-        note(f"  layer {layer.index} {shape_name}: {layer.color_stacklang!r}")
-
-
 def run_benchmark(
     spec: Benchmark,
     *,
@@ -217,10 +196,6 @@ def run_benchmark(
                 warmup=warmup,
             )
         min_size = tuned_min_size(path.key)
-        if enabled() and path.key == "imgcomp_stacklang":
-            reset()
-            note(f"benchmark {spec.name} {spec.width}x{spec.height} min_size={min_size}")
-            _describe_stacklang(scene)
         surface, seconds, iteration_seconds = time_render(
             path.render,
             scene,
@@ -238,12 +213,12 @@ def run_benchmark(
         )
 
     if spec.name == "simpletest":
-        py_surface = result.paths["python"].surface
+        bench_surface = result.paths[BENCH_PATH_KEY].surface
         result.extra["white_px"] = {
             key: surface_white_count(path.surface)
             for key, path in result.paths.items()
         }
-        result.extra["white_px_match"] = len({surface_white_count(p.surface) for p in result.paths.values()}) == 1
+        result.extra["white_px_match"] = surface_white_count(bench_surface) == result.extra["white_px"][BENCH_PATH_KEY]
 
     showcase = result.paths[spec.png_path_key].surface
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -408,11 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="hillclimb quadtree min_size per path before timing (RMS frame ms)",
     )
-    parser.add_argument(
-        "--debug-stacklang",
-        action="store_true",
-        help="log stacklang <-> Python boundary crossings to stderr",
-    )
     return parser
 
 
@@ -432,11 +402,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.warmup < 0:
         parser.error("--warmup must be >= 0")
 
-    if args.debug_stacklang:
-        set_enabled(True)
-        log_path = configure_logging(args.output / "stacklang_debug.log")
-        reset()
-        note(f"debug log path: {log_path}")
+    from tests.global_warming import warm_render_benchmarks
+
+    warm_render_benchmarks()
 
     timings_path = args.output / TIMINGS_FILE
     previous_payload = _load_timings(timings_path)
@@ -455,8 +423,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print_results(results, previous_payload=previous_payload)
     record_run(results, output_dir=args.output, previous_payload=previous_payload)
-    if args.debug_stacklang:
-        print_summary(log_path=args.output / "stacklang_debug.log", wait=True)
     return 0
 
 

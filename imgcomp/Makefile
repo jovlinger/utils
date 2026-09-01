@@ -1,4 +1,4 @@
-.PHONY: test all-tests build-ext bench
+.PHONY: test all-tests build-ext global-warming bench bench-render bench-stack
 
 VENV_PYTHON := .venv/bin/python
 BUILD_STAMP := .venv/.stack_c_built
@@ -12,11 +12,19 @@ $(BUILD_STAMP): $(VENV_PYTHON) setup.py imgcomp/_math.pyx imgcomp/_math.pxd imgc
 
 build-ext: $(BUILD_STAMP)
 
+global-warming: $(BUILD_STAMP)
+	$(VENV_PYTHON) tests/global_warming.py
+
+bench-render: $(BUILD_STAMP)
+	$(VENV_PYTHON) tests/bench_render.py --repeat 3 --warmup 0 --output demo-output-bench
+
+bench-stack: $(BUILD_STAMP)
+	$(VENV_PYTHON) tests/bench_stack_run.py --repeat 3 --output demo-output-bench-stack
+
+bench: bench-render bench-stack
+
 test: $(BUILD_STAMP)
 	$(VENV_PYTHON) -m pytest -m "not slow"
 
 all-tests: $(BUILD_STAMP)
 	$(VENV_PYTHON) -m pytest
-
-bench: $(BUILD_STAMP)
-	$(VENV_PYTHON) tests/bench_render.py
