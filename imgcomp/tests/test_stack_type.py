@@ -70,6 +70,48 @@ def test_union_spirograph_stack_debug_renders() -> None:
         set_stack_type_debug(False)
 
 
+def test_if_branch_selects_true_or_false_body() -> None:
+    sc.reset_vm()
+    sc.register_base_ops()
+    true_body = sc.register_op("if_true", [1, sc.i_add])
+    false_body = sc.register_op("if_false", [2, sc.i_add])
+    sc.register_op(
+        "if_prog",
+        [
+            10,
+            1,
+            sc.lit_op,
+            true_body,
+            sc.lit_op,
+            false_body,
+            sc.if_,
+        ],
+    )
+    sc.eval_op("if_prog")
+    from imgcomp import _stack_c as _cy
+
+    assert _cy.pop_int() == 11
+
+    sc.reset_vm()
+    sc.register_base_ops()
+    true_body = sc.register_op("if_true", [1, sc.i_add])
+    false_body = sc.register_op("if_false", [2, sc.i_add])
+    sc.register_op(
+        "if_prog",
+        [
+            10,
+            0,
+            sc.lit_op,
+            true_body,
+            sc.lit_op,
+            false_body,
+            sc.if_,
+        ],
+    )
+    sc.eval_op("if_prog")
+    assert _cy.pop_int() == 12
+
+
 def test_area_debug_passes_valid_body() -> None:
     set_stack_type_debug(True)
     try:

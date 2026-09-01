@@ -46,6 +46,7 @@ f_mul: OpHandler
 f_gt: OpHandler
 f_add_at: OpHandler
 if_nzero_run: OpHandler
+if_: OpHandler
 call_op: OpHandler
 printf: OpHandler
 int_incr_le: OpHandler
@@ -73,7 +74,7 @@ def register_base_ops() -> None:
     global lit_op, dup, drop, swap, over, rot
     global i_add, i_sub, i_eq, i_gt, i_add_at, i_to_f
     global f_add, f_sub, f_mul, f_gt, f_add_at
-    global if_nzero_run, call_op, printf, int_incr_le, float_incr_le, while_loop
+    global if_nzero_run, if_, call_op, printf, int_incr_le, float_incr_le, while_loop
     lit_op = register_op("lit_op", _cy.lit_op)
     dup = register_op("dup", _cy.dup)
     drop = register_op("drop", _cy.drop)
@@ -92,6 +93,7 @@ def register_base_ops() -> None:
     f_gt = register_op("f_gt", _cy.f_gt)
     f_add_at = register_op("f_add_at", _cy.f_add_at)
     if_nzero_run = register_op("if_nzero_run", _cy.if_nzero_run)
+    if_ = register_op("if", _cy.if_)
     call_op = register_op("call_op", _cy.call_op)
     printf = register_op("printf", _cy.printf)
     int_incr_le = register_op("int_incr_le", _cy.int_incr_le)
@@ -117,6 +119,13 @@ def get_data_sp() -> int:
 
 def get_op(name: str) -> OpHandler:
     return _cy.get_op_by_name(name)
+
+
+def body_source(op: OpHandler) -> list[Any]:
+    """Return the authoring list for a registered body opcode."""
+    if op.op_id < 0:
+        raise ValueError(f"opcode {op.name!r} is not registered")
+    return _cy.get_op_body_source(op.op_id)
 
 
 def eval_op(name: str) -> None:

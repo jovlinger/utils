@@ -32,7 +32,8 @@ handlers; spot-check generated ``_stack_c.c`` after edits.
 2. **``gil_free`` marking** (``finalize_gil_free_flags``): After all bodies
    compile, DFS memoizes whether a buffer uses only nogil-safe tags and only
    calls gil-free children (``TAG_CALL_WB``, ``TAG_WHILE_BUFS``). Any
-   ``TAG_CALL_FN``, ``TAG_LIT_STR``, ``TAG_IF_NZERO``, or ``TAG_WHILE_IDS``
+   ``TAG_CALL_FN``, ``TAG_LIT_STR``, ``TAG_IF_NZERO``, ``TAG_IF``, or
+   ``TAG_WHILE_IDS``
    forces slow path.
 
 3. **Loop nesting without frames**: ``*_incr_le`` and ``run_while_loop_bufs``
@@ -102,6 +103,7 @@ DEF TAG_OVER_I_GT = 34    # replace top with (top > second)
 DEF TAG_OVER_F_GT = 35    # replace top with (top > second)
 DEF TAG_I_GT_C_REV = 36   # push c > top (top stays)
 DEF TAG_F_GT_C_REV = 37   # push c > top (top stays)
+DEF TAG_IF = 38           # pop false_op, true_op, cond; run one branch
 
 # Fast-interpreter status (nogil path; raised at GIL boundary).
 DEF WB_OK = 0
@@ -302,6 +304,7 @@ cdef inline bint tag_needs_gil(uint64_t tag) noexcept nogil:
         tag == TAG_CALL_FN
         or tag == TAG_LIT_STR
         or tag == TAG_IF_NZERO
+        or tag == TAG_IF
         or tag == TAG_WHILE_IDS
     )
 
@@ -637,6 +640,11 @@ cdef int compile_body_to_wordbuf(int op_id, WordBuf* buf) except -1:
                 raise ValueError(f"opcode {op.name!r} is not registered")
             if op.fn == _op_while:
                 raise ValueError("while requires a [whilefn, body, while] triplet")
+            if op.fn == _op_if:
+                wordbuf_push(buf, TAG_IF)
+                prev_tag = -1
+                prev2_tag = -1
+                continue
             if op.takes_operand:
                 if i >= len(body):
                     raise ValueError(f"opcode {op.name!r} missing operand")
@@ -945,6 +953,11 @@ cdef int _op_i_add_at() except -1:
 cdef int _op_if_nzero_run() except -1:
     # Compile-time marker: if_nzero_run tokens become TAG_IF_NZERO.
     raise RuntimeError("if_nzero_run cannot be invoked directly")
+
+
+cdef int _op_if() except -1:
+    # Compile-time marker: ``if`` becomes TAG_IF (operands are on the stack).
+    raise RuntimeError("if cannot be invoked directly")
 
 
 cdef int _op_call_op() except -1:
@@ -1347,6 +1360,14 @@ cdef int run_wordbuf(WordBuf* buf) except -1:
             bpc += 2
             if data_pop_int() != 0:
                 run_quoted_body(<int>buf.elems[bpc - 1])
+        elif tag == TAG_IF:
+            false_id = data_pop_op_literal()
+            true_id = data_pop_op_literal()
+            if data_pop_int() != 0:
+                run_quoted_body(true_id)
+            else:
+                run_quoted_body(false_id)
+            bpc += 1
         elif tag == TAG_DUP:
             exec_dup()
             bpc += 1
@@ -1527,6 +1548,7 @@ f_mul = _handler(_op_f_mul)
 f_gt = _handler(_op_f_gt)
 f_add_at = _handler(_op_f_add_at)
 if_nzero_run = _handler(_op_if_nzero_run)
+if_ = _handler(_op_if)
 call_op = _handler(_op_call_op)
 printf = _handler(_op_printf)
 int_incr_le = _handler(_op_int_incr_le)
@@ -1640,6 +1662,18 @@ def pop_float() -> float:
 
 def get_data_sp() -> int:
     return data_sp
+
+
+def get_op_body_source(int op_id):
+    """Return the authoring list registered for a body opcode."""
+    if op_id < 0 or op_id >= num_ops:
+        raise RuntimeError(f"unknown opcode id {op_id}")
+    if not op_table[op_id].is_wordbuf:
+        raise TypeError(f"opcode id {op_id} is not a body opcode")
+    src = op_bodies_src[op_id]
+    if src is None:
+        return []
+    return src
 
 
 def run_op(str name) -> None:

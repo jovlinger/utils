@@ -18,6 +18,7 @@ from typing import Callable
 from imgcomp import _stack_c as _cy
 from imgcomp import stack_c as sc
 from imgcomp.stack_c import OpHandler, reset_vm
+from imgcomp.stack_type import PrePost
 from tests import _stack_bench_c as _bench_c
 
 
@@ -35,7 +36,6 @@ class BenchTriple:
 
 def register_bench_ops() -> None:
     """Register test-only VM opcodes that wrap native C kernels."""
-    sc.ack = sc.register_op("ack", _bench_c.ack)
     sc.mandel_pixel = sc.register_op("mandel_pixel", _bench_c.mandel_pixel)
     sc.mandel_sum = sc.register_op("mandel_sum", _bench_c.mandel_sum)
 
@@ -60,16 +60,93 @@ def ack_python(m: int, n: int) -> int:
     return ack_python(m - 1, ack_python(m, n - 1))
 
 
-def ack_stacklang(m: int, n: int) -> int:
-    """Ackermann via the stack VM dispatching the native ``ack`` opcode.
+def _register_ack_recursive() -> OpHandler:
+    """Register recursive Ackermann with PrePost stack contracts on every body."""
+    ack_impl = sc.register_op("ack_impl", [])
+    ack_m_zero = sc.register_op(
+        "ack_m_zero",
+        PrePost(
+            [sc.swap, sc.drop, 1, sc.i_add],
+            pre=["m", "n"],
+            post=["result"],
+            label="ack_m_zero",
+        ),
+    )
+    ack_n_zero = sc.register_op("ack_n_zero", [])
+    ack_n_nonzero = sc.register_op("ack_n_nonzero", [])
+    ack_m_nonzero = sc.register_op("ack_m_nonzero", [])
+    ack = sc.register_op(
+        "ack",
+        PrePost(
+            [ack_impl],
+            pre=["m", "n"],
+            post=["result"],
+            label="ack",
+        ),
+    )
+    sc.body_source(ack_n_zero)[:] = [
+        PrePost(
+            [sc.drop, 1, sc.i_sub, 1, ack_impl],
+            pre=["m", "n"],
+            post=["result"],
+            label="ack_n_zero",
+        )
+    ]
+    sc.body_source(ack_n_nonzero)[:] = [
+        PrePost(
+            [
+                sc.over,
+                sc.swap,
+                1,
+                sc.i_sub,
+                ack_impl,
+                sc.swap,
+                1,
+                sc.i_sub,
+                sc.swap,
+                ack_impl,
+            ],
+            pre=["m", "n"],
+            post=["result"],
+            label="ack_n_nonzero",
+        )
+    ]
+    sc.body_source(ack_m_nonzero)[:] = [
+        PrePost(
+            [
+                sc.dup,
+                0,
+                sc.i_eq,
+                sc.lit_op,
+                ack_n_zero,
+                sc.lit_op,
+                ack_n_nonzero,
+                sc.if_,
+            ],
+            pre=["m", "n"],
+            post=["result"],
+            label="ack_m_nonzero",
+        )
+    ]
+    sc.body_source(ack_impl)[:] = [
+        sc.over,
+        0,
+        sc.i_eq,
+        sc.lit_op,
+        ack_m_zero,
+        sc.lit_op,
+        ack_m_nonzero,
+        sc.if_,
+    ]
+    return ack
 
-    There is no composed token program for Ackermann; this path measures VM
-    overhead around the C kernel.
-    """
-    _fresh_vm(lambda: None)
-    _cy.push_int(n)
+
+def ack_stacklang(m: int, n: int) -> int:
+    """Ackermann via a recursive stack-language program."""
+    _fresh_vm(_register_ack_recursive)
     _cy.push_int(m)
-    _cy.invoke_op("ack")
+    _cy.push_int(n)
+    _cy.run_op("ack")
     return _cy.pop_int()
 
 
