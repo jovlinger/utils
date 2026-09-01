@@ -9,8 +9,24 @@ This file restates the rules Cursor agents keep breaking, in plain language.
 
 ## 0. When this applies
 
-You are in Cursor. The user said work / proceed / continue on a todo, or you
-picked up a ticket in `working` state. **Read this file before you touch code.**
+You are in Cursor. **Read this file before product code** when either:
+
+- **Groom:** user says make/groom/plan/track a todo -> read [`GROOMING.md`](GROOMING.md)
+  first; [`SKILL.md` HARD GATE](SKILL.md#hard-gate-groom-vs-work-read-before-any-tool-use).
+- **Work:** user says work / proceed / continue on a todo, or you picked up a
+  ticket in `working` state.
+
+### Groom gate (Cursor agents keep skipping this)
+
+When the user asks to **make** or **track** work (not yet working a named id):
+
+1. **First tools:** `todo.py mint`, then `set`, then `work-item-add` -- not codebase reads.
+2. **Output:** Summary, Body, AC, tiered WorkItems on the ticket.
+3. **Stop** after reporting `todo:<id>` unless the same message also ordered work
+   and groom completed in that turn.
+4. **No `init`** until user asks to work (or groom explicitly includes init).
+
+Investigation (read code, run benches) belongs in **work** WorkItems, not in groom.
 
 ### Paths (do not forget)
 

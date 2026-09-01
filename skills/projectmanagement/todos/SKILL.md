@@ -2,9 +2,10 @@
 name: todos
 description: >-
   Branch-bound todo task tickets managed through the todo.py CLI (one ticket
-  per git branch). TRIGGER: the user says "TODO", "todo", "ticket", "branch
-  task", "HICAP", "MIDCAP", "LOCAP", "groom", or asks to track/manage task
-  state -- invoke immediately. Route ALL ticket access through todo.py; never
+  per git branch). TRIGGER (invoke immediately, read this file first): user
+  says "make a todo", "work the todo", "groom", "TODO", "todo", "ticket",
+  "branch task", "track this work", HICAP/MIDCAP/LOCAP, or asks to
+  track/manage task state. Route ALL ticket access through todo.py; never
   read or write TODO.json or a backend by hand. Load detailed references on
   demand via the intent router below -- do not preload the full CLI/schema/runbook
   unless needed.
@@ -14,6 +15,21 @@ disable-model-invocation: false
 # Todo tickets
 
 status: living document - entry skill (router)
+
+## HARD GATE: groom vs work (read before any tool use)
+
+Two phases. **Never mix them in one turn without explicit user order.**
+
+| User says | You do | Banned until groom is complete |
+|-----------|--------|--------------------------------|
+| **make / groom / plan / track** | Read [`GROOMING.md`](GROOMING.md). `mint` -> `set` (Summary, Body, AC) -> `work-item-add`. Stay in `groom`. Report `todo:<id>`. | **No** product code edits, **no** `init`, **no** investigation "to help groom" unless user asked research-only. |
+| **work / proceed / continue** (named `todo:` id or ready ticket) | Read [`CURSOR.md`](CURSOR.md) then [`WORKING.md`](WORKING.md). `init` if needed, then WorkItem loop. | **No** re-grooming or scope expansion without user ask. |
+
+**Compound requests** ("make a todo, then work it"): groom first (mint + full ticket), stop and show `todo:<id>`, then work only after user says proceed **or** the same message clearly orders both and groom finished in that turn.
+
+**First tool calls for groom:** `todo.py mint` / `todo.py set` -- not `Read` on product code, not `grep`, not benchmarks.
+
+`todo.py` path: `skills/projectmanagement/todos/todo.py` (from utils root). If `todo` is not on PATH, use that path or `PATH=.../bin/binlinks:...`.
 
 **Cursor agents:** before working a ticket, read [`CURSOR.md`](CURSOR.md) (tier
 dispatch, do not stop mid-loop, worktree rules restated for Cursor).
