@@ -24,7 +24,7 @@ def test_simpletest_render_timing_and_png(tmp_path: Path) -> None:
 
     py_surface = result.paths["python"].surface
     assert surface_white_count(py_surface) == surface_white_count(
-        result.paths["stacklang"].surface
+        result.paths["imgcomp_stacklang"].surface
     )
     assert surface_white_count(py_surface) == surface_white_count(result.paths["c"].surface)
 
@@ -35,5 +35,5 @@ def test_simpletest_render_timing_and_png(tmp_path: Path) -> None:
     assert image.getpixel(corner) == (0, 0, 0, 0)
 
     assert result.paths["python"].seconds > 0.0
-    assert result.paths["stacklang"].seconds > 0.0
+    assert result.paths["imgcomp_stacklang"].seconds > 0.0
     assert result.paths["c"].seconds > 0.0

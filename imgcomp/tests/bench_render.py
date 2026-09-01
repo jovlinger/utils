@@ -34,7 +34,7 @@ from tests.simpletest import (
     surface_white_count,
 )
 
-RenderFn = Callable[[Scene, int, int], Surface]
+RenderFn = Callable[..., Surface]
 
 GALLERY_SIZE = 192
 GALLERY_PROFILE = "fast"
@@ -60,7 +60,7 @@ class Benchmark:
     height: int
     scene: Callable[[], Scene]
     paths: tuple[RenderPath, ...]
-    png_path_key: str = "stacklang"
+    png_path_key: str = "imgcomp_stacklang"
 
 
 @dataclass
@@ -92,11 +92,15 @@ def _python_path() -> RenderPath:
 
 
 def _stacklang_path() -> RenderPath:
-    return RenderPath("stacklang", render_stacklang)
+    return RenderPath("imgcomp_stacklang", render_stacklang)
 
 
 def _c_path() -> RenderPath:
     return RenderPath("c", render_c)
+
+
+def _fractal_paths() -> tuple[RenderPath, ...]:
+    return (_python_path(), _stacklang_path())
 
 
 BENCHMARKS: dict[str, Benchmark] = {
@@ -106,35 +110,36 @@ BENCHMARKS: dict[str, Benchmark] = {
         height=VIEWPORT,
         scene=simpletest_scene,
         paths=(_python_path(), _stacklang_path(), _c_path()),
-        png_path_key="stacklang",
+        png_path_key="imgcomp_stacklang",
     ),
     "carpet": Benchmark(
         name="carpet",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("carpet"),
-        paths=(_python_path(), _stacklang_path()),
+        paths=_fractal_paths(),
     ),
     "phyllotaxis": Benchmark(
         name="phyllotaxis",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("phyllotaxis"),
-        paths=(_python_path(), _stacklang_path()),
+        paths=_fractal_paths(),
     ),
     "rings": Benchmark(
         name="rings",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("rings"),
-        paths=(_python_path(), _stacklang_path()),
+        paths=_fractal_paths(),
     ),
     "spirograph": Benchmark(
         name="spirograph",
         width=GALLERY_SIZE,
         height=GALLERY_SIZE,
         scene=lambda: _gallery_scene("spirograph"),
-        paths=(_python_path(), _stacklang_path()),
+        paths=_fractal_paths(),
+        png_path_key="imgcomp_stacklang",
     ),
 }
 
@@ -149,6 +154,7 @@ def time_render(
     *,
     repeat: int,
     warmup: int,
+    min_size: float = 16.0,
 ) -> tuple[Surface, float, list[float]]:
     """Return the last surface, total seconds, and per-iteration times."""
     if repeat < 1:
@@ -157,13 +163,13 @@ def time_render(
         raise ValueError("warmup must be >= 0")
 
     for _ in range(warmup):
-        render_fn(scene, width, height)
+        render_fn(scene, width, height, min_size=min_size)
 
     iteration_seconds: list[float] = []
     surface: Surface | None = None
     for _ in range(repeat):
         iter_start = time.perf_counter()
-        surface = render_fn(scene, width, height)
+        surface = render_fn(scene, width, height, min_size=min_size)
         iteration_seconds.append(time.perf_counter() - iter_start)
     if surface is None:
         raise RuntimeError("render produced no surface")
@@ -185,8 +191,11 @@ def run_benchmark(
     output_dir: Path,
     repeat: int = 1,
     warmup: int = 1,
+    tune_min_size: bool = False,
 ) -> BenchmarkResult:
     """Time each path, then write the showcase PNG outside the timer."""
+    from imgcomp.render_tune import hillclimb_min_size, tuned_min_size
+
     bench_start = time.perf_counter()
     scene = spec.scene()
     result = BenchmarkResult(
@@ -197,9 +206,20 @@ def run_benchmark(
     )
 
     for path in spec.paths:
-        if enabled() and path.key == "stacklang":
+        if tune_min_size:
+            hillclimb_min_size(
+                path.key,
+                path.render,
+                scene,
+                spec.width,
+                spec.height,
+                repeat=max(1, repeat - 1),
+                warmup=warmup,
+            )
+        min_size = tuned_min_size(path.key)
+        if enabled() and path.key == "imgcomp_stacklang":
             reset()
-            note(f"benchmark {spec.name} {spec.width}x{spec.height}")
+            note(f"benchmark {spec.name} {spec.width}x{spec.height} min_size={min_size}")
             _describe_stacklang(scene)
         surface, seconds, iteration_seconds = time_render(
             path.render,
@@ -208,6 +228,7 @@ def run_benchmark(
             spec.height,
             repeat=repeat,
             warmup=warmup,
+            min_size=min_size,
         )
         result.paths[path.key] = PathResult(
             key=path.key,
@@ -239,6 +260,7 @@ def run_selected(
     output_dir: Path = DEFAULT_OUTPUT,
     repeat: int = 1,
     warmup: int = 1,
+    tune_min_size: bool = False,
 ) -> dict[str, BenchmarkResult]:
     """Run named benchmarks; default registry order when ``names`` is empty."""
     selected = list(names) if names else list(ALL_BENCHMARK_NAMES)
@@ -253,6 +275,7 @@ def run_selected(
             output_dir=output_dir,
             repeat=repeat,
             warmup=warmup,
+            tune_min_size=tune_min_size,
         )
     return results
 
@@ -381,6 +404,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"output directory for PNGs and {TIMINGS_FILE} (default demo-output)",
     )
     parser.add_argument(
+        "--tune-min-size",
+        action="store_true",
+        help="hillclimb quadtree min_size per path before timing (RMS frame ms)",
+    )
+    parser.add_argument(
         "--debug-stacklang",
         action="store_true",
         help="log stacklang <-> Python boundary crossings to stderr",
@@ -419,6 +447,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output,
             repeat=args.repeat,
             warmup=args.warmup,
+            tune_min_size=args.tune_min_size,
         )
     except ValueError as exc:
         parser.error(str(exc))

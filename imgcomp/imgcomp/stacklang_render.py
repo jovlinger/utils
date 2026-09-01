@@ -178,6 +178,17 @@ def _iter_leaf_zlists(node: QuadNode) -> list[ZList]:
     return leaves
 
 
+def _iter_leaf_nodes(node: QuadNode) -> list[QuadNode]:
+    """Return every quadtree leaf node (zlist bucket with bounds)."""
+    if node.zlist is not None:
+        return [node]
+    assert node.children is not None
+    leaves: list[QuadNode] = []
+    for child in node.children:
+        leaves.extend(_iter_leaf_nodes(child))
+    return leaves
+
+
 def _finalize_member_op_ids(
     node: QuadNode,
     member_op_ids: dict[tuple[Hashable, ...], int],
