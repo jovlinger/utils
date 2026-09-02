@@ -53,6 +53,14 @@ def prepare_scene(scene: Scene) -> list[SceneLayer]:
     return layers
 
 
+def prepare_shape_layers(scene: Scene) -> list[SceneLayer]:
+    """Scene layer roots for quadtree culling (no stacklang export)."""
+    return [
+        SceneLayer(index=layer_index, shape=layer_shape, color_stacklang=[])
+        for layer_index, layer_shape in enumerate(as_z_list(scene))
+    ]
+
+
 def viewport_aabb(width: int, height: int) -> AABB:
     half_w = width / 2.0
     half_h = height / 2.0

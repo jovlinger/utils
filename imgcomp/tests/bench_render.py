@@ -22,6 +22,7 @@ from typing import Any
 from imgcomp.scene import Scene
 from imgcomp.surface import Surface
 from tests.fractal_scenes import fractal_gallery_scene
+from tests.bench_expected import expected_render_white_px
 from tests.simpletest import (
     VIEWPORT,
     render_python,
@@ -136,32 +137,34 @@ ALL_BENCHMARK_NAMES: tuple[str, ...] = tuple(BENCHMARKS.keys())
 
 def time_render(
     render_fn: RenderFn,
-    scene: Scene,
+    scene_fn: Callable[[], Scene],
     width: int,
     height: int,
     *,
     repeat: int,
     warmup: int,
     min_size: float = 16.0,
-) -> tuple[Surface, float, list[float]]:
-    """Return the last surface, total seconds, and per-iteration times."""
+) -> tuple[Surface, float, float, list[float]]:
+    """Return the last surface, timed wall seconds, timed self-report total, iter times."""
     if repeat < 1:
         raise ValueError("repeat must be >= 1")
     if warmup < 0:
         raise ValueError("warmup must be >= 0")
 
     for _ in range(warmup):
-        render_fn(scene, width, height, min_size=min_size)
+        render_fn(scene_fn(), width, height, min_size=min_size)
 
+    timed_wall_start = time.perf_counter()
     iteration_seconds: list[float] = []
     surface: Surface | None = None
     for _ in range(repeat):
         iter_start = time.perf_counter()
-        surface = render_fn(scene, width, height, min_size=min_size)
+        surface = render_fn(scene_fn(), width, height, min_size=min_size)
         iteration_seconds.append(time.perf_counter() - iter_start)
+    timed_wall_s = time.perf_counter() - timed_wall_start
     if surface is None:
         raise RuntimeError("render produced no surface")
-    return surface, sum(iteration_seconds), iteration_seconds
+    return surface, timed_wall_s, sum(iteration_seconds), iteration_seconds
 
 
 def run_benchmark(
@@ -176,7 +179,6 @@ def run_benchmark(
     from imgcomp.render_tune import hillclimb_min_size, tuned_min_size
 
     bench_start = time.perf_counter()
-    scene = spec.scene()
     result = BenchmarkResult(
         name=spec.name,
         width=spec.width,
@@ -189,16 +191,16 @@ def run_benchmark(
             hillclimb_min_size(
                 path.key,
                 path.render,
-                scene,
+                spec.scene(),
                 spec.width,
                 spec.height,
                 repeat=max(1, repeat - 1),
                 warmup=warmup,
             )
         min_size = tuned_min_size(path.key)
-        surface, seconds, iteration_seconds = time_render(
+        surface, timed_wall_s, seconds, iteration_seconds = time_render(
             path.render,
-            scene,
+            spec.scene,
             spec.width,
             spec.height,
             repeat=repeat,
@@ -211,14 +213,26 @@ def run_benchmark(
             iteration_seconds=iteration_seconds,
             surface=surface,
         )
-
-    if spec.name == "simpletest":
-        bench_surface = result.paths[BENCH_PATH_KEY].surface
-        result.extra["white_px"] = {
-            key: surface_white_count(path.surface)
-            for key, path in result.paths.items()
+        result.extra.setdefault("timing_audit", {})[path.key] = {
+            "timed_wall_s": timed_wall_s,
+            "timed_self_s": seconds,
+            "wall_minus_self_s": timed_wall_s - seconds,
         }
-        result.extra["white_px_match"] = surface_white_count(bench_surface) == result.extra["white_px"][BENCH_PATH_KEY]
+
+    expected_white = expected_render_white_px(spec.name, path_key=BENCH_PATH_KEY)
+    result.extra["white_px"] = {
+        key: surface_white_count(path.surface)
+        for key, path in result.paths.items()
+    }
+    if expected_white is not None:
+        bench_white = result.extra["white_px"][BENCH_PATH_KEY]
+        result.extra["white_px_expected"] = expected_white
+        result.extra["white_px_ok"] = bench_white == expected_white
+        if not result.extra["white_px_ok"]:
+            raise RuntimeError(
+                f"{spec.name}: {BENCH_PATH_KEY} white_px={bench_white} "
+                f"expected {expected_white}"
+            )
 
     showcase = result.paths[spec.png_path_key].surface
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -323,6 +337,14 @@ def _print_result(result: BenchmarkResult, *, previous: dict[str, Any] | None) -
             parts[-1] += f" ({delta:+.1f}% vs last)"
     if "white_px" in result.extra:
         parts.append(f"white_px={result.extra['white_px']}")
+    audit = result.extra.get("timing_audit", {}).get(BENCH_PATH_KEY)
+    if audit is not None:
+        parts.append(
+            "audit "
+            f"wall={audit['timed_wall_s']:.6f}s "
+            f"self={audit['timed_self_s']:.6f}s "
+            f"delta={audit['wall_minus_self_s']:.6f}s"
+        )
     if result.png_path is not None:
         parts.append(f"png={result.png_path}")
     print("  ".join(parts))

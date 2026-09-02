@@ -1,4 +1,4 @@
-"""Pure-Python per-pixel compositor."""
+"""Pure-Python quadtree leaf-cell compositor (reference color_at path)."""
 
 from __future__ import annotations
 
@@ -68,12 +68,12 @@ def render_quadtree_python(
     from imgcomp.stacklang_render import (
         _iter_leaf_nodes,
         build_quadtree,
-        prepare_scene,
+        prepare_shape_layers,
         viewport_aabb,
     )
 
-    with phase(profile, "prepare_scene"):
-        render_layers = prepare_scene(scene)
+    with phase(profile, "prepare_shape_layers"):
+        render_layers = prepare_shape_layers(scene)
     with phase(profile, "build_quadtree"):
         tree = build_quadtree(
             render_layers,
@@ -93,7 +93,7 @@ def render_quadtree_python(
 
 
 class NaiveCompositor(Compositor):
-    """For each viewport pixel, walk the z-list and accumulate hit colors."""
+    """Quadtree leaf-cell batch compositor (Python color_at reference)."""
 
     def render(
         self,

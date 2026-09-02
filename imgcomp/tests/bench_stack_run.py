@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -17,6 +18,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from tests.bench_expected import EXPECTED_STACK_VALUES
 from tests.bench_stack import (
     ack_python,
     float_step_sum_python,
@@ -57,14 +59,24 @@ def warm_stack_workloads() -> None:
         workload.fn()
 
 
-def time_path(fn: PathFn, *, repeat: int) -> tuple[object, list[float]]:
+def _values_match(got: object, expected: int | float) -> bool:
+    if isinstance(expected, float):
+        return isinstance(got, (int, float)) and math.isclose(
+            float(got), expected, rel_tol=0.0, abs_tol=1e-6
+        )
+    return got == expected
+
+
+def time_path(fn: PathFn, *, repeat: int) -> tuple[object, float, float, list[float]]:
+    timed_wall_start = time.perf_counter()
     iteration_seconds: list[float] = []
     value: object = None
     for _ in range(repeat):
         iter_start = time.perf_counter()
         value = fn()
         iteration_seconds.append(time.perf_counter() - iter_start)
-    return value, iteration_seconds
+    timed_wall_s = time.perf_counter() - timed_wall_start
+    return value, timed_wall_s, sum(iteration_seconds), iteration_seconds
 
 
 def run_all(*, repeat: int) -> dict[str, Any]:
@@ -74,15 +86,25 @@ def run_all(*, repeat: int) -> dict[str, Any]:
         "workloads": {},
     }
     for workload in WORKLOADS:
-        value, iter_s = time_path(workload.fn, repeat=repeat)
+        value, timed_wall_s, self_s, iter_s = time_path(workload.fn, repeat=repeat)
+        expected = EXPECTED_STACK_VALUES[workload.name]
+        if not _values_match(value, expected):
+            raise RuntimeError(
+                f"{workload.name}: {BENCH_STACK_KEY} value={value!r} expected {expected!r}"
+            )
         results["workloads"][workload.name] = {
             "value": value,
             "iter_s": iter_s,
-            "total_s": sum(iter_s),
+            "total_s": self_s,
+            "timed_wall_s": timed_wall_s,
+            "wall_minus_self_s": timed_wall_s - self_s,
+            "value_ok": True,
         }
         print(
             f"{workload.name}: {BENCH_STACK_KEY}_iter_s={iter_s} "
-            f"{BENCH_STACK_KEY}_total_s={sum(iter_s):.6f} value={value!r}"
+            f"{BENCH_STACK_KEY}_total_s={self_s:.6f} "
+            f"wall={timed_wall_s:.6f}s delta={timed_wall_s - self_s:.6f}s "
+            f"value={value!r}"
         )
     return results
 

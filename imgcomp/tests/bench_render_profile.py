@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -11,11 +12,26 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from imgcomp.naive import render_quadtree_python
-from imgcomp.stacklang_render import build_quadtree, prepare_scene, viewport_aabb, _iter_leaf_zlists
+from imgcomp.render_profile import RenderProfile
+from imgcomp.stacklang_render import (
+    build_quadtree,
+    prepare_scene,
+    viewport_aabb,
+    _iter_leaf_zlists,
+)
 from tests.fractal_scenes import fractal_gallery_scene
 
 GALLERY_SIZE = 192
 SCENES = ("rings", "spirograph")
+MIN_SIZE = 16.0
+
+
+def _print_profile(branch: str, path_key: str, profile: RenderProfile) -> None:
+    parts = [f"{name}={ms:.3f}ms" for name, ms in profile.as_dict_ms().items()]
+    print(
+        f"  branch={branch} path={path_key} total={profile.total_ms():.3f}ms  "
+        + "  ".join(parts)
+    )
 
 
 def _quad_stats(scene, width: int, height: int, *, min_size: float) -> tuple[int, int]:
@@ -31,22 +47,38 @@ def _quad_stats(scene, width: int, height: int, *, min_size: float) -> tuple[int
     return count_nodes(tree), len(leaves)
 
 
-def main() -> int:
-    from imgcomp.stacklang_render import render as render_stacklang
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--branch",
+        required=True,
+        help="git branch name for labels (e.g. master)",
+    )
+    args = parser.parse_args(argv)
+    branch = args.branch
 
+    print(f"=== branch {branch} ===")
     for kind in SCENES:
         scene = fractal_gallery_scene(kind, size=GALLERY_SIZE, profile="fast")
         nodes4, leaves4 = _quad_stats(scene, GALLERY_SIZE, GALLERY_SIZE, min_size=4.0)
-        nodes16, leaves16 = _quad_stats(scene, GALLERY_SIZE, GALLERY_SIZE, min_size=16.0)
+        nodes16, leaves16 = _quad_stats(scene, GALLERY_SIZE, GALLERY_SIZE, min_size=MIN_SIZE)
         print(f"{kind} ({GALLERY_SIZE}x{GALLERY_SIZE}):")
         print(f"  quadtree min_size=4:  nodes={nodes4} leaves={leaves4}")
-        print(f"  quadtree min_size=16: nodes={nodes16} leaves={leaves16}")
-        render_quadtree_python(scene, GALLERY_SIZE, GALLERY_SIZE, min_size=16.0)
-        print("  python: ok")
-        render_stacklang(scene, GALLERY_SIZE, GALLERY_SIZE)
-        print("  imgcomp_stacklang: ok")
-        render_stacklang(scene, GALLERY_SIZE, GALLERY_SIZE)
-        print("  imgcomp_stacklang_warm2: ok")
+        print(f"  quadtree min_size={MIN_SIZE}: nodes={nodes16} leaves={leaves16}")
+
+        py_profile = RenderProfile()
+        render_quadtree_python(
+            scene, GALLERY_SIZE, GALLERY_SIZE, min_size=MIN_SIZE, profile=py_profile
+        )
+        _print_profile(branch, "python", py_profile)
+
+        render_quadtree_python(scene, GALLERY_SIZE, GALLERY_SIZE, min_size=MIN_SIZE)
+        py_warm = RenderProfile()
+        render_quadtree_python(
+            scene, GALLERY_SIZE, GALLERY_SIZE, min_size=MIN_SIZE, profile=py_warm
+        )
+        _print_profile(branch, "python_warm2", py_warm)
+
         print()
     return 0
 

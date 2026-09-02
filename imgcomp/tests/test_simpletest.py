@@ -23,6 +23,7 @@ def test_simpletest_render_timing_and_png(tmp_path: Path) -> None:
     assert bench_path.surface.get_pixel(*corner) == TRANSPARENT
 
     assert surface_white_count(bench_path.surface) == result.extra["white_px"][BENCH_PATH_KEY]
+    assert result.extra.get("white_px_ok", True)
 
     assert result.png_path is not None
     image = Image.open(result.png_path)
