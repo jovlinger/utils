@@ -785,7 +785,7 @@ class StateTests(TodoCase):
         wt.parent.mkdir(parents=True)
         self._git("worktree", "add", "-q", str(wt), branch)
         self.assertTrue(wt.is_dir())
-        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        proc = self.todo("set", tid[:8], "--state", "done")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(wt.exists())
         listed = self._git("worktree", "list", "--porcelain")
@@ -802,14 +802,15 @@ class StateTests(TodoCase):
         wt.parent.mkdir(parents=True)
         self._git("worktree", "add", "-q", str(wt), branch)
         (wt / "dirt.txt").write_text("nope\n", encoding="utf-8")
-        proc = self.todo("set", "--id", tid[:8], "--state", "done")
+        before = json.loads(self.todo("get-json-path", tid[:8], "State").stdout)
+        proc = self.todo("set", tid[:8], "--state", "done")
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("dirty", proc.stderr)
         self.assertTrue(wt.is_dir())
         # State must not have advanced when teardown is blocked.
         got = self.todo("get-json-path", tid[:8], "State")
         self.assertEqual(got.returncode, 0, got.stderr)
-        self.assertEqual(json.loads(got.stdout), {"init": {}})
+        self.assertEqual(json.loads(got.stdout), before)
 
 
 class WaitTests(TodoCase):
@@ -1672,7 +1673,7 @@ class WebViewerTests(TodoCase):
         proc = self.todo("web", "--dump-html")  # no selector -> search landing page
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
-        self.assertIn("search todos (vector search)", out)  # search box placeholder
+        self.assertIn("search todos (id prefix or lexical)", out)  # search box placeholder
         self.assertIn("Alpha todo", out)
         self.assertIn("Beta todo", out)
         self.assertIn(alpha, out)  # ids embedded for client-side links
