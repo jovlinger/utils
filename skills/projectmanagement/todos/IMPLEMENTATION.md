@@ -167,11 +167,10 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 
 | Command | Status | Behavior today |
 |---------|--------|----------------|
-| `ensure_worktree <todoid>` | **STUB** | Resolves todo and prints the *intended* path under `<todo-dir>/worktrees/<repo>/<branch>` with `created=false`. Does **not** run `git worktree add` |
+| `ensure_worktree <todoid> [--init] [--no-commit]` | live | With `--init`, promotes a groom todo when its git branch is missing (same as `init --id … --stay-on-parent`; noop when the branch exists). Then creates or reuses a linked worktree via `git worktree add`. Without `--init`, exit 1 when the branch does not exist yet. Prints `inited`, `created`, and `worktree` |
 
-Worktree create/remove remains a **manual** procedure in
-[`WORKING.md`](WORKING.md#worktree-setup). Do not treat `ensure_worktree` as
-having created a checkout.
+Worktree removal remains manual on finish (see [`WORKING.md`](WORKING.md#6-finish-and-remove-the-worktree)).
+Do not assume a worktree exists until `ensure_worktree` succeeds.
 
 ### Minimal examples (verified forms)
 
@@ -246,8 +245,15 @@ Macros: `ALL`, `FINAL`, `PAUSING` (waiting, userneeded, stopped), `WORKING`,
 ### Search ranking
 
 `search` fuses (reciprocal rank) one ranking per selected embedder with **one**
-lexical ranking over all terms. The lexical half is IDF-weighted full-text, in
+lexical ranking over all text terms. The lexical half is IDF-weighted full-text, in
 `todo_search.py`:
+
+**Query syntax**
+
+| Piece | Behavior |
+|-------|----------|
+| Text terms | Space-separated (each CLI argv is one term; the web box uses `shlex`). **OR**, google-style: each term is its own matcher; a doc matching only one term can appear; matching more terms ranks higher. Quote a phrase to keep it one term |
+| Time operators | `tc_before:`, `tc_after:`, `tu_before:`, `tu_after:` each glued to an RFC3339 `Z` timestamp or a date-only `YYYY-MM-DD` / `YYYY/MM/DD` (no space). Filter `create_dt` / `update_dt` inclusively. Date-only *after* starts at 00:00:00Z that day; date-only *before* ends at 23:59:59Z. **AND** with each other and with text terms. Operator-only queries list matches sorted by `update_dt` desc. Matches excluded by the default state filter are counted on stderr as ``... N hidden by status`` |
 
 | Piece | Behavior |
 |-------|----------|
@@ -570,7 +576,7 @@ Non-normative. Do **not** put these in current dispatch tables.
 | Item | Notes |
 |------|-------|
 | `todo.py new` | Mentioned historically as alias for `init` with JSON seed -- **not implemented** |
-| `ensure_worktree` automation | STUB today; future may create/remove trees |
+| `ensure_worktree` automation | `--init` promotes groom branch when missing; then `git worktree add` under `<todo-dir>/worktrees/...` |
 | `waiting` state / dependency graph | In `VALID_STATES` / macros but not settable via `--state`; design deferred |
 | `N/a` state | Present but not settable via `--note`/`--state` workflow |
 | Stack across branches | Deferred |

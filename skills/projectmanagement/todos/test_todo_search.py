@@ -20,6 +20,152 @@ import todo_search  # noqa: E402
 from test_todo import TodoCase  # noqa: E402  (temp-repo + subprocess harness)
 
 
+class ParseSearchQueryTest(unittest.TestCase):
+    """Colon-based time operators are stripped; text terms pass through."""
+
+    def test_strips_time_operators_and_keeps_text(self) -> None:
+        terms, filters = todo.parse_search_query(
+            [
+                "alpha",
+                "tc_after:2026-01-01T00:00:00Z",
+                "tc_before:2026-12-31T23:59:59Z",
+                "beta",
+            ]
+        )
+        self.assertEqual(terms, ["alpha", "beta"])
+        self.assertEqual(filters.create_after, "2026-01-01T00:00:00Z")
+        self.assertEqual(filters.create_before, "2026-12-31T23:59:59Z")
+
+    def test_update_operators(self) -> None:
+        _terms, filters = todo.parse_search_query(
+            [
+                "tu_after:2026-06-01T12:00:00Z",
+                "tu_before:2026-06-30T12:00:00Z",
+            ]
+        )
+        self.assertEqual(filters.update_after, "2026-06-01T12:00:00Z")
+        self.assertEqual(filters.update_before, "2026-06-30T12:00:00Z")
+
+    def test_unknown_colon_token_is_a_text_term(self) -> None:
+        terms, _filters = todo.parse_search_query(["foo:bar"])
+        self.assertEqual(terms, ["foo:bar"])
+
+    def test_date_only_expands_to_day_bounds(self) -> None:
+        _terms, filters = todo.parse_search_query(
+            [
+                "tc_after:2026-08-25",
+                "tc_before:2026-08-31",
+            ]
+        )
+        self.assertEqual(filters.create_after, "2026-08-25T00:00:00Z")
+        self.assertEqual(filters.create_before, "2026-08-31T23:59:59Z")
+
+    def test_slash_dates_normalize_to_hyphens(self) -> None:
+        _terms, filters = todo.parse_search_query(["tc_after:2026/08/26"])
+        self.assertEqual(filters.create_after, "2026-08-26T00:00:00Z")
+
+    def test_invalid_timestamp_errors(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            todo.parse_search_query(["tc_after:not-a-date"])
+
+    def test_empty_operator_value_errors(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            todo.parse_search_query(["tc_after:"])
+
+
+class SearchTimeFilterTest(TodoCase):
+    """Time operators AND with text search and filter create/update_dt."""
+
+    def test_tc_after_date_only_filters_by_create_dt(self) -> None:
+        old_id = self.mint()
+        new_id = self.mint()
+        self.write_ticket(
+            f"{old_id[:8]}-o",
+            old_id,
+            summary="old widget",
+            extra={"create_dt": "2026-08-24T12:00:00Z", "update_dt": "2026-08-24T12:00:00Z"},
+        )
+        self.write_ticket(
+            f"{new_id[:8]}-n",
+            new_id,
+            summary="new widget",
+            extra={"create_dt": "2026-08-25T12:00:00Z", "update_dt": "2026-08-25T12:00:00Z"},
+        )
+        proc = self.todo(
+            "search",
+            "tc_after:2026-08-25",
+            "widget",
+            "--embedder",
+            "apple",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(new_id[:8], proc.stdout)
+        self.assertNotIn(old_id[:8], proc.stdout)
+
+    def test_tc_after_filters_by_create_dt(self) -> None:
+        old_id = self.mint()
+        new_id = self.mint()
+        self.write_ticket(
+            f"{old_id[:8]}-o",
+            old_id,
+            summary="old widget",
+            extra={"create_dt": "2026-01-01T00:00:00Z", "update_dt": "2026-01-01T00:00:00Z"},
+        )
+        self.write_ticket(
+            f"{new_id[:8]}-n",
+            new_id,
+            summary="new widget",
+            extra={"create_dt": "2026-06-01T00:00:00Z", "update_dt": "2026-06-01T00:00:00Z"},
+        )
+        proc = self.todo(
+            "search",
+            "tc_after:2026-03-01T00:00:00Z",
+            "widget",
+            "--embedder",
+            "apple",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(new_id[:8], proc.stdout)
+        self.assertNotIn(old_id[:8], proc.stdout)
+
+    def test_operator_only_lists_matching_todos(self) -> None:
+        in_id = self.mint()
+        out_id = self.mint()
+        self.write_ticket(
+            f"{in_id[:8]}-i",
+            in_id,
+            summary="inside",
+            extra={"create_dt": "2026-06-01T00:00:00Z", "update_dt": "2026-06-01T00:00:00Z"},
+        )
+        self.write_ticket(
+            f"{out_id[:8]}-o",
+            out_id,
+            summary="outside",
+            extra={"create_dt": "2026-01-01T00:00:00Z", "update_dt": "2026-01-01T00:00:00Z"},
+        )
+        proc = self.todo("search", "tc_after:2026-03-01T00:00:00Z", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(in_id[:8], proc.stdout)
+        self.assertNotIn(out_id[:8], proc.stdout)
+
+    def test_hidden_by_status_reported_on_stderr(self) -> None:
+        done_id = self.mint()
+        self.write_ticket(
+            f"{done_id[:8]}-d",
+            done_id,
+            summary="done ticket",
+            extra={
+                "create_dt": "2026-08-30T00:00:00Z",
+                "update_dt": "2026-08-30T00:00:00Z",
+                "State": {"done": {}},
+            },
+        )
+        proc = self.todo("search", "tc_after:2026-08-26", "--embedder", "apple")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "")
+        self.assertIn("... 1 hidden by status", proc.stderr)
+
+
 class StemTest(unittest.TestCase):
     """v1 morphology: de-pluralize, de-gerund, and nothing cleverer."""
 
@@ -226,11 +372,11 @@ class EmbedderOffSwitchTest(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertGreater(self._embedding_count(), 0)
 
-    def test_absent_key_keeps_the_default(self) -> None:
+    def test_absent_key_disables_embedders(self) -> None:
         self._seed()
         proc = self.todo("search", "quokka")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertGreater(self._embedding_count(), 0, "default is every embedder")
+        self.assertEqual(0, self._embedding_count(), "default is lexical-only")
 
     def test_a_nonsense_value_is_an_error_not_a_silent_default(self) -> None:
         self._seed()

@@ -30,25 +30,15 @@ Skip `_tags/` and `data/` when surveying.
 
 **Before:** `VA - Verve Remixed: The First Ladies 2013`
 
-Live offender (illegal `:` for Samba/VFAT).
+Illegal `:` for Samba/VFAT **and** leftover `VA -`. Sidecar artist
+`Various Artists` / `VA` is not the folder artist.
 
-Sidecar walk:
-
-| Tier | Source | Artist | Album |
-|------|--------|--------|-------|
-| 1 | `.meta.combined.json` | (missing) | — |
-| 2 | `.meta.johan.json` `local` | VA | Verve Remixed: The First Ladies |
-| 3 | musicbrainz `metadata` | Various Artists | Verve Remixed: The First Ladies |
-| 3 | discogs/lastfm `local` | VA | Verve Remixed: The First Ladies |
-
-**Wins at tier 2 (johan):** `VA` / `Verve Remixed: The First Ladies`. Keep year
-suffix from dirname; VFAT-sanitize `:` → `-`.
-
-**After (dir):** `VA - Verve Remixed- The First Ladies 2013`
+**After (dir):** `Verve Remixed - The First Ladies`  
+(year `2013` → year tag; `:` → `-` already implied by dropping the subtitle colon)
 
 ```text
 DIR  VA - Verve Remixed: The First Ladies 2013
-  ->  VA - Verve Remixed- The First Ladies 2013
+  ->  Verve Remixed - The First Ladies
 ```
 
 Apply from `files/` with **`shadup mv`** (not bare `mv`):
@@ -59,14 +49,14 @@ DB=$HOME/Music/shasrv/shadup.db
 cd "$SHADIR/files"
 shadup -v --shadir "$SHADIR" --db "$DB" mv --dry-run \
   "VA - Verve Remixed: The First Ladies 2013" \
-  "VA - Verve Remixed- The First Ladies 2013"
+  "Verve Remixed - The First Ladies"
 shadup --shadir "$SHADIR" --db "$DB" mv \
   "VA - Verve Remixed: The First Ladies 2013" \
-  "VA - Verve Remixed- The First Ladies 2013"
+  "Verve Remixed - The First Ladies"
 ```
 
-Tracks may still be scene-style (`01-ella_fitzgerald-….flac`) — optional
-follow-up after dirname P0 (per-track renames also use `shadup mv`).
+Tags: `various;curated` + `artist;ververemixed`. Tracks may still be
+scene-style — optional follow-up (`shadup mv` per file).
 
 ---
 
@@ -142,7 +132,8 @@ Forms are **not** always equivalent for *lookup* without retries
 | Pixies | `Pixies - Doolittle` |
 | The Pogues | `Pogues - Rum Sodomy & the Lash` |
 
-No `VA -` here — these are main-artist albums. Details in `SKILL.md`.
+No `VA -` on main-artist albums **or** on compilations. Compilations use the
+movie / DJ / series as the dirname artist. Details in `SKILL.md`.
 
 ---
 
@@ -162,6 +153,12 @@ Multi-disc pair — same album string, one disc-marker style:
 |-------|-------|
 | `Beatles - The Beatles - 1967-1970 (CD1)` / `… (The Blue Album), Disc 2 of 2` | `Beatles - The Beatles 1967-1970 (The Blue Album) CD1` / `… CD2` |
 
+## Canonical dirname (spaces, no `_`)
+
+Album folders: `<artist name> - <album name> <extras>`. Separator is ` - `.
+Extras (`CD1`, `DUP`) after the title with a space. Never `_` in the folder name
+(`Kind_Of_Blue` → `Kind of Blue`; `Album_CD1` → `Album CD1`).
+
 ## Collisions → `DUP`
 
 If the target exists, append ` DUP` (again if needed): `Album`, `Album DUP`,
@@ -175,35 +172,37 @@ old path rows get `end=now()`, new rows get `start=now()`. Do not write
 
 ---
 
-## VA only for true collections
+## No `VA -` (compilations use movie / DJ / series)
 
-`VA -` = multi-artist compilation / anthology with no single primary artist
-(e.g. `VA - Verve Remixed- The First Ladies 2013`, `VA - DJ-Kicks- DJ Cam`).
+Do **not** leave `VA -` or `Various Artists -` on any album dir. Kind is a
+tag (`various;soundtrack` / `various;curated` / `various;collection`).
 
-Main artist + guests/collaborators → still `Artist - Album` (Pixies, Pogues,
-…). Do not refile those under `VA -`.
+| Leftover | Target | Tags |
+|----------|--------|------|
+| `VA - Pulp Fiction- Music From the Motion Picture` | `Pulp Fiction - Music From the Motion Picture` | `various;soundtrack` `artist;pulpfiction` |
+| `VA - DJ-Kicks- DJ Cam` | `DJ Cam - DJ-Kicks` | `various;curated` `artist;djcam` |
+| `VA - Verve Remixed- The First Ladies` | `Verve Remixed - The First Ladies` | `various;curated` `artist;ververemixed` |
+| `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` | not various — single-artist anthology |
 
-**Pogues best-ofs (live inconsistency):** both are single-artist compilations;
-neither should be `VA -`. Strip artist `The` as usual.
+Main artist + guests → still `Artist - Album` (Pixies, Pogues). Movie titles
+keep leading `The`; band dirnames strip it.
 
-| On disk now | Homogeneous target |
-|-------------|-----------|
-| `The Pogues - The Rest of the Best` | `Pogues - The Rest of the Best` |
-| `VA - The Best of The Pogues` | `Pogues - The Best of The Pogues` |
-
-MusicBrainz artist remains `The Pogues` in sidecars; dirname uses `Pogues`.
+Helper: `tag_classify.va_rename_target`.
 
 ---
 
 ## Series already sanitized in-tree
 
-Existing pattern to match:
+Existing pattern to match (` - ` between parts; no `_`):
 
-- `VA - DJ-Kicks- DJ Cam`
-- `Erlend Øye - DJ-Kicks- Erlend Øye`
+- `DJ Cam - DJ-Kicks`
+- `Erlend Øye - DJ-Kicks - Erlend Øye`
+- `Hotel Costes - Hotel Costes 5`
+- `Cafe Del Mar - Volume 15 Quince`
 
-MusicBrainz may still say `DJ-Kicks: Kid Loco`. Prefer the hyphenated series
-form already used on disk; do not reintroduce `:`.
+MusicBrainz may still say `DJ-Kicks: Kid Loco` or `Various Artists`. Prefer
+`DJ-Kicks - Kid Loco` (spaces around the subtitle hyphen); do not reintroduce
+`:`, `VA -`, or `_`.
 
 ---
 
@@ -227,17 +226,18 @@ Do **not** keep `YYYY - …` as a browsing form. Year → tag.
 Album: `1973 - Verve Jazzclub - Verve Records Jazz Box [10LP]`
 
 Use sidecar priority first; raw cue is for track `FILE` / multi-performer layout
-when higher tiers lack tracks. Kind = collection/VA. **Drop** the leading year
-from the dirname (year → tag); keep series only if it aids browsing without
-impersonating the artist (`VA - Verve Jazzclub - …` or a primary-artist form).
+when higher tiers lack tracks. Kind = `various;curated` (Verve Jazzclub).
+**Drop** the leading year from the dirname (year → tag); dirname artist is
+the series, not `VA` and not `1996`: `Verve Jazzclub - Verve Records Jazz Box`.
+
 ---
 
 ## Classical subtitle
 
 **Before (meta):** `Puccini: Greatest Hits`  
-**In-tree form:** `Giacomo Puccini - Puccini- Greatest Hits`
+**In-tree form:** `Giacomo Puccini - Puccini - Greatest Hits`
 
-Sanitize `:` → `-`; keep composer-forward dirname convention.
+Sanitize `:` → ` - `; keep composer-forward dirname convention. No `_`.
 
 ---
 
@@ -254,6 +254,7 @@ present; else walk johan → online → txt/cue. Example shape:
 
 `_tags/album/DJ-Kicks: DJ Cam` can still contain `:` even when the real album
 dir uses `-`. Fixing album dirs does not by itself rewrite tag strings; after
-album dir renames (`shadup mv`) run `shadup refresh-extracted-tags`, and prefer
-`;`-namespaced tags (e.g. `artist;name`) without `:` in values when grooming
-metadata (related: musicology tag grooming).
+album dir renames (`shadup mv`) run `shadup refresh-extracted-tags` (and
+`postingest --force_retag` if combined `artist;*` still says `variousartists`).
+Prefer `;`-namespaced tags (`artist;ververemixed`, `various;curated`) with
+slugged values and no `:` in values (related: groom-musicology-tags).

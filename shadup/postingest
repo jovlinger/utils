@@ -3,7 +3,8 @@
 
 Discovers every directory that contains audio (including nested), plus parents
 of those dirs (multi-CD boxes get a set-union combined). Rebuilds
-``.meta.combined.json`` when inputs are newer (or ``--force``).
+``.meta.combined.json`` when inputs are newer (or ``--force_retag``). Provider APIs
+are queried only for missing sidecars, or when ``--force_provider`` is set.
 """
 
 from __future__ import annotations
@@ -218,7 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
             "write .meta.combined.json (synonym-normalized type;value tags), "
             "importtags from that file, and refresh files/_tags. Parents of "
             "multi-CD / nested albums get a set-union combined. Skips work when "
-            "combined is newer than inputs unless --force."
+            "combined is newer than inputs unless --force_retag. Does not re-query "
+            "musicology providers unless sidecars are missing or --force_provider."
         )
     )
     parser.add_argument(
@@ -243,9 +245,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use every known musicscan provider: musicbrainz, discogs, lastfm.",
     )
     parser.add_argument(
-        "--force",
+        "--force_retag",
         action="store_true",
-        help="Ignore mtimes; rescan providers and rebuild every combined file.",
+        help=(
+            "Ignore mtimes; rebuild every .meta.combined.json from existing "
+            "sidecars. Does not re-query providers (see --force_provider)."
+        ),
+    )
+    parser.add_argument(
+        "--force_provider",
+        action="store_true",
+        help=(
+            "Re-run musicscan --force (network) for every album. Slow. "
+            "Not implied by --force_retag."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -297,33 +310,33 @@ def process_audio_album(
     album: Path,
     *,
     providers: Sequence[str],
-    force: bool,
+    force_retag: bool,
+    force_provider: bool,
     dry_run: bool,
     include_raw: bool,
     verbose: int,
     synonyms_dir: Path,
     child_audio: Sequence[Path],
 ) -> bool:
-    """Scan + combine one audio-bearing album. Returns True if combined written/needed."""
-    stale = force or combine.combined_is_stale(
+    """Scan if needed, then combine one audio-bearing album.
+
+    Returns True if combined written/needed.
+    """
+    stale = force_retag or combine.combined_is_stale(
         album, audio_exts=AUDIO_EXTS, child_dirs=child_audio
     )
-    if not stale and not force:
-        # Still ensure provider sidecars exist for assert-all-working.
-        missing = [
-            p for p in providers if not (album / f".meta.{p}.json").is_file()
-        ]
-        if not missing:
-            return False
+    missing = [p for p in providers if not (album / f".meta.{p}.json").is_file()]
+    if not stale and not force_retag and not missing and not force_provider:
+        return False
 
-    scan_needed = force or any(
-        not (album / f".meta.{p}.json").is_file() for p in providers
-    )
-    if scan_needed or force:
+    # Network scan: missing sidecars always; full refetch only with --force_provider.
+    # --force_retag alone must not call musicscan --force (that is the slow path).
+    scan_needed = force_provider or bool(missing)
+    if scan_needed:
         scan_cmd = [str(MUSICSCAN)]
         for provider in providers:
             scan_cmd.extend(["--provider", provider])
-        if force:
+        if force_provider:
             scan_cmd.append("--force")
         if include_raw:
             scan_cmd.append("--include-raw")
@@ -348,7 +361,7 @@ def process_audio_album(
     base = combine.combine_from_providers(
         album,
         synonyms_dir=synonyms_dir,
-        providers=list(providers) + ["johan"],
+        providers=list(providers),
     )
     if child_audio:
         doc = combine.combine_union_children(
@@ -364,14 +377,14 @@ def process_parent_union(
     parent: Path,
     children: Sequence[Path],
     *,
-    force: bool,
+    force_retag: bool,
     dry_run: bool,
 ) -> bool:
     """Write parent combined as set-union of children (no musicscan)."""
     if has_audio(parent):
         # Handled in process_audio_album with child_audio.
         return False
-    stale = force or combine.combined_is_stale(
+    stale = force_retag or combine.combined_is_stale(
         parent, audio_exts=AUDIO_EXTS, child_dirs=children
     )
     if not stale:
@@ -402,6 +415,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     log(f"selected providers: {', '.join(providers)}")
+    log(
+        f"force_retag={args.force_retag} force_provider={args.force_provider} "
+        "(force_provider is the slow provider refetch; force_retag only rebuilds combined)"
+    )
     log(f"audio album dirs: {len(audio_albums)}")
     log(f"parent union dirs: {len(parent_map)}")
 
@@ -414,7 +431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if process_audio_album(
             album,
             providers=providers,
-            force=args.force,
+            force_retag=args.force_retag,
+            force_provider=args.force_provider,
             dry_run=args.dry_run,
             include_raw=args.include_raw,
             verbose=args.verbose,
@@ -428,7 +446,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if process_parent_union(
             parent,
             children,
-            force=args.force,
+            force_retag=args.force_retag,
             dry_run=args.dry_run,
         ):
             touched.append(parent)

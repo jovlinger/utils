@@ -603,6 +603,37 @@ def _section(
     )
 
 
+def _md_field_html(
+    text: str,
+    *,
+    interactive: bool = True,
+    monospace: bool = False,
+    label: str = "Field",
+) -> str:
+    """Wrap prose *text* with a Preview control that renders markdown in the fold.
+
+    The raw source stays in the upper pane for find/copy; preview is rendered
+    client-side into the lower pane on first toggle.
+    """
+    escaped = html.escape(text)
+    if not interactive:
+        if monospace or "\n" in text:
+            return f'<pre class="val body">{escaped}</pre>'
+        return f'<div class="val">{escaped}</div>'
+    raw_cls = "val body md-view md-raw" if monospace or "\n" in text else "val md-view md-raw"
+    if monospace or "\n" in text:
+        raw_inner = f'<pre class="{raw_cls}">{escaped}</pre>'
+    else:
+        raw_inner = f'<div class="{raw_cls}">{escaped}</div>'
+    return (
+        f'<div class="md-field" data-md-label="{html.escape(label)}">'
+        '<div class="md-bar"><button type="button" class="md-toggle" '
+        'aria-pressed="false">Preview</button></div>'
+        f"{raw_inner}"
+        "</div>"
+    )
+
+
 def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "") -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
@@ -616,7 +647,7 @@ def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "
         if isinstance(value, (dict, list)):
             rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
         else:
-            rendered = f'<div class="val">{html.escape(str(value))}</div>'
+            rendered = _md_field_html(str(value), interactive=interactive, label=str(key))
         attrs = _section_attrs(value, interactive=interactive)
         badge = _objid_badge(_first_objid(value), interactive=interactive)
         rows.append(
@@ -663,9 +694,13 @@ def _state_section_html(todo: JsonDict, *, interactive: bool = True) -> str:
         text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
         # A note is prose with paragraphs; a pr number or branch name is a word.
         rendered = (
-            f'<pre class="val body">{html.escape(text)}</pre>'
-            if "\n" in text
-            else f'<div class="val">{html.escape(text)}</div>'
+            _md_field_html(text, interactive=interactive, monospace="\n" in text, label=f"State {key}")
+            if key == "note"
+            else (
+                f'<pre class="val body">{html.escape(text)}</pre>'
+                if "\n" in text
+                else f'<div class="val">{html.escape(text)}</div>'
+            )
         )
         rows.append(
             f'<div class="meta-row"><h3 class="meta-key">{html.escape(str(key))}</h3>'
@@ -704,7 +739,7 @@ def _sections_html(
     long_summary = _raw_field(todo, "LongSummary")
     long_summary_html = _section(
         "Long summary",
-        f'<pre class="val body">{html.escape(long_summary)}</pre>',
+        _md_field_html(long_summary, interactive=interactive, monospace=True, label="Long summary"),
         interactive=interactive,
         attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
         objid=_first_objid(todo.get("LongSummary")),
@@ -733,7 +768,7 @@ def _sections_html(
         + long_summary_html
         + _section(
             "Body",
-            f'<pre class="val body">{html.escape(body)}</pre>',
+            _md_field_html(body, interactive=interactive, monospace=True, label="Body"),
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
             objid=_first_objid(todo.get("Body")),
@@ -920,6 +955,24 @@ _STYLE = """<style>
   .results li { padding: 8px; border-bottom: 1px solid #eaeef2; }
   .results .r-state { color: #57606a; font-size: 12px; }
   .results .r-utime { color: #8b949e; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; }
+  .md-bar { text-align: right; margin: 0 0 4px; }
+  .md-toggle { font-size: 11px; color: #0969da; background: #fff; border: 1px solid #d8dee4;
+               border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .md-toggle[aria-pressed="true"] { background: #ddf4ff; border-color: #0969da; }
+  .md-field.md-active { box-shadow: 0 0 0 2px #ddf4ff; border-radius: 6px; }
+  .fold-md { height: 100%; overflow: auto; }
+  .fold-md h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+                letter-spacing: .04em; color: #57606a; }
+  .md-preview { background: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
+  .md-preview h1 { font-size: 1.35em; margin: 0.5em 0 0.25em; }
+  .md-preview h2 { font-size: 1.15em; margin: 0.5em 0 0.25em; }
+  .md-preview h3 { font-size: 1.05em; margin: 0.5em 0 0.25em; }
+  .md-preview p { margin: 0.35em 0; }
+  .md-preview ul { margin: 0.35em 0; padding-left: 1.4em; }
+  .md-preview code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                     background: #eaeef2; padding: 0 3px; border-radius: 3px; font-size: 12px; }
+  .md-preview pre.md-code { background: #eaeef2; padding: 10px; border-radius: 6px; overflow: auto; }
+  .md-preview pre.md-code code { background: none; padding: 0; }
 </style>"""
 
 
@@ -931,6 +984,146 @@ const topPane = document.getElementById('top');
 const divider = document.getElementById('divider');
 
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function safeHref(h){
+  h = String(h||'').trim();
+  if (/^javascript:/i.test(h)) return '#';
+  return h.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+function inlineMd(s){
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+  s = s.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+  s = s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function(_, t, u){ return '<a href="'+safeHref(u)+'">'+t+'</a>'; });
+  return s;
+}
+function mdRender(src){
+  if (!src) return '';
+  var lines = String(src).split('\\n');
+  var out = [], inCode = false, code = [], list = null;
+  function flushList(){
+    if (!list) return;
+    out.push('<ul>'+list.map(function(li){ return '<li>'+inlineMd(li)+'</li>'; }).join('')+'</ul>');
+    list = null;
+  }
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (/^```/.test(line)) {
+      flushList();
+      if (inCode) {
+        out.push('<pre class="md-code"><code>'+esc(code.join('\\n'))+'</code></pre>');
+        code = []; inCode = false;
+      } else { inCode = true; }
+      continue;
+    }
+    if (inCode) { code.push(line); continue; }
+    var hm = line.match(/^(#{1,3})\\s+(.+)$/);
+    if (hm) {
+      flushList();
+      var n = hm[1].length;
+      out.push('<h'+n+'>'+inlineMd(hm[2])+'</h'+n+'>');
+      continue;
+    }
+    var lm = line.match(/^[-*]\\s+(.+)$/);
+    if (lm) {
+      if (!list) list = [];
+      list.push(lm[1]);
+      continue;
+    }
+    if (line.trim() === '') { flushList(); continue; }
+    flushList();
+    out.push('<p>'+inlineMd(line)+'</p>');
+  }
+  flushList();
+  if (inCode && code.length) {
+    out.push('<pre class="md-code"><code>'+esc(code.join('\\n'))+'</code></pre>');
+  }
+  return out.join('');
+}
+var activeMdField = null;
+var foldHint = '<p class="hint">Click a work item to see its message and diff. Click a subtodo to view it. Drag the bar to resize.</p>';
+
+function mdLabel(field){
+  return field.getAttribute('data-md-label') || 'Preview';
+}
+
+function clearMdPreview(){
+  if (!activeMdField) return;
+  var btn = activeMdField.querySelector('.md-toggle');
+  if (btn) {
+    btn.textContent = 'Preview';
+    btn.setAttribute('aria-pressed', 'false');
+  }
+  activeMdField.classList.remove('md-active');
+  activeMdField = null;
+}
+
+function showMdPreview(field){
+  clearMdPreview();
+  var raw = field.querySelector('.md-raw');
+  if (!raw) return;
+  fold.className = 'fold';
+  fold.innerHTML = '<div class="fold-md"><h3>'+esc(mdLabel(field))+'</h3><div class="md-preview">'+mdRender(raw.textContent)+'</div></div>';
+  var btn = field.querySelector('.md-toggle');
+  if (btn) {
+    btn.textContent = 'Raw';
+    btn.setAttribute('aria-pressed', 'true');
+  }
+  field.classList.add('md-active');
+  activeMdField = field;
+}
+
+function toggleFoldInlineMd(field){
+  var raw = field.querySelector('.md-raw');
+  var btn = field.querySelector('.md-toggle');
+  if (!raw || !btn) return;
+  var preview = field.querySelector('.md-preview');
+  if (!preview) {
+    preview = document.createElement('div');
+    preview.className = 'md-view md-preview';
+    field.appendChild(preview);
+  }
+  var showing = btn.getAttribute('aria-pressed') === 'true';
+  if (showing) {
+    raw.hidden = false;
+    preview.hidden = true;
+    btn.textContent = 'Preview';
+    btn.setAttribute('aria-pressed', 'false');
+    return;
+  }
+  if (!preview.dataset.filled) {
+    preview.innerHTML = mdRender(raw.textContent);
+    preview.dataset.filled = '1';
+  }
+  raw.hidden = true;
+  preview.hidden = false;
+  btn.textContent = 'Raw';
+  btn.setAttribute('aria-pressed', 'true');
+}
+
+function initMdToggles(root){
+  (root || document).querySelectorAll('.md-field').forEach(function(field){
+    if (field.dataset.mdInit) return;
+    field.dataset.mdInit = '1';
+    var btn = field.querySelector('.md-toggle');
+    if (!btn) return;
+    var inFold = !!(root && root.id === 'fold') || !!field.closest('#fold');
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      if (inFold) {
+        toggleFoldInlineMd(field);
+        return;
+      }
+      if (field === activeMdField && btn.getAttribute('aria-pressed') === 'true') {
+        clearMdPreview();
+        fold.className = 'fold';
+        fold.innerHTML = foldHint;
+        return;
+      }
+      showMdPreview(field);
+    });
+  });
+}
 function clearHi(){
   document.querySelectorAll('.wi,.st').forEach(function(el){ el.classList.remove('hi','active'); });
 }
@@ -942,6 +1135,7 @@ function box(objid){ return document.querySelector('#top [data-obj="'+objid+'"]'
 function select(objid){
   var entry = (DATA.objects || {})[objid];
   if (!entry) return false;
+  clearMdPreview();
   clearHi();
   var el = box(objid);
   if (el) el.classList.add('active');
@@ -954,8 +1148,11 @@ function select(objid){
     if (entry.github) { head = '<a href="'+entry.github+'">'+head+'</a>'; }
     fold.className = 'fold split-fold';
     fold.innerHTML =
-      '<div class="fold-msg"><h3>'+head+'</h3><pre><code>'+esc(entry.message || '(no commit)')+'</code></pre></div>' +
+      '<div class="fold-msg"><h3>'+head+'</h3>' +
+      '<div class="md-field" data-md-label="Commit message"><div class="md-bar"><button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>' +
+      '<pre class="md-view md-raw"><code>'+esc(entry.message || '(no commit)')+'</code></pre></div></div>' +
       '<div class="fold-diff diff-code"><pre><code>'+esc(entry.diff || 'no diff')+'</code></pre></div>';
+    initMdToggles(fold);
   } else {
     fold.className = 'fold';
     fold.innerHTML = entry.html || '<p class="hint">No detail.</p>';
@@ -1013,6 +1210,7 @@ function focusOn(objid){
   if (el) el.scrollIntoView({block: 'nearest', inline: 'center'});
 }
 focusOn(FOCUS);
+initMdToggles(document.getElementById('top'));
 
 var dragging = false;
 divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
@@ -1118,10 +1316,10 @@ def render_search_page(root: Path, rows: List[JsonDict]) -> str:
 </head>
 <body class="search">
   <header><div class="title">Todos</div>
-    <div class="meta">{html.escape(str(root))} &middot; vector search &middot; {len(rows)} todos</div>
+    <div class="meta">{html.escape(str(root))} &middot; lexical search &middot; {len(rows)} todos</div>
   </header>
   <div id="top">
-    <input id="q" class="search-box" type="text" placeholder="search todos (vector search)" autofocus>
+    <input id="q" class="search-box" type="text" placeholder="search todos (id prefix or lexical)" autofocus>
     <ul id="results" class="results"></ul>
   </div>
   {script}

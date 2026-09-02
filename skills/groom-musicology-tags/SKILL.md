@@ -2,9 +2,10 @@
 name: groom-musicology-tags
 description: >-
   Normalize musicology provider tags into a shared VFAT-safe type;value domain
-  (artist, album, year, genre, collection) with per-provider synonym maps and
-  deterministic JSON extraction paths. Use when grooming .meta.*.json tags,
-  building shadup _tags mirrors, or preparing tag data for mechanistic eval.
+  (artist, album, year, genre, collection, various). Skip johan. No VA /
+  Various Artists as an artist tag: use various;soundtrack|curated|collection
+  and put the movie, DJ, or series in artist;*. Use when grooming .meta.*.json
+  tags, building shadup _tags mirrors, or preparing tag data for mechanistic eval.
 disable-model-invocation: true
 ---
 
@@ -16,6 +17,26 @@ Prepare provider tag corpora so a later **mechanistic** step can emit canonical
 Musicology lives in the sibling checkout `../bin/musicology`. Live sidecars sit
 under `/mnt/sdb2/music/flac/files/**/.meta.<provider>.json` (skip `_tags/`).
 
+Runtime classifier: `shadup/tag_classify.py` (synonym maps, year/artist
+coercion, `various;*` policy, `va_rename_target` for matching folder names).
+Album **directory** names are `skills/correct-flac-names` — same artist
+preference (movie / DJ / series), never `VA -`.
+
+## Preferences (normative)
+
+| Topic | Preference |
+|-------|------------|
+| Namespace | Every tag is `type;value`. Unqualified tags (`90s`, `VA`) are leftovers — do not emit them. |
+| Separator | `;` only. Never `:` or `\|` (VFAT). `_tags/` becomes `type/value`. |
+| Value slug | Always lowercase alphanumeric. Strip spaces/punct. Collapse accidental repeats (`blurblur` → `blur`; protect `duranduran`). `canonicalize_tag` runs on every combined tag and on `importtags` read. |
+| Johan | Hand labels in ``metadata.genres`` / ``metadata.tags`` — **skipped** at combine unless ``providers`` lists ``johan``. Mechanistic supplements live in ``local.derived_tags`` (always merged). |
+| Years | Release years: ``year;YYYY``. Decades: ``year;YYYx`` — from crowd tags **or** inferred from release years into ``local.derived_tags``. |
+| Artist-as-genre | Last.fm (etc.) performer names → `artist;slug`, not `genre;leonardcohen`. |
+| No VA artist | Never emit `artist;va` / `artist;variousartists`. |
+| Compilation kind | `various;soundtrack` / `various;curated` / `various;collection` (default). |
+| Compilation artist | Movie name, DJ (DJ-Kicks / Back to Mine), or series (Verve Remixed, Hotel Costes, Café del Mar). |
+| Folder name | Same artist preference, human-readable, no `VA -` prefix — see correct-flac-names. |
+
 ## Canonical schema (P0: VFAT / Samba)
 
 Tags become directory names under `files/_tags/`. Illegal path chars (`:`, `|`,
@@ -24,16 +45,54 @@ Tags become directory names under `files/_tags/`. Illegal path chars (`:`, `|`,
 | Rule | Choice |
 |------|--------|
 | Form | `type;value` (semicolon — same as `shadup` / `importtags`) |
-| Types | `artist`, `album`, `year`, `genre`, `collection` |
-| Value | lowercase slug: strip spaces/punct (`Peter Gabriel` → `petergabriel`) |
-| Not used | `:` (legacy namespace) or `\|` (body sketch — **illegal on VFAT**) |
+| Types | `artist`, `album`, `year`, `genre`, `collection`, `various` |
+| Value | lowercase slug: **always** strip spaces/punct |
+| Not used | `:` (legacy namespace) or `\|` |
 
-Examples: `artist;petergabriel`, `album;so`, `year;1984`, `year;1980s`,
-`genre;pop`, `genre;poprock`, `collection;djkicks`.
+Examples: `artist;petergabriel`, `artist;pulpfiction`, `artist;djcam`,
+`artist;ververemixed`, `year;199x`, `year;2001`, `genre;poprock`, `various;soundtrack`,
+`various;curated`, `various;collection`.
 
-Album/artist/year **fields** on the sidecar (`metadata.artist` etc.) map
-directly to typed tags when emitting; freeform `metadata.tags` /
-`metadata.genres` go through the synonym map.
+### Years vs genres
+
+Decade/year crowd tags are `year;*`. Runtime `canonicalize_tag` coerces a stale
+`genre;00s` map entry to `year;200x`. Release years stay four digits (`year;1994`).
+Decades use `YYYx` (`80s`/`1980s` → `year;198x`, `00s` → `year;200x`, `10s` → `year;201x`).
+
+**Derived decades (johan):** after provider union, `meta_combine` infers
+`year;YYYx` from every `year;YYYY` release year, writes them to
+``.meta.johan.json`` → ``local.derived_tags``, and merges into combined.
+Suppress a wrong bucket with ``local.derived_suppress`` (hand edit). Hand
+genres in ``metadata.*`` remain skipped unless ``johan`` is listed in
+``providers``.
+
+### Artist names leaking into genres
+
+If the raw string slugs to the album's own artist, or to a known alias
+(`leonard cohen` / `leonardchohen` → `leonardcohen`), emit `artist;slug` —
+one tag, no spaces. Do not keep both `genre;leonard cohen` and
+`genre;leonardcohen`.
+
+### Compilations (`various;*`)
+
+| Kind | When | `artist;*` |
+|------|------|------------|
+| `soundtrack` | OST / motion picture / soundtrack in title (plus a few movie overrides) | Movie (`pulpfiction`, `8mile`) |
+| `curated` | DJ-Kicks, Back to Mine, Verve Remixed, Hotel Costes, Café del Mar, … | DJ (`djcam`) or series (`ververemixed`, `hotelcostes`) |
+
+For fixed series (Hotel Costes, Cafe Del Mar, …), drop curator/DJ performer
+tags from provider metadata — only the series slug remains in `artist;*`.
+Example: `Stephane Pompougnac - Hotel Costes - Quatre` → `artist;hotelcostes`,
+not `artist;stphanepompougnac`.
+| `collection` | Default true compilation | Compilation / series title slug |
+
+Patterns: [various-series.json](various-series.json). Single-artist series
+volumes (e.g. `George Shearing - Verve Jazz Masters 57`) are **not**
+`various;*`.
+
+Album/artist/year **fields** on the sidecar map to typed tags when emitting,
+except a VA artist field is dropped. Freeform `metadata.tags` /
+`metadata.genres` go through the synonym map, then `canonicalize_tag`.
 
 ## Provider domains (corpus snapshot)
 
@@ -43,8 +102,8 @@ Each provider is internally consistent but uses a different vocabulary:
 |----------|-------------------|-----------------|-------|
 | discogs | Broad Discogs genres (`Rock`, `Electronic`) | Styles (`Trip Hop`, `Synth-pop`) | Both → mostly `genre;*` |
 | musicbrainz | Usually empty here | Crowd tags (mixed quality) | Drop noise (`isrc`, `vendu`, UUIDs) |
-| lastfm | Top crowd tags (genre **and** decades/moods) | Overflow (often empty) | Classify years → `year;*` |
-| johan | Compact hand labels | Compact hand labels | Prefer existing slug; fix typos |
+| lastfm | Top crowd tags (genre **and** decades/moods/artists) | Overflow (often empty) | Years → `year;*`; artist names → `artist;*` |
+| johan | Compact hand labels | Compact hand labels | **Skipped at combine** (kept on disk only) |
 
 Inventories: [inventory/](inventory/) (`count\\traw` TSV, regenerated by script).
 Maps: [synonyms/](synonyms/) (`raw` → `type;value`, plus `dropped`).
@@ -96,25 +155,43 @@ Then **review** `dropped` and fix misclassified rows by editing the JSON
 
 Given one album directory:
 
-1. Load all `.meta.<provider>.json`.
+1. Load `.meta.<provider>.json` except `combined` and **`johan`**.
 2. For each provider, read `metadata.genres` / `metadata.tags` (and optionally
-   artist/album/year fields).
-3. Replace each raw string via that provider's map (unmapped → skip or log).
+   artist/album/year fields). Skip emitting `artist;va` / `artist;variousartists`.
+3. Replace each raw string via that provider's map, then `canonicalize_tag`
+   (year coercion, artist aliases, slug).
 4. Union canonical `type;value` strings across providers.
-5. Emit only VFAT-safe segments (assert no `:|<>\"/\\?*`).
-6. Write the result to **`.meta.combined.json`** (`tags: [...]`). Parents of
-   multi-CD / nested album dirs also get a combined file that is the set-union
-   of their children's combined tags.
+5. Apply various-artists policy (`various;kind` + derived artist).
+6. Emit only VFAT-safe segments (assert no `:|<>\"/\\?*`).
+7. Write the result to **`.meta.combined.json`** (`tags: [...]`). Parents of
+   multi-CD / nested album dirs also get a set-union combined file.
 
 Conflict policy for the **same type** with different values: keep all values
 (set union) unless a later consumer asks for a single winner (then prefer
-`johan` > shortest slug > lexicographic).
+shortest slug > lexicographic).
 
-Runtime path: `postingest` (scan → combine → `importtags` reads only
-`.meta.combined.json` → `shadup refresh-extracted-tags`).
+Runtime path: `shadup/postingest`
+
+```
+musicscan (only if sidecars missing, or --force_provider)
+  → .meta.combined.json
+  → importtags (only that file)
+  → shadup refresh-extracted-tags
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--force_retag` | Rebuild combined from **existing** sidecars (no network). Use after map/schema changes. |
+| `--force_provider` | Re-query MusicBrainz / Discogs / Last.fm. Slow. Not implied by `--force_retag`. |
+| `--reset` | Drop old DB tags before import (needed to drop `genre;00s` / `artist;variousartists`). |
+
+Do not pass `--force_provider` for a tag-schema rebuild. Folder renames are
+**not** postingest — `shadup mv` via correct-flac-names / `va_rename_target`.
 
 ## Related
 
-- `../bin/musicology/` — `providers.py`, `metatool.py`, `fix_johan_colon_tags.py`
+- `shadup/tag_classify.py` — slug, years, artist aliases, `various;*`, `va_rename_target`
+- `shadup/postingest` — `--force_retag` / `--force_provider` / `--reset`
 - `shadup/importtags.py` — `artist;…` / `album;…` separators
-- `skills/correct-flac-names` — path sanitization for album dirs (orthogonal)
+- `../bin/musicology/` — `providers.py`, `metatool.py`
+- `skills/correct-flac-names` — album dirnames (same compilation artist preference; no `VA -`)

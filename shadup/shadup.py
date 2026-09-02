@@ -1214,14 +1214,35 @@ def get_tags(conn: sqlite3.Connection, shasum: str) -> list[str]:
     return json.loads(row[0])
 
 
+def normalize_stored_tags(tags: list[str]) -> list[str]:
+    """Canonicalize ``type;value`` tags before DB storage (lowercase slugs)."""
+    import tag_classify as tc
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        t = tag.strip()
+        if not t:
+            continue
+        canon = tc.canonicalize_tag(t)
+        stored = canon if canon else t
+        if stored not in seen:
+            seen.add(stored)
+            out.append(stored)
+    return sorted(out)
+
+
 def set_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
     """Replace the tag list for a sha256 hash."""
+    normalized = normalize_stored_tags(tags)
     conn.execute(
         """
         INSERT INTO sha_tags (shasum, tags) VALUES (?, ?)
         ON CONFLICT(shasum) DO UPDATE SET tags = excluded.tags
         """,
-        (shasum, json.dumps(sorted(set(tags)))),
+        (shasum, json.dumps(normalized)),
     )
 
 
@@ -1234,7 +1255,8 @@ def add_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
 def remove_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
     """Remove tags from a sha256 hash (no-op for absent tags)."""
     current = get_tags(conn, shasum)
-    set_tags(conn, shasum, [t for t in current if t not in tags])
+    drop = set(normalize_stored_tags(tags))
+    set_tags(conn, shasum, [t for t in current if t not in drop])
 
 
 # ---------------------------------------------------------------------------

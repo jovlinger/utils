@@ -6,7 +6,8 @@
     "album",
     "year",
     "genre",
-    "collection"
+    "collection",
+    "various"
   ],
   "value_slug": "lowercase alphanumeric only (strip spaces/punct)",
   "field_roles": {

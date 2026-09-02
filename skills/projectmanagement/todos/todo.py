@@ -18,9 +18,10 @@ import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Sequence
+from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence
 
 import todo_db
 import todo_objid
@@ -987,6 +988,106 @@ def worktree_path_for_branch(root: Path, branch: str) -> Optional[Path]:
     return linked_worktrees_by_branch(root).get(branch)
 
 
+def intended_worktree_path(root: Path, branch: str) -> Path:
+    """Return the conventional linked worktree path for *branch*."""
+    return Path(todo_db.todo_dir()) / "worktrees" / repo_key(root) / branch
+
+
+def resolve_ticket_branch(ticket: JsonDict, *, branch: Optional[str] = None) -> str:
+    """Return the git branch name for *ticket* (label on record, not existence)."""
+    ticket_id = str(ticket["Id"])
+    return branch or str(ticket.get("Branch") or "") or kebab_branch_name(
+        ticket_id, _raw_of(ticket, "Summary") or ""
+    )
+
+
+def promote_groom_todo(
+    root: Path,
+    ticket: JsonDict,
+    *,
+    branch: Optional[str] = None,
+    stay_on_parent: bool = True,
+    no_commit: bool = False,
+) -> JsonDict:
+    """Create the git branch for a groom ticket and move it to ``ready``."""
+    ticket_id = str(ticket["Id"])
+    branch_name = resolve_ticket_branch(ticket, branch=branch)
+    if branch_exists(root, branch_name):
+        raise TodoError(f"branch {branch_name!r} already exists")
+    parent_branch = current_branch(root)
+    run_git(root, "checkout", "-b", branch_name)
+    base = head_sha(root)
+    if base:
+        ticket["BaseSha"] = base
+    ticket["Branch"] = branch_name
+    if isinstance(ticket.get("Scope"), dict):
+        ticket["Scope"]["branch"] = branch_name
+    set_state(ticket, "ready")
+    write_todo_worktree(root, ticket)
+    if not no_commit:
+        commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
+    if stay_on_parent and parent_branch:
+        run_git(root, "checkout", parent_branch)
+    return ticket
+
+
+def maybe_init_todo_branch(
+    root: Path,
+    ticket: JsonDict,
+    *,
+    stay_on_parent: bool = True,
+    no_commit: bool = False,
+) -> tuple[JsonDict, bool]:
+    """Run ``init`` promote when the ticket branch is absent; else noop.
+
+    Returns ``(ticket, inited)`` where ``inited`` is True when a new branch was
+    created.
+    """
+    branch_name = resolve_ticket_branch(ticket)
+    if branch_name and branch_exists(root, branch_name):
+        return ticket, False
+    ticket = promote_groom_todo(
+        root,
+        ticket,
+        branch=branch_name or None,
+        stay_on_parent=stay_on_parent,
+        no_commit=no_commit,
+    )
+    return ticket, True
+
+
+def ensure_todo_worktree(root: Path, todo: JsonDict) -> JsonDict:
+    """Create or reuse the linked worktree for *todo*'s branch.
+
+    Returns a JSON-serializable payload with ``worktree`` and ``created``.
+    Raises TodoError when the ticket has no Branch, the branch is missing in
+    git (promote with ``init`` first), or ``git worktree add`` fails.
+    """
+    branch = str(todo.get("Branch") or "")
+    if not branch:
+        raise TodoError("ticket missing Branch; run todo init --id <selector> first")
+    if not branch_exists(root, branch):
+        ticket_id = str(todo.get("Id") or "")[:8]
+        hint = f"todo init --id {ticket_id}" if ticket_id else "todo init"
+        raise TodoError(f"branch {branch!r} does not exist; run {hint} first")
+
+    intended = intended_worktree_path(root, branch)
+    existing = worktree_path_for_branch(root, branch)
+    if existing is not None:
+        return {"worktree": str(existing), "created": False}
+
+    if intended.is_dir() and not (intended / ".git").exists():
+        raise TodoError(
+            f"worktree path {intended} exists but is not a git worktree; "
+            "remove or rename it, then retry"
+        )
+
+    main = todo_db.main_checkout_root(root) or root
+    intended.parent.mkdir(parents=True, exist_ok=True)
+    run_git(main, "worktree", "add", str(intended), branch)
+    return {"worktree": str(intended), "created": True}
+
+
 def assert_todo_worktree_removable(root: Path, branch: str) -> None:
     """Raise TodoError if the todo's linked worktree exists and is dirty."""
     path = worktree_path_for_branch(root, branch)
@@ -1696,6 +1797,212 @@ def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
 # Reciprocal-rank-fusion constant; larger flattens the contribution curve.
 _RRF_K = 60
 
+# Search query prefix operators (no space between operator and value).
+_SEARCH_TIME_OPERATORS = frozenset(
+    {"tc_before", "tc_after", "tu_before", "tu_after"}
+)
+_RFC3339_Z_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+_RFC3339_DATE_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+_RFC3339_DATE_SLASH_RE = re.compile(r"\A\d{4}/\d{2}/\d{2}\Z")
+
+
+@dataclass(frozen=True)
+class SearchTimeFilters:
+    """Inclusive RFC3339 Z bounds on create_dt / update_dt from search terms."""
+
+    create_before: Optional[str] = None
+    create_after: Optional[str] = None
+    update_before: Optional[str] = None
+    update_after: Optional[str] = None
+
+    def active(self) -> bool:
+        """True when at least one bound is set."""
+        return (
+            self.create_before is not None
+            or self.create_after is not None
+            or self.update_before is not None
+            or self.update_after is not None
+        )
+
+
+def _normalize_search_date(value: str) -> str:
+    """Accept ``YYYY-MM-DD`` or ``YYYY/MM/DD``; return hyphenated date."""
+    if _RFC3339_DATE_SLASH_RE.match(value):
+        return value.replace("/", "-")
+    return value
+
+
+def _parse_search_timestamp(value: str, *, bound: str) -> str:
+    """Validate *value* and return an RFC3339 Z string for comparison.
+
+    Accepts a full timestamp (``2026-01-01T00:00:00Z``) or a date-only value
+    (``2026-01-01`` or ``2026/01/01``). Date-only *after* bounds start at
+    00:00:00Z that day; date-only *before* bounds end at 23:59:59Z that day.
+    """
+    if _RFC3339_Z_RE.match(value):
+        return value
+    date_value = _normalize_search_date(value)
+    if _RFC3339_DATE_RE.match(date_value):
+        if bound == "after":
+            return f"{date_value}T00:00:00Z"
+        if bound == "before":
+            return f"{date_value}T23:59:59Z"
+    raise TodoError(
+        f"invalid search timestamp {value!r}; expected YYYY-MM-DD, YYYY/MM/DD, "
+        "or YYYY-MM-DDTHH:MM:SSZ"
+    )
+
+
+def parse_search_query(
+    terms: Sequence[str],
+) -> tuple[List[str], SearchTimeFilters]:
+    """Split *terms* into text matchers and colon-based time-filter operators.
+
+    Recognized operators (glued to the value, no space): ``tc_before:``,
+    ``tc_after:``, ``tu_before:``, ``tu_after:`` each followed by RFC3339 Z or a
+    date-only ``YYYY-MM-DD``. Any other token is a normal search term (including strings that
+    happen to contain a colon but do not match a known operator prefix).
+    """
+    text_terms: List[str] = []
+    create_before: Optional[str] = None
+    create_after: Optional[str] = None
+    update_before: Optional[str] = None
+    update_after: Optional[str] = None
+    for term in terms:
+        if ":" not in term:
+            text_terms.append(term)
+            continue
+        prefix, _, value = term.partition(":")
+        if prefix not in _SEARCH_TIME_OPERATORS:
+            text_terms.append(term)
+            continue
+        if not value:
+            raise TodoError(f"search operator {prefix!r} requires a value after ':'")
+        bound = "before" if prefix.endswith("_before") else "after"
+        timestamp = _parse_search_timestamp(value, bound=bound)
+        if prefix == "tc_before":
+            create_before = timestamp
+        elif prefix == "tc_after":
+            create_after = timestamp
+        elif prefix == "tu_before":
+            update_before = timestamp
+        else:
+            update_after = timestamp
+    return text_terms, SearchTimeFilters(
+        create_before=create_before,
+        create_after=create_after,
+        update_before=update_before,
+        update_after=update_after,
+    )
+
+
+def _ticket_matches_time_filters(
+    ticket: JsonDict, filters: SearchTimeFilters
+) -> bool:
+    """True when *ticket* satisfies every set bound in *filters*."""
+    create_dt = str(ticket.get("create_dt") or "")
+    update_dt = str(ticket.get("update_dt") or "")
+    if filters.create_before is not None:
+        if not create_dt or create_dt > filters.create_before:
+            return False
+    if filters.create_after is not None:
+        if not create_dt or create_dt < filters.create_after:
+            return False
+    if filters.update_before is not None:
+        if not update_dt or update_dt > filters.update_before:
+            return False
+    if filters.update_after is not None:
+        if not update_dt or update_dt < filters.update_after:
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class SearchTicketsResult:
+    """Ranked search hits plus how many matches the state filter hid."""
+
+    hits: List[JsonDict]
+    hidden_by_status: int
+
+
+def _ticket_matches_tag_filter(ticket: JsonDict, tags: Optional[frozenset]) -> bool:
+    if tags is None:
+        return True
+    return bool(
+        {
+            e["raw"]
+            for e in (ticket.get("Tag") or [])
+            if isinstance(e, dict) and isinstance(e.get("raw"), str)
+        }
+        & tags
+    )
+
+
+def _partition_search_candidates(
+    store: todo_store.TodoStore,
+    *,
+    states: Optional[frozenset],
+    tags: Optional[frozenset],
+    time_filters: SearchTimeFilters,
+) -> tuple[Dict[str, JsonDict], Dict[str, JsonDict], Dict[str, tuple[str, str]]]:
+    """Split store tickets into visible vs status-hidden search pools."""
+    visible: Dict[str, JsonDict] = {}
+    hidden: Dict[str, JsonDict] = {}
+    locations: Dict[str, tuple[str, str]] = {}
+    for repo_path, branch, parsed in store.list_located():
+        parsed = normalize_todo_schema(parsed)
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if not _ticket_matches_tag_filter(parsed, tags):
+            continue
+        if not _ticket_matches_time_filters(parsed, time_filters):
+            continue
+        locations[ticket_id] = (repo_path, branch)
+        state = current_state_name(parsed) or ""
+        if states is not None and state not in states:
+            hidden[ticket_id] = parsed
+        else:
+            visible[ticket_id] = parsed
+    return visible, hidden, locations
+
+
+def _text_search_match_ids(
+    tickets: Mapping[str, JsonDict],
+    raws: Mapping[str, Dict[str, str]],
+    text_terms: Sequence[str],
+    prepared: Sequence[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]],
+    stored_by_fingerprint: Mapping[str, Mapping[tuple[str, str], List[List[float]]]],
+    *,
+    persist_stopwords: bool,
+) -> set[str]:
+    """Ticket ids that match *text_terms* under the same rankers as search."""
+    if not text_terms or not tickets:
+        return set()
+
+    rankings: List[Dict[str, float]] = []
+    for _name, _embedder, fingerprint, term_vecs in prepared:
+        stored = stored_by_fingerprint[fingerprint]
+        for _term, query_vec in term_vecs:
+            scores: Dict[str, float] = {}
+            for tid in tickets:
+                best = 0.0
+                for field_path in raws.get(tid, {}):
+                    chunks = stored.get((tid, field_path)) or []
+                    for chunk in chunks:
+                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
+                if best > 0.0:
+                    scores[tid] = best
+            rankings.append(scores)
+
+    index = todo_search.LexicalIndex(
+        {tid: " ".join(raws[tid].values()) for tid in tickets}
+    )
+    index.use_stopwords(resolve_stopwords(index, persist=persist_stopwords))
+    rankings.append(index.score(text_terms))
+    fused = _rrf_fuse(rankings)
+    return {tid for tid, score in fused.items() if score > 0.0}
+
 
 def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
     """Reciprocal rank fusion: sum 1/(k+rank) across rankers, scale-free."""
@@ -1802,7 +2109,7 @@ def search_tickets(
     dry_run: bool = False,
     states: Optional[frozenset] = None,
     tags: Optional[frozenset] = None,
-) -> List[JsonDict]:
+) -> SearchTicketsResult:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
 
     ``terms`` is a list of independent search terms (google-style): each term is
@@ -1825,7 +2132,15 @@ def search_tickets(
     vector/lexical score -- a bare id prefix otherwise has no lexical or
     semantic overlap with Summary/Body text and would not reliably surface on
     its own.
+
+    Search terms may include colon-based time operators (no space before the
+    value): ``tc_before:``, ``tc_after:``, ``tu_before:``, ``tu_after:`` each
+    followed by an RFC3339 Z timestamp. They are ANDed with each other and with
+    text terms. Space-separated text terms are google-style OR: each term is its
+    own matcher and matching more terms ranks higher; a doc matching only one
+    term can still appear.
     """
+    text_terms, time_filters = parse_search_query(terms)
     names = resolve_embedder_names(embedder_names)
     embedders: List[tuple[str, todo_embed.Embedder]] = []
     for name in names:
@@ -1838,37 +2153,38 @@ def search_tickets(
             ) from exc
 
     store = todo_store.get_store()
-    tickets: Dict[str, JsonDict] = {}
-    raws: Dict[str, Dict[str, str]] = {}
-    locations: Dict[str, tuple[str, str]] = {}
-    for repo_path, branch, parsed in store.list_located():
-        parsed = normalize_todo_schema(parsed)  # legacy state keys -> current nouns
-        ticket_id = str(parsed.get("Id", ""))
-        if not ticket_id:
-            continue
-        if states is not None and (current_state_name(parsed) or "") not in states:
-            continue
-        if tags is not None and not (
-            {
-                e["raw"]
-                for e in (parsed.get("Tag") or [])
-                if isinstance(e, dict) and isinstance(e.get("raw"), str)
-            }
-            & tags
-        ):
-            continue
-        tickets[ticket_id] = parsed
-        locations[ticket_id] = (repo_path, branch)
-        raws[ticket_id] = _raw_map(parsed)
+    tickets, hidden_tickets, locations = _partition_search_candidates(
+        store, states=states, tags=tags, time_filters=time_filters
+    )
+    raws: Dict[str, Dict[str, str]] = {
+        ticket_id: _raw_map(parsed) for ticket_id, parsed in tickets.items()
+    }
+    hidden_raws: Dict[str, Dict[str, str]] = {
+        ticket_id: _raw_map(parsed) for ticket_id, parsed in hidden_tickets.items()
+    }
 
-    prefix_hit = _solo_term_id_prefix_hit(terms, tickets)
+    if not text_terms:
+        ranked_ids = sorted(
+            tickets.keys(),
+            key=lambda tid: (
+                str(tickets[tid].get("update_dt") or ""),
+                str(tickets[tid].get("create_dt") or ""),
+            ),
+            reverse=True,
+        )
+        return SearchTicketsResult(
+            hits=[tickets[tid] for tid in ranked_ids[:limit]],
+            hidden_by_status=len(hidden_tickets),
+        )
+
+    prefix_hit = _solo_term_id_prefix_hit(text_terms, tickets)
 
     prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
     stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
     for name, embedder in embedders:
         try:
             fingerprint = embedder.fingerprint()
-            term_vecs = [(term, embedder.embed(term)) for term in terms]
+            term_vecs = [(term, embedder.embed(term)) for term in text_terms]
         except (ValueError, RuntimeError) as exc:
             raise TodoError(f"embedder {name!r} failed: {exc}") from exc
         prepared.append((name, embedder, fingerprint, term_vecs))
@@ -1962,7 +2278,7 @@ def search_tickets(
         {tid: " ".join(raws[tid].values()) for tid in tickets}
     )
     index.use_stopwords(resolve_stopwords(index, persist=not dry_run))
-    rankings.append(index.score(terms))
+    rankings.append(index.score(text_terms))
 
     if refreshing_embeddings:
         print("Done", file=sys.stderr, flush=True)
@@ -1974,7 +2290,20 @@ def search_tickets(
         # Pinned first: an id prefix has no lexical/semantic score of its own,
         # so it may otherwise be absent from `fused` entirely (see _rrf_fuse).
         ordered_ids = [prefix_hit] + [tid for tid in ordered_ids if tid != prefix_hit]
-    return [tickets[tid] for tid in ordered_ids[:limit]]
+    hidden_by_status = len(
+        _text_search_match_ids(
+            hidden_tickets,
+            hidden_raws,
+            text_terms,
+            prepared,
+            stored_by_fingerprint,
+            persist_stopwords=not dry_run,
+        )
+    )
+    return SearchTicketsResult(
+        hits=[tickets[tid] for tid in ordered_ids[:limit]],
+        hidden_by_status=hidden_by_status,
+    )
 
 
 def _prompt_section(todo: JsonDict) -> str:
@@ -3437,26 +3766,14 @@ class InitCommand(TodoCreateCommand):
     def _promote(self, root: Path, ticket: JsonDict) -> int:
         """Give an existing groom todo a git branch and move it to `ready`."""
         ticket_id = str(ticket["Id"])
-        branch = self.branch or str(ticket.get("Branch") or "") or kebab_branch_name(
-            ticket_id, _raw_of(ticket, "Summary") or ""
+        ticket = promote_groom_todo(
+            root,
+            ticket,
+            branch=self.branch,
+            stay_on_parent=self.stay_on_parent,
+            no_commit=self.no_commit,
         )
-        if branch_exists(root, branch):
-            raise TodoError(f"branch {branch!r} already exists")
-        parent_branch = current_branch(root)
-        run_git(root, "checkout", "-b", branch)
-        base = head_sha(root)  # branch's initial sha (invariant #5)
-        if base:
-            ticket["BaseSha"] = base
-        ticket["Branch"] = branch
-        if isinstance(ticket.get("Scope"), dict):
-            ticket["Scope"]["branch"] = branch
-        set_state(ticket, "ready")
-        write_todo_worktree(root, ticket)
-        if not self.no_commit:
-            commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
-        if self.stay_on_parent and parent_branch:
-            run_git(root, "checkout", parent_branch)
-        print(json.dumps({"Id": ticket_id, "Branch": branch}, indent=2))
+        print(json.dumps({"Id": ticket_id, "Branch": ticket["Branch"]}, indent=2))
         return 0
 
     def _create_fresh(self, root: Path) -> int:
@@ -3535,38 +3852,55 @@ class InitCommand(TodoCreateCommand):
 
 class EnsureWorktreeCommand(SubtodoCommand):
     command_names = ("ensure_worktree",)
-    doc_short: ClassVar[str] = "Ensure a working tree exists for a todo (STUB)"
+    doc_short: ClassVar[str] = "Ensure a linked git worktree exists for a todo"
     doc_long: ClassVar[str] = (
-        "Ensure-worktree will materialize a git working tree for the todo's branch so code can be "
-        "worked on it -- creating it if absent and printing its path -- and is meant to be called "
-        "implicitly whenever a flow needs to touch code. The working tree may become ephemeral "
-        "(created on demand, discarded when idle) in a later revision. STUB: for now it only "
-        "resolves the todo and prints the INTENDED worktree path (under "
-        "<todo-dir>/worktrees/<repo>/<branch>) with created=false; it does not run `git worktree "
-        "add` yet. Selector is a 4+ hex Id prefix or the full digest."
+        "Ensure-worktree materializes a git working tree for the todo's branch under "
+        "<todo-dir>/worktrees/<repo>/<branch>, creating it with `git worktree add` "
+        "when absent. Idempotent when the branch already has a linked worktree. "
+        "Fails (exit 1) when the ticket has no Branch or the branch does not exist "
+        "yet unless --init is passed. With --init, runs the same promote as "
+        "`init --id <selector> --stay-on-parent` when the branch is missing (noop "
+        "when it already exists), then ensures the worktree. Selector is a 4+ hex "
+        "Id prefix or the full digest."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ensure_worktree arguments."""
         parser.add_argument("todoid", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "--init",
+            action="store_true",
+            help="promote groom todo (todo init) when its git branch is missing; noop otherwise",
+        )
+        parser.add_argument(
+            "--no-commit",
+            action="store_true",
+            help="with --init, skip the chore(todo) commit on the new branch",
+        )
 
     def do(self) -> int:
-        """STUB: print the intended worktree path for the todo without creating it."""
+        """Create or reuse the linked worktree for the todo's branch."""
         root = self.root()
+        if self.init and read_todo_worktree(root) is not None:
+            raise TodoError("todo already exists on current branch; resume it instead of init")
         _loc, todo = resolve_ticket_by_id(root, self.todoid)
-        branch = str(todo.get("Branch") or "")
-        # STUB: real impl will `git worktree add` at this path (idempotent) and may
-        # treat the tree as ephemeral. Convention: <todo-dir>/worktrees/<repo>/<branch>.
-        intended = Path(todo_db.todo_dir()) / "worktrees" / repo_key(root) / branch
+        inited = False
+        if self.init:
+            todo, inited = maybe_init_todo_branch(
+                root,
+                todo,
+                stay_on_parent=True,
+                no_commit=self.no_commit,
+            )
+        payload = ensure_todo_worktree(root, todo)
         print(
             json.dumps(
                 {
                     "Id": str(todo["Id"])[:8],
-                    "Branch": branch,
-                    "worktree": str(intended),
-                    "created": False,
-                    "stub": True,
+                    "Branch": str(todo.get("Branch") or ""),
+                    "inited": inited,
+                    **payload,
                 },
                 indent=2,
             )
@@ -5333,7 +5667,8 @@ class WebCommand(EnvironmentCommand):
                     terms = query.split()
                 if terms:
                     try:
-                        return run_search(root, terms)
+                        rows, _hidden = run_search(root, terms)
+                        return rows
                     except TodoError as exc:
                         raise todo_web.TodoWebError(str(exc)) from exc
             return [todo_row(todo) for todo in list_todos()]
@@ -5507,14 +5842,15 @@ def run_search(
     dry_run: bool = False,
     states: Optional[frozenset] = None,
     tags: Optional[frozenset] = None,
-) -> List[JsonDict]:
+) -> tuple[List[JsonDict], int]:
     """Ranked search as structured rows (relevance-rank order preserved).
 
     Shared by the 'search' subcommand and the web viewer so both go through the
     same vector-search backend without duplicating it. ``terms`` is the list of
-    google-style search terms (see ``search_tickets``).
+    google-style search terms (see ``search_tickets``). Returns ``(rows,
+    hidden_by_status)``.
     """
-    hits = search_tickets(
+    result = search_tickets(
         root,
         terms,
         limit=limit,
@@ -5523,7 +5859,7 @@ def run_search(
         states=states,
         tags=tags,
     )
-    return [todo_row(todo) for todo in hits]
+    return [todo_row(todo) for todo in result.hits], result.hidden_by_status
 
 
 class SearchCommand(CorpusQueryCommand):
@@ -5531,13 +5867,17 @@ class SearchCommand(CorpusQueryCommand):
     doc_short: ClassVar[str] = "Vector search todos"
     doc_long: ClassVar[str] = (
         "Search ranks todos by reciprocal-rank fusion over one or more embedders "
-        "plus lexical overlap. Multiple terms are searched google-style: each term "
-        "is embedded and matched independently and the per-term scores add. A term "
+        "plus lexical overlap. Multiple text terms are searched google-style (OR): "
+        "each term is embedded and matched independently and matching more terms "
+        "ranks higher; a doc matching only one term can still appear. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
         "unquoted words (bh 791) match individually. A single term that uniquely "
         "prefix-matches one ticket's Id (4+ hex chars, same shape as a selector) "
-        "is pinned first regardless of its own lexical/semantic score. Results "
-        "hide FINAL (done, "
+        "is pinned first regardless of its own lexical/semantic score. Colon "
+        "operators (no space before the value) filter by time and are ANDed with "
+        "text terms: tc_before:/tc_after: on create_dt, tu_before:/tu_after: on "
+        "update_dt, each followed by RFC3339 Z (e.g. tc_after:2026-01-01T00:00:00Z). "
+        "Results hide FINAL (done, "
         "merged) by default; pass -s to show all states or --states=<expr> (UPPERCASE "
         "macros ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state "
         "names) to filter. --embedder takes a comma list "
@@ -5559,9 +5899,10 @@ class SearchCommand(CorpusQueryCommand):
             nargs="+",
             metavar="TERM",
             help=(
-                "one or more search terms (google-style): each is embedded and "
-                'matched on its own and the scores add. Quote a phrase ("bh 791") '
-                "to make it a single term; unquoted words (bh 791) match individually"
+                "one or more search terms (google-style OR): each text term is "
+                "embedded and matched on its own; matching more terms ranks higher. "
+                'Quote a phrase ("bh 791") to make it a single term. Time filters: '
+                "tc_before:/tc_after:/tu_before:/tu_after:<RFC3339Z> (no space, ANDed)"
             ),
         )
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
@@ -5604,7 +5945,7 @@ class SearchCommand(CorpusQueryCommand):
             if self.tag
             else None
         )
-        rows = run_search(
+        rows, hidden_by_status = run_search(
             root,
             self.query,
             limit=self.limit,
@@ -5615,6 +5956,8 @@ class SearchCommand(CorpusQueryCommand):
         )
         for line in _format_rows(rows, columns):
             print(line)
+        if hidden_by_status:
+            print(f"... {hidden_by_status} hidden by status", file=sys.stderr)
         return 0
 
 
