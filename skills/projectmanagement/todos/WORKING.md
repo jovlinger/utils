@@ -151,6 +151,27 @@ todo.py read <id>            # full record
 todo.py set <id> --state working --owner=<agent>
 ```
 
+**Before resuming: verify identity, don't infer it from a branch name.** Ambiguity
+runs in both directions:
+
+- **Branch does not imply todo.** A checked-out branch that resembles a ticket
+  (same ticket key, similar topic words) is not evidence it is that todo's
+  registered worktree. Confirm with an exact match -- `todo.py ls -s` then
+  `todo.py get-json-path <id> Branch` (and `Scope.branch`) against the literal
+  `git branch --show-current` -- never resemblance. A long-lived/shared
+  worktree can sit on an old or repurposed branch name that maps to no todo at
+  all, or to a different one than the name suggests.
+- **Todo state does not imply code state, or vice versa.** A todo whose
+  WorkItems all show `done: false` is not proof the work is unstarted: the
+  same ticket's code may already have landed under a *different* todo
+  (separate id/branch), or via a commit that was never tracked as any todo's
+  WorkItem. Before resuming or reporting a hypothesis: (1) read the todo
+  itself; (2) search finished/merged todos on the same topic (`todo.py ls -s`
+  includes FINAL states; `todo.py search "<topic>"`) -- their Body/WorkItems
+  often record exactly what already shipped and why; (3) check the code/DB/git
+  history directly for whether the acceptance criteria are already met --
+  don't assume the todo ledger is complete.
+
 Startup context: `Parent` is a list of `{Id, Branch}` refs. `add-subtodo` sets
 element 0 (structural) and registers a tracked subtodo. `set --parent` writes
 follow-only INFO backlinks -- see
