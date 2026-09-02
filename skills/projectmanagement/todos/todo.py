@@ -76,8 +76,8 @@ DEFAULT_STATE_FILTER = "ALL,-FINAL"
 #   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
 #                            derived data, dropped by clear-search-data
 #   search_stopword_min_idf  the IDF below which a term is a stopword here
-#   embedder                 present-and-null turns vector search OFF for this
-#                            store, leaving lexical IDF as the only ranker
+#   embedder                 null or absent turns vector search OFF; a name/list
+#                            or --embedder re-enables embedders for search
 SEARCH_STOPWORDS_KEY = "search_stopwords"
 SEARCH_STOPWORD_MIN_IDF_KEY = "search_stopword_min_idf"
 SEARCH_EMBEDDER_KEY = "embedder"
@@ -2022,23 +2022,21 @@ def resolve_embedder_names(requested: Optional[Sequence[str]]) -> List[str]:
     ==========================  ==========================================
     ``config.json``             search runs with
     ==========================  ==========================================
-    (key absent)                every non-hidden embedder -- the default
+    (key absent)                NO embedder -- lexical IDF only (default)
     ``"embedder": null``        NO embedder: lexical IDF is the only ranker
     ``"embedder": "apple"``     that embedder (comma list, like --embedder)
     ``"embedder": ["a", "b"]``  those embedders
     ==========================  ==========================================
 
-    The null case is the point: it skips instantiation entirely, so nothing
-    spawns the macOS NLCE sidecar, nothing backfills a vector, and search stays
-    fast and hermetic on a machine that cannot embed at all. It is a store-level
-    policy rather than a flag because "this checkout does not do vectors" is a
-    property of the checkout.
+    Vector search remains available: set ``embedder`` in config or pass
+    ``--embedder`` explicitly. The default skips instantiation entirely, so
+    nothing spawns the macOS NLCE sidecar and search stays fast and hermetic.
     """
     if requested:
         return list(requested)
     todo_dir = todo_db.todo_dir()
     if not todo_store.config_has(todo_dir, SEARCH_EMBEDDER_KEY):
-        return todo_embed.default_embedder_names()
+        return []
     configured = todo_store.config_value_raw(todo_dir, SEARCH_EMBEDDER_KEY)
     if configured is None:
         return []
@@ -2116,7 +2114,8 @@ def search_tickets(
     embedded and matched on its own, contributing its own ranker to the fusion,
     so their scores add. A term is the unit of embedding and matching -- a term
     holding whitespace (a quoted phrase from the shell) is embedded/matched whole
-    rather than split. ``embedder_names`` defaults to every non-hidden embedder.
+    rather than split. ``embedder_names`` defaults to the store's ``embedder``
+    config -- absent or null means no embedder (see ``resolve_embedder_names``).
     A requested embedder that cannot be instantiated or run raises ``TodoError``
     (choose ``--embedder`` explicitly). Unless ``dry_run``, vectors missing for a
     chosen embedder are computed and stored (lazy backfill) before ranking; a
@@ -5600,7 +5599,7 @@ class WebCommand(EnvironmentCommand):
         "a read-only rendition below the split. Clicking anything rewrites the address bar to "
         "that item's permalink, so what is on screen is always copyable. With a selector (a 4+ "
         "hex Id prefix) the printed URL opens straight onto that todo; without one the page is a "
-        "vector search (the same ranking as 'todo search') over every todo, showing update-time "
+        "lexical search (the same ranking as 'todo search') over every todo, showing update-time "
         "and State columns, with an empty query listing all. It also serves permalinks: "
         "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
         "(see 'resolveurl' for the grammar)."
@@ -5653,7 +5652,7 @@ class WebCommand(EnvironmentCommand):
         def search_rows(query: str) -> List[JsonDict]:
             """Structured rows for the viewer's search box.
 
-            A non-empty query runs the same vector search as `todo search`
+            A non-empty query runs the same lexical search as `todo search`
             (rank order preserved); an empty query lists every todo. The box has
             no shell, so it is split with ``shlex`` -- a quoted phrase becomes one
             term, mirroring the CLI (unbalanced quotes fall back to whitespace
@@ -5864,7 +5863,7 @@ def run_search(
 
 class SearchCommand(CorpusQueryCommand):
     command_names = ("search",)
-    doc_short: ClassVar[str] = "Vector search todos"
+    doc_short: ClassVar[str] = "Search todos (lexical IDF)"
     doc_long: ClassVar[str] = (
         "Search ranks todos by reciprocal-rank fusion over one or more embedders "
         "plus lexical overlap. Multiple text terms are searched google-style (OR): "
@@ -5881,7 +5880,7 @@ class SearchCommand(CorpusQueryCommand):
         "merged) by default; pass -s to show all states or --states=<expr> (UPPERCASE "
         "macros ALL, FINAL, PAUSING, WORKING, UNSTARTED, INFO plus lowercase state "
         "names) to filter. --embedder takes a comma list "
-        "(default: all non-hidden embedders; see the 'embedders' command). A "
+        "(default: the store's 'embedder' config; absent or null means none). A "
         "requested embedder that is unavailable errors -- pick one explicitly. "
         "Missing vectors are backfilled and stored before ranking unless "
         "--dry-run; a ticket with no vector for an embedder just does not "
@@ -5908,7 +5907,7 @@ class SearchCommand(CorpusQueryCommand):
         parser.add_argument("-n", "--limit", type=int, default=20, help="max results")
         parser.add_argument(
             "--embedder",
-            help="comma list of embedders (default: all non-hidden, e.g. apple)",
+            help="comma list of embedders (default: the store's 'embedder' config, else none)",
         )
         parser.add_argument(
             "--dry-run",

@@ -274,7 +274,7 @@ Config keys, per todo dir in `config.json`:
 |-----|---------|
 | `search_stopwords` | The discovered list. Written on the first search that finds one, then reused verbatim -- so a hand-edited list is honored. Derived data: `clear-search-data ALL` drops it and the next search rediscovers it against the corpus as it stands then (which is how a list that has gone stale gets corrected) |
 | `search_stopword_min_idf` | Cut-off for discovery (default `0.3`, i.e. a term in roughly 74%+ of todos) |
-| `embedder` | Absent = every non-hidden embedder. **`null` = none**, leaving lexical IDF as the only ranker: nothing instantiates an embedder, so no NLCE sidecar spawns and no vector is backfilled. A string (comma list) or list selects. `--embedder` always overrides; any other value type errors |
+| `embedder` | Absent or **`null` = none** (default): lexical IDF and id-prefix search only; nothing instantiates an embedder, so no NLCE sidecar spawns and no vector is backfilled. A string (comma list) or list re-enables vector search. `--embedder` always overrides; any other value type errors |
 
 `--dry-run` discovers stopwords for that run but persists nothing, matching how
 it already refuses to backfill vectors.
