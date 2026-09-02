@@ -197,28 +197,6 @@ def _iter_leaf_nodes(node: QuadNode) -> list[QuadNode]:
     return leaves
 
 
-def _finalize_member_op_ids(
-    node: QuadNode,
-    member_op_ids: dict[tuple[Hashable, ...], int],
-) -> QuadNode:
-    if node.zlist is not None:
-        members: list[Shape] = []
-        for member in node.zlist.members:
-            op_id = member_op_ids.get(member.cachekey(), -1)
-            if member.paint_op_id != op_id:
-                member.paint_op_id = op_id
-            members.append(member)
-        zlist = ZList(*members) if members else ZList()
-        return QuadNode(bounds=node.bounds, zlist=zlist)
-    assert node.children is not None
-    return QuadNode(
-        bounds=node.bounds,
-        children=tuple(
-            _finalize_member_op_ids(child, member_op_ids) for child in node.children
-        ),
-    )
-
-
 def _unique_members(zlists: Sequence[ZList]) -> list[Shape]:
     members: list[Shape] = []
     seen: set[tuple[Hashable, ...]] = set()
@@ -510,8 +488,9 @@ def render(
         unique_zlists.append(zlist)
     surface = ArraySurface(width, height, fill=TRANSPARENT)
     member_op_ids, shape_objects = _register_render_vm(width, height, unique_zlists)
-    tree = _finalize_member_op_ids(tree, member_op_ids)
-    quadtree_mm = mmap_quadtree(serialize_quadtree(tree))
+    quadtree_mm = mmap_quadtree(
+        serialize_quadtree(tree, member_op_ids=member_op_ids)
+    )
     _slr.bind_render(
         surface.pixel_buffer(),
         width,

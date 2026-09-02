@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import mmap
 import struct
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Hashable
 
 if TYPE_CHECKING:
     from imgcomp.stacklang_render import QuadNode
@@ -22,12 +22,19 @@ def _flatten_node(
     node: QuadNode,
     flat: list[tuple[float, float, float, float, int, int, int]],
     leaf_ops: list[int],
+    *,
+    member_op_ids: dict[tuple[Hashable, ...], int] | None = None,
 ) -> None:
     idx = len(flat)
     bounds = node.bounds
     if node.zlist is not None:
         zlist = node.zlist
-        member_ops = [member.paint_op_id for member in zlist.members]
+        if member_op_ids is not None:
+            member_ops = [
+                member_op_ids.get(member.cachekey(), -1) for member in zlist.members
+            ]
+        else:
+            member_ops = [member.paint_op_id for member in zlist.members]
         offset = len(leaf_ops)
         leaf_ops.extend(member_ops)
         flat.append(
@@ -46,7 +53,7 @@ def _flatten_node(
     first_child = len(flat)
     assert node.children is not None
     for child in node.children:
-        _flatten_node(child, flat, leaf_ops)
+        _flatten_node(child, flat, leaf_ops, member_op_ids=member_op_ids)
     flat[idx] = (
         bounds.xmin,
         bounds.ymin,
@@ -58,11 +65,15 @@ def _flatten_node(
     )
 
 
-def serialize_quadtree(root: QuadNode) -> bytes:
+def serialize_quadtree(
+    root: QuadNode,
+    *,
+    member_op_ids: dict[tuple[Hashable, ...], int] | None = None,
+) -> bytes:
     """Pack quadtree nodes and per-leaf member VM op ids into a binary blob."""
     nodes: list[tuple[float, float, float, float, int, int, int]] = []
     leaf_ops: list[int] = []
-    _flatten_node(root, nodes, leaf_ops)
+    _flatten_node(root, nodes, leaf_ops, member_op_ids=member_op_ids)
     buf = bytearray(HEADER_SIZE + NODE_SIZE * len(nodes) + LEAF_OP_STRUCT.size * len(leaf_ops))
     HEADER_STRUCT.pack_into(buf, 0, MAGIC, VERSION, len(nodes), len(leaf_ops))
     offset = HEADER_SIZE
