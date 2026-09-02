@@ -1,5 +1,5 @@
 #!/usr/bin/env venv-run
-"""Stack VM benchmarks: one native path per branch, untimed warm then timed reps."""
+"""Stack VM benchmarks: timed repetitions only (global warming is ``make build-ext``)."""
 
 from __future__ import annotations
 
@@ -140,10 +140,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.repeat < 1:
         parser.error("--repeat must be >= 1")
-
-    from tests.global_warming import warm_stack_benchmarks
-
-    warm_stack_benchmarks()
 
     results = run_all(repeat=args.repeat)
     timings_path = record_run(results, args.output)

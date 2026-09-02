@@ -1,5 +1,13 @@
 #!/usr/bin/env venv-run
-"""Untimed warmup for this branch's bench render and stack paths."""
+"""Global warming: untimed bench-path prep (JIT, directstack compile, VM registration).
+
+Policy (do not violate):
+- Global warming is part of **build** (``make build-ext`` / ``make global-warming``).
+- ``bench_render.py`` and ``bench_stack_run.py`` report **timed repetitions only**.
+- Self-reported ``*_iter_s`` / ``*_total_s`` must never include global warming.
+- Per-scene ``--warmup`` in bench_render is optional extra iteration inside the timed
+  driver only when explicitly requested; default ``make bench`` uses ``--warmup 0``.
+"""
 
 from __future__ import annotations
 

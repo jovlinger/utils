@@ -1,6 +1,6 @@
 #!/usr/bin/env venv-run
 # fmt: off
-"""Image render benchmarks: time render paths, write PNGs outside the timer."""
+"""Image render benchmarks: timed repetitions only (global warming is ``make build-ext``)."""
 
 from __future__ import annotations
 
@@ -423,10 +423,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--repeat must be >= 1")
     if args.warmup < 0:
         parser.error("--warmup must be >= 0")
-
-    from tests.global_warming import warm_render_benchmarks
-
-    warm_render_benchmarks()
 
     timings_path = args.output / TIMINGS_FILE
     previous_payload = _load_timings(timings_path)
