@@ -200,11 +200,11 @@ spawn a subtodo.
 | a subtodo to start | `todo.py add-subtodo <parent-id> --summary=...` | `start_subtodo` |
 | a subtodo to land | **git-merge** child into parent branch, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` |
 | local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
-| no-code step | `todo.py work-item-done <id> --checkpoint -m "..."` | `checkpoint` |
+| no-code step | `todo.py work-item-checkpoint <id> -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
 | fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
 | no longer wanted -- descoped, superseded, or subsumed by another step | `todo.py work-item-obsolete <id> [target] -m "why"` | `obsolete` (kept in the trail with its reason, unlike a delete) |
-| impossible as written | `todo.py work-item-done <id> --blocked -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `code` with the no-change sentinel |
+| impossible as written | `todo.py work-item-blocked <id> -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `blocked` |
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
 
@@ -270,16 +270,11 @@ chat. Record it in TWO places, long form and short form:
 
 | Where | What | Why there |
 |-------|------|-----------|
-A dropped step is not a blocked one. `--blocked` means the step is still owed
-and cannot be done as written, so it belongs in the escalation below;
-`work-item-obsolete` means nobody wants it any more and there is nothing to
-escalate.
-
-| **The work item** (`work-item-done --blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
+| **The work item** (`work-item-blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
 | **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question |
 
 ```bash
-todo.py work-item-done <id> --blocked -m "Not achievable with the committed corpus.
+todo.py work-item-blocked <id> -m "Not achievable with the committed corpus.
 MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
 STORM-30: no interchange fixture exists at all...
 Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
@@ -291,12 +286,21 @@ the step is merely unstarted; the item without the state note leaves a stuck tod
 that never asks the user anything. The **permalink to the blocked item** is what
 you paste into chat, a PR, or another todo -- not a retelling.
 
-`--blocked` requires a clean tree (commit or discard the partial attempt first),
-refuses `--sha`, and refuses to be combined with `--checkpoint`. Reach for
-`--checkpoint` when the step genuinely finished without producing code; reach for
-`--blocked` when it did not finish at all. Because the sentinel cannot be the
-last item of a done todo (invariant #6), a blocked tail keeps the todo honestly
-unfinished -- see
+`work-item-blocked` is store-only: nothing it records comes from git, so a
+partial attempt sitting in the tree neither blocks it nor gets swept into it --
+commit or discard that attempt on its own terms.
+
+Pick between the three by what you are claiming, not by what is convenient:
+
+- **`work-item-checkpoint`** -- the step genuinely FINISHED, it just produced no
+  code. Needs the branch checked out and a clean tree, since it records HEAD.
+- **`work-item-blocked`** -- it did not finish at all and is still owed. Escalate
+  with the `userneeded` note above.
+- **`work-item-obsolete`** -- nobody wants it any more. Nothing to escalate, so
+  no `userneeded` note; the reason on the item is the whole record.
+
+Because no no-commit item can be the last item of a done todo (invariant #6), a
+blocked tail keeps the todo honestly unfinished -- see
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants).
 
 ---
@@ -402,7 +406,8 @@ readable but are not written any more. Prefer the `objid` form
 
 `fail` is the more specific case and wins the overlap: `userneeded` awaiting a
 decision is `mix`, but `userneeded` because an item is IMPOSSIBLE as written is
-`fail` -- and that item should already be recorded with `--blocked` (section 5).
+`fail` -- and that item should already be recorded with `work-item-blocked`
+(section 5).
 
 Always report `N of M work items done, cursor at todo:<id>/workitem/<i>`.
 Untracked mid-run asks become WorkItems (`work-item-add`), not prose side
