@@ -1552,6 +1552,137 @@ def is_done(todo: JsonDict) -> bool:
     return cursor_index(todo) is None
 
 
+# --- WorkItem addressing ---------------------------------------------------
+#
+# A work-item command names ONE item, three ways:
+#
+#   (omitted)      the cursor -- the first not-done item; the working default,
+#                  which is what the one-item-at-a-time loop wants
+#   <int>          a 0-based index into WorkItems; a negative one counts from
+#                  the end the way python's own indexing does, so -1 is the
+#                  last item and -2 the one before it
+#   objid:<hex>    the item carrying that objid -- the same stable handle
+#                  permalinks are built on. An objid is an allocation number
+#                  rendered %04x, so leading zeros are optional on input:
+#                  objid:3 == objid:03 == objid:0003
+#
+# Indexes read straight off `work-item-read`, `doctor` findings, and permalinks
+# (all 0-based), which makes them easy to type and unsafe to keep: an insert,
+# a delete, or a reorder renumbers everything after it. An objid never moves,
+# so a plan edit worked out in advance -- a topological pass over a plan whose
+# steps came out in the wrong dependency order, say -- addresses by objid.
+#
+# A bare hex string is an INDEX, never an id: `12` means index 12, not objid
+# 0012. That is the permalink grammar's rule too (a bare segment is always an
+# index), and it is why an objid has to name its scheme.
+#
+# The 4-character floor permalinks put on a prefix (``todo_url.MIN_PREFIX``)
+# does NOT apply here, and neither does its refusal to pad. There, a prefix is
+# matched against every object in the record, so a short one is a coin flip;
+# here the short form is padded to a whole id first (an id is a number, and
+# 0003 is how 3 is written) and then matched against one short list, where it
+# is either unique or reported as ambiguous.
+
+WORKITEM_OBJID_SCHEME: str = "objid:"
+
+WORKITEM_TARGET_HELP: str = (
+    "which work item: an index (0-based; negative counts from the end) or "
+    f"{WORKITEM_OBJID_SCHEME}<hex> (leading zeros optional). Defaults to the cursor"
+)
+
+
+def _workitem_index_by_objid(items: Sequence[Any], prefix: str) -> int:
+    """Return the index of the one work item whose objid matches *prefix*.
+
+    *prefix* is zero-padded to a whole id first, so `3` finds `0003`; a value
+    already that long acts as a plain prefix. See the section comment above.
+    """
+    if not prefix:
+        raise TodoError(
+            f"{WORKITEM_OBJID_SCHEME} needs a value, e.g. {WORKITEM_OBJID_SCHEME}0a3f"
+        )
+    if not todo_objid.is_objid_prefix(prefix):
+        raise TodoError(
+            f"objid {prefix!r} is not lowercase hex; an objid has exactly one spelling"
+        )
+    padded = todo_objid.normalize_objid_prefix(prefix)
+    hits = [
+        index
+        for index, item in enumerate(items)
+        if isinstance(item, dict)
+        and isinstance(item.get(todo_objid.OBJID_KEY), str)
+        and item[todo_objid.OBJID_KEY].startswith(padded)
+    ]
+    if not hits:
+        raise TodoError(
+            f"no work item in this todo carries objid {padded!r}"
+            + (f" (from {prefix!r})" if padded != prefix else "")
+        )
+    if len(hits) > 1:
+        joined = ", ".join(str(index) for index in hits)
+        raise TodoError(
+            f"objid {padded!r} is ambiguous: matches work items {joined}; "
+            "use the whole id"
+        )
+    return hits[0]
+
+
+def _workitem_index_by_number(items: Sequence[Any], address: str) -> int:
+    """Return the index *address* names, resolving a negative one from the end."""
+    try:
+        index = int(address, 10)
+    except ValueError:
+        raise TodoError(
+            f"{address!r} addresses nothing: pass an index (negative counts from the "
+            f"end) or {WORKITEM_OBJID_SCHEME}<hex>"
+        ) from None
+    if not items:
+        raise TodoError("this todo has no work items")
+    resolved = index + len(items) if index < 0 else index
+    if not 0 <= resolved < len(items):
+        raise TodoError(
+            f"work item {index} is out of range; this todo has {len(items)} "
+            f"(0..{len(items) - 1}, or -1..-{len(items)} from the end)"
+        )
+    return resolved
+
+
+def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str) -> int:
+    """Return the WorkItems index *address* names, or the cursor's when it is None.
+
+    *what* is the verb for the no-open-item message ("replace", "delete"), which
+    only an omitted address can produce. Raises TodoError naming what failed --
+    no open item, a non-address, an out-of-range index, an unknown or ambiguous
+    objid -- so no caller has to re-check the result.
+    """
+    items: Sequence[Any] = todo.get("WorkItems") or []
+    if address is None:
+        index = cursor_index(todo)
+        if index is None:
+            raise TodoError(f"no open work item to {what}")
+        return index
+    if address.startswith(WORKITEM_OBJID_SCHEME):
+        return _workitem_index_by_objid(items, address[len(WORKITEM_OBJID_SCHEME) :])
+    return _workitem_index_by_number(items, address)
+
+
+def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
+    """Return the work item at *index*, refusing a done one (invariant #3).
+
+    Done items form the prefix of the plan and are its committed history, so
+    only the not-done frontier can be edited. An edit aimed at a done item is
+    an error rather than a silent no-op: it is a misaddressed command, and
+    rewriting history is what invariant #3 exists to prevent.
+    """
+    item = todo["WorkItems"][index]
+    if not isinstance(item, dict) or workitem_is_done(item):
+        raise TodoError(
+            f"work item {index} is done; only the not-done frontier can be edited "
+            "(done items are this todo's committed history -- invariant #3)"
+        )
+    return item
+
+
 def next_action(todo: JsonDict) -> JsonDict:
     """Deterministic next mechanical step for the cursor, where the tool can tell.
 
@@ -1656,8 +1787,8 @@ def merge_subtodo_workitem(subtodo_id: str, sha: str, summary: str = "") -> Json
 def mark_cursor_done(todo: JsonDict, done_item: JsonDict) -> int:
     """Convert the cursor (first not-done) item into *done_item*, or append it when
     the plan has no open item. The cursor's freetext summary carries over as the
-    item's high-level description unless *done_item* already set one. Returns the
-    affected index."""
+    item's high-level description unless *done_item* already set one, and so does
+    its objid. Returns the affected index."""
     items = list(todo.get("WorkItems") or [])
     index = cursor_index(todo)
     if index is None:
@@ -1666,6 +1797,14 @@ def mark_cursor_done(todo: JsonDict, done_item: JsonDict) -> int:
     else:
         if not done_item.get("summary"):
             done_item["summary"] = items[index].get("summary", "")
+        # Completing a step does not make it a different step. The objid is the
+        # item's identity, so it carries over and a permalink minted while the
+        # step was still open goes on resolving to it -- dropping it would mint
+        # a fresh id at the next write, and silently, since stamping only fills
+        # gaps.
+        objid = items[index].get(todo_objid.OBJID_KEY)
+        if todo_objid.is_objid(objid):
+            done_item[todo_objid.OBJID_KEY] = objid
         items[index] = done_item
     todo["WorkItems"] = items
     return index
@@ -4597,27 +4736,38 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
 
 class WorkItemReadCommand(WorkItemProgressCommand):
     command_names = ("work-item-read",)
-    doc_short: ClassVar[str] = "Read the cursor work item"
+    doc_short: ClassVar[str] = "Read the cursor, or any, work item"
     doc_long: ClassVar[str] = (
         "Work-item-read prints the current work item -- the cursor, which is the first not-done "
         "item -- with its index, plus whether the todo is done. Index is null when there is no "
         "open item. It also emits a 'next' object: the deterministic mechanical command to advance "
         "the loop ({action, command}), including the finish sequence when the todo is done. 'next' "
         "is a mechanism hint, not policy -- a plain task defaults to work-item-done, but the agent "
-        "may instead split it or turn it into a subtodo per the skill's dispatch table."
+        "may instead split it or turn it into a subtodo per the skill's dispatch table. An "
+        "explicit TARGET (an index, negative counting from the end, or objid:<hex>) reads that "
+        "item instead, done items included -- reading is not editing. 'next' still describes the "
+        "CURSOR whatever item is read, since it is the todo's next mechanical step, not the "
+        "target's."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-read arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
 
     def do(self) -> int:
-        """Print the cursor work item for the selected todo."""
+        """Print the cursor work item, or the addressed one, for the selected todo."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
-        index = cursor_index(todo)
+        # No target and no open item is not an error here: the empty cursor is
+        # exactly what a polling worker needs to see (index null, is_done true).
+        index = (
+            cursor_index(todo)
+            if self.target is None
+            else resolve_workitem_index(todo, self.target, what="read")
+        )
         items = todo.get("WorkItems") or []
         item = items[index] if index is not None else None
         print(
@@ -4636,31 +4786,42 @@ class WorkItemReadCommand(WorkItemProgressCommand):
 
 class WorkItemInsertCommand(WorkItemEditCommand):
     command_names = ("work-item-insert",)
-    doc_short: ClassVar[str] = "Insert a task at the cursor"
+    doc_short: ClassVar[str] = "Insert a task in the plan"
     doc_long: ClassVar[str] = (
         "Work-item-insert adds a not-done task at the cursor so it becomes the current item, "
         "pushing the existing frontier down (used to explode a step into finer steps). It appends "
-        "when the todo has no open item. The write is store-only."
+        "when the todo has no open item. An explicit TARGET (an index, negative counting from the "
+        "end, or objid:<hex>) inserts BEFORE that item instead, pushing it down -- the same "
+        "operation aimed further down the plan, so the target must itself be a not-done item. "
+        "Appending is work-item-add, not an insert past the end. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-insert arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Insert a not-done task at the cursor."""
+        """Insert a not-done task at the cursor, or before the addressed item."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         items: List[JsonDict] = list(todo.get("WorkItems") or [])
         new_item = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
-        index = cursor_index(todo)
-        if index is None:
-            items.append(new_item)
-            index = len(items) - 1
+        if self.target is None:
+            # The cursor default appends on a finished plan (nothing to push
+            # down); an explicit target always names an item to push down.
+            index = cursor_index(todo)
+            if index is None:
+                items.append(new_item)
+                index = len(items) - 1
+            else:
+                items.insert(index, new_item)
         else:
+            index = resolve_workitem_index(todo, self.target, what="insert before")
+            require_open_workitem(todo, index)
             items.insert(index, new_item)
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
@@ -4672,28 +4833,39 @@ class WorkItemInsertCommand(WorkItemEditCommand):
 
 class WorkItemReplaceCommand(WorkItemEditCommand):
     command_names = ("work-item-replace",)
-    doc_short: ClassVar[str] = "Replace the cursor work item"
+    doc_short: ClassVar[str] = "Reword a not-done work item"
     doc_long: ClassVar[str] = (
-        "Work-item-replace rewrites the current (cursor) task's freetext summary, leaving it "
-        "not-done. Errors when there is no open item. The write is store-only."
+        "Work-item-replace rewrites a not-done task's freetext summary, leaving it not-done. It "
+        "acts on the cursor by default; an explicit TARGET (an index, negative counting from the "
+        "end, or objid:<hex>) rewords that item instead, and it must be not-done. Errors when "
+        "there is no open item. Rewording does not make it a different task, so the item keeps "
+        "its objid and every permalink to it stays valid. The write is store-only."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-replace arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Replace the cursor task's summary."""
+        """Replace the addressed (default cursor) task's summary."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
-        index = cursor_index(todo)
-        if index is None:
-            raise TodoError("no open work item to replace")
+        index = resolve_workitem_index(todo, self.target, what="replace")
+        require_open_workitem(todo, index)
         items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        items[index] = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        replacement: JsonDict = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        # Carry the objid over: a reworded step is the SAME step, and the objid
+        # is its identity, not its content. Dropping it would silently mint a
+        # fresh id at the next write and break every permalink already handed
+        # out for this item.
+        objid = items[index].get(todo_objid.OBJID_KEY)
+        if todo_objid.is_objid(objid):
+            replacement[todo_objid.OBJID_KEY] = objid
+        items[index] = replacement
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -4704,10 +4876,12 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
 
 class WorkItemDeleteCommand(WorkItemEditCommand):
     command_names = ("work-item-delete",)
-    doc_short: ClassVar[str] = "Delete the cursor work item"
+    doc_short: ClassVar[str] = "Delete a not-done work item"
     doc_long: ClassVar[str] = (
-        "Work-item-delete removes the current (cursor) not-done item. Done items are the "
-        "committed history of the todo and are never the cursor, so they are never deleted here. "
+        "Work-item-delete removes a not-done item: the cursor by default, or the one an explicit "
+        "TARGET names (an index, negative counting from the end, or objid:<hex>) -- dropping a "
+        "step further down the plan without having to work forward to it. Done items are the "
+        "committed history of the todo, so a target that names one is an error, not a deletion. "
         "Errors when there is no open item. The write is store-only."
     )
 
@@ -4715,15 +4889,15 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-delete arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
-        """Delete the cursor work item."""
+        """Delete the addressed (default cursor) work item."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
-        index = cursor_index(todo)
-        if index is None:
-            raise TodoError("no open work item to delete")
+        index = resolve_workitem_index(todo, self.target, what="delete")
+        require_open_workitem(todo, index)
         items: List[JsonDict] = list(todo.get("WorkItems") or [])
         removed = items.pop(index)
         todo["WorkItems"] = items
@@ -4734,6 +4908,98 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
                 f"chore(todo): delete work item: {_summary_snippet(removed.get('summary', ''))}",
             )
         print(json.dumps({"deleted_index": index, "summary": removed.get("summary", "")}, indent=2))
+        return 0
+
+
+class WorkItemReorderCommand(WorkItemEditCommand):
+    command_names = ("work-item-reorder",)
+    doc_short: ClassVar[str] = "Move a not-done item in the plan"
+    doc_long: ClassVar[str] = (
+        "Work-item-reorder moves ONE not-done item to another position in the plan, leaving every "
+        "other item in its existing relative order. SRC names the item to move: an index (0-based, "
+        "negative counting from the end) or objid:<hex>. DST is a POSITION -- the index the item "
+        "should occupy afterwards -- negative counting from the end the way python indexing does, "
+        "so -1 is last and -2 next-to-last; objid:<hex> is a SRC form and is rejected for DST. "
+        "Because a move never changes the list's length, 'the end' is unambiguous: DST -1 always "
+        "means last. The done prefix is immovable and out of bounds at both ends (invariant #3): "
+        "SRC must be a not-done item, and DST cannot land above the cursor. Moving an item to the "
+        "position it already holds is a no-op. Use it to put a plan whose steps came out in the "
+        "wrong dependency order into topological order, or to push a stalled step to the end so "
+        "the rest can proceed -- which is NOT work-item-done --blocked, the completion for a step "
+        "that cannot be done at all. Address by objid when making several moves: each move "
+        "renumbers the items after it, while an objid keeps naming the same item. The write is "
+        "store-only."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-reorder arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "src",
+            help=(
+                "item to move: an index (0-based; negative counts from the end) or "
+                f"{WORKITEM_OBJID_SCHEME}<hex>. Must be a not-done item"
+            ),
+        )
+        parser.add_argument(
+            "dst",
+            help=(
+                "index the item should occupy afterwards; negative counts from the end "
+                "(-1 is last). Cannot land in the done prefix"
+            ),
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Move one not-done work item to another position in the plan."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        normalize_todo_schema(todo)
+        frontier = cursor_index(todo)
+        if frontier is None:
+            raise TodoError(
+                "this todo has no not-done work items; there is nothing reorderable "
+                "(done items are its committed history -- invariant #3)"
+            )
+        src = resolve_workitem_index(todo, self.src, what="reorder")
+        require_open_workitem(todo, src)
+        if self.dst.startswith(WORKITEM_OBJID_SCHEME):
+            # DST is a slot, not an item. "Before or after that item?" has no
+            # answer once SRC has been lifted out, so the ambiguity is refused
+            # rather than guessed at.
+            raise TodoError(
+                f"DST is a position, not an item: pass an index (negative counts from the "
+                f"end). {WORKITEM_OBJID_SCHEME}<hex> addresses SRC"
+            )
+        items: List[JsonDict] = list(todo.get("WorkItems") or [])
+        dst = _workitem_index_by_number(items, self.dst)
+        if dst < frontier:
+            raise TodoError(
+                f"work item {self.dst} is in the done prefix (items 0..{frontier - 1}); a "
+                "not-done item cannot move above the cursor (invariant #3)"
+            )
+        # Pop then insert at DST. The list keeps its length, so the item lands
+        # exactly at index DST -- which is what makes a negative DST mean the
+        # position it names (-1 is last) rather than python's insert-before.
+        items.insert(dst, items.pop(src))
+        todo["WorkItems"] = items
+        write_todo_worktree(root, todo)
+        node = todo["WorkItems"][dst]
+        summary = str(node.get("summary", ""))
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): reorder work item: {_summary_snippet(summary)}")
+        print(
+            json.dumps(
+                {
+                    "from_index": src,
+                    "to_index": dst,
+                    "objid": node.get(todo_objid.OBJID_KEY, ""),
+                    "summary": summary,
+                },
+                indent=2,
+            )
+        )
         return 0
 
 

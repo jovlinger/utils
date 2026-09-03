@@ -2259,6 +2259,246 @@ class WorkItemInvariantTests(TodoCase):
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
 
+class WorkItemAddressingTests(TodoCase):
+    """Naming one work item by index or objid, and moving one within the plan."""
+
+    def _plan(self, *summaries: str) -> None:
+        """An inited todo carrying one not-done task per summary."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=Effort")
+        for summary in summaries:
+            proc = self.todo("work-item-add", self.tid, f"--summary={summary}")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _order(self) -> list:
+        """The plan's summaries, in list order."""
+        return [item["summary"] for item in self.read_cur()["WorkItems"]]
+
+    def _objids(self) -> list:
+        """The plan's objids, in list order."""
+        return [item["objid"] for item in self.read_cur()["WorkItems"]]
+
+    def _complete_cursor(self) -> None:
+        """Close the cursor item as code against the (clean) branch HEAD."""
+        proc = self.todo("work-item-done", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    # --- reorder -----------------------------------------------------------
+
+    def test_reorder_moves_an_item_by_index(self) -> None:
+        self._plan("A", "B", "C", "D")
+        proc = self.todo("work-item-reorder", self.tid, "1", "2")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual({"from_index": 1, "to_index": 2}, {k: payload[k] for k in ("from_index", "to_index")})
+        self.assertEqual("B", payload["summary"])
+        self.assertEqual(["A", "C", "B", "D"], self._order())
+
+    def test_negative_dst_names_the_position_it_counts_to(self) -> None:
+        # -1 is LAST, not python's insert-before-last: a move keeps the list's
+        # length, so the item lands exactly at the index dst names.
+        self._plan("A", "B", "C", "D")
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "0", "-1").returncode)
+        self.assertEqual(["B", "C", "D", "A"], self._order())
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "-1", "-2").returncode)
+        self.assertEqual(["B", "C", "A", "D"], self._order())
+
+    def test_reorder_addresses_src_by_objid_with_leading_zeros_optional(self) -> None:
+        self._plan("A", "B", "C")
+        objid = self._objids()[2]  # C
+        short = objid.lstrip("0") or "0"  # an objid is a number: 0003 == 3
+        proc = self.todo("work-item-reorder", self.tid, f"objid:{short}", "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(objid, json.loads(proc.stdout)["objid"])
+        self.assertEqual(["C", "A", "B"], self._order())
+        # and the whole id spells the same item
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, f"objid:{objid}", "-1").returncode)
+        self.assertEqual(["A", "B", "C"], self._order())
+
+    def test_an_objid_keeps_naming_the_item_after_a_move_renumbers_the_plan(self) -> None:
+        # The reason the docs push objid for a multi-move pass: indexes read
+        # before the first move are stale after it, objids are not.
+        self._plan("A", "B", "C")
+        first, second = self._objids()[0], self._objids()[1]
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, f"objid:{first}", "-1").returncode)
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, f"objid:{second}", "-1").returncode)
+        self.assertEqual(["C", "A", "B"], self._order())
+
+    def test_reorder_to_its_own_position_is_a_no_op(self) -> None:
+        self._plan("A", "B", "C")
+        proc = self.todo("work-item-reorder", self.tid, "1", "1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(["A", "B", "C"], self._order())
+
+    def test_reorder_refuses_a_done_src_and_a_dst_in_the_done_prefix(self) -> None:
+        # Invariant #3: done items form a prefix and are committed history.
+        self._plan("A", "B", "C")
+        self._complete_cursor()
+        done_src = self.todo("work-item-reorder", self.tid, "0", "2")
+        self.assertEqual(done_src.returncode, 1)
+        self.assertIn("is done", done_src.stderr)
+        into_prefix = self.todo("work-item-reorder", self.tid, "2", "0")
+        self.assertEqual(into_prefix.returncode, 1)
+        self.assertIn("done prefix", into_prefix.stderr)
+        self.assertEqual(["A", "B", "C"], self._order())  # neither one moved
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "2", "1").returncode)
+        self.assertEqual(["A", "C", "B"], self._order())  # within the frontier: fine
+
+    def test_reorder_needs_something_not_done_to_move(self) -> None:
+        self._plan("A")
+        self._complete_cursor()
+        proc = self.todo("work-item-reorder", self.tid, "0", "0")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("nothing reorderable", proc.stderr)
+
+    def test_dst_is_a_position_so_an_objid_is_refused_there(self) -> None:
+        self._plan("A", "B")
+        objid = self._objids()[1]
+        proc = self.todo("work-item-reorder", self.tid, "0", f"objid:{objid}")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("DST is a position", proc.stderr)
+        self.assertEqual(["A", "B"], self._order())
+
+    def test_reorder_reports_a_bad_address(self) -> None:
+        self._plan("A", "B")
+        out_of_range = self.todo("work-item-reorder", self.tid, "0", "2")
+        self.assertEqual(out_of_range.returncode, 1)
+        self.assertIn("out of range", out_of_range.stderr)
+        nonsense = self.todo("work-item-reorder", self.tid, "banana", "0")
+        self.assertEqual(nonsense.returncode, 1)
+        self.assertIn("addresses nothing", nonsense.stderr)
+        unknown = self.todo("work-item-reorder", self.tid, "objid:ffff", "0")
+        self.assertEqual(unknown.returncode, 1)
+        self.assertIn("carries objid", unknown.stderr)
+        shouty = self.todo("work-item-reorder", self.tid, "objid:00FF", "0")
+        self.assertEqual(shouty.returncode, 1)
+        self.assertIn("lowercase hex", shouty.stderr)
+        self.assertEqual(["A", "B"], self._order())  # nothing moved
+
+    # --- the same addressing on the other work-item commands ---------------
+
+    def test_insert_replace_delete_take_a_target(self) -> None:
+        self._plan("A", "B", "C")
+        objid_b = self._objids()[1]
+        self.assertEqual(0, self.todo("work-item-insert", self.tid, "2", "--summary=X").returncode)
+        self.assertEqual(["A", "B", "X", "C"], self._order())  # inserted BEFORE C
+        self.assertEqual(0, self.todo("work-item-replace", self.tid, f"objid:{objid_b}", "--summary=B2").returncode)
+        self.assertEqual(["A", "B2", "X", "C"], self._order())
+        self.assertEqual(0, self.todo("work-item-delete", self.tid, "-1").returncode)
+        self.assertEqual(["A", "B2", "X"], self._order())
+
+    def test_the_target_defaults_to_the_cursor(self) -> None:
+        self._plan("A", "B")
+        self._complete_cursor()  # cursor is now B, at index 1
+        self.assertEqual(0, self.todo("work-item-replace", self.tid, "--summary=B2").returncode)
+        self.assertEqual(["A", "B2"], self._order())
+        self.assertEqual(0, self.todo("work-item-insert", self.tid, "--summary=X").returncode)
+        self.assertEqual(["A", "X", "B2"], self._order())
+        self.assertEqual(0, self.todo("work-item-delete", self.tid).returncode)
+        self.assertEqual(["A", "B2"], self._order())
+
+    def test_editing_a_done_item_is_refused_however_it_is_addressed(self) -> None:
+        self._plan("A", "B")
+        self._complete_cursor()
+        objid = self._objids()[0]
+        for args in (("work-item-delete", self.tid, "0"),
+                     ("work-item-delete", self.tid, f"objid:{objid}"),
+                     ("work-item-replace", self.tid, "0", "--summary=rewrite history"),
+                     ("work-item-insert", self.tid, "0", "--summary=before history")):
+            with self.subTest(command=args[0], target=args[2]):
+                proc = self.todo(*args)
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn("is done", proc.stderr)
+        self.assertEqual(["A", "B"], self._order())
+
+    def test_read_takes_a_target_and_will_read_a_done_item(self) -> None:
+        # Reading is not editing, so the done prefix is legible.
+        self._plan("A", "B")
+        self._complete_cursor()
+        proc = self.todo("work-item-read", self.tid, "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(0, payload["index"])
+        self.assertEqual("A", payload["item"]["summary"])
+        self.assertTrue(payload["item"]["done"])
+        # `next` describes the CURSOR whatever item was read
+        self.assertEqual("work-item-done", payload["next"]["action"])
+        cursor = json.loads(self.todo("work-item-read", self.tid).stdout)
+        self.assertEqual(1, cursor["index"])
+
+    def test_read_without_a_target_still_reports_an_empty_cursor(self) -> None:
+        self._plan("A")
+        self._complete_cursor()
+        payload = json.loads(self.todo("work-item-read", self.tid).stdout)
+        self.assertIsNone(payload["index"])
+        self.assertIsNone(payload["item"])
+        self.assertTrue(payload["is_done"])
+
+    def test_a_bare_hex_address_is_an_index_never_an_objid(self) -> None:
+        # The permalink grammar's rule, restated for the CLI: a bare value is
+        # always an index, so an id has to name its scheme. This plan has one
+        # item, and its objid read as an index is past the end.
+        self._plan("only")
+        objid = self._objids()[0]
+        bare = self.todo("work-item-read", self.tid, objid)
+        self.assertEqual(bare.returncode, 1)
+        self.assertIn("out of range", bare.stderr)
+        scoped = self.todo("work-item-read", self.tid, f"objid:{objid}")
+        self.assertEqual(scoped.returncode, 0, scoped.stderr)
+        self.assertEqual("only", json.loads(scoped.stdout)["item"]["summary"])
+
+    # --- objid stability, which is what makes it worth addressing by --------
+
+    def test_an_items_objid_survives_rewording_completion_and_a_move(self) -> None:
+        self._plan("A", "B")
+        objid = self._objids()[0]
+        self.assertEqual(0, self.todo("work-item-replace", self.tid, "0", "--summary=A2").returncode)
+        self.assertEqual(objid, self._objids()[0], "rewording is not a new item")
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "0", "-1").returncode)
+        self.assertEqual(objid, self._objids()[1], "moving is not a new item")
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "-1", "0").returncode)
+        self._complete_cursor()
+        item = self.read_cur()["WorkItems"][0]
+        self.assertEqual(objid, item["objid"], "completing is not a new item")
+        self.assertEqual("code", item["kind"])
+
+    def test_doctor_is_happy_after_a_reorder(self) -> None:
+        self._plan("A", "B", "C")
+        self._complete_cursor()
+        self.assertEqual(0, self.todo("work-item-reorder", self.tid, "2", "1").returncode)
+        payload = json.loads(self.todo("doctor", self.tid).stdout)
+        self.assertTrue(payload["ok"], payload["findings"])
+
+
+class WorkItemAddressUnitTests(unittest.TestCase):
+    """Address-grammar corners the CLI cannot easily build a record for."""
+
+    @staticmethod
+    def _items(*objids: str) -> list:
+        return [{"kind": "task", "summary": o, "done": False, "objid": o} for o in objids]
+
+    def test_a_padded_prefix_finds_the_short_spelling(self) -> None:
+        self.assertEqual(1, todo._workitem_index_by_objid(self._items("0003", "0004"), "4"))
+
+    def test_an_ambiguous_prefix_names_the_candidates(self) -> None:
+        # Ids widen past four hex only above 65536 objects in one todo, which
+        # is the one way a padded prefix can still hit two items.
+        with self.assertRaises(todo.TodoError) as caught:
+            todo._workitem_index_by_objid(self._items("10001", "10002"), "1000")
+        self.assertIn("ambiguous", str(caught.exception))
+        self.assertIn("0, 1", str(caught.exception))
+
+    def test_a_wide_id_still_resolves_exactly(self) -> None:
+        self.assertEqual(1, todo._workitem_index_by_objid(self._items("10001", "10002"), "10002"))
+
+    def test_an_index_is_bounds_checked_against_both_ends(self) -> None:
+        items = self._items("0003", "0004")
+        self.assertEqual(0, todo._workitem_index_by_number(items, "-2"))
+        for address in ("2", "-3"):
+            with self.subTest(address=address), self.assertRaises(todo.TodoError):
+                todo._workitem_index_by_number(items, address)
+
+
 class BaseDirRepoDirTests(TodoCase):
     def test_basedir_prints_resolved_todo_dir(self) -> None:
         self.todo("init", "--summary=seed the db")  # ensure the db dir is materialized
