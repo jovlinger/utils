@@ -60,6 +60,7 @@ TODO=skills/projectmanagement/todos/todo.py
 ID=$("$TODO" mint)
 "$TODO" set "$ID" --summary="..." --body="..." --ac="..."
 "$TODO" work-item-add "$ID" --summary="[MIDCAP] ..."
+"$TODO" work-item-reorder "$ID" objid:0007 -1   # right step, wrong order
 # stay in State groom until the user asks to work
 
 # promote when ready to work (branch only; worktree is separate)

@@ -144,13 +144,52 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | Command | Behavior |
 |---------|----------|
 | `work-item-add <selector> --summary=...` | Append not-done `task` |
-| `work-item-insert <selector> --summary=...` | Insert task at cursor |
-| `work-item-replace <selector> --summary=...` | Reword cursor task |
-| `work-item-delete <selector>` | Delete cursor task |
-| `work-item-read <selector>` | Cursor + `next` mechanism hint |
+| `work-item-insert <selector> [target] --summary=...` | Insert task before `target`, pushing it down (default: the cursor). Appends only when the plan has no open item |
+| `work-item-replace <selector> [target] --summary=...` | Reword a not-done task (default: the cursor). Keeps the item's `objid` |
+| `work-item-delete <selector> [target]` | Delete a not-done task (default: the cursor) |
+| `work-item-reorder <selector> <src> <dst>` | Move one not-done item to position `dst`. `src` is an index or `objid:`; `dst` is an index only, negative counting from the end (`-1` is last). Refuses the done prefix at both ends (#3) |
+| `work-item-read <selector> [target]` | A work item + `next` mechanism hint (default: the cursor). Reads a done item too; `next` always describes the cursor |
 | `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | Complete cursor as `code` (or `--checkpoint` / `--blocked`). Must run from a checkout of the todo's branch. `--blocked` requires `-m` and a clean tree; refuses `--sha` and refuses `--checkpoint` |
 | `is-done <selector>` | Exit 0 when no open work items |
 | `last-sha <selector>` | Sha of last work item (branch tip attribution); `None` for the no-change sentinel |
+
+### Addressing one work item
+
+Every work-item command names ONE item, three ways:
+
+| Address | Means |
+|---------|-------|
+| omitted | the **cursor** -- the first not-done item; the working default |
+| `<int>` | a 0-based index into `WorkItems`; negative counts from the end the way python indexing does, so `-1` is the last item |
+| `objid:<hex>` | the item carrying that `objid`. An objid is an allocation number rendered `%04x`, so leading zeros are optional: `objid:3` == `objid:03` == `objid:0003` |
+
+A bare value is **always** an index -- `12` means index 12, not `objid:0012` --
+which is the permalink grammar's rule restated, and why an id has to name its
+scheme. The 4-character floor permalinks put on a prefix does **not** apply
+here: this prefix is matched against one short list, not the whole record, so it
+is padded to a whole id first and is then either unique or reported ambiguous.
+
+Only the not-done frontier is editable (#3). `insert` / `replace` / `delete` /
+`reorder` refuse a done target; `read` will read one, because reading is not
+editing.
+
+An index is convenient and perishable: every insert, delete, and reorder
+renumbers the items after it. An `objid` survives all three -- and rewording and
+completion -- so a plan edit worked out in advance addresses by objid rather
+than by indexes that were read before the first move:
+
+```bash
+# push two stalled steps to the end, in that order, without recomputing indexes
+todo.py work-item-reorder <id> objid:0007 -1
+todo.py work-item-reorder <id> objid:000a -1
+```
+
+`work-item-reorder` moves ONE item and leaves the relative order of the rest
+alone, which is what makes a topological pass over a mis-ordered plan cheap:
+send each item to `-1` in the order you want them run, first to last, and after
+the final move the plan reads in exactly that order. It is **not** a substitute
+for `work-item-done --blocked`: reorder is for a step that is fine but mistimed,
+`--blocked` is for one that cannot be done as written.
 
 ### Maintenance and I/O
 
@@ -301,7 +340,11 @@ Required: `Branch`, `Id`, `State`, `Summary`.
 
 Every nested JSON object (except the root and the whole `State` subtree)
 carries immutable `"objid": "0a3f"` unique within that todo. Writers stamp
-them; doctor hard-fails missing/malformed/duplicate ids.
+them; doctor hard-fails missing/malformed/duplicate ids. Immutable means through
+edits too: a work item keeps its id when reworded, moved, or completed. Ids are
+allocation numbers rendered `%04x`, which is why the CLI accepts a short
+spelling (`objid:3`) where a permalink insists on 4+ characters -- see
+[Addressing one work item](#addressing-one-work-item).
 
 ### Scope
 
@@ -370,7 +413,12 @@ because nothing else will notice.
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` | `add-subtodo` |
 | `checkpoint` | `summary`, `at_sha`, `message`, `done:true` | `work-item-done --checkpoint` |
 
-Cursor = first not-done item (derived).
+Cursor = first not-done item (derived). The not-done tail is the plan's
+**frontier** and the only editable part of it: `work-item-insert` /
+`-replace` / `-delete` / `-reorder` all work there and refuse a done target,
+which is #3 holding rather than four separate rules. An item's `objid` is its
+identity through all of it -- rewording, moving, and completing keep it, so a
+permalink minted while a step was still open resolves to the finished step.
 
 **`sha` vs `at_sha` (attribution vs observation).** A `code`/`merge_subtodo`
 `sha` means "this commit IS this item's work". A `checkpoint` records `at_sha`
@@ -446,8 +494,9 @@ so a hex value must name its key (`sha/883368`). Only `sha`, `subtodo_id`, and
 A list-valued field whose name ends in `s` also answers to the name minus that
 `s` (naming the element type: `WorkItems` answers to `workitem`), with an exact
 match winning over the alias. Prefer objid over indexes when linking durable
-content -- `work-item-insert` shifts every later item, so `/workitem/1` silently
-comes to mean a different item.
+content -- `work-item-insert`, `-delete`, and `-reorder` all shift later items,
+so `/workitem/1` silently comes to mean a different item, while an objid keeps
+naming the same one ([addressing](#addressing-one-work-item)).
 
 `todo.py web` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
 the whole todo, scrolled to and focused on the resolved object. No redirect --

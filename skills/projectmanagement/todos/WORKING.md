@@ -202,6 +202,7 @@ spawn a subtodo.
 | local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
 | no-code step | `todo.py work-item-done <id> --checkpoint -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
+| fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
 | impossible as written | `todo.py work-item-done <id> --blocked -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `code` with the no-change sentinel |
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
@@ -213,6 +214,9 @@ Full command flags -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items).
 ## 3. Split or delegate
 
 - Short linear steps -> parent WorkItems (`work-item-add` / `work-item-insert`).
+- Right steps, wrong order -> `work-item-reorder` (topological pass; address by
+  `objid:` when making several moves). Grooming policy:
+  [`GROOMING.md`](GROOMING.md#required-grooming-outputs).
 - Independent context-heavy domains -> subtodos (`add-subtodo`), still
   **sequential by default** unless parallel is authorized (grooming policy).
 - Capability tiers on each unit -> [`GROOMING.md`](GROOMING.md#capability-tiers).

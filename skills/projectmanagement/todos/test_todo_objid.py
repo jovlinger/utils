@@ -47,6 +47,39 @@ def _objids(node: object) -> list:
     return found
 
 
+class ObjidSpellingTest(unittest.TestCase):
+    """What an id looks like on INPUT: prefix shape, and the padded short form."""
+
+    def test_a_prefix_is_lowercase_hex_of_any_length(self) -> None:
+        for value in ("0", "03", "0003", "10000"):
+            with self.subTest(value=value):
+                self.assertTrue(todo_objid.is_objid_prefix(value))
+
+    def test_a_prefix_refuses_every_other_spelling(self) -> None:
+        # Same reason a whole id refuses them: one id, one spelling.
+        for value in ("00FF", "0x03", "", "00 3", "003g", 3, None):
+            with self.subTest(value=value):
+                self.assertFalse(todo_objid.is_objid_prefix(value))
+
+    def test_a_short_id_pads_to_the_rendered_width(self) -> None:
+        for value in ("3", "03", "0003"):
+            with self.subTest(value=value):
+                self.assertEqual("0003", todo_objid.normalize_objid_prefix(value))
+
+    def test_padding_agrees_with_what_format_objid_renders(self) -> None:
+        for value in (0, 3, 255, 0xFFFF):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    todo_objid.format_objid(value),
+                    todo_objid.normalize_objid_prefix(f"{value:x}"),
+                )
+
+    def test_a_wide_id_is_left_alone(self) -> None:
+        # Past 65536 objects ids widen; padding must not corrupt one, and it
+        # goes on acting as a plain prefix there.
+        self.assertEqual("10000", todo_objid.normalize_objid_prefix("10000"))
+
+
 class StampObjidsTest(unittest.TestCase):
     """stamp_objids assigns, preserves, and de-duplicates object ids."""
 
