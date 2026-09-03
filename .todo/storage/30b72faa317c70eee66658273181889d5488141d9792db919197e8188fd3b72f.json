@@ -1,0 +1,49 @@
+{
+  "AC": "Given one existing ticket whose Id starts with hex prefix P, 'todo.py search P' includes that ticket in its results even when P shares no lexical/semantic overlap with any Summary/Body text. A P matching zero or more than one ticket falls back to ordinary ranked search only (no error, no spurious single match). Multi-term queries never engage the prefix path. The web viewer's search box (/search?q=P) shows the same behavior, since it is backed by the same search_tickets/run_search functions as the CLI command.",
+  "ActualSummary": "Added a solo-term hex-id-prefix search strategy (pins a unique Id-prefix hit first, shared by CLI search and the web viewer's search box), plus a small visible objid badge on every objid-bearing box/section in the web viewer (work items, subtodos, parents, Summary/Body/LongSummary, generic Fields rows) so a permalink's objid can be read straight off the page.",
+  "BaseSha": "91396c25f61bfe7b0ae434115ad3e91db9a78d99",
+  "Body": {
+    "objid": "0002",
+    "raw": "search_tickets (skills/projectmanagement/todos/todo.py:1778), reached via the shared run_search (todo.py:5425), ranks by reciprocal-rank fusion over vector embedders plus one lexical IDF ranking -- it treats every query term as ordinary text to embed/match. Both consumers of run_search go through this same path: the 'search' CLI command (SearchCommand, todo.py:5453) and the web viewer's search box (WebCommand.search_rows, todo.py:5243, backing the /search route in todo_web.py used by the bare 'web' base page). Neither special-cases a query that looks like an Id prefix, even though resolve_ticket_by_id (todo.py:1612) already implements exactly that 4+ hex prefix match for direct selectors elsewhere (get, set, web ?id=, etc.) -- so pasting a short id prefix into search does not reliably find the ticket it names, since a hex string has no lexical/semantic overlap with Summary/Body text.\n\nAdd a search strategy: when a search invocation has exactly one term, additionally attempt that term as a hex prefix against every ticket's Id (same prefix-matching semantics as resolve_ticket_by_id), and fold any hit into the results alongside the normal ranked search. Multi-term queries are unaffected -- the prefix attempt only applies to the solo-term case. Implementing this once in the shared search_tickets/run_search path covers both the CLI 'search' command and the web base page's search box without duplicating logic."
+  },
+  "Branch": "30b72faa-search-try-solo-query",
+  "Id": "30b72faa317c70eee66658273181889d5488141d9792db919197e8188fd3b72f",
+  "Scope": {
+    "branch": "30b72faa-search-try-solo-query",
+    "git_url": "https://github.com/jovlinger/utils.git",
+    "objid": "0000",
+    "path_from_root": "skills/projectmanagement/todos"
+  },
+  "State": {
+    "merged": {
+      "last_commit": "cb9e37c2e8dd28434c11b567cafd381cd03d3bc1",
+      "merge_commit": "b190e1d",
+      "merged_into": "master"
+    }
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Search: try a solo query term as a todo id prefix"
+  },
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "todo search: pin a unique solo-term id-prefix hit first\n\nsearch_tickets/run_search fused vector+lexical rankers over query terms with\nno id awareness, so a bare hex id prefix (no lexical/semantic overlap with\nSummary/Body text) could not reliably find its ticket even though the same\nprefix works everywhere else (resolve_ticket_by_id).\n\nAdd _solo_term_id_prefix_hit: for a single search term shaped like a 4+ hex\nselector, uniquely matched against every candidate ticket's Id, pinned first\nin the results. Zero or ambiguous matches fall back to ordinary ranked search\nuntouched; multi-term queries never engage the path. Covers both the CLI\n'search' command and the web viewer's search box, which share this function.",
+      "objid": "0005",
+      "sha": "c3eee11285b31cd03941d1439f3d8b829bd74417",
+      "summary": "Implement solo-term id-prefix search: in search_tickets/run_search (todo.py:1778,5425), when exactly one term is given, additionally match it as a hex prefix of every ticket Id (same semantics as resolve_ticket_by_id, todo.py:1612) and fold any hit into the results. Cover with a test."
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "todo web: show each object's own objid, small and visible\n\nWork item, subtodo and parent boxes, plus Summary/Body/LongSummary sections and\ngeneric Fields rows, already carry an objid internally (_box_attrs /\n_section_attrs stamp it as the DOM anchor and permalink scroll target) but\nnever showed it -- reading a permalink's objid off the page required\ninspecting the DOM.\n\nAdd _objid_badge/_first_objid and wire them into _wi_box, _st_box,\n_parent_box (absolute-positioned corner label) and _section()'s heading plus\n_meta_html's per-row heading (inline label). A list-shaped section (Work\nitems, Subtodos, Parent) has no objid of its own -- only its elements do, and\nthose already show theirs. Static fold reprs stay plain, same scope as\n_box_attrs.",
+      "objid": "0006",
+      "sha": "cb9e37c2e8dd28434c11b567cafd381cd03d3bc1",
+      "summary": "Web viewer: render each object's objid visibly, small in a corner of its box -- work item and subtodo boxes (_wi_box/_st_box, todo_web.py:372,422), parent boxes (_parents_html, todo_web.py:498), and the top-level sections (Summary/Body/LongSummary/WorkItems/Subtodos, _section_attrs, todo_web.py:312) that already carry an objid via _box_attrs/_section_attrs but only expose it as a data-obj attribute today, not as visible text. Purely cosmetic/debug aid so a permalink's objid (/<todoid>/objid/<objid>) can be read straight off the page instead of only via right-click/inspect."
+    }
+  ],
+  "_nextobjid": 7,
+  "create_dt": "2026-08-20T17:33:32Z",
+  "update_dt": "2026-08-20T19:22:39Z"
+}
