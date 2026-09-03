@@ -1860,6 +1860,21 @@ class WorkItemModelUnitTests(unittest.TestCase):
         self.assertTrue(todo.is_done(done_todo))
         self.assertTrue(todo.is_done({"WorkItems": []}))
 
+    def test_an_obsolete_item_is_closed_so_the_cursor_moves_past_it(self) -> None:
+        # "Done" in the model means CLOSED, not accomplished: a dropped step is
+        # never the cursor and never keeps a todo from being is-done.
+        t = {"WorkItems": [
+            {"kind": "obsolete", "done": True, "summary": "drop me", "message": "descoped"},
+            {"kind": "task", "done": False, "summary": "do X"},
+        ]}
+        self.assertEqual(todo.cursor_index(t), 1)
+        self.assertTrue(todo.workitem_is_done(t["WorkItems"][0]))
+        self.assertIn(todo.WORKITEM_OBSOLETE, todo.WORKITEM_DONE_KINDS)
+        only_dropped = {"WorkItems": [t["WorkItems"][0]]}
+        self.assertTrue(todo.is_done(only_dropped))
+        # ...and it is not a branch commit, so it never answers last-sha
+        self.assertIsNone(todo.last_sha(only_dropped))
+
     def test_next_action_finish_when_done(self) -> None:
         done_todo = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
         nxt = todo.next_action(done_todo)
@@ -2497,6 +2512,149 @@ class WorkItemAddressUnitTests(unittest.TestCase):
         for address in ("2", "-3"):
             with self.subTest(address=address), self.assertRaises(todo.TodoError):
                 todo._workitem_index_by_number(items, address)
+
+
+class WorkItemObsoleteTests(TodoCase):
+    """Closing a step that is no longer WANTED, as opposed to done or blocked."""
+
+    def _plan(self, *summaries: str, stay: bool = False) -> None:
+        """An inited todo carrying one not-done task per summary."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        args = ["--summary=Effort"] + (["--stay-on-parent"] if stay else [])
+        self.init_ok(*args)
+        for summary in summaries:
+            proc = self.todo("work-item-add", self.tid, f"--summary={summary}")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _items(self) -> list:
+        return self.read_cur()["WorkItems"]
+
+    def _order(self) -> list:
+        return [item["summary"] for item in self._items()]
+
+    def test_obsolete_closes_the_cursor_and_keeps_the_reason_in_the_trail(self) -> None:
+        self._plan("A", "B")
+        reason = "descoped by the user: the API this step wrapped was withdrawn"
+        proc = self.todo("work-item-obsolete", self.tid, "-m", reason)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual({"index": 0, "from_index": 0}, {k: payload[k] for k in ("index", "from_index")})
+        item = self._items()[0]
+        self.assertEqual("obsolete", item["kind"])
+        self.assertTrue(item["done"])
+        self.assertEqual(reason, item["message"])
+        self.assertEqual("A", item["summary"])  # the step it dropped is still named
+        self.assertEqual(["A", "B"], self._order())
+        # the cursor moved on, and the dropped step is not a commit
+        self.assertEqual(1, json.loads(self.todo("work-item-read", self.tid).stdout)["index"])
+        self.assertEqual(1, self.todo("last-sha", self.tid).returncode)
+
+    def test_delete_erases_the_step_where_obsolete_records_it(self) -> None:
+        # The distinction the two commands exist for.
+        self._plan("A", "B")
+        self.assertEqual(0, self.todo("work-item-delete", self.tid, "1").returncode)
+        self.assertEqual(["A"], self._order())  # B left no trace
+        self.assertEqual(0, self.todo("work-item-obsolete", self.tid, "-m", "descoped").returncode)
+        self.assertEqual(["A"], self._order())  # A is still here, now as a record
+        self.assertEqual("obsolete", self._items()[0]["kind"])
+
+    def test_obsolete_moves_a_later_item_into_the_done_prefix(self) -> None:
+        # Closing a step further down the plan would otherwise leave a done
+        # item behind not-done ones, which #3 forbids.
+        self._plan("A", "B", "C")
+        proc = self.todo("work-item-obsolete", self.tid, "2", "-m", "subsumed by A")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(0, payload["index"])
+        self.assertEqual(2, payload["from_index"])
+        self.assertEqual(["C", "A", "B"], self._order())
+        self.assertEqual("obsolete", self._items()[0]["kind"])
+        doctor = json.loads(self.todo("doctor", self.tid).stdout)
+        self.assertTrue(doctor["ok"], doctor["findings"])  # done items still a prefix
+
+    def test_obsolete_patches_the_item_and_keeps_its_objid_and_hints(self) -> None:
+        # Patch, never delete-and-recreate: the objid a permalink was minted
+        # against survives, and so does what the plan attached to the step.
+        self._plan("A", "B")
+        hints = self.repo / "hints.json"
+        hints.write_text(json.dumps({"primitive": "wait-for", "wait_for": ["abcd1234"]}), encoding="utf-8")
+        wired = self.todo("set-json-path", self.tid, "WorkItems.1.execution", "--file", str(hints))
+        hints.unlink()
+        self.assertEqual(wired.returncode, 0, wired.stderr)
+        before = self._items()[1]
+        objid, execution_objid = before["objid"], before["execution"]["objid"]
+        proc = self.todo("work-item-obsolete", self.tid, f"objid:{objid}", "-m", "no longer waiting on that child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = self._items()[0]  # moved to the frontier, same object
+        self.assertEqual(objid, after["objid"])
+        self.assertEqual(objid, json.loads(proc.stdout)["objid"])
+        self.assertEqual("wait-for", after["execution"]["primitive"])
+        self.assertEqual(execution_objid, after["execution"]["objid"])
+
+    def test_obsolete_is_store_only_and_needs_no_branch_checkout(self) -> None:
+        # Unlike work-item-done, dropping a step commits nothing, so it must
+        # not require being in a checkout of the todo's branch.
+        self._plan("A", stay=True)
+        self.assertNotEqual(
+            self.read_cur()["Branch"], self._git("branch", "--show-current").stdout.strip()
+        )
+        proc = self.todo("work-item-obsolete", self.tid, "-m", "descoped before it ever started")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("obsolete", self._items()[0]["kind"])
+
+    def test_obsolete_requires_a_reason(self) -> None:
+        self._plan("A")
+        missing = self.todo("work-item-obsolete", self.tid)
+        self.assertEqual(missing.returncode, 2)  # argparse: -m is required
+        self.assertIn("--message", missing.stderr)
+        blank = self.todo("work-item-obsolete", self.tid, "-m", "   ")
+        self.assertEqual(blank.returncode, 1)
+        self.assertIn("why the step is no longer wanted", blank.stderr)
+        self.assertEqual("task", self._items()[0]["kind"])  # nothing recorded
+
+    def test_obsolete_refuses_an_already_closed_item(self) -> None:
+        self._plan("A", "B")
+        self.assertEqual(0, self.todo("work-item-obsolete", self.tid, "-m", "descoped").returncode)
+        again = self.todo("work-item-obsolete", self.tid, "0", "-m", "descoped twice")
+        self.assertEqual(again.returncode, 1)
+        self.assertIn("is done", again.stderr)
+
+    def test_obsolete_as_the_last_item_is_a_doctor_finding(self) -> None:
+        # Same refusal as a blocked tail (#6): a todo whose final act was
+        # dropping a step has stopped, not finished.
+        self._plan("A")
+        self.assertEqual(0, self.todo("work-item-obsolete", self.tid, "-m", "descoped").returncode)
+        self.assertEqual(0, self.todo("is-done", self.tid).returncode)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any("obsolete" in f for f in payload["findings"]), payload["findings"])
+
+    def test_doctor_requires_an_obsolete_items_metadata(self) -> None:
+        # Shapes the CLI cannot produce, but a hand edit or an older tool can.
+        self._plan("A")
+        for node, expected in (
+            ({"kind": "obsolete", "done": True, "summary": "A"}, "missing a message"),
+            ({"kind": "obsolete", "done": True, "summary": "A", "message": "why",
+              "sha": "a" * 40}, "carries sha"),
+            ({"kind": "obsolete", "done": True, "summary": "A", "message": "why",
+              "at_sha": "b" * 40}, "carries at_sha"),
+        ):
+            with self.subTest(expected=expected):
+                items = self.repo / "items.json"
+                items.write_text(
+                    json.dumps([node, {"kind": "task", "done": False, "summary": "real work"}]),
+                    encoding="utf-8",
+                )
+                wrote = self.todo("set-json-path", self.tid, "WorkItems", "--file", str(items))
+                items.unlink()
+                self.assertEqual(wrote.returncode, 0, wrote.stderr)
+                payload = json.loads(self.todo("doctor", self.tid).stdout)
+                self.assertFalse(payload["ok"])
+                self.assertTrue(
+                    any(expected in f for f in payload["findings"]), payload["findings"]
+                )
 
 
 class BaseDirRepoDirTests(TodoCase):
