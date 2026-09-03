@@ -33,10 +33,20 @@ JsonDict = Dict[str, Any]
 OBJID_KEY: str = "objid"
 NEXT_OBJID_KEY: str = "_nextobjid"
 
+# Characters ``format_objid`` renders. An id widens past this only if one todo
+# ever holds more than 65536 objects, so in practice every id is this wide --
+# which is what makes an unpadded spelling worth accepting on input (see
+# normalize_objid_prefix).
+OBJID_WIDTH: int = 4
+
 # A well-formed objid: lowercase hex, at least the 4 characters `%04x` renders.
 # Uppercase is deliberately rejected so there is exactly one spelling of an id
 # and a prefix match never has to case-fold.
 OBJID_RE = re.compile(r"^[0-9a-f]{4,}$")
+
+# The same spelling with no length floor: what a caller that matches a prefix
+# against ONE collection accepts (see is_objid_prefix).
+OBJID_PREFIX_RE = re.compile(r"^[0-9a-f]+$")
 
 # Top-level field whose subtree is never stamped (see module docstring).
 _EXEMPT_TOP_FIELD: str = "State"
@@ -44,12 +54,37 @@ _EXEMPT_TOP_FIELD: str = "State"
 
 def format_objid(value: int) -> str:
     """Render an allocation counter as an objid."""
-    return format(value, "04x")
+    return format(value, f"0{OBJID_WIDTH}x")
+
+
+def normalize_objid_prefix(value: str) -> str:
+    """Left-pad a short objid to the width ``format_objid`` renders.
+
+    An objid IS an allocation number, so ``3``, ``03`` and ``0003`` are three
+    spellings of ONE id and the padded one is canonical -- a caller matching
+    against a collection can accept the short form without becoming ambiguous.
+    A value already that wide is returned unchanged, where it goes on acting as
+    a plain prefix. Permalinks do NOT pad: ``todo_url`` matches an objid prefix
+    against every object in the record and imposes a 4-character floor instead.
+    """
+    return value.rjust(OBJID_WIDTH, "0")
 
 
 def is_objid(value: Any) -> bool:
     """True when *value* is a well-formed objid."""
     return isinstance(value, str) and bool(OBJID_RE.match(value))
+
+
+def is_objid_prefix(value: Any) -> bool:
+    """True when *value* could be the leading characters of an objid.
+
+    The same lowercase-hex spelling as a whole id, at any length. A prefix
+    only means something against a stated collection, and the caller is what
+    knows whether it hits exactly one object there, so a length floor is not
+    this function's business -- contrast ``todo_url.MIN_PREFIX``, which guards
+    a prefix matched against the WHOLE record.
+    """
+    return isinstance(value, str) and bool(OBJID_PREFIX_RE.match(value))
 
 
 def iter_objects(todo: JsonDict) -> Iterator[Tuple[str, JsonDict]]:
