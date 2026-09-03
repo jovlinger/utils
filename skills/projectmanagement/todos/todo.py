@@ -1479,7 +1479,7 @@ def build_ticket_skeleton(
 
 # --- WorkItem model: typed items, cursor, and invariants -------------------
 #
-# A WorkItem is either not-done freetext (kind "task") or one of four typed
+# A WorkItem is either not-done freetext (kind "task") or one of five typed
 # done kinds, each produced by the command that performs that work:
 #   - "code"          local coding; carries a `sha` (invariant #1)
 #   - "merge_subtodo" a merged subtodo; carries `subtodo_id` and a `sha`
@@ -1490,6 +1490,15 @@ def build_ticket_skeleton(
 #                     what the no-code step did. Mirrors the State-value
 #                     doctrine: each kind keeps only its own metadata, and
 #                     inapplicable metadata raises instead of silently dropping.
+#   - "obsolete"      NOT DONE and never will be, because it is no longer
+#                     WANTED: descoped, superseded, or subsumed by another
+#                     step. Carries a `message` saying why and nothing else --
+#                     no `sha` (it produced no commit) and no `at_sha` (it
+#                     observed nothing). Distinct from `work-item-done
+#                     --blocked`, which is a step still owed that CANNOT be
+#                     done as written; nobody owes an obsolete step anything.
+#                     Distinct from work-item-delete, which erases the step:
+#                     an obsolete item stays in the trail, with its reason.
 # The cursor is the first not-done item (derived). Working proceeds by marking
 # the cursor done and advancing; the index never decreases though the list may
 # grow (invariant #3). A todo is done when nothing is not-done (invariant #7).
@@ -1499,6 +1508,7 @@ WORKITEM_CODE = "code"
 WORKITEM_MERGE_SUBTODO = "merge_subtodo"
 WORKITEM_START_SUBTODO = "start_subtodo"
 WORKITEM_CHECKPOINT = "checkpoint"
+WORKITEM_OBSOLETE = "obsolete"
 # git's null object id: an EXPLICIT no-change sentinel on a done code/merge
 # item's `sha`. Two producers: `work-item-done --blocked`, for an item that
 # CANNOT be done as written (the sentinel says "no commit, and none is coming"
@@ -1508,8 +1518,19 @@ WORKITEM_CHECKPOINT = "checkpoint"
 # report it as a branch commit; doctor accepts it mid-list and rejects it as
 # the last item.
 WORKITEM_NULL_SHA = "0" * 40
+# "Done" here means CLOSED -- the cursor is past it and the plan owes it
+# nothing further. An obsolete item is closed without ever having been done,
+# which is why the flag on the node stays `done: true`: every reader that walks
+# the plan (cursor, is-done, #3's prefix rule) asks "is this still open?", and
+# the answer for a dropped step is no.
 WORKITEM_DONE_KINDS = frozenset(
-    {WORKITEM_CODE, WORKITEM_MERGE_SUBTODO, WORKITEM_START_SUBTODO, WORKITEM_CHECKPOINT}
+    {
+        WORKITEM_CODE,
+        WORKITEM_MERGE_SUBTODO,
+        WORKITEM_START_SUBTODO,
+        WORKITEM_CHECKPOINT,
+        WORKITEM_OBSOLETE,
+    }
 )
 WORKITEM_KINDS = WORKITEM_DONE_KINDS | {WORKITEM_TASK}
 
@@ -1669,8 +1690,8 @@ def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str)
 def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
     """Return the work item at *index*, refusing a done one (invariant #3).
 
-    Done items form the prefix of the plan and are its committed history, so
-    only the not-done frontier can be edited. An edit aimed at a done item is
+    Done items form the prefix of the plan and are its history, so only the
+    not-done frontier can be edited. An edit aimed at a done item is
     an error rather than a silent no-op: it is a misaddressed command, and
     rewriting history is what invariant #3 exists to prevent.
     """
@@ -1678,7 +1699,7 @@ def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
     if not isinstance(item, dict) or workitem_is_done(item):
         raise TodoError(
             f"work item {index} is done; only the not-done frontier can be edited "
-            "(done items are this todo's committed history -- invariant #3)"
+            "(done items are this todo's history -- invariant #3)"
         )
     return item
 
@@ -3098,14 +3119,32 @@ def workitem_findings(todo: JsonDict) -> List[str]:
                     f"WorkItems.{index} checkpoint item carries a sha; a checkpoint claims "
                     "no commit (observational position goes in at_sha)"
                 )
-    # a done todo must not end in start_subtodo, checkpoint, or a no-change
-    # sentinel -- it must be a real code/merge commit so last-sha is the
-    # branch's last commit (#6)
+        if k == WORKITEM_OBSOLETE:
+            # The reason is the item's whole content: without it the trail says
+            # a step vanished and nothing about why, which is what deleting it
+            # would have said.
+            if not (isinstance(item.get("message"), str) and item.get("message").strip()):
+                findings.append(
+                    f"WorkItems.{index} obsolete item is missing a message; the reason a "
+                    "step was dropped IS the record"
+                )
+            for field in ("sha", "at_sha"):
+                if item.get(field):
+                    findings.append(
+                        f"WorkItems.{index} obsolete item carries {field}; a dropped step "
+                        "produced no commit and observed no position"
+                    )
+    # a done todo must not end in start_subtodo, checkpoint, obsolete, or a
+    # no-change sentinel -- it must be a real code/merge commit so last-sha is
+    # the branch's last commit (#6). An obsolete tail is the same refusal as a
+    # blocked one: a todo whose final act was dropping a step has not finished,
+    # it has stopped.
     if items and is_done(todo):
         last = items[-1]
         if isinstance(last, dict) and workitem_kind(last) in (
             WORKITEM_START_SUBTODO,
             WORKITEM_CHECKPOINT,
+            WORKITEM_OBSOLETE,
         ):
             findings.append(
                 f"last work item is {workitem_kind(last)}; a done todo must end in a "
@@ -4857,15 +4896,15 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
         index = resolve_workitem_index(todo, self.target, what="replace")
         require_open_workitem(todo, index)
         items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        replacement: JsonDict = {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
-        # Carry the objid over: a reworded step is the SAME step, and the objid
-        # is its identity, not its content. Dropping it would silently mint a
-        # fresh id at the next write and break every permalink already handed
-        # out for this item.
-        objid = items[index].get(todo_objid.OBJID_KEY)
-        if todo_objid.is_objid(objid):
-            replacement[todo_objid.OBJID_KEY] = objid
-        items[index] = replacement
+        # PATCH the node; never delete-and-recreate it. A reworded step is the
+        # SAME step, so everything that is its identity rather than its content
+        # survives -- the objid above all, since re-minting one silently at the
+        # next write would break every permalink already handed out for this
+        # item, but also any execution hints the plan attached to it.
+        item = items[index]
+        item["kind"] = WORKITEM_TASK
+        item["summary"] = self.summary
+        item["done"] = False
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -4881,8 +4920,10 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
         "Work-item-delete removes a not-done item: the cursor by default, or the one an explicit "
         "TARGET names (an index, negative counting from the end, or objid:<hex>) -- dropping a "
         "step further down the plan without having to work forward to it. Done items are the "
-        "committed history of the todo, so a target that names one is an error, not a deletion. "
-        "Errors when there is no open item. The write is store-only."
+        "history of the todo, so a target that names one is an error, not a deletion. Deleting "
+        "drops the step AND the fact that it was ever planned, so once a plan is real prefer "
+        "work-item-obsolete, which closes a no-longer-wanted step and keeps the reason in the "
+        "trail. Errors when there is no open item. The write is store-only."
     )
 
     @classmethod
@@ -4960,7 +5001,7 @@ class WorkItemReorderCommand(WorkItemEditCommand):
         if frontier is None:
             raise TodoError(
                 "this todo has no not-done work items; there is nothing reorderable "
-                "(done items are its committed history -- invariant #3)"
+                "(done items are its history -- invariant #3)"
             )
         src = resolve_workitem_index(todo, self.src, what="reorder")
         require_open_workitem(todo, src)
@@ -4996,6 +5037,93 @@ class WorkItemReorderCommand(WorkItemEditCommand):
                     "to_index": dst,
                     "objid": node.get(todo_objid.OBJID_KEY, ""),
                     "summary": summary,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+
+class WorkItemObsoleteCommand(WorkItemProgressCommand):
+    command_names = ("work-item-obsolete",)
+    doc_short: ClassVar[str] = "Close an item as no longer wanted"
+    doc_long: ClassVar[str] = (
+        "Work-item-obsolete closes a not-done item that is no longer WANTED -- descoped, "
+        "superseded, or subsumed by another step -- as kind=obsolete carrying the required -m "
+        "reason. Three things can end a step, and they say different things: work-item-done "
+        "COMPLETED it; work-item-done --blocked still owes it (it cannot be done AS WRITTEN, so "
+        "someone has to decide what happens next); obsolete owes it nothing. Prefer it over "
+        "work-item-delete once a plan is real -- delete erases the step and its reason, obsolete "
+        "keeps both in the trail a later reader walks. TARGET is an index (negative counts from "
+        "the end) or objid:<hex>, defaulting to the cursor, because a step usually turns out to "
+        "be unnecessary while an earlier one is still current. The item is PATCHED in place, so "
+        "it keeps its objid and any permalink to it stays valid, and it moves to the end of the "
+        "done prefix -- it is history now, not plan -- which is what keeps done items a prefix "
+        "(invariant #3). Store-only: it makes no commit and needs no branch checkout. Doctor "
+        "rejects an obsolete item as the LAST item of a done todo (#6, as for --blocked): a todo "
+        "whose final act was dropping a step has stopped, not finished."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-obsolete arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
+        parser.add_argument(
+            "-m",
+            "--message",
+            required=True,
+            help=(
+                "why the step is no longer wanted: descoped by whom, superseded by what, or "
+                "which other step subsumed it"
+            ),
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Close the addressed (default cursor) work item as no longer wanted."""
+        if not self.message.strip():
+            raise TodoError(
+                "-m must say why the step is no longer wanted; that reason is the entire "
+                "content of an obsolete item, and a blank one records nothing"
+            )
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        normalize_todo_schema(todo)
+        index = resolve_workitem_index(todo, self.target, what="mark obsolete")
+        item = require_open_workitem(todo, index)
+        # The cursor, i.e. the end of the done prefix. Asked for through the
+        # same resolver so there is no second no-open-item path: the target
+        # above is an open item, so this cannot fail.
+        frontier = resolve_workitem_index(todo, None, what="mark obsolete")
+        # PATCH the node; never delete-and-recreate it. The step is not being
+        # swapped for a different one, it is being closed, so its objid, its
+        # summary, and any execution hints the plan attached to it all survive
+        # as the record of what was dropped and what it was going to be.
+        item["kind"] = WORKITEM_OBSOLETE
+        item["message"] = self.message
+        item["done"] = True
+        items: List[JsonDict] = list(todo.get("WorkItems") or [])
+        # A closed step belongs to the history, not to the remaining plan, so
+        # it joins the end of the done prefix. Without the move, dropping a
+        # step further down the list would leave a done item sitting behind
+        # not-done ones -- exactly what #3 forbids.
+        items.insert(frontier, items.pop(index))
+        todo["WorkItems"] = items
+        write_todo_worktree(root, todo)
+        node = todo["WorkItems"][frontier]
+        summary = str(node.get("summary", ""))
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): obsolete work item: {_summary_snippet(summary)}")
+        print(
+            json.dumps(
+                {
+                    "index": frontier,
+                    "from_index": index,
+                    "kind": WORKITEM_OBSOLETE,
+                    "objid": node.get(todo_objid.OBJID_KEY, ""),
+                    "summary": summary,
+                    "message": node["message"],
                 },
                 indent=2,
             )

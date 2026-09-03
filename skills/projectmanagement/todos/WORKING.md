@@ -203,6 +203,7 @@ spawn a subtodo.
 | no-code step | `todo.py work-item-done <id> --checkpoint -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
 | fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
+| no longer wanted -- descoped, superseded, or subsumed by another step | `todo.py work-item-obsolete <id> [target] -m "why"` | `obsolete` (kept in the trail with its reason, unlike a delete) |
 | impossible as written | `todo.py work-item-done <id> --blocked -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `code` with the no-change sentinel |
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
@@ -269,6 +270,11 @@ chat. Record it in TWO places, long form and short form:
 
 | Where | What | Why there |
 |-------|------|-----------|
+A dropped step is not a blocked one. `--blocked` means the step is still owed
+and cannot be done as written, so it belongs in the escalation below;
+`work-item-obsolete` means nobody wants it any more and there is nothing to
+escalate.
+
 | **The work item** (`work-item-done --blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
 | **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question |
 
