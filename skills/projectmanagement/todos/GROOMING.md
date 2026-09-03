@@ -144,6 +144,12 @@ order, which gives a whole plan a topological pass cheaply: send each step to
 plan reads in exactly that order. Address by `objid:` while doing it -- each move
 renumbers the indexes after it, an objid keeps naming the same item.
 
+Dropping a step: `work-item-delete` while the plan is still notional (`groom`),
+`work-item-obsolete <id> [target] -m "why"` once it is real. Obsolete closes the
+step as no-longer-wanted and keeps it, and the reason, in the trail a later
+reader walks; delete erases both. Neither is `work-item-done --blocked`, which
+is for a step still OWED that cannot be done as written.
+
 Wholesale replan: `set-json-path <id> WorkItems` (JSON array) -- see
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items). Edit the not-done frontier;
 never rewrite the done prefix. Addressing (index vs `objid:`, and which commands

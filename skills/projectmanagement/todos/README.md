@@ -93,7 +93,7 @@ To enable observability into agents' behavior, we rely on git.  After every step
 the implementing agent commits that step's work, records the SHA, and (for convenience) duplicates the commit message
 into the WorkItem.  This allows the web UI to display a detailed log of the agent's actions. 
 
-Each **WorkItem** is one of 4 kinds, and goes from a textual description to a structured result.
+Each **WorkItem** is one of 5 kinds, and goes from a textual description to a structured result.
 
 | kind            | records                                                               |
 |-----------------|-----------------------------------------------------------------------|
@@ -101,6 +101,7 @@ Each **WorkItem** is one of 4 kinds, and goes from a textual description to a st
 | `checkpoint`    | a no-code step finished (`--checkpoint`, observational `at_sha`)      |
 | `merge_subtodo` | child integrated on the parent branch (after **your** `git merge`)    |
 | `start_subtodo` | child registered (`add-subtodo`)                                      |
+| `obsolete`      | a step dropped as no longer wanted (`work-item-obsolete`, `-m` why)   |
 
 The [`frequentcommits`](../frequentcommits/SKILL.md) policy goes into more detail. 
 
