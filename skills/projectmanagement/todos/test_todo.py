@@ -2122,10 +2122,10 @@ class WorkItemInvariantTests(TodoCase):
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(self.read_cur()["WorkItems"][0]["sha"], self._head())
 
-    def test_checkpoint_workitem_records_at_sha_not_sha(self) -> None:
+    def test_checkpoint_records_at_sha_not_sha(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=recon only")
-        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon: findings in Body")
+        proc = self.todo("work-item-checkpoint", self.tid, "-m", "recon: findings in Body")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         item = self.read_cur()["WorkItems"][0]
         self.assertEqual(item["kind"], "checkpoint")
@@ -2138,7 +2138,7 @@ class WorkItemInvariantTests(TodoCase):
     def test_checkpoint_without_message_marks_explicit_noop(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=wait for CI")
-        proc = self.todo("work-item-done", self.tid, "--checkpoint")
+        proc = self.todo("work-item-checkpoint", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         item = self.read_cur()["WorkItems"][0]
         # never inherits the HEAD commit's own message
@@ -2148,27 +2148,43 @@ class WorkItemInvariantTests(TodoCase):
         self._init()
         self.todo("work-item-add", self.tid, "--summary=recon only")
         (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
-        proc = self.todo("work-item-done", self.tid, "--checkpoint", "-m", "recon")
+        proc = self.todo("work-item-checkpoint", self.tid, "-m", "recon")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("dirty", proc.stderr)
         self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
 
-    def test_checkpoint_refuses_sha_flag(self) -> None:
+    def test_checkpoint_needs_the_todos_own_branch_for_at_sha(self) -> None:
+        # It reads HEAD, so a checkout of some other branch would record a
+        # position the trail cannot use. Its two siblings need no checkout.
         self._init()
         self.todo("work-item-add", self.tid, "--summary=recon only")
-        proc = self.todo("work-item-done", self.tid, "--checkpoint", "--sha", self._head())
+        self._git("checkout", "-q", "master")
+        proc = self.todo("work-item-checkpoint", self.tid, "-m", "recon")
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("--checkpoint does not take --sha", proc.stderr)
+        self.assertIn("run it from a checkout of that branch", proc.stderr)
 
-    def test_clean_tree_message_without_checkpoint_is_an_error(self) -> None:
+    def test_clean_tree_message_without_a_disposition_is_an_error(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=code it")
         proc = self.todo("work-item-done", self.tid, "-m", "would be silently dropped")
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("--checkpoint", proc.stderr)
+        self.assertIn("work-item-checkpoint", proc.stderr)
         self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
 
-    def test_blocked_workitem_records_null_sha_and_the_long_form(self) -> None:
+    def test_the_moved_flags_point_at_their_new_commands(self) -> None:
+        # A disposition that records no commit is no longer a flag on the
+        # command whose job is recording one.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        for flag, command in (("--checkpoint", "work-item-checkpoint"),
+                              ("--blocked", "work-item-blocked")):
+            with self.subTest(flag=flag):
+                proc = self.todo("work-item-done", self.tid, flag, "-m", "why")
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn(command, proc.stderr)
+        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+
+    def test_blocked_records_the_kind_and_the_long_form(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=replay the 22-event burst")
         long_form = (
@@ -2177,47 +2193,67 @@ class WorkItemInvariantTests(TodoCase):
             "STORM-30: no interchange fixture exists at all.\n\n"
             "Options: (a) descope, (b) wait for a healthy tenant, (c) move to layer 3."
         )
-        proc = self.todo("work-item-done", self.tid, "--blocked", "-m", long_form)
+        proc = self.todo("work-item-blocked", self.tid, "-m", long_form)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         item = self.read_cur()["WorkItems"][0]
-        self.assertEqual(item["kind"], "code")
+        self.assertEqual(item["kind"], "blocked")
         self.assertTrue(item["done"])
-        self.assertEqual(item["sha"], "0" * 40)  # no commit, and none is coming
+        # the kind says it now; no sentinel sha to special-case, and no at_sha
+        self.assertNotIn("sha", item)
+        self.assertNotIn("at_sha", item)
         self.assertEqual(item["message"], long_form)  # the narrative lives in the trail
-        self.assertEqual(item["summary"], "replay the 22-event burst")  # cursor summary carries over
-        # cursor advanced, but the sentinel is not reported as a branch commit
+        self.assertEqual(item["summary"], "replay the 22-event burst")  # summary carries over
+        # cursor advanced, and nothing here is reportable as a branch commit
         self.assertEqual(self.todo("is-done", self.tid).returncode, 0)
         self.assertEqual(self.todo("last-sha", self.tid).stdout.strip(), "")
 
     def test_blocked_requires_a_message(self) -> None:
         self._init()
         self.todo("work-item-add", self.tid, "--summary=impossible thing")
-        proc = self.todo("work-item-done", self.tid, "--blocked")
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("--blocked requires -m", proc.stderr)
+        missing = self.todo("work-item-blocked", self.tid)
+        self.assertEqual(missing.returncode, 2)  # argparse: -m is required
+        self.assertIn("--message", missing.stderr)
+        blank = self.todo("work-item-blocked", self.tid, "-m", "  ")
+        self.assertEqual(blank.returncode, 1)
+        self.assertIn("long form", blank.stderr)
         self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # cursor did not advance
 
-    def test_blocked_refuses_dirty_tree_and_sha_and_checkpoint(self) -> None:
+    def test_blocked_is_store_only_so_a_dirty_tree_is_fine(self) -> None:
+        # Nothing it records comes from git, so it has no business demanding a
+        # clean tree -- the old --blocked refused one, which forced a commit or
+        # a stash just to write down a paragraph.
         self._init()
         self.todo("work-item-add", self.tid, "--summary=impossible thing")
-        sha = self.todo("work-item-done", self.tid, "--blocked", "-m", "why", "--sha", self._head())
-        self.assertEqual(sha.returncode, 1)
-        self.assertIn("--blocked does not take --sha", sha.stderr)
-        both = self.todo("work-item-done", self.tid, "--blocked", "--checkpoint", "-m", "why")
-        self.assertEqual(both.returncode, 1)
-        self.assertIn("different completions", both.stderr)
-        (self.repo / "f.txt").write_text("x\n", encoding="utf-8")
-        dirty = self.todo("work-item-done", self.tid, "--blocked", "-m", "why")
-        self.assertEqual(dirty.returncode, 1)
-        self.assertIn("dirty", dirty.stderr)
-        self.assertFalse(self.read_cur()["WorkItems"][0]["done"])  # nothing recorded
+        (self.repo / "partial.txt").write_text("half an attempt\n", encoding="utf-8")
+        proc = self.todo("work-item-blocked", self.tid, "-m", "why it cannot be done")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.read_cur()["WorkItems"][0]["kind"], "blocked")
+        self.assertTrue((self.repo / "partial.txt").exists())  # the attempt is untouched
 
     def test_blocked_as_last_item_is_a_doctor_finding(self) -> None:
         # A blocked item makes the todo is-done with no real final commit; #6
         # is what refuses to call that finished.
         self._init()
         self.todo("work-item-add", self.tid, "--summary=impossible thing")
-        self.todo("work-item-done", self.tid, "--blocked", "-m", "why it cannot be done")
+        self.todo("work-item-blocked", self.tid, "-m", "why it cannot be done")
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("last work item is blocked", proc.stdout)
+
+    def test_a_legacy_sentinel_tail_is_still_a_doctor_finding(self) -> None:
+        # Records written before kind=blocked existed carry a code item with
+        # the null sha; #6 must go on catching that spelling too.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=impossible thing")
+        items = self.repo / "items.json"
+        items.write_text(
+            json.dumps([{"kind": "code", "done": True, "summary": "impossible thing",
+                         "sha": todo.WORKITEM_NULL_SHA, "message": "why"}]),
+            encoding="utf-8",
+        )
+        wrote = self.todo("set-json-path", self.tid, "WorkItems", "--file", str(items))
+        items.unlink()
+        self.assertEqual(wrote.returncode, 0, wrote.stderr)
         proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("no-change sentinel", proc.stdout)
@@ -2514,8 +2550,108 @@ class WorkItemAddressUnitTests(unittest.TestCase):
                 todo._workitem_index_by_number(items, address)
 
 
+class NoCommitDispositionTests(TodoCase):
+    """checkpoint / blocked / obsolete: one close mechanism, three claims.
+
+    The claims differ and are tested per command; what is asserted here is that
+    the mechanism they share behaves identically, since that shared mechanism is
+    the reason three commands cost little."""
+
+    KINDS = {
+        "work-item-checkpoint": "checkpoint",
+        "work-item-blocked": "blocked",
+        "work-item-obsolete": "obsolete",
+    }
+
+    def _fresh(self) -> None:
+        """A brand-new repo and store, so each subTest starts from zero.
+
+        Every case here runs the same scenario against three commands, and a
+        todo is one-per-branch: reusing the fixture would leave the previous
+        command's closed item in the plan. tearDown first so the discarded
+        temp dirs go with it rather than leaking one per iteration."""
+        self.tearDown()
+        self.setUp()
+
+    def _plan(self, *summaries: str) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=Effort")
+        for summary in summaries:
+            proc = self.todo("work-item-add", self.tid, f"--summary={summary}")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _items(self) -> list:
+        return self.read_cur()["WorkItems"]
+
+    def test_each_closes_the_cursor_and_advances_it(self) -> None:
+        for command, kind in self.KINDS.items():
+            with self.subTest(command=command):
+                self._fresh()
+                self._plan("A", "B")
+                proc = self.todo(command, self.tid, "-m", "the reason")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                payload = json.loads(proc.stdout)
+                self.assertEqual(kind, payload["kind"])
+                self.assertEqual(0, payload["index"])
+                self.assertEqual("the reason", payload["message"])
+                item = self._items()[0]
+                self.assertEqual(kind, item["kind"])
+                self.assertTrue(item["done"])
+                self.assertEqual("A", item["summary"])  # the step is still named
+                self.assertEqual(1, json.loads(self.todo("work-item-read", self.tid).stdout)["index"])
+
+    def test_each_slots_a_targeted_item_into_the_done_prefix(self) -> None:
+        for command, kind in self.KINDS.items():
+            with self.subTest(command=command):
+                self._fresh()
+                self._plan("A", "B", "C")
+                proc = self.todo(command, self.tid, "2", "-m", "the reason")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                payload = json.loads(proc.stdout)
+                self.assertEqual((2, 0), (payload["from_index"], payload["index"]))
+                self.assertEqual(["C", "A", "B"], [i["summary"] for i in self._items()])
+                self.assertEqual(kind, self._items()[0]["kind"])
+                doctor = json.loads(self.todo("doctor", self.tid).stdout)
+                self.assertTrue(doctor["ok"], doctor["findings"])  # done items still a prefix
+
+    def test_each_keeps_the_items_objid(self) -> None:
+        for command in self.KINDS:
+            with self.subTest(command=command):
+                self._fresh()
+                self._plan("A", "B")
+                objid = self._items()[1]["objid"]
+                proc = self.todo(command, self.tid, f"objid:{objid}", "-m", "the reason")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(objid, json.loads(proc.stdout)["objid"])
+                self.assertEqual(objid, self._items()[0]["objid"])  # patched, not rebuilt
+
+    def test_each_refuses_an_already_closed_item(self) -> None:
+        for command in self.KINDS:
+            with self.subTest(command=command):
+                self._fresh()
+                self._plan("A", "B")
+                self.assertEqual(0, self.todo(command, self.tid, "-m", "the reason").returncode)
+                again = self.todo(command, self.tid, "0", "-m", "again")
+                self.assertEqual(again.returncode, 1)
+                self.assertIn("is done", again.stderr)
+
+    def test_each_takes_a_summary_override(self) -> None:
+        for command in self.KINDS:
+            with self.subTest(command=command):
+                self._fresh()
+                self._plan("A")
+                proc = self.todo(
+                    command, self.tid, "-m", "the reason", "--summary=a better description"
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual("a better description", self._items()[0]["summary"])
+
+
 class WorkItemObsoleteTests(TodoCase):
-    """Closing a step that is no longer WANTED, as opposed to done or blocked."""
+    """What is specific to obsolete: no-longer-WANTED, as against done or blocked.
+
+    The mechanics it shares with checkpoint and blocked live in
+    NoCommitDispositionTests."""
 
     def _plan(self, *summaries: str, stay: bool = False) -> None:
         """An inited todo carrying one not-done task per summary."""
@@ -2532,23 +2668,6 @@ class WorkItemObsoleteTests(TodoCase):
     def _order(self) -> list:
         return [item["summary"] for item in self._items()]
 
-    def test_obsolete_closes_the_cursor_and_keeps_the_reason_in_the_trail(self) -> None:
-        self._plan("A", "B")
-        reason = "descoped by the user: the API this step wrapped was withdrawn"
-        proc = self.todo("work-item-obsolete", self.tid, "-m", reason)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        payload = json.loads(proc.stdout)
-        self.assertEqual({"index": 0, "from_index": 0}, {k: payload[k] for k in ("index", "from_index")})
-        item = self._items()[0]
-        self.assertEqual("obsolete", item["kind"])
-        self.assertTrue(item["done"])
-        self.assertEqual(reason, item["message"])
-        self.assertEqual("A", item["summary"])  # the step it dropped is still named
-        self.assertEqual(["A", "B"], self._order())
-        # the cursor moved on, and the dropped step is not a commit
-        self.assertEqual(1, json.loads(self.todo("work-item-read", self.tid).stdout)["index"])
-        self.assertEqual(1, self.todo("last-sha", self.tid).returncode)
-
     def test_delete_erases_the_step_where_obsolete_records_it(self) -> None:
         # The distinction the two commands exist for.
         self._plan("A", "B")
@@ -2557,20 +2676,6 @@ class WorkItemObsoleteTests(TodoCase):
         self.assertEqual(0, self.todo("work-item-obsolete", self.tid, "-m", "descoped").returncode)
         self.assertEqual(["A"], self._order())  # A is still here, now as a record
         self.assertEqual("obsolete", self._items()[0]["kind"])
-
-    def test_obsolete_moves_a_later_item_into_the_done_prefix(self) -> None:
-        # Closing a step further down the plan would otherwise leave a done
-        # item behind not-done ones, which #3 forbids.
-        self._plan("A", "B", "C")
-        proc = self.todo("work-item-obsolete", self.tid, "2", "-m", "subsumed by A")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        payload = json.loads(proc.stdout)
-        self.assertEqual(0, payload["index"])
-        self.assertEqual(2, payload["from_index"])
-        self.assertEqual(["C", "A", "B"], self._order())
-        self.assertEqual("obsolete", self._items()[0]["kind"])
-        doctor = json.loads(self.todo("doctor", self.tid).stdout)
-        self.assertTrue(doctor["ok"], doctor["findings"])  # done items still a prefix
 
     def test_obsolete_patches_the_item_and_keeps_its_objid_and_hints(self) -> None:
         # Patch, never delete-and-recreate: the objid a permalink was minted
@@ -2612,13 +2717,6 @@ class WorkItemObsoleteTests(TodoCase):
         self.assertIn("why the step is no longer wanted", blank.stderr)
         self.assertEqual("task", self._items()[0]["kind"])  # nothing recorded
 
-    def test_obsolete_refuses_an_already_closed_item(self) -> None:
-        self._plan("A", "B")
-        self.assertEqual(0, self.todo("work-item-obsolete", self.tid, "-m", "descoped").returncode)
-        again = self.todo("work-item-obsolete", self.tid, "0", "-m", "descoped twice")
-        self.assertEqual(again.returncode, 1)
-        self.assertIn("is done", again.stderr)
-
     def test_obsolete_as_the_last_item_is_a_doctor_finding(self) -> None:
         # Same refusal as a blocked tail (#6): a todo whose final act was
         # dropping a step has stopped, not finished.
@@ -2631,17 +2729,22 @@ class WorkItemObsoleteTests(TodoCase):
         self.assertFalse(payload["ok"])
         self.assertTrue(any("obsolete" in f for f in payload["findings"]), payload["findings"])
 
-    def test_doctor_requires_an_obsolete_items_metadata(self) -> None:
+    def test_doctor_requires_the_no_commit_metadata(self) -> None:
         # Shapes the CLI cannot produce, but a hand edit or an older tool can.
+        # blocked and obsolete claim the same thing about git -- nothing -- so
+        # they answer to the same rules.
         self._plan("A")
-        for node, expected in (
-            ({"kind": "obsolete", "done": True, "summary": "A"}, "missing a message"),
+        cases = [
+            ({"kind": kind, "done": True, "summary": "A"}, "missing a message")
+            for kind in ("obsolete", "blocked")
+        ] + [
             ({"kind": "obsolete", "done": True, "summary": "A", "message": "why",
               "sha": "a" * 40}, "carries sha"),
-            ({"kind": "obsolete", "done": True, "summary": "A", "message": "why",
+            ({"kind": "blocked", "done": True, "summary": "A", "message": "why",
               "at_sha": "b" * 40}, "carries at_sha"),
-        ):
-            with self.subTest(expected=expected):
+        ]
+        for node, expected in cases:
+            with self.subTest(node=node["kind"], expected=expected):
                 items = self.repo / "items.json"
                 items.write_text(
                     json.dumps([node, {"kind": "task", "done": False, "summary": "real work"}]),
