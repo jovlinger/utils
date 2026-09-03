@@ -147,10 +147,12 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `work-item-insert <selector> [target] --summary=...` | Insert task before `target`, pushing it down (default: the cursor). Appends only when the plan has no open item |
 | `work-item-replace <selector> [target] --summary=...` | Reword a not-done task (default: the cursor). Keeps the item's `objid` |
 | `work-item-delete <selector> [target]` | Delete a not-done task (default: the cursor). Erases it; prefer `work-item-obsolete` once the plan is real |
-| `work-item-obsolete <selector> [target] -m MSG` | Close a not-done item as **no longer wanted** (`obsolete`), keeping it and the required reason in the trail. Moves it to the end of the done prefix (#3). Store-only; no branch checkout |
+| `work-item-obsolete <selector> [target] -m MSG [--summary S]` | Close a not-done item as **no longer wanted**, as `obsolete`. `-m` required. Store-only |
 | `work-item-reorder <selector> <src> <dst>` | Move one not-done item to position `dst`. `src` is an index or `objid:`; `dst` is an index only, negative counting from the end (`-1` is last). Refuses the done prefix at both ends (#3) |
 | `work-item-read <selector> [target]` | A work item + `next` mechanism hint (default: the cursor). Reads a done item too; `next` always describes the cursor |
-| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S] [--checkpoint] [--blocked]` | Complete cursor as `code` (or `--checkpoint` / `--blocked`). Must run from a checkout of the todo's branch. `--blocked` requires `-m` and a clean tree; refuses `--sha` and refuses `--checkpoint` |
+| `work-item-done <selector> [-m MSG] [--sha SHA] [--summary S]` | Complete the cursor as `code`: records a real commit, making it first (`git add -A`) when the tree is dirty. Must run from a checkout of the todo's branch. Does ONE thing -- the no-commit dispositions are the three commands below |
+| `work-item-checkpoint <selector> [target] [-m MSG] [--summary S]` | Close a not-done item that FINISHED without a commit, as `checkpoint` + observational `at_sha`. Needs the todo's branch checked out (it reads HEAD) and a clean tree. `-m` defaults to an explicit no-op marker |
+| `work-item-blocked <selector> [target] -m MSG [--summary S]` | Close a not-done item that is still OWED but cannot be done as written, as `blocked`. `-m` required (the long form). Store-only: no branch checkout, no clean tree |
 | `is-done <selector>` | Exit 0 when no open work items |
 | `last-sha <selector>` | Sha of last work item (branch tip attribution); `None` for the no-change sentinel |
 
@@ -171,8 +173,9 @@ here: this prefix is matched against one short list, not the whole record, so it
 is padded to a whole id first and is then either unique or reported ambiguous.
 
 Only the not-done frontier is editable (#3). `insert` / `replace` / `delete` /
-`reorder` / `obsolete` refuse a done target; `read` will read one, because
-reading is not editing.
+`reorder` and the three closing commands (`checkpoint` / `blocked` /
+`obsolete`) all refuse a done target; `read` will read one, because reading is
+not editing.
 
 An index is convenient and perishable: every insert, delete, and reorder
 renumbers the items after it. An `objid` survives all three -- and rewording and
@@ -189,8 +192,8 @@ todo.py work-item-reorder <id> objid:000a -1
 alone, which is what makes a topological pass over a mis-ordered plan cheap:
 send each item to `-1` in the order you want them run, first to last, and after
 the final move the plan reads in exactly that order. It is **not** a substitute
-for `work-item-done --blocked`: reorder is for a step that is fine but mistimed,
-`--blocked` is for one that cannot be done as written.
+for `work-item-blocked`: reorder is for a step that is fine but mistimed,
+`work-item-blocked` is for one that cannot be done as written.
 
 ### Maintenance and I/O
 
@@ -409,16 +412,31 @@ because nothing else will notice.
 | kind | fields | produced by |
 |------|--------|-------------|
 | `task` | `summary`, `done:false` | `work-item-add` / `work-item-insert` |
-| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done`; also `work-item-done --blocked` for an item that cannot be done as written (`sha` = the no-change sentinel, `-m` required) |
+| `code` | `summary`, `sha`, `message`, `done:true` | `work-item-done` |
 | `merge_subtodo` | `summary`, `subtodo_id`, `sha`, `done:true` | `merge-subtodo` |
 | `start_subtodo` | `summary`, `subtodo_id`, `done:true` | `add-subtodo` |
-| `checkpoint` | `summary`, `at_sha`, `message`, `done:true` | `work-item-done --checkpoint` |
+| `checkpoint` | `summary`, `at_sha`, `message`, `done:true` | `work-item-checkpoint` |
+| `blocked` | `summary`, `message`, `done:true` (no `sha`, no `at_sha`) | `work-item-blocked` |
 | `obsolete` | `summary`, `message`, `done:true` (no `sha`, no `at_sha`) | `work-item-obsolete` |
+
+**One command per kind, always.** A `kind` is not a status a caller sets, it
+is the receipt of an action: the command does the work and writes down what it
+witnessed. That is why there is no `--status` -- it would let a caller assert
+`code` (this step produced commit X) without producing anything, and the five
+other kinds have incompatible preconditions anyway (needs the branch checked
+out / needs a clean tree / needs your git merge to have happened / needs
+nothing). `set --state` is the opposite case and rightly IS a setter: a todo's
+State is a disposition with no artifact. The escape hatch for writing a node by
+hand stays `set-json-path`, with `doctor` validating the result.
+
+The three no-commit kinds (`checkpoint`, `blocked`, `obsolete`) share ONE
+mechanism -- patch the node, then slot it at the end of the done prefix -- so
+the three names buy meaning, not machinery.
 
 Cursor = first not-done item (derived). The not-done tail is the plan's
 **frontier** and the only editable part of it: `work-item-insert` /
 `-replace` / `-delete` / `-reorder` all work there and refuse a done target,
-which is #3 holding rather than four separate rules. An item's `objid` is its
+which is #3 holding rather than five separate rules. An item's `objid` is its
 identity through all of it -- rewording, moving, and completing keep it, so a
 permalink minted while a step was still open resolves to the finished step.
 
@@ -429,15 +447,20 @@ authorship. `message` on a `code` item is the full commit message recorded at
 `sha`, which makes the trail self-describing -- so `-m` must state the concrete
 outcome (files/tests added, with paths), not a vague label. Inapplicable flags
 raise rather than being silently dropped (`-m` on a clean tree without
-`--checkpoint`/`--blocked` errors; `--sha` with either errors).
+`work-item-checkpoint` errors; `--sha` on a dirty tree errors).
 
-**Done means CLOSED, not accomplished.** Three commands end a step and they
-claim different things. `work-item-done` COMPLETED it. `work-item-done
---blocked` still OWES it: it cannot be done as written, so someone has to
-decide what happens next. `work-item-obsolete` owes it NOTHING -- the step is
-no longer wanted (descoped, superseded, subsumed), and `-m` says which. All
-three are `done` for the cursor, `is-done`, and #3, because every reader of the
-plan is asking "is this still open?".
+**Done means CLOSED, not accomplished.** Four commands end a step and they
+claim different things:
+
+| Command | The claim | Needs git? |
+|---|---|---|
+| `work-item-done` | COMPLETED it, and here is the commit | yes: the branch, and it commits a dirty tree itself |
+| `work-item-checkpoint` | FINISHED it, but it produced no commit | yes: reads HEAD as `at_sha`, clean tree |
+| `work-item-blocked` | still OWED: cannot be done as written, so someone has to decide what happens next | no |
+| `work-item-obsolete` | owes NOTHING: no longer wanted (descoped, superseded, subsumed) | no |
+
+All four are `done` for the cursor, `is-done`, and #3, because every reader of
+the plan is only asking "is this still open?".
 
 `work-item-obsolete` is also the reason `work-item-delete` should be rare: once
 a plan is being worked, deleting a step erases the fact that it was ever planned
@@ -450,24 +473,29 @@ than rebuilt, it keeps its `objid` and any permalink to it stays valid.
 `code`/`merge` node may carry git's null object id to say "no commit"
 explicitly. Two producers:
 
-- `work-item-done --blocked -m "<long form>"` -- the item CANNOT be done as
-  written. Where a checkpoint says "no commit, step finished", the sentinel says
-  "no commit, and none is coming". Procedure:
-  [`WORKING.md`](WORKING.md#5-handle-userneeded-or-stopped).
+- Old blocked items, written before `kind=blocked` existed. That spelling made
+  `kind` say `code` for something that was not code, so every reader needed a
+  special case; `work-item-blocked` now says it in the field that is supposed
+  to. Procedure: [`WORKING.md`](WORKING.md#5-handle-userneeded-or-stopped).
 - The legacy retrofit for old records that misattribute a foreign commit,
   without converting the node's kind.
 
+Neither is migrated to `kind=blocked`: after the fact the two are
+indistinguishable, and guessing would relabel a bad attribution as a decision
+nobody made. Readers keep accepting the sentinel; nothing writes it any more.
+
 `doctor` accepts the sentinel mid-list, never tries to resolve it, and rejects it
-as the last item of a done todo (invariant #6, same as `checkpoint`); `last-sha`
-reports `None` for it, never the zeros. That last rule is load-bearing for a
-blocked item: it is the tool refusing to call a todo finished when its final act
-was failing to do something.
+as the last item of a done todo (invariant #6, same as every no-commit kind);
+`last-sha` reports `None` for it, never the zeros. That last rule is
+load-bearing for a blocked item: it is the tool refusing to call a todo finished
+when its final act was failing to do something.
 
 **Invariants** (tool + `doctor`; numbers kept stable):
 
 1. A done item is `start_subtodo`, `checkpoint` (observational `at_sha`, never
-   attributing `sha`), `obsolete` (a `message`, and neither kind of sha), or a
-   `code`/`merge_subtodo` that carries a `sha` plus a high-level description.
+   attributing `sha`), `blocked` or `obsolete` (a `message`, and neither kind of
+   sha), or a `code`/`merge_subtodo` that carries a `sha` plus a high-level
+   description.
 2. A not-done item is freetext (`task`) -- a step or a prose list of not-yet-
    started subtasks -- with `done:false`.
 3. Done items form a prefix; the cursor moves monotonically down (list may grow).
@@ -475,9 +503,10 @@ was failing to do something.
    the durable code line for the work (worktrees are ephemeral).
 5. `BaseSha` records the branch's initial sha, captured at branch creation
    (`init` / `add-subtodo`).
-6. The last item of a done todo cannot be `start_subtodo`, `checkpoint`, or
-   `obsolete` (or the null-sha sentinel); it must be a real `code`/`merge`
-   commit so `last-sha` is the branch tip.
+6. The last item of a done todo cannot be `start_subtodo` or any no-commit
+   kind -- `checkpoint`, `blocked`, `obsolete` (or the legacy null-sha
+   sentinel); it must be a real `code`/`merge` commit so `last-sha` is the
+   branch tip.
 7. A todo `is-done` when it has no not-yet-done items.
 
 `doctor` hard-checks shape via #1/#3/#6/#7 (and related kind/field rules). #2

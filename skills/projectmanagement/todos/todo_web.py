@@ -231,12 +231,14 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
         kind = str(item.get("kind") or ("code" if item.get("done") else "task"))
         sha = item.get("sha")
         sha = sha if isinstance(sha, str) and sha else ""
-        # A blocked item's sentinel sha names no commit: it must not become a
-        # sha chip, a github link, or a git lookup. `nocommit` also covers the
-        # kinds that legitimately have no sha at all (task, checkpoint,
-        # start_subtodo), which is what makes the stored `message` the only
-        # thing the fold can show for them.
-        blocked = sha == _NULL_SHA
+        # A blocked item must not become a sha chip, a github link, or a git
+        # lookup. kind="blocked" says so directly; the sentinel sha is the
+        # LEGACY spelling of the same thing (todo.py WORKITEM_NULL_SHA), still
+        # carried by records written before the kind existed. `nocommit` also
+        # covers the kinds that legitimately have no sha at all (task,
+        # checkpoint, start_subtodo, obsolete), which is what makes the stored
+        # `message` the only thing the fold can show for them.
+        blocked = kind == "blocked" or sha == _NULL_SHA
         sha = "" if blocked else sha
         done = bool(item.get("done")) or kind in _DONE_KINDS
         out.append(

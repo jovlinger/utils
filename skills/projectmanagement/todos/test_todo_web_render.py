@@ -108,6 +108,14 @@ class BlockedWorkItemTest(unittest.TestCase):
         self.assertNotIn("sha:00000000", page)
         self.assertIn('<div class="wi-blocked">blocked</div>', page)
 
+    def test_the_blocked_kind_needs_no_sentinel_to_be_marked(self) -> None:
+        # New records say it in `kind` and carry no sha at all; the badge must
+        # not depend on the legacy sentinel spelling.
+        item = {**self.item(), "kind": "blocked"}
+        item.pop("sha")
+        page = _page(_todo({"userneeded": {"note": NOTE}}, [item]))
+        self.assertIn('<div class="wi-blocked">blocked</div>', page)
+
     def test_long_form_reaches_the_fold_without_asking_git(self) -> None:
         page = _page(_todo({"userneeded": {"note": NOTE}}, [self.item()]))
         entry = _fold_entry(page, "001b")
