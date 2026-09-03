@@ -149,8 +149,9 @@ being written).
    full-text with discovered stopwords in `<todo-dir>/config.json`. Rare terms
    dominate; corpus-wide words are skipped unless the whole query is stopwords.
    This half works everywhere, offline, in CI.
-2. **Vector embedders** -- when available. Default set is `apple`
-   (NLContextualEmbedding sidecar on macOS 14+). Vectors backfill lazily on
+2. **Vector embedders** -- off by default; opt in with the `embedder` config key
+   or `--embedder`. The usual choice is `apple` (NLContextualEmbedding sidecar
+   on macOS 14+). Vectors backfill lazily on
    first search; nothing is computed on write (no `cheap` embedder since `hash`
    was retired).
 
