@@ -34,8 +34,8 @@ precursors to implementation WorkItems.
 
 1. **WorkItems are research tasks, not code commits.** Each item should answer a
    single question, scrape a single source, or produce a single data artifact.
-   Mark them done with `--checkpoint` (no code change) or commit the resulting
-   document fragment.
+   Mark them done with `work-item-checkpoint` (no code change) or commit the
+   resulting document fragment.
 
 2. **Synthesis is explicit.** Reserve a final WorkItem (often `[HICAP]`) for
    combining the gathered data into the summary deliverable. Do not treat

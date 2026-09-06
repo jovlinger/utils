@@ -137,12 +137,10 @@ todo.py work-item-reorder <id> <src> <dst>   # src: index or objid:; dst: index
 todo.py work-item-reorder <id> objid:0007 -1 # push a stalled step to the end
 ```
 
-`dst` is the position the item ends up at, negative counting from the end
-(`-1` last, `-2` next-to-last). One item moves and the rest keep their relative
-order, which gives a whole plan a topological pass cheaply: send each step to
-`-1` in the order you want them RUN, first to last, and after the final move the
-plan reads in exactly that order. Address by `objid:` while doing it -- each move
-renumbers the indexes after it, an objid keeps naming the same item.
+One item moves and the rest keep their relative order, which is what makes a
+whole mis-ordered plan cheap to fix. The `dst` grammar, the topological pass it
+enables, and why a multi-move edit addresses by `objid:` rather than by index:
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#addressing-one-work-item).
 
 Dropping a step: `work-item-delete` while the plan is still notional (`groom`),
 `work-item-obsolete <id> [target] -m "why"` once it is real. Obsolete closes the

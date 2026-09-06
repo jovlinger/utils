@@ -210,7 +210,7 @@ for `work-item-blocked`: reorder is for a step that is fine but mistimed,
 
 | Command | Status | Behavior today |
 |---------|--------|----------------|
-| `ensure_worktree <todoid> [--init] [--no-commit]` | live | With `--init`, promotes a groom todo when its git branch is missing (same as `init --id … --stay-on-parent`; noop when the branch exists). Then creates or reuses a linked worktree via `git worktree add`. Without `--init`, exit 1 when the branch does not exist yet. Prints `inited`, `created`, and `worktree` |
+| `ensure_worktree <todoid> [--init] [--no-commit]` | live | With `--init`, promotes a groom todo when its git branch is missing (same as `init --id ... --stay-on-parent`; noop when the branch exists). Then creates or reuses a linked worktree via `git worktree add`. Without `--init`, exit 1 when the branch does not exist yet. Prints `inited`, `created`, and `worktree` |
 
 Worktree removal remains manual on finish (see [`WORKING.md`](WORKING.md#6-finish-and-remove-the-worktree)).
 Do not assume a worktree exists until `ensure_worktree` succeeds.
@@ -441,13 +441,18 @@ identity through all of it -- rewording, moving, and completing keep it, so a
 permalink minted while a step was still open resolves to the finished step.
 
 **`sha` vs `at_sha` (attribution vs observation).** A `code`/`merge_subtodo`
-`sha` means "this commit IS this item's work". A `checkpoint` records `at_sha`
-instead: where branch HEAD stood when a no-commit step finished, claiming no
-authorship. `message` on a `code` item is the full commit message recorded at
-`sha`, which makes the trail self-describing -- so `-m` must state the concrete
-outcome (files/tests added, with paths), not a vague label. Inapplicable flags
-raise rather than being silently dropped (`-m` on a clean tree without
-`work-item-checkpoint` errors; `--sha` on a dirty tree errors).
+`sha` means "this commit IS this item's work", and is always a commit on the
+todo's own branch -- `work-item-done` accepts only HEAD, `merge_subtodo` records
+the parent tip after your git integration. There is no field for a foreign sha:
+work that originated elsewhere is landed on the branch first and its origin
+recorded in the item's text
+([`WORKING.md`](WORKING.md#landing-foreign-work-no-merge-node)). A `checkpoint`
+records `at_sha` instead: where branch HEAD stood when a no-commit step
+finished, claiming no authorship. `message` on a `code` item is the full commit
+message recorded at `sha`, which makes the trail self-describing -- so `-m` must
+state the concrete outcome (files/tests added, with paths), not a vague label.
+Inapplicable flags raise rather than being silently dropped (`-m` on a clean
+tree without `work-item-checkpoint` errors; `--sha` on a dirty tree errors).
 
 **Done means CLOSED, not accomplished.** Four commands end a step and they
 claim different things:

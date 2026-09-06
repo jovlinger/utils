@@ -1,7 +1,7 @@
 # Working a todo
 
 status: living document - **normative owner** for lifecycle, worktrees, subtodo
-integration, finish/teardown, handoff, and chat reporting
+and foreign-work integration, finish/teardown, handoff, and chat reporting
 
 CLI syntax and schema -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
 Ticket design / decomposition -> [`GROOMING.md`](GROOMING.md)
@@ -200,6 +200,7 @@ spawn a subtodo.
 | a subtodo to start | `todo.py add-subtodo <parent-id> --summary=...` | `start_subtodo` |
 | a subtodo to land | **git-merge** child into parent branch, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` |
 | local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
+| already written elsewhere -- another branch's commit, or a suggestion you decided to take | land it on the todo branch, then `todo.py work-item-done <id> --summary="... from branch:<b>, sha:<s>"` ([landing foreign work](#landing-foreign-work-no-merge-node)) | `code` -- the landing commit; the source is named in text only |
 | no-code step | `todo.py work-item-checkpoint <id> -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
 | fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
@@ -248,6 +249,34 @@ the git step first.
 
 Portable coordination: poll with `wait-for` / `wait-and-merge`. Same-session
 harness completion notifications (when available) are a convenience only.
+
+### Landing foreign work (no merge node)
+
+The code for a step sometimes already exists outside this todo: a commit on an
+unrelated branch, another session's fix, a claude suggestion you decided to
+take. That is neither a subtodo nor a child -- nothing was ever registered, so
+there is no merge obligation to discharge and no `merge_subtodo` node. Land it
+on the todo's branch and close the item as ordinary `code`, carrying the origin
+in the item's own text:
+
+```bash
+git merge --no-ff <source-branch>          # or: git cherry-pick -x <sha>
+todo.py work-item-done <id> --summary='guard the NULL case in foo.py: from a claude suggestion "investigate NULL errors in foo.py", merged from branch:foobar, sha:abc123'
+```
+
+The recorded `sha` is your landing commit on the todo's branch, never the
+foreign one -- `work-item-done` accepts only HEAD
+([`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants)) -- so the
+origin survives only in what you write. Name all of it: what asked for the work
+(quote a suggestion verbatim), whether it was merged or copied, and the source
+`branch:` and `sha:`. Prefer `--no-ff`, whose merge message you write, and
+`cherry-pick -x`, which appends the source sha, so the node's `message` carries
+the provenance too; a fast-forward merge leaves HEAD as the foreign commit and
+`--summary` as the only place the source is recorded at all.
+
+A registered child is not eligible for this: integrate it by the sequence above
+and run `merge-subtodo`. Ad-hoc landing is for work that never had a tracking
+node, not a shortcut past one that does.
 
 ---
 
