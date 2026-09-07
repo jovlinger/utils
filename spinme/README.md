@@ -7,18 +7,25 @@
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
 
+## Research docs (2026-09-07)
+
+| Doc | Topic |
+|-----|-------|
+| [`docs/hardware-identity.md`](docs/hardware-identity.md) | Exact SKU + USB/flash evidence |
+| [`docs/usb-enumerate-2026-09-07.md`](docs/usb-enumerate-2026-09-07.md) | Raw USB / esptool capture |
+| [`docs/frameworks-ota.md`](docs/frameworks-ota.md) | OTA-capable stacks vs MicroPython |
+| [`docs/display-touch.md`](docs/display-touch.md) | Round panel / 240x240 / LVGL stack |
+
 ## Progress summary
 
 | Item | Status |
 |------|--------|
-| **Research complete** | ~70% |
-| **Board identified** | Waveshare ESP32-S3-Knob-Touch-LCD-1.8 (dual MCU: ESP32-S3R8 + ESP32-U4WDH) |
-| **Dev methodology** | Attach via Type-C USB; iterate with Arduino or ESP-IDF; no simulator needed |
-| **Upload** | Type-C orientation selects which MCU is connected; ESP32-S3: hold BOOT, power on for download mode; flash via esptool or IDE |
-| **Encoder GPIOs** | In schematic/demo source (04_Encoder_Test); community hw-reference available |
+| **Board identified** | **CORRECTED 2026-09-07:** Elecrow CrowPanel 1.28inch-HMI ESP32 Rotary Display, SKU **DHE38128D** (flash string `ESP32S3_1.28_BLE_Server`). Earlier Waveshare 1.8 dual-MCU ID was wrong for the attached unit. |
+| **OTA / frameworks** | Documented: prefer Arduino/PlatformIO (+ OTA partition table); MicroPython not factory default. |
+| **Display / touch** | Documented: GC9A01 240x240 square FB in round bezel; LVGL over LovyanGFX; CST816D touch; encoder GPIOs on wiki. |
 | **Volumio API** | Documented; not yet tested from this machine |
 
-**Next steps:** (1) Download [schematic](https://files.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8/ESP32-S3-Knob-Touch-LCD-1.8-schematic.zip) and confirm encoder GPIOs for S3. (2) On a PC: verify `http://volumio.local/api/v1/getState` and one `commands/?cmd=volume&volume=plus`. (3) Create PlatformIO project; WiFi + HTTP client to Volumio. (4) Wire encoder to HTTP commands on device.
+**Next steps:** (1) PlatformIO Arduino project with OTA-ready partitions for DHE38128D. (2) Verify Volumio HTTP from host. (3) Encoder + optional LVGL volume UI to Volumio commands.
 
 ---
 
@@ -26,17 +33,14 @@ root [`AGENTS.md`](../AGENTS.md)).
 
 | Component | Description |
 |-----------|-------------|
-| **ESP32-S3R8** | Wi-Fi + Bluetooth SoC, 240 MHz, 8 MB PSRAM |
-| **ESP32-U4WDH** | Wi-Fi + Classic Bluetooth, 240 MHz, 4 MB Flash |
-| **PCM5100A** | Stereo DAC (I²S) — audio out on device |
-| **Rotary encoder** | One physical knob; encoder inputs on both MCUs, Type-C orientation selects which MCU sees it |
-| **USB to UART** | Flashing and serial debug |
-| **16 MB Flash** | Plenty for firmware |
-| **DRV2605** | Vibration motor driver (I2C) — haptic feedback |
-| **TF card, MIC, 3.5 mm jack, Type-C** | Extra features; not required for remote |
-| **Display** | 1.8" IPS 360×360, QSPI, driver ST77916; touch CST816 (I2C) |
+| **ESP32-S3R8** | Wi-Fi + BLE SoC, 240 MHz, 8 MB PSRAM, 16 MB flash |
+| **Display** | 1.28" round IPS; square **240x240** FB; driver **GC9A01** (SPI) |
+| **Touch** | Capacitive **CST816D** (I2C) |
+| **Rotary encoder** | Knob A/B/SW (GPIOs 45/42/41 per Elecrow wiki) |
+| **Ambient LEDs** | WS2812 ring (5 LEDs on GPIO 48) |
+| **USB** | Native USB-Serial/JTAG (`0x303a:0x1001`) |
 
-**Connectivity:** Board has **Wi-Fi and Bluetooth** on both SoCs. For “remote to Volumio on network,” **Wi-Fi is the right choice**; Volumio is controlled over HTTP/WebSocket on the LAN.
+**Connectivity:** Wi-Fi for Volumio HTTP/WebSocket on the LAN; BLE available on S3 but not required for the remote.
 
 ---
 
@@ -45,13 +49,13 @@ root [`AGENTS.md`](../AGENTS.md)).
 ### Board and product
 
 - **Q: Exact board?**  
-  **A:** Waveshare [ESP32-S3-Knob-Touch-LCD-1.8](https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm) (product); [Wiki](https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8) (setup, demos, schematic, BIN flashing).
+  **A:** **CORRECTED 2026-09-07:** Elecrow [CrowPanel 1.28inch-HMI ESP32 Rotary Display](https://www.elecrow.com/crowpanel-1-28inch-hmi-esp32-rotary-display-240-240-ips-round-touch-knob-screen.html) (SKU **DHE38128D**); [Wiki](https://elecrow.com/wiki/CrowPanel_1.28inch-HMI_ESP32_Rotary_Display.html). Evidence: `docs/hardware-identity.md`. (Older Waveshare answers below in dual-MCU sections are historical mis-ID.)
 
 - **Q: Development methodology — attach and iterate?**  
-  **A:** Yes. Connect via Type-C USB; no simulator. Use Arduino IDE or ESP-IDF (VS Code/CLion). Board appears as COM/serial port; flash with esptool or IDE upload.
+  **A:** Yes. Connect via Type-C USB; no simulator. Prefer Arduino IDE or PlatformIO; ESP-IDF also fine. Board appears as `/dev/cu.usbmodem*` (Espressif USB JTAG/serial); flash with esptool or IDE upload.
 
 - **Q: How to attach / upload?**  
-  **A:** Type-C plug **orientation** selects which MCU is connected (CH445P switch): one way = ESP32-S3, other = ESP32. For ESP32-S3: hold **BOOT**, power on to enter download mode, then flash. Flashing: esptool (`esptool.py --chip esp32s3 --port COMx write_flash 0x0 firmware.bin`) or Arduino/PlatformIO/ESP-IDF flash button.
+  **A:** Single ESP32-S3 with native USB-Serial/JTAG. Hold **BOOT** while resetting if download mode is needed; usually `esptool` resets via USB. Example: `esptool --chip esp32s3 --port /dev/cu.usbmodem1101 write_flash ...` or PlatformIO upload.
 
 - **Q: Do we need a simulator?**  
   **A:** No. Develop on host, flash to device, use serial monitor for debug.
@@ -61,43 +65,32 @@ root [`AGENTS.md`](../AGENTS.md)).
 - **Q: How is Volumio controlled?**  
   **A:** REST API on port 3000 (e.g. `volumio.local`). Key endpoints: `GET /api/v1/getState` (state); `GET /api/v1/commands/?cmd=volume&volume=plus|minus|mute|unmute|<0–100>`; `GET /api/v1/commands/?cmd=play|pause|toggle|stop|prev|next`.
 
-### SoC roles and dual-MCU
+### SoC roles (CrowPanel is single-MCU)
 
-- **Q: Why two SoCs?**  
-  **A:** S3 handles UI, display (LVGL), encoder; U4WDH adds Classic Bluetooth (S3 has BLE only) and can handle audio/I2S. Split avoids UI stutter while doing wireless/audio.
+- **Q: Dual MCU / Type-C flip?**  
+  **A:** **Not on this board.** Those notes were for a mis-identified Waveshare product. CrowPanel DHE38128D is a single ESP32-S3R8.  
 
-- **Q: Which MCU drives the encoder?**  
-  **A:** There is one knob. Its encoder lines are connected to both MCUs; Type-C orientation selects which MCU is active (and thus which one sees the knob). Demos use **ESP32-S3** (04_Encoder_Test); for our firmware use S3 so the same knob is read by the S3.
-
-- **Q: How does Type-C choose MCU?**  
-  **A:** CH445P 4-pole double-throw switch routes USB to either ESP32-S3 or ESP32 depending on plug orientation.
-
-- **Q: Given the S3 handles UI / encoder / WiFi, do we need the other chip? Reasonable to target only the S3 initially?**  
-  **A:** For a Volumio remote (WiFi + HTTP + one knob, optional display/haptic) you don’t need the other chip. Target **only the ESP32-S3** initially: it has WiFi, the demos use it for the knob and display, and one firmware keeps the loop simple. The U4WDH is the same single knob when USB is flipped, plus Classic Bluetooth; add it later only if you want BT audio sink or to run a second role on the other MCU.  
-
-### Display and touch (from wiki + community)
+### Display and touch
 
 - **Q: Display IC and interface?**  
-  **A:** ST77916, 360×360, QSPI. Arduino demo pins (S3): CS=14, PCLK=13, DATA0–3=15,16,17,18, RST=21, Backlight=47. Touch: CST816 (I2C).
+  **A:** **CORRECTED:** GC9A01 SPI, 240x240 square framebuffer in a round bezel. Pins (wiki): SCLK=10, MOSI=11, DC=3, CS=9, RST=14, backlight=46. Touch: CST816D I2C (SDA=6, SCL=7, INT=5, RST=13). See `docs/display-touch.md`.
 
-- **Q: LVGL rotation?**  
-  **A:** 180° is fast (pixel reversal in flush). 90°/270° need matrix transpose and are slow on S3; MADCTL (esp_lcd) may allow hardware rotation — worth trying (Reddit).
+- **Q: Widgets or pixels?**  
+  **A:** LVGL widgets on top of LovyanGFX (or Arduino_GFX). Not a proprietary closed UI OS; factory firmware already uses LVGL.
 
-- **Q: Display colors wrong?**  
-  **A:** Panel can be big-endian; LVGL flush may need byte-swap (SH8601/QSPI byte-swap noted in community).
-
-- **Q: LVGL fonts?**  
-  **A:** TinyTTF runtime TTF on S3 is problematic (heap/PSRAM). Pre-render bitmap fonts at build with lv_font_conv is recommended.
+- **Q: Circular vs square?**  
+  **A:** Optics are circular; addressing is square 240x240. Design UI inside the inscribed circle or accept clipped corners.
 
 ### Encoder and pins
 
 - **Q: Encoder GPIOs?**  
-  **A:** Not listed in wiki text; come from [schematic](https://files.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8/ESP32-S3-Knob-Touch-LCD-1.8-schematic.zip) or demo source (04_Encoder_Test). Community hw-reference: [muness/roon-knob docs/esp/hw-reference](https://github.com/muness/roon-knob/tree/master/docs/esp/hw-reference) (CST816, DRV2605, battery ADC, encoder).
+  **A:** Elecrow wiki: A=45, B=42, SW=41. WS2812 ambient LEDs on GPIO 48 (5 LEDs).
 
 ### Still to decide / test
 
 - **Volumio hostname/IP** on your network (fixed IP vs mDNS `volumio.local`).
 - **WebSocket** (push state) vs REST-only for first version (REST only is simpler).
+- First custom firmware with OTA-ready partition table (factory image has single `app0` only).
 
 ---
 
