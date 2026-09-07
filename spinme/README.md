@@ -62,3 +62,8 @@ it. MicroPython is optional, not factory default on the probed CrowPanel.
 ```text
 Encoder/touch -> firmware logic -> WiFi HTTP -> Volumio :3000
 ```
+
+## Firmware scaffolds
+
+- [`firmware/elecrow-crowpanel-1.28/`](firmware/elecrow-crowpanel-1.28/)
+- [`firmware/waveshare-knob-touch-lcd-1.8/`](firmware/waveshare-knob-touch-lcd-1.8/)
