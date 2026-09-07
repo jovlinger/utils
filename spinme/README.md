@@ -1,21 +1,22 @@
 # ESP32 as Volumio Remote -- Investigation & Plan
 
-**Goal:** Use ESP32-based knob/touch boards as wireless volume (and playback)
-remotes for a Volumio server on the local network -- WiFi or Bluetooth as
-available.
+**Goal:** On-device music controller (follow now-playing + knob volume + zone
+pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
+
+**UX / stack map:** [`HILEVEL.md`](HILEVEL.md).
 
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
 
-## Hardware (two boards)
+## Hardware
 
-Both are in inventory. Research for each lives in its own directory; pin maps and
-firmware are **not** interchangeable.
+**RATIFIED 2026-09-07: Waveshare ESP32-S3-Knob-Touch-LCD-1.8** (S3 half;
+device-end Type-C). Elecrow remains documented sibling only.
 
-| Board | Directory |
-|-------|-----------|
-| Elecrow CrowPanel 1.28" rotary (SKU **DHE38128D**) | [`hardware/elecrow-crowpanel-1.28/`](hardware/elecrow-crowpanel-1.28/) |
-| Waveshare ESP32-S3-Knob-Touch-LCD-1.8 (dual MCU) | [`hardware/waveshare-knob-touch-lcd-1.8/`](hardware/waveshare-knob-touch-lcd-1.8/) |
+| Board | Role | Directory |
+|-------|------|-----------|
+| Waveshare ESP32-S3-Knob-Touch-LCD-1.8 | **Active target** | [`hardware/waveshare-knob-touch-lcd-1.8/`](hardware/waveshare-knob-touch-lcd-1.8/) |
+| Elecrow CrowPanel 1.28" (DHE38128D) | Sibling / reference | [`hardware/elecrow-crowpanel-1.28/`](hardware/elecrow-crowpanel-1.28/) |
 
 Index: [`hardware/README.md`](hardware/README.md).
 
@@ -33,13 +34,14 @@ Index: [`hardware/README.md`](hardware/README.md).
 
 | Item | Status |
 |------|--------|
-| **Elecrow identity / OTA / display docs** | Done under `hardware/elecrow-crowpanel-1.28/` |
-| **Waveshare research** | Recovered under `hardware/waveshare-knob-touch-lcd-1.8/` |
-| **Volumio API** | Documented below; host probe: `miniDSP-SHD.local` answers getState (2026-09-07) |
-| **Firmware scaffold** | Pending (prefer PlatformIO Arduino + OTA partitions per board) |
+| **Hardware choice** | **Waveshare** (S3); Elecrow sibling docs kept |
+| **HILEVEL UX** | [`HILEVEL.md`](HILEVEL.md) -- zones as pairs, follow, volume regimes, LVGL |
+| **Board probes** | Both boards documented under `hardware/` |
+| **Volumio API** | `miniDSP-SHD.local` getState OK (2026-09-07) |
+| **Firmware** | Scaffolds under `firmware/`; controller impl next |
 
-**Next steps:** (1) Per-board PlatformIO scaffold. (2) Confirm Volumio commands on
-`miniDSP-SHD.local`. (3) Encoder -> HTTP on chosen board.
+**Next steps:** Config schema; Sonos SSDP/SOAP + Volumio drivers; LVGL follow +
+zone list on Waveshare.
 
 ## Shared: Volumio API
 

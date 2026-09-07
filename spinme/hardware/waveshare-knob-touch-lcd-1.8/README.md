@@ -5,18 +5,27 @@ Sibling hardware under `../elecrow-crowpanel-1.28/` is a separate Elecrow CrowPa
 
 Recovered 2026-09-07 from git history (`spinme/README.md` before the CrowPanel split).
 
+## Live probe docs
+
+| Doc | Topic |
+|-----|-------|
+| [hardware-identity.md](hardware-identity.md) | Identity + live USB summary |
+| [usb-enumerate-2026-09-07.md](usb-enumerate-2026-09-07.md) | U4WDH-side USB/esptool capture |
+| [frameworks-ota.md](frameworks-ota.md) | Stacks / OTA (U4WDH probed; S3 pending flip) |
+| [display-touch.md](display-touch.md) | ST77916 360x360 / LVGL notes |
+
 ## Progress summary
 
 | Item | Status |
 |------|--------|
-| **Research complete** | ~70% |
 | **Board identified** | Waveshare ESP32-S3-Knob-Touch-LCD-1.8 (dual MCU: ESP32-S3R8 + ESP32-U4WDH) |
-| **Dev methodology** | Attach via Type-C USB; iterate with Arduino or ESP-IDF; no simulator needed |
-| **Upload** | Type-C orientation selects which MCU is connected; ESP32-S3: hold BOOT, power on for download mode; flash via esptool or IDE |
-| **Encoder GPIOs** | In schematic/demo source (04_Encoder_Test); community hw-reference available |
-| **Volumio API** | Documented; not yet tested from this machine |
+| **USB orientation** | Device-end flip selects MCU. **S3 now active** (`cu.usbmodem101`, MAC `20:6e:f1:a1:2c:70`). Host-end flip does nothing. |
+| **U4WDH firmware** | ESP-IDF `TAIJI_KNOB_*`; 4 MB; no OTA |
+| **S3 live dump** | Done: 8 MB PSRAM, 16 MB flash, Arduino+LVGL+ST77916+CST816S; **OTA app0/app1** present |
+| **Encoder GPIOs** | Still confirm from schematic / 04_Encoder_Test (knob task runs in factory image) |
+| **Volumio API** | Host: `miniDSP-SHD.local` (see `../../docs/docs-volumio-probe-2026-09-07.md`) |
 
-**Next steps:** (1) Download [schematic](https://files.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8/ESP32-S3-Knob-Touch-LCD-1.8-schematic.zip) and confirm encoder GPIOs for S3. (2) On a PC: verify `http://volumio.local/api/v1/getState` and one `commands/?cmd=volume&volume=plus`. (3) Create PlatformIO project; WiFi + HTTP client to Volumio. (4) Wire encoder to HTTP commands on device.
+**Next steps:** (1) Confirm encoder GPIOs from schematic. (2) Decide Elecrow vs Waveshare for first firmware.
 
 ---
 
