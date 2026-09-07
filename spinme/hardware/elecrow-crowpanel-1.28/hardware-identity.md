@@ -3,13 +3,14 @@
 **Verdict (2026-09-07):** Elecrow **CrowPanel 1.28inch-HMI ESP32 Rotary Display**
 (marketing: 240x240 IPS round touch knob screen). **SKU: DHE38128D**.
 
-Prior `README.md` Waveshare ESP32-S3-Knob-Touch-LCD-1.8 notes are **wrong for this
-attached unit** and should be treated as obsolete for spinme hardware planning.
+This unit is distinct from the Waveshare ESP32-S3-Knob-Touch-LCD-1.8 also tracked
+under `../waveshare-knob-touch-lcd-1.8/`. Both are valid spinme hardware; do not
+merge their pin maps or firmware assumptions.
 
 ## Evidence chain
 
 1. USB: Espressif `0x303a:0x1001` USB JTAG/serial, MAC `1c:db:d4:b3:6c:fc`
-   (`docs/usb-enumerate-2026-09-07.md`).
+   (`usb-enumerate-2026-09-07.md`).
 2. esptool: ESP32-S3 (QFN56) rev v0.2, **8 MB embedded PSRAM**, **16 MB** flash.
 3. On-flash ASCII strings in the running image:
    - `ELECROW`
@@ -24,7 +25,7 @@ attached unit** and should be treated as obsolete for spinme hardware planning.
 | CrowPanel 1.28" rotary | DHE38128D | 240x240 | GC9A01 | **Match** (flash string) |
 | CrowPanel 1.46" rotary | DHR55146D | 360x360 | JD9855 / ST77961 | No `1.46` string; different panel |
 | CrowPanel 2.1" rotary | DHE03921D | 480x480 | ST7701S | No `2.1` string; different panel |
-| Waveshare Knob-Touch-LCD-1.8 | (Waveshare) | 360x360 | ST77916 | No Waveshare strings; dual-MCU story does not match USB |
+| Waveshare Knob-Touch-LCD-1.8 | (Waveshare) | 360x360 | ST77916 | Different product (sibling dir); not this USB dump |
 
 ## Board summary
 
@@ -49,7 +50,7 @@ attached unit** and should be treated as obsolete for spinme hardware planning.
 
 Wiki claims support for Arduino IDE, ESP-IDF, Lua RTOS, Home Assistant /
 PlatformIO / MicroPython, and LVGL. Factory image on this unit is **Arduino +
-LVGL**, not MicroPython (see `docs/frameworks-ota.md`, `docs/display-touch.md`).
+LVGL**, not MicroPython (see `frameworks-ota.md`, `display-touch.md`).
 
 ## On-device "docs"
 

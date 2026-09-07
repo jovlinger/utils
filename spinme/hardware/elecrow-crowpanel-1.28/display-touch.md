@@ -1,6 +1,6 @@
 # Display and touch programming model
 
-Board: CrowPanel 1.28" rotary (SKU DHE38128D). See `hardware-identity.md`.
+Board: CrowPanel 1.28" rotary (SKU DHE38128D). See `hardware-identity.md` in this directory.
 
 ## Circular bezel, square framebuffer
 
