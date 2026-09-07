@@ -28,7 +28,7 @@ Index: [`hardware/README.md`](hardware/README.md).
 | Display | GC9A01 SPI, 240x240 | ST77916 QSPI, 360x360 |
 | Touch | CST816D | CST816 |
 | USB flash | Native USB-Serial/JTAG | Type-C orientation selects MCU |
-| Live probe 2026-09-07 | Yes (MAC `1c:db:d4:b3:6c:fc`) | Research from wiki/community (recovered) |
+| Live probe 2026-09-07 | Yes (MAC `1c:db:d4:b3:6c:fc`) | Yes -- S3 MAC `20:6e:f1:a1:2c:70` (flip device Type-C) |
 
 ## Progress summary
 
