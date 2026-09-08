@@ -2,6 +2,18 @@
 
 status: living -- maps user experience to concrete firmware/actions
 
+status: living -- **NOT LOCKED** (2026-09-07). Expect edits; WorkItems are preliminary.
+
+**Parallel implementation tracks** (parent `todo:4a26154c`):
+
+| Track | Todo | Scope |
+|-------|------|-------|
+| Device UI | `todo:f8a5c5fc` (`branch:4a26154c-device-ui`) | Waveshare WiFi / LVGL / encoder / touch |
+| Audio control | `todo:c475b79b` (`branch:4a26154c-audio-control`) | Python zone library + Flask harness; port later |
+
+Ratchet: small slices, lock learnings with tests/docs, then next level. On-device
+integration of both tracks stays on the parent after merge.
+
 **Hardware (RATIFIED 2026-09-07):** Waveshare ESP32-S3-Knob-Touch-LCD-1.8
 (ESP32-S3 half; device-end Type-C). Round 360x360 touch LCD + rotary encoder
 **without** a hardware push-click. Touch replaces "click" for discrete actions.
