@@ -25,6 +25,71 @@ API for MVP.
 
 ---
 
+## 0. Hardware development approach
+
+status: living -- **NOT LOCKED** with the rest of HILEVEL.
+
+### Board
+
+**Waveshare ESP32-S3-Knob-Touch-LCD-1.8**, ESP32-S3 half (device-end Type-C).
+Single active hardware target for MVP. Elecrow and multi-board factoring are
+**out of scope now**; we may split targets later. Do not abstract build matrices
+for two boards yet.
+
+### Language / firmware stack
+
+**C++ on Arduino-esp32 via PlatformIO** (matches factory image and CrowPanel /
+Waveshare demos). LVGL for UI; panel/touch as in
+`hardware/waveshare-knob-touch-lcd-1.8/`.
+
+Not MicroPython, not Rust, not WASM for on-device MVP. (Audio-control logic is
+prototyped in **desktop Python** on `todo:c475b79b`, then ported into this C++
+tree on the parent.)
+
+### Iterate / test / flash
+
+**Long-term USB-C tether** to the S3 orientation until near MVP. Prefer
+`esptool` / PlatformIO upload over repeated OTA during active UI work (fast
+cycle, serial logs). OTA remains for config and late-stage firmware once the
+partition table is trusted.
+
+No device emulator / QEMU requirement for MVP. Host-side checks where cheap
+(fixture structs, Python audio lib tests); on-device smoke via serial + eyeball
+LVGL.
+
+### Make interface (RATIFIED)
+
+Drive the device tree with **Make** targets named exactly:
+
+| Target | Meaning |
+|--------|---------|
+| `make build` | Compile firmware for the Waveshare S3 env |
+| `make test` | Run whatever automated tests exist for this tree (host and/or on-device smoke wrappers) |
+| `make install` | Flash the built image to the tethered board (S3 USB) |
+
+PlatformIO (or esptool) is an implementation detail **under** those targets.
+Agents and humans use `make build|test|install`, not ad-hoc `pio` unless
+debugging the Make wrapper.
+
+### Hello world
+
+Smallest green path on hardware:
+
+1. `make build && make install`
+2. Serial shows a known banner (board name / SKU).
+3. Display backlight on; optional LVGL "hello" label.
+4. Encoder ticks print `volume_delta` (or equivalent) on serial.
+
+That locks USB orientation, toolchain, and upload before UI or network work.
+
+### Images / history
+
+**Do not archive historic firmware binaries** in-repo. Images are cheap to
+rebuild: check out the git revision and `make build` / `make install`. Commit
+source + Make/PlatformIO config only.
+
+---
+
 ## 1. Core model: zones as system/endpoint pairs
 
 **Open Q (user proposal, adopted for MVP):** flatten ecosystems into one list of
