@@ -69,3 +69,23 @@ Already in ticket Body: DAG-safe audio index **~2.5–3.6 MiB** for ~7.4k uniq
 - Treating `.mpdignore _tags` as the product fix (lab control only).
 - Fancy probabilistic visited structures.
 - Replacing Dirac / flashing generic NanoPi images.
+
+## LOCAP verification (2026-09-13 evening)
+
+Remounted `/mnt/sdb2` **rw**; ran:
+
+```bash
+python3 shadup/shadup.py --db /home/johan/Music/shasrv/shadup.db \
+  --shadir /mnt/sdb2/music/flac refresh-extracted-tags
+```
+
+(exit 0)
+
+| Check | Result |
+|-------|--------|
+| `_meta/*/…` → `_tags` backlinks | **0** (walk of `_meta`) |
+| Typical leaf (`Aim - Cold Water Music`) | only `album → ../../Aim - …` |
+| `find -L …/files/_meta -type f` | **terminates** (~62k paths, ~30s) |
+| `find -L …/files -type f` | **terminates** (~27k paths, &lt;20s; GNU find loop detection) |
+
+**Residual:** many albums still have local `_tags/{genre,artist,…}` dirs whose links point into global `_tags` (and album-root tag name links like `coldwatermusic → ../../../_tags/album/…`). That is album→tags→meta→album adjacency; `_meta` no longer closes the old NOTAGS mirror loop. MPD song inflation may still need ignore/policy or further shadup cleanup — separate from this LOCAP.
