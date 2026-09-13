@@ -238,6 +238,50 @@ you to rewrite an existing `LongSummary` in the same breath.
 
 ---
 
+## Groom handoff report (chat)
+
+When a make/groom pass finishes (mint + fields seeded, still `State: groom`,
+**before** `init` unless the user asked to work), end the chat turn with this
+compact bullet block so the human can confirm identity and plan without reading
+raw `todo.py read` JSON. Do **not** bury the Id in prose.
+
+```text
+- **Id:** `<64-hex>` (`<8-hex prefix>`)
+- **Store:** `<repo>/.todo/storage/<id>.json`   # or whatever `todo.py basedir` + export path is
+- **State:** `groom` (not inited)               # or `ready` / `working` if already promoted
+- **Summary:** <Summary.raw one-liner>
+- **Body:** <what landed — e.g. “plan of record ingested; source file removed”>
+- **Scope:** `<git_url host/repo>` / `<path_from_root>`
+- **WorkItems:** <short arrow chain of the plan head, tier tags optional here>
+```
+
+Rules:
+
+1. **Id first** -- full digest plus short prefix; all later commands use the
+   prefix (4+ hex) or full Id.
+2. **Store path explicit** -- so cross-repo `Scope.git_url` mistakes are obvious
+   (ticket must live under the CWD repo’s `.todo`, not a sibling clone’s).
+3. **State honest** -- say `groom (not inited)` until `init` / `ensure_worktree
+   --init` has run.
+4. **WorkItems as a scan line** -- enough to see sequence; full text stays in
+   the ticket (`work-item-read` / `read`).
+5. Offer next step in one line after the block (`init` / first WorkItem) -- do
+   not start implementation from an ungroomed or unconfirmed plan.
+
+Example (shape only):
+
+```text
+- **Id:** `e09c565e…13439` (`e09c565e`)
+- **Store:** `utils/.todo/storage/e09c565e….json`
+- **State:** `groom` (not inited)
+- **Summary:** Volumio SHD OOM: on-disk index + break shadup _meta cycles
+- **Body:** full former `~/VOLUMEIO-PLAN.md` (file removed)
+- **Scope:** `jovlinger/utils` / `shadup`
+- **WorkItems:** commit loop layout → break `_meta→_tags` → audit visited-set/SQLite → prototype → deploy notes
+```
+
+---
+
 ## Ready-to-init checklist
 
 - [ ] Summary, Body, AC present and agreed
@@ -247,6 +291,7 @@ you to rewrite an existing `LongSummary` in the same breath.
 - [ ] Subtodo vs WorkItem choice recorded (table above)
 - [ ] Open product decisions asked of the user (or explicitly deferred in Body)
 - [ ] Id captured for all later commands
+- [ ] Chat closed with a [groom handoff report](#groom-handoff-report-chat)
 
 Then: `todo.py init --id <id> --stay-on-parent` and follow
 [`WORKING.md`](WORKING.md#1-start-or-resume).
