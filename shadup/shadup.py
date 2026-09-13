@@ -553,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Rebuild files/_meta/ and files/_tags/ browse mirrors from "
             "filesystem + DB tags (tag leaves link to shared meta folders; "
-            "see tag_mirror_relpath)"
+            "meta only links album — no _meta→_tags cycles; see tag_mirror_relpath)"
         ),
     )
 
@@ -1685,15 +1685,20 @@ def install_meta_directories(
     tags_by_dir: dict[str, frozenset[str]],
     name_by_dir: dict[str, str],
 ) -> int:
-    """Create ``_meta/<nested-path>/`` with ``album`` + per-tag links into ``_tags/``.
+    """Create ``_meta/<nested-path>/`` with ``album`` → real album only.
 
     *name_by_dir* maps ``dir_key`` → nested relpath (usually equal to ``dir_key``).
     Nested albums share path prefixes (``_meta/woodstock/vol 01`` under
     ``_meta/woodstock``); parent metas are real directories that may contain child
-    meta folders alongside ``album`` / tag links.
+    meta folders alongside ``album``.
+
+    Deliberately does **not** link ``_meta/.../<tag_path>`` back into ``_tags/``:
+    that back-edge created cycles with :func:`install_tag_bucket_meta_links`
+    (``_tags → _meta → _tags``) that MPD unrolls into path explosions.
+    *tags_by_dir* is accepted for call-site compatibility but unused.
     """
+    del tags_by_dir  # API compat; tag membership lives only under ``_tags/``.
     meta_root = os.path.join(files_root, META_DIR_NAME)
-    tags_root = os.path.join(files_root, "_tags")
     n_meta = 0
     for dir_key, name in sorted(name_by_dir.items(), key=lambda kv: kv[1]):
         meta_dir = os.path.join(meta_root, *name.split("/"))
@@ -1702,22 +1707,11 @@ def install_meta_directories(
         album_abs = os.path.join(files_root, *dir_key.split("/"))
         album_link = os.path.join(meta_dir, META_ALBUM_LINK_NAME)
         _force_symlink(album_link, os.path.relpath(album_abs, meta_dir))
-
-        tags = tags_by_dir.get(dir_key) or frozenset()
-        tag_names = sorted(tags) if tags else [NOTAGS_DIR_NAME]
-        for tag in tag_names:
-            parts = tag_mirror_relpath(tag)
-            bucket = os.path.join(tags_root, *parts)
-            os.makedirs(bucket, exist_ok=True)
-            link = os.path.join(meta_dir, *parts)
-            parent = os.path.dirname(link)
-            _force_symlink(link, os.path.relpath(bucket, parent))
-            out(
-                "refresh-extracted-tags meta {name}/{tag_dir}",
-                2,
-                name=name,
-                tag_dir="/".join(parts),
-            )
+        out(
+            "refresh-extracted-tags meta {name}/album",
+            2,
+            name=name,
+        )
     return n_meta
 
 
@@ -1781,7 +1775,7 @@ def install_tag_bucket_meta_links(
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_meta`` and ``files/_tags`` circular browse mirrors.
+    """Rebuild ``files/_meta`` and ``files/_tags`` acyclic browse mirrors.
 
     Passes:
 
@@ -1791,11 +1785,11 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     2. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
        per directory, rows ``(tag, meta_relpath, dir_key)``.
     3. **Meta folders** via :func:`install_meta_directories`: one
-       ``_meta/<nested>/`` per directory with ``album`` → real dir and
-       ``<tag_path>`` → ``_tags/<tag_path>``.
+       ``_meta/<nested>/`` per directory with ``album`` → real dir only
+       (no backlinks into ``_tags/``).
     4. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
        ``_tags/<tag_path>/<nested>`` → the **same** ``_meta/<nested>`` (not the
-       album). Cycles between meta ↔ tag buckets are intentional.
+       album). Edges are one-way: tags → meta → album.
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:

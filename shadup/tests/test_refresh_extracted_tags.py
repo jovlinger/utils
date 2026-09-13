@@ -1,10 +1,11 @@
 """Tests for ``--refresh-extracted-tags`` mirror layout (shared nested ``_meta``).
 
-Layout under ``files/``::
+Layout under ``files/`` (acyclic)::
 
   ``_meta/<dir-key>/album`` → real ``<dir-key>``
-  ``_meta/<dir-key>/<tag_path>`` → ``_tags/<tag_path>``
   ``_tags/<tag_path>/<dir-key>`` → **the same** ``_meta/<dir-key>``
+
+There is **no** ``_meta → _tags`` backlink (that created MPD path explosions).
 
 Nested albums keep their hierarchy (``_meta/woodstock/vol 01``, not a flat
 ``_meta/vol 01``). When a parent and child share a tag bucket, the parent path
@@ -424,9 +425,6 @@ def test_shared_meta_across_two_tag_buckets(tmp_path: Path) -> None:
     assert lounge.resolve() == meta.resolve()
     assert triphop.resolve() == meta.resolve()
     assert (meta / META_ALBUM_LINK_NAME).resolve() == album.resolve()
-    assert (meta / "genre" / "lounge").resolve() == (
-        files_root / "_tags" / "genre" / "lounge"
-    ).resolve()
-    assert (meta / "genre" / "triphop").resolve() == (
-        files_root / "_tags" / "genre" / "triphop"
-    ).resolve()
+    # No _meta → _tags back-edges (would cycle with tag → meta links).
+    assert not (meta / "genre").exists()
+    assert {p.name for p in meta.iterdir()} == {META_ALBUM_LINK_NAME}
