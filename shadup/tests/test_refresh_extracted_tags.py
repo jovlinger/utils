@@ -1,24 +1,17 @@
-"""Tests for ``--refresh-extracted-tags`` mirror layout (namespaced tag symlinks).
+"""Tests for ``--refresh-extracted-tags`` mirror layout (shared nested ``_meta``).
 
-Layout under ``<parent-of-shadir>/files``::
+Layout under ``files/``::
 
-  ``_tags/<tag_mirror_relpath(tag)>/<basename-or-basename(n)>`` → symlink
-  to ``<root>/<dir-key>`` (logical DB tag strings are unchanged; each path
-  segment is sanitized for the filesystem).
+  ``_meta/<dir-key>/album`` → real ``<dir-key>``
+  ``_meta/<dir-key>/<tag_path>`` → ``_tags/<tag_path>``
+  ``_tags/<tag_path>/<dir-key>`` → **the same** ``_meta/<dir-key>``
 
-  Examples: ``artist;beck`` → ``_tags/artist/beck/<name>``,
-  ``genre;rock`` → ``_tags/genre/rock/<name>``, ``tag;live`` →
-  ``_tags/tag/live/<name>``. Legacy ``artist:…`` maps like ``artist;…``.
+Nested albums keep their hierarchy (``_meta/woodstock/vol 01``, not a flat
+``_meta/vol 01``). When a parent and child share a tag bucket, the parent path
+is a real directory and its meta is linked as ``_self`` beside the children.
 
-* ``NOTAGS`` holds mirrors for directories whose computed tag set is empty.
-* **Directory tags** = ⋃ over **direct children** (files use DB tags; subdirs use
-  their computed set).
-* Within each tag folder, names are disambiguated with ``(2)``, ``(3)``, … when
-  the same basename appears more than once (see :func:`plan_refresh_extracted_tag_mirrors`).
-
-The user worked example under ``test_user_abcdf_tree_mirror_plan``; one line in
-their sketch was inconsistent (``z`` mirroring ``d`` while ``d/`` is ``y``-only) —
-the test encodes the corrected plan.
+Examples: ``artist;letter`` → ``_tags/artist/letter/<dir-key>``,
+``genre;rock`` → ``_tags/genre/rock/<dir-key>``.
 """
 
 from __future__ import annotations
@@ -45,11 +38,16 @@ def _load_shadup() -> object:
 _sh = _load_shadup()
 plan_refresh_extracted_tag_mirrors = _sh.plan_refresh_extracted_tag_mirrors
 NOTAGS_DIR_NAME = _sh.NOTAGS_DIR_NAME
+META_DIR_NAME = _sh.META_DIR_NAME
+META_ALBUM_LINK_NAME = _sh.META_ALBUM_LINK_NAME
+META_TAG_SELF_LINK_NAME = _sh.META_TAG_SELF_LINK_NAME
 tag_mirror_relpath = _sh.tag_mirror_relpath
+meta_mirror_relpath = _sh.meta_mirror_relpath
 
 
-def _mirror_link_rel(tag: str, name: str) -> Path:
-    return Path("_tags").joinpath(*tag_mirror_relpath(tag), name)
+def _mirror_link_rel(tag: str, name: str, *, as_self: bool = False) -> Path:
+    base = Path("_tags").joinpath(*tag_mirror_relpath(tag), *name.split("/"))
+    return base / META_TAG_SELF_LINK_NAME if as_self else base
 
 
 def _run_shadup(
@@ -140,6 +138,13 @@ def compute_dir_tags_from_file_specs(
     return result
 
 
+def _prefix_names_for_tag(
+    rows: list[tuple[str, str, str]], tag: str
+) -> set[str]:
+    names = {name for t, name, _dk in rows if t == tag}
+    return _sh._tag_paths_needing_real_dirs(names)
+
+
 def _expected_find_lines_from_plan(
     files_root: Path, rows: list[tuple[str, str, str]]
 ) -> str:
@@ -162,18 +167,20 @@ def _expected_find_lines_from_plan(
 
     add_chain(fr / "_tags")
     for tag, name, _dk in rows:
-        add_chain(fr / _mirror_link_rel(tag, name))
+        as_self = name in _prefix_names_for_tag(rows, tag)
+        add_chain(fr / _mirror_link_rel(tag, name, as_self=as_self))
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
 def _symlink_checks_from_plan(
     files_root: Path, rows: list[tuple[str, str, str]]
 ) -> list[tuple[Path, str]]:
-    """(path relative to ``files_root``, expected readlink text)."""
+    """(path relative to ``files_root``, expected readlink text) → ``_meta``."""
     out: list[tuple[Path, str]] = []
-    for tag, name, dk in rows:
-        rel = _mirror_link_rel(tag, name)
-        target = files_root / dk
+    for tag, name, _dk in rows:
+        as_self = name in _prefix_names_for_tag(rows, tag)
+        rel = _mirror_link_rel(tag, name, as_self=as_self)
+        target = files_root.joinpath(META_DIR_NAME, *name.split("/"))
         link_parent = (files_root / rel).parent
         txt = os.path.relpath(target, link_parent)
         out.append((rel, txt))
@@ -181,18 +188,21 @@ def _symlink_checks_from_plan(
 
 
 def _dir_key_from_plan_row(rel: Path, rows: list[tuple[str, str, str]]) -> str:
-    """Map ``_tags/…/<name>`` back to dir_key using the plan."""
+    """Map ``_tags/…/<nested>`` (or ``…/_self``) back to dir_key using the plan."""
     assert rel.parts[0] == "_tags"
-    name = rel.parts[-1]
-    tag_fs = rel.parts[1:-1]
+    parts = list(rel.parts[1:])
+    if parts and parts[-1] == META_TAG_SELF_LINK_NAME:
+        parts = parts[:-1]
     for t, n, dk in rows:
-        if n == name and tag_mirror_relpath(t) == tag_fs:
+        tag_fs = tag_mirror_relpath(t)
+        nested = tuple(n.split("/"))
+        if tuple(parts[: len(tag_fs)]) == tag_fs and tuple(parts[len(tag_fs) :]) == nested:
             return dk
     raise AssertionError(f"no plan row for {rel}")
 
 
 def test_tag_mirror_relpath_namespaced_and_legacy() -> None:
-    assert tag_mirror_relpath("artist;beck") == ("artist", "beck")
+    assert tag_mirror_relpath("artist;letter") == ("artist", "letter")
     assert tag_mirror_relpath("artist:Depeche Mode") == ("artist", "Depeche Mode")
     assert tag_mirror_relpath("album;The Information") == ("album", "The Information")
     assert tag_mirror_relpath("genre;rock") == ("genre", "rock")
@@ -200,6 +210,12 @@ def test_tag_mirror_relpath_namespaced_and_legacy() -> None:
     assert tag_mirror_relpath("x") == ("x",)
     assert tag_mirror_relpath(NOTAGS_DIR_NAME) == (NOTAGS_DIR_NAME,)
     assert tag_mirror_relpath("artist;foo<bar>") == ("artist", "foo_bar")
+
+
+def test_meta_mirror_relpath_preserves_nesting() -> None:
+    assert meta_mirror_relpath("woodstock/vol 01") == "woodstock/vol 01"
+    assert meta_mirror_relpath("a/a") == "a/a"
+    assert meta_mirror_relpath("plain") == "plain"
 
 
 def test_user_abcdf_tree_mirror_plan() -> None:
@@ -212,19 +228,60 @@ def test_user_abcdf_tree_mirror_plan() -> None:
         "e": frozenset(),
     }
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
-    # Order matches shadup.plan_refresh_extracted_tag_mirrors (tags x,y,z then NOTAGS).
+    # Nested paths (no flat a(2) disambiguation).
     want: list[tuple[str, str, str]] = [
         ("x", "a", "a"),
-        ("x", "b", "a/b"),
-        ("x", "a(2)", "a/a"),
+        ("x", "a/b", "a/b"),
+        ("x", "a/a", "a/a"),
         ("y", "a", "a"),
-        ("y", "b", "a/b"),
+        ("y", "a/b", "a/b"),
         ("y", "d", "d"),
         ("z", "a", "a"),
-        ("z", "a(2)", "a/a"),
+        ("z", "a/a", "a/a"),
         (NOTAGS_DIR_NAME, "e", "e"),
     ]
     assert rows == want
+
+
+def test_nested_album_meta_path_not_flat(tmp_path: Path) -> None:
+    """Woodstock vols live under ``_meta/woodstock/…``, not flat ``_meta/vol 01``."""
+    files_root = tmp_path / "files"
+    box = files_root / "woodstock"
+    vol01 = box / "vol 01"
+    vol02 = box / "vol 02"
+    for p in (vol01, vol02):
+        p.mkdir(parents=True)
+        (p / "t.flac").write_text("x", encoding="utf-8")
+
+    tags_by_dir = {
+        "": frozenset({"genre;live"}),
+        "woodstock": frozenset({"genre;live"}),
+        "woodstock/vol 01": frozenset({"genre;live"}),
+        "woodstock/vol 02": frozenset({"genre;live"}),
+    }
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    name_by_dir = {dk: name for _t, name, dk in rows}
+    assert name_by_dir["woodstock/vol 01"] == "woodstock/vol 01"
+    assert name_by_dir["woodstock/vol 02"] == "woodstock/vol 02"
+    assert "vol 01" not in name_by_dir.values()
+
+    _sh.install_meta_directories(str(files_root), tags_by_dir, name_by_dir)
+    _sh.install_tag_bucket_meta_links(str(files_root), rows)
+
+    meta_v1 = files_root / META_DIR_NAME / "woodstock" / "vol 01"
+    meta_box = files_root / META_DIR_NAME / "woodstock"
+    assert meta_v1.is_dir()
+    assert not (files_root / META_DIR_NAME / "vol 01").exists()
+    assert (meta_v1 / META_ALBUM_LINK_NAME).resolve() == vol01.resolve()
+    assert (meta_box / META_ALBUM_LINK_NAME).resolve() == box.resolve()
+
+    # Parent path under the tag is a real dir; meta via _self; child is a symlink.
+    tag_box = files_root / "_tags" / "genre" / "live" / "woodstock"
+    tag_v1 = tag_box / "vol 01"
+    assert tag_box.is_dir() and not tag_box.is_symlink()
+    assert (tag_box / META_TAG_SELF_LINK_NAME).resolve() == meta_box.resolve()
+    assert tag_v1.is_symlink()
+    assert tag_v1.resolve() == meta_v1.resolve()
 
 
 def _build_three_level_two_plus_two(
@@ -324,7 +381,52 @@ def test_refresh_extracted_tags_pipeline_find_and_symlinks(
         ), f"{link}: got {os.readlink(link)!r} want {want_text!r}"
     for rel, _want_text in want_links:
         link = files_root / rel
-        target = (link.parent / os.readlink(link)).resolve()
+        meta = (link.parent / os.readlink(link)).resolve()
         dir_key = _dir_key_from_plan_row(rel, rows)
-        expect = (files_root / dir_key).resolve()
-        assert target == expect, f"{link} -> {target} expected {expect}"
+        name = meta_mirror_relpath(dir_key)
+        expect_meta = files_root.joinpath(META_DIR_NAME, *name.split("/")).resolve()
+        assert meta == expect_meta, f"{link} -> {meta} expected {expect_meta}"
+        album_link = meta / META_ALBUM_LINK_NAME
+        assert album_link.is_symlink()
+        album = (album_link.parent / os.readlink(album_link)).resolve()
+        assert album == (files_root / dir_key).resolve()
+
+    for dir_key in tags_by_dir:
+        if not dir_key:
+            continue
+        assert not (files_root / dir_key / "_tags").exists()
+
+
+def test_shared_meta_across_two_tag_buckets(tmp_path: Path) -> None:
+    """``genre/lounge/X`` and ``genre/triphop/X`` are the same ``_meta/X``."""
+    files_root = tmp_path / "files"
+    album = files_root / "Baby Mammoth - Seven Up"
+    album.mkdir(parents=True)
+    (album / "track.flac").write_text("x", encoding="utf-8")
+
+    tags_by_dir = {
+        "": frozenset({"genre;lounge", "genre;triphop"}),
+        "Baby Mammoth - Seven Up": frozenset({"genre;lounge", "genre;triphop"}),
+    }
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    name_by_dir = {dk: name for _t, name, dk in rows}
+    assert name_by_dir["Baby Mammoth - Seven Up"] == "Baby Mammoth - Seven Up"
+
+    n_meta = _sh.install_meta_directories(str(files_root), tags_by_dir, name_by_dir)
+    n_links = _sh.install_tag_bucket_meta_links(str(files_root), rows)
+    assert n_meta == 1
+    assert n_links == 2
+
+    meta = files_root / META_DIR_NAME / "Baby Mammoth - Seven Up"
+    lounge = files_root / "_tags" / "genre" / "lounge" / "Baby Mammoth - Seven Up"
+    triphop = files_root / "_tags" / "genre" / "triphop" / "Baby Mammoth - Seven Up"
+    assert lounge.is_symlink() and triphop.is_symlink()
+    assert lounge.resolve() == meta.resolve()
+    assert triphop.resolve() == meta.resolve()
+    assert (meta / META_ALBUM_LINK_NAME).resolve() == album.resolve()
+    assert (meta / "genre" / "lounge").resolve() == (
+        files_root / "_tags" / "genre" / "lounge"
+    ).resolve()
+    assert (meta / "genre" / "triphop").resolve() == (
+        files_root / "_tags" / "genre" / "triphop"
+    ).resolve()

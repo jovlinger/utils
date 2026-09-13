@@ -31,6 +31,15 @@ _ACTIVE_STORED_FILES_WHERE = "deleted = 0 AND end IS NULL"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
+# Parallel browse tree: one folder per album/dir, linked from every tag bucket.
+META_DIR_NAME = "_meta"
+# Inside each ``_meta/<dir_key>/``, symlink to the real album directory.
+META_ALBUM_LINK_NAME = "album"
+# When a tag-bucket path must be a real dir (nested children) and also point at
+# that album's meta, the meta symlink lives here beside the children.
+META_TAG_SELF_LINK_NAME = "_self"
+# Skip these when walking the library for tag aggregation / cleanup descent.
+_INDEX_TREE_NAMES = frozenset({"_tags", META_DIR_NAME})
 # Characters invalid in a Windows path segment (excluding ``:``, handled below).
 _TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
 
@@ -542,8 +551,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "refresh-extracted-tags",
         help=(
-            "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
-            "(namespaced tags become subdirs; see tag_mirror_relpath)"
+            "Rebuild files/_meta/ and files/_tags/ browse mirrors from "
+            "filesystem + DB tags (tag leaves link to shared meta folders; "
+            "see tag_mirror_relpath)"
         ),
     )
 
@@ -1338,36 +1348,32 @@ def _parent_dir_key(dir_key: str) -> str:
     return "/".join(dir_key.split("/")[:-1])
 
 
-def _allocate_flat_link_basename(taken: set[str], logical_base: str) -> str:
-    """First free name among ``base``, ``base(2)``, ``base(3)``, … and mark it taken."""
-    if logical_base not in taken:
-        taken.add(logical_base)
-        return logical_base
-    n = 2
-    while True:
-        cand = f"{logical_base}({n})"
-        if cand not in taken:
-            taken.add(cand)
-            return cand
-        n += 1
+def meta_mirror_relpath(dir_key: str) -> str:
+    """Relative path under ``_meta/`` / tag buckets for *dir_key* (nested).
+
+    Preserves the library hierarchy (``woodstock/vol 01`` → ``woodstock/vol 01``)
+    with each segment sanitized like tag path parts. Empty *dir_key* is invalid.
+    """
+    if not dir_key:
+        raise ValueError("meta_mirror_relpath: empty dir_key")
+    return "/".join(
+        _sanitize_tag_mirror_segment(part) for part in dir_key.split("/")
+    )
 
 
-def _plan_flat_mirrors_for_tag(
+def _plan_mirrors_for_tag(
     tag: str, subset: set[str]
 ) -> list[tuple[str, str, str]]:
-    """BFS per top-level component; ``taken`` basenames are shared across components."""
+    """BFS per top-level component; link path is nested :func:`meta_mirror_relpath`."""
     from collections import deque
 
     roots = sorted(d for d in subset if "/" not in d)
-    taken: set[str] = set()
     rows: list[tuple[str, str, str]] = []
     for root in roots:
         dq: deque[str] = deque([root])
         while dq:
             dk = dq.popleft()
-            logical_base = dk.split("/")[-1]
-            name = _allocate_flat_link_basename(taken, logical_base)
-            rows.append((tag, name, dk))
+            rows.append((tag, meta_mirror_relpath(dk), dk))
             children = sorted(
                 (d for d in subset if _parent_dir_key(d) == dk),
                 reverse=True,
@@ -1379,7 +1385,7 @@ def _plan_flat_mirrors_for_tag(
 def plan_refresh_extracted_tag_mirrors(
     tags_by_dir: dict[str, frozenset[str]],
 ) -> list[tuple[str, str, str]]:
-    """Plan flat per-tag symlinks: ``(tag_or_NOTAGS, link_basename, dir_key)`` rows.
+    """Plan per-tag symlinks: ``(tag_or_NOTAGS, meta_relpath, dir_key)`` rows.
 
     Rules:
 
@@ -1387,10 +1393,11 @@ def plan_refresh_extracted_tag_mirrors(
       computed set contains ``t`` and walk them top-down BFS per top-level
       component. Siblings are emitted **descending by dir_key** (so ``a/b``
       appears before ``a/a``).
-    * Within a tag folder, duplicate basenames are disambiguated with
-      ``(2)``, ``(3)``, … (shared across top-level components under the tag).
+    * Link / meta paths preserve nesting via :func:`meta_mirror_relpath`
+      (``woodstock/vol 01`` → ``_meta/woodstock/vol 01``, not a flat
+      ``_meta/vol 01``).
     * Directories whose computed set is empty go under
-      :data:`NOTAGS_DIR_NAME` with the same BFS + disambiguation rules.
+      :data:`NOTAGS_DIR_NAME` with the same BFS order.
     * The root directory (``dir_key = ""``) is **never** mirrored.
     * Tags iterate in ``sorted`` order; :data:`NOTAGS_DIR_NAME` is emitted last.
     """
@@ -1400,10 +1407,10 @@ def plan_refresh_extracted_tag_mirrors(
         all_tags |= set(ts)
     for tag in sorted(all_tags):
         subset = {dk for dk, ts in tags_by_dir.items() if dk and tag in ts}
-        rows.extend(_plan_flat_mirrors_for_tag(tag, subset))
+        rows.extend(_plan_mirrors_for_tag(tag, subset))
     empty_dirs = {dk for dk, ts in tags_by_dir.items() if dk and not ts}
     if empty_dirs:
-        rows.extend(_plan_flat_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
+        rows.extend(_plan_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
     return rows
 
 
@@ -1562,7 +1569,7 @@ def _compute_tags_by_dir(
 
     acc: dict[str, set[str]] = {"": set()}
     for dirpath_abs, dirnames, filenames in os.walk(files_root_abs, topdown=True):
-        dirnames[:] = [d for d in dirnames if d != "_tags"]
+        dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
         rel_dir = os.path.relpath(dirpath_abs, files_root_abs)
         dir_key = "" if rel_dir in (".", "") else rel_dir.replace(os.sep, "/")
         acc.setdefault(dir_key, set())
@@ -1627,17 +1634,168 @@ def handle_ls_alltags(
     _emit_ls_alltags_pretty(rows)
 
 
-def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_tags`` with namespaced per-tag symlinks.
+def _force_symlink(link: str, target_rel: str) -> None:
+    """Create *link* → *target_rel*, replacing any existing file/dir/symlink."""
+    parent = os.path.dirname(link)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    if os.path.lexists(link):
+        if os.path.isdir(link) and not os.path.islink(link):
+            shutil.rmtree(link)
+        else:
+            os.unlink(link)
+    os.symlink(target_rel, link)
 
-    Two passes:
+
+def _remove_index_trees(files_root: str) -> int:
+    """Delete ``files/_tags``, ``files/_meta``, and leftover album-local ``_tags``.
+
+    Does not follow symlinks when removing. Returns the number of trees removed.
+    """
+    removed = 0
+    for name in (META_DIR_NAME, "_tags"):
+        path = os.path.join(files_root, name)
+        if not os.path.lexists(path):
+            continue
+        if os.path.islink(path) or os.path.isfile(path):
+            os.unlink(path)
+        else:
+            shutil.rmtree(path)
+        removed += 1
+
+    for dirpath, dirnames, _filenames in os.walk(files_root, topdown=True):
+        # Do not descend into index trees if somehow still present.
+        dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
+        if "_tags" not in dirnames:
+            continue
+        tags_path = os.path.join(dirpath, "_tags")
+        dirnames.remove("_tags")
+        if os.path.islink(tags_path) or os.path.isfile(tags_path):
+            os.unlink(tags_path)
+            removed += 1
+            continue
+        if os.path.isdir(tags_path):
+            shutil.rmtree(tags_path)
+            removed += 1
+    return removed
+
+
+def install_meta_directories(
+    files_root: str,
+    tags_by_dir: dict[str, frozenset[str]],
+    name_by_dir: dict[str, str],
+) -> int:
+    """Create ``_meta/<nested-path>/`` with ``album`` + per-tag links into ``_tags/``.
+
+    *name_by_dir* maps ``dir_key`` → nested relpath (usually equal to ``dir_key``).
+    Nested albums share path prefixes (``_meta/woodstock/vol 01`` under
+    ``_meta/woodstock``); parent metas are real directories that may contain child
+    meta folders alongside ``album`` / tag links.
+    """
+    meta_root = os.path.join(files_root, META_DIR_NAME)
+    tags_root = os.path.join(files_root, "_tags")
+    n_meta = 0
+    for dir_key, name in sorted(name_by_dir.items(), key=lambda kv: kv[1]):
+        meta_dir = os.path.join(meta_root, *name.split("/"))
+        os.makedirs(meta_dir, exist_ok=True)
+        n_meta += 1
+        album_abs = os.path.join(files_root, *dir_key.split("/"))
+        album_link = os.path.join(meta_dir, META_ALBUM_LINK_NAME)
+        _force_symlink(album_link, os.path.relpath(album_abs, meta_dir))
+
+        tags = tags_by_dir.get(dir_key) or frozenset()
+        tag_names = sorted(tags) if tags else [NOTAGS_DIR_NAME]
+        for tag in tag_names:
+            parts = tag_mirror_relpath(tag)
+            bucket = os.path.join(tags_root, *parts)
+            os.makedirs(bucket, exist_ok=True)
+            link = os.path.join(meta_dir, *parts)
+            parent = os.path.dirname(link)
+            _force_symlink(link, os.path.relpath(bucket, parent))
+            out(
+                "refresh-extracted-tags meta {name}/{tag_dir}",
+                2,
+                name=name,
+                tag_dir="/".join(parts),
+            )
+    return n_meta
+
+
+def _tag_paths_needing_real_dirs(relpaths: set[str]) -> set[str]:
+    """Return relpaths that are strict prefixes of another path in *relpaths*."""
+    need: set[str] = set()
+    for path in relpaths:
+        parent = path
+        while "/" in parent:
+            parent = parent.rsplit("/", 1)[0]
+            if parent in relpaths:
+                need.add(parent)
+    return need
+
+
+def install_tag_bucket_meta_links(
+    files_root: str,
+    rows: list[tuple[str, str, str]],
+) -> int:
+    """Create ``_tags/<tag_path>/<nested>`` → ``_meta/<nested>`` (shared meta).
+
+    Nested ``dir_key`` paths are preserved. If both a parent and a child appear
+    under the same tag, the parent path is a real directory (so children can
+    nest) and the parent's meta is linked as :data:`META_TAG_SELF_LINK_NAME`.
+    """
+    meta_root = os.path.join(files_root, META_DIR_NAME)
+    n_links = 0
+    by_tag: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for tag, name, dir_key in rows:
+        by_tag[tag].append((name, dir_key))
+
+    for tag, items in sorted(by_tag.items()):
+        tag_parts = tag_mirror_relpath(tag)
+        names = {name for name, _dk in items}
+        prefix_dirs = _tag_paths_needing_real_dirs(names)
+        for name, dir_key in items:
+            meta_dir = os.path.join(meta_root, *name.split("/"))
+            os.makedirs(meta_dir, exist_ok=True)
+            if name in prefix_dirs:
+                # Real dir for nesting; meta reachable via _self.
+                nest_dir = os.path.join(files_root, "_tags", *tag_parts, *name.split("/"))
+                os.makedirs(nest_dir, exist_ok=True)
+                link = os.path.join(nest_dir, META_TAG_SELF_LINK_NAME)
+            else:
+                link = os.path.join(
+                    files_root, "_tags", *tag_parts, *name.split("/")
+                )
+            parent = os.path.dirname(link)
+            os.makedirs(parent, exist_ok=True)
+            _force_symlink(link, os.path.relpath(meta_dir, parent))
+            n_links += 1
+            out(
+                "refresh-extracted-tags mirror {tag_dir}/{name} -> {meta}/{name} ({dir_key})",
+                2,
+                tag_dir="/".join(tag_parts),
+                name=name,
+                meta=META_DIR_NAME,
+                dir_key=dir_key,
+            )
+    return n_links
+
+
+def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
+    """Rebuild ``files/_meta`` and ``files/_tags`` circular browse mirrors.
+
+    Passes:
 
     1. **Bottom-up** walk of ``files/``: build ``dir_key → frozenset(tags)`` by
        unioning each file's DB tags into its directory and propagating to
-       ancestors.
-    2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag_mirror_relpath(tag)>/<basename[(n)]>`` →
-       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_relpath`).
+       ancestors (``_tags`` / ``_meta`` skipped while walking).
+    2. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
+       per directory, rows ``(tag, meta_relpath, dir_key)``.
+    3. **Meta folders** via :func:`install_meta_directories`: one
+       ``_meta/<nested>/`` per directory with ``album`` → real dir and
+       ``<tag_path>`` → ``_tags/<tag_path>``.
+    4. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
+       ``_tags/<tag_path>/<nested>`` → the **same** ``_meta/<nested>`` (not the
+       album). Cycles between meta ↔ tag buckets are intentional.
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1651,36 +1809,27 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
             f"refresh-extracted-tags: files root not a directory: {files_root}"
         )
 
-    tags_root = os.path.join(files_root, "_tags")
-    if os.path.lexists(tags_root):
-        shutil.rmtree(tags_root)
+    removed = _remove_index_trees(files_root)
+    out(
+        "refresh-extracted-tags cleared {count} prior index trees",
+        1,
+        count=removed,
+    )
 
     tags_by_dir = _compute_tags_by_dir(conn, files_root)
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    name_by_dir = {dk: name for _tag, name, dk in rows}
 
-    for tag, name, dir_key in rows:
-        tag_parts = tag_mirror_relpath(tag)
-        link = os.path.join(files_root, "_tags", *tag_parts, name)
-        target = os.path.join(files_root, *dir_key.split("/"))
-        parent = os.path.dirname(link)
-        os.makedirs(parent, exist_ok=True)
-        if os.path.lexists(link):
-            os.unlink(link)
-        rel_target = os.path.relpath(target, parent)
-        os.symlink(rel_target, link)
-        tag_dir = "/".join(tag_parts)
-        out(
-            "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
-            2,
-            tag_dir=tag_dir,
-            name=name,
-            dir_key=dir_key,
-        )
-    os.makedirs(tags_root, exist_ok=True)
+    os.makedirs(os.path.join(files_root, "_tags"), exist_ok=True)
+    os.makedirs(os.path.join(files_root, META_DIR_NAME), exist_ok=True)
+    n_meta = install_meta_directories(files_root, tags_by_dir, name_by_dir)
+    n_links = install_tag_bucket_meta_links(files_root, rows)
     out(
-        "refresh-extracted-tags mirrors {count}",
+        "refresh-extracted-tags mirrors {count} meta_dirs {n_meta} tag_links {n_links}",
         0,
         count=len(rows),
+        n_meta=n_meta,
+        n_links=n_links,
     )
 
 
