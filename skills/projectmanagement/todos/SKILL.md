@@ -2,7 +2,7 @@
 name: todos
 description: >-
   Branch-bound todo task tickets managed through the todo.py CLI (one ticket
-  per git branch). TRIGGER: the user says "TODO", "todo", "ticket", "branch
+  per git branch). TRIGGER: the user says "TODO", "todo", "branch
   task", "HICAP", "MIDCAP", "LOCAP", "groom", or asks to track/manage task
   state -- invoke immediately. Route ALL ticket access through todo.py; never
   read or write TODO.json or a backend by hand. Load detailed references on
@@ -49,6 +49,7 @@ Load **only** what the user intent needs:
 | **Cursor: work / proceed / continue a ticket** | [`CURSOR.md`](CURSOR.md) **first**, then [`WORKING.md`](WORKING.md) |
 | make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) |
 | start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
+| review cycle / Copilot review / PR handoff | [`WORKING.md` section 7](WORKING.md#7-handoff-to-parent-or-pr) |
 | command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
 
 ## Everyday quick reference
@@ -79,6 +80,10 @@ cd "$("$TODO" ensure_worktree "$ID" | jq -r .worktree)"
 # finish (WORKING.md section 6 -- includes worktree remove after set done)
 "$TODO" doctor "$ID"                  # must be ok
 "$TODO" set "$ID" --state done --actual-summary="..."
+
+# review cycle before the PR goes to humans (WORKING.md section 7, fixed order):
+# HICAP review + fix -> push -> Copilot review (per-repo table; opportunity only)
+# -> HICAP fix + re-request -> HICAP re-review
 ```
 
 Authoritative finish, child integration, and worktree teardown:

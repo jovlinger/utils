@@ -846,6 +846,9 @@ def _page_data(
             "mode": "workitem",
             "kind": w["kind"],
             "short": w["short"],
+            # The tile clamps this; the fold is the only place it is readable
+            # in full, so it travels with the message and diff.
+            "summary": w["summary"],
             "message": commit_message(root, sha) if sha else w["message"],
             "diff": diff_unified(root, sha) if sha else "",
             "github": f"{github}/commit/{sha}" if github and sha else "",
@@ -932,7 +935,11 @@ _STYLE = """<style>
   .focus { box-shadow: 0 0 0 2px #cfe3ff; border-radius: 6px; }
   .wi.done { background: #f6f8fa; }
   .wi-kind { font-size: 11px; color: #57606a; }
-  .wi-sum, .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
+  .st-sum { font-weight: 600; overflow-wrap: anywhere; margin: 2px 0; }
+  /* A work item's summary is a paragraph, not a headline: no tile size makes it
+     fit, so the tile shows it small and unbold as a preview and the fold shows
+     the whole thing. */
+  .wi-sum { font-size: 12px; overflow-wrap: anywhere; margin: 2px 0; }
   .wi-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
             color: #0969da; }
   /* A blocked item is done-but-not-achieved: red, where a sha would be. */
@@ -946,6 +953,8 @@ _STYLE = """<style>
   .wi.hi, .st.hi { border-color: #bf8700; box-shadow: 0 0 0 2px #fff8c5; }
   .fold.split-fold { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
   .fold-msg pre { background: #f6f8fa; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
+  .fold-msg .wi-raw { background: #f6f8fa; padding: 12px; border-radius: 6px;
+                      white-space: pre-wrap; overflow-wrap: anywhere; }
   .diff-code { background: #0d1117; color: #e6edf3; border-radius: 6px; padding: 12px; overflow: auto; }
   .diff-code a { color: #79c0ff; }
   .fold pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -957,7 +966,10 @@ _STYLE = """<style>
   .results li { padding: 8px; border-bottom: 1px solid #eaeef2; }
   .results .r-state { color: #57606a; font-size: 12px; }
   .results .r-utime { color: #8b949e; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; }
-  .md-bar { text-align: right; margin: 0 0 4px; }
+  .md-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
+  .md-bar .md-toggle { margin-left: auto; }
+  .md-name { font-size: 11px; color: #57606a; text-transform: uppercase;
+             letter-spacing: .04em; }
   .md-toggle { font-size: 11px; color: #0969da; background: #fff; border: 1px solid #d8dee4;
                border-radius: 4px; padding: 2px 8px; cursor: pointer; }
   .md-toggle[aria-pressed="true"] { background: #ddf4ff; border-color: #0969da; }
@@ -1148,10 +1160,19 @@ function select(objid){
   if (entry.mode === 'workitem') {
     var head = entry.short ? ('sha:'+esc(entry.short)) : esc(entry.kind || 'work item');
     if (entry.github) { head = '<a href="'+entry.github+'">'+head+'</a>'; }
+    // The tile can only ever show a clamped preview of the item's own text, so
+    // the fold is where it is read in full -- above the commit message, each
+    // block labelled and separately previewable so the two prose blocks (the
+    // item's own words, and git's) are never mistaken for one another.
+    var text = entry.summary ?
+      ('<div class="md-field wi-text" data-md-label="Work item">' +
+       '<div class="md-bar"><span class="md-name">work item</span>' +
+       '<button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>' +
+       '<div class="md-view md-raw wi-raw">'+esc(entry.summary)+'</div></div>') : '';
     fold.className = 'fold split-fold';
     fold.innerHTML =
-      '<div class="fold-msg"><h3>'+head+'</h3>' +
-      '<div class="md-field" data-md-label="Commit message"><div class="md-bar"><button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>' +
+      '<div class="fold-msg"><h3>'+head+'</h3>' + text +
+      '<div class="md-field" data-md-label="Commit message"><div class="md-bar"><span class="md-name">commit</span><button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>' +
       '<pre class="md-view md-raw"><code>'+esc(entry.message || '(no commit)')+'</code></pre></div></div>' +
       '<div class="fold-diff diff-code"><pre><code>'+esc(entry.diff || 'no diff')+'</code></pre></div>';
     initMdToggles(fold);

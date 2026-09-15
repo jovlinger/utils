@@ -416,5 +416,40 @@ class MarkdownPreviewTest(unittest.TestCase):
         self.assertIn("# Title", html)
 
 
+class WorkItemTextInFoldTest(unittest.TestCase):
+    """A tile shows a small, unbold PREVIEW of the item's text; the fold shows
+    the whole thing, previewable, above the commit message it already had."""
+
+    def item(self) -> Dict[str, Any]:
+        return {
+            "kind": "task",
+            "summary": "[MOVED 2026-09-02 to todo:c08ed702 (BH-790 mk2)] " + "w" * 400,
+            "done": False,
+            "objid": "010c",
+        }
+
+    def test_tile_summary_is_small_and_unbold(self) -> None:
+        rule = todo_web._STYLE.split(".wi-sum {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-size: 12px", rule)
+        self.assertNotIn("font-weight", rule)
+
+    def test_subtodo_summary_keeps_its_weight(self) -> None:
+        # Only the work-item tile changed: a subtodo box summary is one line.
+        rule = todo_web._STYLE.split(".st-sum {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-weight: 600", rule)
+
+    def test_fold_entry_carries_the_items_own_text(self) -> None:
+        page = _page(_todo({"working": {}}, [self.item()]))
+        self.assertEqual(self.item()["summary"], _fold_entry(page, "010c")["summary"])
+
+    def test_fold_renders_the_text_as_a_previewable_field(self) -> None:
+        page = _page(_todo({"working": {}}, [self.item()]))
+        self.assertIn('data-md-label="Work item"', page)
+        self.assertIn("entry.summary", page)
+        # ... and the commit message field is still there, unchanged.
+        self.assertIn('data-md-label="Commit message"', page)
+        self.assertIn("(no commit)", page)
+
+
 if __name__ == "__main__":
     unittest.main()
