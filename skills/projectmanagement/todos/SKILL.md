@@ -27,7 +27,7 @@ tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
 
 | Role | Who | Job |
 |------|-----|-----|
-| Groomer | HICAP (sparingly) | Mint, decompose, write AC/Body/LongSummary, tag tiers, decide WorkItem vs subtodo -- do **not** implement or `init` unless asked to work |
+| Groomer | HICAP (sparingly) | Mint, decompose, write AC/Body/LongSummary, tag tiers, decide WorkItem vs subtodo -- do **not** implement or `init` unless asked to work; close the make turn with the [groom handoff report](GROOMING.md#groom-handoff-report-chat) |
 | Worker | MIDCAP / LOCAP | Execute one WorkItem at a time on the todo branch in a dedicated worktree |
 | Orchestrator | Parent context | Bookkeeping, child launch, synthesis after merge |
 
@@ -47,7 +47,7 @@ Load **only** what the user intent needs:
 | Intent | Open |
 |--------|------|
 | **Cursor: work / proceed / continue a ticket** | [`CURSOR.md`](CURSOR.md) **first**, then [`WORKING.md`](WORKING.md) |
-| make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) |
+| make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) (incl. [groom handoff report](GROOMING.md#groom-handoff-report-chat)) |
 | start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
 | review cycle / Copilot review / PR handoff | [`WORKING.md` section 7](WORKING.md#7-handoff-to-parent-or-pr) |
 | command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
@@ -63,6 +63,7 @@ ID=$("$TODO" mint)
 "$TODO" work-item-add "$ID" --summary="[MIDCAP] ..."
 "$TODO" work-item-reorder "$ID" objid:0007 -1   # right step, wrong order
 # stay in State groom until the user asks to work
+# then end the chat with the groom handoff report -- see GROOMING.md
 
 # promote when ready to work (branch only; worktree is separate)
 "$TODO" init --id "$ID" --stay-on-parent
