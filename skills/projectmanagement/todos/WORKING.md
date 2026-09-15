@@ -115,6 +115,25 @@ test "$(git branch --show-current)" = "$BRANCH"
 Prefer `todo.py init --stay-on-parent` when filing from the main checkout, then
 add the worktree.
 
+**Stacked promote (the current checkout is itself todo-bound).** `init` and
+`ensure_worktree --init` refuse with `todo already exists on current branch` when run
+from another todo's worktree -- the normal case when a session starts inside one. Do
+NOT switch that checkout's branch to get around it (it is someone's live worktree).
+Create the branch by hand from the default branch tip, then let `ensure_worktree`
+(no `--init`) place it:
+
+```bash
+BR=$(todo get-json-path <id> Branch)
+git -C "$MAIN" fetch origin "$DEFAULT_BRANCH"
+git -C "$MAIN" branch "$BR" "origin/$DEFAULT_BRANCH"
+printf '"%s"' "$(git -C "$MAIN" rev-parse "origin/$DEFAULT_BRANCH")" | todo set-json-path <id> BaseSha
+todo set <id> --state ready
+todo ensure_worktree <id>
+```
+
+Groom-phase writes (`mint`, `set`, `work-item-add`) are store-only and may run from
+any checkout; the first `git` or code action on the todo happens inside its worktree.
+
 **INVARIANT:** every FINAL state (`done`, `merged`, `rejected`) implies **no
 live worktree** for that todo. Teardown is mandatory on finish (below), not
 optional cleanup. `set --state ...` is store-only and does **not** remove
@@ -383,6 +402,47 @@ Git-integrate into the parent branch, then `merge-subtodo` (section 4). Teardown
 the child worktree happens at child FINAL (section 6).
 
 ### Root todo -> PR
+
+Once `is-done` holds and section 6's verification passes, the branch goes through the
+**review cycle** before the PR is handed to humans. The order is fixed. Every finding
+that gets fixed lands as a WorkItem on this todo (`work-item-add`, then
+`work-item-done`), never as a silent edit on a finished plan.
+
+| # | Step | Who | Notes |
+|---|------|-----|-------|
+| 1 | Review the whole branch diff vs the default branch as a reviewer would; fix what it finds | HICAP reviewer (Fable-class) | findings -> `work-item-add <id> --summary="[HICAP] review follow-up: ..."` |
+| 2 | Push, open the PR (draft or not), wait for CI green | worker | the repo's own push hooks apply (opportunity: the Semaphore watch hook) |
+| 3 | Copilot code review -- ONLY when the repo is in the table below | MIDCAP, following the repo's `request-copilot-code-review` skill literally | request, wait, harvest; findings -> `[HICAP] Copilot review follow-up (pr:N): ...` WorkItems |
+| 4 | Fix EVERY Copilot finding now, push, re-request the Copilot review | HICAP fixer (Opus-class) | one commit per finding, why-per-file messages; deferring a finding to a later todo needs the user's explicit yes in chat first -- never a unilateral "tracked as todo:X" |
+| 5 | Re-review the branch after the fixes | HICAP reviewer (Fable-class) | exit gate; loop to 3 only if step 4 changed behavior, not wording |
+
+Within HICAP the reviewer is the most capable model available (Fable-class) and the
+fixer is the HICAP workhorse (Opus-class). Tiers: [`GROOMING.md`](GROOMING.md#capability-tiers).
+
+**Practice what you preach: self-review resolves its own citations.** When steps 1 or 5 touch
+a skill, rule, or doc file that cites a file path, a symbol, or a line number, resolving those
+citations against the current tree is part of the review, not optional polish -- a reviewer
+that tells others to check prose against code and then ships an unchecked citation in its own
+diff has not done the review. For every backtick-quoted path: confirm it exists (`git show
+<base>:<path>` or `git cat-file -e`). For every symbol claimed to live in a specific file:
+`grep` for it there. For every cited line or line range: confirm the file has that many lines.
+A citation that predates something now true (a skill that "does not exist yet") is stale in
+the same way a wrong path is; fix or remove it, do not leave it standing next to its own
+correction. This check is unbounded in scope within the touched files -- run it on every
+citation the diff adds or changes, not a sample.
+
+**Copilot review is a per-repo feature, hardcoded here.** It is on only where the repo
+carries BOTH a requesting skill (Claude side) and a Copilot-side checklist; the two
+files co-evolve and reference each other.
+
+| Repo (`Scope.git_url`) | Copilot review | Requesting skill | Copilot-side checklist |
+|---|---|---|---|
+| `github.com/easternlabs/opportunity` | yes | `.claude/skills/request-copilot-code-review/SKILL.md` | `.github/skills/code-review/SKILL.md` |
+| every other repo | no -- steps 3 and 4 are skipped | -- | -- |
+
+Adding a repo means adding a row here AND both files in that repo.
+
+After the cycle:
 
 ```bash
 todo.py set <id> --state merged --pr <N>    # "Push PR" transition after done
