@@ -374,6 +374,7 @@ appear in current examples.
 | `ActualSummary` | optional string at finish; reused by `merge-subtodo` |
 | `Tag` | optional list of `{raw, manual, ...}`; manual sticky; auto-tagging dormant |
 | `Notes` | optional list of `{objid, raw, relto?}`; status-free facts and findings, addressed by objid (`note-add`, `note-read`, `note-replace`, `note-delete`) |
+| `relto` | optional list of `{objid, type, target}` on `Body`, a `Notes` element, or a `WorkItems` element; cross-references read and written by `relto-add`, `relto-remove`, `relto-read`, addressed by HOST: `body`, `objid:<hex>` (record-wide), `note:<index>` or `workitem:<index>` |
 
 `Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`,
 `Tag` and `Notes` are optional and omitted when unused.

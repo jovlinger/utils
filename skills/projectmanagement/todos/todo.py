@@ -1761,6 +1761,57 @@ def resolve_note_index(todo: JsonDict, address: str) -> int:
     return _index_by_number(items, address, noun="note")
 
 
+# How a relto HOST is addressed -- one grammar serving all three relto-bearing
+# node kinds, so relto-add/-remove/-read are one command family rather than a
+# per-kind one. See resolve_relto_host.
+RELTO_HOST_HELP: str = (
+    "which relto-bearing node: 'body' (the Body field's own relto list), "
+    f"{todo_ref.OBJID_SCHEME}<hex> (4+ hex, record-wide -- any object in the record, checked "
+    "against the three legal relto hosts), or note:<index> / workitem:<index> (0-based, "
+    "negative counting from the end)"
+)
+
+
+def resolve_relto_host(todo: JsonDict, host: str) -> str:
+    """Return the json dot-path *host* names among the three legal relto hosts.
+
+    Four spellings collapse onto the three hosts ``_RELTO_HOST_RE`` encodes
+    (see ``relto_findings``): the literal ``body`` for the ``Body`` field;
+    ``objid:<hex>`` (4+ hex, record-wide), resolved with ``todo_ref.resolve_local``
+    exactly as a permalink resolves ``objid:<hex>`` and then checked against
+    ``_RELTO_HOST_RE`` -- an objid landing on a Tag, a Subtodos entry, or a
+    relto element itself is refused, naming what it hit; and
+    ``note:<index>`` / ``workitem:<index>`` (0-based, negative counting from
+    the end), reusing ``_index_by_number`` against the Notes / WorkItems list
+    the way work-item and note addressing already do.
+    """
+    if host == "body":
+        return "Body"
+    if host.startswith(todo_ref.OBJID_SCHEME):
+        try:
+            path = todo_ref.resolve_local(todo, host)
+        except todo_ref.TodoRefError as exc:
+            raise TodoError(str(exc)) from exc
+        if not _RELTO_HOST_RE.match(path):
+            raise TodoError(
+                f"{host} resolves to {path}, which is not a legal relto host; relto is "
+                "legal only on Body, a Notes element, or a WorkItems element"
+            )
+        return path
+    if host.startswith("note:"):
+        items: Sequence[Any] = todo.get("Notes") or []
+        index = _index_by_number(items, host[len("note:") :], noun="note")
+        return f"Notes.{index}"
+    if host.startswith("workitem:"):
+        items = todo.get("WorkItems") or []
+        index = _index_by_number(items, host[len("workitem:") :], noun="work item")
+        return f"WorkItems.{index}"
+    raise TodoError(
+        f"unrecognized relto host {host!r}; expected body, {todo_ref.OBJID_SCHEME}<hex>, "
+        "note:<index>, or workitem:<index>"
+    )
+
+
 def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
     """Return the work item at *index*, refusing a done one (invariant #3).
 
@@ -4965,6 +5016,33 @@ class WorkItemReadCommand(WorkItemProgressCommand):
         return 0
 
 
+def _build_relto_element(target: str, rel_type: str) -> JsonDict:
+    """Validate an explicit (target, type) pair and build one relto element.
+
+    Shared by ``note-add``'s ``--relto=TARGET[:TYPE]`` parsing (``_parse_relto_arg``) and
+    ``relto-add``'s separate ``--target``/``--type`` flags, so the relation-type allow-list
+    check, the ``mention`` refusal, and the target-syntax check live in exactly one place.
+    ``rel_type`` must be one of ``todo_ref.RELATION_TYPES``; ``mention`` is refused even
+    though it is a valid type, since doctor derives and owns mention entries from a node's
+    own prose and a hand-written one would immediately fight that sync. ``target`` is
+    checked for SYNTAX only, via ``todo_ref.parse_target`` -- whether it resolves to
+    anything is doctor's concern, not this one.
+    """
+    if rel_type not in todo_ref.RELATION_TYPES:
+        allowed = ", ".join(sorted(todo_ref.RELATION_TYPES))
+        raise TodoError(f"unknown relation type {rel_type!r}; expected one of {allowed}")
+    if rel_type == todo_ref.TYPE_MENTION:
+        raise TodoError(
+            "relto may not set type=mention by hand; doctor derives and owns mention "
+            "entries from a node's own prose"
+        )
+    try:
+        todo_ref.parse_target(target)
+    except todo_ref.TodoRefError as exc:
+        raise TodoError(str(exc)) from exc
+    return {"target": target, "type": rel_type}
+
+
 def _parse_relto_arg(value: str) -> JsonDict:
     """Parse one ``--relto=TARGET[:TYPE]`` value into a relto element.
 
@@ -4972,10 +5050,9 @@ def _parse_relto_arg(value: str) -> JsonDict:
     so there is no separator that is safe to split on unconditionally. Instead:
     split on the LAST colon, and treat the suffix as a relation TYPE only when
     it is one of ``todo_ref.RELATION_TYPES`` -- otherwise the whole value is
-    the target and the type defaults to ``todo_ref.TYPE_RELATES``. ``mention``
-    is refused here even though it is a valid type: doctor derives and owns
-    mention entries from a node's own prose, so writing one from the command
-    line would immediately fight doctor's own sync.
+    the target and the type defaults to ``todo_ref.TYPE_RELATES``. The allow-list
+    check and the ``mention`` refusal are ``_build_relto_element``'s; this only
+    does the split.
     """
     if not value:
         raise TodoError("--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates")
@@ -4984,16 +5061,7 @@ def _parse_relto_arg(value: str) -> JsonDict:
         target, rel_type = head, suffix
     else:
         target, rel_type = value, todo_ref.TYPE_RELATES
-    if rel_type == todo_ref.TYPE_MENTION:
-        raise TodoError(
-            "--relto may not set type=mention from the command line; doctor derives and "
-            "owns mention entries from a node's own prose"
-        )
-    try:
-        todo_ref.parse_target(target)
-    except todo_ref.TodoRefError as exc:
-        raise TodoError(str(exc)) from exc
-    return {"target": target, "type": rel_type}
+    return _build_relto_element(target, rel_type)
 
 
 class NoteAddCommand(NoteCommand):
@@ -5161,6 +5229,171 @@ class NoteDeleteCommand(NoteCommand):
                 root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}"
             )
         print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
+        return 0
+
+
+def _relto_read_all(todo: JsonDict) -> List[JsonDict]:
+    """Every relation anywhere in *todo*, one entry per relto element.
+
+    Walks the same ``_RELTO_HOST_RE``-filtered hosts ``relto_findings`` checks, in the
+    same depth-first record order (Body, then Notes, then WorkItems), so the whole
+    cross-reference graph of one todo comes back in one deterministic list. Each entry
+    carries the host's own json path and objid alongside the relation's own objid, type
+    and target.
+    """
+    entries: List[JsonDict] = []
+    for path, obj in todo_objid.iter_objects(todo):
+        if not _RELTO_HOST_RE.match(path):
+            continue
+        for element in obj.get("relto") or []:
+            if not isinstance(element, dict):
+                continue  # doctor reports the shape; a read should not traceback on it
+            entries.append(
+                {
+                    "host_path": path,
+                    "host_objid": obj.get(todo_objid.OBJID_KEY),
+                    todo_objid.OBJID_KEY: element.get(todo_objid.OBJID_KEY),
+                    "type": element.get("type"),
+                    "target": element.get("target"),
+                }
+            )
+    return entries
+
+
+class RelToAddCommand(NoteCommand):
+    command_names = ("relto-add",)
+    doc_short: ClassVar[str] = "Add a cross-reference to a relto-bearing node"
+    doc_long: ClassVar[str] = (
+        "Relto-add appends one cross-reference to the addressed HOST's relto list. HOST is "
+        "one command family serving all three relto-bearing node kinds, not a per-kind one: "
+        "'body' for the Body field's own list, objid:<hex> (4+ hex, record-wide) for any object "
+        "in the record -- resolved exactly as a permalink resolves objid:<hex>, then checked "
+        "against the three legal relto hosts, so an objid landing on a Tag or a Subtodos entry "
+        "is refused naming what it hit -- or note:<index> / workitem:<index> (0-based, negative "
+        "counting from the end) against the Notes or WorkItems list. --target is a qualified "
+        "target (objid:<hex> in this record, todo:<hex> for a whole todo, or "
+        "todo:<hex>/objid:<hex> for an object in another todo's record), checked for SYNTAX "
+        "only -- whether it resolves to anything is doctor's concern, not this one. --type "
+        "defaults to 'relates' and is checked against the relation-type allow-list; 'mention' "
+        "is refused -- doctor derives and owns mention entries from a node's own prose, so a "
+        "hand-written one is an assertion nobody made. A host relates to a target once: adding "
+        "a target the host's relto already carries is an error, whatever the existing entry's "
+        "type is. The write is store-only, so it works equally on a branchless groom todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register relto-add arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("host", help=RELTO_HOST_HELP)
+        parser.add_argument("--target", required=True, help="qualified target, e.g. objid:0034")
+        parser.add_argument(
+            "--type",
+            default=todo_ref.TYPE_RELATES,
+            help="relation type (default 'relates'); 'mention' is refused here",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Append one relto element to the addressed host and print it."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        path = resolve_relto_host(todo, self.host)
+        node = get_at_path(todo, path)
+        element = _build_relto_element(self.target, self.type)
+        relto: List[JsonDict] = list(node.get("relto") or [])
+        if any(existing.get("target") == element["target"] for existing in relto):
+            raise TodoError(f"{path} already relates to {element['target']!r}")
+        relto.append(element)
+        node["relto"] = relto
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): relto-add {path} -> {element['target']}")
+        print(json.dumps(element, indent=2))
+        return 0
+
+
+class RelToRemoveCommand(NoteCommand):
+    command_names = ("relto-remove",)
+    doc_short: ClassVar[str] = "Remove a cross-reference from a relto-bearing node"
+    doc_long: ClassVar[str] = (
+        "Relto-remove drops one cross-reference from the addressed HOST's relto list, matched "
+        "by --target against the exact stored string -- not a prefix. HOST takes the same "
+        "spellings relto-add does: 'body', objid:<hex> (4+ hex, record-wide, checked against "
+        "the three legal relto hosts), or note:<index> / workitem:<index>. A target the host "
+        "does not carry is an error. Removing an entry whose type is 'mention' is refused: "
+        "doctor would re-derive it on the very next run, so the only way to drop a mention is "
+        "to edit the node's own prose so the target no longer appears there. The write is "
+        "store-only, so it works equally on a branchless groom todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register relto-remove arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("host", help=RELTO_HOST_HELP)
+        parser.add_argument("--target", required=True, help="the exact stored target to remove")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Remove one relto element from the addressed host, matched by exact target."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        path = resolve_relto_host(todo, self.host)
+        node = get_at_path(todo, path)
+        relto: List[JsonDict] = list(node.get("relto") or [])
+        index = next(
+            (i for i, element in enumerate(relto) if element.get("target") == self.target), None
+        )
+        if index is None:
+            raise TodoError(f"{path} has no relto entry targeting {self.target!r}")
+        if relto[index].get("type") == todo_ref.TYPE_MENTION:
+            raise TodoError(
+                f"{path}.relto.{index} is a mention entry; doctor would re-derive it on the "
+                "next run -- edit the node's prose instead so the target no longer appears there"
+            )
+        removed = relto.pop(index)
+        if relto:
+            node["relto"] = relto
+        else:
+            node.pop("relto", None)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): relto-remove {path} -> {removed['target']}")
+        print(json.dumps(removed, indent=2))
+        return 0
+
+
+class RelToReadCommand(NoteCommand):
+    command_names = ("relto-read",)
+    doc_short: ClassVar[str] = "Read one host's relations, or every relation in the record"
+    doc_long: ClassVar[str] = (
+        "Relto-read prints the addressed HOST's relto list as JSON when HOST is given, or "
+        "every relation anywhere in the record as a JSON list when HOST is omitted. HOST takes "
+        "the same spellings relto-add does: 'body', objid:<hex> (4+ hex, record-wide, checked "
+        "against the three legal relto hosts), or note:<index> / workitem:<index> (0-based, "
+        "negative counting from the end). With no host, each entry in the printed list carries "
+        "the host's own json path and objid alongside the relation's own objid, type and "
+        "target, so the whole cross-reference graph of one todo is visible in one call. The "
+        "read is store-only and works equally on a branchless groom todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register relto-read arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("host", nargs="?", help=RELTO_HOST_HELP)
+
+    def do(self) -> int:
+        """Print one host's relations, or every relation, for the selected todo."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        if self.host is None:
+            print(json.dumps(_relto_read_all(todo), indent=2))
+            return 0
+        path = resolve_relto_host(todo, self.host)
+        node = get_at_path(todo, path)
+        print(json.dumps(node.get("relto") or [], indent=2))
         return 0
 
 

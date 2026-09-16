@@ -819,6 +819,169 @@ class NoteTests(TodoCase):
         self.assertEqual(["first-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
 
 
+class ReltoTests(TodoCase):
+    """relto-add / relto-remove / relto-read: one host-addressed family serving
+    Body, a Notes element and a WorkItems element alike, not a per-kind one."""
+
+    def _seed(self) -> str:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-relto", tid, body="the implementation strategy")
+        return tid
+
+    def test_relto_add_on_the_body_host(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Body"]["relto"]
+        self.assertEqual(1, len(relto))
+        self.assertEqual("objid:0100", relto[0]["target"])
+        self.assertEqual("relates", relto[0]["type"])
+        self.assertRegex(relto[0]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_relto_add_on_a_note_host_by_index(self) -> None:
+        self._seed()
+        self.todo("note-add", self.tid, "--raw=a fact")
+        proc = self.todo("relto-add", self.tid, "note:0", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["Notes"][0]["relto"][0]["target"])
+
+    def test_relto_add_on_a_workitem_host_by_index(self) -> None:
+        self._seed()
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        proc = self.todo("relto-add", self.tid, "workitem:0", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["WorkItems"][0]["relto"][0]["target"])
+
+    def test_relto_add_on_an_objid_host_record_wide(self) -> None:
+        self._seed()
+        note_objid = self.todo("note-add", self.tid, "--raw=a fact").stdout.strip()
+        proc = self.todo("relto-add", self.tid, f"objid:{note_objid}", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["Notes"][0]["relto"][0]["target"])
+
+    def test_relto_add_with_an_explicit_type(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=todo:aaaabbbb", "--type=relates")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("relates", self.read_cur()["Body"]["relto"][0]["type"])
+
+    def test_relto_add_unknown_type_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=blocks")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown relation type", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_mention_type_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=mention")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("doctor", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_duplicate_target_is_refused(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=relates")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("already relates to", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_add_rejects_a_target_that_does_not_parse(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=bogus")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not qualified", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_accepts_a_target_that_does_not_resolve(self) -> None:
+        # A well-formed target naming no object is legal to write here: reporting
+        # an unresolvable one is doctor's job, not relto-add's.
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:ffffffff")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:ffffffff", self.read_cur()["Body"]["relto"][0]["target"])
+
+    def test_relto_add_objid_host_resolving_to_an_illegal_kind_is_refused(self) -> None:
+        self._seed()
+        self.todo("tag-add", self.tid, "ui")
+        tag_objid = self.read_cur()["Tag"][0]["objid"]
+        proc = self.todo("relto-add", self.tid, f"objid:{tag_objid}", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not a legal relto host", proc.stderr)
+
+    def test_relto_add_objid_host_that_resolves_to_nothing_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "objid:ffffffff", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no object in this todo", proc.stderr)
+
+    def test_relto_remove_by_target(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_remove_nonexistent_target_is_refused(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:ffff")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no relto entry targeting", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_remove_a_mention_entry_is_refused(self) -> None:
+        # mention entries can only exist via a seeded record: relto-add itself
+        # refuses to write one, so this is doctor's / a hand-edit's territory.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-relto",
+            tid,
+            extra={
+                "Body": {
+                    "raw": "mentions objid:0100 in prose",
+                    "relto": [{"type": "mention", "target": "objid:0100"}],
+                }
+            },
+        )
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("mention", proc.stderr)
+        self.assertIn("doctor", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_read_one_host(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.todo("relto-add", self.tid, "body", "--target=objid:0101")
+        proc = self.todo("relto-read", self.tid, "body")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            ["objid:0100", "objid:0101"], [r["target"] for r in json.loads(proc.stdout)]
+        )
+
+    def test_relto_read_with_no_host_lists_every_relation(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.todo("note-add", self.tid, "--raw=a fact")
+        self.todo("relto-add", self.tid, "note:0", "--target=objid:0101")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        self.todo("relto-add", self.tid, "workitem:0", "--target=objid:0102")
+        proc = self.todo("relto-read", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        entries = json.loads(proc.stdout)
+        by_target = {e["target"]: e["host_path"] for e in entries}
+        self.assertEqual(
+            {"objid:0100": "Body", "objid:0101": "Notes.0", "objid:0102": "WorkItems.0"},
+            by_target,
+        )
+        for entry in entries:
+            self.assertIn("host_objid", entry)
+            self.assertIn("objid", entry)
+            self.assertIn("type", entry)
+
+
 class PathTests(TodoCase):
     def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
