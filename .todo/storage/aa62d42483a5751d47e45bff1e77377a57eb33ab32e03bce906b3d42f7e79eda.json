@@ -11,6 +11,30 @@
     "objid": "0003",
     "raw": "Todo records currently commingle implementation strategy with the facts and findings discovered while working, all inside one `Body` string. This adds a `Notes` list to the record -- status-free nodes holding one fact each, `{objid, raw, relto}` -- so the `Body` can shrink to pure strategy and a fact can be referenced instead of retold. Because every nested object already carries an immutable `objid`, a note is permanently addressable, and one todo's note can be cited from another.\n\nCross-references are carried by a `relto` list that lives on `Body`, on every note, and on every work item. A relto element is `{objid, type, target}`, where `target` is always namespace-qualified: `objid:0034` for an object in the same record, `todo:dea7` for a whole todo, `todo:c03d/objid:0045` for an object in another todo. An `objid:` target may name any object in a record, not only a note. A `todo:` target is a reader's cross-reference only -- it creates no merge obligation and no INFO back-link, which remain the business of `add-subtodo` and `set --parent`.\n\nOne relation type, `mention`, is derived: `todo.py doctor` scans each relto-bearing node's prose (`raw`, `summary`, `message`) for target tokens and reconciles that node's `mention` entries to what the text actually says, while never touching an entry of any other type. Doctor's sync must be idempotent to the byte -- no objid churn, no `update_dt` bump, no commit on an unchanged record -- because doctor runs constantly and commits its own repairs.\n\n`todo.py prompt` starts emitting notes, which is what makes the strategy/facts split safe: a fresh agent still gets Summary plus Body for every ancestor, and now also the notes reachable through that record's `Body.relto`, transitively, cycle-safe via the same `seen` set the parent walk uses. It emits notes only -- never a work item, never a subtodo -- and it does not chase a `todo:` target into another record, emitting a one-line pointer instead.\n\nThe web viewer gains a `Notes` section between `Body` and `Work items`, built from the existing work-item box primitives (`_box_attrs`, `_objid_badge`, `_clamped`, `_section`, the fold objects map and its `hi` cross-highlight list) rather than a parallel renderer, and with no status affordance on a note box. No permalink grammar change is needed: `/<todoid>/note/0/raw` already resolves through `todo_url`'s drop-the-s alias, and `/<todoid>/objid/<hex>` already finds an object anywhere in a record. `Notes` and `relto` are optional and absent-means-none, so no record migration and no `SCHEMA_VERSION` bump.\n\nThe skill documentation is part of the deliverable, not a follow-up: `BODY.md` is rewritten so `Body` is pure strategy with facts in notes, and its propagation table -- today \"Summary and Body. Nothing else.\" -- becomes false the moment `prompt` changes. Search is deliberately out of scope: note text does not join the embedding or IDF target list in this ticket."
   },
+  "Notes": [
+    {
+      "objid": "000f",
+      "raw": "IMPLEMENTATION.md carries the relto row inside the top-level field table (the one holding Summary, Body, AC, ActualSummary, Tag, Notes), where every other row is a top-level field. relto is nested: it lives on Body, on a Notes element and on a WorkItems element, and ALLOWED_TOP_LEVEL_FIELDS does not include it. Notes and relto want a section of their own, describing the node shapes, the target grammar and the host spellings in one place.",
+      "relto": [
+        {
+          "objid": "0010",
+          "target": "objid:000e",
+          "type": "relates"
+        }
+      ]
+    },
+    {
+      "objid": "0011",
+      "raw": "A target already carried by a MANUAL relto entry is already related, so doctor's mention sync does not add a second entry of type mention for it. Reconciliation is: for every target the prose names, ensure SOME entry exists on that node (a manual entry counts); remove only mention entries whose target the prose no longer names. This is what keeps the one-host-relates-to-one-target-once rule that relto-add already enforces by refusing a duplicate target.",
+      "relto": [
+        {
+          "objid": "0012",
+          "target": "objid:0009",
+          "type": "relates"
+        }
+      ]
+    }
+  ],
   "Scope": {
     "branch": "aa62d424-notes-status-free-facts",
     "git_url": "https://github.com/jovlinger/utils.git",
@@ -52,9 +76,11 @@
       "summary": "[MIDCAP] note-replace and note-delete. The note command set is exactly note-add, note-read, note-replace, note-delete: a note has no status and no plan order, so nothing closes one and nothing sequences one. note-replace overwrites raw in place and keeps both the objid and the node's relto list, because a note is a permanent handle other records cite. note-delete erases the node, and a target left pointing at it becomes a doctor finding. Both are store-only -- no branch checkout, no clean tree, no State restriction, editable at any time. Tests: replace preserves objid and relto; delete a note that another node's relto targets, and assert doctor reports the dangling target rather than the write failing."
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "relto-add, relto-remove, relto-read: one family for all three hosts\n\nBody, a note and a work item all carry the same relto list, so one HOST\nargument selects which rather than three near-identical command families.\nFour spellings collapse onto the three legal hosts: 'body', objid:<hex>\nresolved record-wide through todo_ref.resolve_local exactly as a permalink\nresolves it and then checked against _RELTO_HOST_RE, and note:<index> /\nworkitem:<index> through the existing _index_by_number.\n\n_build_relto_element now holds the relation-type allow-list, the mention\nrefusal and the target-syntax check in one place, so note-add's\n--relto=TARGET[:TYPE] and relto-add's --target/--type cannot diverge.\n\nTargets are validated for SYNTAX only: one naming nothing is legal to write,\nbecause reporting an unresolvable target is doctor's job. A host relates to a\ntarget once, so a duplicate is refused. Removing a mention entry is refused\nand points at editing the node's prose, since doctor re-derives it.\n\nrelto-read with no host walks the same _RELTO_HOST_RE-filtered hosts in\nrecord order and prints the whole cross-reference graph of one todo.\n\n17 new tests in ReltoTests. Full suite 713 passed, up from 696.",
       "objid": "0008",
+      "sha": "0e9735d4c0727a1a30dd1387d309f32029ec1cd4",
       "summary": "[MIDCAP] relto-add, relto-remove, relto-read -- ONE command family for all three relto-bearing node kinds, not a per-kind family. The host argument is body, objid:<hex> (record-wide, which already uniquely names Body, a note or a work item), or a list index qualified by field. relto-add <selector> <host> --target=... [--type=relates]; an unknown type is an error against the seeded allow-list (mention, relates). Both commands REFUSE to add or remove type=mention: doctor owns those, so a hand-added one is a lie and a hand-removed one comes straight back -- the error message must say to edit the prose instead. relto-read prints one host's relations, or every relation in the record when no host is given. Tests for each host spelling, the mention refusal, and the duplicate-target case (same target twice on one host is an error)."
     },
     {
@@ -94,7 +120,7 @@
       "summary": "[MIDCAP] Sweep the remaining skill docs for the new model. IMPLEMENTATION.md: Notes in the schema field list, the note and relto node shapes, the relation-type allow-list, doctor's mention sync and its idempotence rule, the permalink alias note, and the prompt contract. SKILL.md: an intent-router row for notes and the note-*/relto-* commands in the quick reference. GROOMING.md: notes in the required-grooming-outputs table, the ready-to-init checklist, and the groom handoff report. WORKING.md: a finding discovered mid-flight becomes a note with a relto to the work item it bears on, NOT a Body edit. README.md where it describes the record. Finish with grep -rn 'Nothing else' *.md and a grep for every doc claim about what prompt propagates, and fix each hit."
     }
   ],
-  "_nextobjid": 15,
+  "_nextobjid": 19,
   "create_dt": "2026-09-16T17:59:28Z",
-  "update_dt": "2026-09-16T19:48:02Z"
+  "update_dt": "2026-09-16T20:15:10Z"
 }
