@@ -48,6 +48,7 @@ Load **only** what the user intent needs:
 |--------|------|
 | **Cursor: work / proceed / continue a ticket** | [`CURSOR.md`](CURSOR.md) **first**, then [`WORKING.md`](WORKING.md) |
 | make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) (incl. [groom handoff report](GROOMING.md#groom-handoff-report-chat)) |
+| **writing or rewriting a `Body`** (what belongs in Body vs WorkItem vs subtodo, how detailed to be) | [`BODY.md`](BODY.md) -- load only for this; not needed to tier, decompose, or work |
 | start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
 | review cycle / Copilot review / PR handoff | [`WORKING.md` section 7](WORKING.md#7-handoff-to-parent-or-pr) |
 | command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |

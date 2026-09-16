@@ -106,7 +106,7 @@ Before `init` / before implementation agents fan out, the ticket should have:
 | Output | Notes |
 |--------|-------|
 | `Summary.raw` | Human title. Optimize purely for clarity -- do not reorder or pad it to game the auto-derived Branch label (below). |
-| `Body.raw` | Description / WHY |
+| `Body.raw` | The IMPLEMENTATION STRATEGY -- see [What goes where](#what-goes-where-body-vs-workitem-vs-subtodo). Not a history of how it was decided. |
 | `LongSummary.raw` | Optional. A reader-first summary of `Body`, and the text the summary embedding is computed from (below) |
 | `AC` | Concrete acceptance criteria |
 | `Scope` | At least one of `git_url`, `path_from_root` (+ `branch` with `git_url`). Do **not** set `path_to_project` (stripped by migration) |
@@ -154,6 +154,18 @@ never rewrite the done prefix. Addressing (index vs `objid:`, and which commands
 take a target): [`IMPLEMENTATION.md`](IMPLEMENTATION.md#addressing-one-work-item).
 
 ---
+
+## What goes where: Body vs WorkItem vs subtodo
+
+Normative owner: [`BODY.md`](BODY.md). Load it when you are about to WRITE a
+`Body`; skip it otherwise.
+
+The short of it: for an implementation todo the Body is the implementation
+STRATEGY -- broad scope, the architectural decisions every WorkItem must
+honour, invariants, pointers to normative artifacts. Per-item detail lives in
+the WorkItem. An item that spawns a subtodo carries the material that child's
+Body and AC get written from, because `prompt` propagates only `Summary` and
+`Body` down the ancestor chain -- never `AC`, never `WorkItems`.
 
 ## WorkItem vs subtodo
 
