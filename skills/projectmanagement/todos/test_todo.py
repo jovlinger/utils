@@ -710,6 +710,114 @@ class NoteTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Notes", proc.stdout)
 
+    # --- note-replace / note-delete -----------------------------------------
+
+    def test_note_replace_overwrites_raw_and_preserves_objid_and_relto(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=stale fact", "--relto=objid:0100")
+        before = self.read_cur()["Notes"][0]
+        proc = self.todo("note-replace", self.tid, "0", "--raw=updated fact")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = self.read_cur()["Notes"][0]
+        self.assertEqual("updated fact", after["raw"])
+        self.assertEqual(before["objid"], after["objid"])
+        self.assertEqual(before["relto"], after["relto"])
+
+    def test_note_replace_by_index_negative_index_and_objid(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        objid_first = self.read_cur()["Notes"][0]["objid"]
+        by_objid = self.todo("note-replace", self.tid, f"objid:{objid_first}", "--raw=first-v2")
+        self.assertEqual(by_objid.returncode, 0, by_objid.stderr)
+        by_negative_index = self.todo("note-replace", self.tid, "-1", "--raw=second-v2")
+        self.assertEqual(by_negative_index.returncode, 0, by_negative_index.stderr)
+        self.assertEqual(["first-v2", "second-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
+
+    def test_note_replace_missing_or_out_of_range_target_names_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        out_of_range = self.todo("note-replace", self.tid, "5", "--raw=x")
+        self.assertEqual(out_of_range.returncode, 1)
+        self.assertIn("note 5 is out of range", out_of_range.stderr)
+        unknown_objid = self.todo("note-replace", self.tid, "objid:ffffffff", "--raw=x")
+        self.assertEqual(unknown_objid.returncode, 1)
+        self.assertIn("no note in this todo carries objid", unknown_objid.stderr)
+
+    def test_note_replace_blank_raw_is_rejected(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-replace", self.tid, "0", "--raw=   ")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual("only", self.read_cur()["Notes"][0]["raw"])
+
+    def test_note_delete_removes_the_node_and_leaves_others_in_order(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        self.todo("note-add", self.tid, "--raw=third")
+        proc = self.todo("note-delete", self.tid, "1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(["first", "third"], [n["raw"] for n in self.read_cur()["Notes"]])
+
+    def test_note_delete_missing_or_out_of_range_target_names_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        out_of_range = self.todo("note-delete", self.tid, "5")
+        self.assertEqual(out_of_range.returncode, 1)
+        self.assertIn("note 5 is out of range", out_of_range.stderr)
+        unknown_objid = self.todo("note-delete", self.tid, "objid:ffffffff")
+        self.assertEqual(unknown_objid.returncode, 1)
+        self.assertIn("no note in this todo carries objid", unknown_objid.stderr)
+        self.assertEqual(1, len(self.read_cur()["Notes"]))
+
+    def test_note_delete_the_last_note_drops_the_notes_field_entirely(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-delete", self.tid, "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_delete_a_note_another_notes_relto_targets_succeeds(self) -> None:
+        # The delete is unconditional: it neither checks for nor refuses on an
+        # incoming relto. What the surviving target then resolves to is
+        # doctor's business, so nothing here asserts an exit code for it.
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        cited = self.todo("note-add", self.tid, "--raw=the fact being cited")
+        target_objid = cited.stdout.strip()
+        self.todo(
+            "note-add",
+            self.tid,
+            f"--raw=see objid:{target_objid}",
+            f"--relto=objid:{target_objid}",
+        )
+        proc = self.todo("note-delete", self.tid, "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        remaining = self.read_cur()["Notes"]
+        self.assertEqual(1, len(remaining))
+        self.assertEqual(f"objid:{target_objid}", remaining[0]["relto"][0]["target"])
+
+    def test_note_replace_and_delete_are_unrestricted_by_todo_state(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        done = self.todo("set", self.tid, "--state", "done")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        replaced = self.todo("note-replace", self.tid, "0", "--raw=first-v2")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        deleted = self.todo("note-delete", self.tid, "-1")
+        self.assertEqual(deleted.returncode, 0, deleted.stderr)
+        self.assertEqual(["first-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
+
 
 class PathTests(TodoCase):
     def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:

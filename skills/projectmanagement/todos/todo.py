@@ -1736,10 +1736,15 @@ def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str)
     return _workitem_index_by_number(items, address)
 
 
-NOTE_TARGET_HELP: str = (
+# How a note is addressed, and the two things an omitted target can mean.
+_NOTE_ADDRESS_HELP: str = (
     f"which note: an index (0-based; negative counts from the end) or "
-    f"{WORKITEM_OBJID_SCHEME}<hex> (leading zeros optional). Omit to print every note"
+    f"{WORKITEM_OBJID_SCHEME}<hex> (leading zeros optional)."
 )
+
+NOTE_TARGET_HELP: str = f"{_NOTE_ADDRESS_HELP} Omit to print every note"
+
+NOTE_REQUIRED_TARGET_HELP: str = f"{_NOTE_ADDRESS_HELP} There is no cursor default"
 
 
 def resolve_note_index(todo: JsonDict, address: str) -> int:
@@ -5073,6 +5078,89 @@ class NoteReadCommand(NoteCommand):
             return 0
         index = resolve_note_index(todo, self.target)
         print(json.dumps(notes[index], indent=2))
+        return 0
+
+
+class NoteReplaceCommand(NoteCommand):
+    command_names = ("note-replace",)
+    doc_short: ClassVar[str] = "Overwrite a note's text"
+    doc_long: ClassVar[str] = (
+        "Note-replace overwrites the addressed note's raw text in place. TARGET is required -- "
+        "an index (0-based, negative counting from the end) or objid:<hex> (leading zeros "
+        "optional) -- since a note has no cursor to default to. Both the objid and any existing "
+        "relto list survive untouched: the objid because a note is a permanent handle other "
+        "records cite, and relto because rewording the fact is not the same act as retargeting "
+        "its cross-references. A note carries no status and no done prefix, so there is nothing "
+        "here to restrict -- the write applies to any note at any time, regardless of the "
+        "todo's State. The write is store-only."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register note-replace arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
+        parser.add_argument("--raw", required=True, help="the replacement fact or finding")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Overwrite the addressed note's raw text, keeping its objid and relto."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        if not self.raw.strip():
+            raise TodoError("--raw must not be blank")
+        index = resolve_note_index(todo, self.target)
+        notes: List[JsonDict] = list(todo.get("Notes") or [])
+        # PATCH the node; never delete-and-recreate it -- the objid and relto
+        # are the note's identity, not its content, so both survive untouched.
+        notes[index]["raw"] = self.raw
+        todo["Notes"] = notes
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): replace note: {_summary_snippet(self.raw)}")
+        print(json.dumps({"index": index, "raw": self.raw}, indent=2))
+        return 0
+
+
+class NoteDeleteCommand(NoteCommand):
+    command_names = ("note-delete",)
+    doc_short: ClassVar[str] = "Delete a note"
+    doc_long: ClassVar[str] = (
+        "Note-delete erases the addressed note node outright. TARGET is required -- an index "
+        "(0-based, negative counting from the end) or objid:<hex> (leading zeros optional) -- "
+        "since a note has no cursor to default to. A note carries no status and no done prefix, "
+        "so there is nothing here to restrict -- any note can be deleted at any time, regardless "
+        "of the todo's State. A relto element elsewhere that targets the deleted objid is left "
+        "as-is: a target left pointing at nothing becomes a doctor finding, not a refusal here. "
+        "Deleting the last remaining note drops the Notes field entirely, matching absent-means-"
+        "none: an empty list is equivalent to no field and is not written. The write is "
+        "store-only."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register note-delete arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Delete the addressed note."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        index = resolve_note_index(todo, self.target)
+        notes: List[JsonDict] = list(todo.get("Notes") or [])
+        removed = notes.pop(index)
+        if notes:
+            todo["Notes"] = notes
+        else:
+            todo.pop("Notes", None)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(
+                root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}"
+            )
+        print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
         return 0
 
 

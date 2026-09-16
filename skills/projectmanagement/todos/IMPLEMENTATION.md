@@ -373,7 +373,7 @@ appear in current examples.
 | `AC` | string |
 | `ActualSummary` | optional string at finish; reused by `merge-subtodo` |
 | `Tag` | optional list of `{raw, manual, ...}`; manual sticky; auto-tagging dormant |
-| `Notes` | optional list of `{objid, raw, relto?}`; status-free facts and findings, addressed by objid (`note-add` / `note-read`) |
+| `Notes` | optional list of `{objid, raw, relto?}`; status-free facts and findings, addressed by objid (`note-add`, `note-read`, `note-replace`, `note-delete`) |
 
 `Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`,
 `Tag` and `Notes` are optional and omitted when unused.
