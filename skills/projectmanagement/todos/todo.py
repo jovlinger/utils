@@ -809,6 +809,17 @@ def head_sha(root: Path) -> Optional[str]:
     return result.stdout.strip() or None
 
 
+def sha_matches(head: str, candidate: str) -> bool:
+    """True when *candidate* names commit *head*: the exact sha, or a prefix.
+
+    Same MIN_PREFIX convention permalinks use for the sha/subtodo_id/objid
+    where-clauses (todo_url.MIN_PREFIX) -- a candidate shorter than that is
+    never accepted, so a chance collision with a short abbreviation can't
+    silently pass this check.
+    """
+    return len(candidate) >= todo_url.MIN_PREFIX and head.startswith(candidate)
+
+
 def current_branch(root: Path) -> Optional[str]:
     """Return short name of the checked-out branch, if any."""
     result: subprocess.CompletedProcess[str] = subprocess.run(
@@ -4667,8 +4678,9 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
     doc_long: ClassVar[str] = (
         "Work-item-done completes the current (cursor) work item as a typed 'code' item and "
         "advances the cursor. Its post-condition is a fully committed branch. If the tree is clean "
-        "it records the branch's most recent commit, or a --sha that must match HEAD (mismatch "
-        "exits 1). If the tree is dirty it commits all updates and new files (git add -A) and "
+        "it records the branch's most recent commit, or a --sha that must name HEAD -- the full "
+        "sha or a 4+ char prefix of it (mismatch exits 1). If the tree is dirty it commits all "
+        "updates and new files (git add -A) and "
         "records the new HEAD sha; the commit message is -m when given, else the work item's "
         "summary. It adds no bookkeeping commit, so the recorded sha stays the branch HEAD "
         "(invariant #6). --summary overrides the item's high-level description (defaults to the "
@@ -4685,7 +4697,7 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
         """Register work-item-done arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
         parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
-        parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
+        parser.add_argument("--sha", help="commit sha (full, or a 4+ char prefix) for a clean tree; must name HEAD")
         parser.add_argument("--summary", help="override the work item's high-level description")
         # Migration stubs. Both moved to commands of their own, because a
         # disposition that records no commit has no business being a flag on
@@ -4749,9 +4761,14 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
             head = head_sha(root)
             if not head:
                 raise TodoError("no commits on branch; cannot record a code work item")
-            if self.sha and self.sha != head:
+            if self.sha and not sha_matches(head, self.sha):
+                if len(self.sha) < todo_url.MIN_PREFIX:
+                    raise TodoError(
+                        f"--sha {self.sha!r} is shorter than {todo_url.MIN_PREFIX} characters; "
+                        "pass a longer prefix or the full sha"
+                    )
                 raise TodoError(
-                    f"--sha {self.sha[:8]} does not match HEAD {head[:8]}; "
+                    f"--sha {self.sha!r} does not match HEAD {head!r}; "
                     "commit your work or pass the current HEAD"
                 )
             sha = head

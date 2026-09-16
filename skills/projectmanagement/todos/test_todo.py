@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
 import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
+import todo_url  # noqa: E402  (MIN_PREFIX, asserted at unit level)
 
 # Offline by default so an accidental real fetch can never reach out or prompt.
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
@@ -1903,6 +1904,15 @@ class WorkItemModelUnitTests(unittest.TestCase):
         self.assertIsNone(todo.last_sha({"WorkItems": [{"kind": "task", "done": False}]}))
         self.assertIsNone(todo.last_sha({"WorkItems": []}))
 
+    def test_sha_matches_prefix_convention(self) -> None:
+        head = "a39940d8d71d81554fad2db8f595f7a2783e69c4"
+        self.assertTrue(todo.sha_matches(head, head))  # full sha
+        self.assertTrue(todo.sha_matches(head, "a39940d8d7"))  # 10-char prefix
+        self.assertTrue(todo.sha_matches(head, "a399"))  # minimum 4-char prefix
+        self.assertFalse(todo.sha_matches(head, "a39"))  # 3 chars: below MIN_PREFIX
+        self.assertFalse(todo.sha_matches(head, "deadbeef"))  # valid length, wrong content
+        self.assertEqual(todo_url.MIN_PREFIX, 4)  # the convention this reuses
+
     def test_mark_cursor_done_converts_and_carries_summary(self) -> None:
         t = {"WorkItems": [{"kind": "task", "summary": "do X", "done": False}]}
         self.assertEqual(todo.mark_cursor_done(t, todo.code_workitem("sha1")), 0)
@@ -2121,6 +2131,39 @@ class WorkItemInvariantTests(TodoCase):
         ok = self.todo("work-item-done", self.tid, "--sha", self._head())
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(self.read_cur()["WorkItems"][0]["sha"], self._head())
+
+    def test_code_workitem_clean_sha_accepts_head_prefix(self) -> None:
+        # Same prefix convention permalinks use for sha/subtodo_id/objid
+        # (todo_url.MIN_PREFIX): --sha need not be the full 40 chars, only
+        # enough of a prefix to name HEAD.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        proc = self.todo("work-item-done", self.tid, "--sha", self._head()[:10])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # The recorded sha is always the real HEAD, never the short prefix the
+        # caller passed in -- the prefix only asserts identity, it is not what
+        # gets stored (invariant #6).
+        self.assertEqual(self.read_cur()["WorkItems"][0]["sha"], self._head())
+
+    def test_code_workitem_clean_sha_prefix_too_short_rejected(self) -> None:
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        proc = self.todo("work-item-done", self.tid, "--sha", self._head()[:3])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("shorter than 4 characters", proc.stderr)
+
+    def test_code_workitem_clean_sha_prefix_mismatch_shows_distinct_values(self) -> None:
+        # The old message truncated both sides to 8 chars for display, so a
+        # real mismatch could print as "X does not match X" -- unreadable.
+        # The reported values must actually differ in the message.
+        self._init()
+        self.todo("work-item-add", self.tid, "--summary=code it")
+        bogus = "deadbeef" if not self._head().startswith("deadbeef") else "beefdead"
+        proc = self.todo("work-item-done", self.tid, "--sha", bogus)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("does not match HEAD", proc.stderr)
+        self.assertIn(bogus, proc.stderr)
+        self.assertIn(self._head(), proc.stderr)
 
     def test_checkpoint_records_at_sha_not_sha(self) -> None:
         self._init()
