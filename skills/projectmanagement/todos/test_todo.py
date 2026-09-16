@@ -578,6 +578,139 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
+class NoteTests(TodoCase):
+    """note-add / note-read: status-free facts, addressed by objid, no cursor."""
+
+    def test_note_add_prints_the_new_objid_and_it_round_trips(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=the API returns 500 under load")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        objid = proc.stdout.strip()
+        self.assertRegex(objid, r"\A[0-9a-f]{4,}\Z")
+
+        notes = self.read_cur()["Notes"]
+        self.assertEqual(1, len(notes))
+        self.assertEqual(objid, notes[0]["objid"])
+        self.assertEqual("the API returns 500 under load", notes[0]["raw"])
+        self.assertNotIn("relto", notes[0])
+
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{objid}").stdout)
+        self.assertEqual(notes[0], read)
+
+    def test_note_add_blank_raw_is_rejected(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=   ")
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_add_with_a_relto_target_defaults_to_relates(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=see the other finding", "--relto=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Notes"][0]["relto"]
+        self.assertEqual(1, len(relto))
+        self.assertEqual("objid:0100", relto[0]["target"])
+        self.assertEqual("relates", relto[0]["type"])
+        self.assertRegex(relto[0]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_note_add_relto_repeatable_with_explicit_type(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo(
+            "note-add",
+            self.tid,
+            "--raw=x",
+            "--relto=objid:0100:relates",
+            "--relto=todo:aaaabbbb",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Notes"][0]["relto"]
+        self.assertEqual(
+            [("objid:0100", "relates"), ("todo:aaaabbbb", "relates")],
+            [(r["target"], r["type"]) for r in relto],
+        )
+
+    def test_note_add_rejects_a_target_that_does_not_parse(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=x", "--relto=bogus")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not qualified", proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_add_refuses_mention_type_from_the_cli(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=x", "--relto=objid:0100:mention")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("doctor", proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_read_with_no_target_lists_all_notes_in_order(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        proc = self.todo("note-read", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(["first", "second"], [n["raw"] for n in json.loads(proc.stdout)])
+
+    def test_note_read_by_index_and_negative_index(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        first = json.loads(self.todo("note-read", self.tid, "0").stdout)
+        self.assertEqual("first", first["raw"])
+        last = json.loads(self.todo("note-read", self.tid, "-1").stdout)
+        self.assertEqual("second", last["raw"])
+
+    def test_note_read_by_objid_with_leading_zeros_optional(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=only")
+        objid = proc.stdout.strip()
+        short = objid.lstrip("0") or "0"
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{short}").stdout)
+        self.assertEqual("only", read["raw"])
+
+    def test_note_read_out_of_range_names_notes_not_work_items(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-read", self.tid, "5")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("note 5 is out of range", proc.stderr)
+
+    def test_note_read_on_a_todo_with_no_notes_at_all(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        listed = self.todo("note-read", self.tid)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual([], json.loads(listed.stdout))
+        targeted = self.todo("note-read", self.tid, "0")
+        self.assertEqual(targeted.returncode, 1)
+        self.assertIn("this todo has no notes", targeted.stderr)
+
+    def test_note_commands_work_on_a_branchless_groom_todo(self) -> None:
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("note-add", self.tid, "--raw=a fact recorded before init")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        objid = proc.stdout.strip()
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{objid}").stdout)
+        self.assertEqual("a fact recorded before init", read["raw"])
+
+    def test_doctor_is_silent_when_notes_is_absent(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Notes", proc.stdout)
+
+
 class PathTests(TodoCase):
     def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -945,6 +1078,122 @@ class DoctorTests(TodoCase):
         payload = json.loads(proc.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("Tag.1.raw must be a non-empty string", payload["findings"])
+
+    def test_doctor_accepts_a_well_formed_note_with_relto(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-notes-ok",
+            tid,
+            extra={
+                "Body": {
+                    "raw": "strategy",
+                    "relto": [{"type": "relates", "target": "objid:0100"}],
+                },
+                "Notes": [
+                    {"raw": "a fact", "relto": [{"type": "relates", "target": "todo:aaaa"}]},
+                    {"raw": "another fact"},
+                ],
+                "WorkItems": [
+                    {
+                        "kind": "task",
+                        "summary": "x",
+                        "done": False,
+                        "relto": [{"type": "mention", "target": "objid:0100"}],
+                    }
+                ],
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
+    def test_doctor_fails_notes_element_with_unexpected_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-notes-bad-field", tid, extra={"Notes": [{"raw": "a fact", "done": False}]}
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0 has unexpected fields: done", payload["findings"])
+
+    def test_doctor_fails_notes_element_missing_raw(self) -> None:
+        tid = self.mint()
+        self.write_ticket("doctor-notes-no-raw", tid, extra={"Notes": [{"raw": ""}]})
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0.raw must be a non-empty string", payload["findings"])
+
+    def test_doctor_fails_relto_element_with_unexpected_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-field",
+            tid,
+            extra={
+                "Notes": [
+                    {
+                        "raw": "x",
+                        "relto": [{"type": "relates", "target": "objid:0100", "note": "extra"}],
+                    }
+                ]
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0.relto.0 has unexpected fields: note", payload["findings"])
+
+    def test_doctor_fails_relto_unknown_type(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-type",
+            tid,
+            extra={"Notes": [{"raw": "x", "relto": [{"type": "blocks", "target": "objid:0100"}]}]},
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn(
+            "Notes.0.relto.0.type 'blocks' is not a known relation type", payload["findings"]
+        )
+
+    def test_doctor_fails_relto_target_that_does_not_parse(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-target",
+            tid,
+            extra={"Notes": [{"raw": "x", "relto": [{"type": "relates", "target": "bogus"}]}]},
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(
+            any(f.startswith("Notes.0.relto.0.target:") for f in payload["findings"]),
+            payload["findings"],
+        )
+
+    def test_doctor_fails_relto_outside_its_three_legal_hosts(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-host",
+            tid,
+            extra={
+                "Tag": [
+                    {
+                        "raw": "ui",
+                        "manual": True,
+                        "relto": [{"type": "relates", "target": "objid:0100"}],
+                    }
+                ]
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(
+            any("relto is not allowed here" in f for f in payload["findings"]), payload["findings"]
+        )
 
     def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
         tid = self.mint()

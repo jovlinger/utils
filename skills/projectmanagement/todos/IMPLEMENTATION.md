@@ -326,7 +326,7 @@ it already refuses to backfill vectors.
 
 Allowed top-level fields (unknown keys -> doctor findings):
 `AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `LongSummary`,
-`Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
+`Notes`, `Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
 `WorkItems`, `create_dt`, `update_dt`, `_schema`, `_nextobjid`.
 
 Required: `Branch`, `Id`, `State`, `Summary`.
@@ -373,9 +373,10 @@ appear in current examples.
 | `AC` | string |
 | `ActualSummary` | optional string at finish; reused by `merge-subtodo` |
 | `Tag` | optional list of `{raw, manual, ...}`; manual sticky; auto-tagging dormant |
+| `Notes` | optional list of `{objid, raw, relto?}`; status-free facts and findings, addressed by objid (`note-add` / `note-read`) |
 
-`Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`
-and `Tag` are optional and omitted when unused.
+`Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`,
+`Tag` and `Notes` are optional and omitted when unused.
 
 ### LongSummary: the field contract
 

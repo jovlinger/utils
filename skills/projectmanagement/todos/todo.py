@@ -25,6 +25,7 @@ from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Seque
 
 import todo_db
 import todo_objid
+import todo_ref
 import todo_search
 import todo_store
 import todo_embed
@@ -1646,11 +1647,13 @@ WORKITEM_TARGET_HELP: str = (
 )
 
 
-def _workitem_index_by_objid(items: Sequence[Any], prefix: str) -> int:
-    """Return the index of the one work item whose objid matches *prefix*.
+def _index_by_objid(items: Sequence[Any], prefix: str, *, noun: str) -> int:
+    """Return the index of the one *noun* in *items* whose objid matches *prefix*.
 
     *prefix* is zero-padded to a whole id first, so `3` finds `0003`; a value
     already that long acts as a plain prefix. See the section comment above.
+    *noun* names what is being addressed ("work item", "note", ...) so the
+    error wording stays specific to the kind of thing a caller misaddressed.
     """
     if not prefix:
         raise TodoError(
@@ -1670,20 +1673,27 @@ def _workitem_index_by_objid(items: Sequence[Any], prefix: str) -> int:
     ]
     if not hits:
         raise TodoError(
-            f"no work item in this todo carries objid {padded!r}"
+            f"no {noun} in this todo carries objid {padded!r}"
             + (f" (from {prefix!r})" if padded != prefix else "")
         )
     if len(hits) > 1:
         joined = ", ".join(str(index) for index in hits)
         raise TodoError(
-            f"objid {padded!r} is ambiguous: matches work items {joined}; "
-            "use the whole id"
+            f"objid {padded!r} is ambiguous: matches {noun}s {joined}; " "use the whole id"
         )
     return hits[0]
 
 
-def _workitem_index_by_number(items: Sequence[Any], address: str) -> int:
-    """Return the index *address* names, resolving a negative one from the end."""
+def _workitem_index_by_objid(items: Sequence[Any], prefix: str) -> int:
+    """Return the index of the one work item whose objid matches *prefix*."""
+    return _index_by_objid(items, prefix, noun="work item")
+
+
+def _index_by_number(items: Sequence[Any], address: str, *, noun: str) -> int:
+    """Return the index *address* names, resolving a negative one from the end.
+
+    *noun* names what is being addressed, for error wording specific to it.
+    """
     try:
         index = int(address, 10)
     except ValueError:
@@ -1692,14 +1702,19 @@ def _workitem_index_by_number(items: Sequence[Any], address: str) -> int:
             f"end) or {WORKITEM_OBJID_SCHEME}<hex>"
         ) from None
     if not items:
-        raise TodoError("this todo has no work items")
+        raise TodoError(f"this todo has no {noun}s")
     resolved = index + len(items) if index < 0 else index
     if not 0 <= resolved < len(items):
         raise TodoError(
-            f"work item {index} is out of range; this todo has {len(items)} "
+            f"{noun} {index} is out of range; this todo has {len(items)} "
             f"(0..{len(items) - 1}, or -1..-{len(items)} from the end)"
         )
     return resolved
+
+
+def _workitem_index_by_number(items: Sequence[Any], address: str) -> int:
+    """Return the index *address* names, resolving a negative one from the end."""
+    return _index_by_number(items, address, noun="work item")
 
 
 def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str) -> int:
@@ -1719,6 +1734,26 @@ def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str)
     if address.startswith(WORKITEM_OBJID_SCHEME):
         return _workitem_index_by_objid(items, address[len(WORKITEM_OBJID_SCHEME) :])
     return _workitem_index_by_number(items, address)
+
+
+NOTE_TARGET_HELP: str = (
+    f"which note: an index (0-based; negative counts from the end) or "
+    f"{WORKITEM_OBJID_SCHEME}<hex> (leading zeros optional). Omit to print every note"
+)
+
+
+def resolve_note_index(todo: JsonDict, address: str) -> int:
+    """Return the Notes index *address* names.
+
+    Same addressing grammar as a work item -- an index (negative counts from
+    the end) or objid:<hex> -- but there is no cursor default: a note has no
+    status, so an omitted target means "every note", which the caller (not
+    this function) handles before *address* is required.
+    """
+    items: Sequence[Any] = todo.get("Notes") or []
+    if address.startswith(WORKITEM_OBJID_SCHEME):
+        return _index_by_objid(items, address[len(WORKITEM_OBJID_SCHEME) :], noun="note")
+    return _index_by_number(items, address, noun="note")
 
 
 def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
@@ -3139,6 +3174,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "Body",
         "Branch",
         "Id",
+        "Notes",
         "Parent",
         "Scope",
         "State",
@@ -3268,6 +3304,83 @@ def unmerged_subtodos(todo: JsonDict) -> List[str]:
     return labels
 
 
+def notes_findings(todo: JsonDict) -> List[str]:
+    """Hard findings for the optional ``Notes`` field's shape.
+
+    ``Notes`` is optional; when present it must be a list whose every element
+    is an object carrying only ``objid``, ``raw``, and optional ``relto`` --
+    no ``kind``, no ``done``, no status of any sort, since a note is a fact
+    and a fact has no disposition to record. ``relto``'s own shape is checked
+    separately by ``relto_findings``, since that field also legally appears
+    on ``Body`` and on ``WorkItems`` elements.
+    """
+    findings: List[str] = []
+    notes = todo.get("Notes")
+    if notes is None:
+        return findings
+    if not isinstance(notes, list):
+        return ["Notes must be a list"]
+    for index, element in enumerate(notes):
+        if not isinstance(element, dict):
+            findings.append(f"Notes.{index} must be an object")
+            continue
+        extra = sorted(set(element) - {todo_objid.OBJID_KEY, "raw", "relto"})
+        if extra:
+            findings.append(f"Notes.{index} has unexpected fields: {', '.join(extra)}")
+        raw = element.get("raw")
+        if not isinstance(raw, str) or not raw:
+            findings.append(f"Notes.{index}.raw must be a non-empty string")
+    return findings
+
+
+# The three node kinds relto is legal on: Body itself, a Notes element, or a
+# WorkItems element -- see IMPLEMENTATION.md / the relto design. Matched
+# against todo_objid.iter_objects' dot-path spelling.
+_RELTO_HOST_RE = re.compile(r"^(Body|Notes\.\d+|WorkItems\.\d+)$")
+
+
+def relto_findings(todo: JsonDict) -> List[str]:
+    """Hard findings for every ``relto`` list found anywhere in *todo*.
+
+    A ``relto`` element holds exactly ``objid``, ``type`` and ``target``:
+    ``type`` must be one of ``todo_ref.RELATION_TYPES`` and ``target`` must
+    parse per ``todo_ref.parse_target`` (syntax only -- whether the target
+    actually resolves is doctor's mention-sync concern, not this one).
+    ``relto`` itself is legal only on ``Body``, a ``Notes`` element, or a
+    ``WorkItems`` element; found anywhere else, its mere presence is a finding.
+    """
+    findings: List[str] = []
+    for path, obj in todo_objid.iter_objects(todo):
+        relto = obj.get("relto")
+        if relto is None:
+            continue
+        if not _RELTO_HOST_RE.match(path):
+            findings.append(
+                f"{path}.relto is not allowed here; relto is legal only on Body, a "
+                "Notes element, or a WorkItems element"
+            )
+            continue
+        if not isinstance(relto, list):
+            findings.append(f"{path}.relto must be a list")
+            continue
+        for index, element in enumerate(relto):
+            label = f"{path}.relto.{index}"
+            if not isinstance(element, dict):
+                findings.append(f"{label} must be an object")
+                continue
+            extra = sorted(set(element) - {todo_objid.OBJID_KEY, "type", "target"})
+            if extra:
+                findings.append(f"{label} has unexpected fields: {', '.join(extra)}")
+            rel_type = element.get("type")
+            if rel_type not in todo_ref.RELATION_TYPES:
+                findings.append(f"{label}.type {rel_type!r} is not a known relation type")
+            try:
+                todo_ref.parse_target(element.get("target"))
+            except todo_ref.TodoRefError as exc:
+                findings.append(f"{label}.target: {exc}")
+    return findings
+
+
 def objid_findings(todo: JsonDict) -> List[str]:
     """Return hard findings about objids: the permalink handles must hold.
 
@@ -3370,6 +3483,8 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
             )
     findings.extend(workitem_findings(todo))
     findings.extend(tag_findings(todo))
+    findings.extend(notes_findings(todo))
+    findings.extend(relto_findings(todo))
     findings.extend(objid_findings(todo))
     findings.extend(wait_graph_findings(root, todo))
     # done/merged must not retain a linked worktree (tool-enforced property).
@@ -3671,6 +3786,12 @@ class WorkItemProgressCommand(WorkItemCommand):
     """Advances the cursor, or reports where it stands."""
 
 
+class NoteCommand(CommandGroup):
+    """Acts on a todo's Notes -- status-free facts and findings, cross-referenced by objid."""
+
+    group_title: ClassVar[str] = "Note"
+
+
 class SubtodoCommand(CommandGroup):
     """Parent/child bookkeeping and the checkouts children are worked in."""
 
@@ -3690,6 +3811,7 @@ COMMAND_GROUPS: Sequence[type[CommandGroup]] = (
     ManagementCommand,
     TodoCrudCommand,
     WorkItemCommand,
+    NoteCommand,
     SubtodoCommand,
 )
 
@@ -4835,6 +4957,122 @@ class WorkItemReadCommand(WorkItemProgressCommand):
                 indent=2,
             )
         )
+        return 0
+
+
+def _parse_relto_arg(value: str) -> JsonDict:
+    """Parse one ``--relto=TARGET[:TYPE]`` value into a relto element.
+
+    A target itself contains colons (``objid:0034``, ``todo:c03d/objid:0045``),
+    so there is no separator that is safe to split on unconditionally. Instead:
+    split on the LAST colon, and treat the suffix as a relation TYPE only when
+    it is one of ``todo_ref.RELATION_TYPES`` -- otherwise the whole value is
+    the target and the type defaults to ``todo_ref.TYPE_RELATES``. ``mention``
+    is refused here even though it is a valid type: doctor derives and owns
+    mention entries from a node's own prose, so writing one from the command
+    line would immediately fight doctor's own sync.
+    """
+    if not value:
+        raise TodoError("--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates")
+    head, sep, suffix = value.rpartition(":")
+    if sep and suffix in todo_ref.RELATION_TYPES:
+        target, rel_type = head, suffix
+    else:
+        target, rel_type = value, todo_ref.TYPE_RELATES
+    if rel_type == todo_ref.TYPE_MENTION:
+        raise TodoError(
+            "--relto may not set type=mention from the command line; doctor derives and "
+            "owns mention entries from a node's own prose"
+        )
+    try:
+        todo_ref.parse_target(target)
+    except todo_ref.TodoRefError as exc:
+        raise TodoError(str(exc)) from exc
+    return {"target": target, "type": rel_type}
+
+
+class NoteAddCommand(NoteCommand):
+    command_names = ("note-add",)
+    doc_short: ClassVar[str] = "Append a note"
+    doc_long: ClassVar[str] = (
+        "Note-add appends a status-free fact or finding to the selected todo's Notes list and "
+        "PRINTS the new note's objid on stdout, because that objid is the handle every "
+        "cross-reference needs -- unlike work-item-add, which prints nothing. A note carries "
+        "exactly raw text plus an optional relto list: no kind, no done, no status of any sort, "
+        "since a fact has no disposition to record. --relto (repeatable) adds a cross-reference: "
+        "TARGET[:TYPE] where TARGET is a qualified target (objid:<hex> in this record, "
+        "todo:<hex> for a whole todo, or todo:<hex>/objid:<hex> for an object in another todo's "
+        "record) and the optional ':TYPE' suffix is checked against the relation-type allow-list "
+        "and split off the LAST colon only, since a target itself contains colons; a value with "
+        "no recognized type suffix is the target as-is, with type defaulting to 'relates'. "
+        "'mention' is refused from the command line -- doctor derives and owns mention entries "
+        "from a node's own prose. The write is store-only, so it works equally on a branchless "
+        "groom todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register note-add arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("--raw", required=True, help="the fact or finding")
+        parser.add_argument(
+            "--relto",
+            action="append",
+            metavar="TARGET[:TYPE]",
+            help="cross-reference (repeatable); TYPE defaults to 'relates' and 'mention' is "
+            "refused here -- doctor owns mention entries",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Append a note to the selected todo and print its new objid."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        if not self.raw.strip():
+            raise TodoError("--raw must not be blank")
+        relto = [_parse_relto_arg(value) for value in (self.relto or [])]
+        note: JsonDict = {"raw": self.raw}
+        if relto:
+            note["relto"] = relto
+        notes: List[JsonDict] = list(todo.get("Notes") or [])
+        notes.append(note)
+        todo["Notes"] = notes
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): add note: {_summary_snippet(self.raw)}")
+        print(note[todo_objid.OBJID_KEY])
+        return 0
+
+
+class NoteReadCommand(NoteCommand):
+    command_names = ("note-read",)
+    doc_short: ClassVar[str] = "Read one note, or every note"
+    doc_long: ClassVar[str] = (
+        "Note-read prints one note as JSON when TARGET is given -- an index (0-based, negative "
+        "counting from the end) or objid:<hex> (leading zeros optional), the same addressing "
+        "grammar work-item commands use -- or every note as a JSON list when TARGET is omitted. "
+        "This deliberately differs from work-item-read, which defaults an omitted target to the "
+        "cursor: a note has no status, so there is no cursor to default to, and 'every note' is "
+        "the only sensible reading of a bare selector. The read is store-only and works equally "
+        "on a branchless groom todo."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register note-read arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=NOTE_TARGET_HELP)
+
+    def do(self) -> int:
+        """Print one note, or every note, for the selected todo."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        notes: List[JsonDict] = list(todo.get("Notes") or [])
+        if self.target is None:
+            print(json.dumps(notes, indent=2))
+            return 0
+        index = resolve_note_index(todo, self.target)
+        print(json.dumps(notes[index], indent=2))
         return 0
 
 
