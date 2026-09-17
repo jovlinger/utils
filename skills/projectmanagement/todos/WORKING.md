@@ -228,6 +228,13 @@ spawn a subtodo.
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
 
+A fact discovered while executing a step -- a measurement, a hazard hit, a
+count -- becomes a **Note** (`note-add <id> --raw="..."`), cited from the work
+item it bears on (`relto-add <id> workitem:<idx> --target=objid:<note-objid>`).
+Not a `Body` edit, and not chat. See
+[`BODY.md`](BODY.md#facts-and-findings-are-notes-not-body) for the Note vs
+Body vs WorkItem split.
+
 Full command flags -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items).
 
 ---
@@ -481,9 +488,14 @@ readable but are not written any more. Prefer the `objid` form
 (`todo:d56d/objid/0a3f`) when naming a durable object, since an index shifts --
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#permalinks).
 
+A **Note** is addressable the same way (`todo:d56d/note/2`, or
+`todo:d56d/objid/000e`) -- cite it by permalink like any other object instead
+of retelling its content in chat.
+
 **While working:** one short action line per action; no preamble.
 
-**Durable notes** belong in the commit message (`work-item-done -m`), not chat.
+**Durable commentary** belongs in the commit message (`work-item-done -m`),
+not chat. A durable FACT belongs in a Note.
 
 **Verdict grades the MAIN todo**, not the last step:
 
