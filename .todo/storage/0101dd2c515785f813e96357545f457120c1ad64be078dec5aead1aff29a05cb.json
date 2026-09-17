@@ -1062,7 +1062,7 @@
       "objid": "000a"
     },
     {
-      "Branch": "800a0db5",
+      "Branch": "800a0db5-tool-vs-agent-invariant",
       "Id": "800a0db53a83103062b0b6407ae0c686c998cb734581265446664f11a2a594c9",
       "State": "INFO",
       "Summary": "tool vs agent: invariants the tool could own instead of agent discipline",
@@ -1641,5 +1641,5 @@
   ],
   "_nextobjid": 19,
   "create_dt": "2026-08-07T21:06:45Z",
-  "update_dt": "2026-08-07T21:29:49Z"
+  "update_dt": "2026-09-17T04:04:21Z"
 }
