@@ -129,15 +129,19 @@
       "summary": "[MIDCAP] prompt emits notes. Extend _prompt_section / build_prompt_chain (todo.py:2548, 2559) so each record's block is Summary, Body, then every note reachable through that record's Body.relto, each under a header carrying its objid. Two hard limits, both testable: notes only (a target naming a work item or subtodo is emitted as nothing), and this record only (a todo: or todo:.../objid: target is emitted as a one-line pointer naming the target, never inlined). The in-record walk IS transitive, so reuse build_prompt_chain's existing seen-set discipline for cycle safety rather than adding a depth cap. Tests: a note chain three deep, a deliberate A->B->A relto cycle, a note reachable from both a parent and the target (emitted once), a Body.relto target naming a work item, and a cross-todo target."
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "web viewer: a Notes section between Body and Work items\n\nNotes render as boxes built from the work-item box primitives -- _box_attrs,\n_objid_badge, _clamped, _section, the .wi CSS family, the objid-keyed fold map\n-- so a note tile behaves like every other tile: click it for the full text,\nits objid is a permalink, an oversized list collapses with an N-notes hint.\n_note_box is a sibling of _wi_box rather than a branch inside it, because a\nnote has no checkbox, no sha chip and no todo chip, and a shared box would\nbecome a status/no-status switch. A test asserts those absences directly.\n\nrelto renders as chips under the Body text and on note and work-item boxes,\neach showing its relation type so a derived mention reads differently from a\nmanual relates. A chip linking rule, not a guess: a local target that resolves\nanchors to /<todoid>/objid/<objid>, a todo: target links to that todo's page,\na dangling one renders as plain text rather than a dead link, and the static\nread-only repr never grows a link at all.\n\nA note's fold entry sets hi to the objids its relto resolves to locally, so\nclicking a note highlights the work item it bears on -- the existing\ncross-highlight mechanism, no new machinery.\n\nNotes joins _DEDICATED_FIELDS, or _meta_html dumps the raw dicts, and\n_focusable_objids, or a permalink to a note focuses nothing. A record without\nNotes renders exactly as before; the section is absent rather than empty,\nmatching Long summary.\n\nThe permalink grammar needed no change: todo_url's drop-the-s alias already\nroutes /<todoid>/note/0/raw to Notes.\n\n14 new tests. Full suite 745 passed, up from 731.",
       "objid": "000b",
+      "sha": "325c3d9effab5e0cc84f07a2e20f40a93d6b8d38",
       "summary": "[MIDCAP] Web viewer: Notes section between Body and Work items. Add _notes_view and _note_box to todo_web.py reusing _box_attrs (:376), _objid_badge (:309), _clamped (:359) and _section (:563) and the .wi CSS family; do NOT add a note branch to _wi_box (:395), whose checkbox and sha chip a note must not have. Insert the section in _sections_html (:719) between Body and Work items. Add a fold entry per note in _page_data (:815) whose hi list is the note's locally-resolved relto targets, which buys click-a-note-highlight-its-work-item from the existing mechanism. Add Notes to _DEDICATED_FIELDS (:544) or _meta_html dumps the raw dicts, and to _focusable_objids (:1354) or a permalink to a note focuses nothing. Render Body's and a work item's relto as target chips linking to the local objid box. Tests in test_todo_web_render.py, including the collapse threshold on a long Notes list and a note box asserting NO checkbox markup."
     },
     {
-      "done": false,
-      "kind": "task",
+      "done": true,
+      "kind": "code",
+      "message": "pin the note permalink forms; the grammar needed no change\n\ntodo_url's drop-the-s alias and record-wide objid lookup already address a\nnote, so nothing in todo_url.py or todo_web.py changed. These tests pin that,\nbecause it is a claim that a later edit to either could break silently.\n\nCovered: /<todoid>/note/0/raw and /<todoid>/notes/0/raw both translating to\nNotes.0.raw; /<todoid>/objid/<note objid> finding the note anywhere in the\nrecord; /<todoid>/note/objid/<hex> as a where-clause on the Notes list, whole\nand by prefix; an out-of-range note index raising TodoUrlError; resolve_focus\nreturning the note's objid both for the note itself and for a scalar inside\nit, walking outward to the nearest box the page draws; and the route serving\na note permalink as a focused page.\n\n11 tests across test_todo_url.py and test_todo_web_permalink.py. No source\nfile touched.",
       "objid": "000c",
+      "sha": "8913f90ad7d3075f73170e028101f4d0ff9b09bb",
       "summary": "[LOCAP] Verify the permalink grammar needs no change, and pin it with tests. Confirm /<todoid>/note/0/raw resolves through todo_url's drop-the-s alias (todo_url.py:_resolve_field) and that /<todoid>/objid/<note objid> focuses the note box. Add the cases to test_todo_url.py and test_todo_web_permalink.py. Run-and-report: if either path does NOT resolve, stop and escalate rather than changing the grammar -- a grammar change is a design decision that is not in this ticket's Body."
     },
     {
@@ -155,5 +159,5 @@
   ],
   "_nextobjid": 25,
   "create_dt": "2026-09-16T17:59:28Z",
-  "update_dt": "2026-09-17T03:08:51Z"
+  "update_dt": "2026-09-17T03:37:21Z"
 }
