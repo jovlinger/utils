@@ -1357,26 +1357,228 @@ class DoctorTests(TodoCase):
             tid,
             extra={
                 "Body": {
+                    "objid": "0100",
                     "raw": "strategy",
-                    "relto": [{"type": "relates", "target": "objid:0100"}],
+                    "relto": [{"type": "relates", "target": "objid:0101"}],
                 },
                 "Notes": [
-                    {"raw": "a fact", "relto": [{"type": "relates", "target": "todo:aaaa"}]},
-                    {"raw": "another fact"},
+                    {
+                        "objid": "0101",
+                        "raw": "a fact",
+                        "relto": [{"type": "relates", "target": "todo:aaaa"}],
+                    },
+                    {"objid": "0102", "raw": "another fact"},
                 ],
                 "WorkItems": [
                     {
                         "kind": "task",
-                        "summary": "x",
+                        "summary": "the step that turns on objid:0101",
                         "done": False,
-                        "relto": [{"type": "mention", "target": "objid:0100"}],
+                        "relto": [{"type": "mention", "target": "objid:0101"}],
                     }
                 ],
             },
         )
         proc = self.todo("doctor", self.tid)
         self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertTrue(json.loads(proc.stdout)["ok"])
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["ok"])
+        # The mention is already there and the summary still names it, so
+        # nothing is derived and nothing is dropped.
+        self.assertEqual(0, payload["mentions"])
+        self.assertEqual([], payload["findings"])
+        # A cross-todo target is only ever a warning: the store is per-repo.
+        self.assertEqual(
+            ["Notes.0.relto.0.target todo:aaaa: todo not discoverable here"],
+            payload["warnings"],
+        )
+
+    # --- mention sync -----------------------------------------------------
+
+    def _mention_record(self, branch: str, **extra: Any) -> Dict[str, Any]:
+        """Seed a record with explicit objids so targets in it can resolve."""
+        tid = self.mint()
+        seed: Dict[str, Any] = {
+            "Body": {"objid": "0100", "raw": "strategy"},
+            "Notes": [{"objid": "0101", "raw": "a fact"}],
+            "WorkItems": [{"objid": "0102", "kind": "task", "summary": "a step", "done": False}],
+        }
+        seed.update(extra)
+        self.write_ticket(branch, tid, extra=seed)
+        return seed
+
+    def _doctor(self, *args: str) -> Dict[str, Any]:
+        """Run doctor on the tracked ticket and return its payload."""
+        proc = self.todo("doctor", self.tid, *args)
+        return json.loads(proc.stdout)
+
+    def test_doctor_derives_a_mention_from_body_prose(self) -> None:
+        self._mention_record(
+            "mention-body", Body={"objid": "0100", "raw": "the count is in objid:0101"}
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("Body: derived mention of objid:0101", payload["repairs"])
+        derived = self.read_cur()["Body"]["relto"]
+        self.assertEqual(1, len(derived))
+        self.assertEqual("mention", derived[0]["type"])
+        self.assertEqual("objid:0101", derived[0]["target"])
+        # A derived entry is a node like any other, so it carries an objid.
+        self.assertTrue(todo_objid.is_objid(derived[0]["objid"]), derived[0])
+
+    def test_doctor_derives_a_mention_from_a_note_and_from_a_work_item(self) -> None:
+        self._mention_record(
+            "mention-note-and-item",
+            Notes=[{"objid": "0101", "raw": "this bears on objid:0102"}],
+            WorkItems=[
+                {
+                    "objid": "0102",
+                    "kind": "task",
+                    "summary": "honour the fact in objid:0101",
+                    "done": False,
+                }
+            ],
+        )
+        payload = self._doctor()
+        self.assertEqual(2, payload["mentions"])
+        record = self.read_cur()
+        self.assertEqual("objid:0102", record["Notes"][0]["relto"][0]["target"])
+        self.assertEqual("objid:0101", record["WorkItems"][0]["relto"][0]["target"])
+
+    def test_doctor_does_not_scan_a_work_items_git_message(self) -> None:
+        # A message is copied from git when the item completes and cannot be
+        # edited afterwards, so a relation derived from it could never be
+        # corrected. Only raw and summary are scanned.
+        self._mention_record(
+            "mention-not-from-message",
+            WorkItems=[
+                {
+                    "objid": "0102",
+                    "kind": "code",
+                    "summary": "a step",
+                    "sha": "a" * 40,
+                    "message": "landed the fix described in objid:0101",
+                    "done": True,
+                }
+            ],
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        self.assertNotIn("relto", self.read_cur()["WorkItems"][0])
+
+    def test_doctor_drops_a_mention_the_prose_no_longer_names(self) -> None:
+        self._mention_record(
+            "mention-dropped",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, naming nothing",
+                "relto": [{"objid": "0103", "type": "mention", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("Body: dropped mention of objid:0101", payload["repairs"])
+        # The list emptied, so the field goes: absent means none.
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_doctor_leaves_every_non_mention_entry_untouched(self) -> None:
+        # The manual entry's target appears in no prose at all, which is
+        # exactly the case a sync that owned the whole list would destroy.
+        self._mention_record(
+            "mention-manual-kept",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, naming nothing",
+                "relto": [{"objid": "0103", "type": "relates", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        kept = self.read_cur()["Body"]["relto"]
+        self.assertEqual([{"objid": "0103", "type": "relates", "target": "objid:0101"}], kept)
+
+    def test_doctor_derives_no_second_entry_for_a_target_a_manual_entry_carries(self) -> None:
+        self._mention_record(
+            "mention-no-duplicate",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, which turns on objid:0101",
+                "relto": [{"objid": "0103", "type": "relates", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_doctor_mention_sync_is_idempotent(self) -> None:
+        # The guard this work item exists for: doctor runs constantly and
+        # commits what it repairs, so a sync that re-wrote an unchanged record
+        # would churn _nextobjid and update_dt on every pass and bury the
+        # store's real history.
+        self._mention_record(
+            "mention-idempotent",
+            Body={"objid": "0100", "raw": "strategy, which turns on objid:0101"},
+            Notes=[{"objid": "0101", "raw": "a fact about objid:0102"}],
+        )
+        first = self._doctor()
+        self.assertEqual(2, first["mentions"])
+        settled = self.read_cur()
+        commits = self._git("log", "--oneline").stdout
+        second = self._doctor()
+        self.assertEqual(0, second["mentions"])
+        self.assertEqual([], second["repairs"])
+        again = self.read_cur()
+        self.assertEqual(json.dumps(settled, sort_keys=True), json.dumps(again, sort_keys=True))
+        self.assertEqual(settled["update_dt"], again["update_dt"])
+        self.assertEqual(settled["_nextobjid"], again["_nextobjid"])
+        self.assertEqual(commits, self._git("log", "--oneline").stdout)
+
+    def test_doctor_reports_a_dangling_local_target_as_a_finding(self) -> None:
+        self._mention_record(
+            "mention-dangling-local", Body={"objid": "0100", "raw": "see objid:0fff"}
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(1, proc.returncode)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any("0fff" in finding for finding in payload["findings"]), payload["findings"]
+        )
+
+    def test_doctor_reports_an_unresolvable_cross_todo_target_as_a_warning(self) -> None:
+        # Another repo's store is legitimately unreachable from this one, so a
+        # cross-todo target never hard-fails doctor.
+        self._mention_record(
+            "mention-cross-todo",
+            Notes=[{"objid": "0101", "raw": "ratified in todo:dead/objid:0045"}],
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertEqual([], payload["findings"])
+        self.assertTrue(
+            any("todo:dead/objid:0045" in w for w in payload["warnings"]), payload["warnings"]
+        )
+
+    def test_doctor_reports_a_cross_todo_target_into_a_reachable_todo_that_lacks_it(self) -> None:
+        other = self.mint()
+        self.write_ticket("mention-other-record", other)
+        self._mention_record(
+            "mention-cross-todo-missing-objid",
+            Notes=[{"objid": "0101", "raw": f"see todo:{other[:8]}/objid:0fff"}],
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertTrue(any("0fff" in w for w in payload["warnings"]), payload["warnings"])
+
+    def test_doctor_dry_run_reports_what_it_would_derive_and_writes_nothing(self) -> None:
+        self._mention_record(
+            "mention-dry-run", Body={"objid": "0100", "raw": "strategy, which turns on objid:0101"}
+        )
+        payload = self._doctor("--dry-run")
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("would Body: derived mention of objid:0101", payload["repairs"])
+        self.assertNotIn("relto", self.read_cur()["Body"])
 
     def test_doctor_fails_notes_element_with_unexpected_field(self) -> None:
         tid = self.mint()

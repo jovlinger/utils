@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence
+from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import todo_db
 import todo_objid
@@ -3431,10 +3431,90 @@ def relto_findings(todo: JsonDict) -> List[str]:
             if rel_type not in todo_ref.RELATION_TYPES:
                 findings.append(f"{label}.type {rel_type!r} is not a known relation type")
             try:
-                todo_ref.parse_target(element.get("target"))
+                parsed = todo_ref.parse_target(element.get("target"))
             except todo_ref.TodoRefError as exc:
                 findings.append(f"{label}.target: {exc}")
+                continue
+            # A LOCAL target is checkable here and now, and a dead one is a
+            # dead citation: the prose or the manual entry names an object
+            # this record does not have. A cross-todo target needs another
+            # record, so it is doctor_warnings' business instead.
+            if parsed.is_local:
+                try:
+                    todo_ref.resolve_local(todo, parsed)
+                except todo_ref.TodoRefError as exc:
+                    findings.append(f"{label}.target: {exc}")
     return findings
+
+
+# The prose a derived mention is read from. A work item's ``message`` is
+# deliberately absent: it is copied from git when the item completes and is
+# not editable afterwards, so a relation derived from it could never be
+# corrected -- only removed by rewriting history.
+_MENTION_PROSE_FIELDS: Tuple[str, ...] = ("raw", "summary")
+
+
+def _prose_targets(node: JsonDict) -> List[str]:
+    """Every target *node*'s own editable prose names, first-occurrence order."""
+    named: List[str] = []
+    for field in _MENTION_PROSE_FIELDS:
+        text = node.get(field)
+        if not isinstance(text, str):
+            continue
+        for target in todo_ref.scan_targets(text):
+            if target not in named:
+                named.append(target)
+    return named
+
+
+def sync_mentions(todo: JsonDict) -> List[str]:
+    """Reconcile every relto-bearing node's derived ``mention`` entries in place.
+
+    A ``mention`` says "this node's prose names that target", so doctor owns it
+    outright: it is added when the prose gains a target, dropped when the prose
+    loses one, and never written by hand. Every entry of any OTHER type is left
+    exactly as it stands -- same target, same type, same position -- which is
+    the only rule that makes a derived field safe to edit by hand.
+
+    A target a manual entry already carries is already related, so no second
+    entry is derived for it; that keeps the one-host-one-target rule
+    ``relto-add`` enforces.
+
+    Returns one line per change, empty when the record already says what its
+    prose says. Nothing is touched on a node that needs no change, so a second
+    consecutive run allocates no objid and produces no write at all.
+    """
+    changes: List[str] = []
+    for path, node in todo_objid.iter_objects(todo):
+        if not _RELTO_HOST_RE.match(path):
+            continue
+        named = _prose_targets(node)
+        existing = node.get("relto")
+        existing = list(existing) if isinstance(existing, list) else []
+        kept: List[Any] = []
+        for element in existing:
+            # A malformed element is relto_findings' to report, not this
+            # function's to silently discard.
+            if not isinstance(element, dict) or element.get("type") != todo_ref.TYPE_MENTION:
+                kept.append(element)
+                continue
+            if element.get("target") in named:
+                kept.append(element)
+            else:
+                changes.append(f"{path}: dropped mention of {element.get('target')}")
+        carried = {e.get("target") for e in kept if isinstance(e, dict)}
+        for target in named:
+            if target in carried:
+                continue
+            kept.append({"type": todo_ref.TYPE_MENTION, "target": target})
+            changes.append(f"{path}: derived mention of {target}")
+        if kept == existing:
+            continue
+        if kept:
+            node["relto"] = kept
+        else:
+            node.pop("relto", None)
+    return changes
 
 
 def objid_findings(todo: JsonDict) -> List[str]:
@@ -3575,6 +3655,29 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                     resolve_ticket_by_id(root, child_id[:8])
                 except TodoError:
                     warnings.append(f"Subtodos.{index}.Id {child_id[:8]} not discoverable here")
+    for path, node in todo_objid.iter_objects(todo):
+        if not _RELTO_HOST_RE.match(path):
+            continue
+        for index, element in enumerate(node.get("relto") or []):
+            if not isinstance(element, dict):
+                continue
+            try:
+                parsed = todo_ref.parse_target(element.get("target"))
+            except todo_ref.TodoRefError:
+                continue  # relto_findings owns the syntax complaint
+            if parsed.is_local:
+                continue  # checkable here, so it is a finding instead
+            label = f"{path}.relto.{index}.target {parsed.raw}"
+            try:
+                _loc, other = resolve_ticket_by_id(root, parsed.todo_prefix)
+            except TodoError:
+                warnings.append(f"{label}: todo not discoverable here")
+                continue
+            if parsed.is_remote:
+                try:
+                    todo_ref.resolve_local(other, todo_ref.OBJID_SCHEME + parsed.objid_prefix)
+                except todo_ref.TodoRefError as exc:
+                    warnings.append(f"{label}: {exc}")
     items = todo.get("WorkItems") or []
     if isinstance(items, list):
         for index, item in enumerate(items):
@@ -6304,11 +6407,22 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
     (see ``reconcile_pr_state``). A gh failure is reported as a warning carrying
     its remediation, never a hard finding. Also tears down a leftover linked
     worktree when State is done/merged.
+
+    It also reconciles derived ``mention`` relations against each relto-bearing
+    node's own prose (see ``sync_mentions``), persisting them before the audit
+    so a mention derived this run is audited this run.
     """
     _loc, todo = resolve_ticket_by_id(root, selector)
+    # Derive mentions FIRST, and persist them before auditing, so a mention
+    # this run derives is audited by this same run rather than the next one --
+    # a target the prose names but the record lacks is reported immediately.
+    mentions = sync_mentions(todo)
+    if mentions and not dry_run:
+        write_todo_worktree(root, todo)
     findings = doctor_findings(root, selector)
     warnings = doctor_warnings(root, selector)
     repairs = reestablish_backlinks(root, todo, dry_run=dry_run)
+    repairs.extend(f"would {change}" if dry_run else change for change in mentions)
     if current_state_name(todo) in WORKTREE_TEARDOWN_STATES:
         branch = str(todo.get("Branch") or "")
         leftover = worktree_path_for_branch(root, branch) if branch else None
@@ -6342,6 +6456,7 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
         "repairs": repairs,
         "pr": pr,
         "auto_tags": auto_tags,
+        "mentions": len(mentions),
     }
 
 
@@ -6359,7 +6474,11 @@ class DoctorCommand(StoreMaintenanceCommand):
         "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
         "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag elements for an "
         "audited todo that has none yet (trusting any already present, so a normal run is cheap), "
-        "reported as 'auto_tags'. For a ROOT todo in a terminal state it reconciles the PR "
+        "reported as 'auto_tags'. It reconciles derived relto 'mention' entries against each "
+        "relto-bearing node's own editable prose -- Body.raw, a note's raw, a work item's "
+        "summary -- adding one for a target the prose names and dropping one for a target it no "
+        "longer names, while never touching an entry of any other type; reported as 'mentions'. "
+        "A work item's git-copied message is not scanned. For a ROOT todo in a terminal state it reconciles the PR "
         "disposition via gh (reported as 'pr'): a done todo with a PR becomes merged {pr}, a merged "
         "PR records its merge_commit, a closed-unmerged PR becomes rejected. gh is attempted once "
         "per run -- the first environmental failure disables it for the rest of the run and reports "
@@ -6412,6 +6531,7 @@ class DoctorCommand(StoreMaintenanceCommand):
                         "unlocked": unlocked,
                         "migrated": migrated,
                         "auto_tags": sum(r["auto_tags"] for r in results),
+                        "mentions": sum(r["mentions"] for r in results),
                         "pr_reconciled": sum(1 for r in results if r["pr"].get("changed")),
                         "gh": gh_gate_reason() or "ok",
                         "audited": len(results),
@@ -6430,6 +6550,7 @@ class DoctorCommand(StoreMaintenanceCommand):
                     "unlocked": unlocked,
                     "migrated": migrated,
                     "auto_tags": result["auto_tags"],
+                    "mentions": result["mentions"],
                     "pr": result["pr"],
                     "gh": gh_gate_reason() or "ok",
                     "findings": result["findings"],
