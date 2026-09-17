@@ -2266,6 +2266,113 @@ class ParentPromptTests(TodoCase):
         self.assertIn("not found", proc.stdout)
         self.assertIn("ORPHAN", proc.stdout)
 
+    def test_prompt_no_notes_no_relto_is_byte_identical_to_before(self) -> None:
+        # Regression guard: this change is additive. A record with neither
+        # Notes nor a Body.relto must still emit exactly the old
+        # Summary/Body-only block.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("plain", body="PLAIN-BODY")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        expected = f"===== plain [{self.tid[:8]}] =====\nPLAIN-BODY"
+        self.assertEqual(expected, proc.stdout.rstrip("\n"))
+
+    def test_prompt_notes_chain_three_deep(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("chain", body="ROOT-BODY")
+        n1 = self.todo("note-add", self.tid, "--raw=NOTE-ONE").stdout.strip()
+        n2 = self.todo("note-add", self.tid, "--raw=NOTE-TWO").stdout.strip()
+        n3 = self.todo("note-add", self.tid, "--raw=NOTE-THREE").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{n1}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{n2}")
+        self.todo("relto-add", self.tid, "note:1", f"--target=objid:{n3}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        for objid, text in ((n1, "NOTE-ONE"), (n2, "NOTE-TWO"), (n3, "NOTE-THREE")):
+            self.assertIn(f"note [objid:{objid}]", out)
+            self.assertIn(text, out)
+        self.assertLess(out.index("ROOT-BODY"), out.index("NOTE-ONE"))
+        self.assertLess(out.index("NOTE-ONE"), out.index("NOTE-TWO"))
+        self.assertLess(out.index("NOTE-TWO"), out.index("NOTE-THREE"))
+
+    def test_prompt_notes_ab_cycle_terminates_each_note_once(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("cyclic", body="ROOT-BODY")
+        a = self.todo("note-add", self.tid, "--raw=NOTE-A").stdout.strip()
+        b = self.todo("note-add", self.tid, "--raw=NOTE-B").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{a}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{b}")  # A -> B
+        self.todo("relto-add", self.tid, "note:1", f"--target=objid:{a}")  # B -> A
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertEqual(1, out.count("NOTE-A"))
+        self.assertEqual(1, out.count("NOTE-B"))
+        self.assertEqual(1, out.count(f"note [objid:{a}]"))
+        self.assertEqual(1, out.count(f"note [objid:{b}]"))
+
+    def test_prompt_notes_shared_note_reached_two_ways_emitted_once(self) -> None:
+        # Body.relto cites note-one AND the shared note directly; note-one's
+        # own relto ALSO cites the shared note -- reachable two ways, emitted
+        # once, at its first (here: the indirect, via note-one) occurrence.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("diamond", body="ROOT-BODY")
+        n1 = self.todo("note-add", self.tid, "--raw=NOTE-ONE").stdout.strip()
+        shared = self.todo("note-add", self.tid, "--raw=SHARED-FACT").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{n1}")
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{shared}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{shared}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertEqual(1, out.count("SHARED-FACT"))
+        self.assertEqual(1, out.count(f"note [objid:{shared}]"))
+        self.assertLess(out.index("NOTE-ONE"), out.index("SHARED-FACT"))
+
+    def test_prompt_notes_body_relto_workitem_emits_nothing(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("wi-target", body="ROOT-BODY")
+        self.todo("work-item-add", self.tid, "--summary=WORKITEM-SUMMARY-TEXT")
+        wi_objid = self._read(self.tid)["WorkItems"][0]["objid"]
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{wi_objid}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertNotIn("WORKITEM-SUMMARY-TEXT", out)
+        self.assertNotIn("not followed", out)
+
+    def test_prompt_notes_cross_todo_target_emits_pointer_not_text(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        other_id = self._init("other record", body="OTHER-BODY-NEVER-INLINED")
+        other_note = self.todo(
+            "note-add", self.tid, "--raw=OTHER-NOTE-NEVER-INLINED"
+        ).stdout.strip()
+        self._git("checkout", base)
+        self._init("home record", body="HOME-BODY")
+        whole_target = f"todo:{other_id[:8]}"
+        remote_target = f"todo:{other_id[:8]}/objid:{other_note}"
+        self.todo("relto-add", self.tid, "body", f"--target={whole_target}")
+        self.todo("relto-add", self.tid, "body", f"--target={remote_target}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertIn(f"not followed: {whole_target}", out)
+        self.assertIn(f"not followed: {remote_target}", out)
+        self.assertNotIn("OTHER-BODY-NEVER-INLINED", out)
+        self.assertNotIn("OTHER-NOTE-NEVER-INLINED", out)
+
+    def test_prompt_notes_dangling_local_target_emits_nothing(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("dangling", body="ROOT-BODY")
+        self.todo("relto-add", self.tid, "body", "--target=objid:ffffffff")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertNotIn("not followed", out)
+        self.assertNotIn("note [objid:", out)
+
     def test_add_subtodo_parent_is_list_and_prompt_walks_up(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         parent_id = self._init("parent feature", body="parent why")

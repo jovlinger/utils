@@ -2636,15 +2636,81 @@ def search_tickets(
     )
 
 
-def _prompt_section(todo: JsonDict) -> str:
-    """Render one todo as a titled Summary/Body block for the prompt chain."""
+# A path names a Notes element (and only a Notes element) when it matches this
+# -- the narrower sibling of ``_RELTO_HOST_RE`` (todo.py:3395), which also
+# accepts Body and WorkItems.N. prompt propagates notes and nothing else, so
+# it needs the narrower test.
+_NOTE_PATH_RE = re.compile(r"^Notes\.\d+$")
+
+
+def _prompt_notes(todo: JsonDict, node: JsonDict, seen_notes: set) -> List[str]:
+    """Sections for every note reachable from *node*'s ``relto``, depth-first.
+
+    *node* is ``Body`` or a ``Notes`` element of *todo*; *seen_notes* is keyed
+    by ``(todo Id, note objid)`` and shared across the WHOLE prompt run (every
+    record in the chain), so a note already emitted anywhere is never emitted
+    twice -- the same discipline ``build_prompt_chain`` already applies to a
+    shared ancestor, membership checked before descent. A target's fate: one
+    naming a work item, a subtodo, or anything but a ``Notes`` element resolves
+    to nothing (``prompt`` has never propagated ``AC`` or ``WorkItems``, and a
+    relto target is not a way around that); an unresolvable local target is
+    silently dropped (a dangling target is a doctor finding, not a prompt
+    failure); a ``todo:`` or cross-todo target is never chased -- this record
+    only -- and prints a one-line pointer naming the target instead; a local
+    target naming a note descends into that note's own ``relto`` in turn, so
+    the walk is transitive within this record and cycle-safe via *seen_notes*.
+    """
+    sections: List[str] = []
+    tid = str(todo.get("Id", ""))
+    for element in node.get("relto") or []:
+        target_str = element.get("target") if isinstance(element, dict) else None
+        if not isinstance(target_str, str):
+            continue
+        try:
+            target = todo_ref.parse_target(target_str)
+        except todo_ref.TodoRefError:
+            continue
+        if not target.is_local:
+            sections.append(f"===== [not followed: {target.raw}] =====")
+            continue
+        try:
+            path = todo_ref.resolve_local(todo, target)
+        except todo_ref.TodoRefError:
+            continue
+        if not _NOTE_PATH_RE.match(path):
+            continue
+        note = get_at_path(todo, path)
+        objid = note.get(todo_objid.OBJID_KEY, "")
+        key = (tid, objid)
+        if key in seen_notes:
+            continue
+        seen_notes.add(key)
+        raw = note.get("raw", "")
+        sections.append(f"===== note [objid:{objid}] =====\n{raw}".rstrip())
+        sections.extend(_prompt_notes(todo, note, seen_notes))
+    return sections
+
+
+def _prompt_section(todo: JsonDict, seen_notes: set) -> str:
+    """Render one todo as Summary/Body plus its reachable notes, for the prompt chain.
+
+    Notes reachable from ``Body.relto`` (transitively, notes-only, this record
+    only -- see ``_prompt_notes``) are appended after Body, each under its own
+    header carrying the note's objid so an agent can cite the fact it used.
+    *seen_notes* is the whole run's note de-dup set, threaded through so a note
+    already emitted -- from this record or an earlier one in the chain -- is
+    not emitted twice.
+    """
     tid = str(todo.get("Id", ""))[:8]
     summary_obj = todo.get("Summary")
     summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
     body_obj = todo.get("Body")
     body = body_obj.get("raw", "") if isinstance(body_obj, dict) else ""
     header = f"===== {summary} [{tid}] =====".strip()
-    return f"{header}\n{body}".rstrip()
+    parts = [f"{header}\n{body}".rstrip()]
+    if isinstance(body_obj, dict):
+        parts.extend(_prompt_notes(todo, body_obj, seen_notes))
+    return "\n\n".join(parts)
 
 
 def build_prompt_chain(root: Path, selector: str) -> str:
@@ -2654,11 +2720,15 @@ def build_prompt_chain(root: Path, selector: str) -> str:
     the farthest ancestors' 'why' comes first and the target's own body is last.
     De-duplicates shared ancestors, is cycle-safe, and notes any parent that
     cannot be resolved in this db rather than dropping it silently. Read-only:
-    parents are resolved from the db with no branch checkout.
+    parents are resolved from the db with no branch checkout. Each record's
+    section also carries the notes reachable from its own Body.relto (see
+    _prompt_notes); seen_notes de-dupes those across the whole chain, not just
+    within one record.
     """
     _loc, target = resolve_ticket_by_id(root, selector)
     sections: List[str] = []
     seen: set[str] = set()
+    seen_notes: set = set()
 
     def visit(todo: JsonDict) -> None:
         tid = str(todo.get("Id", ""))
@@ -2678,7 +2748,7 @@ def build_prompt_chain(root: Path, selector: str) -> str:
                 sections.append(f"===== [parent {parent_id[:8]} not found] =====")
                 continue
             visit(parent)
-        sections.append(_prompt_section(todo))
+        sections.append(_prompt_section(todo, seen_notes))
 
     visit(target)
     return "\n\n".join(sections)
@@ -7185,9 +7255,15 @@ class PromptCommand(CorpusQueryCommand):
         "Prompt concatenates the Summary/Body of a todo and its Parent chain "
         "(context references from set --parent included), farthest ancestors "
         "first and the target last, so a fresh agent with zero context reads WHY "
-        "down to WHAT before starting. Read-only: it resolves parents from the db "
-        "without checking out branches. Selector is a 4+ hex Id prefix or the "
-        "full digest."
+        "down to WHAT before starting. Each record's Body is followed by every "
+        "note reachable from its Body.relto -- transitively, within that record "
+        "only -- each under its own 'note [objid:...]' header; a relto target "
+        "naming anything but a note (a work item, a subtodo, ...) emits nothing, "
+        "and a todo: or cross-todo target is never chased, printing a one-line "
+        "'[not followed: ...]' pointer instead. De-duplication (shared ancestors "
+        "and shared notes alike) spans the whole chain. Read-only: it resolves "
+        "parents from the db without checking out branches. Selector is a 4+ hex "
+        "Id prefix or the full digest."
     )
 
     @classmethod
