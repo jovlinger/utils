@@ -1,7 +1,7 @@
-Home Thermostat IR with Raspberry Pi and Anavi IR hat
-=====================================================
+Home Thermostat IR with Variety of Backends
+===========================================
 
-(Preminimary before moving this to separate repo)
+Active work state: [`BOOKMARK.md`](BOOKMARK.md). Backlog: [`TODO.md`](TODO.md).
 
 ### TL;DR
 
@@ -9,7 +9,7 @@ I have a daikin heat-pump minisplit, but it does not provide any room for automa
 a hardwired control panel. Which I won't, being bit by the previous daikin installer. So I have the
 IR remotes.
 
-I also have a raspberry pi zero W and an anavi IR pi hat with temperature sensor. 
+I also have a raspberry pi zero W and an anavi IR pi hat with temperature sensor.  And a bunch of ESP32, an arduino, and a pico2w. So a true plethora.
 
 So let's pull them together and see what we get. 
 

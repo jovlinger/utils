@@ -1,0 +1,44 @@
+{
+  "AC": "Agent1 stash committed; slow benchmarks run vs baseline; branch merged to master",
+  "ActualSummary": "Agent1 compile-time partial eval committed; slow benchmarks green vs baseline",
+  "BaseSha": "b4295cd04eb1a72aec1cdfd840538a9619878ed9",
+  "Body": {
+    "objid": "0002",
+    "raw": "# Stack VM compilation strategies (Agent 1)\n\nRetrospective ticket for compile-time partial evaluation of stacklang body\nprograms. Surface authoring language is unchanged; programs still use\n`register_op(name, [literals, OpHandler tokens, ...])`.\n\n## Strategy: tagged bytecode with early binding\n\nAt `run_op` time, `compile_body_to_wordbuf` lowers each authoring list into a\nflat `WordBuf` of tag words plus resolved operands. The interpreter (`run_wordbuf`)\ndispatches with a C `switch` on tags instead of walking Python lists or a\nframe/PC loop.\n\n## Strategy: operand resolution at compile time\n\n- Native ops: `TAG_CALL_FN` + resolved `op_fn_t` pointer\n- Nested bodies: `TAG_CALL_WB` + stable `WordBuf*` into `op_table`\n- Literals: `TAG_LIT_INT` / `TAG_LIT_FLOAT` / `TAG_LIT_STR` / `TAG_LIT_OP`\n- Primitives (`dup`, `f_add`, ...): dedicated inline tags (`TAG_DUP`, ...)\n\n## Strategy: superinstruction fusion (peephole at compile)\n\nAdjacent patterns fold into fewer instructions:\n\n- `[lit, i_add]` -> `TAG_I_ADD_C`\n- `[lit, f_add_at]` -> `TAG_F_ADD_AT_D` (float step-sum body becomes one insn)\n- `[over, i_gt]` -> `TAG_OVER_I_GT`; with leading lit -> `TAG_I_GT_C_REV`\n- `[whilefn, body, while]` -> `TAG_WHILE_BUFS` + two `WordBuf*` operands\n\n## Strategy: `except -1` calling convention\n\n`op_fn_t` returns `int` with `except -1`. Success is 0; errors propagate\nwithout `PyErr_Occurred` polling in the dispatch hot loop. `pop_int` uses\n`int64_t` end-to-end (no 32-bit truncation).\n\n## Strategy: benchmark authoring (outside VM core)\n\n`tests/stack_bench.py` bakes loop bounds at registration (`nextafter` for float\nwhile, `stop+1` for int) so hot loops emit shorter bytecode. Ratchet test in\n`test_stack_benchmark.py` requires `float_while` stacklang to beat Python.\n\n## Files\n\n- `imgcomp/_stack_c.pyx` (compile + tagged interpreter)\n- `imgcomp/tests/test_stack_benchmark.py` (iter counts + ratchet)\n\n## Stash\n\nApply `stash@{1}`: `agent1: stack VM compile-time partial eval`"
+  },
+  "Branch": "db540bb9-retrospective-stack-vm-",
+  "Id": "db540bb9adee41451b7fdf0af3f144ef20a78bce4dd045da8bca81d53d008e0e",
+  "Scope": {
+    "branch": "db540bb9-retrospective-stack-vm-",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0000"
+  },
+  "State": {
+    "done": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Retrospective: stack VM compile-time partial eval (agent 1)"
+  },
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "imgcomp: compile-time partial eval for stack VM (agent 1)\n\nTagged WordBuf bytecode, superinstruction fusion, while lowering, and\nexcept -1 dispatch. Benchmark iter counts and float_while ratchet test.",
+      "objid": "0005",
+      "sha": "d84dec702cfffba451281b4e4623b84ff5e19161",
+      "summary": "[MIDCAP] Apply agent1 stash and commit"
+    },
+    {
+      "at_sha": "d84dec702cfffba451281b4e4623b84ff5e19161",
+      "done": true,
+      "kind": "checkpoint",
+      "message": "Slow benchmarks vs baseline: 8 passed",
+      "objid": "0006",
+      "summary": "[LOCAP] Run slow benchmarks vs baseline"
+    }
+  ],
+  "_nextobjid": 7,
+  "create_dt": "2026-08-30T20:10:56Z",
+  "update_dt": "2026-08-30T20:14:08Z"
+}

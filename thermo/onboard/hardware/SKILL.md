@@ -20,7 +20,7 @@ steps. Re-read the file after each step.
 - Shared layout rules and validation live in `thermo/onboard/hardware/`.
 - Board-generated or board-specific artifacts live in leaf `hat/` dirs, such as
   `thermo/onboard/hardware/pico2w/hat/` and
-  `thermo/onboard/hardware/esp32s3_devkitc1/hat/`.
+  `thermo/onboard/hardware/esp32s3/hat/`.
 - A board profile owns header labels, expected pin columns, module leg columns,
   and physical header spacing.
 

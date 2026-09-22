@@ -1,0 +1,507 @@
+# Working a todo
+
+status: living document - **normative owner** for lifecycle, worktrees, subtodo
+and foreign-work integration, finish/teardown, handoff, and chat reporting
+
+CLI syntax and schema -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
+Ticket design / decomposition -> [`GROOMING.md`](GROOMING.md)
+Intent router -> [`SKILL.md`](SKILL.md)
+
+There is exactly one normative sequence per operation below. Other docs link
+here; they do not restate these steps.
+
+---
+
+## Operator intents
+
+1. [Start or resume](#1-start-or-resume)
+2. [Poll and execute one WorkItem](#2-poll-and-execute-one-workitem)
+3. [Split or delegate](#3-split-or-delegate)
+4. [Wait and integrate child work](#4-wait-and-integrate-child-work)
+5. [Handle `userneeded` or `stopped`](#5-handle-userneeded-or-stopped)
+6. [Finish and remove the worktree](#6-finish-and-remove-the-worktree)
+7. [Handoff to parent or PR](#7-handoff-to-parent-or-pr)
+8. [Report the result](#8-report-the-result)
+
+---
+
+## Hard rules (operational)
+
+1. **CLI-only ticket access** -- every read/write through `todo.py` (see
+   [`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands)).
+2. **Explicit selector** -- no current-branch alias; capture and reuse `Id`.
+3. **Tool-owned storage** -- `todo.py` owns the ticket record and backend
+   selection. Never treat `TODO.json` as the live record. Backend placement is
+   normally irrelevant to working a ticket; see
+   [`IMPLEMENTATION.md`](IMPLEMENTATION.md#repository-local-storage).
+4. **Dedicated worktree for code** -- never `git checkout` the todo branch in
+   the main checkout while working it.
+5. **No parent `done` before tracked children are `merged`** on the parent
+   record (INFO backlinks excluded).
+6. **Sequential by default** -- when working a todo with subtodos, work children
+   one at a time in stack order unless the user explicitly asks for parallel
+   work or the children are genuinely independent context-heavy research (see
+   [`GROOMING.md`](GROOMING.md#workitem-vs-subtodo)). Parallel is an exception,
+   not the default.
+
+### Context shedding between sequential subtodos
+
+The durable state is the **todo record + git**, not the chat. After finishing
+and merging one subtodo, shed finished-child context with whatever mechanism
+your host agent provides (compact/summarize/new session/etc.), then reload the
+next frame with `todo.py prompt <id>` / `todo.py read`. Do not require a
+vendor-specific slash command. Committed work and store writes are never
+rewound.
+
+---
+
+## Default branch (`DEFAULT_BRANCH`)
+
+The main checkout must stay on the repository's **configured default branch**
+while any todo is worked in a linked worktree. That branch may be `master`,
+`main`, `dev`, or another name -- never hard-code `master` in checks.
+
+Resolve once per session:
+
+```bash
+MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+
+DEFAULT_BRANCH=$(git -C "$MAIN" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+if [ -z "$DEFAULT_BRANCH" ]; then
+  for cand in master main dev; do
+    if git -C "$MAIN" show-ref --verify --quiet "refs/heads/$cand"; then
+      DEFAULT_BRANCH=$cand
+      break
+    fi
+  done
+fi
+if [ -z "$DEFAULT_BRANCH" ]; then
+  echo "cannot determine DEFAULT_BRANCH; set origin/HEAD or create master/main/dev" >&2
+  exit 1
+fi
+```
+
+Every "main checkout branch" check compares against `$DEFAULT_BRANCH`.
+
+### Why the main checkout stays on the default branch
+
+Checking out a todo branch in the main tree couples any local storage churn
+into feature-branch history. Keep code work in linked worktrees only.
+
+---
+
+## Worktree setup
+
+`todo.py ensure_worktree <id> [--init]` runs `git worktree add` at the conventional
+path when the todo branch exists. Pass `--init` to promote a groom todo first
+(same as `init --id <id> --stay-on-parent` when the branch is missing; noop when
+it already exists). Without `--init`, run `init` manually first.
+
+**On entry** (before `set <id> --state working`, `work-item-done`, or code edits):
+
+```bash
+# 1) Main checkout on DEFAULT_BRANCH
+git -C "$MAIN" branch --show-current   # must equal $DEFAULT_BRANCH
+
+# 2) Init branch (if groom) and create/reuse worktree
+todo ensure_worktree <id> --init
+cd "$(todo ensure_worktree <id> | jq -r .worktree)"
+
+# 3) Verify CWD is the linked worktree of the todo branch
+test "$(git rev-parse --show-toplevel)" != "$MAIN"
+test "$(git branch --show-current)" = "$BRANCH"
+```
+
+Prefer `todo.py init --stay-on-parent` when filing from the main checkout, then
+add the worktree.
+
+**Stacked promote (the current checkout is itself todo-bound).** `init` and
+`ensure_worktree --init` refuse with `todo already exists on current branch` when run
+from another todo's worktree -- the normal case when a session starts inside one. Do
+NOT switch that checkout's branch to get around it (it is someone's live worktree).
+Create the branch by hand from the default branch tip, then let `ensure_worktree`
+(no `--init`) place it:
+
+```bash
+BR=$(todo get-json-path <id> Branch)
+git -C "$MAIN" fetch origin "$DEFAULT_BRANCH"
+git -C "$MAIN" branch "$BR" "origin/$DEFAULT_BRANCH"
+printf '"%s"' "$(git -C "$MAIN" rev-parse "origin/$DEFAULT_BRANCH")" | todo set-json-path <id> BaseSha
+todo set <id> --state ready
+todo ensure_worktree <id>
+```
+
+Groom-phase writes (`mint`, `set`, `work-item-add`) are store-only and may run from
+any checkout; the first `git` or code action on the todo happens inside its worktree.
+
+**INVARIANT:** every FINAL state (`done`, `merged`, `rejected`) implies **no
+live worktree** for that todo. Teardown is mandatory on finish (below), not
+optional cleanup. `set --state ...` is store-only and does **not** remove
+worktrees.
+
+---
+
+## Recursive completion (subtodos)
+
+Parent goal: finish local work **and** merge tracked subtodos. Setting a child
+`done` without `merge-subtodo` on the parent is an incomplete call.
+
+| Rule | Meaning |
+|------|---------|
+| Every subtodo must terminate | Child reaches `done`/`merged`, or surfaces via `userneeded`/`stopped` |
+| No silent skips | Do not mark parent `done` while any tracked subtodo is still `ready`/`working`, or `done` but not yet bookkept as `merged` on the parent |
+| Git integrate, then bookkeeping | After the child's branch is merged/absorbed into the parent branch, run `merge-subtodo` (or `wait-and-merge` after the git merges) |
+| Parent synthesis last | Parent `done` only after all tracked subtodos are `merged` (or user-waived) |
+
+Anti-patterns: landing all code on the parent while children stay `ready`;
+marking children `done` without working their branches; parent `done` while
+`todo.py read <parent> | jq -r '.Subtodos[].State'` still shows `ready` or
+`done` (unmerged). INFO rows are excluded from merge-completeness.
+
+---
+
+## 1. Start or resume
+
+```bash
+todo.py prompt <id>          # WHY -> WHAT (Parent chain); first action for a worker
+todo.py read <id>            # full record
+# verify DEFAULT_BRANCH + worktree (Worktree setup)
+todo.py set <id> --state working --owner=<agent>
+```
+
+**Before resuming: verify identity, don't infer it from a branch name.** Ambiguity
+runs in both directions:
+
+- **Branch does not imply todo.** A checked-out branch that resembles a ticket
+  (same ticket key, similar topic words) is not evidence it is that todo's
+  registered worktree. Confirm with an exact match -- `todo.py ls -s` then
+  `todo.py get-json-path <id> Branch` (and `Scope.branch`) against the literal
+  `git branch --show-current` -- never resemblance. A long-lived/shared
+  worktree can sit on an old or repurposed branch name that maps to no todo at
+  all, or to a different one than the name suggests.
+- **Todo state does not imply code state, or vice versa.** A todo whose
+  WorkItems all show `done: false` is not proof the work is unstarted: the
+  same ticket's code may already have landed under a *different* todo
+  (separate id/branch), or via a commit that was never tracked as any todo's
+  WorkItem. Before resuming or reporting a hypothesis: (1) read the todo
+  itself; (2) search finished/merged todos on the same topic (`todo.py ls -s`
+  includes FINAL states; `todo.py search "<topic>"`) -- their Body/WorkItems
+  often record exactly what already shipped and why; (3) check the code/DB/git
+  history directly for whether the acceptance criteria are already met --
+  don't assume the todo ledger is complete.
+
+Startup context: `Parent` is a list of `{Id, Branch}` refs. `add-subtodo` sets
+element 0 (structural) and registers a tracked subtodo. `set --parent` writes
+follow-only INFO backlinks -- see
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#subtodos-and-waiting). For mergeable
+children always use `add-subtodo`.
+
+If promoting a groomed ticket first: `todo.py init --id <id> --stay-on-parent`,
+then worktree setup. Creation policy lives in
+[`GROOMING.md`](GROOMING.md#two-phase-make-vs-work).
+
+---
+
+## 2. Poll and execute one WorkItem
+
+The tool carries process weight -- poll for the next step:
+
+```bash
+todo.py work-item-read <id>   # cursor + mechanism `next` hint
+todo.py is-done <id>          # exit 0 when nothing left
+```
+
+`next` is mechanism, not policy. Override when the dispatch table says split or
+spawn a subtodo.
+
+| Cursor item is... | Do | Tool records |
+|-----------------|----|--------------|
+| a subtodo to start | `todo.py add-subtodo <parent-id> --summary=...` | `start_subtodo` |
+| a subtodo to land | **git-merge** child into parent branch, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` |
+| local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
+| already written elsewhere -- another branch's commit, or a suggestion you decided to take | land it on the todo branch, then `todo.py work-item-done <id> --summary="... from branch:<b>, sha:<s>"` ([landing foreign work](#landing-foreign-work-no-merge-node)) | `code` -- the landing commit; the source is named in text only |
+| no-code step | `todo.py work-item-checkpoint <id> -m "..."` | `checkpoint` |
+| too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
+| fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
+| no longer wanted -- descoped, superseded, or subsumed by another step | `todo.py work-item-obsolete <id> [target] -m "why"` | `obsolete` (kept in the trail with its reason, unlike a delete) |
+| impossible as written | `todo.py work-item-blocked <id> -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `blocked` |
+| blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
+| empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
+
+Full command flags -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items).
+
+---
+
+## 3. Split or delegate
+
+- Short linear steps -> parent WorkItems (`work-item-add` / `work-item-insert`).
+- Right steps, wrong order -> `work-item-reorder` (topological pass; address by
+  `objid:` when making several moves). Grooming policy:
+  [`GROOMING.md`](GROOMING.md#required-grooming-outputs).
+- Independent context-heavy domains -> subtodos (`add-subtodo`), still
+  **sequential by default** unless parallel is authorized (grooming policy).
+- Capability tiers on each unit -> [`GROOMING.md`](GROOMING.md#capability-tiers).
+
+---
+
+## 4. Wait and integrate child work
+
+**`wait-and-merge` and `merge-subtodo` do not merge git branches.** They only
+poll (for wait-and-merge) and update store bookkeeping. The recorded
+`merge_subtodo` sha is the **parent branch tip after your git integration**.
+
+Normative sequence per child (or batch):
+
+1. Child lifecycle to `is-done`, then `todo.py set <child-id> --state done
+   --actual-summary="..."` (and child worktree teardown per section 6).
+2. In the **parent** worktree, on the parent branch: integrate the child
+   (`git merge <child-branch>`, or cherry-pick / equivalent absorption you can
+   verify). Resolve conflicts; confirm the parent tip contains the child's work.
+3. Bookkeeping: `todo.py merge-subtodo <child-id>`
+   or, after all intended git merges: `todo.py wait-and-merge <child-id>...`
+   (still bookkeeping-only; fails usefully if the parent branch tip is missing).
+4. Confirm parent `Subtodos[].State` is `merged` for each tracked child.
+
+Optional barrier WorkItems may name `execution.primitive: "wait-and-merge"` so
+`work-item-read`'s `next` hint points at the command -- policy still requires
+the git step first.
+
+Portable coordination: poll with `wait-for` / `wait-and-merge`. Same-session
+harness completion notifications (when available) are a convenience only.
+
+### Landing foreign work (no merge node)
+
+The code for a step sometimes already exists outside this todo: a commit on an
+unrelated branch, another session's fix, a claude suggestion you decided to
+take. That is neither a subtodo nor a child -- nothing was ever registered, so
+there is no merge obligation to discharge and no `merge_subtodo` node. Land it
+on the todo's branch and close the item as ordinary `code`, carrying the origin
+in the item's own text:
+
+```bash
+git merge --no-ff <source-branch>          # or: git cherry-pick -x <sha>
+todo.py work-item-done <id> --summary='guard the NULL case in foo.py: from a claude suggestion "investigate NULL errors in foo.py", merged from branch:foobar, sha:abc123'
+```
+
+The recorded `sha` is your landing commit on the todo's branch, never the
+foreign one -- `work-item-done` accepts only HEAD
+([`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants)) -- so the
+origin survives only in what you write. Name all of it: what asked for the work
+(quote a suggestion verbatim), whether it was merged or copied, and the source
+`branch:` and `sha:`. Prefer `--no-ff`, whose merge message you write, and
+`cherry-pick -x`, which appends the source sha, so the node's `message` carries
+the provenance too; a fast-forward merge leaves HEAD as the foreign commit and
+`--summary` as the only place the source is recorded at all.
+
+A registered child is not eligible for this: integrate it by the sequence above
+and run `merge-subtodo`. Ad-hoc landing is for work that never had a tracking
+node, not a shortcut past one that does.
+
+---
+
+## 5. Handle `userneeded` or `stopped`
+
+```bash
+todo.py set <child-id> --state userneeded --note="..."
+todo.py set <parent-id> --state userneeded --note="blocked on child <id>: ..."
+```
+
+Never leave a child in `ready`/`working` indefinitely without escalating.
+`stopped` is a user override halt (`--note`).
+
+### Recording a blocked item
+
+A work item that cannot be completed as written -- the approach turns out to
+require solving P==NP, the data it needs does not exist, the API it assumed is
+not there -- is **not** silently left at the cursor and **not** disposed of in
+chat. Record it in TWO places, long form and short form:
+
+| Where | What | Why there |
+|-------|------|-----------|
+| **The work item** (`work-item-blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
+| **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question |
+
+```bash
+todo.py work-item-blocked <id> -m "Not achievable with the committed corpus.
+MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
+STORM-30: no interchange fixture exists at all...
+Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
+todo.py set <id> --state userneeded --note="http://localhost:8765/<id>/objid/<objid> blocked: replay corpus lacks the recordings. Three options on the work item, need a pick."
+```
+
+Both writes, not one. The state note without the item leaves the trail claiming
+the step is merely unstarted; the item without the state note leaves a stuck todo
+that never asks the user anything. The **permalink to the blocked item** is what
+you paste into chat, a PR, or another todo -- not a retelling.
+
+`work-item-blocked` is store-only: nothing it records comes from git, so a
+partial attempt sitting in the tree neither blocks it nor gets swept into it --
+commit or discard that attempt on its own terms.
+
+Pick between the three by what you are claiming, not by what is convenient:
+
+- **`work-item-checkpoint`** -- the step genuinely FINISHED, it just produced no
+  code. Needs the branch checked out and a clean tree, since it records HEAD.
+- **`work-item-blocked`** -- it did not finish at all and is still owed. Escalate
+  with the `userneeded` note above.
+- **`work-item-obsolete`** -- nobody wants it any more. Nothing to escalate, so
+  no `userneeded` note; the reason on the item is the whole record.
+
+Because no no-commit item can be the last item of a done todo (invariant #6), a
+blocked tail keeps the todo honestly unfinished -- see
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants).
+
+---
+
+## 6. Finish and remove the worktree
+
+When `todo.py is-done <id>` is true, run this **directed** sequence. State
+transition and worktree removal are separate halves; both must succeed.
+
+1. **In the todo worktree**, verify:
+   - working tree clean (`git status`)
+   - `todo.py is-done <id>` (exit 0)
+   - `todo.py doctor <id>` -> ok (no hard findings)
+   - `todo.py last-sha <id>` matches the intended branch tip (invariant #6)
+2. Read completed WorkItems (`todo.py read <id> | jq '.WorkItems'`) and
+   **synthesize** a 1-3 sentence `ActualSummary` (retrospective vs planned
+   Summary -- pivots, descopes, surprises).
+3. **Save the worktree path** and leave it (`cd` to main checkout or elsewhere):
+   `WT=$(git rev-parse --show-toplevel)`.
+4. **Set terminal state** (store-only):
+   `todo.py set <id> --state done --actual-summary="<synthesis>"`
+   (use `--state merged` / `--state rejected` only for those dispositions; same
+   teardown obligation applies).
+5. **Remove that exact worktree** and verify:
+   ```bash
+   git worktree remove "$WT"
+   git worktree list   # must not list $WT
+   ```
+6. Branch handoff/retirement is **separate** -- see section 7. Do not `git branch -D`
+   as part of finish.
+
+**Failure handling**
+
+| Failure | Action |
+|---------|--------|
+| Dirty tree / not `is-done` / doctor fails | Do not set FINAL state; fix or surface `userneeded` |
+| `set --state done` fails after leaving WT | Re-run `set` from any cwd in the repo; do not remove WT until state is FINAL |
+| State is FINAL but `worktree remove` fails | Resolve (busy WT, dirty) then remove; orphan FINAL+live-WT is an invariant violation -- next agent/`doctor` sweep should remove it |
+| Remove succeeded but you still need the branch | Fine -- branch and commits remain until handoff delete gate |
+
+Parent finishes only after every tracked subtodo shows `merged` (or explicit
+user waiver).
+
+---
+
+## 7. Handoff to parent or PR
+
+### Subtodo -> parent
+
+Git-integrate into the parent branch, then `merge-subtodo` (section 4). Teardown of
+the child worktree happens at child FINAL (section 6).
+
+### Root todo -> PR
+
+Once `is-done` holds and section 6's verification passes, the branch goes through the
+**review cycle** before the PR is handed to humans. The order is fixed. Every finding
+that gets fixed lands as a WorkItem on this todo (`work-item-add`, then
+`work-item-done`), never as a silent edit on a finished plan.
+
+| # | Step | Who | Notes |
+|---|------|-----|-------|
+| 1 | Review the whole branch diff vs the default branch as a reviewer would; fix what it finds | HICAP reviewer (Fable-class) | findings -> `work-item-add <id> --summary="[HICAP] review follow-up: ..."` |
+| 2 | Push, open the PR (draft or not), wait for CI green | worker | the repo's own push hooks apply (opportunity: the Semaphore watch hook) |
+| 3 | Copilot code review -- ONLY when the repo is in the table below | MIDCAP, following the repo's `request-copilot-code-review` skill literally | request, wait, harvest; findings -> `[HICAP] Copilot review follow-up (pr:N): ...` WorkItems |
+| 4 | Fix EVERY Copilot finding now, push, re-request the Copilot review | HICAP fixer (Opus-class) | one commit per finding, why-per-file messages; deferring a finding to a later todo needs the user's explicit yes in chat first -- never a unilateral "tracked as todo:X" |
+| 5 | Re-review the branch after the fixes | HICAP reviewer (Fable-class) | exit gate; loop to 3 only if step 4 changed behavior, not wording |
+
+Within HICAP the reviewer is the most capable model available (Fable-class) and the
+fixer is the HICAP workhorse (Opus-class). Tiers: [`GROOMING.md`](GROOMING.md#capability-tiers).
+
+**Practice what you preach: self-review resolves its own citations.** When steps 1 or 5 touch
+a skill, rule, or doc file that cites a file path, a symbol, or a line number, resolving those
+citations against the current tree is part of the review, not optional polish -- a reviewer
+that tells others to check prose against code and then ships an unchecked citation in its own
+diff has not done the review. For every backtick-quoted path: confirm it exists (`git show
+<base>:<path>` or `git cat-file -e`). For every symbol claimed to live in a specific file:
+`grep` for it there. For every cited line or line range: confirm the file has that many lines.
+A citation that predates something now true (a skill that "does not exist yet") is stale in
+the same way a wrong path is; fix or remove it, do not leave it standing next to its own
+correction. This check is unbounded in scope within the touched files -- run it on every
+citation the diff adds or changes, not a sample.
+
+**Copilot review is a per-repo feature, hardcoded here.** It is on only where the repo
+carries BOTH a requesting skill (Claude side) and a Copilot-side checklist; the two
+files co-evolve and reference each other.
+
+| Repo (`Scope.git_url`) | Copilot review | Requesting skill | Copilot-side checklist |
+|---|---|---|---|
+| `github.com/easternlabs/opportunity` | yes | `.claude/skills/request-copilot-code-review/SKILL.md` | `.github/skills/code-review/SKILL.md` |
+| every other repo | no -- steps 3 and 4 are skipped | -- | -- |
+
+Adding a repo means adding a row here AND both files in that repo.
+
+After the cycle:
+
+```bash
+todo.py set <id> --state merged --pr <N>    # "Push PR" transition after done
+```
+
+`doctor` fills `merge_commit` / moves closed-unmerged to `rejected`. See
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#state-machine).
+
+### Branch retirement (destructive -- gated)
+
+Worktree teardown is reversible (checkout only). **Deleting a branch** is
+separate and requires **all** of:
+
+1. Ticket records handoff evidence (`merged` with `merged_into` and/or `pr`, or
+   documented cherry-pick / absorption note on the ticket).
+2. No live worktree for that branch.
+3. Durable ref pushed where the workflow expects remote backup (when the repo
+   uses a remote).
+4. **Explicit user authorization** before `git branch -D`.
+
+Remote branch deletion is out of scope unless the user separately requests it.
+Do not treat "equivalent-content absorption" as a silent delete license without
+ticket evidence + user auth.
+
+---
+
+## 8. Report the result
+
+Namespace ids: `todo:d56d`, `sha:ce66a4`, `pr:22660`, `branch:dev`.
+
+**Name a work item by PATH, not by index notation:** `todo:d56d/workitem/18`,
+and deeper when you need a field: `todo:d56d/workitem/18/summary`. This is the
+same grammar the permalink syntax uses, so the token a reader sees in chat is the
+token that resolves. The older organic `WI[18]` / `todo:x.WI[4]` forms stay
+readable but are not written any more. Prefer the `objid` form
+(`todo:d56d/objid/0a3f`) when naming a durable object, since an index shifts --
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#permalinks).
+
+**While working:** one short action line per action; no preamble.
+
+**Durable notes** belong in the commit message (`work-item-done -m`), not chat.
+
+**Verdict grades the MAIN todo**, not the last step:
+
+| verdict | when |
+|---------|------|
+| `success` | FINAL success: `done` or `merged` |
+| `mix` | progress, unfinished; or `userneeded` / `stopped` |
+| `fail` | stuck -- cannot complete a work item as written |
+
+`fail` is the more specific case and wins the overlap: `userneeded` awaiting a
+decision is `mix`, but `userneeded` because an item is IMPOSSIBLE as written is
+`fail` -- and that item should already be recorded with `work-item-blocked`
+(section 5).
+
+Always report `N of M work items done, cursor at todo:<id>/workitem/<i>`.
+Untracked mid-run asks become WorkItems (`work-item-add`), not prose side
+conditions.
+
+SUMMARY shape: `SUMMARY: <success|fail|mix> [clause]` -> effect of the todo as a
+whole -> short bullets for interesting items only. Never report "spawned a
+subtodo" as a result; mention children only when their **outcome** matters.

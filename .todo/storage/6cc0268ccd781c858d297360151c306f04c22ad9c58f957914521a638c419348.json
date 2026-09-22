@@ -1,0 +1,44 @@
+{
+  "AC": "Agent2 stash committed on agent1 base; slow benchmarks vs baseline; merged to master",
+  "ActualSummary": "Agent2 LOCAP runtime committed; benchmarks green; merged to master",
+  "BaseSha": "b4295cd04eb1a72aec1cdfd840538a9619878ed9",
+  "Body": {
+    "objid": "0002",
+    "raw": "# Stack VM runtime strategies (Agent 2)\n\nRetrospective ticket for C-level / boundary-relaxed optimizations on top of\nAgent 1 tagged bytecode. Surface language unchanged; LOCAP techniques are\ndocumented in `_stack_c.pyx` module docstring.\n\n## Strategy: inline primitive dispatch\n\nHot `run_wordbuf` branches call `cdef inline exec_*()` for primitives instead of\n`_op_*()` wrappers, reducing per-instruction call and error-path overhead.\nSurface handlers (`_op_dup`, etc.) delegate to `exec_*` for `TAG_CALL_FN` paths.\n\n## Strategy: loop-invariant body hoisting\n\n`*_incr_le` resolves `body_id` once to `WordBuf*` or `op_fn_t` before the\nmillion-iteration loop, avoiding `run_quoted_body` branch and id lookup each trip.\n\n## Strategy: nogil fast interpreter (`interpret_gil_free`)\n\nBodies marked `WordBuf.gil_free` (DFS at compile end) run under `with nogil:` via\nunchecked stack ops (`u_push_*` / `u_pop_*`) with no `PyErr_Occurred` per pop.\n`TAG_CALL_FN`, `TAG_LIT_STR`, `TAG_IF_NZERO`, `TAG_WHILE_IDS` force slow path.\n\n## Strategy: frameless inner loops\n\nWhen `gil_free`, `*_incr_le` and `run_while_loop_bufs` call `interpret_gil_free`\ndirectly in inner loops instead of `run_wordbuf` (skips RefNanny + `call_depth`\nper iteration). Stack depth is asserted sane on `run_op` re-entry only.\n\n## Strategy: incremental stash\n\nApply `stash@{0}`: `agent2: stack VM runtime LOCAP peephole` on top of Agent 1\ncommit. Only `imgcomp/_stack_c.pyx` changes.\n\n## Files\n\n- `imgcomp/_stack_c.pyx` (runtime / LOCAP runbook)"
+  },
+  "Branch": "6cc0268c-retrospective-stack-vm-",
+  "Id": "6cc0268ccd781c858d297360151c306f04c22ad9c58f957914521a638c419348",
+  "Scope": {
+    "branch": "6cc0268c-retrospective-stack-vm-",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0000"
+  },
+  "State": {
+    "done": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Retrospective: stack VM runtime LOCAP peephole (agent 2)"
+  },
+  "WorkItems": [
+    {
+      "done": true,
+      "kind": "code",
+      "message": "imgcomp: stack VM runtime LOCAP peephole (agent 2)",
+      "objid": "0005",
+      "sha": "a8a149dfc037f6ba314a3522357f31f0b0c3cfbf",
+      "summary": "[MIDCAP] Apply agent2 stash and commit"
+    },
+    {
+      "done": true,
+      "kind": "code",
+      "message": "imgcomp: stack VM runtime LOCAP peephole (agent 2)",
+      "objid": "0006",
+      "sha": "a8a149dfc037f6ba314a3522357f31f0b0c3cfbf",
+      "summary": "[LOCAP] Run slow benchmarks vs baseline"
+    }
+  ],
+  "_nextobjid": 7,
+  "create_dt": "2026-08-30T20:11:08Z",
+  "update_dt": "2026-08-30T20:17:07Z"
+}

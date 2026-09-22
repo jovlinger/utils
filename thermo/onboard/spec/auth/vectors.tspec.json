@@ -1,0 +1,36 @@
+{
+  "$tsl": "1.0",
+  "kind": "auth_vectors",
+  "source": "thermo/onboard/hardware/pico2w/src/auth.rs tests",
+  "sha256_hex": [
+    {
+      "name": "empty_object_body",
+      "body_utf8": "{}",
+      "expected_hex": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ],
+  "sign_headers": [
+    {
+      "name": "pico_unit_test_signs_request_headers",
+      "seed_bytes_base64": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+      "method": "POST",
+      "path": "/zone/test/sensors",
+      "body_utf8": "{}",
+      "zone_name": "test",
+      "epoch_seconds": 1700000000,
+      "expected_timestamp": "1700000000",
+      "expected_signature_b64_length": 88,
+      "expected_signature_b64": "+CJV/yQGEXdJF5N5GSDQLX20Q1OKtVUJYzwR01RrCxlq9FLMY0MY5AUzkjG4drqVR/prmwu006rnnheOAxf4BQ==",
+      "expected_zone_name": "test",
+      "note": "Computed with Python cryptography using payload POST\\n/zone/test/sensors\\n1700000000\\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ],
+  "pkcs8_der_seed_extraction": [
+    {
+      "name": "extract_pkcs8_der_seed",
+      "der_prefix_hex": "302e020100300506032b657004220420",
+      "seed_byte_value": 9,
+      "expected_extract_ok": true
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "AC": "- PlatformIO (or agreed) project builds/uploads to Waveshare S3 orientation.\n- WiFi connects using build-flag or config stub.\n- LVGL shows a follow-style stub screen and a touch-selectable zone list stub.\n- Encoder rotation produces documented volume-delta events (serial or callback); touch selects zone in list.\n- Docs: short DEVICE_UI.md ratchet log of locked learnings; pin headers match hardware notes.\n- No requirement to talk to real Sonos/Volumio in this subtodo.",
+  "BaseSha": "a32a49cf637b045e450c3822d1ca2f3c0e1430b0",
+  "Body": {
+    "objid": "0002",
+    "raw": "Build the on-device interaction platform for Waveshare ESP32-S3-Knob-Touch-LCD-1.8 while HILEVEL.md is still unlocked.\n\nScope: WiFi STA, LVGL (or agreed) UI shell, rotary encoder input, CST816 touch, basic screens (follow chrome stub, zone list stub). No Sonos/Volumio protocol depth here -- emit/consume abstract UI events and show fake/fixture state until audio library ports in.\n\nRatchet: each WorkItem ends with a flashable or host-testable artifact + short note of what locked (pins, LVGL pattern, encoder debounce). Prefer tests where feasible (host mocks; on-device smoke checklist as LOCAP).\n\nParallel with audio-control Python subtodo; do not block on Flask library."
+  },
+  "Branch": "4a26154c-device-ui",
+  "Id": "f8a5c5fc22dd69dd15bcdab60e58593c850b99212f34697b71ee6dd476595155",
+  "LongSummary": {
+    "objid": "000b",
+    "raw": "Waveshare S3 device UI platform for spinme: WiFi, LVGL display, rotary encoder, and touch. Delivers stub follow and zone-list screens plus encoder volume-delta events without talking to Sonos or Volumio. Ratcheted WorkItems lock pins and UI contracts with smoke tests or checklists. Runs in parallel with the Python audio-control subtodo; parent merges both for on-device MVP."
+  },
+  "Parent": [
+    {
+      "Branch": "4a26154c-spinme-identify-elecrow",
+      "Id": "4a26154cb41699619a9378e192c88ad7b4757904bb5da87541487bce5fe09d88",
+      "objid": "0003"
+    }
+  ],
+  "Scope": {
+    "branch": "4a26154c-device-ui",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0000",
+    "path_from_root": "spinme"
+  },
+  "State": {
+    "ready": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "spinme device UI: Waveshare WiFi/display/encoder/touch platform"
+  },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0004",
+      "summary": "[LOCAP] Confirm S3 USB orientation + PlatformIO env builds (smoke upload optional)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0005",
+      "summary": "[MIDCAP] Ratchet: board_pins.h + encoder read -> serial volume_delta events (test: unit or serial checklist)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0006",
+      "summary": "[MIDCAP] Ratchet: CST816 touch -> LVGL pointer; blank screen brings up"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0007",
+      "summary": "[MIDCAP] Ratchet: LVGL follow stub (zone name, play glyph, track labels) from fixture state struct"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0008",
+      "summary": "[MIDCAP] Ratchet: zone list screen; touch select updates active zone id"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0009",
+      "summary": "[MIDCAP] Ratchet: WiFi STA + reconnect policy; document in DEVICE_UI.md"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000a",
+      "summary": "[LOCAP] DEVICE_UI.md ratchet log: locked pins, LVGL pattern, encoder/touch contracts"
+    }
+  ],
+  "_nextobjid": 12,
+  "create_dt": "2026-09-07T23:59:09Z",
+  "update_dt": "2026-09-07T23:59:40Z"
+}

@@ -1,0 +1,32 @@
+{
+  "$tsl": "1.0",
+  "kind": "profile",
+  "zone_name": "office",
+  "backend": "esp32s3",
+  "hardware_profile": "esp32s3_aht20_ir",
+  "dmz": {
+    "scheme": "http",
+    "host": "jovlinger.duckdns.org",
+    "port": 5000
+  },
+  "gpio": {
+    "ir_tx": 17,
+    "ir_rx": 6,
+    "aht20_sda": 8,
+    "aht20_scl": 9,
+    "status_led_ws2812": 38,
+    "note_n16r8": "GPIO35-37 reserved for octal PSRAM; do not use for I2C."
+  },
+  "aht20_i2c_address": "0x38",
+  "jaguar": {
+    "device_name": "esp32s3-office",
+    "container_name": "thermo-esp32s3"
+  },
+  "sensor_boot_required": 0,
+  "post_timeout_seconds": 600,
+  "onboard_http_port": 5000,
+  "ir_protocol": "midea24_coolix",
+  "send_behavior": "ir_heatpump",
+  "report_behavior": "sensor_readings",
+  "status_led_driver": "log_only"
+}

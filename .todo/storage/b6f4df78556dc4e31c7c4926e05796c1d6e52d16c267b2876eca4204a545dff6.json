@@ -1,0 +1,34 @@
+{
+  "AC": "Reproduce create_pipenv.sh imgcomp in a fresh worktree; identify hang root cause; fix or document reliable venv setup path.",
+  "Body": {
+    "objid": "0002",
+    "raw": "Investigate whether create_pipenv.sh reliably sets up project .venv (worktrees, detached HEAD, Cursor agent shells).\n\ncreate_pipenv.sh prints :success or :failure lines on stderr, plus an action line pointing here.\n\n## Record a datapoint (WorkItem)\n\nFrom the utils repo root, when you see a todo line from create_pipenv.sh:\n\n```bash\nTODO=skills/projectmanagement/todos/todo.py\n\"$TODO\" ensure_worktree b6f4df78 --init\ncd \"$(\"$TODO\" ensure_worktree b6f4df78 | jq -r .worktree)\"\n\"$TODO\" work-item-add b6f4df78 --summary=\":success create_pipenv PROJECT\"\n\"$TODO\" work-item-done b6f4df78 --checkpoint -m \"WHY: paste the reason from the todo line\"\n```\n\nReplace :success with :failure when the script line says :failure. Replace PROJECT with the project path from the line (e.g. imgcomp). The checkpoint -m message is the why (text after -- on the todo line).\n\n## Example WorkItem\n\n- summary: `:failure create_pipenv imgcomp`\n- checkpoint -m: `Hung 4+ min, zero stdout in utils-imgcomp-master-aug27 worktree. Why: Cursor shell harness blocked on cat before create_pipenv ran; manual python3 -m venv succeeded in ~4s.`"
+  },
+  "Branch": "b6f4df78-does-setup-env-ever",
+  "Id": "b6f4df78556dc4e31c7c4926e05796c1d6e52d16c267b2876eca4204a545dff6",
+  "Scope": {
+    "branch": "b6f4df78-does-setup-env-ever",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0000"
+  },
+  "State": {
+    "groom": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "Does setup env ever work?"
+  },
+  "WorkItems": [
+    {
+      "at_sha": "5f70000075ab49c129337e148735cf174b6b9155",
+      "done": true,
+      "kind": "checkpoint",
+      "message": "synced venv at /Users/johan/github.com/jovlinger/utils/imgcomp/.venv",
+      "objid": "0004",
+      "summary": ":success create_pipenv imgcomp"
+    }
+  ],
+  "_nextobjid": 5,
+  "create_dt": "2026-08-30T21:13:08Z",
+  "update_dt": "2026-08-30T21:23:13Z"
+}

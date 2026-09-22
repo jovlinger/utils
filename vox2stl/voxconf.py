@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, FrozenSet, Mapping, MutableMapping, Sequence, Tuple, Union
+from typing import Dict, FrozenSet, List, Mapping, MutableMapping, Sequence, Tuple, Union
 
 CONFIG_DIR = Path(__file__).resolve().parent
 
@@ -240,6 +241,42 @@ def _resolve_config(
         _merge_values(merged, included)
     _merge_values(merged, values)
     return merged
+
+
+def ordered_conf_paths(
+    name: str,
+    *,
+    stack: Tuple[str, ...] = (),
+) -> Tuple[Path, ...]:
+    """Return profile .conf files in include order (includes before profile)."""
+
+    basename = name
+    if basename.endswith(".conf"):
+        basename = basename[: -len(".conf")]
+    if basename in stack:
+        chain = " -> ".join((*stack, basename))
+        raise ValueError(f"circular config include: {chain}")
+    path = _config_path(basename)
+    if not path.is_file():
+        raise ValueError(f"missing config file {path}")
+    includes, _ = _parse_config_text(path.read_text(encoding="ascii"), str(path))
+    ordered: List[Path] = []
+    for include_name in includes:
+        ordered.extend(ordered_conf_paths(include_name, stack=(*stack, basename)))
+    ordered.append(path)
+    return tuple(ordered)
+
+
+def conf_profile_hash(name: str) -> str:
+    """Return a stable SHA-256 digest of the profile's .conf file chain."""
+
+    digest = hashlib.sha256()
+    for path in ordered_conf_paths(name):
+        digest.update(path.name.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _require_key(

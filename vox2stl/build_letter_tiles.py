@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-render A-Z letter tiles as high-resolution binary STL."""
+"""Pre-render A-Z and 0-9 label tiles as high-resolution binary STL."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 import vox2stl
+
+LABEL_GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
 def main() -> int:
@@ -20,11 +22,11 @@ def main() -> int:
         "letter triangles",
     ]
     total_triangles = 0
-    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        tris = vox2stl.generate_letter_tile_triangles(letter)
-        path = out_dir / f"{letter}.stl"
-        vox2stl.write_binary_stl(path, tris, f"letter_{letter}")
-        manifest_lines.append(f"{letter} {len(tris)}")
+    for glyph in LABEL_GLYPHS:
+        tris = vox2stl.generate_letter_tile_triangles(glyph)
+        path = out_dir / f"{glyph}.stl"
+        vox2stl.write_binary_stl(path, tris, f"letter_{glyph}")
+        manifest_lines.append(f"{glyph} {len(tris)}")
         total_triangles += len(tris)
         print(f"wrote {path.name}: {len(tris)} triangles")
     manifest_lines.append(f"total {total_triangles}")

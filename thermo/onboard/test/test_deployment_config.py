@@ -162,7 +162,7 @@ def test_kitchen_pico2w_env_matches_supported_config() -> None:
     assert cfg.ir_protocol == "daikin_arc452a9"
 
 
-def test_office_pico2w_env_matches_supported_config() -> None:
+def test_office_esp32s3_env_matches_supported_config() -> None:
     sample_path = Path(__file__).resolve().parents[1] / "zones" / "office" / "zone.env"
     values: dict[str, str] = {}
     for raw in sample_path.read_text(encoding="ascii").splitlines():
@@ -175,8 +175,8 @@ def test_office_pico2w_env_matches_supported_config() -> None:
 
     cfg = config_from_environ(values)
     assert cfg.zone_name == "office"
-    assert cfg.hardware_profile == "pico2w_aht20_ir"
-    assert cfg.ir_protocol == "midea_classic"
+    assert cfg.hardware_profile == "esp32s3_aht20_ir"
+    assert cfg.ir_protocol == "midea24_coolix"
 
 
 def test_bedroom_pico2w_env_matches_supported_config() -> None:

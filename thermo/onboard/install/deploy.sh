@@ -37,7 +37,7 @@ if [ -n "${EXPECTED_ONBOARD_DEPLOY_BACKEND:-}" ] && [ "$ONBOARD_DEPLOY_BACKEND" 
 	exit 1
 fi
 
-if [ "${1:-}" = "--preflight" ] && [ "$ONBOARD_DEPLOY_BACKEND" != "pico2w" ]; then
+if [ "${1:-}" = "--preflight" ] && [ "$ONBOARD_DEPLOY_BACKEND" != "pico2w" ] && [ "$ONBOARD_DEPLOY_BACKEND" != "esp32s3" ]; then
 	log "No deploy preflight for backend=$ONBOARD_DEPLOY_BACKEND"
 	exit 0
 fi

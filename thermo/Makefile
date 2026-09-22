@@ -69,4 +69,5 @@ docker-all-clean:
 	$(MAKE) -C test docker-all-clean
 
 binlinks:
-	@:
+	ln -sf ../thermo/dmz/manage ../binlinks/manage
+	ln -sf ../thermo/onboard/onboardctl/onboardctl ../binlinks/onboardctl

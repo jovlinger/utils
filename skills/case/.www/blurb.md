@@ -1,0 +1,1 @@
+The CASE skill: read and write CASE files in `cases/` (symptoms, evidence and anti-evidence, layman analysis, adaptable remediation, discussion).

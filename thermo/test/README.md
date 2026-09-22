@@ -3,11 +3,11 @@ Testing microservices
 
 **The Main thesis / TL;DR**
 
-It is hard to meaningfully test a microservice in isolation because it is tightly integrated into 
-an ecosystem. Thus all local tests become unit-tests. 
+It is hard to meaningfully test a microservice in isolation because it is tightly integrated into
+an ecosystem. Thus all local tests become unit-tests.
 
 To get more meaningful tests, we wire together several micro-services into a black-box group, and assert
-against observable state. For tests we might also expose internal state via a test-only API, or 
+against observable state. For tests we might also expose internal state via a test-only API, or
 peek into the database
 
 # Testing Thermo
@@ -24,18 +24,4 @@ not to overload the machine.
 The main test target will be `dmz`, as it is the publically visible
 part of the application.
 
-# and some canned commands
-
-- run tests (builds ``../onboard`` GHCR-tagged app + twoway images, dmz, testdriver; then compose):
-> make dockertest
-
-- same stack (``testcases/test_e2e.py`` compose mode): `make test-docker` or alias `make test_e2e`
-
-- copy file from container (doesn't have to be running)
-> docker cp f1c711b7e058:/app/twoway.out -
-
-- log into stopped container (that is: run bash interactively)
-> docker start  f1c711b7e058
-> docker exec -it f1c711b7e058 bash 
-
-- 
+Canned make/docker recipes for agents: [`AGENTS.md`](AGENTS.md).

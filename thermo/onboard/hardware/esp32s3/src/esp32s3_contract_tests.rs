@@ -136,8 +136,8 @@ fn optional_sensor_failure_posts_fallback_values() {
     let outcome = fixture.poll(false, Some(VALID_EPOCH_SECONDS));
 
     assert_eq!(outcome, PollOutcome::Posted);
-    assert!(fixture.dmz.posts[0].contains("\"temp_centigrade\":21.0"));
-    assert!(fixture.dmz.posts[0].contains("\"humid_percent\":50.0"));
+    assert!(fixture.dmz.posts[0].contains("\"temp_centigrade\":1.0"));
+    assert!(fixture.dmz.posts[0].contains("\"humid_percent\":1.0"));
 }
 
 #[test]

@@ -7,10 +7,13 @@ import csv
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import sqlite3
 import sys
+from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Callable, Iterator, TypeVar
 
 T = TypeVar("T")
@@ -21,6 +24,10 @@ DB_NAME = ".shadup.db"
 # Object payloads live under ``<shadir>/data/xx/<digest>`` (sibling to ``files/``).
 DATA_DIR_NAME = "data"
 META_KEY_SHADIR = "shadir"
+# RFC3339 UTC instant when a path row became effective; epoch for pre-history rows.
+PATH_EFFECTIVE_EPOCH = "1970-01-01T00:00:00Z"
+# Active stored_files rows: not soft-deleted and not end-dated.
+_ACTIVE_STORED_FILES_WHERE = "deleted = 0 AND end IS NULL"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
@@ -92,39 +99,46 @@ def _format_pretty_path(path: str) -> str:
 
 
 def _emit_lspath_machine(
-    entries: list[tuple[str, str, list[str], bool]],
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
 ) -> None:
-    for path, shasum, tags, deleted in entries:
-        out_csv([path, shasum, json.dumps(tags), "1" if deleted else "0"])
+    for path, shasum, tags, deleted, start, end in entries:
+        out_csv([path, shasum, json.dumps(tags), "1" if deleted else "0", start, end or ""])
 
 
 def _emit_lspath_pretty(
-    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
+    show_deleted: bool,
 ) -> None:
     formatted = [
-        (_format_pretty_path(path), shasum, tags, deleted)
-        for path, shasum, tags, deleted in entries
+        (_format_pretty_path(path), shasum, tags, deleted, start, end or "")
+        for path, shasum, tags, deleted, start, end in entries
     ]
-    max_path = max(len(path) for path, _s, _t, _d in formatted)
-    tag_strs = [json.dumps(tags, sort_keys=True) for _p, _s, tags, _d in formatted]
+    max_path = max(len(path) for path, _s, _t, _d, _st, _en in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _p, _s, tags, _d, _st, _en in formatted]
     max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
-    for (path, shasum, tags, deleted), tstr in zip(formatted, tag_strs, strict=True):
+    for (path, shasum, tags, deleted, start, end), tstr in zip(
+        formatted, tag_strs, strict=True
+    ):
         if show_deleted:
             out(
-                "{path} {tags} {deleted} {shasum}",
+                "{path} {tags} {deleted} {start} {end} {shasum}",
                 0,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
                 deleted="X" if deleted else ".",
+                start=start,
+                end=end,
                 shasum=shasum,
                 kind="data",
             )
         else:
             out(
-                "{path} {tags} {shasum}",
+                "{path} {tags} {start} {end} {shasum}",
                 0,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
+                start=start,
+                end=end,
                 shasum=shasum,
                 kind="data",
             )
@@ -151,42 +165,47 @@ def _emit_ls_alltags_pretty(rows: list[tuple[str, list[str]]]) -> None:
 
 
 def _emit_lshash_machine(
-    entries: list[tuple[str, str, list[str], bool]],
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
 ) -> None:
-    for shasum, path, tags, deleted in entries:
-        out_csv([shasum, path, json.dumps(tags), "1" if deleted else "0"])
+    for shasum, path, tags, deleted, start, end in entries:
+        out_csv([shasum, path, json.dumps(tags), "1" if deleted else "0", start, end or ""])
 
 
 def _emit_lshash_pretty(
-    entries: list[tuple[str, str, list[str], bool]], show_deleted: bool
+    entries: list[tuple[str, str, list[str], bool, str, str | None]],
+    show_deleted: bool,
 ) -> None:
     formatted = [
-        (shasum, _format_pretty_path(path), tags, deleted)
-        for shasum, path, tags, deleted in entries
+        (shasum, _format_pretty_path(path), tags, deleted, start, end or "")
+        for shasum, path, tags, deleted, start, end in entries
     ]
-    max_path = max(len(path) for _s, path, _t, _d in formatted)
-    tag_strs = [json.dumps(tags, sort_keys=True) for _s, _p, tags, _d in formatted]
+    max_path = max(len(path) for _s, path, _t, _d, _st, _en in formatted)
+    tag_strs = [json.dumps(tags, sort_keys=True) for _s, _p, tags, _d, _st, _en in formatted]
     max_tags = max(len(t) for t in tag_strs) if tag_strs else 0
-    for (shasum, path, _tags, deleted), tstr in zip(
+    for (shasum, path, _tags, deleted, start, end), tstr in zip(
         formatted, tag_strs, strict=True
     ):
         if show_deleted:
             out(
-                "{shasum} {path} {tags} {deleted}",
+                "{shasum} {path} {tags} {deleted} {start} {end}",
                 0,
                 shasum=shasum,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
                 deleted="X" if deleted else ".",
+                start=start,
+                end=end,
                 kind="data",
             )
         else:
             out(
-                "{shasum} {path} {tags}",
+                "{shasum} {path} {tags} {start} {end}",
                 0,
                 shasum=shasum,
                 path=path.ljust(max_path),
                 tags=tstr.ljust(max_tags),
+                start=start,
+                end=end,
                 kind="data",
             )
 
@@ -436,12 +455,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files and directories starting with '.' (default: true)",
     )
 
+    p_mv = sub.add_parser(
+        "mv",
+        help="Rename a stored path on disk and record start/end history in the DB",
+    )
+    p_mv.add_argument("old", metavar="OLD", help="Current stored path (file or directory prefix)")
+    p_mv.add_argument("new", metavar="NEW", help="New stored path")
+    p_mv.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned renames and DB updates without applying",
+    )
+
     sub.add_parser(
         "check",
         help=(
             "Verify shadir discovery and DB. Without --shadir/--db: exit 0 if "
             "store + default DB exist. With either: open (creating) the DB and "
             "print path + aggregate stats."
+        ),
+    )
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Audit and repair stored_files rows (canonical root, dedupe paths)",
+    )
+    p_doctor.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report planned repairs without writing",
+    )
+    p_doctor.add_argument(
+        "-v",
+        "--verbose-ratio",
+        dest="verbose_ratio",
+        type=float,
+        default=0.01,
+        metavar="RATIO",
+        help=(
+            "Fraction of fixup rows to print in detail (default: 0.01). "
+            "Selected rows show every planned action for that row."
         ),
     )
 
@@ -706,6 +759,41 @@ def get_shadir(conn: sqlite3.Connection) -> str:
     return expand_path(raw)
 
 
+def canonical_files_root(shadir: str) -> str:
+    """Return ``${meta.shadir}/files`` — the sole valid ``stored_files.root``."""
+    return os.path.normpath(os.path.join(os.path.abspath(shadir), "files"))
+
+
+def _blank_dirpath(dirpath: str) -> str:
+    return "" if dirpath in (".", "") else dirpath
+
+
+def canonical_stored_path_parts(
+    shadir: str,
+    root: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+) -> tuple[str, str, str, str] | None:
+    """Normalize a row to canonical ``(root, root_rel, dirpath, filename)`` under ``files/``.
+
+    Returns None when *root* is not under the store's ``files/`` tree.
+    """
+    files_root = canonical_files_root(shadir)
+    root_abs = os.path.abspath(root)
+    dp = _blank_dirpath(dirpath)
+
+    if root_abs == files_root:
+        return files_root, "", dp, filename
+
+    if is_under_dir(root_abs, files_root) and root_abs != files_root:
+        prefix = os.path.relpath(root_abs, files_root)
+        new_dp = os.path.normpath(os.path.join(prefix, dp)) if dp else prefix
+        return files_root, "", new_dp, filename
+
+    return None
+
+
 def sync_shadir(
     conn: sqlite3.Connection, cli_shadir: str | None, cwd: str
 ) -> str:
@@ -727,6 +815,286 @@ def sync_shadir(
     return found
 
 
+def rfc3339_now() -> str:
+    """Return the current UTC instant as RFC3339 (second resolution, Z suffix)."""
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+
+def _stored_files_column_names(conn: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in conn.execute("PRAGMA table_info(stored_files)")}
+
+
+def upgrade_stored_files_schema(conn: sqlite3.Connection) -> bool:
+    """Add path effective start/end columns to legacy stored_files tables in place."""
+    cols = _stored_files_column_names(conn)
+    changed = False
+    if "start" not in cols:
+        conn.execute(
+            "ALTER TABLE stored_files ADD COLUMN start TEXT NOT NULL "
+            f"DEFAULT '{PATH_EFFECTIVE_EPOCH}'"
+        )
+        changed = True
+    if "end" not in cols:
+        conn.execute("ALTER TABLE stored_files ADD COLUMN end TEXT DEFAULT NULL")
+        changed = True
+    if upgrade_stored_files_unique_index(conn):
+        changed = True
+    return changed
+
+
+def upgrade_stored_files_unique_index(conn: sqlite3.Connection) -> bool:
+    """Replace full path unique index with one scoped to active rows only."""
+    indexes = {
+        row[1] for row in conn.execute("PRAGMA index_list(stored_files)")
+    }
+    if "stored_files_unique_active_rel" in indexes:
+        return False
+    if "stored_files_unique_rel" in indexes:
+        conn.execute("DROP INDEX stored_files_unique_rel")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_active_rel
+        ON stored_files(shasum, root_rel, dirpath, filename)
+        WHERE deleted = 0 AND end IS NULL
+        """
+    )
+    return True
+
+
+def _stored_path_from_parts(root_rel: str, dirpath: str, filename: str) -> str:
+    parts = [p for p in (root_rel, dirpath, filename) if p]
+    return os.path.normpath(os.path.join(*parts)) if parts else ""
+
+
+def _physical_path_from_parts(root: str, dirpath: str, filename: str) -> str:
+    return os.path.normpath(os.path.join(os.path.abspath(root), dirpath, filename))
+
+
+def _fetch_active_stored_rows(
+    conn: sqlite3.Connection,
+) -> list[tuple[str, str, str, str, str]]:
+    return conn.execute(
+        f"""
+        SELECT shasum, root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        """
+    ).fetchall()
+
+
+def _end_date_active_row(
+    conn: sqlite3.Connection,
+    shasum: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    when: str | None = None,
+) -> None:
+    now = when or rfc3339_now()
+    conn.execute(
+        f"""
+        UPDATE stored_files
+        SET end = ?
+        WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+          AND {_ACTIVE_STORED_FILES_WHERE}
+        """,
+        (now, shasum, root_rel, dirpath, filename),
+    )
+
+
+def _end_active_rows_at_path(
+    conn: sqlite3.Connection,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    when: str | None = None,
+    except_shasum: str | None = None,
+) -> int:
+    """End-date every active row at a stored path (optionally except one shasum)."""
+    now = when or rfc3339_now()
+    if except_shasum is None:
+        cur = conn.execute(
+            f"""
+            UPDATE stored_files
+            SET end = ?
+            WHERE root_rel = ? AND dirpath = ? AND filename = ?
+              AND {_ACTIVE_STORED_FILES_WHERE}
+            """,
+            (now, root_rel, dirpath, filename),
+        )
+    else:
+        cur = conn.execute(
+            f"""
+            UPDATE stored_files
+            SET end = ?
+            WHERE root_rel = ? AND dirpath = ? AND filename = ?
+              AND shasum <> ?
+              AND {_ACTIVE_STORED_FILES_WHERE}
+            """,
+            (now, root_rel, dirpath, filename, except_shasum),
+        )
+    return cur.rowcount
+
+
+def _dup_stored_filename(filename: str) -> str:
+    base, ext = os.path.splitext(filename)
+    return f"{base} DUP{ext}"
+
+
+def _unique_active_filename(
+    conn: sqlite3.Connection,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+) -> str:
+    """Return *filename*, or ``name DUP.ext`` (repeat) until no active collision."""
+    candidate = filename
+    while conn.execute(
+        f"""
+        SELECT 1 FROM stored_files
+        WHERE root_rel = ? AND dirpath = ? AND filename = ?
+          AND {_ACTIVE_STORED_FILES_WHERE}
+        LIMIT 1
+        """,
+        (root_rel, dirpath, candidate),
+    ).fetchone():
+        candidate = _dup_stored_filename(candidate)
+    return candidate
+
+
+def _insert_active_stored_row(
+    conn: sqlite3.Connection,
+    shasum: str,
+    root: str,
+    root_rel: str,
+    dirpath: str,
+    filename: str,
+    *,
+    start: str | None = None,
+) -> None:
+    now = start or rfc3339_now()
+    conn.execute(
+        """
+        INSERT INTO stored_files
+        (shasum, root, root_rel, dirpath, filename, deleted, start, end)
+        VALUES (?, ?, ?, ?, ?, 0, ?, NULL)
+        """,
+        (shasum, root, root_rel, dirpath, filename, now),
+    )
+
+
+def _split_stored_under_root_rel(root_rel: str, stored: str) -> tuple[str, str]:
+    """Return ``(dirpath, filename)`` for *stored* given fixed *root_rel*."""
+    st = os.path.normpath(stored)
+    rr = os.path.normpath(root_rel) if root_rel else ""
+    if rr and (st == rr or st.startswith(rr + os.sep)):
+        tail = "" if st == rr else st[len(rr) + 1 :]
+    else:
+        tail = st
+    if not tail:
+        return "", ""
+    if os.sep not in tail:
+        return "", tail
+    return os.path.dirname(tail), os.path.basename(tail)
+
+
+def _replace_stored_prefix(stored: str, old_prefix: str, new_prefix: str) -> str:
+    old_n = os.path.normpath(old_prefix)
+    new_n = os.path.normpath(new_prefix)
+    st = os.path.normpath(stored)
+    if st == old_n:
+        return new_n
+    sep = old_n + os.sep
+    if st.startswith(sep):
+        return os.path.normpath(new_n + st[len(old_n) :])
+    raise SystemExit(f"mv: stored path {stored!r} not under {old_prefix!r}")
+
+
+def _select_mv_rows(
+    rows: list[tuple[str, str, str, str, str]], old_query: str
+) -> tuple[list[tuple[str, str, str, str, str]], bool]:
+    """Return ``(matching rows, directory_mv)`` for a stored-path *old_query*."""
+    old_n = os.path.normpath(old_query)
+    prefix_matches = [
+        row
+        for row in rows
+        if (
+            (stored := _stored_path_from_parts(row[2], row[3], row[4])) == old_n
+            or stored.startswith(old_n + os.sep)
+        )
+    ]
+    if prefix_matches:
+        if len(prefix_matches) == 1:
+            stored = _stored_path_from_parts(
+                prefix_matches[0][2], prefix_matches[0][3], prefix_matches[0][4]
+            )
+            return prefix_matches, stored != old_n
+        return prefix_matches, True
+    exact = [
+        row
+        for row in rows
+        if _stored_path_from_parts(row[2], row[3], row[4]) == old_n
+    ]
+    if exact:
+        return exact, False
+    tail = [
+        row
+        for row in rows
+        if path_matches_ls_query(
+            _stored_path_from_parts(row[2], row[3], row[4]), old_n
+        )
+    ]
+    if not tail:
+        return [], False
+    if len(tail) == 1:
+        return tail, False
+    return tail, True
+
+
+def _upsert_active_stored_file(
+    conn: sqlite3.Connection,
+    digest: str,
+    abs_root: str,
+    root_rel: str,
+    rel_dir: str,
+    filename: str,
+    *,
+    shadir: str | None = None,
+) -> None:
+    """Insert or reactivate a stored_files row (start=now on insert, end=NULL)."""
+    if shadir is not None:
+        canonical = canonical_stored_path_parts(
+            shadir, abs_root, root_rel, rel_dir, filename
+        )
+        if canonical is not None:
+            abs_root, root_rel, rel_dir, filename = canonical
+        # else: classic store outside ${shadir}/files keeps ingest root;
+        # doctor normalizes rows that live under files/.
+    now = rfc3339_now()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO stored_files
+        (shasum, root, root_rel, dirpath, filename, deleted, start, end)
+        VALUES (?, ?, ?, ?, ?, 0, ?, NULL)
+        """,
+        (digest, abs_root, root_rel, rel_dir, filename, now),
+    )
+    conn.execute(
+        """
+        UPDATE stored_files
+        SET deleted = 0, end = NULL, root = ?
+        WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+        """,
+        (abs_root, digest, root_rel, rel_dir, filename),
+    )
+
+
 def init_db_schema(conn: sqlite3.Connection) -> None:
     """Create application tables and indexes if missing."""
     conn.execute(
@@ -745,14 +1113,19 @@ def init_db_schema(conn: sqlite3.Connection) -> None:
             root_rel TEXT NOT NULL,
             dirpath TEXT NOT NULL,
             filename TEXT NOT NULL,
-            deleted INTEGER NOT NULL DEFAULT 0
+            deleted INTEGER NOT NULL DEFAULT 0,
+            start TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+            end TEXT
         )
         """
     )
+    upgrade_stored_files_schema(conn)
+    upgrade_stored_files_unique_index(conn)
     conn.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_rel
+        CREATE UNIQUE INDEX IF NOT EXISTS stored_files_unique_active_rel
         ON stored_files(shasum, root_rel, dirpath, filename)
+        WHERE deleted = 0 AND end IS NULL
         """
     )
     conn.execute(
@@ -787,10 +1160,10 @@ def fetch_check_stats(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
     """Return cheap aggregates: active rows, distinct active hashes, deleted rows, total rows."""
     try:
         row = conn.execute(
-            """
+            f"""
             SELECT
-              SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END),
-              COUNT(DISTINCT CASE WHEN deleted = 0 THEN shasum END),
+              SUM(CASE WHEN {_ACTIVE_STORED_FILES_WHERE} THEN 1 ELSE 0 END),
+              COUNT(DISTINCT CASE WHEN {_ACTIVE_STORED_FILES_WHERE} THEN shasum END),
               SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END),
               COUNT(*)
             FROM stored_files
@@ -841,14 +1214,35 @@ def get_tags(conn: sqlite3.Connection, shasum: str) -> list[str]:
     return json.loads(row[0])
 
 
+def normalize_stored_tags(tags: list[str]) -> list[str]:
+    """Canonicalize ``type;value`` tags before DB storage (lowercase slugs)."""
+    import tag_classify as tc
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        t = tag.strip()
+        if not t:
+            continue
+        canon = tc.canonicalize_tag(t)
+        stored = canon if canon else t
+        if stored not in seen:
+            seen.add(stored)
+            out.append(stored)
+    return sorted(out)
+
+
 def set_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
     """Replace the tag list for a sha256 hash."""
+    normalized = normalize_stored_tags(tags)
     conn.execute(
         """
         INSERT INTO sha_tags (shasum, tags) VALUES (?, ?)
         ON CONFLICT(shasum) DO UPDATE SET tags = excluded.tags
         """,
-        (shasum, json.dumps(sorted(set(tags)))),
+        (shasum, json.dumps(normalized)),
     )
 
 
@@ -861,7 +1255,8 @@ def add_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
 def remove_tags(conn: sqlite3.Connection, shasum: str, tags: list[str]) -> None:
     """Remove tags from a sha256 hash (no-op for absent tags)."""
     current = get_tags(conn, shasum)
-    set_tags(conn, shasum, [t for t in current if t not in tags])
+    drop = set(normalize_stored_tags(tags))
+    set_tags(conn, shasum, [t for t in current if t not in drop])
 
 
 # ---------------------------------------------------------------------------
@@ -1051,7 +1446,7 @@ def resolve_files_root_abs(conn: sqlite3.Connection, shadir: str) -> str | None:
     for candidate in library_root_candidates(shadir):
         if os.path.isdir(candidate):
             hit = conn.execute(
-                "SELECT 1 FROM stored_files WHERE root = ? AND deleted = 0 LIMIT 1",
+                f"SELECT 1 FROM stored_files WHERE root = ? AND {_ACTIVE_STORED_FILES_WHERE} LIMIT 1",
                 (candidate,),
             ).fetchone()
             if hit:
@@ -1060,17 +1455,17 @@ def resolve_files_root_abs(conn: sqlite3.Connection, shadir: str) -> str | None:
     cwd_files = os.path.abspath(os.path.join(os.getcwd(), "files"))
     if os.path.isdir(cwd_files):
         hit = conn.execute(
-            "SELECT 1 FROM stored_files WHERE root = ? AND deleted = 0 LIMIT 1",
+            f"SELECT 1 FROM stored_files WHERE root = ? AND {_ACTIVE_STORED_FILES_WHERE} LIMIT 1",
             (cwd_files,),
         ).fetchone()
         if hit:
             return cwd_files
 
     roots = conn.execute(
-        """
+        f"""
         SELECT root, COUNT(*) AS n
         FROM stored_files
-        WHERE deleted = 0
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
         GROUP BY root
         ORDER BY n DESC
         """
@@ -1137,7 +1532,7 @@ def _stored_relpath_to_shasum(
     """Map ``dirpath/filename`` POSIX relpath under ``files_root`` → shasum."""
     out_map: dict[str, str] = {}
     for shasum, root, dirpath, filename in conn.execute(
-        "SELECT shasum, root, dirpath, filename FROM stored_files WHERE deleted = 0"
+        f"SELECT shasum, root, dirpath, filename FROM stored_files WHERE {_ACTIVE_STORED_FILES_WHERE}"
     ):
         if os.path.abspath(root) != files_root_abs:
             continue
@@ -1343,10 +1738,10 @@ def _fetch_extract_rows(
             "SELECT shasum, root, root_rel, dirpath, filename FROM stored_files"
         ).fetchall()
     return conn.execute(
-        """
+        f"""
         SELECT shasum, root, root_rel, dirpath, filename
         FROM stored_files
-        WHERE deleted = 0
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
         """
     ).fetchall()
 
@@ -1485,24 +1880,25 @@ def extract_from_db(
 
 def list_db_entries(
     conn: sqlite3.Connection, show_deleted: bool
-) -> list[tuple[str, str, bool]]:
-    """Return stored (path, shasum, deleted) entries as normalized relative paths."""
+) -> list[tuple[str, str, bool, str, str | None]]:
+    """Return stored (path, shasum, deleted, start, end) as normalized relative paths."""
     if show_deleted:
         rows = conn.execute(
-            "SELECT shasum, root_rel, dirpath, filename, deleted FROM stored_files"
+            "SELECT shasum, root_rel, dirpath, filename, deleted, start, end "
+            "FROM stored_files"
         ).fetchall()
     else:
         rows = conn.execute(
-            """
-            SELECT shasum, root_rel, dirpath, filename, deleted
+            f"""
+            SELECT shasum, root_rel, dirpath, filename, deleted, start, end
             FROM stored_files
-            WHERE deleted = 0
+            WHERE {_ACTIVE_STORED_FILES_WHERE}
             """
         ).fetchall()
-    entries: list[tuple[str, str, bool]] = []
-    for shasum, root_rel, dirpath, filename, deleted in rows:
+    entries: list[tuple[str, str, bool, str, str | None]] = []
+    for shasum, root_rel, dirpath, filename, deleted, start, end in rows:
         path = os.path.normpath(os.path.join(root_rel, dirpath, filename))
-        entries.append((path, shasum, bool(deleted)))
+        entries.append((path, shasum, bool(deleted), start, end))
     return entries
 
 
@@ -1555,8 +1951,8 @@ def _path_matches_ls_prefixes(list_path: str, prefixes: list[str]) -> bool:
 
 def list_children(
     conn: sqlite3.Connection, prefixes: list[str], recursive: bool, show_deleted: bool
-) -> list[tuple[str, str, bool]]:
-    """Return (path, shasum, deleted) entries under prefixes, optionally recursively."""
+) -> list[tuple[str, str, bool, str, str | None]]:
+    """Return (path, shasum, deleted, start, end) under prefixes, optionally recursively."""
     entries = list_db_entries(conn, show_deleted)
     if not prefixes:
         return sorted(set(entries))
@@ -1566,17 +1962,18 @@ def list_children(
         if os.path.isabs(prefix):
             continue
         normalized.append(os.path.normpath(prefix))
-    results: dict[str, tuple[str, bool]] = {}
-    for path, shasum, deleted in entries:
+    results: dict[str, tuple[str, bool, str, str | None]] = {}
+    for path, shasum, deleted, start, end in entries:
         for prefix in normalized:
             if path_matches_ls_query(path, prefix):
                 if recursive:
-                    results[path] = (shasum, deleted)
+                    results[path] = (shasum, deleted, start, end)
                     break
-                results[path] = (shasum, deleted)
+                results[path] = (shasum, deleted, start, end)
                 break
     return sorted(
-        (path, shasum, deleted) for path, (shasum, deleted) in results.items()
+        (path, shasum, deleted, start, end)
+        for path, (shasum, deleted, start, end) in results.items()
     )
 
 
@@ -1676,10 +2073,10 @@ def _lookup_db_hash(
     conn: sqlite3.Connection, root_rel: str, rel_dir: str, filename: str
 ) -> str | None:
     row = conn.execute(
-        """
+        f"""
         SELECT shasum
         FROM stored_files
-        WHERE root_rel = ? AND dirpath = ? AND filename = ? AND deleted = 0
+        WHERE root_rel = ? AND dirpath = ? AND filename = ? AND {_ACTIVE_STORED_FILES_WHERE}
         ORDER BY rowid DESC
         LIMIT 1
         """,
@@ -1698,30 +2095,20 @@ def _set_fixed_link_in_db(
     root_rel: str,
     rel_dir: str,
     filename: str,
+    *,
+    shadir: str,
 ) -> None:
     conn.execute(
-        """
+        f"""
         UPDATE stored_files
         SET deleted = 1
-        WHERE root_rel = ? AND dirpath = ? AND filename = ? AND shasum <> ? AND deleted = 0
+        WHERE root_rel = ? AND dirpath = ? AND filename = ? AND shasum <> ?
+          AND {_ACTIVE_STORED_FILES_WHERE}
         """,
         (root_rel, rel_dir, filename, digest),
     )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO stored_files
-        (shasum, root, root_rel, dirpath, filename, deleted)
-        VALUES (?, ?, ?, ?, ?, 0)
-        """,
-        (digest, abs_root, root_rel, rel_dir, filename),
-    )
-    conn.execute(
-        """
-        UPDATE stored_files
-        SET deleted = 0
-        WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
-        """,
-        (digest, root_rel, rel_dir, filename),
+    _upsert_active_stored_file(
+        conn, digest, abs_root, root_rel, rel_dir, filename, shadir=shadir
     )
 
 
@@ -1816,7 +2203,9 @@ def handle_fixlinks(
 
             os.unlink(link_path)
             os.symlink(os.path.abspath(canonical_target), link_path)
-            _set_fixed_link_in_db(conn, digest, db_root, root_rel, rel_dir, filename)
+            _set_fixed_link_in_db(
+                conn, digest, db_root, root_rel, rel_dir, filename, shadir=shadir
+            )
             fixed += 1
             out("fixed {path} -> {target}", 1, path=link_path, target=canonical_target)
 
@@ -1845,24 +2234,13 @@ def _record_stored_file(
     filename: str,
     dest: str,
     existed_already: bool,
+    *,
+    shadir: str,
 ) -> None:
     verb = "linked" if existed_already else "stored"
     out("{verb} {path} -> {dest}", 1, verb=verb, path=filename, dest=dest)
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO stored_files
-        (shasum, root, root_rel, dirpath, filename, deleted)
-        VALUES (?, ?, ?, ?, ?, 0)
-        """,
-        (digest, abs_root, root_rel, rel_dir, filename),
-    )
-    conn.execute(
-        """
-        UPDATE stored_files
-        SET deleted = 0
-        WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
-        """,
-        (digest, root_rel, rel_dir, filename),
+    _upsert_active_stored_file(
+        conn, digest, abs_root, root_rel, rel_dir, filename, shadir=shadir
     )
 
 
@@ -1900,6 +2278,7 @@ def handle_store(
                 filename,
                 dest,
                 existed_already,
+                shadir=shadir,
             )
             if existed_already:
                 skipped_bytes += size
@@ -1930,6 +2309,7 @@ def handle_store(
                 filename,
                 dest,
                 existed_already,
+                shadir=shadir,
             )
             if existed_already:
                 skipped_bytes += size
@@ -1961,11 +2341,11 @@ def handle_dedup(
         rel_dir = os.path.relpath(os.path.dirname(path), abs_root)
         filename = os.path.basename(path)
         dup_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM stored_files
             WHERE shasum = ?
-              AND deleted = 0
+              AND {_ACTIVE_STORED_FILES_WHERE}
               AND NOT (root_rel = ? AND dirpath = ? AND filename = ?)
             """,
             (digest, root_rel, rel_dir, filename),
@@ -2024,7 +2404,7 @@ def handle_ls(
             return
 
         cwd = os.getcwd()
-        file_entries: list[tuple[str, str, bool]] = []
+        file_entries: list[tuple[str, str, bool, str, str | None]] = []
         dir_prefixes: list[str] = []
         for p in normalized:
             abs_p = os.path.normpath(os.path.join(cwd, p))
@@ -2045,20 +2425,20 @@ def handle_ls(
                 else:
                     dir_prefixes.append(p)
 
-        seen_paths: dict[str, tuple[str, bool]] = {}
-        for path, shasum, deleted in file_entries:
-            seen_paths[path] = (shasum, deleted)
-        tagged: list[tuple[str, str, list[str], bool]] = [
-            (path, shasum, sorted(get_tags(conn, shasum)), deleted)
-            for path, (shasum, deleted) in sorted(seen_paths.items())
+        seen_paths: dict[str, tuple[str, bool, str, str | None]] = {}
+        for path, shasum, deleted, start, end in file_entries:
+            seen_paths[path] = (shasum, deleted, start, end)
+        tagged: list[tuple[str, str, list[str], bool, str, str | None]] = [
+            (path, shasum, sorted(get_tags(conn, shasum)), deleted, start, end)
+            for path, (shasum, deleted, start, end) in sorted(seen_paths.items())
         ]
         if mindup > 1 and tagged:
             grouped: dict[str, list[str]] = {}
-            for path, shasum, _tags, _deleted in tagged:
+            for path, shasum, _tags, _deleted, _start, _end in tagged:
                 grouped.setdefault(shasum, []).append(path)
             dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
             dir_counts: dict[str, int] = {}
-            for path, shasum, _tags, _deleted in tagged:
+            for path, shasum, _tags, _deleted, _start, _end in tagged:
                 if shasum not in dup_shasums:
                     continue
                 dirpath = os.path.dirname(path)
@@ -2080,16 +2460,16 @@ def handle_ls(
         conn, prefixes, recursive=recursive, show_deleted=show_deleted
     )
     tagged = [
-        (path, shasum, sorted(get_tags(conn, shasum)), deleted)
-        for path, shasum, deleted in entries
+        (path, shasum, sorted(get_tags(conn, shasum)), deleted, start, end)
+        for path, shasum, deleted, start, end in entries
     ]
     if mindup > 1 and tagged:
         grouped: dict[str, list[str]] = {}
-        for path, shasum, _tags, _deleted in tagged:
+        for path, shasum, _tags, _deleted, _start, _end in tagged:
             grouped.setdefault(shasum, []).append(path)
         dup_shasums = {shasum for shasum, paths in grouped.items() if len(paths) > 1}
         dir_counts: dict[str, int] = {}
-        for path, shasum, _tags, _deleted in tagged:
+        for path, shasum, _tags, _deleted, _start, _end in tagged:
             if shasum not in dup_shasums:
                 continue
             dirpath = os.path.dirname(path)
@@ -2124,7 +2504,7 @@ def handle_lshash(
         return
     if mindup > 1:
         counts: dict[str, int] = {}
-        for _path, shasum, _deleted in entries:
+        for _path, shasum, _deleted, _start, _end in entries:
             counts[shasum] = counts.get(shasum, 0) + 1
         entries = [e for e in entries if counts[e[1]] >= mindup]
         if not entries:
@@ -2138,10 +2518,10 @@ def handle_lshash(
             tag_cache[shasum] = cached
         return cached
 
-    tagged: list[tuple[str, str, list[str], bool]] = sorted(
+    tagged: list[tuple[str, str, list[str], bool, str, str | None]] = sorted(
         (
-            (shasum, path, _tags(shasum), deleted)
-            for path, shasum, deleted in entries
+            (shasum, path, _tags(shasum), deleted, start, end)
+            for path, shasum, deleted, start, end in entries
         ),
         key=lambda row: (row[0], row[1]),
     )
@@ -2183,10 +2563,10 @@ def delete_from_db(
         ).fetchall()
     else:
         rows = conn.execute(
-            """
+            f"""
             SELECT shasum, root_rel, dirpath, filename
             FROM stored_files
-            WHERE deleted = 0
+            WHERE {_ACTIVE_STORED_FILES_WHERE}
             """
         ).fetchall()
 
@@ -2281,6 +2661,325 @@ def handle_rmhash(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> 
     out("deleted entries: {deleted}", 0, deleted=deleted)
 
 
+def handle_mv(
+    conn: sqlite3.Connection,
+    old_arg: str,
+    new_arg: str,
+    shadir: str,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Rename on disk and close/open ``stored_files`` rows with end/start timestamps."""
+    active = _fetch_active_stored_rows(conn)
+    matched, directory_mv = _select_mv_rows(active, old_arg)
+    if not matched:
+        raise SystemExit(f"mv: no active stored path matches {old_arg!r}")
+
+    roots = {os.path.abspath(row[1]) for row in matched}
+    if len(roots) != 1:
+        raise SystemExit("mv: matched rows span multiple store roots")
+    root = matched[0][1]
+    root_abs = os.path.abspath(root)
+    old_prefix = os.path.normpath(old_arg)
+    new_prefix = os.path.normpath(new_arg)
+
+    if directory_mv:
+        old_abs = os.path.join(root_abs, old_prefix)
+        new_abs = os.path.join(root_abs, new_prefix)
+    else:
+        row = matched[0]
+        old_abs = _physical_path_from_parts(root, row[3], row[4])
+        new_stored = _replace_stored_prefix(
+            _stored_path_from_parts(row[2], row[3], row[4]), old_prefix, new_prefix
+        )
+        new_dirpath, new_filename = _split_stored_under_root_rel(row[2], new_stored)
+        new_abs = _physical_path_from_parts(root, new_dirpath, new_filename)
+
+    if not os.path.lexists(old_abs):
+        raise SystemExit(f"mv: source not found on disk: {old_abs}")
+    if directory_mv and os.path.lexists(new_abs):
+        raise SystemExit(f"mv: target already exists: {new_abs}")
+
+    when = rfc3339_now()
+    out(
+        "mv {old} -> {new} ({n} row(s), dir={directory})",
+        1,
+        old=old_abs,
+        new=new_abs,
+        n=len(matched),
+        directory=directory_mv,
+    )
+    if dry_run:
+        for row in matched:
+            stored = _stored_path_from_parts(row[2], row[3], row[4])
+            new_stored = _replace_stored_prefix(stored, old_prefix, new_prefix)
+            new_dirpath, new_filename = _split_stored_under_root_rel(row[2], new_stored)
+            out(
+                "dry-run db {stored} -> {new_stored}",
+                1,
+                stored=stored,
+                new_stored=new_stored,
+            )
+            out(
+                "dry-run row dirpath={dirpath} filename={filename}",
+                2,
+                dirpath=new_dirpath,
+                filename=new_filename,
+            )
+        return
+
+    os.rename(old_abs, new_abs)
+    for row in matched:
+        shasum, store_root, root_rel, dirpath, filename = row
+        stored = _stored_path_from_parts(root_rel, dirpath, filename)
+        new_stored = _replace_stored_prefix(stored, old_prefix, new_prefix)
+        new_dirpath, new_filename = _split_stored_under_root_rel(root_rel, new_stored)
+        _end_date_active_row(
+            conn, shasum, root_rel, dirpath, filename, when=when
+        )
+        _end_active_rows_at_path(
+            conn,
+            root_rel,
+            new_dirpath,
+            new_filename,
+            when=when,
+            except_shasum=shasum,
+        )
+        _insert_active_stored_row(
+            conn,
+            shasum,
+            store_root,
+            root_rel,
+            new_dirpath,
+            new_filename,
+            start=when,
+        )
+    out("mv updated rows: {count}", 0, count=len(matched))
+
+
+def _doctor_sample_rowids(rowids: list[int], ratio: float) -> set[int]:
+    """Return a random subset of *rowids* sized ``round(n * ratio)`` (clamped)."""
+    n = len(rowids)
+    if n == 0 or ratio <= 0:
+        return set()
+    if ratio >= 1:
+        return set(rowids)
+    k = min(n, int(round(n * ratio)))
+    if k <= 0:
+        return set()
+    return set(random.sample(rowids, k))
+
+
+def _doctor_rdf(root: str, dirpath: str, filename: str) -> str:
+    """Format ``(root, dirpath, filename)`` for doctor action lines."""
+    return f"({root!r}, {dirpath!r}, {filename!r})"
+
+
+def handle_doctor(
+    conn: sqlite3.Connection,
+    shadir: str,
+    *,
+    dry_run: bool = False,
+    verbose_ratio: float = 0.01,
+) -> int:
+    """Normalize ``stored_files.root`` to ``${shadir}/files`` and dedupe active paths."""
+    files_root = canonical_files_root(shadir)
+    when = rfc3339_now()
+    raw_rows = conn.execute(
+        f"""
+        SELECT rowid, shasum, root, root_rel, dirpath, filename, start
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        ORDER BY rowid
+        """
+    ).fetchall()
+
+    planned: list[dict] = []
+    unfixable = 0
+    actions_by_rowid: dict[int, list[str]] = defaultdict(list)
+    for rowid, shasum, root, root_rel, dirpath, filename, start in raw_rows:
+        canonical = canonical_stored_path_parts(
+            shadir, root, root_rel, dirpath, filename
+        )
+        if canonical is None:
+            unfixable += 1
+            # Always surface unfixable rows (errors), not sampled.
+            out(
+                "doctor unfixable root={root} path={dirpath}/{filename}",
+                0,
+                kind="data",
+                root=root,
+                dirpath=dirpath,
+                filename=filename,
+            )
+            continue
+        nroot, nrr, ndp, nfn = canonical
+        planned.append(
+            {
+                "rowid": rowid,
+                "shasum": shasum,
+                "root": nroot,
+                "root_rel": nrr,
+                "dirpath": ndp,
+                "filename": nfn,
+                "start": start or PATH_EFFECTIVE_EPOCH,
+                "orig_root": root,
+                "orig_root_rel": root_rel,
+                "orig_dirpath": dirpath,
+                "orig_filename": filename,
+            }
+        )
+
+    # Drop duplicate rows for the same canonical path + shasum (keep earliest start).
+    by_sha_path: dict[tuple, list[dict]] = {}
+    for item in planned:
+        key = (
+            item["root"],
+            item["root_rel"],
+            item["dirpath"],
+            item["filename"],
+            item["shasum"],
+        )
+        by_sha_path.setdefault(key, []).append(item)
+
+    survivors: list[dict] = []
+    end_rowids: list[int] = []
+    for group in by_sha_path.values():
+        group.sort(key=lambda x: (x["start"], x["rowid"]))
+        keep = group[0]
+        survivors.append(keep)
+        for dup in group[1:]:
+            end_rowids.append(dup["rowid"])
+            before = _doctor_rdf(
+                dup["orig_root"], dup["orig_dirpath"], dup["orig_filename"]
+            )
+            after = _doctor_rdf(dup["root"], dup["dirpath"], dup["filename"])
+            actions_by_rowid[dup["rowid"]].append(
+                f"end duplicate sha={dup['shasum'][:8]} "
+                f"before={before} end=NULL "
+                f"after={after} end={when} "
+                f"(kept rowid={keep['rowid']})"
+            )
+
+    # Resolve different shas at the same canonical path (DUP newer; else smaller sha).
+    by_path: dict[tuple, list[dict]] = {}
+    for item in survivors:
+        key = (item["root"], item["root_rel"], item["dirpath"], item["filename"])
+        by_path.setdefault(key, []).append(item)
+
+    updates: dict[int, dict] = {
+        item["rowid"]: {
+            "root": item["root"],
+            "root_rel": item["root_rel"],
+            "dirpath": item["dirpath"],
+            "filename": item["filename"],
+        }
+        for item in survivors
+    }
+
+    for path_key, group in by_path.items():
+        if len(group) <= 1:
+            continue
+        group.sort(key=lambda x: (x["start"], x["shasum"]))
+        _root, _rr, dp, fn = path_key
+        reserved = {fn}
+        for loser in group[1:]:
+            candidate = _dup_stored_filename(fn)
+            while candidate in reserved or conn.execute(
+                f"""
+                SELECT 1 FROM stored_files
+                WHERE root_rel = ? AND dirpath = ? AND filename = ?
+                  AND {_ACTIVE_STORED_FILES_WHERE}
+                  AND rowid <> ?
+                LIMIT 1
+                """,
+                (_rr, dp, candidate, loser["rowid"]),
+            ).fetchone():
+                candidate = _dup_stored_filename(candidate)
+            reserved.add(candidate)
+            updates[loser["rowid"]]["filename"] = candidate
+            actions_by_rowid[loser["rowid"]].append(
+                f"DUP sha={loser['shasum'][:8]} {dp}/{fn} -> {candidate}"
+            )
+
+    fixups = 0
+    for rowid in end_rowids:
+        fixups += 1
+        if dry_run:
+            continue
+        row = conn.execute(
+            """
+            SELECT shasum, root_rel, dirpath, filename
+            FROM stored_files WHERE rowid = ?
+            """,
+            (rowid,),
+        ).fetchone()
+        if row:
+            _end_date_active_row(conn, row[0], row[1], row[2], row[3], when=when)
+
+    for item in survivors:
+        target = updates[item["rowid"]]
+        changed = (
+            item["orig_root"] != target["root"]
+            or item["orig_root_rel"] != target["root_rel"]
+            or item["orig_dirpath"] != target["dirpath"]
+            or item["orig_filename"] != target["filename"]
+        )
+        if not changed:
+            continue
+        fixups += 1
+        before = _doctor_rdf(
+            item["orig_root"], item["orig_dirpath"], item["orig_filename"]
+        )
+        after = _doctor_rdf(
+            target["root"], target["dirpath"], target["filename"]
+        )
+        actions_by_rowid[item["rowid"]].append(f"normalize {before} -> {after}")
+        if dry_run:
+            continue
+        conn.execute(
+            """
+            UPDATE stored_files
+            SET root = ?, root_rel = ?, dirpath = ?, filename = ?
+            WHERE rowid = ?
+            """,
+            (
+                target["root"],
+                target["root_rel"],
+                target["dirpath"],
+                target["filename"],
+                item["rowid"],
+            ),
+        )
+
+    touched = sorted(actions_by_rowid)
+    selected = _doctor_sample_rowids(touched, verbose_ratio)
+    out(
+        "doctor sample {shown}/{touched} fixup rows (ratio={ratio})",
+        0,
+        kind="data",
+        shown=len(selected),
+        touched=len(touched),
+        ratio=verbose_ratio,
+    )
+    for rowid in sorted(selected):
+        out("doctor rowid={rowid}", 0, kind="data", rowid=rowid)
+        for action in actions_by_rowid[rowid]:
+            out("  {action}", 0, kind="data", action=action)
+
+    out(
+        "doctor fixups={fixups} unfixable={unfixable} files_root={files_root}",
+        0,
+        kind="data",
+        fixups=fixups,
+        unfixable=unfixable,
+        files_root=files_root,
+    )
+    if dry_run:
+        out("doctor dry-run: no changes written", 0, kind="data")
+    return 1 if unfixable else 0
+
+
 def handle_reindex_files(
     conn: sqlite3.Connection, shadir: str, files_root: str, skip_dotfiles: bool
 ) -> None:
@@ -2332,21 +3031,8 @@ def handle_reindex_files(
             rel_dir = os.path.relpath(os.path.dirname(link_path), abs_files_root)
             if rel_dir == ".":
                 rel_dir = ""
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO stored_files
-                (shasum, root, root_rel, dirpath, filename, deleted)
-                VALUES (?, ?, ?, ?, ?, 0)
-                """,
-                (digest, abs_files_root, root_rel, rel_dir, name),
-            )
-            conn.execute(
-                """
-                UPDATE stored_files
-                SET deleted = 0
-                WHERE shasum = ? AND root_rel = ? AND dirpath = ? AND filename = ?
-                """,
-                (digest, root_rel, rel_dir, name),
+            _upsert_active_stored_file(
+                conn, digest, abs_files_root, root_rel, rel_dir, name, shadir=shadir
             )
             indexed += 1
     out("reindexed symlinks scanned: {count}", 0, count=scanned)
@@ -2520,6 +3206,16 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             paranoia=args.paranoia,
         )
         return 0
+    if action == "mv":
+        handle_mv(conn, args.old, args.new, shadir, dry_run=args.dry_run)
+        return 0
+    if action == "doctor":
+        return handle_doctor(
+            conn,
+            shadir,
+            dry_run=args.dry_run,
+            verbose_ratio=args.verbose_ratio,
+        )
     if action == "reindex-files":
         if args.dir is None:
             resolved = resolve_files_root_abs(conn, shadir)

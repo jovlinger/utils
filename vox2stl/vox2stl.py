@@ -42,7 +42,6 @@ from constants import (
     DEFAULT_HOLE_OVAL_MINOR_FRAC,
     DEFAULT_HOLE_OVAL_Z_FRACS,
     HOLE_VOID_GRID_DIVISOR,
-    TILE_CACHE_GEOMETRY_REVISION,
     DEFAULT_ISOL_LIG_FRAC,
     DEFAULT_ISOL_LIG_MM,
     DEFAULT_LABEL_BLUR_PASSES,
@@ -77,11 +76,12 @@ from constants import (
     PIN_PAD_CHAR,
     SHORTHAND_DIRECT_CHARS,
     TILE_CACHE_PATH,
+    is_vox_meta_line,
     parse_alias_line,
     parse_layer_header,
     UNIT_RE,
 )
-from voxconf import VoxProfile, load_config
+from voxconf import VoxProfile, conf_profile_hash, load_config
 from letter_mesh import generate_letter_tile_triangles
 
 Vec3 = Tuple[float, float, float]
@@ -163,9 +163,10 @@ class RenderConfig:
     origin_x_mm: float = 0.0
     origin_y_mm: float = 0.0
     include_pads: bool = True
+    conf_name: str = "default"
 
 
-def render_config_from_profile(profile: VoxProfile) -> RenderConfig:
+def render_config_from_profile(profile: VoxProfile, *, conf_name: str = "default") -> RenderConfig:
     return RenderConfig(
         unit_mm=profile.unit_mm,
         trace_width_mm=profile.trace_width_mm,
@@ -191,6 +192,7 @@ def render_config_from_profile(profile: VoxProfile) -> RenderConfig:
         trace_z0_mm=profile.resolved_trace_z0_mm,
         trace_z1_mm=profile.resolved_trace_z1_mm,
         grid_mm=profile.grid_mm,
+        conf_name=conf_name,
     )
 
 
@@ -348,12 +350,10 @@ def read_layers(path: Path) -> Dict[str, Layer]:
 
     for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw_line.rstrip("\n")
-        stripped_line = line.strip()
-        if not stripped_line or stripped_line.startswith("#"):
-            continue
-        alias = parse_alias_line(line.strip())
-        if alias is not None:
-            aliases[alias.source] = alias.target
+        if is_vox_meta_line(line):
+            alias = parse_alias_line(line.strip())
+            if alias is not None:
+                aliases[alias.source] = alias.target
             continue
         header = parse_layer_header(line)
         if header is not None:
@@ -478,7 +478,7 @@ def square_box(cx: float, cy: float, width: float, z0: float, z1: float) -> BoxS
 
 
 def is_label_char(char: str) -> bool:
-    return "a" <= char <= "z"
+    return ("a" <= char <= "z") or ("0" <= char <= "9")
 
 
 def write_binary_stl(path: Path, triangles: Sequence[Tri], name: str = "tile") -> None:
@@ -552,12 +552,19 @@ _LETTER_TILE_CACHE: Dict[str, List[Tri]] = {}
 _LETTER_FOOTPRINT_CACHE: Dict[str, List[LetterFootprintBox]] = {}
 
 
+def label_tile_key(letter: str) -> str:
+    """Canonical on-disk / cache key: digits stay digits; letters go uppercase."""
+    if "0" <= letter <= "9":
+        return letter
+    return letter.upper()
+
+
 def letter_tile_path(letter: str) -> Path:
-    return LETTER_TILES_DIR / f"{letter.upper()}.stl"
+    return LETTER_TILES_DIR / f"{label_tile_key(letter)}.stl"
 
 
 def load_letter_tile(letter: str) -> List[Tri]:
-    key = letter.upper()
+    key = label_tile_key(letter)
     cached = _LETTER_TILE_CACHE.get(key)
     if cached is not None:
         return cached
@@ -577,7 +584,7 @@ def letter_xy_scale(config: RenderConfig) -> float:
 
 
 def letter_tile_footprint_boxes(letter: str, *, label_height_frac: float = DEFAULT_LABEL_HEIGHT_FRAC) -> List[LetterFootprintBox]:
-    key = letter.upper()
+    key = label_tile_key(letter)
     cached = _LETTER_FOOTPRINT_CACHE.get(key)
     if cached is not None:
         return cached
@@ -665,39 +672,11 @@ def letter_tris(cx: float, cy: float, char: str, config: RenderConfig) -> List[T
 
 _PERSISTENT_TILE_CACHE: Optional[TileCache] = None
 _PERSISTENT_TILE_CACHE_DIRTY = False
-_RUNTIME_TILE_CACHES: Dict[Tuple[float, ...], TileCache] = {}
-TILE_CACHE_SIGNATURE_KEY = "__tile_cache_signature__"
+TILE_CACHE_CONF_HASH_KEY = "__tile_cache_conf_hash__"
 
 
 def negative_base_letter_cache_key(char: str) -> NegativeBaseLetterKey:
     return (NEGATIVE_BASE_LETTER_CACHE_TAG, char)
-
-
-def tile_cache_signature(config: RenderConfig) -> Tuple[float, ...]:
-    return (
-        round(config.unit_mm, 9),
-        round(config.trace_width_mm, 9),
-        round(config.pad_width_mm, 9),
-        round(config.device_pad_width_mm, 9),
-        round(config.pin_hole_diameter_mm, 9),
-        round(config.device_hole_diameter_mm, 9),
-        round(config.base_z0_mm, 9),
-        round(config.base_z1_mm, 9),
-        round(config.trace_z0_mm, 9),
-        round(config.trace_z1_mm, 9),
-        round(config.grid_mm, 9),
-        round(config.cond_lig_mm, 9),
-        round(config.isol_lig_mm, 9),
-        round(config.label_recess_mm, 9),
-        round(config.label_height_mm, 9),
-        float(config.include_pads),
-        float(TILE_CACHE_GEOMETRY_REVISION),
-    )
-
-
-def persistent_tile_cache_enabled(config: RenderConfig) -> bool:
-    default = RenderConfig()
-    return tile_cache_signature(config) == tile_cache_signature(default)
 
 
 def load_persistent_tile_cache() -> TileCache:
@@ -741,79 +720,14 @@ def flush_persistent_tile_cache() -> None:
 
 atexit.register(flush_persistent_tile_cache)
 
-VOX2STL_PACKAGE_DIR = Path(__file__).resolve().parent
 
-DEFAULT_TILE_CACHE_WARMUP_SOURCES: Tuple[Path, ...] = (
-    VOX2STL_PACKAGE_DIR / "testdata" / "straight.vox",
-    VOX2STL_PACKAGE_DIR / "testdata" / "box_glyphs.vox",
-    VOX2STL_PACKAGE_DIR.parent / "thermo" / "onboard" / "hardware" / "pico2w" / "hat" / "up-side.vox",
-)
-
-
-def warm_tile_cache_from_vox(path: Path, config: RenderConfig) -> None:
-    report_progress(f"Warming tile cache from {path}...")
-    layers = read_layers(path)
-    base_layer = layers.get("base")
-    trace_layer = layers.get("trace")
-    if base_layer is not None and trace_layer is not None:
-        full_mesh_from_layers(base_layer, trace_layer, config)
+def ensure_tile_cache_conf_hash(cache: TileCache, config: RenderConfig) -> None:
+    expected_hash = conf_profile_hash(config.conf_name)
+    if cache.get(TILE_CACHE_CONF_HASH_KEY) == expected_hash:
         return
-    if trace_layer is not None:
-        build_layer_mesh(trace_layer, config)
-        return
-    raise ValueError(f"{path}: missing trace layer")
-
-
-def verify_persistent_tile_cache(path: Path = TILE_CACHE_PATH) -> int:
-    with gzip.open(path, "rb") as file_obj:
-        cache = pickle.load(file_obj)
-    if not isinstance(cache, dict):
-        raise ValueError(f"{path}: tile cache is not a dictionary")
-    if TILE_CACHE_SIGNATURE_KEY not in cache:
-        raise ValueError(f"{path}: tile cache is missing signature key")
-    return len(cache)
-
-
-def warm_persistent_tile_cache(
-    sources: Optional[Sequence[Path]] = None,
-    *,
-    profile_name: str = "default",
-) -> Tuple[Path, int, Tuple[float, ...]]:
-    """Rebuild the on-disk ligature tile cache for one geometry profile."""
-
-    profile = load_config(profile_name)
-    config = render_config_from_profile(profile)
-    warmup_sources = tuple(sources) if sources is not None else DEFAULT_TILE_CACHE_WARMUP_SOURCES
-    missing = [path for path in warmup_sources if not path.is_file()]
-    if missing:
-        missing_list = ", ".join(str(path) for path in missing)
-        raise ValueError(f"missing warmup source(s): {missing_list}")
-
-    global _PERSISTENT_TILE_CACHE, _PERSISTENT_TILE_CACHE_DIRTY
-    if TILE_CACHE_PATH.is_file():
-        TILE_CACHE_PATH.unlink()
-    signature = tile_cache_signature(config)
-    warm_cache: TileCache = {TILE_CACHE_SIGNATURE_KEY: signature}
-    _PERSISTENT_TILE_CACHE = warm_cache
-    _PERSISTENT_TILE_CACHE_DIRTY = False
-
-    def warming_tile_cache_for_config(cfg: RenderConfig) -> Tuple[TileCache, bool]:
-        if tile_cache_signature(cfg) != signature:
-            raise ValueError("warmup geometry does not match the selected profile")
-        seed_pre_rendered_letters(warm_cache, cfg)
-        return warm_cache, True
-
-    original_tile_cache_for_config = tile_cache_for_config
-    try:
-        globals()["tile_cache_for_config"] = warming_tile_cache_for_config
-        for path in warmup_sources:
-            warm_tile_cache_from_vox(path, config)
-    finally:
-        globals()["tile_cache_for_config"] = original_tile_cache_for_config
-
-    flush_persistent_tile_cache()
-    key_count = verify_persistent_tile_cache(TILE_CACHE_PATH)
-    return TILE_CACHE_PATH, key_count, signature
+    cache.clear()
+    cache[TILE_CACHE_CONF_HASH_KEY] = expected_hash
+    mark_persistent_tile_cache_dirty()
 
 
 def format_tile_cache_key(key: TileCacheKey) -> str:
@@ -829,29 +743,9 @@ def report_tile_cache_miss(key: TileCacheKey) -> None:
 
 
 def tile_cache_for_config(config: RenderConfig) -> Tuple[TileCache, bool]:
-    if persistent_tile_cache_enabled(config):
-        cache = load_persistent_tile_cache()
-        signature = tile_cache_signature(config)
-        if cache.get(TILE_CACHE_SIGNATURE_KEY) != signature:
-            cache.clear()
-            cache[TILE_CACHE_SIGNATURE_KEY] = signature
-        seed_pre_rendered_letters(cache, config)
-        return cache, True
-    signature = tile_cache_signature(config)
-    return _RUNTIME_TILE_CACHES.setdefault(signature, {}), False
-
-
-def seed_pre_rendered_letters(cache: TileCache, config: RenderConfig) -> None:
-    dirty = False
-    for letter in "abcdefghijklmnopqrstuvwxyz":
-        if letter in cache:
-            continue
-        report_tile_cache_miss(letter)
-        template = load_letter_tile(letter)
-        cache[letter] = place_letter_tris(template, 0.0, 0.0, config)
-        dirty = True
-    if dirty:
-        mark_persistent_tile_cache_dirty()
+    cache = load_persistent_tile_cache()
+    ensure_tile_cache_conf_hash(cache, config)
+    return cache, True
 
 
 def translate_tris(tris: Sequence[Tri], dx: float, dy: float) -> List[Tri]:
@@ -1696,7 +1590,7 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _cli_render_config(args: argparse.Namespace, file_unit: Optional[float]) -> RenderConfig:
     profile = load_config(args.conf)
-    config = render_config_from_profile(profile)
+    config = render_config_from_profile(profile, conf_name=args.conf)
     overrides: Dict[str, float] = {}
     if args.unit_mm is not None:
         overrides["unit_mm"] = args.unit_mm
@@ -1734,8 +1628,8 @@ def _cli_render_config(args: argparse.Namespace, file_unit: Optional[float]) -> 
     if trace_z0_mm is not None:
         overrides["trace_z0_mm"] = trace_z0_mm
     if args.no_pads:
-        return replace(config, include_pads=False, **overrides)
-    return replace(config, **overrides)
+        return replace(config, include_pads=False, conf_name=args.conf, **overrides)
+    return replace(config, conf_name=args.conf, **overrides)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

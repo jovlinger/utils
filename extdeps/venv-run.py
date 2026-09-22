@@ -14,12 +14,18 @@ When the kernel runs a script with that shebang, it invokes
    file).
 2. Walks up from the real script's directory looking for a virtualenv
    directory (``.venv``, ``venv``, or ``env`` - first match wins per level).
-3. Sets ``VIRTUAL_ENV`` + prepends ``<venv>/bin`` to ``PATH`` and exec's
+3. If none is found but a ``requirements.txt`` exists walking up, creates the
+   venv automatically next to the nearest one (reusing an existing ``.venv``/
+   ``venv``/``env`` marker directory's name when that directory is already
+   there, since repos commit a marker-only ``.venv/README.md`` -- generated
+   contents are gitignored -- specifically so a fresh checkout still knows
+   where the venv belongs) and installs ``requirements.txt`` into it. A
+   missing venv with no ``requirements.txt`` anywhere above still falls back
+   to pointing at the nearest ``setup-venv.sh`` (or ``setup-venv``).
+4. Sets ``VIRTUAL_ENV`` + prepends ``<venv>/bin`` to ``PATH`` and exec's
    the venv's ``python`` on a tiny launcher (``venv-run-launch.py``) that
    runs the script via ``runpy`` and prints hints if a dependency is missing
-   (``ModuleNotFoundError``). Both that case and a missing venv point at the
-   nearest ``setup-venv.sh`` (or ``setup-venv``) found walking up from the
-   script, same as this repo's ``setup-venv.sh`` helpers.
+   (``ModuleNotFoundError``).
 
 This replaces the older ``pylauncher.sh`` scheme. The key difference: the
 ``.py`` file is now self-contained (shebang declares its runtime), so
@@ -35,6 +41,7 @@ Tests live in ``tests/test_venv_run.py``.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from typing import Iterable, List, Optional
 
@@ -43,6 +50,19 @@ from typing import Iterable, List, Optional
 #: First match per level wins; ``.venv`` is preferred because that's the
 #: convention in this repo.
 VENV_NAMES: tuple = (".venv", "venv", "env")
+
+#: Marker committed in place of a venv's contents (see ``create_venv``): only
+#: this file is meant to be tracked in git, so a fresh checkout still knows
+#: where the venv belongs even though the generated contents are gitignored.
+_MARKER_README = """\
+# Project virtualenv marker
+
+This directory marks where the project-local Python virtualenv belongs.
+The launcher searches upward for the nearest .venv, venv, or env directory.
+
+Only this README is meant to be committed; the generated virtualenv contents
+stay local to the machine.
+"""
 
 #: Filenames to look for when suggesting how to create/sync a venv (nearest
 #: ancestor of the script wins, same walk as ``requirements.txt``).
@@ -110,6 +130,58 @@ def find_nearest_setup_venv(start_dir: str) -> Optional[str]:
         d = parent
 
 
+def find_venv_creation_target(start_dir: str) -> Optional[str]:
+    """Return where a new venv belongs, or ``None`` if there is nothing to create.
+
+    Walks up for the nearest ``requirements.txt`` (same as
+    ``find_nearest_requirements_txt``): its directory is "closest to the
+    python program" being run, so that is where the venv goes. If that
+    directory already has a ``.venv``/``venv``/``env`` marker (even a
+    marker-only checkout with just a README - see the repo convention of not
+    versioning generated venv contents), its existing name is reused instead
+    of always defaulting to ``.venv``.
+    """
+    req = find_nearest_requirements_txt(start_dir)
+    if req is None:
+        return None
+    req_dir = os.path.dirname(req)
+    for name in VENV_NAMES:
+        candidate = os.path.join(req_dir, name)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(req_dir, VENV_NAMES[0])
+
+
+def create_venv(venv_dir: str, requirements_txt: str) -> bool:
+    """Create ``venv_dir`` with the running interpreter and install requirements.
+
+    Uses ``sys.executable`` (whatever ambient ``python3`` launched this
+    process) the same way ``create_pipenv.sh``/``setup-venv.sh`` use
+    whatever ``python3`` is on ``PATH``. Safe to call when ``venv_dir``
+    already exists as a marker-only directory: ``python -m venv`` populates
+    missing venv files alongside the existing README rather than erroring.
+    Returns True on success; prints its own diagnostics on failure.
+    """
+    print(f"venv-run: no virtualenv found; creating one at {venv_dir}", file=sys.stderr)
+    try:
+        subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"venv-run: failed to create venv at {venv_dir}: {exc}", file=sys.stderr)
+        return False
+    readme = os.path.join(venv_dir, "README.md")
+    if not os.path.isfile(readme):
+        with open(readme, "w", encoding="utf-8") as fh:
+            fh.write(_MARKER_README)
+    python = os.path.join(venv_dir, "bin", "python")
+    print(f"venv-run: installing {requirements_txt}", file=sys.stderr)
+    try:
+        subprocess.run([python, "-m", "pip", "install", "-r", requirements_txt, "-q"], check=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"venv-run: failed to install {requirements_txt}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def build_env(venv: str) -> dict:
     """Return an ``os.environ``-shaped dict with the venv activated.
 
@@ -141,6 +213,14 @@ def main(argv: List[str]) -> int:
 
     script_dir = os.path.dirname(real)
     venv = find_venv(script_dir)
+    if venv is None:
+        target = find_venv_creation_target(script_dir)
+        if target is not None:
+            requirements_txt = find_nearest_requirements_txt(script_dir)
+            assert requirements_txt is not None  # implied by find_venv_creation_target
+            if create_venv(target, requirements_txt):
+                venv = find_venv(script_dir)
+
     if venv is None:
         setup = find_nearest_setup_venv(script_dir)
         print("", file=sys.stderr)

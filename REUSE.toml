@@ -1,0 +1,15 @@
+version = 1
+SPDX-PackageName = "utils"
+SPDX-PackageSupplier = "Johan Ovlinger"
+SPDX-PackageDownloadLocation = "https://github.com/jovlinger/utils"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright (c) 2010-2026 Johan Ovlinger"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "thermo/onboard/hardware/esp32s3/envelope/**"
+SPDX-FileCopyrightText = "Copyright (C) 2024 Toitware ApS"
+SPDX-License-Identifier = "0BSD"

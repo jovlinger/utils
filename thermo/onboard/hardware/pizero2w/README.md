@@ -2,6 +2,8 @@
 
 Two **separate** container images on **GHCR**:
 
+Agent deploy checklist and troubleshooting: [`AGENTS.md`](AGENTS.md).
+
 
 | Image                                     | Role                                                       |
 | ----------------------------------------- | ---------------------------------------------------------- |

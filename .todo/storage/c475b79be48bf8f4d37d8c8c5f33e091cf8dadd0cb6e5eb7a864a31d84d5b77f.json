@@ -1,0 +1,81 @@
+{
+  "AC": "- Throwaway Flask app exists early and can show state / send play-pause + volume for the active backend.\n- Volumio path first: single configured host; getState + play/pause/toggle + volume; pytest with fixtures and optional live host.\n- Sonos path second: hardcoded Office room/endpoint; transport play/pause + volume via UPnP/SOAP; fixtures + optional LAN.\n- No playlist/queue browse/edit APIs.\n- Package importable under spinme/; README how to run Flask + tests. Schema may churn with unlocked HILEVEL.",
+  "BaseSha": "a32a49cf637b045e450c3822d1ca2f3c0e1430b0",
+  "Body": {
+    "objid": "0002",
+    "raw": "Desktop-first control plane for HILEVEL zones against Sonos S1 and Volumio.\nHILEVEL still unlocked; this plan is preliminary.\n\n**Approach (RATIFIED for this subtodo 2026-09-07):**\n- Flask harness **first** (minimal throwaway UI), then thicken the library underneath.\n- Start with the **most well-documented / simplest** stack: **Volumio REST** (one assumed endpoint on the LAN, e.g. miniDSP-SHD.local).\n- Then **Sonos S1**, hardcoded to zone/room **Office** (no full discovery UX required for MVP of this track).\n- Drive each through **basic play/pause (or toggle) + volume** before adding the other.\n- **Playlist management is OUT OF SCOPE.**\n\nRatchet: green tests (fixtures + optional live LAN) before the next layer. ESP32 port stays on parent todo:4a26154c after merge."
+  },
+  "Branch": "4a26154c-audio-control",
+  "Id": "c475b79be48bf8f4d37d8c8c5f33e091cf8dadd0cb6e5eb7a864a31d84d5b77f",
+  "LongSummary": {
+    "objid": "000b",
+    "raw": "Python audio-control track for spinme: Flask UI first, then Volumio REST against one LAN endpoint, then Sonos S1 hardcoded to Office for play/pause and volume. Playlist features are out of scope. Tests ratchet each layer; ESP32 port is parent work after merge. HILEVEL remains unlocked."
+  },
+  "Parent": [
+    {
+      "Branch": "4a26154c-spinme-identify-elecrow",
+      "Id": "4a26154cb41699619a9378e192c88ad7b4757904bb5da87541487bce5fe09d88",
+      "objid": "0003"
+    }
+  ],
+  "Scope": {
+    "branch": "4a26154c-audio-control",
+    "git_url": "git@github.com:jovlinger/utils.git",
+    "objid": "0000",
+    "path_from_root": "spinme"
+  },
+  "State": {
+    "ready": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "spinme audio control: Python zone library + Flask harness (Sonos/Volumio)"
+  },
+  "WorkItems": [
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000c",
+      "summary": "[MIDCAP] Minimal package + Flask hello: one page, healthz, wired to a FakeZone stub"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000d",
+      "summary": "[MIDCAP] Volumio client (single host): getState + play/pause/toggle + volume; pytest fixtures (+ optional live)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000e",
+      "summary": "[MIDCAP] Flask: follow view + transport/volume controls bound to Volumio host"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "000f",
+      "summary": "[MIDCAP] Sonos client hardcoded Office: GetTransportInfo/play/pause + Get/SetVolume; fixtures (+ optional LAN)"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0010",
+      "summary": "[MIDCAP] Flask: switch backend Volumio <-> Sonos Office; same play/volume UX"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0011",
+      "summary": "[MIDCAP] Thin ZoneDriver facade over both; volume_regime stub native-only for these two endpoints"
+    },
+    {
+      "done": false,
+      "kind": "task",
+      "objid": "0012",
+      "summary": "[LOCAP] README: run Flask, run pytest; OOS playlist; HILEVEL unlocked note"
+    }
+  ],
+  "_nextobjid": 19,
+  "create_dt": "2026-09-07T23:59:36Z",
+  "update_dt": "2026-09-08T00:14:01Z"
+}

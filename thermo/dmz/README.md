@@ -57,8 +57,10 @@ Older full pipeline (bwrap, `dmz-init`, etc.) is on branch **`overly_complicated
 
 ## Tests
 
-- **Unit / integration (in-process):** `./test/run.sh` or `make test-local` — see **`test/README.md`**. **`make test-docker`** runs pytest in the built image; **`make test`** runs both.
-- **Smoketests (Docker + HTTP):** **`./smoketest/run.sh`** — see **`smoketest/README.md`**.
+See [`AGENTS.md`](AGENTS.md). Short pointers:
+
+- Unit / integration: `./test/run.sh` -- [`test/README.md`](test/README.md)
+- Smoketests: `./smoketest/run.sh` -- [`smoketest/README.md`](smoketest/README.md)
 
 ## Other paths
 

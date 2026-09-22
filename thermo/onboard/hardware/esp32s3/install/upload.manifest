@@ -1,0 +1,9 @@
+# Files copied to the board by install/deploy.sh (mpremote).
+# Bootstrap includes Midea canned on/off. Daikin stays omitted.
+config.py
+logring.py
+httpdebug.py
+ir_midea.py
+ir_canned.py
+ir_tx.py
+main.py

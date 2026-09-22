@@ -1,0 +1,55 @@
+{
+  "$tsl": "1.0",
+  "kind": "ir_protocol",
+  "name": "midea24_coolix",
+  "source": "thermo/onboard/hardware/pico2w/src/ir.rs",
+  "carrier_hz": 38000,
+  "timing_microseconds": {
+    "header_mark": 4500,
+    "header_space": 4500,
+    "bit_mark": 560,
+    "space_zero": 560,
+    "space_one": 1680,
+    "inter_packet_gap": 5200
+  },
+  "encoding": {
+    "bit_order": "msb_first",
+    "bit_one": "mark then space_one",
+    "bit_zero": "mark then space_zero",
+    "packet_prefix": "header_mark then header_space",
+    "packet_suffix": "final bit_mark then inter_packet_gap"
+  },
+  "transmit_sequence": {
+    "description": "State command: complement-paired packet twice, then D5 packet, each separated by inter_packet_gap.",
+    "packets_per_command": 3,
+    "repeat_identical_state_packet_count": 2
+  },
+  "golden_frames": [
+    {
+      "name": "cool_on_example_from_readme",
+      "command_summary": "power on cool example",
+      "packets_hex": [
+        "B24D9F60609F",
+        "B24D9F60609F",
+        "D5282001001E"
+      ],
+      "source": "pico2w/README.md Office Midea IR Reference"
+    },
+    {
+      "name": "pico_test_heat_24_fan_auto",
+      "heatpump_command": {"power": true, "mode": "HEAT", "temp_c": 24, "fan": "AUTO"},
+      "packets_hex": [
+        "B24D9F60708F",
+        "B24D9F60708F",
+        "D5282001001E"
+      ],
+      "source": "pico2w/src/ir.rs midea_classic_frames test"
+    }
+  ],
+  "raw_ir_sequence": {
+    "optional": true,
+    "command_type": "raw_ir_sequence",
+    "max_entries": 1024,
+    "duration_sign": "positive_mark_negative_space"
+  }
+}

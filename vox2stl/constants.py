@@ -10,9 +10,6 @@ from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from voxconf import VoxProfile, load_config
 
-# Bump when cached naive/ligature tile geometry changes.
-TILE_CACHE_GEOMETRY_REVISION = 3
-
 # Default per-layer rendering mode for lowercase letter cells.
 DEFAULT_LETTER_STYLE = "positive"
 LETTER_STYLES: FrozenSet[str] = frozenset({"positive", "negative"})
@@ -181,6 +178,28 @@ UNIT_RE = re.compile(r"UNIT_MM\s*=\s*([0-9]+(?:\.[0-9]+)?)")
 
 # Trace glyph alias parser for .vox files.
 ALIAS_RE = re.compile(r"^alias\s+(\S)\s*->\s*(\S)\s*=\s*([A-Za-z0-9_:-]+)\s*$")
+
+# Net name alias parser: `net alias TX = GPIO43`
+NET_ALIAS_RE = re.compile(r"^net\s+alias\s+([A-Za-z0-9_:-]+)\s*=\s*([A-Za-z0-9_:-]+)$")
+
+
+def parse_net_alias_line(line: str) -> Optional[Tuple[str, str]]:
+    match = NET_ALIAS_RE.match(line)
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
+
+
+def is_vox_meta_line(line: str) -> bool:
+    """True for blank, comment, glyph-alias, or net-alias lines (not design rows)."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return True
+    if parse_alias_line(stripped) is not None:
+        return True
+    if parse_net_alias_line(stripped) is not None:
+        return True
+    return False
 
 
 def _parse_positive_int(raw_value: str, key: str) -> int:
@@ -507,9 +526,7 @@ def correct_vox_shorthand_text(text: str) -> str:
         current_rows = []
 
     for line_index, line in enumerate(lines):
-        if not line or line.startswith("#"):
-            continue
-        if parse_alias_line(line.strip()) is not None:
+        if is_vox_meta_line(line):
             continue
         header = parse_layer_header(line)
         if header is not None:

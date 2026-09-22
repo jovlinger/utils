@@ -1,0 +1,1 @@
+Home thermostat automation over IR: Pi/Pico/ESP32 zones talk to a DMZ rendezvous service and drive Daikin head units. Active state in [`BOOKMARK.md`](thermo/BOOKMARK.md); backlog in [`TODO.md`](thermo/TODO.md).

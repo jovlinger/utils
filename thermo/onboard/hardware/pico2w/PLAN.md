@@ -151,8 +151,8 @@ for production readings. During bring-up, missing sensor hardware is not a boot
 failure when `SENSOR_BOOT_REQUIRED=0`; the firmware logs the read failure and
 uses fallback values for that poll:
 
-- `temp_centigrade`: 21.0 (fixed)
-- `humid_percent`: 50.0 (fixed)
+- `temp_centigrade`: 1.0 (fixed)
+- `humid_percent`: 1.0 (fixed)
 - IR transmit: drive the GP10 IR LED for accepted Midea commands and log
   "IR sent command".
 
@@ -393,7 +393,7 @@ POST_TIMEOUT = 600
 last_created_dt = ""
 
 def fake_sensors():
-    return {"temp_centigrade": 21.0, "humid_percent": 50.0}
+    return {"temp_centigrade": 1.0, "humid_percent": 1.0}
 
 async def poll_loop():
     global last_created_dt
@@ -659,8 +659,8 @@ isolation are acceptable.
 int thermo_app_poll_once(const ThermoHost *host, ThermoState *state) {
     ThermoSensors sensors;
     if (host->read_aht20(&sensors) != 0) {
-        sensors.temp_centigrade = 21.0f;
-        sensors.humid_percent = 50.0f;
+        sensors.temp_centigrade = 1.0f;
+        sensors.humid_percent = 1.0f;
     }
     return host->post_sensors_and_apply_command(&sensors, state);
 }

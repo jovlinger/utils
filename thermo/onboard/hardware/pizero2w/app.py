@@ -296,9 +296,10 @@ def _environment_dict() -> Dict[str, Any]:
         }
     except Exception as e:
         logger.info("environment%s", format_kv(error=str(e)))
+        # Implausible fixed fallback so a missing HTU21D is obvious in graphs/UI.
         return {
-            "temperature_centigrade": None,
-            "humidity_percent": None,
+            "temperature_centigrade": 1.0,
+            "humidity_percent": 1.0,
             "time": ts.isoformat(),
             "command": cmd,
             "network": network,

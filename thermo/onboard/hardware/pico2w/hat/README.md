@@ -8,7 +8,7 @@ Iteration HAT STL for AHT20 + 38 kHz IR TX/RX modules on a Pico 2 W.
 - `../../SKILL.md` -- shared ASCII HAT layout rules
 - `../../../../../vox2stl/voxtool.py` -- shared `.vox` validator and transformer
 - `../../../../../vox2stl/vox2stl.py` -- top-level `.vox` trace-to-STL converter
-- `PLAN.md` -- board orientation, coordinates, routes, and fabrication notes
+- `BOOKMARK.md` -- in-progress HAT routing and validation state
 - `thermo-pico2w-sensor-hat-v1-up-side.stl` -- solid base plate, trace-side component holes
 - `thermo-pico2w-sensor-hat-v1-pico-side.stl` -- solid base plate, flat-side component holes
 - `thermo-pico2w-sensor-hat-v1-up-side-vox.stl` -- full base, holes, and raised trace mesh from `up-side.vox`

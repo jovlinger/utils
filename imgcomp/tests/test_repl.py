@@ -1,0 +1,63 @@
+"""Tests for visual REPL session and layer cache."""
+
+from __future__ import annotations
+
+from imgcomp.repl import LayerCache, ReplSession
+from imgcomp.shapes import Circle
+from imgcomp.wrappers import Color, Translate
+
+
+def test_run_line_builds_scene_and_renders() -> None:
+    session = ReplSession(40, 40)
+    result = session.run_line(
+        "show(color(circle(8), 40, 40, 40), move(color(circle(5), 255, 0, 0), 10, 0))"
+    )
+    assert result.ok
+    assert session.last_error is None
+    surface = session.render()
+    assert surface.get_pixel(30, 20) == (255, 0, 0, 255)
+
+
+def test_failed_eval_keeps_prior_scene() -> None:
+    session = ReplSession(20, 20)
+    assert session.run_line("show(color(circle(4), 0, 255, 0))").ok
+    before = session.render().get_pixel(10, 10)
+    bad = session.run_line("show(no_such_name)")
+    assert bad.ok is False
+    assert bad.error is not None
+    assert session.render().get_pixel(10, 10) == before
+
+
+def test_layer_cache_reuses_unchanged_layer() -> None:
+    cache = LayerCache(30, 30)
+    bg = Color(Circle(12.0), (20, 20, 20, 255))
+    fg = Translate(Color(Circle(4.0), (255, 0, 0, 255)), 0.0, 0.0)
+    scene = [bg, fg]
+    cache.render(scene)
+    assert cache.misses == 2
+    assert cache.hits == 0
+
+    scene2 = [bg, Translate(Color(Circle(4.0), (255, 0, 0, 255)), 5.0, 0.0)]
+    cache.render(scene2)
+    assert cache.hits == 1
+    assert cache.misses == 3
+    assert cache.stats()["entries"] == 3
+
+
+def test_cached_render_matches_naive() -> None:
+    session = ReplSession(24, 24)
+    session.run_line(
+        "show(color(circle(10), 10, 10, 80), move(color(circle(3), 255, 255, 0), 6, -4))"
+    )
+    cached = session.render(use_cache=True)
+    naive = session.render(use_cache=False)
+    for y in range(24):
+        for x in range(24):
+            assert cached.get_pixel(x, y) == naive.get_pixel(x, y)
+
+
+def test_repl_render_defaults_to_uncached() -> None:
+    session = ReplSession(16, 16)
+    session.run_line("show(color(circle(4), 1, 2, 3))")
+    session.render()
+    assert session.cache.stats()["misses"] == 0

@@ -1,0 +1,60 @@
+{
+  "$tsl": "1.0",
+  "kind": "tsl_schema",
+  "name": "thermo_onboard_tsl_meta_schema",
+  "description": "Self-describing TSL meta-schema manifest for document kinds and required fields.",
+  "global_requirements": {
+    "json_only": true,
+    "required_top_level_fields": ["$tsl", "kind"],
+    "tsl_version_required": "1.0",
+    "file_naming_pattern": "*.tspec.json",
+    "non_executable_spec_tree": true
+  },
+  "kinds": [
+    {
+      "kind": "manifest",
+      "required_fields": ["$tsl", "kind", "name", "documents", "translation_targets"],
+      "optional_fields": ["description", "reference_oracle_until_conformance_tests"]
+    },
+    {
+      "kind": "tsl_schema",
+      "required_fields": ["$tsl", "kind", "name", "global_requirements", "kinds"],
+      "optional_fields": ["description"]
+    },
+    {
+      "kind": "controller",
+      "required_fields": ["$tsl", "kind", "name", "startup", "poll_loop", "on_ir_command_applied"],
+      "optional_fields": ["description", "status_led_semantics", "local_http"]
+    },
+    {
+      "kind": "command_freshness",
+      "required_fields": ["$tsl", "kind", "name", "source", "rule", "cases"],
+      "optional_fields": ["description"]
+    },
+    {
+      "kind": "dmz_request",
+      "required_fields": ["$tsl", "kind", "method", "path_template", "headers", "signing", "response_parse"],
+      "optional_fields": []
+    },
+    {
+      "kind": "dmz_golden",
+      "required_fields": ["$tsl", "kind", "name", "source", "expected_body_json"],
+      "optional_fields": ["zone_name", "reading", "last_applied_command_json", "include_network", "include_logs", "deployment", "must_not_contain_substrings"]
+    },
+    {
+      "kind": "auth_vectors",
+      "required_fields": ["$tsl", "kind", "source", "sha256_hex", "sign_headers"],
+      "optional_fields": ["pkcs8_der_seed_extraction"]
+    },
+    {
+      "kind": "ir_protocol",
+      "required_fields": ["$tsl", "kind", "name", "source", "carrier_hz", "timing_microseconds", "encoding", "transmit_sequence", "golden_frames"],
+      "optional_fields": ["raw_ir_sequence"]
+    },
+    {
+      "kind": "profile",
+      "required_fields": ["$tsl", "kind", "zone_name", "backend", "hardware_profile", "ir_protocol"],
+      "optional_fields": ["note", "dmz", "gpio", "aht20_i2c_address", "jaguar", "dhcp_hostname_pattern", "sensor_boot_required", "post_timeout_seconds", "onboard_http_port", "send_behavior", "report_behavior", "status_led_driver"]
+    }
+  ]
+}

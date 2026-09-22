@@ -3,6 +3,8 @@ requests
 pydantic
 cryptography==48.0.1
 smbus2
+mpremote
+esptool
 
 # below here is for testing. So far it is lightweight and we comingle with deployed code. But if this gets heaveir, 
 # we will create requirements-dev.txt

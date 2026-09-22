@@ -1,0 +1,43 @@
+{
+  "provider": "johan",
+  "separator": ";",
+  "types": [
+    "artist",
+    "album",
+    "year",
+    "genre",
+    "collection",
+    "various"
+  ],
+  "value_slug": "lowercase alphanumeric only (strip spaces/punct)",
+  "field_roles": {
+    "metadata.genres": "UNUSED at combine time (johan sidecars skipped)",
+    "metadata.tags": "UNUSED at combine time (johan sidecars skipped)",
+    "metadata.artist": "UNUSED at combine time",
+    "metadata.album": "UNUSED at combine time",
+    "metadata.year": "UNUSED at combine time"
+  },
+  "map": {
+    "abstract": "genre;abstract",
+    "bigbandjazz": "genre;bigbandjazz",
+    "blues": "genre;blues",
+    "broadway": "genre;broadway",
+    "classical": "genre;classical",
+    "cubanjazz": "genre;cubanjazz",
+    "downtempo": "genre;downtempo",
+    "drumnbass": "genre;drumnbass",
+    "electronic": "genre;electronic",
+    "jazz": "genre;jazz",
+    "malesinger": "genre;malesinger",
+    "noise": "genre;noise",
+    "remixjazz": "genre;remixjazz",
+    "rock": "genre;rock",
+    "rocknroll": "genre;rocknroll",
+    "scandinivia": "collection;scandinavia",
+    "soundtrack": "genre;soundtrack",
+    "tribute": "genre;tribute",
+    "trip-hop": "genre;triphop",
+    "turntable": "genre;turntable"
+  },
+  "dropped": []
+}

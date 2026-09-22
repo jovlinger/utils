@@ -80,6 +80,8 @@ def test_lshash_machine_mode_emits_flat_rows_with_tags(tmp_path: Path) -> None:
     assert csv_json_tags(b_row[2]) == []
     assert a_row[3] == "0"
     assert b_row[3] == "0"
+    assert a_row[4]  # start (RFC3339)
+    assert a_row[5] == ""  # active row: end NULL
 
 
 def csv_json_tags(cell: str) -> list[str]:
@@ -89,7 +91,7 @@ def csv_json_tags(cell: str) -> list[str]:
 
 
 def test_lspath_machine_mode_still_lists_tags(tmp_path: Path) -> None:
-    """Sanity: lspath machine mode is unchanged (path, shasum, tags-json, deleted)."""
+    """Sanity: lspath machine mode (path, shasum, tags-json, deleted, start, end)."""
     cwd, shadir, digests = _setup_two_files(tmp_path)
 
     result = _run(cwd, shadir, ["ls"])
@@ -98,6 +100,8 @@ def test_lspath_machine_mode_still_lists_tags(tmp_path: Path) -> None:
     assert by_path["work/a.txt"][1] == digests["a.txt"]
     assert sorted(csv_json_tags(by_path["work/a.txt"][2])) == ["blue", "red"]
     assert by_path["work/a.txt"][3] == "0"
+    assert by_path["work/a.txt"][4]
+    assert by_path["work/a.txt"][5] == ""
 
 
 def test_lshash_shows_tags_for_filtered_hash(tmp_path: Path) -> None:
@@ -107,11 +111,13 @@ def test_lshash_shows_tags_for_filtered_hash(tmp_path: Path) -> None:
     result = _run(cwd, shadir, ["lshash", digests["a.txt"]])
     rows = list(csv.reader(io.StringIO(result.stdout)))
     assert len(rows) == 1
-    shasum, path, tags_json, deleted = rows[0]
+    shasum, path, tags_json, deleted, start, end = rows[0]
     assert shasum == digests["a.txt"]
     assert path == "work/a.txt"
     assert sorted(csv_json_tags(tags_json)) == ["blue", "red"]
     assert deleted == "0"
+    assert start
+    assert end == ""
 
 
 def test_ls_alltags_single_file_matches_plain_ls(tmp_path: Path) -> None:
@@ -191,3 +197,5 @@ def test_lshash_show_deleted_column(tmp_path: Path) -> None:
 
     assert by_path["work/a.txt"][3] == "1"
     assert by_path["work/b.txt"][3] == "0"
+    assert by_path["work/a.txt"][4]
+    assert by_path["work/a.txt"][5] == ""

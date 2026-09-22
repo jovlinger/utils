@@ -1,0 +1,28 @@
+{
+  "$tsl": "1.0",
+  "kind": "dmz_golden",
+  "name": "command_freshness_gate_vectors",
+  "source": "thermo/onboard/hardware/pico2w/src/protocol.rs rejects_missing_or_stale_timestamps + accepts_strictly_newer_iso_timestamp",
+  "zone_name": "office",
+  "expected_body_json": "{\"command_freshness_rule\":\"lexicographic_strict\"}",
+  "vectors": [
+    {
+      "name": "stale",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_command_created_dt": "2026-05-25T09:59:00.000000",
+      "expected_apply": false
+    },
+    {
+      "name": "newer",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_command_created_dt": "2026-05-25T10:01:00.000000",
+      "expected_apply": true
+    },
+    {
+      "name": "empty_created_dt",
+      "last_applied_created_dt": "2026-05-25T10:00:00.000000",
+      "response_command_created_dt": "",
+      "expected_apply": false
+    }
+  ]
+}

@@ -18,12 +18,34 @@
 
 set -e
 
+# Setup-env investigation: record :failure/:success datapoints as WorkItems on todo:b6f4df78.
+CREATE_PIPENV_TODO_ID=b6f4df78
+
 SELF="$0"
 case "$SELF" in
   */*) ;;
   *) SELF="$(command -v "$SELF")" ;;
 esac
 UTILS_ROOT="$(cd "$(dirname "$SELF")" && pwd)"
+
+todo_create_pipenv_msg() {
+  tag=$1
+  project=$2
+  why=$3
+  item_project=${project:-unknown}
+  summary="$tag create_pipenv $item_project"
+  if [ -n "$project" ]; then
+    echo "todo:$CREATE_PIPENV_TODO_ID $tag $project -- $why" >&2
+  else
+    echo "todo:$CREATE_PIPENV_TODO_ID $tag -- $why" >&2
+  fi
+  echo "todo:$CREATE_PIPENV_TODO_ID action: make a WorkItem on todo:$CREATE_PIPENV_TODO_ID with summary \"$summary\" and checkpoint message \"$why\" (todo.py commands in this todo Body)" >&2
+}
+
+fail_create_pipenv() {
+  todo_create_pipenv_msg :failure "${2:-}" "$1"
+  exit 1
+}
 
 SYNC=0
 while [ $# -gt 0 ]; do
@@ -53,13 +75,13 @@ fi
 
 if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
   echo "Python is not installed or not on PATH." >&2
-  exit 1
+  fail_create_pipenv "Python is not installed or not on PATH."
 fi
 
 if [ -n "${VIRTUAL_ENV:-}" ]; then
   echo "Error: deactivate before create_pipenv (VIRTUAL_ENV=$VIRTUAL_ENV)." >&2
   echo "Project .venv must be created from system python3, not bin/.venv or another utils venv." >&2
-  exit 1
+  fail_create_pipenv "deactivate before create_pipenv (VIRTUAL_ENV=$VIRTUAL_ENV)"
 fi
 
 PYTHON_BIN="$(command -v python3 2>/dev/null || command -v python)"
@@ -73,7 +95,7 @@ for PROJECT_REL in "$@"; do
 
   if [ ! -d "$PROJECT_DIR" ]; then
     echo "Error: No such project $PROJECT_REL" >&2
-    exit 1
+    fail_create_pipenv "no such project $PROJECT_REL" "$PROJECT_REL"
   fi
 
   marker_dir_is_empty_or_readme_only() {
@@ -105,7 +127,7 @@ EOF
       else
         echo "Error: $ENV_DIR exists but is not a venv or marker-only directory." >&2
         echo "Move it aside before migrating $LEGACY_ENV." >&2
-        exit 1
+        fail_create_pipenv "$ENV_DIR exists but is not a venv or marker-only directory" "$PROJECT_REL"
       fi
     fi
     echo "Migrating legacy env/ -> .venv/ for $PROJECT_REL..."
@@ -151,6 +173,7 @@ EOF
     if [ "$SYNC" -eq 1 ]; then
       echo "Syncing venv at $ENV_DIR..."
       run_pip_install
+      todo_create_pipenv_msg :success "$PROJECT_REL" "synced venv at $ENV_DIR"
     else
       echo "Venv already exists at $ENV_DIR."
     fi
@@ -161,4 +184,5 @@ EOF
   "$PYTHON_BIN" -m venv "$ENV_DIR"
   ensure_venv_marker_readme
   run_pip_install
+  todo_create_pipenv_msg :success "$PROJECT_REL" "created venv at $ENV_DIR"
 done

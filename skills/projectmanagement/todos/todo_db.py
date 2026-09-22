@@ -1,0 +1,656 @@
+"""SQLite storage for branch-bound todo tickets under a single todo directory."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sqlite3
+import struct
+import subprocess
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+
+import todo_objid
+
+JsonDict = Dict[str, Any]
+
+HOME_TODO_DIR_NAME: str = ".todo"
+SCHEMA_VERSION: int = 9
+_RESOLVED_TODO_DIR: Optional[Path] = None
+
+
+def migrate_record_v6(todo: JsonDict) -> JsonDict:
+    """Fold legacy field names (Chunks, Subtickets) into WorkItems, Subtodos.
+
+    Also migrates the singular ``Parent`` dict to a ``Parent`` list of
+    ``{Id, Branch}`` refs (element 0 is the structural/fork parent used for the
+    log diff base and merge; later entries are context-only references set by
+    ``set --parent``), and strips the machine-specific ``Scope.path_to_project``
+    (the repo name identifies the repo; CWD is the concrete location on this
+    machine). This is the record-shape half of the version-6 migration; the
+    table-shape half lives in ``migrate()`` below. Registered in
+    ``RECORD_MIGRATIONS[6]`` and reused by ``todo.normalize_todo_schema`` so
+    both the migration sweep and ordinary reads share one implementation.
+    """
+    if "Chunks" in todo and "WorkItems" not in todo:
+        todo["WorkItems"] = todo.pop("Chunks")
+    if "Subtickets" in todo and "Subtodos" not in todo:
+        todo["Subtodos"] = todo.pop("Subtickets")
+    parent = todo.get("Parent")
+    if isinstance(parent, dict):
+        todo["Parent"] = [parent]
+    scope = todo.get("Scope")
+    if isinstance(scope, dict):
+        scope.pop("path_to_project", None)
+    return todo
+
+
+def migrate_record_v7(todo: JsonDict) -> JsonDict:
+    """Fold the legacy flat ``Tags`` (list of strings) into plural ``Tag`` elements.
+
+    Each legacy tag becomes ``{"raw": <downcased, stripped>, "manual": True}``
+    (a hand-set tag, same provenance as one added via ``tagadd``); duplicates
+    (after downcasing) collapse to one element, first-seen order kept. Merges
+    into any ``Tag`` elements already present rather than clobbering them, so
+    a record migrated more than once (or hand-seeded with both shapes) stays
+    additive. The old ``Tags`` key is always dropped. Registered in
+    ``RECORD_MIGRATIONS[7]``.
+    """
+    tags = todo.pop("Tags", None)
+    if not isinstance(tags, list):
+        return todo
+    existing = todo.get("Tag")
+    elements: List[JsonDict] = list(existing) if isinstance(existing, list) else []
+    seen_raws = {
+        e["raw"] for e in elements if isinstance(e, dict) and isinstance(e.get("raw"), str)
+    }
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        raw = tag.strip().lower()
+        if raw and raw not in seen_raws:
+            elements.append({"raw": raw, "manual": True})
+            seen_raws.add(raw)
+    if elements:
+        todo["Tag"] = elements
+    return todo
+
+
+# State-key renames introduced in schema v8: nouns over gerunds. Case-sensitive;
+# the uppercase Subtodos back-link marker "INFO" (a relationship link inserted by
+# `set --parent`, not a todo State) is deliberately absent so it is never touched.
+_STATE_RENAMES_V8: Dict[str, str] = {
+    "pre": "groom",
+    "pre-init": "groom",
+    "init": "ready",
+    "info": "fact",
+}
+
+
+def migrate_record_v8(todo: JsonDict) -> JsonDict:
+    """Rename state keys to nouns: pre/pre-init -> groom, init -> ready, info -> fact.
+
+    Rewrites only the todo's own single-key ``State`` object. The Subtodos
+    back-link marker ``State == "INFO"`` (the follow-only link `set --parent`
+    inserts, excluded from merge-completeness) is a relationship marker, not the
+    ``info`` state, and is case-distinct from it -- left untouched.
+    """
+    state = todo.get("State")
+    if isinstance(state, dict) and len(state) == 1:
+        ((key, value),) = state.items()
+        renamed = _STATE_RENAMES_V8.get(key)
+        if renamed is not None:
+            todo["State"] = {renamed: value}
+    return todo
+
+
+def migrate_record_v9(todo: JsonDict) -> JsonDict:
+    """Stamp an objid onto every nested object, plus the ``_nextobjid`` cursor.
+
+    Backfills the permalink handles for records written before objids existed
+    (see ``todo_objid``). Ordinary writes stamp at the write choke point, so
+    this only has to catch what is already in the store; it is idempotent, so a
+    record that has been swept re-sweeps to itself and reports no change.
+    """
+    todo_objid.stamp_objids(todo)
+    return todo
+
+
+# Record transform keyed by the SCHEMA_VERSION it produces. A version whose
+# change was table-only (see `migrate()`) registers no entry here -- a no-op
+# on the record axis. Keep this in ascending-version order for readability;
+# `migrate_record` sorts explicitly so declaration order does not matter.
+RECORD_MIGRATIONS: Dict[int, Callable[[JsonDict], JsonDict]] = {
+    6: migrate_record_v6,
+    7: migrate_record_v7,
+    8: migrate_record_v8,
+    9: migrate_record_v9,
+}
+
+
+def migrate_record(todo: JsonDict) -> JsonDict:
+    """Bring *todo* up to SCHEMA_VERSION and stamp ``todo["_schema"]``.
+
+    Applies every ``RECORD_MIGRATIONS[v]`` with ``v > todo.get("_schema", 0)``
+    and ``v <= SCHEMA_VERSION``, ascending, then stamps
+    ``todo["_schema"] = SCHEMA_VERSION``. Idempotent: a record already at
+    SCHEMA_VERSION runs no transforms and is returned with the same stamp.
+    """
+    current = todo.get("_schema", 0)
+    if not isinstance(current, int):
+        current = 0
+    for version in sorted(v for v in RECORD_MIGRATIONS if current < v <= SCHEMA_VERSION):
+        todo = RECORD_MIGRATIONS[version](todo)
+    todo["_schema"] = SCHEMA_VERSION
+    return todo
+
+
+def get_data_version(conn: sqlite3.Connection) -> int:
+    """Return the store's record-sweep marker (0 when unset).
+
+    Distinct from the ``schema_version`` table, which tracks TABLE structure
+    and auto-applies on every connect (see ``migrate()``); this tracks how far
+    the RECORDS themselves have been swept by ``migrate_record``, and only
+    advances when something explicitly calls ``set_data_version`` (the
+    migration sweep). Cheap: one indexed-free SELECT on a one-row table.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    return int(row["version"]) if row else 0
+
+
+def set_data_version(conn: sqlite3.Connection, version: int) -> None:
+    """Persist the store's record-sweep marker."""
+    conn.execute("CREATE TABLE IF NOT EXISTS data_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM data_version LIMIT 1").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO data_version(version) VALUES (?)", (version,))
+    else:
+        conn.execute("UPDATE data_version SET version = ?", (version,))
+
+
+def repo_identity_from_url(url: str) -> Optional[str]:
+    """Canonical ``host/owner/name`` identity from a git remote URL, or None.
+
+    Normalizes the common shapes (``https://host/o/n(.git)``,
+    ``git@host:o/n(.git)``, ``ssh://git@host/o/n``) to one stable string so the
+    same repo resolves identically across machines, users, and worktrees. Lives
+    here (not in todo.py) so the schema migration can reuse it.
+    """
+    u = url.strip().removesuffix(".git")
+    if not u:
+        return None
+    match = re.match(r"\A[\w.+-]+@([^:/]+):(.+)\Z", u)  # scp-like: git@host:owner/name
+    if not match:
+        match = re.match(r"\A[a-zA-Z][\w+.-]*://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)\Z", u)
+    if not match:
+        return None
+    host, path = match.group(1), match.group(2).strip("/")
+    if not path:
+        return None
+    return f"{host.lower()}/{path}"
+
+
+class TodoDbError(Exception):
+    """User-facing todo database error."""
+
+
+def reset_todo_dir() -> None:
+    """Clear cached todo directory (tests only)."""
+    global _RESOLVED_TODO_DIR
+    _RESOLVED_TODO_DIR = None
+
+
+def main_checkout_root(start: Optional[Path] = None) -> Optional[Path]:
+    """Return the repo's MAIN checkout root for *start*, or None when not in a repo.
+
+    Anchored on the repo's primary working tree, NOT the current linked worktree,
+    so every worktree of a repo shares ONE todo store in the core checkout.
+    ``git worktree list`` always lists the main worktree first. (Bare / no-checkout
+    hosting is out of scope.)
+    """
+    cwd: Path = start or Path.cwd()
+    result: subprocess.CompletedProcess[str] = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree ") :].strip())
+    return None
+
+
+def _home_todo_dir() -> Path:
+    return Path.home() / HOME_TODO_DIR_NAME
+
+
+def _ancestors_within_home(start: Path) -> List[Path]:
+    """*start* and its ancestors up to and including $HOME, closest-first.
+
+    The walk stays inside the $HOME subtree and never rises above it. When
+    *start* is not under $HOME (unusual), only *start* itself is returned; the
+    caller still appends $HOME/.todo as the universal fallback.
+    """
+    home = Path.home()
+    dirs: List[Path] = [start]
+    if home in start.parents:
+        current = start
+        while current != home:
+            current = current.parent
+            dirs.append(current)
+    return dirs
+
+
+def _todo_dir_candidates(git_root: Optional[Path]) -> List[Path]:
+    """Ordered todo directory candidates for one CLI invocation.
+
+    ``$TODO_DIR`` (verbatim) first, then ``.todo`` at each level from the repo's
+    main-checkout root upward to and including $HOME, then $HOME/.todo as the
+    final fallback. The walk stops at $HOME and never goes above it, so a store
+    at any ancestor between the repo and home is found before falling through.
+    """
+    candidates: List[Path] = []
+    todo_dir_env = os.environ.get("TODO_DIR")
+    if todo_dir_env:
+        candidates.append(Path(todo_dir_env))
+    if git_root is not None:
+        candidates.extend(d / HOME_TODO_DIR_NAME for d in _ancestors_within_home(git_root))
+    home_todo = _home_todo_dir()
+    if home_todo not in candidates:
+        candidates.append(home_todo)
+    return candidates
+
+
+def _default_todo_dir(git_root: Optional[Path]) -> Path:
+    """Directory to create when no populated store exists in any candidate."""
+    todo_dir_env = os.environ.get("TODO_DIR")
+    if todo_dir_env:
+        return Path(todo_dir_env)
+    if git_root is not None:
+        return git_root / HOME_TODO_DIR_NAME
+    return _home_todo_dir()
+
+
+def _candidate_is_populated(candidate: Path) -> bool:
+    """True when *candidate* already holds a todo store worth selecting.
+
+    A directory with ``config.json``, ``sqlite.db``, or a ``storage/`` directory
+    (JSON-file backend) counts. An empty ``.todo`` does not, so search can fall
+    through to a home store that still has data.
+    """
+    return (
+        (candidate / "config.json").is_file()
+        or (candidate / "sqlite.db").is_file()
+        or (candidate / "storage").is_dir()
+    )
+
+
+def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
+    """Resolve the todo directory once per process.
+
+    Search order: ``$TODO_DIR``, then ``.todo`` at each level from the
+    ``<main-checkout-root>`` upward to and including ``$HOME`` (the walk stops at
+    ``$HOME``), then ``$HOME/.todo``. The repo anchor is the MAIN checkout root
+    (not the current worktree), so all worktrees of a repo share one store. The
+    first candidate that already holds a store (``config.json``, ``sqlite.db``,
+    or ``storage/``) wins; otherwise the default create location is the first
+    entry that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
+    All paths (db, worktrees, storage) live under the chosen directory for the
+    rest of the call.
+    """
+    global _RESOLVED_TODO_DIR
+    if _RESOLVED_TODO_DIR is not None:
+        return _RESOLVED_TODO_DIR
+    root = git_root if git_root is not None else main_checkout_root()
+    for candidate in _todo_dir_candidates(root):
+        if _candidate_is_populated(candidate):
+            _RESOLVED_TODO_DIR = candidate.resolve()
+            return _RESOLVED_TODO_DIR
+    _RESOLVED_TODO_DIR = _default_todo_dir(root).resolve()
+    return _RESOLVED_TODO_DIR
+
+
+def todo_dir() -> Path:
+    """Return the resolved todo directory for this process."""
+    return resolve_todo_dir()
+
+
+def db_path() -> Path:
+    """Return path to the todo sqlite database."""
+    return todo_dir() / "sqlite.db"
+
+
+def worktrees_dir() -> Path:
+    """Return worktree root under the resolved todo directory."""
+    return todo_dir() / "worktrees"
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+@contextmanager
+def connection(path: Optional[Path] = None) -> Iterator[sqlite3.Connection]:
+    """Open a sqlite connection with migrations applied."""
+    db = path or db_path()
+    conn = _connect(db)
+    try:
+        migrate(conn)
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Apply schema migrations idempotently."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+    )
+    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    current = int(row["version"]) if row else 0
+    if current < 1:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id TEXT PRIMARY KEY,
+                repo_path TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                data TEXT NOT NULL,
+                update_dt TEXT NOT NULL,
+                UNIQUE(repo_path, branch)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tickets_repo_branch
+                ON tickets(repo_path, branch);
+            CREATE INDEX IF NOT EXISTS idx_tickets_id_prefix
+                ON tickets(substr(id, 1, 8));
+            CREATE TABLE IF NOT EXISTS embeddings (
+                ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                field_path TEXT NOT NULL,
+                embedder TEXT NOT NULL,
+                vector BLOB NOT NULL,
+                PRIMARY KEY (ticket_id, field_path, embedder)
+            );
+            """
+        )
+    if current < 2:
+        conn.execute("DROP TABLE IF EXISTS catalog")
+    if current < 3:
+        _normalize_repo_identities(conn)
+    if current < 4:
+        # Per-TODO advisory locks: one row per held ticket, carrying the holder
+        # pid and an expiry so a crashed holder's lock becomes stealable.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS locks (
+                ticket_id TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL,
+                expires_at REAL NOT NULL
+            )
+            """
+        )
+    if current < 5:
+        # Soft-delete tombstone: a row moved here (verbatim, minus the embeddings
+        # that cascade away) is removed from `tickets` but retained for manual
+        # recovery. No recovery command exists yet -- restore by hand if needed.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_tickets (
+                id TEXT PRIMARY KEY,
+                repo_path TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                data TEXT NOT NULL,
+                update_dt TEXT NOT NULL
+            )
+            """
+        )
+    if current < 6:
+        # Embedding blob format changed from a single array to a list-of-arrays
+        # (one vector per chunk). Old single-vector blobs are unreadable under
+        # the new framing, and embeddings are a derived cache (hash repopulates
+        # on the next write, expensive embedders backfill on the next search),
+        # so drop them and let them rebuild rather than rewrap in place.
+        conn.execute("DELETE FROM embeddings")
+    if current < SCHEMA_VERSION:
+        if row is None:
+            conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+        else:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+
+def _normalize_repo_identities(conn: sqlite3.Connection) -> None:
+    """Rewrite each ticket's ``repo_path`` from an absolute path to the stable
+    ``host/owner/name`` identity, derived from the ticket's own
+    ``Scope.git_url``. Path-based keys were machine/user/worktree specific and
+    broke repo-scoped lookups when the db moved; the remote URL is stable. Rows
+    without a usable ``git_url`` (e.g. local-only repos) are left untouched.
+    """
+    for row in conn.execute("SELECT id, repo_path, data FROM tickets").fetchall():
+        try:
+            data = json.loads(str(row["data"]))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        scope = data.get("Scope") if isinstance(data, dict) else None
+        url = scope.get("git_url") if isinstance(scope, dict) else None
+        identity = repo_identity_from_url(url) if isinstance(url, str) and url else None
+        if identity and identity != row["repo_path"]:
+            conn.execute(
+                "UPDATE tickets SET repo_path = ? WHERE id = ?", (identity, row["id"])
+            )
+
+
+def pack_vectors(vectors: Sequence[Sequence[float]]) -> bytes:
+    """Pack a list of equal-length float vectors into one little-endian blob.
+
+    Framing is a ``<count><dim>`` uint32 header followed by ``count * dim``
+    float32 values, vectors row-major. All vectors share one dimension -- they
+    come from a single embedder, whose output width is fixed -- so a ragged list
+    is a programming error. An empty list packs to a ``0, 0`` header.
+    """
+    count = len(vectors)
+    dim = len(vectors[0]) if count else 0
+    flat: List[float] = []
+    for vec in vectors:
+        if len(vec) != dim:
+            raise TodoDbError(f"cannot pack ragged vectors: expected dim {dim}, got {len(vec)}")
+        flat.extend(vec)
+    return struct.pack(f"<2I{len(flat)}f", count, dim, *flat)
+
+
+def unpack_vectors(blob: bytes) -> List[List[float]]:
+    """Unpack a blob written by ``pack_vectors`` into its list of float vectors."""
+    count, dim = struct.unpack_from("<2I", blob, 0)
+    flat = struct.unpack_from(f"<{count * dim}f", blob, 8)
+    return [list(flat[i * dim : (i + 1) * dim]) for i in range(count)]
+
+
+def put_ticket(conn: sqlite3.Connection, repo_path: str, branch: str, ticket: JsonDict) -> None:
+    """Insert or replace a ticket row."""
+    ticket_id = str(ticket["Id"])
+    update_dt = str(ticket.get("update_dt", ""))
+    payload = json.dumps(ticket, sort_keys=True)
+    conn.execute(
+        """
+        INSERT INTO tickets(id, repo_path, branch, data, update_dt)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            repo_path=excluded.repo_path,
+            branch=excluded.branch,
+            data=excluded.data,
+            update_dt=excluded.update_dt
+        """,
+        (ticket_id, repo_path, branch, payload, update_dt),
+    )
+
+
+def hard_delete_ticket(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Permanently delete a ticket row; its embeddings cascade away. True if a
+    row was removed."""
+    cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    return cur.rowcount > 0
+
+
+def soft_delete_ticket(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Move a ticket row to `deleted_tickets` (verbatim) and drop it from
+    `tickets`; its embeddings cascade away. True if a row was moved."""
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO deleted_tickets(id, repo_path, branch, data, update_dt)
+        SELECT id, repo_path, branch, data, update_dt FROM tickets WHERE id = ?
+        """,
+        (ticket_id,),
+    )
+    cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    return cur.rowcount > 0
+
+
+def get_ticket_by_repo_branch(
+    conn: sqlite3.Connection, repo_path: str, branch: str
+) -> Optional[JsonDict]:
+    """Load a ticket by repo path and branch name."""
+    row = conn.execute(
+        "SELECT data FROM tickets WHERE repo_path = ? AND branch = ?",
+        (repo_path, branch),
+    ).fetchone()
+    if row is None:
+        return None
+    parsed: Any = json.loads(str(row["data"]))
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def find_tickets_by_id_prefix(conn: sqlite3.Connection, query: str) -> List[Tuple[str, str, JsonDict]]:
+    """Return (repo_path, branch, ticket) for id prefix matches."""
+    rows = conn.execute("SELECT repo_path, branch, data FROM tickets").fetchall()
+    matches: List[Tuple[str, str, JsonDict]] = []
+    for row in rows:
+        parsed: Any = json.loads(str(row["data"]))
+        if not isinstance(parsed, dict):
+            continue
+        ticket_id = str(parsed.get("Id", ""))
+        if not ticket_id:
+            continue
+        if ticket_id == query or ticket_id.startswith(query):
+            matches.append((str(row["repo_path"]), str(row["branch"]), parsed))
+        elif len(query) >= 4 and ticket_id.startswith(query):
+            matches.append((str(row["repo_path"]), str(row["branch"]), parsed))
+    return matches
+
+
+def list_tickets(conn: sqlite3.Connection) -> List[JsonDict]:
+    """Return every known ticket as {id, repo, branch, summary, update_dt}, insertion order."""
+    rows = conn.execute(
+        "SELECT id, repo_path, branch, data, update_dt FROM tickets ORDER BY rowid"
+    ).fetchall()
+    result: List[JsonDict] = []
+    for row in rows:
+        parsed: Any = json.loads(str(row["data"]))
+        summary_obj = parsed.get("Summary") if isinstance(parsed, dict) else None
+        summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
+        result.append(
+            {
+                "id": str(row["id"]),
+                "repo": str(row["repo_path"]),
+                "branch": str(row["branch"]),
+                "summary": summary,
+                "update_dt": str(row["update_dt"]),
+            }
+        )
+    return result
+
+
+def put_embedding(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    field_path: str,
+    embedder: str,
+    vectors: Sequence[Sequence[float]],
+) -> None:
+    """Store or replace a field's embedding: one vector per chunk (list-of-arrays)."""
+    conn.execute(
+        """
+        INSERT INTO embeddings(ticket_id, field_path, embedder, vector)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ticket_id, field_path, embedder) DO UPDATE SET
+            vector=excluded.vector
+        """,
+        (ticket_id, field_path, embedder, pack_vectors(vectors)),
+    )
+
+
+def clear_embeddings(
+    conn: sqlite3.Connection, ticket_id: str, field_path: Optional[str] = None
+) -> None:
+    """Delete stored vectors for a ticket, or just one field when given."""
+    if field_path is None:
+        conn.execute("DELETE FROM embeddings WHERE ticket_id = ?", (ticket_id,))
+    else:
+        conn.execute(
+            "DELETE FROM embeddings WHERE ticket_id = ? AND field_path = ?",
+            (ticket_id, field_path),
+        )
+
+
+def existing_embeddings(conn: sqlite3.Connection, ticket_id: str) -> set:
+    """Return the set of ``(field_path, embedder)`` vectors stored for a ticket."""
+    rows = conn.execute(
+        "SELECT field_path, embedder FROM embeddings WHERE ticket_id = ?",
+        (ticket_id,),
+    ).fetchall()
+    return {(str(row["field_path"]), str(row["embedder"])) for row in rows}
+
+
+def all_embeddings(
+    conn: sqlite3.Connection, embedder: str
+) -> List[Tuple[str, str, List[List[float]]]]:
+    """Return (ticket_id, field_path, chunk_vectors) for an embedder."""
+    rows = conn.execute(
+        "SELECT ticket_id, field_path, vector FROM embeddings WHERE embedder = ?",
+        (embedder,),
+    ).fetchall()
+    result: List[Tuple[str, str, List[List[float]]]] = []
+    for row in rows:
+        result.append((str(row["ticket_id"]), str(row["field_path"]), unpack_vectors(bytes(row["vector"]))))
+    return result
+
+
+def embeddings_for_ticket(
+    conn: sqlite3.Connection, ticket_id: str
+) -> List[Tuple[str, str, List[List[float]]]]:
+    """Return (field_path, embedder, chunk_vectors) for every embedder stored for a ticket.
+
+    Symmetric to ``all_embeddings`` (which scopes by embedder across tickets);
+    this scopes by ticket across embedders, so callers can display every vector
+    a ticket has -- cheap or expensive, wherever it was written -- in one query.
+    """
+    rows = conn.execute(
+        "SELECT field_path, embedder, vector FROM embeddings WHERE ticket_id = ?",
+        (ticket_id,),
+    ).fetchall()
+    result: List[Tuple[str, str, List[List[float]]]] = []
+    for row in rows:
+        result.append((str(row["field_path"]), str(row["embedder"]), unpack_vectors(bytes(row["vector"]))))
+    return result
+
+
+def ticket_ids_for_repo(conn: sqlite3.Connection, repo_path: str) -> List[str]:
+    """Return all ticket ids registered for a repo."""
+    rows = conn.execute(
+        "SELECT id FROM tickets WHERE repo_path = ?", (repo_path,)
+    ).fetchall()
+    return [str(row["id"]) for row in rows]

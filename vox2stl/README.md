@@ -2,6 +2,15 @@
 
 Dependency-free `.vox` layer to ASCII STL converter.
 
+Printed thermo HAT board (traces away from pico):
+
+![Thermo HAT board](.www/thermo.jpg)
+
+The dark filament is "conductive".  It is. sort of. at some insane
+ohm/mm at this trace size. It's basically an insulator, so next step
+is to cover this with copper tape, but it technically did print a
+circuit trace. (and I got all prematurely excited to print 3d traces). 
+
 ## Usage
 
 ```bash
@@ -36,9 +45,10 @@ when present. During STL generation, the `base` layer becomes a plate and
 - `+` is treated as a four-way cross.
 - `*` and `O` create raised pad boxes. Pads accept traces from any side, but
   adjacent pad cells such as `OO` do not connect directly to each other.
-- Lowercase `a` through `z` render embossed uppercase letters, one monospace
-  letter per cell. They do not connect electrically. Letter shapes come from
-  pre-rendered smoothed Hershey vector tiles in `vox2stl/tiles/letters/`.
+- Lowercase `a` through `z` and digits `0` through `9` render embossed
+  uppercase / numeral glyphs, one monospace cell each. They do not connect
+  electrically. Shapes come from pre-rendered smoothed Hershey Simplex tiles
+  in `vox2stl/tiles/letters/`.
 
 For hand editing, `voxtool.py correct` rewrites ASCII trace shorthand in place:
 
@@ -96,22 +106,15 @@ same-copper protrusions, then subtracts isolation slots and any `*` or `O`
 through-hole. Cached tiles may extend past one `UNIT_MM` cell; overlaps are
 intentional so neighboring same-copper tiles fuse robustly in slicers.
 
-The persistent tile cache is a pickled dictionary at
-`vox2stl/tiles/tile_cache.pickle`, written as a gzip-compressed pickle stream.
-Lowercase letter tiles are stored under their single-character keys, and copper
-ligatures are stored under their five-part keys. If the pickle is deleted, the
-cache is rebuilt lazily; lowercase letters are loaded from pre-rendered letter
-STL fragments when present, otherwise they are regenerated from the built-in
-letter renderer. Cache format or geometry upgrades are handled by deleting the
-cache file and letting it regenerate, or by running:
-
-```bash
-vox2stl/voxtool.py warm-tile-cache
-vox2stl/voxtool.py warm-tile-cache --conf coppertape
-```
-
-Non-default CLI geometry uses an in-memory
-cache so stale persisted dimensions are not reused.
+The persistent tile cache is a lazy gzip-compressed pickle at
+`vox2stl/tiles/tile_cache.pickle` (local only, not versioned). Each cache
+holds rendered ligature tiles under their keys plus
+`__tile_cache_conf_hash__`, a SHA-256 digest of the active profile's `.conf`
+file chain (includes and overrides, in order). When the hash does not match the
+current `--conf` profile, the cache is cleared and tiles are regenerated on
+demand during STL generation. Lowercase letter tiles still load from
+pre-rendered letter STL fragments when present, otherwise they are generated
+from the built-in letter renderer.
 
 Default `*` and `O` hole diameters are fixed physical dimensions, independent
 of `UNIT_MM`; only the `*` pin hole is enlarged from its previous value. `*` and `O` pad outer prisms use the same outside fraction and are enlarged close to
