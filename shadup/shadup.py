@@ -3,7 +3,9 @@
 
 import argparse
 import concurrent.futures
+import contextlib
 import csv
+import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +23,9 @@ T = TypeVar("T")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 DB_NAME = ".shadup.db"
+LOCK_NAME = ".shadup.lock"
+_store_lock_depth = 0
+_store_lock_fh: object | None = None
 # Object payloads live under ``<shadir>/data/xx/<digest>`` (sibling to ``files/``).
 DATA_DIR_NAME = "data"
 META_KEY_SHADIR = "shadir"
@@ -42,6 +47,30 @@ META_TAG_SELF_LINK_NAME = "_self"
 _INDEX_TREE_NAMES = frozenset({"_tags", META_DIR_NAME})
 # Characters invalid in a Windows path segment (excluding ``:``, handled below).
 _TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
+
+
+@contextlib.contextmanager
+def exclusive_store_lock(shadir: str) -> Iterator[None]:
+    """Exclusive advisory lock for blob writes and unlinks in this process tree.
+
+    Reentrant in the holding process so a command can lock around a helper that
+    also locks. A second process blocks until the holder releases it.
+    """
+    global _store_lock_depth, _store_lock_fh
+    if _store_lock_depth == 0:
+        os.makedirs(shadir, exist_ok=True)
+        fh = open(os.path.join(shadir, LOCK_NAME), "a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        _store_lock_fh = fh
+    _store_lock_depth += 1
+    try:
+        yield
+    finally:
+        _store_lock_depth -= 1
+        if _store_lock_depth == 0 and _store_lock_fh is not None:
+            fcntl.flock(_store_lock_fh.fileno(), fcntl.LOCK_UN)
+            _store_lock_fh.close()
+            _store_lock_fh = None
 
 
 def _sanitize_tag_mirror_segment(part: str) -> str:
@@ -2390,7 +2419,21 @@ def _record_stored_file(
 def handle_store(
     conn: sqlite3.Connection, root: str, shadir: str, skip_dotfiles: bool
 ) -> None:
-    """Store files under root into shadir and replace with symlinks."""
+    """Store files under root into shadir and replace with symlinks.
+
+    The lock covers blob creation and the ``stored_files`` insert. The insert
+    is committed before the lock is released so a concurrent ``gc`` cannot
+    treat a just-written blob as unreferenced.
+    """
+    with exclusive_store_lock(shadir):
+        _handle_store_unlocked(conn, root, shadir, skip_dotfiles)
+        conn.commit()
+
+
+def _handle_store_unlocked(
+    conn: sqlite3.Connection, root: str, shadir: str, skip_dotfiles: bool
+) -> None:
+    """Store files under root. Caller holds :func:`exclusive_store_lock`."""
     stored_bytes = 0
     skipped_bytes = 0
     abs_root = os.path.abspath(root)
