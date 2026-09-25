@@ -1,7 +1,7 @@
 # Working a todo
 
 status: living document - **normative owner** for lifecycle, worktrees, subtodo
-integration, finish/teardown, handoff, and chat reporting
+and foreign-work integration, finish/teardown, handoff, and chat reporting
 
 CLI syntax and schema -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
 Ticket design / decomposition -> [`GROOMING.md`](GROOMING.md)
@@ -115,6 +115,25 @@ test "$(git branch --show-current)" = "$BRANCH"
 Prefer `todo.py init --stay-on-parent` when filing from the main checkout, then
 add the worktree.
 
+**Stacked promote (the current checkout is itself todo-bound).** `init` and
+`ensure_worktree --init` refuse with `todo already exists on current branch` when run
+from another todo's worktree -- the normal case when a session starts inside one. Do
+NOT switch that checkout's branch to get around it (it is someone's live worktree).
+Create the branch by hand from the default branch tip, then let `ensure_worktree`
+(no `--init`) place it:
+
+```bash
+BR=$(todo get-json-path <id> Branch)
+git -C "$MAIN" fetch origin "$DEFAULT_BRANCH"
+git -C "$MAIN" branch "$BR" "origin/$DEFAULT_BRANCH"
+printf '"%s"' "$(git -C "$MAIN" rev-parse "origin/$DEFAULT_BRANCH")" | todo set-json-path <id> BaseSha
+todo set <id> --state ready
+todo ensure_worktree <id>
+```
+
+Groom-phase writes (`mint`, `set`, `work-item-add`) are store-only and may run from
+any checkout; the first `git` or code action on the todo happens inside its worktree.
+
 **INVARIANT:** every FINAL state (`done`, `merged`, `rejected`) implies **no
 live worktree** for that todo. Teardown is mandatory on finish (below), not
 optional cleanup. `set --state ...` is store-only and does **not** remove
@@ -200,11 +219,12 @@ spawn a subtodo.
 | a subtodo to start | `todo.py add-subtodo <parent-id> --summary=...` | `start_subtodo` |
 | a subtodo to land | **git-merge** child into parent branch, then `todo.py merge-subtodo <child-id>` | `merge_subtodo` |
 | local coding | edit in todo worktree, then `todo.py work-item-done <id>` | `code` |
-| no-code step | `todo.py work-item-done <id> --checkpoint -m "..."` | `checkpoint` |
+| already written elsewhere -- another branch's commit, or a suggestion you decided to take | land it on the todo branch, then `todo.py work-item-done <id> --summary="... from branch:<b>, sha:<s>"` ([landing foreign work](#landing-foreign-work-no-merge-node)) | `code` -- the landing commit; the source is named in text only |
+| no-code step | `todo.py work-item-checkpoint <id> -m "..."` | `checkpoint` |
 | too coarse | `todo.py work-item-insert <id> --summary=...` | new task at cursor |
 | fine, but mistimed -- it needs a step further down the plan first | `todo.py work-item-reorder <id> <src> <dst>` (`-1` = last), then poll again | nothing; the plan is reordered, no item completed |
 | no longer wanted -- descoped, superseded, or subsumed by another step | `todo.py work-item-obsolete <id> [target] -m "why"` | `obsolete` (kept in the trail with its reason, unlike a delete) |
-| impossible as written | `todo.py work-item-done <id> --blocked -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `code` with the no-change sentinel |
+| impossible as written | `todo.py work-item-blocked <id> -m "<long form>"`, then the `userneeded` note ([5](#5-handle-userneeded-or-stopped)) | `blocked` |
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
 
@@ -249,6 +269,34 @@ the git step first.
 Portable coordination: poll with `wait-for` / `wait-and-merge`. Same-session
 harness completion notifications (when available) are a convenience only.
 
+### Landing foreign work (no merge node)
+
+The code for a step sometimes already exists outside this todo: a commit on an
+unrelated branch, another session's fix, a claude suggestion you decided to
+take. That is neither a subtodo nor a child -- nothing was ever registered, so
+there is no merge obligation to discharge and no `merge_subtodo` node. Land it
+on the todo's branch and close the item as ordinary `code`, carrying the origin
+in the item's own text:
+
+```bash
+git merge --no-ff <source-branch>          # or: git cherry-pick -x <sha>
+todo.py work-item-done <id> --summary='guard the NULL case in foo.py: from a claude suggestion "investigate NULL errors in foo.py", merged from branch:foobar, sha:abc123'
+```
+
+The recorded `sha` is your landing commit on the todo's branch, never the
+foreign one -- `work-item-done` accepts only HEAD
+([`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants)) -- so the
+origin survives only in what you write. Name all of it: what asked for the work
+(quote a suggestion verbatim), whether it was merged or copied, and the source
+`branch:` and `sha:`. Prefer `--no-ff`, whose merge message you write, and
+`cherry-pick -x`, which appends the source sha, so the node's `message` carries
+the provenance too; a fast-forward merge leaves HEAD as the foreign commit and
+`--summary` as the only place the source is recorded at all.
+
+A registered child is not eligible for this: integrate it by the sequence above
+and run `merge-subtodo`. Ad-hoc landing is for work that never had a tracking
+node, not a shortcut past one that does.
+
 ---
 
 ## 5. Handle `userneeded` or `stopped`
@@ -270,16 +318,11 @@ chat. Record it in TWO places, long form and short form:
 
 | Where | What | Why there |
 |-------|------|-----------|
-A dropped step is not a blocked one. `--blocked` means the step is still owed
-and cannot be done as written, so it belongs in the escalation below;
-`work-item-obsolete` means nobody wants it any more and there is nothing to
-escalate.
-
-| **The work item** (`work-item-done --blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
+| **The work item** (`work-item-blocked -m "..."`) | The LONG form: what was tried, what was actually found (concrete: fixture names, ids, counts, error types), why the approach cannot work, and the options as you see them | The WorkItems trail is what a future agent walks. This is the same durable slot a commit message occupies for work that succeeded -- hence `-m` is mandatory here, unlike on a checkpoint |
 | **The state** (`set <id> --state userneeded --note="..."`) | The SHORT form: one or two lines naming the item and the decision being asked for, pointing at the work item | The note is read ONCE, by the user deciding what to do next. A blocker narrative pasted in full there buries the actual question |
 
 ```bash
-todo.py work-item-done <id> --blocked -m "Not achievable with the committed corpus.
+todo.py work-item-blocked <id> -m "Not achievable with the committed corpus.
 MIXED-22: the 18 checklist ids in the burst match none of the 2 recorded...
 STORM-30: no interchange fixture exists at all...
 Options: (a) descope to checklist_doc_attach.json, (b) wait for a healthy tenant, (c) move to layer 3."
@@ -291,12 +334,21 @@ the step is merely unstarted; the item without the state note leaves a stuck tod
 that never asks the user anything. The **permalink to the blocked item** is what
 you paste into chat, a PR, or another todo -- not a retelling.
 
-`--blocked` requires a clean tree (commit or discard the partial attempt first),
-refuses `--sha`, and refuses to be combined with `--checkpoint`. Reach for
-`--checkpoint` when the step genuinely finished without producing code; reach for
-`--blocked` when it did not finish at all. Because the sentinel cannot be the
-last item of a done todo (invariant #6), a blocked tail keeps the todo honestly
-unfinished -- see
+`work-item-blocked` is store-only: nothing it records comes from git, so a
+partial attempt sitting in the tree neither blocks it nor gets swept into it --
+commit or discard that attempt on its own terms.
+
+Pick between the three by what you are claiming, not by what is convenient:
+
+- **`work-item-checkpoint`** -- the step genuinely FINISHED, it just produced no
+  code. Needs the branch checked out and a clean tree, since it records HEAD.
+- **`work-item-blocked`** -- it did not finish at all and is still owed. Escalate
+  with the `userneeded` note above.
+- **`work-item-obsolete`** -- nobody wants it any more. Nothing to escalate, so
+  no `userneeded` note; the reason on the item is the whole record.
+
+Because no no-commit item can be the last item of a done todo (invariant #6), a
+blocked tail keeps the todo honestly unfinished -- see
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#workitems-and-invariants).
 
 ---
@@ -351,6 +403,47 @@ the child worktree happens at child FINAL (section 6).
 
 ### Root todo -> PR
 
+Once `is-done` holds and section 6's verification passes, the branch goes through the
+**review cycle** before the PR is handed to humans. The order is fixed. Every finding
+that gets fixed lands as a WorkItem on this todo (`work-item-add`, then
+`work-item-done`), never as a silent edit on a finished plan.
+
+| # | Step | Who | Notes |
+|---|------|-----|-------|
+| 1 | Review the whole branch diff vs the default branch as a reviewer would; fix what it finds | HICAP reviewer (Fable-class) | findings -> `work-item-add <id> --summary="[HICAP] review follow-up: ..."` |
+| 2 | Push, open the PR (draft or not), wait for CI green | worker | the repo's own push hooks apply (opportunity: the Semaphore watch hook) |
+| 3 | Copilot code review -- ONLY when the repo is in the table below | MIDCAP, following the repo's `request-copilot-code-review` skill literally | request, wait, harvest; findings -> `[HICAP] Copilot review follow-up (pr:N): ...` WorkItems |
+| 4 | Fix EVERY Copilot finding now, push, re-request the Copilot review | HICAP fixer (Opus-class) | one commit per finding, why-per-file messages; deferring a finding to a later todo needs the user's explicit yes in chat first -- never a unilateral "tracked as todo:X" |
+| 5 | Re-review the branch after the fixes | HICAP reviewer (Fable-class) | exit gate; loop to 3 only if step 4 changed behavior, not wording |
+
+Within HICAP the reviewer is the most capable model available (Fable-class) and the
+fixer is the HICAP workhorse (Opus-class). Tiers: [`GROOMING.md`](GROOMING.md#capability-tiers).
+
+**Practice what you preach: self-review resolves its own citations.** When steps 1 or 5 touch
+a skill, rule, or doc file that cites a file path, a symbol, or a line number, resolving those
+citations against the current tree is part of the review, not optional polish -- a reviewer
+that tells others to check prose against code and then ships an unchecked citation in its own
+diff has not done the review. For every backtick-quoted path: confirm it exists (`git show
+<base>:<path>` or `git cat-file -e`). For every symbol claimed to live in a specific file:
+`grep` for it there. For every cited line or line range: confirm the file has that many lines.
+A citation that predates something now true (a skill that "does not exist yet") is stale in
+the same way a wrong path is; fix or remove it, do not leave it standing next to its own
+correction. This check is unbounded in scope within the touched files -- run it on every
+citation the diff adds or changes, not a sample.
+
+**Copilot review is a per-repo feature, hardcoded here.** It is on only where the repo
+carries BOTH a requesting skill (Claude side) and a Copilot-side checklist; the two
+files co-evolve and reference each other.
+
+| Repo (`Scope.git_url`) | Copilot review | Requesting skill | Copilot-side checklist |
+|---|---|---|---|
+| `github.com/easternlabs/opportunity` | yes | `.claude/skills/request-copilot-code-review/SKILL.md` | `.github/skills/code-review/SKILL.md` |
+| every other repo | no -- steps 3 and 4 are skipped | -- | -- |
+
+Adding a repo means adding a row here AND both files in that repo.
+
+After the cycle:
+
 ```bash
 todo.py set <id> --state merged --pr <N>    # "Push PR" transition after done
 ```
@@ -402,7 +495,8 @@ readable but are not written any more. Prefer the `objid` form
 
 `fail` is the more specific case and wins the overlap: `userneeded` awaiting a
 decision is `mix`, but `userneeded` because an item is IMPOSSIBLE as written is
-`fail` -- and that item should already be recorded with `--blocked` (section 5).
+`fail` -- and that item should already be recorded with `work-item-blocked`
+(section 5).
 
 Always report `N of M work items done, cursor at todo:<id>/workitem/<i>`.
 Untracked mid-run asks become WorkItems (`work-item-add`), not prose side

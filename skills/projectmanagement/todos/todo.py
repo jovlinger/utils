@@ -1479,26 +1479,42 @@ def build_ticket_skeleton(
 
 # --- WorkItem model: typed items, cursor, and invariants -------------------
 #
-# A WorkItem is either not-done freetext (kind "task") or one of five typed
-# done kinds, each produced by the command that performs that work:
+# A WorkItem is either not-done freetext (kind "task") or one of six typed
+# done kinds. ONE COMMAND PER KIND, always: the command performs the work and
+# the kind is the receipt it writes down, which is why a kind is never a
+# `--status` a caller can assert without doing the thing it claims. What each
+# receipt carries is what its command can actually witness:
 #   - "code"          local coding; carries a `sha` (invariant #1)
+#                     [work-item-done; needs the branch checked out, and makes
+#                     the commit itself when the tree is dirty]
 #   - "merge_subtodo" a merged subtodo; carries `subtodo_id` and a `sha`
+#                     [merge-subtodo, after YOUR git merge]
 #   - "start_subtodo" a fired subtodo; carries `subtodo_id`, no sha
-#   - "checkpoint"    completed with NO commit produced (recon, waits,
+#                     [add-subtodo, which creates the child branch]
+#   - "checkpoint"    the step FINISHED but produced no commit (recon, waits,
 #                     bookkeeping); carries `at_sha` -- observational (where
 #                     HEAD stood), never attribution -- and a `message` saying
-#                     what the no-code step did. Mirrors the State-value
-#                     doctrine: each kind keeps only its own metadata, and
-#                     inapplicable metadata raises instead of silently dropping.
-#   - "obsolete"      NOT DONE and never will be, because it is no longer
-#                     WANTED: descoped, superseded, or subsumed by another
-#                     step. Carries a `message` saying why and nothing else --
-#                     no `sha` (it produced no commit) and no `at_sha` (it
-#                     observed nothing). Distinct from `work-item-done
-#                     --blocked`, which is a step still owed that CANNOT be
-#                     done as written; nobody owes an obsolete step anything.
-#                     Distinct from work-item-delete, which erases the step:
-#                     an obsolete item stays in the trail, with its reason.
+#                     what the no-code step did. [work-item-checkpoint; needs
+#                     the branch checked out to read HEAD, and a clean tree so
+#                     no real work is stranded]
+#   - "blocked"       the step is still OWED but cannot be done AS WRITTEN (the
+#                     approach turned out to be impossible, or the data it needs
+#                     does not exist). Carries the long-form `message`: what was
+#                     tried, what was found, what the options are. No sha of
+#                     either sort -- nothing was produced and nothing observed.
+#                     [work-item-blocked, store-only]
+#   - "obsolete"      the step is no longer WANTED: descoped, superseded, or
+#                     subsumed by another step. Carries a `message` saying why.
+#                     No sha of either sort. Nobody owes an obsolete step
+#                     anything, which is the whole difference from `blocked`.
+#                     [work-item-obsolete, store-only]
+# The last three close an item without a commit and share one mechanism
+# (close_workitem): patch the node, then slot it at the end of the done prefix.
+# Only their MEANING differs, and that is what having three names buys. Each
+# kind still keeps only its own metadata, mirroring the State-value doctrine:
+# inapplicable metadata raises instead of being silently dropped.
+# Deleting a step is none of the above -- it erases that the step was ever
+# planned, so it is for a plan that was never right, not one that changed.
 # The cursor is the first not-done item (derived). Working proceeds by marking
 # the cursor done and advancing; the index never decreases though the list may
 # grow (invariant #3). A todo is done when nothing is not-done (invariant #7).
@@ -1508,15 +1524,23 @@ WORKITEM_CODE = "code"
 WORKITEM_MERGE_SUBTODO = "merge_subtodo"
 WORKITEM_START_SUBTODO = "start_subtodo"
 WORKITEM_CHECKPOINT = "checkpoint"
+WORKITEM_BLOCKED = "blocked"
 WORKITEM_OBSOLETE = "obsolete"
+# The three that close an item with no commit: same mechanism, different
+# claim. Every one of them requires its reason to be recorded.
+WORKITEM_NOCOMMIT_KINDS = (WORKITEM_CHECKPOINT, WORKITEM_BLOCKED, WORKITEM_OBSOLETE)
 # git's null object id: an EXPLICIT no-change sentinel on a done code/merge
-# item's `sha`. Two producers: `work-item-done --blocked`, for an item that
-# CANNOT be done as written (the sentinel says "no commit, and none is coming"
-# where a checkpoint says "no commit, step finished"); and the legacy retrofit
-# for old records that misattribute a foreign commit, without converting the
-# node to kind=checkpoint. Readers must never resolve it, attribute it, or
-# report it as a branch commit; doctor accepts it mid-list and rejects it as
-# the last item.
+# item's `sha`. LEGACY ENCODING, no live producer. It was how `work-item-done
+# --blocked` recorded "no commit, and none is coming" -- a `code` item that was
+# not code, so every reader needed a special case for it. kind="blocked" says
+# the same thing in the field that is supposed to say it, and the sentinel is
+# left only for records already carrying it: old blocked items, and the
+# retrofit for records that misattribute a foreign commit. It is deliberately
+# NOT migrated to kind=blocked, because those two producers are
+# indistinguishable after the fact and guessing would relabel a bad
+# attribution as a decision nobody made. Readers must never resolve it,
+# attribute it, or report it as a branch commit; doctor accepts it mid-list and
+# rejects it as the last item.
 WORKITEM_NULL_SHA = "0" * 40
 # "Done" here means CLOSED -- the cursor is past it and the plan owes it
 # nothing further. An obsolete item is closed without ever having been done,
@@ -1528,8 +1552,7 @@ WORKITEM_DONE_KINDS = frozenset(
         WORKITEM_CODE,
         WORKITEM_MERGE_SUBTODO,
         WORKITEM_START_SUBTODO,
-        WORKITEM_CHECKPOINT,
-        WORKITEM_OBSOLETE,
+        *WORKITEM_NOCOMMIT_KINDS,
     }
 )
 WORKITEM_KINDS = WORKITEM_DONE_KINDS | {WORKITEM_TASK}
@@ -1767,23 +1790,6 @@ def code_workitem(sha: str, summary: str = "", message: str = "") -> JsonDict:
     return item
 
 
-def checkpoint_workitem(at_sha: str, summary: str = "", message: str = "") -> JsonDict:
-    """Build a done 'checkpoint' work item: completed with NO commit produced.
-
-    `at_sha` is observational -- where branch HEAD stood at completion -- NOT
-    attribution: a checkpoint claims no authorship of that commit (contrast
-    `code_workitem`, whose `sha` means "this commit IS this item's work").
-    `message` should say what the no-code step actually did; the default marks
-    an explicit no-op so the trail never inherits a foreign commit's message."""
-    return {
-        "kind": WORKITEM_CHECKPOINT,
-        "summary": summary,
-        "at_sha": at_sha,
-        "message": message or "(no-op checkpoint; no commit produced)",
-        "done": True,
-    }
-
-
 def start_subtodo_workitem(subtodo_id: str, summary: str = "") -> JsonDict:
     """Build a done 'start_subtodo' work item (no sha)."""
     return {
@@ -1829,6 +1835,69 @@ def mark_cursor_done(todo: JsonDict, done_item: JsonDict) -> int:
         items[index] = done_item
     todo["WorkItems"] = items
     return index
+
+
+# Recorded on a checkpoint whose caller gave no -m, so the trail never
+# inherits the HEAD commit's own message and pretends it described the step.
+NOOP_CHECKPOINT_MESSAGE = "(no-op checkpoint; no commit produced)"
+
+
+def close_workitem(
+    todo: JsonDict,
+    index: int,
+    kind: str,
+    *,
+    message: str,
+    summary: str = "",
+    extra: Optional[JsonDict] = None,
+) -> int:
+    """Close the not-done item at *index* as done *kind*; return where it landed.
+
+    The one mechanism behind checkpoint, blocked and obsolete -- the three
+    receipts that close an item without a commit. Two moves:
+
+    PATCH, never rebuild. The step is not being swapped for a different one, so
+    the node keeps its objid (every permalink already handed out for it stays
+    valid) along with anything else the plan attached to it. *extra* adds the
+    kind's own metadata; *summary* overrides the step's description only when
+    given, since patching already keeps it.
+
+    SLOT it at the end of the done prefix. A closed step belongs to the history
+    rather than the remaining plan, and without the move a step closed further
+    down the list would leave a done item sitting behind not-done ones, which
+    is exactly what invariant #3 forbids.
+
+    Caller must have checked that *index* names a not-done item
+    (``require_open_workitem``), which is also what makes the cursor lookup
+    here safe."""
+    frontier = resolve_workitem_index(todo, None, what=f"close as {kind}")
+    item = todo["WorkItems"][index]
+    item["kind"] = kind
+    item["message"] = message
+    item["done"] = True
+    if summary:
+        item["summary"] = summary
+    item.update(extra or {})
+    items: List[JsonDict] = list(todo["WorkItems"])
+    items.insert(frontier, items.pop(index))
+    todo["WorkItems"] = items
+    return frontier
+
+
+def closed_workitem_payload(todo: JsonDict, index: int, *, from_index: int) -> JsonDict:
+    """The JSON a close command prints: what was closed, and where it landed."""
+    node = todo["WorkItems"][index]
+    payload: JsonDict = {
+        "index": index,
+        "from_index": from_index,
+        "kind": node.get("kind", ""),
+        "objid": node.get(todo_objid.OBJID_KEY, ""),
+        "summary": node.get("summary", ""),
+        "message": node.get("message", ""),
+    }
+    if node.get("at_sha"):
+        payload["at_sha"] = node["at_sha"]
+    return payload
 
 
 def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
@@ -3119,32 +3188,31 @@ def workitem_findings(todo: JsonDict) -> List[str]:
                     f"WorkItems.{index} checkpoint item carries a sha; a checkpoint claims "
                     "no commit (observational position goes in at_sha)"
                 )
-        if k == WORKITEM_OBSOLETE:
-            # The reason is the item's whole content: without it the trail says
-            # a step vanished and nothing about why, which is what deleting it
-            # would have said.
+        if k in (WORKITEM_BLOCKED, WORKITEM_OBSOLETE):
+            # For both of these the reason is the item's whole content: without
+            # it the trail says a step stopped and nothing about why, which is
+            # what deleting it would have said.
             if not (isinstance(item.get("message"), str) and item.get("message").strip()):
                 findings.append(
-                    f"WorkItems.{index} obsolete item is missing a message; the reason a "
-                    "step was dropped IS the record"
+                    f"WorkItems.{index} {k} item is missing a message; why a step was "
+                    "closed without a commit IS the record"
                 )
             for field in ("sha", "at_sha"):
                 if item.get(field):
                     findings.append(
-                        f"WorkItems.{index} obsolete item carries {field}; a dropped step "
-                        "produced no commit and observed no position"
+                        f"WorkItems.{index} {k} item carries {field}; it produced no commit "
+                        "and observed no position"
                     )
-    # a done todo must not end in start_subtodo, checkpoint, obsolete, or a
-    # no-change sentinel -- it must be a real code/merge commit so last-sha is
-    # the branch's last commit (#6). An obsolete tail is the same refusal as a
-    # blocked one: a todo whose final act was dropping a step has not finished,
-    # it has stopped.
+    # a done todo must not end in start_subtodo, any of the no-commit kinds, or
+    # a no-change sentinel -- it must be a real code/merge commit so last-sha is
+    # the branch's last commit (#6). A todo whose final act produced no commit
+    # has not finished, it has stopped: nothing was landed, and last-sha would
+    # have to lie or be empty.
     if items and is_done(todo):
         last = items[-1]
         if isinstance(last, dict) and workitem_kind(last) in (
             WORKITEM_START_SUBTODO,
-            WORKITEM_CHECKPOINT,
-            WORKITEM_OBSOLETE,
+            *WORKITEM_NOCOMMIT_KINDS,
         ):
             findings.append(
                 f"last work item is {workitem_kind(last)}; a done todo must end in a "
@@ -4604,39 +4672,50 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
         "records the new HEAD sha; the commit message is -m when given, else the work item's "
         "summary. It adds no bookkeeping commit, so the recorded sha stays the branch HEAD "
         "(invariant #6). --summary overrides the item's high-level description (defaults to the "
-        "cursor task's summary). --checkpoint completes a NO-COMMIT item (recon, waits, "
-        "bookkeeping) instead: clean tree only, records HEAD observationally as at_sha (never as "
-        "attribution), message = -m. --blocked completes an item that CANNOT be done as written "
-        "(the approach turned out to be impossible, or the data it needs does not exist): clean "
-        "tree only, records the no-change sentinel sha, and requires -m -- the long form of what "
-        "was tried, what was found, and what the options are. Like State metadata, inapplicable "
-        "flags raise: -m on a clean tree without --checkpoint/--blocked, --sha with either, or "
-        "both variants together, are errors rather than silent no-ops."
+        "cursor task's summary). It does ONE thing -- record a commit -- because the dispositions "
+        "that record no commit are their own commands: work-item-checkpoint (the step finished "
+        "without one), work-item-blocked (it cannot be done as written), work-item-obsolete (it "
+        "is no longer wanted). Those need no commit and, unlike this command, can close an item "
+        "other than the cursor. Like State metadata, inapplicable flags raise rather than being "
+        "silently dropped: -m on a clean tree, or --sha on a dirty one, is an error."
     )
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
         parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary); with --checkpoint, the recorded no-op message")
+        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
         parser.add_argument("--sha", help="commit sha for a clean tree; must equal HEAD")
         parser.add_argument("--summary", help="override the work item's high-level description")
-        parser.add_argument(
-            "--checkpoint",
-            action="store_true",
-            help="complete as a no-commit checkpoint: records HEAD as observational at_sha; clean tree only",
-        )
-        parser.add_argument(
-            "--blocked",
-            action="store_true",
-            help="complete as BLOCKED (cannot be done as written): records the no-change sentinel sha; requires -m; clean tree only",
-        )
+        # Migration stubs. Both moved to commands of their own, because a
+        # disposition that records no commit has no business being a flag on
+        # the command whose whole job is recording one. Kept registered, and
+        # hidden, so the old spelling answers with a pointer rather than
+        # argparse's bare "unrecognized arguments".
+        parser.add_argument("--checkpoint", action="store_true", help=argparse.SUPPRESS)
+        parser.add_argument("--blocked", action="store_true", help=argparse.SUPPRESS)
 
     def do(self) -> int:
         """Complete the cursor work item as code (invariant #1).
 
         Post-condition: the branch is fully committed. A clean tree records the
         current HEAD; a dirty tree commits all updates and new files first."""
+        for flag, moved_to, why in (
+            (
+                "checkpoint",
+                "work-item-checkpoint <id> [target] [-m ...]",
+                "it records HEAD as the observational at_sha, and can close an item other "
+                "than the cursor",
+            ),
+            (
+                "blocked",
+                "work-item-blocked <id> [target] -m ...",
+                "it is store-only -- no branch checkout and no clean tree, since nothing it "
+                "records comes from git",
+            ),
+        ):
+            if getattr(self, flag):
+                raise TodoError(f"--{flag} is now `todo.py {moved_to}`: {why}")
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         # The recorded sha must land on the todo's own branch, so the CWD must
@@ -4650,88 +4729,6 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
                 f"run it from a checkout of that branch (currently on {checked_out!r})"
             )
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
-        if self.checkpoint and self.blocked:
-            raise TodoError(
-                "--checkpoint and --blocked are different completions: a no-commit step that "
-                "FINISHED versus one that cannot be done as written; pass one"
-            )
-        if self.blocked:
-            # The item cannot be completed as written. The LONG form of why belongs
-            # here, on the item: the State note is read once by the user deciding
-            # what to do next, while the WorkItems trail is what a future agent
-            # walks -- so the narrative has to survive in the trail. Same per-variant
-            # metadata discipline as --checkpoint: inapplicable flags raise.
-            # A blocked item left LAST makes the todo is-done with no real final
-            # commit; doctor rejects that under #6 rather than this command, since
-            # a later item may still be added.
-            if self.sha:
-                raise TodoError(
-                    "--blocked does not take --sha; it records the no-change sentinel "
-                    "(a blocked item produced no commit)"
-                )
-            if not self.message:
-                raise TodoError(
-                    "--blocked requires -m: the long form of what was tried, what was found, "
-                    "and what the options are -- a bare 'blocked' teaches the next agent nothing"
-                )
-            if dirty:
-                raise TodoError(
-                    "--blocked records no commit but the tree is dirty; commit the partial "
-                    "attempt (plain work-item-done) or clean the tree first"
-                )
-            item = code_workitem(
-                WORKITEM_NULL_SHA, summary=self.summary or "", message=self.message
-            )
-            index = mark_cursor_done(todo, item)
-            write_todo_worktree(root, todo)
-            node = todo["WorkItems"][index]
-            print(
-                json.dumps(
-                    {
-                        "index": index,
-                        "kind": WORKITEM_CODE,
-                        "sha": node["sha"],
-                        "summary": node.get("summary", ""),
-                        "message": node["message"],
-                    },
-                    indent=2,
-                )
-            )
-            return 0
-        if self.checkpoint:
-            # No-commit completion. Per-variant metadata discipline (same doctrine
-            # as set_state): flags the variant does not keep are errors.
-            if self.sha:
-                raise TodoError(
-                    "--checkpoint does not take --sha; it records HEAD as observational at_sha"
-                )
-            if dirty:
-                raise TodoError(
-                    "--checkpoint records no commit but the tree is dirty; commit the work "
-                    "(plain work-item-done) or clean the tree first"
-                )
-            head = head_sha(root)
-            if not head:
-                raise TodoError("no commits on branch; cannot record a checkpoint position")
-            item = checkpoint_workitem(
-                str(head), summary=self.summary or "", message=self.message or ""
-            )
-            index = mark_cursor_done(todo, item)
-            write_todo_worktree(root, todo)
-            node = todo["WorkItems"][index]
-            print(
-                json.dumps(
-                    {
-                        "index": index,
-                        "kind": WORKITEM_CHECKPOINT,
-                        "at_sha": node["at_sha"],
-                        "summary": node.get("summary", ""),
-                        "message": node["message"],
-                    },
-                    indent=2,
-                )
-            )
-            return 0
         if dirty:
             if self.sha:
                 raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
@@ -4745,8 +4742,9 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
                 # (the node would instead inherit HEAD's own commit message).
                 raise TodoError(
                     "-m does nothing on a clean tree (the HEAD commit's own message is "
-                    "recorded); commit the work first, or pass --checkpoint for a "
-                    "no-commit item, or --blocked for one that cannot be done as written"
+                    "recorded); commit the work first, or use work-item-checkpoint for a step "
+                    "that finished without a commit, or work-item-blocked for one that cannot "
+                    "be done as written"
                 )
             head = head_sha(root)
             if not head:
@@ -5044,6 +5042,138 @@ class WorkItemReorderCommand(WorkItemEditCommand):
         return 0
 
 
+class WorkItemCheckpointCommand(WorkItemProgressCommand):
+    command_names = ("work-item-checkpoint",)
+    doc_short: ClassVar[str] = "Close an item that finished with no commit"
+    doc_long: ClassVar[str] = (
+        "Work-item-checkpoint closes a not-done item that FINISHED but produced no commit -- "
+        "recon whose findings went into Body, a wait, bookkeeping -- as kind=checkpoint. It "
+        "records branch HEAD as at_sha, which is OBSERVATIONAL (where the step finished) and "
+        "never attribution: a checkpoint claims no authorship of that commit, unlike the `sha` "
+        "work-item-done records. So it needs the todo's branch checked out to read HEAD, and a "
+        "clean tree, since a dirty one means real work is about to be stranded (commit it with "
+        "plain work-item-done instead). -m says what the no-code step actually did; without it "
+        "the item records an explicit no-op rather than inheriting HEAD's commit message. TARGET "
+        "is an index (negative counts from the end) or objid:<hex>, defaulting to the cursor. "
+        "The item is patched in place, so it keeps its objid, and it moves to the end of the done "
+        "prefix (invariant #3). Was work-item-done --checkpoint."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-checkpoint arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
+        parser.add_argument(
+            "-m",
+            "--message",
+            help="what the no-commit step did; defaults to an explicit no-op marker",
+        )
+        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Close the addressed (default cursor) item as a no-commit checkpoint."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        normalize_todo_schema(todo)
+        # at_sha comes from git, so unlike its two siblings this one needs the
+        # todo's own branch checked out -- a checkpoint against some other
+        # branch's HEAD would record a position the trail cannot use.
+        branch = str(todo.get("Branch") or "")
+        checked_out = current_branch(root)
+        if checked_out != branch:
+            raise TodoError(
+                f"work-item-checkpoint records HEAD of the todo's branch {branch!r}; "
+                f"run it from a checkout of that branch (currently on {checked_out!r})"
+            )
+        if run_git(root, "status", "--porcelain", check=False).stdout.strip():
+            raise TodoError(
+                "work-item-checkpoint records no commit but the tree is dirty; commit the work "
+                "(plain work-item-done) or clean the tree first"
+            )
+        head = head_sha(root)
+        if not head:
+            raise TodoError("no commits on branch; cannot record a checkpoint position")
+        index = resolve_workitem_index(todo, self.target, what="checkpoint")
+        require_open_workitem(todo, index)
+        landed = close_workitem(
+            todo,
+            index,
+            WORKITEM_CHECKPOINT,
+            message=self.message or NOOP_CHECKPOINT_MESSAGE,
+            summary=self.summary or "",
+            extra={"at_sha": str(head)},
+        )
+        write_todo_worktree(root, todo)
+        payload = closed_workitem_payload(todo, landed, from_index=index)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): checkpoint work item: {_summary_snippet(payload['summary'])}")
+        print(json.dumps(payload, indent=2))
+        return 0
+
+
+class WorkItemBlockedCommand(WorkItemProgressCommand):
+    command_names = ("work-item-blocked",)
+    doc_short: ClassVar[str] = "Close an item that cannot be done as written"
+    doc_long: ClassVar[str] = (
+        "Work-item-blocked closes a not-done item that is still OWED but cannot be done AS "
+        "WRITTEN -- the approach turned out to be impossible, or the data it needs does not "
+        "exist -- as kind=blocked. -m is required and is the item's entire content: the LONG form "
+        "of what was tried, what was actually found (concrete: fixture names, ids, counts, error "
+        "types), why the approach cannot work, and the options as you see them. The State note is "
+        "read once by the user deciding what happens next; the WorkItems trail is what a future "
+        "agent walks, so the narrative has to live here. Store-only -- it needs no branch "
+        "checkout and no clean tree, because nothing it records comes from git (contrast "
+        "work-item-checkpoint, which reads HEAD). TARGET is an index (negative counts from the "
+        "end) or objid:<hex>, defaulting to the cursor. The item is patched in place, so it keeps "
+        "its objid and the permalink you hand the user in the userneeded note stays valid, and it "
+        "moves to the end of the done prefix (invariant #3). Doctor rejects a blocked LAST item "
+        "of a done todo (#6): that is the tool refusing to call a todo finished when its final "
+        "act was failing to do something. Was work-item-done --blocked, which recorded kind=code "
+        "with a sentinel sha; the kind now says it instead."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register work-item-blocked arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
+        parser.add_argument(
+            "-m",
+            "--message",
+            required=True,
+            help=(
+                "the long form: what was tried, what was found, why the approach cannot work, "
+                "and the options"
+            ),
+        )
+        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Close the addressed (default cursor) item as blocked."""
+        if not self.message.strip():
+            raise TodoError(
+                "-m must carry the long form: what was tried, what was found, and what the "
+                "options are -- a bare 'blocked' teaches the next agent nothing"
+            )
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        normalize_todo_schema(todo)
+        index = resolve_workitem_index(todo, self.target, what="mark blocked")
+        require_open_workitem(todo, index)
+        landed = close_workitem(
+            todo, index, WORKITEM_BLOCKED, message=self.message, summary=self.summary or ""
+        )
+        write_todo_worktree(root, todo)
+        payload = closed_workitem_payload(todo, landed, from_index=index)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): blocked work item: {_summary_snippet(payload['summary'])}")
+        print(json.dumps(payload, indent=2))
+        return 0
+
+
 class WorkItemObsoleteCommand(WorkItemProgressCommand):
     command_names = ("work-item-obsolete",)
     doc_short: ClassVar[str] = "Close an item as no longer wanted"
@@ -5078,6 +5208,7 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
                 "which other step subsumed it"
             ),
         )
+        parser.add_argument("--summary", help="override the work item's high-level description")
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -5091,43 +5222,15 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
         _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         index = resolve_workitem_index(todo, self.target, what="mark obsolete")
-        item = require_open_workitem(todo, index)
-        # The cursor, i.e. the end of the done prefix. Asked for through the
-        # same resolver so there is no second no-open-item path: the target
-        # above is an open item, so this cannot fail.
-        frontier = resolve_workitem_index(todo, None, what="mark obsolete")
-        # PATCH the node; never delete-and-recreate it. The step is not being
-        # swapped for a different one, it is being closed, so its objid, its
-        # summary, and any execution hints the plan attached to it all survive
-        # as the record of what was dropped and what it was going to be.
-        item["kind"] = WORKITEM_OBSOLETE
-        item["message"] = self.message
-        item["done"] = True
-        items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        # A closed step belongs to the history, not to the remaining plan, so
-        # it joins the end of the done prefix. Without the move, dropping a
-        # step further down the list would leave a done item sitting behind
-        # not-done ones -- exactly what #3 forbids.
-        items.insert(frontier, items.pop(index))
-        todo["WorkItems"] = items
-        write_todo_worktree(root, todo)
-        node = todo["WorkItems"][frontier]
-        summary = str(node.get("summary", ""))
-        if not self.no_commit:
-            commit_todo(root, f"chore(todo): obsolete work item: {_summary_snippet(summary)}")
-        print(
-            json.dumps(
-                {
-                    "index": frontier,
-                    "from_index": index,
-                    "kind": WORKITEM_OBSOLETE,
-                    "objid": node.get(todo_objid.OBJID_KEY, ""),
-                    "summary": summary,
-                    "message": node["message"],
-                },
-                indent=2,
-            )
+        require_open_workitem(todo, index)
+        landed = close_workitem(
+            todo, index, WORKITEM_OBSOLETE, message=self.message, summary=self.summary or ""
         )
+        write_todo_worktree(root, todo)
+        payload = closed_workitem_payload(todo, landed, from_index=index)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): obsolete work item: {_summary_snippet(payload['summary'])}")
+        print(json.dumps(payload, indent=2))
         return 0
 
 
@@ -6633,7 +6736,7 @@ def grouped_command_listing() -> str:
         lines.append(f"{group.group_title}:")
         for leaf in _command_leaves(group):
             for name in leaf.command_names:
-                lines.append(f"  {name:<18} {leaf.doc_short}")
+                lines.append(f"  {name:<20} {leaf.doc_short}")
         lines.append("")
     return "\n".join(lines)
 

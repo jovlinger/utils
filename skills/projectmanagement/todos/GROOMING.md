@@ -130,25 +130,23 @@ todo.py work-item-add <id> --summary="[MIDCAP] ..."
 
 Reorder the plan when the steps are right but their ORDER is not -- a step
 that turns out to depend on a later one, or one stalled on something outside the
-todo. Move it rather than deleting it or completing it as `--blocked`:
+todo. Move it rather than deleting it or closing it as blocked:
 
 ```bash
 todo.py work-item-reorder <id> <src> <dst>   # src: index or objid:; dst: index
 todo.py work-item-reorder <id> objid:0007 -1 # push a stalled step to the end
 ```
 
-`dst` is the position the item ends up at, negative counting from the end
-(`-1` last, `-2` next-to-last). One item moves and the rest keep their relative
-order, which gives a whole plan a topological pass cheaply: send each step to
-`-1` in the order you want them RUN, first to last, and after the final move the
-plan reads in exactly that order. Address by `objid:` while doing it -- each move
-renumbers the indexes after it, an objid keeps naming the same item.
+One item moves and the rest keep their relative order, which is what makes a
+whole mis-ordered plan cheap to fix. The `dst` grammar, the topological pass it
+enables, and why a multi-move edit addresses by `objid:` rather than by index:
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md#addressing-one-work-item).
 
 Dropping a step: `work-item-delete` while the plan is still notional (`groom`),
 `work-item-obsolete <id> [target] -m "why"` once it is real. Obsolete closes the
 step as no-longer-wanted and keeps it, and the reason, in the trail a later
-reader walks; delete erases both. Neither is `work-item-done --blocked`, which
-is for a step still OWED that cannot be done as written.
+reader walks; delete erases both. Neither is `work-item-blocked`, which is for
+a step still OWED that cannot be done as written.
 
 Wholesale replan: `set-json-path <id> WorkItems` (JSON array) -- see
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items). Edit the not-done frontier;
