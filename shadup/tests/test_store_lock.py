@@ -26,7 +26,8 @@ def test_store_lock_is_reentrant(tmp_path: Path) -> None:
     shadir = tmp_path / "store"
     with shadup.exclusive_store_lock(str(shadir)):
         with shadup.exclusive_store_lock(str(shadir)):
-            assert (shadir / ".shadup.lock").is_file()
+            assert (shadir / "data" / ".shadup.lock").is_file()
+            assert not (shadir / ".shadup.lock").exists()
     assert shadup._store_lock_depth == 0
 
 

@@ -55,11 +55,15 @@ def exclusive_store_lock(shadir: str) -> Iterator[None]:
 
     Reentrant in the holding process so a command can lock around a helper that
     also locks. A second process blocks until the holder releases it.
+
+    The lock lives under ``data/`` because the store root is often not writable
+    by the user who can already create and unlink blobs there.
     """
     global _store_lock_depth, _store_lock_fh
     if _store_lock_depth == 0:
-        os.makedirs(shadir, exist_ok=True)
-        fh = open(os.path.join(shadir, LOCK_NAME), "a+")
+        lock_dir = os.path.join(shadir, DATA_DIR_NAME)
+        os.makedirs(lock_dir, exist_ok=True)
+        fh = open(os.path.join(lock_dir, LOCK_NAME), "a+")
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         _store_lock_fh = fh
     _store_lock_depth += 1
