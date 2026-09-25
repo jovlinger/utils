@@ -425,7 +425,8 @@ def build_parser() -> argparse.ArgumentParser:
         "rm",
         help=(
             "Soft-delete stored paths and remove them from the library tree. "
-            "Blobs stay in the store."
+            "Without --hard, blobs stay. --hard unlinks a blob only when every "
+            "live reference was inside this target."
         ),
     )
     p_rm.add_argument(
@@ -441,7 +442,15 @@ def build_parser() -> argparse.ArgumentParser:
         "-n",
         "--dry-run",
         action="store_true",
-        help="Print paths that would be removed and change nothing",
+        help="Print paths and blobs that would be removed and change nothing",
+    )
+    p_rm.add_argument(
+        "--hard",
+        action="store_true",
+        help=(
+            "Also unlink blobs whose every live reference is inside this target. "
+            "Blobs orphaned by earlier soft-deletes stay on disk."
+        ),
     )
 
     p_rmhash = sub.add_parser(
@@ -2933,6 +2942,63 @@ def remove_library_paths(
             os.unlink(physical)
 
 
+def _live_rows_for_hash(
+    conn: sqlite3.Connection, digest: str
+) -> list[tuple[str, str, str, str]]:
+    """Return active ``(root, root_rel, dirpath, filename)`` rows for *digest*."""
+    return conn.execute(
+        f"""
+        SELECT root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+        """,
+        (digest,),
+    ).fetchall()
+
+
+def hashes_orphaned_by(
+    conn: sqlite3.Connection,
+    rows: list[tuple[str, str, str, str, str]],
+) -> list[str]:
+    """Hashes whose every live reference is inside *rows*.
+
+    Ended and already-soft-deleted rows are not live, so they do not keep a
+    blob. A hash with any live row outside *rows* is not orphaned by this target.
+    """
+    matched = {
+        (root, root_rel, dirpath, filename)
+        for _shasum, root, root_rel, dirpath, filename in rows
+    }
+    orphaned: list[str] = []
+    for digest in sorted({shasum for shasum, _root, _rr, _dp, _fn in rows}):
+        live = _live_rows_for_hash(conn, digest)
+        if live and all(tuple(row) in matched for row in live):
+            orphaned.append(digest)
+    return orphaned
+
+
+def unlink_store_blob(conn: sqlite3.Connection, shadir: str, digest: str) -> None:
+    """Unlink canonical and legacy blob paths for *digest*, plus any resolved copy."""
+    candidates: list[str] = []
+    found = resolve_existing_blob_path(conn, shadir, digest)
+    if found:
+        candidates.append(found)
+    candidates.append(blob_object_path(shadir, digest))
+    candidates.append(legacy_flat_blob_path(shadir, digest))
+    seen: set[str] = set()
+    for path in candidates:
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        if os.path.lexists(absolute) and not os.path.isdir(absolute):
+            os.unlink(absolute)
+            try:
+                os.rmdir(os.path.dirname(absolute))
+            except OSError:
+                pass
+
+
 def handle_rm(
     conn: sqlite3.Connection,
     prefixes: list[str],
@@ -2940,16 +3006,20 @@ def handle_rm(
     *,
     recursive: bool,
     dry_run: bool,
+    hard: bool = False,
 ) -> None:
     """Soft-delete matching paths and remove them from the library tree.
 
-    Blobs are not unlinked. ``--hard`` and ``gc`` reap blobs on their own scopes.
+    ``hard`` unlinks a blob only when every live reference was inside this
+    target. Blobs orphaned by earlier soft-deletes are left in place.
     """
     with exclusive_store_lock(shadir):
         rows = select_active_prefix_rows(conn, prefixes, recursive)
-        for shasum, _root, root_rel, dirpath, filename in rows:
-            del shasum
+        orphaned = hashes_orphaned_by(conn, rows) if hard else []
+        for _shasum, _root, root_rel, dirpath, filename in rows:
             out_csv(["rm", _stored_path_from_parts(root_rel, dirpath, filename)])
+        for digest in orphaned:
+            out_csv(["rmblob", digest])
         if dry_run or not rows:
             return
         conn.executemany(
@@ -2962,6 +3032,16 @@ def handle_rm(
         )
         remove_library_paths(rows, prefixes, recursive)
         conn.commit()
+        for digest in orphaned:
+            remaining = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM stored_files
+                WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+                """,
+                (digest,),
+            ).fetchone()[0]
+            if remaining == 0:
+                unlink_store_blob(conn, shadir, digest)
         out("rm paths: {count}", 0, count=len(rows))
 
 
@@ -3540,6 +3620,7 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             shadir,
             recursive=args.recursive,
             dry_run=args.dry_run,
+            hard=args.hard,
         )
         return 0
     if action == "rmhash":

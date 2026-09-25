@@ -117,3 +117,74 @@ def test_rm_directory_without_recursive_leaves_rows(tmp_path: Path) -> None:
 
     assert (files / "Album" / "a.flac").is_symlink()
     assert _active_names(db, "Album") == ["a.flac"]
+
+
+def _blob(store: Path, digest: str) -> Path:
+    return store / "data" / digest[:2] / digest
+
+
+def test_rm_hard_unlinks_blob_orphaned_by_the_target(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    digests = _store_album(store, files, db, "Album", {"a.flac": b"only-here"})
+
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "--hard", "-r", "Album"])
+
+    assert not (files / "Album").exists()
+    assert not _blob(store, digests["a.flac"]).exists()
+
+
+def test_rm_hard_keeps_blob_still_referenced_elsewhere(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    shared = b"shared-bytes"
+    digests_a = _store_album(store, files, db, "AlbumA", {"a.flac": shared})
+    _store_album(store, files, db, "AlbumB", {"a.flac": shared})
+
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "--hard", "-r", "AlbumA"])
+
+    assert not (files / "AlbumA").exists()
+    assert (files / "AlbumB" / "a.flac").is_symlink()
+    assert _blob(store, digests_a["a.flac"]).read_bytes() == shared
+    assert _active_names(db, "AlbumB") == ["a.flac"]
+
+
+def test_rm_hard_leaves_blobs_orphaned_by_earlier_soft_deletes(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    old = _store_album(store, files, db, "Old", {"a.flac": b"old-bytes"})
+    new = _store_album(store, files, db, "New", {"a.flac": b"new-bytes"})
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "-r", "Old"])
+
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "--hard", "-r", "New"])
+
+    assert _blob(store, old["a.flac"]).read_bytes() == b"old-bytes"
+    assert not _blob(store, new["a.flac"]).exists()
+
+
+def test_rm_hard_ended_history_does_not_pin_the_blob(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    digests = _store_album(store, files, db, "Album", {"a.flac": b"moved"})
+    _run(
+        files,
+        ["--shadir", str(store), "--db", str(db), "mv", "Album", "AlbumRenamed"],
+    )
+
+    _run(
+        files,
+        ["--shadir", str(store), "--db", str(db), "rm", "--hard", "-r", "AlbumRenamed"],
+    )
+
+    assert not _blob(store, digests["a.flac"]).exists()
+
+
+def test_rm_hard_dry_run_prints_blob_and_changes_nothing(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    digests = _store_album(store, files, db, "Album", {"a.flac": b"aaa"})
+
+    result = _run(
+        files,
+        ["--shadir", str(store), "--db", str(db), "rm", "-n", "--hard", "-r", "Album"],
+    )
+
+    assert f"rmblob,{digests['a.flac']}" in result.stdout
+    assert (files / "Album" / "a.flac").is_symlink()
+    assert _blob(store, digests["a.flac"]).is_file()
+    assert _active_names(db, "Album") == ["a.flac"]
