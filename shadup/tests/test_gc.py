@@ -91,7 +91,7 @@ def test_gc_dry_run_changes_nothing(tmp_path: Path) -> None:
     digests = _store_album(store, files, db, "Album", {"a.flac": b"aaa"})
     _run(files, ["--shadir", str(store), "--db", str(db), "rm", "-r", "Album"])
 
-    result = _run(files, ["--shadir", str(store), "--db", str(db), "gc", "-n"])
+    result = _run(files, ["--shadir", str(store), "--db", str(db), "gc", "--dry-run"])
 
     assert f"gc,{digests['a.flac']}" in result.stdout
     assert _blob(store, digests["a.flac"]).is_file()

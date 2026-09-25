@@ -101,7 +101,7 @@ def test_rm_dry_run_changes_nothing(tmp_path: Path) -> None:
 
     result = _run(
         files,
-        ["--shadir", str(store), "--db", str(db), "rm", "-n", "-r", "Album"],
+        ["--shadir", str(store), "--db", str(db), "rm", "--dry-run", "-r", "Album"],
     )
 
     assert "rm,Album/a.flac" in result.stdout
@@ -181,7 +181,7 @@ def test_rm_hard_dry_run_prints_blob_and_changes_nothing(tmp_path: Path) -> None
 
     result = _run(
         files,
-        ["--shadir", str(store), "--db", str(db), "rm", "-n", "--hard", "-r", "Album"],
+        ["--shadir", str(store), "--db", str(db), "rm", "--dry-run", "--hard", "-r", "Album"],
     )
 
     assert f"rmblob,{digests['a.flac']}" in result.stdout

@@ -443,7 +443,6 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recurse into child paths"
     )
     p_rm.add_argument(
-        "-n",
         "--dry-run",
         action="store_true",
         help="Print paths and blobs that would be removed and change nothing",
@@ -467,7 +466,6 @@ def build_parser() -> argparse.ArgumentParser:
         description=gc_help,
     )
     p_gc.add_argument(
-        "-n",
         "--dry-run",
         action="store_true",
         help="Print blobs that would be unlinked and change nothing",
