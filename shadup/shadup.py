@@ -468,7 +468,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_gc.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print blobs that would be unlinked and change nothing",
+        help=(
+            "Print each unreferenced blob and the soft-deleted paths that name it, "
+            "and change nothing"
+        ),
     )
 
     p_rmhash = sub.add_parser(
@@ -3108,18 +3111,48 @@ def unreferenced_blob_digests(conn: sqlite3.Connection, shadir: str) -> list[str
     return orphaned
 
 
+def soft_deleted_paths_for_hash(conn: sqlite3.Connection, digest: str) -> list[str]:
+    """Stored paths marked deleted that still name *digest*, in path order."""
+    rows = conn.execute(
+        """
+        SELECT root_rel, dirpath, filename
+        FROM stored_files
+        WHERE shasum = ? AND deleted = 1
+        ORDER BY root_rel, dirpath, filename
+        """,
+        (digest,),
+    ).fetchall()
+    paths: list[str] = []
+    seen: set[str] = set()
+    for root_rel, dirpath, filename in rows:
+        path = _stored_path_from_parts(root_rel, dirpath, filename)
+        if path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
 def handle_gc(conn: sqlite3.Connection, shadir: str, *, dry_run: bool) -> None:
     """Unlink every blob with no live reference.
 
     This is the whole store, not the target of one ``rm``. It does not mark
-    paths deleted.
+    paths deleted. ``--dry-run`` prints each digest with the soft-deleted
+    paths that still name it, so the hash can be recognized.
     """
     with exclusive_store_lock(shadir):
         orphaned = unreferenced_blob_digests(conn, shadir)
+        if dry_run:
+            for digest in orphaned:
+                paths = soft_deleted_paths_for_hash(conn, digest)
+                if not paths:
+                    out_csv(["gc", digest, ""])
+                    continue
+                for path in paths:
+                    out_csv(["gc", digest, path])
+            return
         for digest in orphaned:
             out_csv(["gc", digest])
-        if dry_run:
-            return
         removed = 0
         for digest in orphaned:
             remaining = conn.execute(

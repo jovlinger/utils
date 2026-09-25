@@ -93,8 +93,37 @@ def test_gc_dry_run_changes_nothing(tmp_path: Path) -> None:
 
     result = _run(files, ["--shadir", str(store), "--db", str(db), "gc", "--dry-run"])
 
-    assert f"gc,{digests['a.flac']}" in result.stdout
+    assert f"gc,{digests['a.flac']},Album/a.flac" in result.stdout
     assert _blob(store, digests["a.flac"]).is_file()
+
+
+def test_gc_dry_run_lists_every_soft_deleted_path_for_a_hash(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    shared = b"shared-bytes"
+    digests = _store_album(store, files, db, "AlbumA", {"a.flac": shared})
+    _store_album(store, files, db, "AlbumB", {"a.flac": shared})
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "-r", "AlbumA"])
+    _run(files, ["--shadir", str(store), "--db", str(db), "rm", "-r", "AlbumB"])
+
+    result = _run(files, ["--shadir", str(store), "--db", str(db), "gc", "--dry-run"])
+
+    assert f"gc,{digests['a.flac']},AlbumA/a.flac" in result.stdout
+    assert f"gc,{digests['a.flac']},AlbumB/a.flac" in result.stdout
+    assert _blob(store, digests["a.flac"]).is_file()
+
+
+def test_gc_dry_run_stray_blob_has_no_path(tmp_path: Path) -> None:
+    store, files, db = _layout(tmp_path)
+    digest = _sha256(b"stray")
+    blob = _blob(store, digest)
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"stray")
+    _run(files, ["--shadir", str(store), "--db", str(db), "check"])
+
+    result = _run(files, ["--shadir", str(store), "--db", str(db), "gc", "--dry-run"])
+
+    assert f"gc,{digest}," in result.stdout
+    assert blob.is_file()
 
 
 def test_gc_removes_blob_with_no_database_row(tmp_path: Path) -> None:
