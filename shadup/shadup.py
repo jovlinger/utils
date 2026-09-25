@@ -449,8 +449,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Also unlink blobs whose every live reference is inside this target. "
-            "Blobs orphaned by earlier soft-deletes stay on disk."
+            "Blobs orphaned by earlier soft-deletes stay on disk; gc reaps those."
         ),
+    )
+
+    gc_help = (
+        "Unlink every blob with no live reference, including blobs orphaned "
+        "by earlier soft-deletes. Takes no path and does not soft-delete paths."
+    )
+    p_gc = sub.add_parser(
+        "gc",
+        help=gc_help,
+        description=gc_help,
+    )
+    p_gc.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print blobs that would be unlinked and change nothing",
     )
 
     p_rmhash = sub.add_parser(
@@ -3045,6 +3061,78 @@ def handle_rm(
         out("rm paths: {count}", 0, count=len(rows))
 
 
+def iter_store_blobs(shadir: str) -> Iterator[tuple[str, str]]:
+    """Yield ``(digest, path)`` for canonical and legacy blob files under *shadir*."""
+    shadir_abs = os.path.abspath(shadir)
+    seen: set[str] = set()
+    for base in (os.path.join(shadir_abs, DATA_DIR_NAME), shadir_abs):
+        if not os.path.isdir(base):
+            continue
+        for bucket_name in os.listdir(base):
+            if not _is_two_hex_dir(bucket_name):
+                continue
+            bucket = os.path.join(base, bucket_name)
+            if not os.path.isdir(bucket) or os.path.islink(bucket):
+                continue
+            for name in os.listdir(bucket):
+                if not HASH_RE.match(name) or not name.startswith(bucket_name):
+                    continue
+                path = os.path.join(bucket, name)
+                absolute = os.path.abspath(path)
+                if absolute in seen or os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                seen.add(absolute)
+                yield name, absolute
+
+
+def unreferenced_blob_digests(conn: sqlite3.Connection, shadir: str) -> list[str]:
+    """Digests of on-disk blobs that have no live ``stored_files`` row."""
+    live = {
+        row[0]
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT shasum FROM stored_files
+            WHERE {_ACTIVE_STORED_FILES_WHERE}
+            """
+        )
+    }
+    orphaned: list[str] = []
+    seen: set[str] = set()
+    for digest, _path in iter_store_blobs(shadir):
+        if digest in live or digest in seen:
+            continue
+        seen.add(digest)
+        orphaned.append(digest)
+    return orphaned
+
+
+def handle_gc(conn: sqlite3.Connection, shadir: str, *, dry_run: bool) -> None:
+    """Unlink every blob with no live reference.
+
+    This is the whole store, not the target of one ``rm``. It does not mark
+    paths deleted.
+    """
+    with exclusive_store_lock(shadir):
+        orphaned = unreferenced_blob_digests(conn, shadir)
+        for digest in orphaned:
+            out_csv(["gc", digest])
+        if dry_run:
+            return
+        removed = 0
+        for digest in orphaned:
+            remaining = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM stored_files
+                WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+                """,
+                (digest,),
+            ).fetchone()[0]
+            if remaining == 0:
+                unlink_store_blob(conn, shadir, digest)
+                removed += 1
+        out("gc blobs: {count}", 0, count=removed)
+
+
 def delete_by_hashes(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> int:
     """Mark all entries with matching shasums as deleted and return count."""
     normalized = [
@@ -3622,6 +3710,10 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             hard=args.hard,
         )
+        return 0
+    if action == "gc":
+        out("gc", 1)
+        handle_gc(conn, shadir, dry_run=args.dry_run)
         return 0
     if action == "rmhash":
         for shasum in args.hashes:
