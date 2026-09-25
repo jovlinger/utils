@@ -1,0 +1,24 @@
+{
+  "AC": "",
+  "Body": {
+    "objid": "0002",
+    "raw": "this is a half-bakery of not-fully-formed ideas for improvements -- or debuffs\n\nScope: todo.py (skills/projectmanagement/todos/) and the projectmanagement skill docs. Each note\nbelow is one idea, unranked and unvetted. Promoting one means minting its own todo for it.\n\n## Note 1: one cross-cutting vertical-slice todo shared by several horizontal todos (many-to-many)\n\nOrigin, 2026-09-25, easternlabs/opportunity: three stacked tickets, bottom to top --\ntodo:dea728c1 (jira:BH-791, DB currency columns), todo:e21ac2ab (jira:BH-1004, carry currency\nacross the wire), todo:64871441 (jira:BH-795, frontend Money type). One vertical slice cuts\nacross all three: express.loan_application.requested_amount traced DB -> wire -> render and back.\nIt is held as per-ticket work items that point at each other (todo:dea728c1/objid:001e,\ntodo:e21ac2ab/objid:0003 and objid:0004), with the seven-layer test outline restated in pieces.\n\nThe idea: a fourth todo holds the slice, is registered as a subtodo of all three horizontal\ntodos, and appears as the same spawn-subtodo work item in each of their lists.\n\nPros:\n- One home for the plan and the test outline. Keeping one slice's story consistent across the\n  three todos plus a Jira ticket took eight separate edits.\n- One done-ness: the slice is done when every layer passes, not \"DB part done, wire part pending\".\n- The slice's branch is one reviewable diff across DB, wire and UI.\n- All three parents' cursors can wait-for the same child.\n\nCons:\n- The merge target is ambiguous under stacked branches. Merging into the bottom of the stack puts\n  wire and TypeScript code in the DB ticket's PR; merging into the top ships the DB ticket's PR\n  without the slice's migration. Either way one-ticket-per-PR breaks (opportunity's PR-title lint\n  does allow up to four ticket keys, so a joint PR is legal there).\n- The relation model is one parent per child today (add-subtodo / merge-subtodo, Parent[] on the\n  child, Subtodos[] on the parent). Unverified whether several parents can hold the same child, or\n  what merge-subtodo records in each.\n- Three parents each recording one merge is three State flips that can disagree.\n\nCleanest variant: split plan from code. The cross-cutting todo holds the plan and the\nverification, with no branch of its own, and relates to the three; each horizontal todo keeps its\nown code work item. Needs a relationship kind like SLICE-OF / SHARED-CHILD in the vocabulary\ntodo:3d696168 (fold relation commands into one `todo relate`) is choosing."
+  },
+  "Branch": "d3396860-todo-tool-skill-half",
+  "Id": "d33968608e419e5b3f32e3859a2703234ae9ab1b74d5dc1977f6611dc34e4ca2",
+  "Scope": {
+    "branch": "d3396860-todo-tool-skill-half",
+    "git_url": "https://github.com/jovlinger/utils.git",
+    "objid": "0000"
+  },
+  "State": {
+    "fact": {}
+  },
+  "Summary": {
+    "objid": "0001",
+    "raw": "todo tool + skill half-bakery: speculative, not-fully-formed improvement ideas (or debuffs)"
+  },
+  "_nextobjid": 3,
+  "create_dt": "2026-09-25T14:02:22Z",
+  "update_dt": "2026-09-25T14:02:23Z"
+}
