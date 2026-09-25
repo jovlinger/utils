@@ -421,6 +421,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include already-deleted entries in selection",
     )
 
+    p_rm = sub.add_parser(
+        "rm",
+        help=(
+            "Soft-delete stored paths and remove them from the library tree. "
+            "Blobs stay in the store."
+        ),
+    )
+    p_rm.add_argument(
+        "prefixes",
+        nargs="+",
+        metavar="PATH",
+        help="Library path prefixes to soft-delete (relative; absolute paths are ignored)",
+    )
+    p_rm.add_argument(
+        "-r", "--recursive", action="store_true", help="Recurse into child paths"
+    )
+    p_rm.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print paths that would be removed and change nothing",
+    )
+
     p_rmhash = sub.add_parser(
         "rmhash", help="Mark all entries with matching sha256 as deleted"
     )
@@ -2804,6 +2827,144 @@ def delete_from_db(
     return len(target_rows)
 
 
+def _blank_root_rel(root_rel: str) -> str:
+    """Treat empty and ``.`` root_rel values as no stored-path prefix."""
+    if not root_rel or root_rel == ".":
+        return ""
+    return os.path.normpath(root_rel)
+
+
+def _strictly_inside(path: str, parent: str) -> bool:
+    """True when *path* is a descendant of *parent*, not *parent* itself."""
+    path_abs = os.path.abspath(path)
+    parent_abs = os.path.abspath(parent)
+    return path_abs != parent_abs and path_abs.startswith(parent_abs + os.sep)
+
+
+def select_active_prefix_rows(
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    recursive: bool,
+) -> list[tuple[str, str, str, str, str]]:
+    """Return active ``(shasum, root, root_rel, dirpath, filename)`` rows for *prefixes*."""
+    normalized = normalize_prefixes(prefixes)
+    if not normalized:
+        return []
+    rows = conn.execute(
+        f"""
+        SELECT shasum, root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        """
+    ).fetchall()
+    target_rows: list[tuple[str, str, str, str, str]] = []
+    for shasum, root, root_rel, dirpath, filename in rows:
+        target_rel = os.path.normpath(os.path.join(root_rel, dirpath, filename))
+        for prefix in normalized:
+            if recursive:
+                if target_rel == prefix or target_rel.startswith(prefix + os.sep):
+                    target_rows.append((shasum, root, root_rel, dirpath, filename))
+                    break
+            elif target_rel == prefix:
+                target_rows.append((shasum, root, root_rel, dirpath, filename))
+                break
+    if not recursive:
+        exact_matches = {
+            os.path.normpath(os.path.join(root_rel, dirpath, filename))
+            for _shasum, _root, root_rel, dirpath, filename in target_rows
+        }
+        for prefix in normalized:
+            if prefix in exact_matches:
+                continue
+            has_descendants = any(
+                os.path.normpath(os.path.join(root_rel, dirpath, filename)).startswith(
+                    prefix + os.sep
+                )
+                for _shasum, _root, root_rel, dirpath, filename in rows
+            )
+            if has_descendants:
+                out(
+                    "skip directory prefix without --recursive: {prefix}",
+                    0,
+                    prefix=prefix,
+                )
+    return target_rows
+
+
+def library_path_for_prefix(root: str, root_rel: str, prefix: str) -> str:
+    """Map a stored-path prefix onto a path under the library *root*."""
+    rr = _blank_root_rel(root_rel)
+    prefix_n = os.path.normpath(prefix)
+    if rr:
+        if prefix_n == rr:
+            return os.path.abspath(root)
+        if prefix_n.startswith(rr + os.sep):
+            return os.path.abspath(os.path.join(root, prefix_n[len(rr) + 1 :]))
+    return os.path.abspath(os.path.join(root, prefix_n))
+
+
+def remove_library_paths(
+    rows: list[tuple[str, str, str, str, str]],
+    prefixes: list[str],
+    recursive: bool,
+) -> None:
+    """Remove library symlinks for *rows*. Recursive directory prefixes drop the tree."""
+    normalized = normalize_prefixes(prefixes)
+    if recursive:
+        seen: set[str] = set()
+        for _shasum, root, root_rel, dirpath, filename in rows:
+            stored = os.path.normpath(os.path.join(root_rel, dirpath, filename))
+            for prefix in normalized:
+                if stored != prefix and not stored.startswith(prefix + os.sep):
+                    continue
+                physical = library_path_for_prefix(root, root_rel, prefix)
+                if physical in seen or not _strictly_inside(physical, root):
+                    continue
+                seen.add(physical)
+                if os.path.isdir(physical) and not os.path.islink(physical):
+                    shutil.rmtree(physical)
+                elif os.path.lexists(physical):
+                    os.unlink(physical)
+    for _shasum, root, _root_rel, dirpath, filename in rows:
+        physical = _physical_path_from_parts(root, dirpath, filename)
+        if os.path.lexists(physical) and not (
+            os.path.isdir(physical) and not os.path.islink(physical)
+        ):
+            os.unlink(physical)
+
+
+def handle_rm(
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    shadir: str,
+    *,
+    recursive: bool,
+    dry_run: bool,
+) -> None:
+    """Soft-delete matching paths and remove them from the library tree.
+
+    Blobs are not unlinked. ``--hard`` and ``gc`` reap blobs on their own scopes.
+    """
+    with exclusive_store_lock(shadir):
+        rows = select_active_prefix_rows(conn, prefixes, recursive)
+        for shasum, _root, root_rel, dirpath, filename in rows:
+            del shasum
+            out_csv(["rm", _stored_path_from_parts(root_rel, dirpath, filename)])
+        if dry_run or not rows:
+            return
+        conn.executemany(
+            """
+            UPDATE stored_files
+            SET deleted = 1
+            WHERE shasum = ? AND root = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+            """,
+            rows,
+        )
+        remove_library_paths(rows, prefixes, recursive)
+        conn.commit()
+        out("rm paths: {count}", 0, count=len(rows))
+
+
 def delete_by_hashes(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> int:
     """Mark all entries with matching shasums as deleted and return count."""
     normalized = [
@@ -3368,6 +3529,17 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             shadir,
             recursive=args.recursive,
             show_deleted=args.show_deleted,
+        )
+        return 0
+    if action == "rm":
+        for prefix in args.prefixes:
+            out("rm {prefix}", 1, prefix=prefix)
+        handle_rm(
+            conn,
+            args.prefixes,
+            shadir,
+            recursive=args.recursive,
+            dry_run=args.dry_run,
         )
         return 0
     if action == "rmhash":
