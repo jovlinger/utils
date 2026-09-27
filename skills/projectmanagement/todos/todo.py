@@ -2328,7 +2328,6 @@ def _solo_term_id_prefix_hit(terms: Sequence[str], tickets: Dict[str, JsonDict])
 
 
 def search_tickets(
-    root: Path,
     terms: Sequence[str],
     *,
     limit: int = 20,
@@ -2338,6 +2337,10 @@ def search_tickets(
     tags: Optional[frozenset] = None,
 ) -> SearchTicketsResult:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
+
+    Reads the resolved todo directory (``$TODO_DIR``, then the ``.todo`` walk),
+    the same store as ``ls``. The current directory does not need to be a git
+    repo.
 
     ``terms`` is a list of independent search terms (google-style): each term is
     embedded and matched on its own, contributing its own ranker to the fusion,
@@ -3517,12 +3520,19 @@ class TodoSubCommand(ABC):
     # Free-text arg dests eligible for the `EDIT` sentinel (see EDIT_SENTINEL).
     edit_fields: ClassVar[Sequence[str]] = ()
 
-    def __init__(self, args: argparse.Namespace) -> None:
-        """Copy parsed argparse fields onto the command object."""
+    def __init__(self, args: argparse.Namespace, *, todo_dir: Path) -> None:
+        """Copy parsed argparse fields onto the command object.
+
+        ``todo_dir`` is the store directory resolved once in ``main`` before any
+        subcommand runs (``$TODO_DIR``, then the ``.todo`` walk). Every
+        subcommand receives that same path as ``self.todo_dir``.
+        """
         self.args = args
         for name, value in vars(args).items():
             if name != "command_cls":
                 setattr(self, name, value)
+        # After the argparse copy so a flag cannot clobber the resolved path.
+        self.todo_dir = todo_dir
 
     def __getattr__(self, name: str) -> Any:
         """Expose argparse fields as dynamic command attributes."""
@@ -4611,8 +4621,8 @@ class ClearSearchDataCommand(StoreMaintenanceCommand):
             vectors_removed += len(stamped)
 
         stopwords_cleared = False
-        if sweep and todo_store.config_list(todo_db.todo_dir(), SEARCH_STOPWORDS_KEY):
-            todo_store.update_config(todo_db.todo_dir(), {SEARCH_STOPWORDS_KEY: None})
+        if sweep and todo_store.config_list(self.todo_dir, SEARCH_STOPWORDS_KEY):
+            todo_store.update_config(self.todo_dir, {SEARCH_STOPWORDS_KEY: None})
             stopwords_cleared = True
 
         print(
@@ -6126,7 +6136,7 @@ class WebCommand(EnvironmentCommand):
         # not the current worktree gitroot. The store is shared across all
         # worktrees, so labelling the page with this worktree misrepresents it.
         # `root` still drives git ops (diffs/selectors) below -- only the label moves.
-        basedir = todo_db.todo_dir()
+        basedir = self.todo_dir
 
         def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
             """Resolve an ?id= selector to (repo_root, todo) for the viewer.
@@ -6163,7 +6173,7 @@ class WebCommand(EnvironmentCommand):
                     terms = query.split()
                 if terms:
                     try:
-                        rows, _hidden = run_search(root, terms)
+                        rows, _hidden = run_search(terms)
                         return rows
                     except TodoError as exc:
                         raise todo_web.TodoWebError(str(exc)) from exc
@@ -6330,7 +6340,6 @@ def _format_rows(rows: Sequence[JsonDict], columns: Sequence[str]) -> List[str]:
 
 
 def run_search(
-    root: Path,
     terms: Sequence[str],
     *,
     limit: int = 20,
@@ -6347,7 +6356,6 @@ def run_search(
     hidden_by_status)``.
     """
     result = search_tickets(
-        root,
         terms,
         limit=limit,
         embedder_names=embedder_names,
@@ -6362,8 +6370,10 @@ class SearchCommand(CorpusQueryCommand):
     command_names = ("search",)
     doc_short: ClassVar[str] = "Search todos (lexical IDF)"
     doc_long: ClassVar[str] = (
-        "Search ranks todos by reciprocal-rank fusion over one or more embedders "
-        "plus lexical overlap. Multiple text terms are searched google-style (OR): "
+        "Search ranks todos in the resolved todo directory ($TODO_DIR, then the "
+        ".todo walk -- the same store as ls) by reciprocal-rank fusion over one or "
+        "more embedders plus lexical overlap. The current directory does not need "
+        "to be a git repo. Multiple text terms are searched google-style (OR): "
         "each term is embedded and matched independently and matching more terms "
         "ranks higher; a doc matching only one term can still appear. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
@@ -6429,8 +6439,7 @@ class SearchCommand(CorpusQueryCommand):
         _add_column_args(parser)
 
     def do(self) -> int:
-        """Print ranked ticket search hits."""
-        root = self.root()
+        """Print ranked ticket search hits from the resolved todo directory."""
         names: Optional[List[str]] = None
         if self.embedder:
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
@@ -6442,7 +6451,6 @@ class SearchCommand(CorpusQueryCommand):
             else None
         )
         rows, hidden_by_status = run_search(
-            root,
             self.query,
             limit=self.limit,
             embedder_names=names,
@@ -6581,7 +6589,7 @@ class BaseDirCommand(EnvironmentCommand):
 
     def do(self) -> int:
         """Print the resolved todo base directory."""
-        print(todo_db.todo_dir())
+        print(self.todo_dir)
         return 0
 
 
@@ -6659,7 +6667,7 @@ class ExportToFileCommand(StoreMaintenanceCommand):
     def do(self) -> int:
         """Export selected todos to files, optionally removing them from the store."""
         store = todo_store.get_store()
-        base = Path(self.basedir) if self.basedir else todo_db.todo_dir()
+        base = Path(self.basedir) if self.basedir else self.todo_dir
         out_dir = base / "storage"
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -7120,9 +7128,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start: float = time.monotonic()
     exit_code: int = 1
     try:
+        # Every subcommand reads the store. Resolve once here so library code
+        # (todo_db.todo_dir cache) and the command (self.todo_dir) share one path.
+        resolved_todo_dir = todo_db.resolve_todo_dir()
         _warn_if_store_behind()
         _warn_if_skills_buried()
-        command: TodoSubCommand = args.command_cls(args)
+        command: TodoSubCommand = args.command_cls(args, todo_dir=resolved_todo_dir)
         exit_code = int(command.do())
         return exit_code
     except todo_store.LockTimeout as exc:

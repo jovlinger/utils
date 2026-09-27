@@ -1127,6 +1127,18 @@ class SearchTests(TodoCase):
         finally:
             conn.close()
 
+    def test_search_outside_git_repo_uses_todo_dir(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-u", tid, summary="unifi controller")
+        nongit = Path(tempfile.mkdtemp(prefix="todo-nongit-"))
+        try:
+            proc = self.todo("search", "unifi", "--embedder", "apple", cwd=nongit)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("not a git repository", proc.stderr)
+            self.assertIn(tid[:8], proc.stdout)
+        finally:
+            shutil.rmtree(nongit, ignore_errors=True)
+
     def test_search_finds_oauth_bearer_ticket(self) -> None:
         oauth_id = self.mint()
         other_id = self.mint()
