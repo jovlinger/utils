@@ -109,6 +109,7 @@ Before `init` / before implementation agents fan out, the ticket should have:
 | `Body.raw` | The IMPLEMENTATION STRATEGY -- see [What goes where](#what-goes-where-body-vs-workitem-vs-subtodo). Not a history of how it was decided. |
 | `LongSummary.raw` | Optional. A reader-first summary of `Body`, and the text the summary embedding is computed from (below) |
 | `AC` | Concrete acceptance criteria |
+| `Notes` | Facts and findings surfaced during grooming, one per `note-add` -- see [`BODY.md`](BODY.md#facts-and-findings-are-notes-not-body). Cite the ones a worker must have from `Body.relto` |
 | `Scope` | At least one of `git_url`, `path_from_root` (+ `branch` with `git_url`). Do **not** set `path_to_project` (stripped by migration) |
 | Tiered WorkItems | Head of list small enough for one trackable unit (`frequentcommits`) |
 | Child plan | For each planned subtodo: independence, integration order, sequential vs authorized parallel |
@@ -164,8 +165,10 @@ The short of it: for an implementation todo the Body is the implementation
 STRATEGY -- broad scope, the architectural decisions every WorkItem must
 honour, invariants, pointers to normative artifacts. Per-item detail lives in
 the WorkItem. An item that spawns a subtodo carries the material that child's
-Body and AC get written from, because `prompt` propagates only `Summary` and
-`Body` down the ancestor chain -- never `AC`, never `WorkItems`.
+Body and AC get written from -- see
+[`BODY.md`](BODY.md#the-propagation-rule-that-makes-this-layout-load-bearing)
+for exactly what a subtodo's `prompt` inherits from its parent, and what does not
+travel.
 
 ## WorkItem vs subtodo
 
@@ -263,6 +266,7 @@ raw `todo.py read` JSON. Do **not** bury the Id in prose.
 - **Body:** <what landed — e.g. “plan of record ingested; source file removed”>
 - **Scope:** `<git_url host/repo>` / `<path_from_root>`
 - **WorkItems:** <short arrow chain of the plan head, tier tags optional here>
+- **Notes:** <objid: one-clause gist, ...>       # omit this line when the ticket has none
 ```
 
 Rules:
@@ -295,6 +299,7 @@ Example (shape only):
 ## Ready-to-init checklist
 
 - [ ] Summary, Body, AC present and agreed
+- [ ] Findings recorded as Notes, cited from `Body.relto` where a worker needs them
 - [ ] Scope locators set (no `path_to_project`)
 - [ ] WorkItems cover the path to AC; head items are one unit each
 - [ ] Each WorkItem / planned subtodo tagged with a capability tier

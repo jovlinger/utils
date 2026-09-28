@@ -578,6 +578,410 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
+class NoteTests(TodoCase):
+    """note-add / note-read: status-free facts, addressed by objid, no cursor."""
+
+    def test_note_add_prints_the_new_objid_and_it_round_trips(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=the API returns 500 under load")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        objid = proc.stdout.strip()
+        self.assertRegex(objid, r"\A[0-9a-f]{4,}\Z")
+
+        notes = self.read_cur()["Notes"]
+        self.assertEqual(1, len(notes))
+        self.assertEqual(objid, notes[0]["objid"])
+        self.assertEqual("the API returns 500 under load", notes[0]["raw"])
+        self.assertNotIn("relto", notes[0])
+
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{objid}").stdout)
+        self.assertEqual(notes[0], read)
+
+    def test_note_add_blank_raw_is_rejected(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=   ")
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_add_with_a_relto_target_defaults_to_relates(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=see the other finding", "--relto=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Notes"][0]["relto"]
+        self.assertEqual(1, len(relto))
+        self.assertEqual("objid:0100", relto[0]["target"])
+        self.assertEqual("relates", relto[0]["type"])
+        self.assertRegex(relto[0]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_note_add_relto_repeatable_with_explicit_type(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo(
+            "note-add",
+            self.tid,
+            "--raw=x",
+            "--relto=objid:0100:relates",
+            "--relto=todo:aaaabbbb",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Notes"][0]["relto"]
+        self.assertEqual(
+            [("objid:0100", "relates"), ("todo:aaaabbbb", "relates")],
+            [(r["target"], r["type"]) for r in relto],
+        )
+
+    def test_note_add_rejects_a_target_that_does_not_parse(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=x", "--relto=bogus")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not qualified", proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_add_refuses_mention_type_from_the_cli(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=x", "--relto=objid:0100:mention")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("doctor", proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_read_with_no_target_lists_all_notes_in_order(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        proc = self.todo("note-read", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(["first", "second"], [n["raw"] for n in json.loads(proc.stdout)])
+
+    def test_note_read_by_index_and_negative_index(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        first = json.loads(self.todo("note-read", self.tid, "0").stdout)
+        self.assertEqual("first", first["raw"])
+        last = json.loads(self.todo("note-read", self.tid, "-1").stdout)
+        self.assertEqual("second", last["raw"])
+
+    def test_note_read_by_objid_with_leading_zeros_optional(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("note-add", self.tid, "--raw=only")
+        objid = proc.stdout.strip()
+        short = objid.lstrip("0") or "0"
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{short}").stdout)
+        self.assertEqual("only", read["raw"])
+
+    def test_note_read_out_of_range_names_notes_not_work_items(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-read", self.tid, "5")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("note 5 is out of range", proc.stderr)
+
+    def test_note_read_on_a_todo_with_no_notes_at_all(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        listed = self.todo("note-read", self.tid)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual([], json.loads(listed.stdout))
+        targeted = self.todo("note-read", self.tid, "0")
+        self.assertEqual(targeted.returncode, 1)
+        self.assertIn("this todo has no notes", targeted.stderr)
+
+    def test_note_commands_work_on_a_branchless_groom_todo(self) -> None:
+        self.tid = self.todo("mint").stdout.strip()
+        proc = self.todo("note-add", self.tid, "--raw=a fact recorded before init")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        objid = proc.stdout.strip()
+        read = json.loads(self.todo("note-read", self.tid, f"objid:{objid}").stdout)
+        self.assertEqual("a fact recorded before init", read["raw"])
+
+    def test_doctor_is_silent_when_notes_is_absent(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Notes", proc.stdout)
+
+    # --- note-replace / note-delete -----------------------------------------
+
+    def test_note_replace_overwrites_raw_and_preserves_objid_and_relto(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=stale fact", "--relto=objid:0100")
+        before = self.read_cur()["Notes"][0]
+        proc = self.todo("note-replace", self.tid, "0", "--raw=updated fact")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = self.read_cur()["Notes"][0]
+        self.assertEqual("updated fact", after["raw"])
+        self.assertEqual(before["objid"], after["objid"])
+        self.assertEqual(before["relto"], after["relto"])
+
+    def test_note_replace_by_index_negative_index_and_objid(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        objid_first = self.read_cur()["Notes"][0]["objid"]
+        by_objid = self.todo("note-replace", self.tid, f"objid:{objid_first}", "--raw=first-v2")
+        self.assertEqual(by_objid.returncode, 0, by_objid.stderr)
+        by_negative_index = self.todo("note-replace", self.tid, "-1", "--raw=second-v2")
+        self.assertEqual(by_negative_index.returncode, 0, by_negative_index.stderr)
+        self.assertEqual(["first-v2", "second-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
+
+    def test_note_replace_missing_or_out_of_range_target_names_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        out_of_range = self.todo("note-replace", self.tid, "5", "--raw=x")
+        self.assertEqual(out_of_range.returncode, 1)
+        self.assertIn("note 5 is out of range", out_of_range.stderr)
+        unknown_objid = self.todo("note-replace", self.tid, "objid:ffffffff", "--raw=x")
+        self.assertEqual(unknown_objid.returncode, 1)
+        self.assertIn("no note in this todo carries objid", unknown_objid.stderr)
+
+    def test_note_replace_blank_raw_is_rejected(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-replace", self.tid, "0", "--raw=   ")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual("only", self.read_cur()["Notes"][0]["raw"])
+
+    def test_note_delete_removes_the_node_and_leaves_others_in_order(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        self.todo("note-add", self.tid, "--raw=third")
+        proc = self.todo("note-delete", self.tid, "1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(["first", "third"], [n["raw"] for n in self.read_cur()["Notes"]])
+
+    def test_note_delete_missing_or_out_of_range_target_names_note(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        out_of_range = self.todo("note-delete", self.tid, "5")
+        self.assertEqual(out_of_range.returncode, 1)
+        self.assertIn("note 5 is out of range", out_of_range.stderr)
+        unknown_objid = self.todo("note-delete", self.tid, "objid:ffffffff")
+        self.assertEqual(unknown_objid.returncode, 1)
+        self.assertIn("no note in this todo carries objid", unknown_objid.stderr)
+        self.assertEqual(1, len(self.read_cur()["Notes"]))
+
+    def test_note_delete_the_last_note_drops_the_notes_field_entirely(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=only")
+        proc = self.todo("note-delete", self.tid, "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Notes", self.read_cur())
+
+    def test_note_delete_a_note_another_notes_relto_targets_succeeds(self) -> None:
+        # The delete is unconditional: it neither checks for nor refuses on an
+        # incoming relto. What the surviving target then resolves to is
+        # doctor's business, so nothing here asserts an exit code for it.
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        cited = self.todo("note-add", self.tid, "--raw=the fact being cited")
+        target_objid = cited.stdout.strip()
+        self.todo(
+            "note-add",
+            self.tid,
+            f"--raw=see objid:{target_objid}",
+            f"--relto=objid:{target_objid}",
+        )
+        proc = self.todo("note-delete", self.tid, "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        remaining = self.read_cur()["Notes"]
+        self.assertEqual(1, len(remaining))
+        self.assertEqual(f"objid:{target_objid}", remaining[0]["relto"][0]["target"])
+
+    def test_note_replace_and_delete_are_unrestricted_by_todo_state(self) -> None:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-notes", tid)
+        self.todo("note-add", self.tid, "--raw=first")
+        self.todo("note-add", self.tid, "--raw=second")
+        done = self.todo("set", self.tid, "--state", "done")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        replaced = self.todo("note-replace", self.tid, "0", "--raw=first-v2")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        deleted = self.todo("note-delete", self.tid, "-1")
+        self.assertEqual(deleted.returncode, 0, deleted.stderr)
+        self.assertEqual(["first-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
+
+
+class ReltoTests(TodoCase):
+    """relto-add / relto-remove / relto-read: one host-addressed family serving
+    Body, a Notes element and a WorkItems element alike, not a per-kind one."""
+
+    def _seed(self) -> str:
+        tid = self.mint()
+        self.write_ticket(f"{tid[:8]}-relto", tid, body="the implementation strategy")
+        return tid
+
+    def test_relto_add_on_the_body_host(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        relto = self.read_cur()["Body"]["relto"]
+        self.assertEqual(1, len(relto))
+        self.assertEqual("objid:0100", relto[0]["target"])
+        self.assertEqual("relates", relto[0]["type"])
+        self.assertRegex(relto[0]["objid"], r"\A[0-9a-f]{4,}\Z")
+
+    def test_relto_add_on_a_note_host_by_index(self) -> None:
+        self._seed()
+        self.todo("note-add", self.tid, "--raw=a fact")
+        proc = self.todo("relto-add", self.tid, "note:0", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["Notes"][0]["relto"][0]["target"])
+
+    def test_relto_add_on_a_workitem_host_by_index(self) -> None:
+        self._seed()
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        proc = self.todo("relto-add", self.tid, "workitem:0", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["WorkItems"][0]["relto"][0]["target"])
+
+    def test_relto_add_on_an_objid_host_record_wide(self) -> None:
+        self._seed()
+        note_objid = self.todo("note-add", self.tid, "--raw=a fact").stdout.strip()
+        proc = self.todo("relto-add", self.tid, f"objid:{note_objid}", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:0100", self.read_cur()["Notes"][0]["relto"][0]["target"])
+
+    def test_relto_add_with_an_explicit_type(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=todo:aaaabbbb", "--type=relates")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("relates", self.read_cur()["Body"]["relto"][0]["type"])
+
+    def test_relto_add_unknown_type_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=blocks")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown relation type", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_mention_type_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=mention")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("doctor", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_duplicate_target_is_refused(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:0100", "--type=relates")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("already relates to", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_add_rejects_a_target_that_does_not_parse(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=bogus")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not qualified", proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_add_accepts_a_target_that_does_not_resolve(self) -> None:
+        # A well-formed target naming no object is legal to write here: reporting
+        # an unresolvable one is doctor's job, not relto-add's.
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "body", "--target=objid:ffffffff")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual("objid:ffffffff", self.read_cur()["Body"]["relto"][0]["target"])
+
+    def test_relto_add_objid_host_resolving_to_an_illegal_kind_is_refused(self) -> None:
+        self._seed()
+        self.todo("tag-add", self.tid, "ui")
+        tag_objid = self.read_cur()["Tag"][0]["objid"]
+        proc = self.todo("relto-add", self.tid, f"objid:{tag_objid}", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not a legal relto host", proc.stderr)
+
+    def test_relto_add_objid_host_that_resolves_to_nothing_is_refused(self) -> None:
+        self._seed()
+        proc = self.todo("relto-add", self.tid, "objid:ffffffff", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no object in this todo", proc.stderr)
+
+    def test_relto_remove_by_target(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_relto_remove_nonexistent_target_is_refused(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:ffff")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no relto entry targeting", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_remove_a_mention_entry_is_refused(self) -> None:
+        # mention entries can only exist via a seeded record: relto-add itself
+        # refuses to write one, so this is doctor's / a hand-edit's territory.
+        tid = self.mint()
+        self.write_ticket(
+            f"{tid[:8]}-relto",
+            tid,
+            extra={
+                "Body": {
+                    "raw": "mentions objid:0100 in prose",
+                    "relto": [{"type": "mention", "target": "objid:0100"}],
+                }
+            },
+        )
+        proc = self.todo("relto-remove", self.tid, "body", "--target=objid:0100")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("mention", proc.stderr)
+        self.assertIn("doctor", proc.stderr)
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_relto_read_one_host(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.todo("relto-add", self.tid, "body", "--target=objid:0101")
+        proc = self.todo("relto-read", self.tid, "body")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            ["objid:0100", "objid:0101"], [r["target"] for r in json.loads(proc.stdout)]
+        )
+
+    def test_relto_read_with_no_host_lists_every_relation(self) -> None:
+        self._seed()
+        self.todo("relto-add", self.tid, "body", "--target=objid:0100")
+        self.todo("note-add", self.tid, "--raw=a fact")
+        self.todo("relto-add", self.tid, "note:0", "--target=objid:0101")
+        self.todo("work-item-add", self.tid, "--summary=do the thing")
+        self.todo("relto-add", self.tid, "workitem:0", "--target=objid:0102")
+        proc = self.todo("relto-read", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        entries = json.loads(proc.stdout)
+        by_target = {e["target"]: e["host_path"] for e in entries}
+        self.assertEqual(
+            {"objid:0100": "Body", "objid:0101": "Notes.0", "objid:0102": "WorkItems.0"},
+            by_target,
+        )
+        for entry in entries:
+            self.assertIn("host_objid", entry)
+            self.assertIn("objid", entry)
+            self.assertIn("type", entry)
+
+
 class PathTests(TodoCase):
     def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -945,6 +1349,324 @@ class DoctorTests(TodoCase):
         payload = json.loads(proc.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("Tag.1.raw must be a non-empty string", payload["findings"])
+
+    def test_doctor_accepts_a_well_formed_note_with_relto(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-notes-ok",
+            tid,
+            extra={
+                "Body": {
+                    "objid": "0100",
+                    "raw": "strategy",
+                    "relto": [{"type": "relates", "target": "objid:0101"}],
+                },
+                "Notes": [
+                    {
+                        "objid": "0101",
+                        "raw": "a fact",
+                        "relto": [{"type": "relates", "target": "todo:aaaa"}],
+                    },
+                    {"objid": "0102", "raw": "another fact"},
+                ],
+                "WorkItems": [
+                    {
+                        "kind": "task",
+                        "summary": "the step that turns on objid:0101",
+                        "done": False,
+                        "relto": [{"type": "mention", "target": "objid:0101"}],
+                    }
+                ],
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["ok"])
+        # The mention is already there and the summary still names it, so
+        # nothing is derived and nothing is dropped.
+        self.assertEqual(0, payload["mentions"])
+        self.assertEqual([], payload["findings"])
+        # A cross-todo target is only ever a warning: the store is per-repo.
+        self.assertEqual(
+            ["Notes.0.relto.0.target todo:aaaa: todo not discoverable here"],
+            payload["warnings"],
+        )
+
+    # --- mention sync -----------------------------------------------------
+
+    def _mention_record(self, branch: str, **extra: Any) -> Dict[str, Any]:
+        """Seed a record with explicit objids so targets in it can resolve."""
+        tid = self.mint()
+        seed: Dict[str, Any] = {
+            "Body": {"objid": "0100", "raw": "strategy"},
+            "Notes": [{"objid": "0101", "raw": "a fact"}],
+            "WorkItems": [{"objid": "0102", "kind": "task", "summary": "a step", "done": False}],
+        }
+        seed.update(extra)
+        self.write_ticket(branch, tid, extra=seed)
+        return seed
+
+    def _doctor(self, *args: str) -> Dict[str, Any]:
+        """Run doctor on the tracked ticket and return its payload."""
+        proc = self.todo("doctor", self.tid, *args)
+        return json.loads(proc.stdout)
+
+    def test_doctor_derives_a_mention_from_body_prose(self) -> None:
+        self._mention_record(
+            "mention-body", Body={"objid": "0100", "raw": "the count is in objid:0101"}
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("Body: derived mention of objid:0101", payload["repairs"])
+        derived = self.read_cur()["Body"]["relto"]
+        self.assertEqual(1, len(derived))
+        self.assertEqual("mention", derived[0]["type"])
+        self.assertEqual("objid:0101", derived[0]["target"])
+        # A derived entry is a node like any other, so it carries an objid.
+        self.assertTrue(todo_objid.is_objid(derived[0]["objid"]), derived[0])
+
+    def test_doctor_derives_a_mention_from_a_note_and_from_a_work_item(self) -> None:
+        self._mention_record(
+            "mention-note-and-item",
+            Notes=[{"objid": "0101", "raw": "this bears on objid:0102"}],
+            WorkItems=[
+                {
+                    "objid": "0102",
+                    "kind": "task",
+                    "summary": "honour the fact in objid:0101",
+                    "done": False,
+                }
+            ],
+        )
+        payload = self._doctor()
+        self.assertEqual(2, payload["mentions"])
+        record = self.read_cur()
+        self.assertEqual("objid:0102", record["Notes"][0]["relto"][0]["target"])
+        self.assertEqual("objid:0101", record["WorkItems"][0]["relto"][0]["target"])
+
+    def test_doctor_does_not_scan_a_work_items_git_message(self) -> None:
+        # A message is copied from git when the item completes and cannot be
+        # edited afterwards, so a relation derived from it could never be
+        # corrected. Only raw and summary are scanned.
+        self._mention_record(
+            "mention-not-from-message",
+            WorkItems=[
+                {
+                    "objid": "0102",
+                    "kind": "code",
+                    "summary": "a step",
+                    "sha": "a" * 40,
+                    "message": "landed the fix described in objid:0101",
+                    "done": True,
+                }
+            ],
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        self.assertNotIn("relto", self.read_cur()["WorkItems"][0])
+
+    def test_doctor_drops_a_mention_the_prose_no_longer_names(self) -> None:
+        self._mention_record(
+            "mention-dropped",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, naming nothing",
+                "relto": [{"objid": "0103", "type": "mention", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("Body: dropped mention of objid:0101", payload["repairs"])
+        # The list emptied, so the field goes: absent means none.
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_doctor_leaves_every_non_mention_entry_untouched(self) -> None:
+        # The manual entry's target appears in no prose at all, which is
+        # exactly the case a sync that owned the whole list would destroy.
+        self._mention_record(
+            "mention-manual-kept",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, naming nothing",
+                "relto": [{"objid": "0103", "type": "relates", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        kept = self.read_cur()["Body"]["relto"]
+        self.assertEqual([{"objid": "0103", "type": "relates", "target": "objid:0101"}], kept)
+
+    def test_doctor_derives_no_second_entry_for_a_target_a_manual_entry_carries(self) -> None:
+        self._mention_record(
+            "mention-no-duplicate",
+            Body={
+                "objid": "0100",
+                "raw": "strategy, which turns on objid:0101",
+                "relto": [{"objid": "0103", "type": "relates", "target": "objid:0101"}],
+            },
+        )
+        payload = self._doctor()
+        self.assertEqual(0, payload["mentions"])
+        self.assertEqual(1, len(self.read_cur()["Body"]["relto"]))
+
+    def test_doctor_mention_sync_is_idempotent(self) -> None:
+        # The guard this work item exists for: doctor runs constantly and
+        # commits what it repairs, so a sync that re-wrote an unchanged record
+        # would churn _nextobjid and update_dt on every pass and bury the
+        # store's real history.
+        self._mention_record(
+            "mention-idempotent",
+            Body={"objid": "0100", "raw": "strategy, which turns on objid:0101"},
+            Notes=[{"objid": "0101", "raw": "a fact about objid:0102"}],
+        )
+        first = self._doctor()
+        self.assertEqual(2, first["mentions"])
+        settled = self.read_cur()
+        commits = self._git("log", "--oneline").stdout
+        second = self._doctor()
+        self.assertEqual(0, second["mentions"])
+        self.assertEqual([], second["repairs"])
+        again = self.read_cur()
+        self.assertEqual(json.dumps(settled, sort_keys=True), json.dumps(again, sort_keys=True))
+        self.assertEqual(settled["update_dt"], again["update_dt"])
+        self.assertEqual(settled["_nextobjid"], again["_nextobjid"])
+        self.assertEqual(commits, self._git("log", "--oneline").stdout)
+
+    def test_doctor_reports_a_dangling_local_target_as_a_finding(self) -> None:
+        self._mention_record(
+            "mention-dangling-local", Body={"objid": "0100", "raw": "see objid:0fff"}
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(1, proc.returncode)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any("0fff" in finding for finding in payload["findings"]), payload["findings"]
+        )
+
+    def test_doctor_reports_an_unresolvable_cross_todo_target_as_a_warning(self) -> None:
+        # Another repo's store is legitimately unreachable from this one, so a
+        # cross-todo target never hard-fails doctor.
+        self._mention_record(
+            "mention-cross-todo",
+            Notes=[{"objid": "0101", "raw": "ratified in todo:dead/objid:0045"}],
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertEqual([], payload["findings"])
+        self.assertTrue(
+            any("todo:dead/objid:0045" in w for w in payload["warnings"]), payload["warnings"]
+        )
+
+    def test_doctor_reports_a_cross_todo_target_into_a_reachable_todo_that_lacks_it(self) -> None:
+        other = self.mint()
+        self.write_ticket("mention-other-record", other)
+        self._mention_record(
+            "mention-cross-todo-missing-objid",
+            Notes=[{"objid": "0101", "raw": f"see todo:{other[:8]}/objid:0fff"}],
+        )
+        payload = self._doctor()
+        self.assertTrue(payload["ok"], payload["findings"])
+        self.assertTrue(any("0fff" in w for w in payload["warnings"]), payload["warnings"])
+
+    def test_doctor_dry_run_reports_what_it_would_derive_and_writes_nothing(self) -> None:
+        self._mention_record(
+            "mention-dry-run", Body={"objid": "0100", "raw": "strategy, which turns on objid:0101"}
+        )
+        payload = self._doctor("--dry-run")
+        self.assertEqual(1, payload["mentions"])
+        self.assertIn("would Body: derived mention of objid:0101", payload["repairs"])
+        self.assertNotIn("relto", self.read_cur()["Body"])
+
+    def test_doctor_fails_notes_element_with_unexpected_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-notes-bad-field", tid, extra={"Notes": [{"raw": "a fact", "done": False}]}
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0 has unexpected fields: done", payload["findings"])
+
+    def test_doctor_fails_notes_element_missing_raw(self) -> None:
+        tid = self.mint()
+        self.write_ticket("doctor-notes-no-raw", tid, extra={"Notes": [{"raw": ""}]})
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0.raw must be a non-empty string", payload["findings"])
+
+    def test_doctor_fails_relto_element_with_unexpected_field(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-field",
+            tid,
+            extra={
+                "Notes": [
+                    {
+                        "raw": "x",
+                        "relto": [{"type": "relates", "target": "objid:0100", "note": "extra"}],
+                    }
+                ]
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn("Notes.0.relto.0 has unexpected fields: note", payload["findings"])
+
+    def test_doctor_fails_relto_unknown_type(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-type",
+            tid,
+            extra={"Notes": [{"raw": "x", "relto": [{"type": "blocks", "target": "objid:0100"}]}]},
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertIn(
+            "Notes.0.relto.0.type 'blocks' is not a known relation type", payload["findings"]
+        )
+
+    def test_doctor_fails_relto_target_that_does_not_parse(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-target",
+            tid,
+            extra={"Notes": [{"raw": "x", "relto": [{"type": "relates", "target": "bogus"}]}]},
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(
+            any(f.startswith("Notes.0.relto.0.target:") for f in payload["findings"]),
+            payload["findings"],
+        )
+
+    def test_doctor_fails_relto_outside_its_three_legal_hosts(self) -> None:
+        tid = self.mint()
+        self.write_ticket(
+            "doctor-relto-bad-host",
+            tid,
+            extra={
+                "Tag": [
+                    {
+                        "raw": "ui",
+                        "manual": True,
+                        "relto": [{"type": "relates", "target": "objid:0100"}],
+                    }
+                ]
+            },
+        )
+        proc = self.todo("doctor", self.tid)
+        self.assertEqual(proc.returncode, 1)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(
+            any("relto is not allowed here" in f for f in payload["findings"]), payload["findings"]
+        )
 
     def test_doctor_warns_unmerged_subtodo_while_parent_open(self) -> None:
         tid = self.mint()
@@ -1543,6 +2265,113 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("not found", proc.stdout)
         self.assertIn("ORPHAN", proc.stdout)
+
+    def test_prompt_no_notes_no_relto_is_byte_identical_to_before(self) -> None:
+        # Regression guard: this change is additive. A record with neither
+        # Notes nor a Body.relto must still emit exactly the old
+        # Summary/Body-only block.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("plain", body="PLAIN-BODY")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        expected = f"===== plain [{self.tid[:8]}] =====\nPLAIN-BODY"
+        self.assertEqual(expected, proc.stdout.rstrip("\n"))
+
+    def test_prompt_notes_chain_three_deep(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("chain", body="ROOT-BODY")
+        n1 = self.todo("note-add", self.tid, "--raw=NOTE-ONE").stdout.strip()
+        n2 = self.todo("note-add", self.tid, "--raw=NOTE-TWO").stdout.strip()
+        n3 = self.todo("note-add", self.tid, "--raw=NOTE-THREE").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{n1}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{n2}")
+        self.todo("relto-add", self.tid, "note:1", f"--target=objid:{n3}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        for objid, text in ((n1, "NOTE-ONE"), (n2, "NOTE-TWO"), (n3, "NOTE-THREE")):
+            self.assertIn(f"note [objid:{objid}]", out)
+            self.assertIn(text, out)
+        self.assertLess(out.index("ROOT-BODY"), out.index("NOTE-ONE"))
+        self.assertLess(out.index("NOTE-ONE"), out.index("NOTE-TWO"))
+        self.assertLess(out.index("NOTE-TWO"), out.index("NOTE-THREE"))
+
+    def test_prompt_notes_ab_cycle_terminates_each_note_once(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("cyclic", body="ROOT-BODY")
+        a = self.todo("note-add", self.tid, "--raw=NOTE-A").stdout.strip()
+        b = self.todo("note-add", self.tid, "--raw=NOTE-B").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{a}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{b}")  # A -> B
+        self.todo("relto-add", self.tid, "note:1", f"--target=objid:{a}")  # B -> A
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertEqual(1, out.count("NOTE-A"))
+        self.assertEqual(1, out.count("NOTE-B"))
+        self.assertEqual(1, out.count(f"note [objid:{a}]"))
+        self.assertEqual(1, out.count(f"note [objid:{b}]"))
+
+    def test_prompt_notes_shared_note_reached_two_ways_emitted_once(self) -> None:
+        # Body.relto cites note-one AND the shared note directly; note-one's
+        # own relto ALSO cites the shared note -- reachable two ways, emitted
+        # once, at its first (here: the indirect, via note-one) occurrence.
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("diamond", body="ROOT-BODY")
+        n1 = self.todo("note-add", self.tid, "--raw=NOTE-ONE").stdout.strip()
+        shared = self.todo("note-add", self.tid, "--raw=SHARED-FACT").stdout.strip()
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{n1}")
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{shared}")
+        self.todo("relto-add", self.tid, "note:0", f"--target=objid:{shared}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertEqual(1, out.count("SHARED-FACT"))
+        self.assertEqual(1, out.count(f"note [objid:{shared}]"))
+        self.assertLess(out.index("NOTE-ONE"), out.index("SHARED-FACT"))
+
+    def test_prompt_notes_body_relto_workitem_emits_nothing(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("wi-target", body="ROOT-BODY")
+        self.todo("work-item-add", self.tid, "--summary=WORKITEM-SUMMARY-TEXT")
+        wi_objid = self._read(self.tid)["WorkItems"][0]["objid"]
+        self.todo("relto-add", self.tid, "body", f"--target=objid:{wi_objid}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertNotIn("WORKITEM-SUMMARY-TEXT", out)
+        self.assertNotIn("not followed", out)
+
+    def test_prompt_notes_cross_todo_target_emits_pointer_not_text(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        base = self._base_branch()
+        other_id = self._init("other record", body="OTHER-BODY-NEVER-INLINED")
+        other_note = self.todo(
+            "note-add", self.tid, "--raw=OTHER-NOTE-NEVER-INLINED"
+        ).stdout.strip()
+        self._git("checkout", base)
+        self._init("home record", body="HOME-BODY")
+        whole_target = f"todo:{other_id[:8]}"
+        remote_target = f"todo:{other_id[:8]}/objid:{other_note}"
+        self.todo("relto-add", self.tid, "body", f"--target={whole_target}")
+        self.todo("relto-add", self.tid, "body", f"--target={remote_target}")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertIn(f"not followed: {whole_target}", out)
+        self.assertIn(f"not followed: {remote_target}", out)
+        self.assertNotIn("OTHER-BODY-NEVER-INLINED", out)
+        self.assertNotIn("OTHER-NOTE-NEVER-INLINED", out)
+
+    def test_prompt_notes_dangling_local_target_emits_nothing(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self._init("dangling", body="ROOT-BODY")
+        self.todo("relto-add", self.tid, "body", "--target=objid:ffffffff")
+        proc = self.todo("prompt", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertNotIn("not followed", out)
+        self.assertNotIn("note [objid:", out)
 
     def test_add_subtodo_parent_is_list_and_prompt_walks_up(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")

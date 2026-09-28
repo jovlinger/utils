@@ -36,7 +36,11 @@ TODO = {
         },
     ],
     "Subtodos": [{"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0006"}],
-    "_nextobjid": 7,
+    "Notes": [
+        {"raw": "first note", "objid": "0007"},
+        {"raw": "second note", "objid": "0008"},
+    ],
+    "_nextobjid": 9,
 }
 
 
@@ -78,6 +82,18 @@ class ResolveFocusTest(unittest.TestCase):
     def test_bad_path_raises(self) -> None:
         with self.assertRaises(todo_url.TodoUrlError):
             self.focus("nope")
+
+    def test_note_path_focuses_that_note(self) -> None:
+        self.assertEqual("0007", self.focus("note", "0"))
+        self.assertEqual("0008", self.focus("note", "1"))
+
+    def test_scalar_inside_note_focuses_the_note(self) -> None:
+        self.assertEqual("0007", self.focus("note", "0", "raw"))
+        self.assertEqual("0008", self.focus("note", "1", "raw"))
+
+    def test_note_objid_form(self) -> None:
+        self.assertEqual("0007", self.focus("objid", "0007"))
+        self.assertEqual("0008", self.focus("objid", "0008"))
 
 
 class RenderFocusTest(unittest.TestCase):
@@ -208,6 +224,20 @@ class PermalinkRouteTest(unittest.TestCase):
 
     def test_search_route_is_unchanged(self) -> None:
         self.assertEqual(200, self._get("/search?q=").status)
+
+    def test_note_objid_permalink_renders_focused_page(self) -> None:
+        resp = self._get("/557a/objid/0007")
+        self.assertEqual(200, resp.status)
+        page = resp.read().decode("utf-8")
+        self.assertIn('const FOCUS = "0007";', page)
+        self.assertIn("routing and agent choice", page)
+
+    def test_note_index_permalink_renders_focused_page(self) -> None:
+        resp = self._get("/557a/note/1")
+        self.assertEqual(200, resp.status)
+        page = resp.read().decode("utf-8")
+        self.assertIn('const FOCUS = "0008";', page)
+        self.assertIn("routing and agent choice", page)
 
 
 if __name__ == "__main__":

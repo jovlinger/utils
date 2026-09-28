@@ -49,6 +49,7 @@ Load **only** what the user intent needs:
 | **Cursor: work / proceed / continue a ticket** | [`CURSOR.md`](CURSOR.md) **first**, then [`WORKING.md`](WORKING.md) |
 | make / groom / plan / decompose / size / tier / HICAP / MIDCAP / LOCAP | [`GROOMING.md`](GROOMING.md) (incl. [groom handoff report](GROOMING.md#groom-handoff-report-chat)) |
 | **writing or rewriting a `Body`** (what belongs in Body vs WorkItem vs subtodo, how detailed to be) | [`BODY.md`](BODY.md) -- load only for this; not needed to tier, decompose, or work |
+| recording a fact/finding, or citing one (`note-*` / `relto-*`) | [`BODY.md`](BODY.md#facts-and-findings-are-notes-not-body) for what goes in a Note vs a Body; [`IMPLEMENTATION.md`](IMPLEMENTATION.md#notes-and-relto) for command syntax |
 | start / resume / work / wait / finish / handoff / report | [`WORKING.md`](WORKING.md) |
 | review cycle / Copilot review / PR handoff | [`WORKING.md` section 7](WORKING.md#7-handoff-to-parent-or-pr) |
 | command syntax / schema / storage / migrate / doctor / permalinks / compatibility | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
@@ -77,6 +78,8 @@ cd "$("$TODO" ensure_worktree "$ID" | jq -r .worktree)"
 "$TODO" prompt "$ID"
 "$TODO" set "$ID" --state working
 "$TODO" work-item-read "$ID"          # poll; follow WORKING.md dispatch
+"$TODO" note-add "$ID" --raw="..."    # fact found mid-flight; prints its objid
+"$TODO" relto-add "$ID" workitem:0 --target=objid:0012  # cite it from the item it bears on
 "$TODO" work-item-done "$ID" -m "..." # or add-subtodo / merge after git merge
 
 # finish (WORKING.md section 6 -- includes worktree remove after set done)
@@ -101,6 +104,8 @@ Authoritative finish, child integration, and worktree teardown:
   only in a dedicated linked worktree -- never in the main checkout while working.
 - **Tracked subtodo:** child from `add-subtodo` (must be git-integrated then
   `merge-subtodo`'d). **INFO backlink:** follow-only parent link from `set --parent`.
+- **Note:** a status-free fact or finding on the ticket (`Notes`), addressable
+  by objid and cross-referenced via `relto`.
 - **Repo selection:** CWD's gitroot; no `--repo` flag -- `cd` into the repo first.
 
 ## Safety rules (non-negotiable)
