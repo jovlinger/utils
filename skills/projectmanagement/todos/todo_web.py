@@ -1432,11 +1432,25 @@ function focusOn(objid){
 focusOn(FOCUS);
 initMdToggles(document.getElementById('top'));
 
+// Delta from the mousedown point, not an absolute position re-derived from
+// getBoundingClientRect() on every move: a real (trusted) mousedown over text
+// content can start a native text-selection drag unless prevented, and a
+// selection drag can auto-scroll -- shifting topPane's measured position mid-
+// gesture and corrupting an absolute calc. Delta-tracking never re-reads that
+// position, so it is immune regardless of the cause.
 var dragging = false;
-divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
+var dragStartY = 0;
+var dragStartHeight = 0;
+divider.addEventListener('mousedown', function(e){
+  dragging = true;
+  dragStartY = e.clientY;
+  dragStartHeight = topPane.getBoundingClientRect().height;
+  document.body.style.userSelect = 'none';
+  e.preventDefault();
+});
 window.addEventListener('mousemove', function(e){
   if (!dragging) return;
-  var h = e.clientY - topPane.getBoundingClientRect().top;
+  var h = dragStartHeight + (e.clientY - dragStartY);
   if (h > 60 && h < window.innerHeight - 60) { topPane.style.height = h + 'px'; }
 });
 window.addEventListener('mouseup', function(){ dragging = false; document.body.style.userSelect = ''; });
