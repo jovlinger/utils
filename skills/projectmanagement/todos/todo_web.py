@@ -1084,7 +1084,13 @@ _STYLE = """<style>
   body.search #top { height: auto; flex: 1 1 auto; }
   #divider { flex: 0 0 auto; height: 7px; background: #d8dee4; cursor: row-resize; }
   #divider:hover { background: #8c959f; }
-  #fold { flex: 1 1 auto; overflow: auto; padding: 12px 16px; background: #fff; }
+  /* flex-basis 0, not auto: an "auto" basis on a flex item with real content
+     (the message/diff panels) is computed from that content's own size, so a
+     long message made #fold's basis huge, which made the shrink algorithm
+     react to any #top resize by shrinking #top further and growing #fold --
+     exactly backwards. A zero basis means #fold's size is purely "whatever
+     flex-grow leaves it", regardless of its content's own preferred size. */
+  #fold { flex: 1 1 0; min-height: 0; overflow: auto; padding: 12px 16px; background: #fff; }
   .part { margin: 10px 0; }
   .part h2 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
              color: #57606a; }
@@ -1149,6 +1155,12 @@ _STYLE = """<style>
      carry a third hue next to done/blocked/hi. */
   .relto-mention { font-style: italic; }
   .fold.split-fold { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
+  /* A grid item's automatic minimum size is its content's full intrinsic
+     size unless the item itself (not just a descendant) sets overflow --
+     .fold-diff gets this from .diff-code, but .fold-msg had nothing, so a
+     long message/commit-body forced this whole row to grow past #fold's
+     height, pushing #top off past 100vh and scrolling the whole page. */
+  .fold-msg { overflow-y: auto; }
   .fold-msg pre { background: #f6f8fa; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
   .fold-msg .wi-raw { background: #f6f8fa; padding: 12px; border-radius: 6px;
                       white-space: pre-wrap; overflow-wrap: anywhere; }
