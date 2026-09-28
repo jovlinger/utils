@@ -3857,6 +3857,177 @@ class CommandTaxonomyTests(unittest.TestCase):
         self.assertNotIn("==SUPPRESS==", text)
         self.assertEqual(1, text.count("  doctor "), "doctor listed more than once")
 
+    def test_class_selection_is_case_insensitive_and_inherited(self) -> None:
+        selected = todo.command_class_selected
+        self.assertTrue(selected(todo.SetCommand, ["setcommand"]))
+        self.assertTrue(selected(todo.SetCommand, ["TodoFieldCommand"]))
+        self.assertTrue(selected(todo.SetCommand, ["TodoCrudCommand"]))
+        self.assertTrue(selected(todo.WorkItemAddCommand, ["WorkItemCommand"]))
+        self.assertTrue(selected(todo.ReadCommand, ["TodoSubCommand"]))
+        self.assertFalse(selected(todo.SetCommand, ["MintCommand"]))
+        self.assertFalse(selected(todo.MintCommand, ["TodoFieldCommand"]))
+        self.assertFalse(selected(todo.SetCommand, ["object"]))
+        self.assertFalse(selected(todo.SetCommand, []))
+
+
+class FileStoreGitSyncTests(unittest.TestCase):
+    """autocommit / autopush act on the file-store repo, never on sqlite."""
+
+    def setUp(self) -> None:
+        self.project: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))
+        self.store: Path = Path(tempfile.mkdtemp(prefix="todo-store-"))
+        self._git(self.project, "init", "-q")
+        self._git(self.project, "config", "user.email", "t@example.com")
+        self._git(self.project, "config", "user.name", "Tester")
+        self._git(self.store, "init", "-q")
+        self._git(self.store, "config", "user.email", "t@example.com")
+        self._git(self.store, "config", "user.name", "Tester")
+        self._write_config(["SetCommand"], [])
+        self.env: Dict[str, str] = {
+            **ENV,
+            "TODO_DIR": str(self.store),
+            "TODO_APPLE_NLCE_BIN": fake_nlce.install(str(self.store)),
+        }
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project, ignore_errors=True)
+        shutil.rmtree(self.store, ignore_errors=True)
+        remote = getattr(self, "remote", None)
+        if remote is not None:
+            shutil.rmtree(remote, ignore_errors=True)
+
+    def _git(
+        self, cwd: Path, *args: str, check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True,
+            check=check, env=ENV,
+        )
+
+    def _write_config(
+        self, autocommit: list, autopush: list, *, sqlite: bool = False,
+    ) -> None:
+        dsn = "sqlite://$TODOBASEDIR/sqlite.db" if sqlite else "file://$TODOBASEDIR/storage"
+        (self.store / "config.json").write_text(
+            json.dumps({"todo_storage": dsn, "autocommit": autocommit, "autopush": autopush}),
+            encoding="utf-8",
+        )
+
+    def todo(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(TODO_PY), *args],
+            cwd=self.project, capture_output=True, text=True,
+            check=False, env=self.env,
+        )
+
+    def _mint(self) -> str:
+        proc = self.todo("mint")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        tid = proc.stdout.strip()
+        self.assertRegex(tid, HEX64)
+        return tid
+
+    def _log(self) -> str:
+        proc = self._git(self.store, "log", "--oneline", check=False)
+        return proc.stdout if proc.returncode == 0 else ""
+
+    def test_set_commits_only_the_ticket_file(self) -> None:
+        tid = self._mint()
+        self.assertEqual(self._log(), "")
+        proc = self.todo("set", tid, "--summary", "hello sync")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], self._log())
+        show = self._git(self.store, "show", "--name-only", "--format=", "HEAD")
+        self.assertIn(f"storage/{tid}.json", show.stdout)
+        self.assertNotIn("config.json", show.stdout)
+        status = self._git(self.store, "status", "--porcelain")
+        self.assertNotIn(f"{tid}.json", status.stdout)
+
+    def test_parent_class_and_lowercase_name_match(self) -> None:
+        self._write_config(["todofieldcommand"], [])
+        tid = self._mint()
+        self.assertEqual(self._log(), "")
+        proc = self.todo("set", tid, "--summary", "via parent class")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(tid[:8], self._log())
+
+    def test_unrelated_class_and_read_do_not_commit(self) -> None:
+        self._write_config(["TodoFieldCommand"], [])
+        tid = self._mint()
+        read = self.todo("read", tid)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(self._log(), "")
+        self._write_config(["SubtodoCommand"], [])
+        proc = self.todo("set", tid, "--summary", "not a subtodo command")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self._log(), "")
+
+    def test_group_class_covers_work_item_add(self) -> None:
+        self._write_config(["WorkItemCommand"], [])
+        tid = self._mint()
+        untouched = self.todo("set", tid, "--summary", "plan")
+        self.assertEqual(untouched.returncode, 0, untouched.stderr)
+        self.assertEqual(self._log(), "")
+        added = self.todo("work-item-add", tid, "--summary", "do the thing")
+        self.assertEqual(added.returncode, 0, added.stderr)
+        self.assertIn("work-item-add", self._log())
+        self.assertIn(tid[:8], self._log())
+
+    def test_failed_command_does_not_commit(self) -> None:
+        tid = self._mint()
+        proc = self.todo("set", tid, "--state", "not-a-state")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self._log(), "")
+
+    def test_rm_commits_the_tombstone(self) -> None:
+        self._write_config(["MintCommand", "RmCommand"], [])
+        tid = self._mint()
+        self.assertIn(tid[:8], self._log())
+        removed = self.todo("rm", tid)
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        # Soft-delete renames <id>.json to <id>.deleted. name-status shows that
+        # rename; name-only keeps only the new path.
+        show = self._git(self.store, "show", "--name-status", "--format=", "HEAD")
+        self.assertIn(f"storage/{tid}.json", show.stdout)
+        self.assertIn(f"storage/{tid}.deleted", show.stdout)
+
+    def test_sqlite_ignores_both_settings(self) -> None:
+        self._write_config(["SetCommand", "TodoSubCommand"], ["SetCommand"], sqlite=True)
+        tid = self._mint()
+        proc = self.todo("set", tid, "--summary", "stays in sqlite")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # sqlite.db may be untracked; the settings must not have committed it.
+        self.assertEqual(self._log(), "")
+
+    def test_autopush_sends_the_commit_and_push_alone_does_not_commit(self) -> None:
+        self.remote = Path(tempfile.mkdtemp(prefix="todo-remote-"))
+        self._git(self.remote, "init", "--bare", "-q")
+        self._git(self.store, "remote", "add", "origin", str(self.remote))
+        self._git(self.store, "commit", "--allow-empty", "-m", "init")
+        self._git(self.store, "push", "-u", "origin", "HEAD")
+
+        self._write_config([], ["SetCommand"])
+        tid = self._mint()
+        pushed_only = self.todo("set", tid, "--summary", "uncommitted")
+        self.assertEqual(pushed_only.returncode, 0, pushed_only.stderr)
+        self.assertEqual(self._log().count("\n"), 1)  # still just the empty init
+        status = self._git(self.store, "status", "--porcelain", "--untracked-files=all")
+        self.assertIn(f"storage/{tid}.json", status.stdout)
+
+        self._write_config(["SetCommand"], ["SetCommand"])
+        both = self.todo("set", tid, "--summary", "committed and pushed")
+        self.assertEqual(both.returncode, 0, both.stderr)
+        remote_log = self._git(self.remote, "log", "--oneline")
+        self.assertIn(tid[:8], remote_log.stdout)
+
+    def test_autopush_without_upstream_fails_the_command(self) -> None:
+        self._write_config(["SetCommand"], ["SetCommand"])
+        tid = self._mint()
+        proc = self.todo("set", tid, "--summary", "no remote")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("autopush failed", proc.stderr)
+        self.assertIn(tid[:8], self._log())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

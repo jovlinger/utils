@@ -60,6 +60,7 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 | Worktrees (convention) | `<todo-dir>/worktrees/<repo-path>/<branch>` |
 | Embeddings | In ticket JSON; sqlite also mirrors a derived index |
 | Search config | `<todo-dir>/config.json` (`search_stopwords`, `search_stopword_min_idf`, `embedder`) -- see [Search ranking](#search-ranking) |
+| File-store git sync | `<todo-dir>/config.json` (`autocommit`, `autopush`) -- see [File-store autocommit and autopush](#file-store-autocommit-and-autopush). Ignored for sqlite |
 
 `TODO_USE_JSON=1` enables legacy file mode (import-oriented). There is **no
 `--repo` flag** -- `cd` into the target repo/worktree; CWD must be a git repo.
@@ -84,6 +85,27 @@ be code history.
 on every invocation when the resolved store is inside the current repository
 and is not ignored. The warning should name the resolved path and explain the
 intermingling risk, but must not block supported workflows.
+
+### File-store autocommit and autopush
+
+Two `config.json` lists, honored only by the file backend (`file://`). Sqlite
+ignores both. Each entry is a subcommand **class** name, not the CLI spelling:
+`SetCommand`, not `set`. Matching is case-insensitive, and naming a non-leaf
+class selects that class and every subclass (`TodoFieldCommand` covers `set`,
+`read`, `rm`, and the other field commands; `WorkItemCommand` covers the whole
+work-item group).
+
+| Key | After a successful command |
+|-----|----------------------------|
+| `autocommit` | `git add` and `git commit` only the store files that command wrote (the ticket `.json`, a `.deleted` tombstone, `.data_version`). Other dirty files in the store repo stay unstaged |
+| `autopush` | `git push` the store repo (its configured upstream) |
+
+A read that matches through a parent class still does nothing: it wrote no
+file, so there is nothing to commit or push. A command listed in `autopush`
+but not `autocommit` pushes existing commits and leaves the new write
+uncommitted. Both run only when the command exits 0. The git repository is the
+one that contains the storage directory -- the todo dir when that dir is itself
+a repo -- not the project checkout the command was invoked from.
 
 ## Selectors
 
