@@ -1,0 +1,4 @@
+{
+  "todo_dir": "../../dottodo",
+  "todo_storage": "file://$TODOBASEDIR/storage"
+}
