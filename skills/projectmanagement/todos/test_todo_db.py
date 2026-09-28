@@ -154,6 +154,99 @@ class TodoDirResolutionTest(unittest.TestCase):
                 resolved = todo_db.resolve_todo_dir(repo_path)
                 self.assertEqual(resolved, (repo_path / ".todo").resolve())
 
+    def test_config_todo_dir_redirect_relative(self) -> None:
+        """A relative todo_dir resolves against the redirecting config.json's own dir."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as sibling:
+            repo_path = Path(repo)
+            sibling_path = Path(sibling)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "../../" + sibling_path.name + "/target"}),
+                encoding="utf-8",
+            )
+            _touch_sqlite_db(sibling_path / "target")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (sibling_path / "target").resolve())
+
+    def test_config_todo_dir_redirect_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as target:
+            repo_path = Path(repo)
+            target_path = Path(target)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(target_path.resolve())}),
+                encoding="utf-8",
+            )
+            _touch_sqlite_db(target_path)
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, target_path.resolve())
+
+    def test_config_todo_dir_redirect_chained(self) -> None:
+        """A -> B -> C: the final non-redirecting directory wins."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as mid, \
+                tempfile.TemporaryDirectory() as final:
+            repo_path = Path(repo)
+            mid_path = Path(mid)
+            final_path = Path(final)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(mid_path.resolve())}), encoding="utf-8"
+            )
+            mid_path.mkdir(exist_ok=True)
+            (mid_path / "config.json").write_text(
+                json.dumps({"todo_dir": str(final_path.resolve())}), encoding="utf-8"
+            )
+            _touch_sqlite_db(final_path)
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, final_path.resolve())
+
+    def test_config_todo_dir_redirect_direct_cycle_raises(self) -> None:
+        """A todo_dir pointing back at its own directory is a hard error."""
+        with tempfile.TemporaryDirectory() as repo:
+            repo_path = Path(repo)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "."}), encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(todo_db.CircularTodoRedirectError):
+                    todo_db.resolve_todo_dir(repo_path)
+
+    def test_config_todo_dir_redirect_indirect_cycle_raises(self) -> None:
+        """A -> B -> A is caught too, not just the direct A -> A case."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as other:
+            repo_path = Path(repo)
+            other_path = Path(other)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(other_path.resolve())}), encoding="utf-8"
+            )
+            (other_path / "config.json").write_text(
+                json.dumps({"todo_dir": str((repo_path / ".todo").resolve())}),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(todo_db.CircularTodoRedirectError):
+                    todo_db.resolve_todo_dir(repo_path)
+
 
 class RepoIdentityMigrationTest(unittest.TestCase):
     """repo_identity_from_url() and the v3 repo_path normalization migration."""
