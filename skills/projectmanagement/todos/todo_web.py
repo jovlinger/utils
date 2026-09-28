@@ -1076,7 +1076,10 @@ _STYLE = """<style>
   header { padding: 8px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; flex: 0 0 auto; }
   header .title { font-weight: 700; }
   header .meta { color: #57606a; font-size: 12px; overflow-wrap: anywhere; }
-  #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; }
+  /* border-box: the divider drag script sets this height directly from mouse
+     Y, so it must equal the rendered (padding-included) height or the pane
+     jumps by the padding total (24px) on the first move of every drag. */
+  #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; box-sizing: border-box; }
   /* Search page has no fold/preview: results fill below the header and scroll here. */
   body.search #top { height: auto; flex: 1 1 auto; }
   #divider { flex: 0 0 auto; height: 7px; background: #d8dee4; cursor: row-resize; }
