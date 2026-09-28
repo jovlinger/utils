@@ -31,7 +31,10 @@ DST_VENV_RUN_LAUNCH := $(CURDIR)/venv-run-launch.py
 DST_VENV_RUN_LINK := $(CURDIR)/venv-run
 VERSION := $(CURDIR)/VERSION
 
-.PHONY: all test all-tests
+.PHONY: all binlinks test all-tests
+
+binlinks:
+	@:
 
 PYTEST := .venv/bin/python
 

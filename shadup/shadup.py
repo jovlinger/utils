@@ -3,7 +3,9 @@
 
 import argparse
 import concurrent.futures
+import contextlib
 import csv
+import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +23,9 @@ T = TypeVar("T")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 DB_NAME = ".shadup.db"
+LOCK_NAME = ".shadup.lock"
+_store_lock_depth = 0
+_store_lock_fh: object | None = None
 # Object payloads live under ``<shadir>/data/xx/<digest>`` (sibling to ``files/``).
 DATA_DIR_NAME = "data"
 META_KEY_SHADIR = "shadir"
@@ -31,8 +36,41 @@ _ACTIVE_STORED_FILES_WHERE = "deleted = 0 AND end IS NULL"
 # Per-tag folder name under ``_tags`` that collects directory mirrors with an
 # empty computed tag set (see :func:`plan_refresh_extracted_tag_mirrors`).
 NOTAGS_DIR_NAME = "NOTAGS"
+# Parallel browse tree: one folder per album/dir, linked from every tag bucket.
+META_DIR_NAME = "_meta"
+# Inside each ``_meta/<dir_key>/``, symlink to the real album directory.
+META_ALBUM_LINK_NAME = "album"
+# When a tag-bucket path must be a real dir (nested children) and also point at
+# that album's meta, the meta symlink lives here beside the children.
+META_TAG_SELF_LINK_NAME = "_self"
+# Skip these when walking the library for tag aggregation / cleanup descent.
+_INDEX_TREE_NAMES = frozenset({"_tags", META_DIR_NAME})
 # Characters invalid in a Windows path segment (excluding ``:``, handled below).
 _TAG_MIRROR_BAD_CHARS = frozenset('<>"/\\|?*')
+
+
+@contextlib.contextmanager
+def exclusive_store_lock(shadir: str) -> Iterator[None]:
+    """Exclusive advisory lock for blob writes and unlinks in this process tree.
+
+    Reentrant in the holding process so a command can lock around a helper that
+    also locks. A second process blocks until the holder releases it.
+    """
+    global _store_lock_depth, _store_lock_fh
+    if _store_lock_depth == 0:
+        os.makedirs(shadir, exist_ok=True)
+        fh = open(os.path.join(shadir, LOCK_NAME), "a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        _store_lock_fh = fh
+    _store_lock_depth += 1
+    try:
+        yield
+    finally:
+        _store_lock_depth -= 1
+        if _store_lock_depth == 0 and _store_lock_fh is not None:
+            fcntl.flock(_store_lock_fh.fileno(), fcntl.LOCK_UN)
+            _store_lock_fh.close()
+            _store_lock_fh = None
 
 
 def _sanitize_tag_mirror_segment(part: str) -> str:
@@ -383,6 +421,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include already-deleted entries in selection",
     )
 
+    p_rm = sub.add_parser(
+        "rm",
+        help=(
+            "Soft-delete stored paths and remove them from the library tree. "
+            "Without --hard, blobs stay. --hard unlinks a blob only when every "
+            "live reference was inside this target."
+        ),
+    )
+    p_rm.add_argument(
+        "prefixes",
+        nargs="+",
+        metavar="PATH",
+        help="Library path prefixes to soft-delete (relative; absolute paths are ignored)",
+    )
+    p_rm.add_argument(
+        "-r", "--recursive", action="store_true", help="Recurse into child paths"
+    )
+    p_rm.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print paths and blobs that would be removed and change nothing",
+    )
+    p_rm.add_argument(
+        "--hard",
+        action="store_true",
+        help=(
+            "Also unlink blobs whose every live reference is inside this target. "
+            "Blobs orphaned by earlier soft-deletes stay on disk; gc reaps those."
+        ),
+    )
+
+    gc_help = (
+        "Unlink every blob with no live reference, including blobs orphaned "
+        "by earlier soft-deletes. Takes no path and does not soft-delete paths."
+    )
+    p_gc = sub.add_parser(
+        "gc",
+        help=gc_help,
+        description=gc_help,
+    )
+    p_gc.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print blobs that would be unlinked and change nothing",
+    )
+
     p_rmhash = sub.add_parser(
         "rmhash", help="Mark all entries with matching sha256 as deleted"
     )
@@ -542,8 +628,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "refresh-extracted-tags",
         help=(
-            "Rebuild _tags/ symlinks under files/ from filesystem + DB tags "
-            "(namespaced tags become subdirs; see tag_mirror_relpath)"
+            "Rebuild files/_meta/ and files/_tags/ browse mirrors from "
+            "filesystem + DB tags (tag leaves link to shared meta folders; "
+            "meta only links album — no _meta→_tags cycles; see tag_mirror_relpath)"
         ),
     )
 
@@ -1338,36 +1425,32 @@ def _parent_dir_key(dir_key: str) -> str:
     return "/".join(dir_key.split("/")[:-1])
 
 
-def _allocate_flat_link_basename(taken: set[str], logical_base: str) -> str:
-    """First free name among ``base``, ``base(2)``, ``base(3)``, … and mark it taken."""
-    if logical_base not in taken:
-        taken.add(logical_base)
-        return logical_base
-    n = 2
-    while True:
-        cand = f"{logical_base}({n})"
-        if cand not in taken:
-            taken.add(cand)
-            return cand
-        n += 1
+def meta_mirror_relpath(dir_key: str) -> str:
+    """Relative path under ``_meta/`` / tag buckets for *dir_key* (nested).
+
+    Preserves the library hierarchy (``woodstock/vol 01`` → ``woodstock/vol 01``)
+    with each segment sanitized like tag path parts. Empty *dir_key* is invalid.
+    """
+    if not dir_key:
+        raise ValueError("meta_mirror_relpath: empty dir_key")
+    return "/".join(
+        _sanitize_tag_mirror_segment(part) for part in dir_key.split("/")
+    )
 
 
-def _plan_flat_mirrors_for_tag(
+def _plan_mirrors_for_tag(
     tag: str, subset: set[str]
 ) -> list[tuple[str, str, str]]:
-    """BFS per top-level component; ``taken`` basenames are shared across components."""
+    """BFS per top-level component; link path is nested :func:`meta_mirror_relpath`."""
     from collections import deque
 
     roots = sorted(d for d in subset if "/" not in d)
-    taken: set[str] = set()
     rows: list[tuple[str, str, str]] = []
     for root in roots:
         dq: deque[str] = deque([root])
         while dq:
             dk = dq.popleft()
-            logical_base = dk.split("/")[-1]
-            name = _allocate_flat_link_basename(taken, logical_base)
-            rows.append((tag, name, dk))
+            rows.append((tag, meta_mirror_relpath(dk), dk))
             children = sorted(
                 (d for d in subset if _parent_dir_key(d) == dk),
                 reverse=True,
@@ -1379,7 +1462,7 @@ def _plan_flat_mirrors_for_tag(
 def plan_refresh_extracted_tag_mirrors(
     tags_by_dir: dict[str, frozenset[str]],
 ) -> list[tuple[str, str, str]]:
-    """Plan flat per-tag symlinks: ``(tag_or_NOTAGS, link_basename, dir_key)`` rows.
+    """Plan per-tag symlinks: ``(tag_or_NOTAGS, meta_relpath, dir_key)`` rows.
 
     Rules:
 
@@ -1387,10 +1470,11 @@ def plan_refresh_extracted_tag_mirrors(
       computed set contains ``t`` and walk them top-down BFS per top-level
       component. Siblings are emitted **descending by dir_key** (so ``a/b``
       appears before ``a/a``).
-    * Within a tag folder, duplicate basenames are disambiguated with
-      ``(2)``, ``(3)``, … (shared across top-level components under the tag).
+    * Link / meta paths preserve nesting via :func:`meta_mirror_relpath`
+      (``woodstock/vol 01`` → ``_meta/woodstock/vol 01``, not a flat
+      ``_meta/vol 01``).
     * Directories whose computed set is empty go under
-      :data:`NOTAGS_DIR_NAME` with the same BFS + disambiguation rules.
+      :data:`NOTAGS_DIR_NAME` with the same BFS order.
     * The root directory (``dir_key = ""``) is **never** mirrored.
     * Tags iterate in ``sorted`` order; :data:`NOTAGS_DIR_NAME` is emitted last.
     """
@@ -1400,10 +1484,10 @@ def plan_refresh_extracted_tag_mirrors(
         all_tags |= set(ts)
     for tag in sorted(all_tags):
         subset = {dk for dk, ts in tags_by_dir.items() if dk and tag in ts}
-        rows.extend(_plan_flat_mirrors_for_tag(tag, subset))
+        rows.extend(_plan_mirrors_for_tag(tag, subset))
     empty_dirs = {dk for dk, ts in tags_by_dir.items() if dk and not ts}
     if empty_dirs:
-        rows.extend(_plan_flat_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
+        rows.extend(_plan_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
     return rows
 
 
@@ -1562,7 +1646,7 @@ def _compute_tags_by_dir(
 
     acc: dict[str, set[str]] = {"": set()}
     for dirpath_abs, dirnames, filenames in os.walk(files_root_abs, topdown=True):
-        dirnames[:] = [d for d in dirnames if d != "_tags"]
+        dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
         rel_dir = os.path.relpath(dirpath_abs, files_root_abs)
         dir_key = "" if rel_dir in (".", "") else rel_dir.replace(os.sep, "/")
         acc.setdefault(dir_key, set())
@@ -1627,17 +1711,162 @@ def handle_ls_alltags(
     _emit_ls_alltags_pretty(rows)
 
 
-def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_tags`` with namespaced per-tag symlinks.
+def _force_symlink(link: str, target_rel: str) -> None:
+    """Create *link* → *target_rel*, replacing any existing file/dir/symlink."""
+    parent = os.path.dirname(link)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    if os.path.lexists(link):
+        if os.path.isdir(link) and not os.path.islink(link):
+            shutil.rmtree(link)
+        else:
+            os.unlink(link)
+    os.symlink(target_rel, link)
 
-    Two passes:
+
+def _remove_index_trees(files_root: str) -> int:
+    """Delete ``files/_tags``, ``files/_meta``, and leftover album-local ``_tags``.
+
+    Does not follow symlinks when removing. Returns the number of trees removed.
+    """
+    removed = 0
+    for name in (META_DIR_NAME, "_tags"):
+        path = os.path.join(files_root, name)
+        if not os.path.lexists(path):
+            continue
+        if os.path.islink(path) or os.path.isfile(path):
+            os.unlink(path)
+        else:
+            shutil.rmtree(path)
+        removed += 1
+
+    for dirpath, dirnames, _filenames in os.walk(files_root, topdown=True):
+        # Do not descend into index trees if somehow still present.
+        dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
+        if "_tags" not in dirnames:
+            continue
+        tags_path = os.path.join(dirpath, "_tags")
+        dirnames.remove("_tags")
+        if os.path.islink(tags_path) or os.path.isfile(tags_path):
+            os.unlink(tags_path)
+            removed += 1
+            continue
+        if os.path.isdir(tags_path):
+            shutil.rmtree(tags_path)
+            removed += 1
+    return removed
+
+
+def install_meta_directories(
+    files_root: str,
+    tags_by_dir: dict[str, frozenset[str]],
+    name_by_dir: dict[str, str],
+) -> int:
+    """Create ``_meta/<nested-path>/`` with ``album`` → real album only.
+
+    *name_by_dir* maps ``dir_key`` → nested relpath (usually equal to ``dir_key``).
+    Nested albums share path prefixes (``_meta/woodstock/vol 01`` under
+    ``_meta/woodstock``); parent metas are real directories that may contain child
+    meta folders alongside ``album``.
+
+    Deliberately does **not** link ``_meta/.../<tag_path>`` back into ``_tags/``:
+    that back-edge created cycles with :func:`install_tag_bucket_meta_links`
+    (``_tags → _meta → _tags``) that MPD unrolls into path explosions.
+    *tags_by_dir* is accepted for call-site compatibility but unused.
+    """
+    del tags_by_dir  # API compat; tag membership lives only under ``_tags/``.
+    meta_root = os.path.join(files_root, META_DIR_NAME)
+    n_meta = 0
+    for dir_key, name in sorted(name_by_dir.items(), key=lambda kv: kv[1]):
+        meta_dir = os.path.join(meta_root, *name.split("/"))
+        os.makedirs(meta_dir, exist_ok=True)
+        n_meta += 1
+        album_abs = os.path.join(files_root, *dir_key.split("/"))
+        album_link = os.path.join(meta_dir, META_ALBUM_LINK_NAME)
+        _force_symlink(album_link, os.path.relpath(album_abs, meta_dir))
+        out(
+            "refresh-extracted-tags meta {name}/album",
+            2,
+            name=name,
+        )
+    return n_meta
+
+
+def _tag_paths_needing_real_dirs(relpaths: set[str]) -> set[str]:
+    """Return relpaths that are strict prefixes of another path in *relpaths*."""
+    need: set[str] = set()
+    for path in relpaths:
+        parent = path
+        while "/" in parent:
+            parent = parent.rsplit("/", 1)[0]
+            if parent in relpaths:
+                need.add(parent)
+    return need
+
+
+def install_tag_bucket_meta_links(
+    files_root: str,
+    rows: list[tuple[str, str, str]],
+) -> int:
+    """Create ``_tags/<tag_path>/<nested>`` → ``_meta/<nested>`` (shared meta).
+
+    Nested ``dir_key`` paths are preserved. If both a parent and a child appear
+    under the same tag, the parent path is a real directory (so children can
+    nest) and the parent's meta is linked as :data:`META_TAG_SELF_LINK_NAME`.
+    """
+    meta_root = os.path.join(files_root, META_DIR_NAME)
+    n_links = 0
+    by_tag: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for tag, name, dir_key in rows:
+        by_tag[tag].append((name, dir_key))
+
+    for tag, items in sorted(by_tag.items()):
+        tag_parts = tag_mirror_relpath(tag)
+        names = {name for name, _dk in items}
+        prefix_dirs = _tag_paths_needing_real_dirs(names)
+        for name, dir_key in items:
+            meta_dir = os.path.join(meta_root, *name.split("/"))
+            os.makedirs(meta_dir, exist_ok=True)
+            if name in prefix_dirs:
+                # Real dir for nesting; meta reachable via _self.
+                nest_dir = os.path.join(files_root, "_tags", *tag_parts, *name.split("/"))
+                os.makedirs(nest_dir, exist_ok=True)
+                link = os.path.join(nest_dir, META_TAG_SELF_LINK_NAME)
+            else:
+                link = os.path.join(
+                    files_root, "_tags", *tag_parts, *name.split("/")
+                )
+            parent = os.path.dirname(link)
+            os.makedirs(parent, exist_ok=True)
+            _force_symlink(link, os.path.relpath(meta_dir, parent))
+            n_links += 1
+            out(
+                "refresh-extracted-tags mirror {tag_dir}/{name} -> {meta}/{name} ({dir_key})",
+                2,
+                tag_dir="/".join(tag_parts),
+                name=name,
+                meta=META_DIR_NAME,
+                dir_key=dir_key,
+            )
+    return n_links
+
+
+def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
+    """Rebuild ``files/_meta`` and ``files/_tags`` acyclic browse mirrors.
+
+    Passes:
 
     1. **Bottom-up** walk of ``files/``: build ``dir_key → frozenset(tags)`` by
        unioning each file's DB tags into its directory and propagating to
-       ancestors.
-    2. **Top-down** via :func:`plan_refresh_extracted_tag_mirrors`: create
-       ``files/_tags/<tag_mirror_relpath(tag)>/<basename[(n)]>`` →
-       ``<files>/<dir_key>`` symlinks (see :func:`tag_mirror_relpath`).
+       ancestors (``_tags`` / ``_meta`` skipped while walking).
+    2. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
+       per directory, rows ``(tag, meta_relpath, dir_key)``.
+    3. **Meta folders** via :func:`install_meta_directories`: one
+       ``_meta/<nested>/`` per directory with ``album`` → real dir only
+       (no backlinks into ``_tags/``).
+    4. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
+       ``_tags/<tag_path>/<nested>`` → the **same** ``_meta/<nested>`` (not the
+       album). Edges are one-way: tags → meta → album.
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1651,36 +1880,27 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
             f"refresh-extracted-tags: files root not a directory: {files_root}"
         )
 
-    tags_root = os.path.join(files_root, "_tags")
-    if os.path.lexists(tags_root):
-        shutil.rmtree(tags_root)
+    removed = _remove_index_trees(files_root)
+    out(
+        "refresh-extracted-tags cleared {count} prior index trees",
+        1,
+        count=removed,
+    )
 
     tags_by_dir = _compute_tags_by_dir(conn, files_root)
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    name_by_dir = {dk: name for _tag, name, dk in rows}
 
-    for tag, name, dir_key in rows:
-        tag_parts = tag_mirror_relpath(tag)
-        link = os.path.join(files_root, "_tags", *tag_parts, name)
-        target = os.path.join(files_root, *dir_key.split("/"))
-        parent = os.path.dirname(link)
-        os.makedirs(parent, exist_ok=True)
-        if os.path.lexists(link):
-            os.unlink(link)
-        rel_target = os.path.relpath(target, parent)
-        os.symlink(rel_target, link)
-        tag_dir = "/".join(tag_parts)
-        out(
-            "refresh-extracted-tags mirror {tag_dir}/{name} -> {dir_key}",
-            2,
-            tag_dir=tag_dir,
-            name=name,
-            dir_key=dir_key,
-        )
-    os.makedirs(tags_root, exist_ok=True)
+    os.makedirs(os.path.join(files_root, "_tags"), exist_ok=True)
+    os.makedirs(os.path.join(files_root, META_DIR_NAME), exist_ok=True)
+    n_meta = install_meta_directories(files_root, tags_by_dir, name_by_dir)
+    n_links = install_tag_bucket_meta_links(files_root, rows)
     out(
-        "refresh-extracted-tags mirrors {count}",
+        "refresh-extracted-tags mirrors {count} meta_dirs {n_meta} tag_links {n_links}",
         0,
         count=len(rows),
+        n_meta=n_meta,
+        n_links=n_links,
     )
 
 
@@ -2247,7 +2467,21 @@ def _record_stored_file(
 def handle_store(
     conn: sqlite3.Connection, root: str, shadir: str, skip_dotfiles: bool
 ) -> None:
-    """Store files under root into shadir and replace with symlinks."""
+    """Store files under root into shadir and replace with symlinks.
+
+    The lock covers blob creation and the ``stored_files`` insert. The insert
+    is committed before the lock is released so a concurrent ``gc`` cannot
+    treat a just-written blob as unreferenced.
+    """
+    with exclusive_store_lock(shadir):
+        _handle_store_unlocked(conn, root, shadir, skip_dotfiles)
+        conn.commit()
+
+
+def _handle_store_unlocked(
+    conn: sqlite3.Connection, root: str, shadir: str, skip_dotfiles: bool
+) -> None:
+    """Store files under root. Caller holds :func:`exclusive_store_lock`."""
     stored_bytes = 0
     skipped_bytes = 0
     abs_root = os.path.abspath(root)
@@ -2616,6 +2850,287 @@ def delete_from_db(
         target_rows,
     )
     return len(target_rows)
+
+
+def _blank_root_rel(root_rel: str) -> str:
+    """Treat empty and ``.`` root_rel values as no stored-path prefix."""
+    if not root_rel or root_rel == ".":
+        return ""
+    return os.path.normpath(root_rel)
+
+
+def _strictly_inside(path: str, parent: str) -> bool:
+    """True when *path* is a descendant of *parent*, not *parent* itself."""
+    path_abs = os.path.abspath(path)
+    parent_abs = os.path.abspath(parent)
+    return path_abs != parent_abs and path_abs.startswith(parent_abs + os.sep)
+
+
+def select_active_prefix_rows(
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    recursive: bool,
+) -> list[tuple[str, str, str, str, str]]:
+    """Return active ``(shasum, root, root_rel, dirpath, filename)`` rows for *prefixes*."""
+    normalized = normalize_prefixes(prefixes)
+    if not normalized:
+        return []
+    rows = conn.execute(
+        f"""
+        SELECT shasum, root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE {_ACTIVE_STORED_FILES_WHERE}
+        """
+    ).fetchall()
+    target_rows: list[tuple[str, str, str, str, str]] = []
+    for shasum, root, root_rel, dirpath, filename in rows:
+        target_rel = os.path.normpath(os.path.join(root_rel, dirpath, filename))
+        for prefix in normalized:
+            if recursive:
+                if target_rel == prefix or target_rel.startswith(prefix + os.sep):
+                    target_rows.append((shasum, root, root_rel, dirpath, filename))
+                    break
+            elif target_rel == prefix:
+                target_rows.append((shasum, root, root_rel, dirpath, filename))
+                break
+    if not recursive:
+        exact_matches = {
+            os.path.normpath(os.path.join(root_rel, dirpath, filename))
+            for _shasum, _root, root_rel, dirpath, filename in target_rows
+        }
+        for prefix in normalized:
+            if prefix in exact_matches:
+                continue
+            has_descendants = any(
+                os.path.normpath(os.path.join(root_rel, dirpath, filename)).startswith(
+                    prefix + os.sep
+                )
+                for _shasum, _root, root_rel, dirpath, filename in rows
+            )
+            if has_descendants:
+                out(
+                    "skip directory prefix without --recursive: {prefix}",
+                    0,
+                    prefix=prefix,
+                )
+    return target_rows
+
+
+def library_path_for_prefix(root: str, root_rel: str, prefix: str) -> str:
+    """Map a stored-path prefix onto a path under the library *root*."""
+    rr = _blank_root_rel(root_rel)
+    prefix_n = os.path.normpath(prefix)
+    if rr:
+        if prefix_n == rr:
+            return os.path.abspath(root)
+        if prefix_n.startswith(rr + os.sep):
+            return os.path.abspath(os.path.join(root, prefix_n[len(rr) + 1 :]))
+    return os.path.abspath(os.path.join(root, prefix_n))
+
+
+def remove_library_paths(
+    rows: list[tuple[str, str, str, str, str]],
+    prefixes: list[str],
+    recursive: bool,
+) -> None:
+    """Remove library symlinks for *rows*. Recursive directory prefixes drop the tree."""
+    normalized = normalize_prefixes(prefixes)
+    if recursive:
+        seen: set[str] = set()
+        for _shasum, root, root_rel, dirpath, filename in rows:
+            stored = os.path.normpath(os.path.join(root_rel, dirpath, filename))
+            for prefix in normalized:
+                if stored != prefix and not stored.startswith(prefix + os.sep):
+                    continue
+                physical = library_path_for_prefix(root, root_rel, prefix)
+                if physical in seen or not _strictly_inside(physical, root):
+                    continue
+                seen.add(physical)
+                if os.path.isdir(physical) and not os.path.islink(physical):
+                    shutil.rmtree(physical)
+                elif os.path.lexists(physical):
+                    os.unlink(physical)
+    for _shasum, root, _root_rel, dirpath, filename in rows:
+        physical = _physical_path_from_parts(root, dirpath, filename)
+        if os.path.lexists(physical) and not (
+            os.path.isdir(physical) and not os.path.islink(physical)
+        ):
+            os.unlink(physical)
+
+
+def _live_rows_for_hash(
+    conn: sqlite3.Connection, digest: str
+) -> list[tuple[str, str, str, str]]:
+    """Return active ``(root, root_rel, dirpath, filename)`` rows for *digest*."""
+    return conn.execute(
+        f"""
+        SELECT root, root_rel, dirpath, filename
+        FROM stored_files
+        WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+        """,
+        (digest,),
+    ).fetchall()
+
+
+def hashes_orphaned_by(
+    conn: sqlite3.Connection,
+    rows: list[tuple[str, str, str, str, str]],
+) -> list[str]:
+    """Hashes whose every live reference is inside *rows*.
+
+    Ended and already-soft-deleted rows are not live, so they do not keep a
+    blob. A hash with any live row outside *rows* is not orphaned by this target.
+    """
+    matched = {
+        (root, root_rel, dirpath, filename)
+        for _shasum, root, root_rel, dirpath, filename in rows
+    }
+    orphaned: list[str] = []
+    for digest in sorted({shasum for shasum, _root, _rr, _dp, _fn in rows}):
+        live = _live_rows_for_hash(conn, digest)
+        if live and all(tuple(row) in matched for row in live):
+            orphaned.append(digest)
+    return orphaned
+
+
+def unlink_store_blob(conn: sqlite3.Connection, shadir: str, digest: str) -> None:
+    """Unlink canonical and legacy blob paths for *digest*, plus any resolved copy."""
+    candidates: list[str] = []
+    found = resolve_existing_blob_path(conn, shadir, digest)
+    if found:
+        candidates.append(found)
+    candidates.append(blob_object_path(shadir, digest))
+    candidates.append(legacy_flat_blob_path(shadir, digest))
+    seen: set[str] = set()
+    for path in candidates:
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        if os.path.lexists(absolute) and not os.path.isdir(absolute):
+            os.unlink(absolute)
+            try:
+                os.rmdir(os.path.dirname(absolute))
+            except OSError:
+                pass
+
+
+def handle_rm(
+    conn: sqlite3.Connection,
+    prefixes: list[str],
+    shadir: str,
+    *,
+    recursive: bool,
+    dry_run: bool,
+    hard: bool = False,
+) -> None:
+    """Soft-delete matching paths and remove them from the library tree.
+
+    ``hard`` unlinks a blob only when every live reference was inside this
+    target. Blobs orphaned by earlier soft-deletes are left in place.
+    """
+    with exclusive_store_lock(shadir):
+        rows = select_active_prefix_rows(conn, prefixes, recursive)
+        orphaned = hashes_orphaned_by(conn, rows) if hard else []
+        for _shasum, _root, root_rel, dirpath, filename in rows:
+            out_csv(["rm", _stored_path_from_parts(root_rel, dirpath, filename)])
+        for digest in orphaned:
+            out_csv(["rmblob", digest])
+        if dry_run or not rows:
+            return
+        conn.executemany(
+            """
+            UPDATE stored_files
+            SET deleted = 1
+            WHERE shasum = ? AND root = ? AND root_rel = ? AND dirpath = ? AND filename = ?
+            """,
+            rows,
+        )
+        remove_library_paths(rows, prefixes, recursive)
+        conn.commit()
+        for digest in orphaned:
+            remaining = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM stored_files
+                WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+                """,
+                (digest,),
+            ).fetchone()[0]
+            if remaining == 0:
+                unlink_store_blob(conn, shadir, digest)
+        out("rm paths: {count}", 0, count=len(rows))
+
+
+def iter_store_blobs(shadir: str) -> Iterator[tuple[str, str]]:
+    """Yield ``(digest, path)`` for canonical and legacy blob files under *shadir*."""
+    shadir_abs = os.path.abspath(shadir)
+    seen: set[str] = set()
+    for base in (os.path.join(shadir_abs, DATA_DIR_NAME), shadir_abs):
+        if not os.path.isdir(base):
+            continue
+        for bucket_name in os.listdir(base):
+            if not _is_two_hex_dir(bucket_name):
+                continue
+            bucket = os.path.join(base, bucket_name)
+            if not os.path.isdir(bucket) or os.path.islink(bucket):
+                continue
+            for name in os.listdir(bucket):
+                if not HASH_RE.match(name) or not name.startswith(bucket_name):
+                    continue
+                path = os.path.join(bucket, name)
+                absolute = os.path.abspath(path)
+                if absolute in seen or os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                seen.add(absolute)
+                yield name, absolute
+
+
+def unreferenced_blob_digests(conn: sqlite3.Connection, shadir: str) -> list[str]:
+    """Digests of on-disk blobs that have no live ``stored_files`` row."""
+    live = {
+        row[0]
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT shasum FROM stored_files
+            WHERE {_ACTIVE_STORED_FILES_WHERE}
+            """
+        )
+    }
+    orphaned: list[str] = []
+    seen: set[str] = set()
+    for digest, _path in iter_store_blobs(shadir):
+        if digest in live or digest in seen:
+            continue
+        seen.add(digest)
+        orphaned.append(digest)
+    return orphaned
+
+
+def handle_gc(conn: sqlite3.Connection, shadir: str, *, dry_run: bool) -> None:
+    """Unlink every blob with no live reference.
+
+    This is the whole store, not the target of one ``rm``. It does not mark
+    paths deleted.
+    """
+    with exclusive_store_lock(shadir):
+        orphaned = unreferenced_blob_digests(conn, shadir)
+        for digest in orphaned:
+            out_csv(["gc", digest])
+        if dry_run:
+            return
+        removed = 0
+        for digest in orphaned:
+            remaining = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM stored_files
+                WHERE shasum = ? AND {_ACTIVE_STORED_FILES_WHERE}
+                """,
+                (digest,),
+            ).fetchone()[0]
+            if remaining == 0:
+                unlink_store_blob(conn, shadir, digest)
+                removed += 1
+        out("gc blobs: {count}", 0, count=removed)
 
 
 def delete_by_hashes(conn: sqlite3.Connection, shasums: list[str], shadir: str) -> int:
@@ -3183,6 +3698,22 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             recursive=args.recursive,
             show_deleted=args.show_deleted,
         )
+        return 0
+    if action == "rm":
+        for prefix in args.prefixes:
+            out("rm {prefix}", 1, prefix=prefix)
+        handle_rm(
+            conn,
+            args.prefixes,
+            shadir,
+            recursive=args.recursive,
+            dry_run=args.dry_run,
+            hard=args.hard,
+        )
+        return 0
+    if action == "gc":
+        out("gc", 1)
+        handle_gc(conn, shadir, dry_run=args.dry_run)
         return 0
     if action == "rmhash":
         for shasum in args.hashes:

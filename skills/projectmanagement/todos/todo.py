@@ -73,6 +73,15 @@ STATE_MACROS = {
 # per todo dir via config.json "default_state_filter". Hides terminated states.
 DEFAULT_STATE_FILTER = "ALL,-FINAL"
 
+# File-store git sync, per todo dir in config.json. Each value is a list of
+# subcommand class names (case-insensitive). A name matches that class and every
+# subclass, so a non-leaf such as TodoFieldCommand covers set, read, rm, and the
+# rest of that branch. Ignored for sqlite. A matching command commits the todo
+# files it wrote (autocommit) or pushes the store repo (autopush); a read matches
+# the class and still does nothing, because it wrote no file.
+AUTOCOMMIT_KEY = "autocommit"
+AUTOPUSH_KEY = "autopush"
+
 # Search config keys, all per todo dir in config.json.
 #   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
 #                            derived data, dropped by clear-search-data
@@ -2430,7 +2439,6 @@ def _solo_term_id_prefix_hit(terms: Sequence[str], tickets: Dict[str, JsonDict])
 
 
 def search_tickets(
-    root: Path,
     terms: Sequence[str],
     *,
     limit: int = 20,
@@ -2440,6 +2448,10 @@ def search_tickets(
     tags: Optional[frozenset] = None,
 ) -> SearchTicketsResult:
     """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
+
+    Reads the resolved todo directory (``$TODO_DIR``, then the ``.todo`` walk),
+    the same store as ``ls``. The current directory does not need to be a git
+    repo.
 
     ``terms`` is a list of independent search terms (google-style): each term is
     embedded and matched on its own, contributing its own ranker to the fusion,
@@ -3872,12 +3884,19 @@ class TodoSubCommand(ABC):
     # Free-text arg dests eligible for the `EDIT` sentinel (see EDIT_SENTINEL).
     edit_fields: ClassVar[Sequence[str]] = ()
 
-    def __init__(self, args: argparse.Namespace) -> None:
-        """Copy parsed argparse fields onto the command object."""
+    def __init__(self, args: argparse.Namespace, *, todo_dir: Path) -> None:
+        """Copy parsed argparse fields onto the command object.
+
+        ``todo_dir`` is the store directory resolved once in ``main`` before any
+        subcommand runs (``$TODO_DIR``, then the ``.todo`` walk). Every
+        subcommand receives that same path as ``self.todo_dir``.
+        """
         self.args = args
         for name, value in vars(args).items():
             if name != "command_cls":
                 setattr(self, name, value)
+        # After the argparse copy so a flag cannot clobber the resolved path.
+        self.todo_dir = todo_dir
 
     def __getattr__(self, name: str) -> Any:
         """Expose argparse fields as dynamic command attributes."""
@@ -4973,8 +4992,8 @@ class ClearSearchDataCommand(StoreMaintenanceCommand):
             vectors_removed += len(stamped)
 
         stopwords_cleared = False
-        if sweep and todo_store.config_list(todo_db.todo_dir(), SEARCH_STOPWORDS_KEY):
-            todo_store.update_config(todo_db.todo_dir(), {SEARCH_STOPWORDS_KEY: None})
+        if sweep and todo_store.config_list(self.todo_dir, SEARCH_STOPWORDS_KEY):
+            todo_store.update_config(self.todo_dir, {SEARCH_STOPWORDS_KEY: None})
             stopwords_cleared = True
 
         print(
@@ -6893,7 +6912,7 @@ class WebCommand(EnvironmentCommand):
         # not the current worktree gitroot. The store is shared across all
         # worktrees, so labelling the page with this worktree misrepresents it.
         # `root` still drives git ops (diffs/selectors) below -- only the label moves.
-        basedir = todo_db.todo_dir()
+        basedir = self.todo_dir
 
         def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
             """Resolve an ?id= selector to (repo_root, todo) for the viewer.
@@ -6930,7 +6949,7 @@ class WebCommand(EnvironmentCommand):
                     terms = query.split()
                 if terms:
                     try:
-                        rows, _hidden = run_search(root, terms)
+                        rows, _hidden = run_search(terms)
                         return rows
                     except TodoError as exc:
                         raise todo_web.TodoWebError(str(exc)) from exc
@@ -7097,7 +7116,6 @@ def _format_rows(rows: Sequence[JsonDict], columns: Sequence[str]) -> List[str]:
 
 
 def run_search(
-    root: Path,
     terms: Sequence[str],
     *,
     limit: int = 20,
@@ -7114,7 +7132,6 @@ def run_search(
     hidden_by_status)``.
     """
     result = search_tickets(
-        root,
         terms,
         limit=limit,
         embedder_names=embedder_names,
@@ -7129,8 +7146,10 @@ class SearchCommand(CorpusQueryCommand):
     command_names = ("search",)
     doc_short: ClassVar[str] = "Search todos (lexical IDF)"
     doc_long: ClassVar[str] = (
-        "Search ranks todos by reciprocal-rank fusion over one or more embedders "
-        "plus lexical overlap. Multiple text terms are searched google-style (OR): "
+        "Search ranks todos in the resolved todo directory ($TODO_DIR, then the "
+        ".todo walk -- the same store as ls) by reciprocal-rank fusion over one or "
+        "more embedders plus lexical overlap. The current directory does not need "
+        "to be a git repo. Multiple text terms are searched google-style (OR): "
         "each term is embedded and matched independently and matching more terms "
         "ranks higher; a doc matching only one term can still appear. A term "
         'is the unit of embedding -- quote a phrase ("bh 791") to match it whole; '
@@ -7196,8 +7215,7 @@ class SearchCommand(CorpusQueryCommand):
         _add_column_args(parser)
 
     def do(self) -> int:
-        """Print ranked ticket search hits."""
-        root = self.root()
+        """Print ranked ticket search hits from the resolved todo directory."""
         names: Optional[List[str]] = None
         if self.embedder:
             names = [part.strip() for part in self.embedder.split(",") if part.strip()]
@@ -7209,7 +7227,6 @@ class SearchCommand(CorpusQueryCommand):
             else None
         )
         rows, hidden_by_status = run_search(
-            root,
             self.query,
             limit=self.limit,
             embedder_names=names,
@@ -7354,7 +7371,7 @@ class BaseDirCommand(EnvironmentCommand):
 
     def do(self) -> int:
         """Print the resolved todo base directory."""
-        print(todo_db.todo_dir())
+        print(self.todo_dir)
         return 0
 
 
@@ -7432,7 +7449,7 @@ class ExportToFileCommand(StoreMaintenanceCommand):
     def do(self) -> int:
         """Export selected todos to files, optionally removing them from the store."""
         store = todo_store.get_store()
-        base = Path(self.basedir) if self.basedir else todo_db.todo_dir()
+        base = Path(self.basedir) if self.basedir else self.todo_dir
         out_dir = base / "storage"
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -7884,6 +7901,164 @@ def _warn_if_store_behind() -> None:
         )
 
 
+def command_class_selected(command_cls: type, names: Sequence[str]) -> bool:
+    """True when *names* cites *command_cls* or one of its TodoSubCommand bases.
+
+    Comparison is case-insensitive and limited to the subcommand hierarchy, so
+    ``object`` or ``ABC`` never select every command. An empty list selects nothing.
+    """
+    wanted = {name.strip().casefold() for name in names if name.strip()}
+    if not wanted:
+        return False
+    for cls in command_cls.__mro__:
+        if not isinstance(cls, type) or not issubclass(cls, TodoSubCommand):
+            continue
+        if cls.__name__.casefold() in wanted:
+            return True
+    return False
+
+
+def _ticket_ids_in_paths(paths: Sequence[Path]) -> List[str]:
+    """Short ids of ticket files among *paths*, in first-seen order."""
+    ids: List[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        name = path.name
+        if name.endswith(".json"):
+            ident = name[: -len(".json")]
+        elif name.endswith(".deleted"):
+            ident = name[: -len(".deleted")]
+        else:
+            continue
+        if len(ident) < 8 or any(ch not in "0123456789abcdef" for ch in ident):
+            continue
+        short = ident[:8]
+        if short not in seen:
+            seen.add(short)
+            ids.append(short)
+    return ids
+
+
+def _autocommit_message(command: TodoSubCommand, paths: Sequence[Path]) -> str:
+    """One-line commit subject: the CLI name plus the short ids that changed."""
+    name = command.command_names[0] if command.command_names else type(command).__name__
+    ids = _ticket_ids_in_paths(paths)
+    return f"todo: {name}" + (f" {' '.join(ids)}" if ids else "")
+
+
+def _git_with_index(
+    root: Path, index: str, *args: str
+) -> subprocess.CompletedProcess[str]:
+    """Run git against *index* instead of the repository's real index."""
+    env = os.environ.copy()
+    env["GIT_INDEX_FILE"] = index
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(["git", *args], returncode=1, stdout="", stderr=str(exc))
+
+
+def _commit_store_paths(root: Path, paths: Sequence[Path], message: str) -> None:
+    """Commit *paths* in *root*, including deletions, and leave every other change alone.
+
+    ``git commit -- paths`` is ``--only``: it takes the working-tree content of
+    paths that still exist and drops a deletion ``git add -A`` had staged. A
+    temporary index started from HEAD records the removed ticket and its
+    tombstone in one commit, without sweeping unrelated staged files.
+    """
+    root_res = root.resolve()
+    rels: List[str] = []
+    for path in paths:
+        try:
+            rels.append(str(path.resolve().relative_to(root_res)))
+        except ValueError as exc:
+            raise TodoError(f"autocommit: {path} is outside git repository {root}") from exc
+    handle = tempfile.NamedTemporaryFile(prefix="todo-autocommit-", delete=False)
+    handle.close()
+    index = handle.name
+    try:
+        head = run_git(root, "rev-parse", "--verify", "HEAD", check=False)
+        base = ["read-tree", "HEAD"] if head.returncode == 0 else ["read-tree", "--empty"]
+        seeded = _git_with_index(root, index, *base)
+        if seeded.returncode != 0:
+            detail = (seeded.stderr or seeded.stdout or "").strip()
+            raise TodoError(f"autocommit failed: {detail}")
+        added = _git_with_index(root, index, "add", "-A", "--", *rels)
+        if added.returncode != 0:
+            detail = (added.stderr or added.stdout or "").strip()
+            raise TodoError(f"autocommit failed: {detail}")
+        diff = _git_with_index(root, index, "diff", "--cached", "--quiet")
+        if diff.returncode == 0:
+            return
+        if diff.returncode != 1:
+            detail = (diff.stderr or diff.stdout or "").strip()
+            raise TodoError(f"autocommit failed: {detail}")
+        committed = _git_with_index(root, index, "commit", "-m", message)
+        if committed.returncode != 0:
+            detail = (committed.stderr or committed.stdout or "").strip()
+            if "nothing to commit" in detail or "no changes added to commit" in detail:
+                return
+            raise TodoError(f"autocommit failed: {detail}")
+    finally:
+        try:
+            os.unlink(index)
+        except OSError:
+            pass
+    # The side index updated HEAD only. Refresh the real index for these paths
+    # so a clean commit does not show up as unstaged, and leave other staged
+    # paths untouched.
+    refreshed = run_git(root, "add", "-A", "--", *rels, check=False)
+    if refreshed.returncode != 0:
+        detail = (refreshed.stderr or refreshed.stdout or "").strip()
+        raise TodoError(f"autocommit failed: {detail}")
+
+
+def _autopush(root: Path) -> None:
+    """Push the store repo with its configured upstream."""
+    pushed = run_git(root, "push", check=False)
+    if pushed.returncode != 0:
+        detail = (pushed.stderr or pushed.stdout or "").strip()
+        raise TodoError(f"autopush failed: {detail}")
+
+
+def sync_file_store_git(command: TodoSubCommand) -> None:
+    """Commit and/or push after a file-store write selected by config.json.
+
+    ``autocommit`` and ``autopush`` are lists of subcommand class names. The
+    running command matches when its class, or any TodoSubCommand base, is named
+    (case-insensitive). Sqlite ignores both lists. A command that wrote no store
+    file -- a read, including one selected via a parent class -- does nothing.
+    """
+    base = command.todo_dir
+    commit_names = todo_store.config_list(base, AUTOCOMMIT_KEY)
+    push_names = todo_store.config_list(base, AUTOPUSH_KEY)
+    if not commit_names and not push_names:
+        return
+    command_cls = type(command)
+    do_commit = command_class_selected(command_cls, commit_names)
+    do_push = command_class_selected(command_cls, push_names)
+    if not do_commit and not do_push:
+        return
+    store = todo_store.get_store()
+    if not isinstance(store, todo_store.JsonDirTodoStore):
+        return
+    paths = store.written_paths()
+    if not paths:
+        return
+    root = repo_root(store.dir)
+    if do_commit:
+        _commit_store_paths(root, paths, _autocommit_message(command, paths))
+    if do_push:
+        _autopush(root)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Entry point."""
     parser: argparse.ArgumentParser = build_parser()
@@ -7893,10 +8068,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start: float = time.monotonic()
     exit_code: int = 1
     try:
+        # Every subcommand reads the store. Resolve once here so library code
+        # (todo_db.todo_dir cache) and the command (self.todo_dir) share one path.
+        resolved_todo_dir = todo_db.resolve_todo_dir()
         _warn_if_store_behind()
         _warn_if_skills_buried()
-        command: TodoSubCommand = args.command_cls(args)
+        command: TodoSubCommand = args.command_cls(args, todo_dir=resolved_todo_dir)
         exit_code = int(command.do())
+        if exit_code == 0:
+            sync_file_store_git(command)
         return exit_code
     except todo_store.LockTimeout as exc:
         # EX_TEMPFAIL: transient per-TODO lock contention. The caller should

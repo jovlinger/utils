@@ -1,4 +1,7 @@
-.PHONY: test all-tests
+.PHONY: binlinks test all-tests
+
+binlinks:
+	@:
 
 VENV_PYTHON := .venv/bin/python
 
