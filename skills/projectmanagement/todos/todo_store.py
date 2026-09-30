@@ -122,6 +122,20 @@ class TodoStore(ABC):
     def __init__(self, *, grace: float = DEFAULT_LOCK_GRACE, ttl: float = DEFAULT_LOCK_TTL) -> None:
         self._grace = grace
         self._ttl = ttl
+        # Files this process created, replaced, or removed. File backends record
+        # them so a later autocommit can stage exactly those paths; sqlite never
+        # calls note_written, and the setting is ignored for that backend.
+        self._written: List[Path] = []
+
+    def note_written(self, path: Path) -> None:
+        """Remember a store file this process just wrote or removed."""
+        resolved = path.resolve()
+        if resolved not in self._written:
+            self._written.append(resolved)
+
+    def written_paths(self) -> List[Path]:
+        """Store files mutated since this process started, in write order."""
+        return list(self._written)
 
     @abstractmethod
     def get(self, repo: str, branch: str) -> Optional[JsonDict]:
@@ -378,6 +392,7 @@ class JsonDirTodoStore(TodoStore):
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp.replace(path)
+        self.note_written(path)
 
     def find_by_id_prefix(self, query: str) -> List[Tuple[str, str, JsonDict]]:
         out: List[Tuple[str, str, JsonDict]] = []
@@ -401,9 +416,13 @@ class JsonDirTodoStore(TodoStore):
             return False
         if hard:
             path.unlink()
+            self.note_written(path)
         else:
             # soft delete: <id>.json -> <id>.deleted (kept for manual recovery)
-            path.replace(path.with_suffix(".deleted"))
+            dest = path.with_suffix(".deleted")
+            path.replace(dest)
+            self.note_written(path)
+            self.note_written(dest)
         return True
 
     def _data_version_path(self) -> Path:
@@ -423,6 +442,7 @@ class JsonDirTodoStore(TodoStore):
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(str(v), encoding="ascii")
         tmp.replace(path)
+        self.note_written(path)
 
     def embeddings_for_ticket(
         self, ticket_id: str

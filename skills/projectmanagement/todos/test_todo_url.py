@@ -34,6 +34,10 @@ TODO = {
     "Tag": [{"raw": "alpha", "objid": "0008"}],
     "Tags": [{"raw": "legacy", "objid": "0009"}],
     "Oxen": [{"name": "bessie", "objid": "000a"}],
+    "Notes": [
+        {"raw": "first note", "objid": "000b"},
+        {"raw": "second note", "objid": "000c"},
+    ],
     # A widened id (this todo once held more than 65536 objects), which is the
     # only way two objids can share a 4-character prefix -- so it is what makes
     # an ambiguous objid prefix testable at all.
@@ -181,6 +185,29 @@ class ToJsonPathTest(unittest.TestCase):
 
     def test_state_is_reachable_without_an_objid(self) -> None:
         self.assertEqual("State.working.owner", self.path("state", "working", "owner"))
+
+    def test_notes_drop_the_s_alias_translates_to_exact_field(self) -> None:
+        self.assertEqual("Notes.0.raw", self.path("note", "0", "raw"))
+        self.assertEqual("Notes.1.raw", self.path("note", "1", "raw"))
+
+    def test_notes_exact_field_name_also_works(self) -> None:
+        self.assertEqual("Notes.0.raw", self.path("notes", "0", "raw"))
+
+    def test_note_objid_lookup_anywhere_in_record(self) -> None:
+        self.assertEqual("Notes.0", self.path("objid", "000b"))
+        self.assertEqual("Notes.1", self.path("objid", "000c"))
+
+    def test_note_objid_lookup_within_notes_list(self) -> None:
+        self.assertEqual("Notes.0.raw", self.path("note", "objid", "000b", "raw"))
+        self.assertEqual("Notes.1", self.path("note", "objid", "000c"))
+
+    def test_out_of_bounds_note_index(self) -> None:
+        with self.assertRaisesRegex(todo_url.TodoUrlError, "out of bounds"):
+            self.path("note", "5")
+
+    def test_note_objid_prefix_within_notes_list(self) -> None:
+        self.assertEqual("Notes.0", self.path("note", "objid", "000b"))
+        self.assertEqual("Notes.1", self.path("note", "objid", "000c"))
 
 
 class ValueAtTest(unittest.TestCase):

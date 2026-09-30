@@ -228,6 +228,13 @@ spawn a subtodo.
 | blocked on children | integrate/wait (below), or `userneeded` and return later | -- |
 | empty (`is-done`) | [Finish](#6-finish-and-remove-the-worktree) | `done` |
 
+A fact discovered while executing a step -- a measurement, a hazard hit, a
+count -- becomes a **Note** (`note-add <id> --raw="..."`), cited from the work
+item it bears on (`relto-add <id> workitem:<idx> --target=objid:<note-objid>`).
+Not a `Body` edit, and not chat. See
+[`BODY.md`](BODY.md#facts-and-findings-are-notes-not-body) for the Note vs
+Body vs WorkItem split.
+
 Full command flags -> [`IMPLEMENTATION.md`](IMPLEMENTATION.md#work-items).
 
 ---
@@ -442,6 +449,33 @@ files co-evolve and reference each other.
 
 Adding a repo means adding a row here AND both files in that repo.
 
+### PTAL readiness check (before pinging any reviewer)
+
+Applies any time a human reviewer is about to be told to take another look -- not only at
+the end of the fixed cycle above. An open PR under live review (a human posting comments over
+several days, no todo cycle in sight) needs the same two checks before "PTAL" goes out.
+
+1. **Tests are green, on the PR's actual head, not the aggregate GitHub check.** The aggregate
+   check stays PENDING until unrelated blocks finish and can hide a pass that already happened.
+   Resolve the head commit (`gh pr view <N> --json headRefOid`), find its CI run for real
+   (`sem get pipelines` / the repo's push-hook Monitor, not `gh pr checks`), and confirm every
+   block passed for THAT commit -- a green run against an older commit does not count once new
+   commits land. A run that is green but stale-configured (the branch's CI config itself has
+   drifted from the default branch, e.g. a renamed deployment target) is worth a caveat to the
+   user, not a blocker by itself, if no new commit is needed to make it re-run clean.
+2. **Every reviewer-initiated thread has been acknowledged.** Walk the review comment graph
+   (group by root via `in_reply_to_id`, not by raw creation order) and check the LAST comment
+   in each thread that a reviewer (not me) started. "Acknowledged" does not require a bespoke
+   reply per thread: several near-duplicate findings (the same Copilot pattern flagged at N
+   call sites, or a reviewer repeating themselves across files) can share ONE reply, posted to
+   a representative thread and cited by file:line from the others -- but every such thread must
+   at minimum point at that shared reply, not sit silent. A thread I started myself (an
+   instruction or an FYI, not a question) needs no reply from anyone; only reviewer-initiated
+   threads count against this check.
+
+Report which threads (if any) are still unacknowledged and whether CI is green on the current
+head; only then does "tell them PTAL" become the right next message.
+
 After the cycle:
 
 ```bash
@@ -481,9 +515,14 @@ readable but are not written any more. Prefer the `objid` form
 (`todo:d56d/objid/0a3f`) when naming a durable object, since an index shifts --
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#permalinks).
 
+A **Note** is addressable the same way (`todo:d56d/note/2`, or
+`todo:d56d/objid/000e`) -- cite it by permalink like any other object instead
+of retelling its content in chat.
+
 **While working:** one short action line per action; no preamble.
 
-**Durable notes** belong in the commit message (`work-item-done -m`), not chat.
+**Durable commentary** belongs in the commit message (`work-item-done -m`),
+not chat. A durable FACT belongs in a Note.
 
 **Verdict grades the MAIN todo**, not the last step:
 

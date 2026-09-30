@@ -451,5 +451,186 @@ class WorkItemTextInFoldTest(unittest.TestCase):
         self.assertIn("(no commit)", page)
 
 
+class NotesSectionTest(unittest.TestCase):
+    """Notes render between Body and Work items, reusing the work-item display
+    machinery (_box_attrs, _objid_badge, _clamped, _section) rather than
+    growing a parallel one -- so a note box looks like a work-item box minus
+    the parts a fact has no business carrying."""
+
+    def _note(self, raw: str = "a fact", objid: str = "000f", relto: Any = None) -> Dict[str, Any]:
+        note: Dict[str, Any] = {"objid": objid, "raw": raw}
+        if relto is not None:
+            note["relto"] = relto
+        return note
+
+    def test_section_renders_between_body_and_work_items(self) -> None:
+        todo = {
+            **_todo({"working": {}}, []),
+            "Body": {"raw": "strategy", "objid": "0001"},
+            "Notes": [self._note()],
+        }
+        top = _top(_page(todo))
+        self.assertLess(top.index("<h2>Body</h2>"), top.index("<h2>Notes</h2>"))
+        self.assertLess(top.index("<h2>Notes</h2>"), top.index("<h2>Work items</h2>"))
+
+    def test_note_box_carries_its_objid_badge_and_clamped_text(self) -> None:
+        long_raw = "y" * (todo_web._CLAMP_CHARS + 1)
+        todo = {**_todo({"working": {}}, []), "Notes": [self._note(long_raw, "000f")]}
+        top = _top(_page(todo))
+        self.assertIn('<span class="objid-tag mono">000f</span>', top)
+        self.assertIn('class="wi-sum clamped"', top)
+        self.assertIn(long_raw, top)  # full text stays in the DOM for find/copy
+
+    def test_note_box_has_no_checkbox_or_sha_chip(self) -> None:
+        # A future refactor that merges this into _wi_box would silently grow
+        # these back; assert their absence explicitly, not just the presence
+        # of what a note DOES carry.
+        todo = {**_todo({"working": {}}, []), "Notes": [self._note()]}
+        section = _section_of(_page(todo), "Notes")
+        self.assertNotIn("[ ]", section)
+        self.assertNotIn("[x]", section)
+        self.assertNotIn("wi-kind", section)
+        self.assertNotIn("wi-sha", section)
+        self.assertNotIn("sha:", section)
+        self.assertNotIn("wi-sub", section)
+
+    def test_note_fold_entry_carries_the_full_raw_text(self) -> None:
+        # The tile clamps; the fold is where the fact is read in full.
+        long_raw = "z " * 200
+        todo = {**_todo({"working": {}}, []), "Notes": [self._note(long_raw, "000f")]}
+        entry = _fold_entry(_page(todo), "000f")
+        self.assertIn(long_raw.strip(), entry["html"])
+
+    def test_hi_includes_a_local_target_but_not_a_cross_todo_one(self) -> None:
+        todo = {
+            **_todo(
+                {"working": {}},
+                [{"kind": "task", "summary": "s", "done": False, "objid": "0002"}],
+            ),
+            "Notes": [
+                self._note(
+                    "sees 0002",
+                    "000f",
+                    relto=[
+                        {"objid": "0010", "target": "objid:0002", "type": "relates"},
+                        {"objid": "0011", "target": "todo:aaaaaaaa", "type": "relates"},
+                    ],
+                )
+            ],
+        }
+        entry = _fold_entry(_page(todo), "000f")
+        self.assertEqual(["0002"], entry["hi"])
+
+    def test_permalink_to_a_note_focuses_its_box(self) -> None:
+        todo = {**_todo({"working": {}}, []), "Notes": [self._note("a fact", "000f")]}
+        focus = todo_web.resolve_focus(Path("."), dict(todo), ["objid", "000f"])
+        self.assertEqual("000f", focus)
+        page = todo_web.render_todo_page(Path("."), dict(todo), focus_objid=focus)
+        self.assertIn('const FOCUS = "000f";', page)
+        self.assertIn('data-obj="000f"', page)
+
+    def test_long_notes_list_collapses_with_a_hint(self) -> None:
+        notes = [self._note("short", f"01{i:02d}") for i in range(todo_web._COLLAPSE_ITEMS + 1)]
+        section = _section_of(_page({**_todo({"working": {}}, []), "Notes": notes}), "Notes")
+        self.assertIn("<details", section)
+        self.assertIn(f"{len(notes)} notes", section)
+
+    def test_short_notes_list_does_not_collapse(self) -> None:
+        todo = {**_todo({"working": {}}, []), "Notes": [self._note("short", "0101")]}
+        section = _section_of(_page(todo), "Notes")
+        self.assertNotIn("<details", section)
+
+    def test_no_notes_key_renders_exactly_as_before(self) -> None:
+        # Additive: a record that has never seen this field grows no new markup.
+        page = _page(_todo({"working": {}}, []))
+        self.assertNotIn("<h2>Notes</h2>", page)
+
+
+class ReltoChipTest(unittest.TestCase):
+    """relto renders as target chips wherever it lives: Body, a note, a work
+    item -- and the relation TYPE rides along, so a derived mention reads
+    differently from a manual relates."""
+
+    def test_body_relto_chip_renders(self) -> None:
+        todo = {
+            **_todo(
+                {"working": {}},
+                [{"kind": "task", "summary": "s", "done": False, "objid": "0002"}],
+            ),
+            "Body": {
+                "raw": "strategy",
+                "objid": "0001",
+                "relto": [{"objid": "0018", "target": "objid:0002", "type": "relates"}],
+            },
+        }
+        section = _section_of(_page(todo), "Body")
+        self.assertIn('class="relto-chip relto-relates idlink"', section)
+        self.assertIn("relates: objid:0002", section)
+
+    def test_note_relto_chip_renders_and_shows_its_type(self) -> None:
+        todo = {
+            **_todo(
+                {"working": {}},
+                [{"kind": "task", "summary": "s", "done": False, "objid": "0002"}],
+            ),
+            "Notes": [
+                {
+                    "objid": "000f",
+                    "raw": "a fact",
+                    "relto": [{"objid": "0010", "target": "objid:0002", "type": "mention"}],
+                }
+            ],
+        }
+        section = _section_of(_page(todo), "Notes")
+        self.assertIn("relto-mention", section)
+        self.assertIn("mention: objid:0002", section)
+
+    def test_work_item_relto_chip_renders(self) -> None:
+        # _todo() always stamps Summary with objid "0000".
+        item = {
+            "kind": "task",
+            "summary": "s",
+            "done": False,
+            "objid": "0002",
+            "relto": [{"objid": "0019", "target": "objid:0000", "type": "relates"}],
+        }
+        section = _section_of(_page(_todo({"working": {}}, [item])), "Work items")
+        self.assertIn('class="relto-chip relto-relates idlink"', section)
+        self.assertIn("relates: objid:0000", section)
+
+    def test_unresolvable_local_target_renders_as_plain_text(self) -> None:
+        todo = {
+            **_todo({"working": {}}, []),
+            "Notes": [
+                {
+                    "objid": "000f",
+                    "raw": "a fact",
+                    "relto": [{"objid": "0010", "target": "objid:ffff", "type": "relates"}],
+                }
+            ],
+        }
+        section = _section_of(_page(todo), "Notes")
+        self.assertIn('<span class="relto-chip relto-relates">relates: objid:ffff</span>', section)
+
+    def test_static_repr_relto_chip_has_no_link(self) -> None:
+        child = {
+            "Id": "13e5" + "0" * 60,
+            "Branch": "13e5-child",
+            "State": {"ready": {}},
+            "Summary": {"raw": "child", "objid": "0000"},
+            "Notes": [
+                {
+                    "objid": "000f",
+                    "raw": "a fact",
+                    "relto": [{"objid": "0010", "target": "todo:aaaaaaaa", "type": "relates"}],
+                }
+            ],
+            "WorkItems": [],
+        }
+        static = todo_web._static_repr_html(Path("."), child, "")
+        self.assertIn("relto-chip", static)
+        self.assertNotIn("idlink", static)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,8 @@
 """Web viewer for todo tickets: a labeled representation with a movable split.
 
 Above the split: the todo itself -- Id, Parent (horizontal boxes), Summary,
-Body, Work items (horizontal boxes), Subtodos (horizontal boxes). Every box has
+Body, Notes (horizontal boxes), Work items (horizontal boxes), Subtodos
+(horizontal boxes). Every box has
 one click model: clicking the box opens the target in the fold below (a work
 item shows its commit message + diff; a subtodo or parent shows a read-only
 rendition), and clicking the box's underlined id/sha is a plain hyperlink (same
@@ -33,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
+import todo_ref
 import todo_url
 
 JsonDict = Dict[str, Any]
@@ -254,6 +256,30 @@ def _workitems_view(todo: JsonDict) -> List[JsonDict]:
                 "message": str(item.get("message") or ""),
                 "subtodo": str(item.get("subtodo_id") or ""),
                 "objid": str(item.get("objid") or ""),
+                "relto": _relto_view(todo, item.get("relto")),
+            }
+        )
+    return out
+
+
+def _notes_view(todo: JsonDict) -> List[JsonDict]:
+    """Light per-note dicts for box rendering, the sibling of
+    ``_workitems_view``. A note carries exactly what BODY.md says it carries --
+    ``objid``, ``raw`` text, and its own ``relto`` row -- and nothing else: no
+    ``kind``, no ``done``, no status of any sort, because a fact has no
+    disposition to record."""
+    out: List[JsonDict] = []
+    notes = todo.get("Notes") or []
+    if not isinstance(notes, list):
+        return out
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        out.append(
+            {
+                "objid": str(note.get("objid") or ""),
+                "raw": str(note.get("raw") or ""),
+                "relto": _relto_view(todo, note.get("relto")),
             }
         )
     return out
@@ -373,6 +399,100 @@ def _clamped(text: str, cls: str, *, interactive: bool) -> str:
     )
 
 
+def _local_relto_objid(todo: JsonDict, target: "todo_ref.Target") -> str:
+    """The objid a LOCAL relto *target* resolves to in *todo*, or "" when it
+    is dangling.
+
+    A target that fails to resolve is a doctor finding (a dangling local
+    target), not a rendering error -- the chip degrades to plain text instead
+    of raising, exactly like an unstamped subtree degrades a permalink focus.
+    """
+    try:
+        path = todo_ref.resolve_local(todo, target)
+    except todo_ref.TodoRefError:
+        return ""
+    node = todo_url.value_at(todo, path)
+    objid = node.get("objid") if isinstance(node, dict) else None
+    return str(objid) if isinstance(objid, str) and objid else ""
+
+
+def _relto_view(todo: JsonDict, relto: Any) -> List[JsonDict]:
+    """Precompute renderable chip data for one node's ``relto`` list, resolved
+    once against *todo* regardless of how many times (or how interactively)
+    the chip is later rendered.
+
+    *todo* is always the record that OWNS the relto-bearing node: the current
+    record for Body/WorkItems/Notes, or a child's own record when this runs
+    inside its static repr -- local resolution only ever means anything
+    against the record holding the entry.
+
+    Each chip carries an ``objid`` (non-empty only for a target that resolved
+    to something in THIS record) and an ``href`` a box function can turn into
+    a link without knowing anything about the target grammar itself.
+    """
+    out: List[JsonDict] = []
+    if not isinstance(relto, list):
+        return out
+    tid = str(todo.get("Id") or "")
+    for entry in relto:
+        if not isinstance(entry, dict):
+            continue
+        target = entry.get("target")
+        if not isinstance(target, str) or not target:
+            continue
+        rel_type = str(entry.get("type") or "")
+        objid = ""
+        href = ""
+        try:
+            parsed = todo_ref.parse_target(target)
+        except todo_ref.TodoRefError:
+            parsed = None
+        if parsed is not None:
+            if parsed.is_local:
+                objid = _local_relto_objid(todo, parsed)
+                if objid:
+                    href = f"/{tid}/objid/{objid}"
+            else:
+                # Whole-todo or cross-todo: the chip lands on that todo's own
+                # page. The objid half of a cross-todo target is never
+                # chased -- this record cannot resolve another one's objids.
+                href = f"/{parsed.todo_prefix}"
+        out.append({"type": rel_type, "target": target, "objid": objid, "href": href})
+    return out
+
+
+def _relto_chips_html(chips: List[JsonDict], *, interactive: bool) -> str:
+    """Render one node's relto entries as a row of chips.
+
+    Each chip is labelled with its relation TYPE so a doctor-derived
+    ``mention`` reads differently from a manually added ``relates``. A chip
+    that resolved locally is a hyperlink to that object's own anchor; a
+    whole-todo or cross-todo target links to that todo's page; anything else
+    (a dangling local target) is plain text -- never a dead link.
+
+    Non-interactive (a static repr in the fold) never grows a link, exactly
+    like every other box: a foreign todo's objids are not addressable from
+    this page anyway.
+    """
+    if not chips:
+        return ""
+    parts: List[str] = []
+    for chip in chips:
+        rel_type = chip["type"]
+        label = (
+            f"{html.escape(rel_type)}: {html.escape(chip['target'])}"
+            if rel_type
+            else html.escape(chip["target"])
+        )
+        css = f"relto-chip relto-{html.escape(rel_type)}" if rel_type else "relto-chip"
+        if interactive and chip["href"]:
+            href = html.escape(chip["href"])
+            parts.append(f'<a class="{css} idlink" href="{href}">{label}</a>')
+        else:
+            parts.append(f'<span class="{css}">{label}</span>')
+    return f'<div class="relto-row">{"".join(parts)}</div>'
+
+
 def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
     """Return the objid attributes that make a box addressable and selectable.
 
@@ -439,7 +559,30 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         + f'<div class="wi-kind">{mark} {html.escape(item["kind"])}</div>'
         + _clamped(item["summary"], "wi-sum", interactive=interactive)
         + f"{todo_html}{sep}{sha_html}"
-        "</div>"
+        + _relto_chips_html(item["relto"], interactive=interactive)
+        + "</div>"
+    )
+
+
+def _note_box(note: JsonDict, *, interactive: bool) -> str:
+    """Render one note box: the sibling of ``_wi_box``, built from the same
+    primitives, but deliberately NOT a branch inside it. A note is a fact, not
+    a task, so its box has no checkbox mark, no ``sha`` chip and no ``todo:``
+    chip -- adding those here would turn ``_wi_box`` into a status/no-status
+    switch, harder to read for both shapes.
+
+    The box opens the note's full raw text in the fold (the tile only clamps
+    it); ``relto`` chips under the clamped text show what the fact bears on.
+    """
+    classes = ["wi", "note"]
+    if not interactive:
+        classes.append("static")
+    return (
+        f'<div class="{" ".join(classes)}"{_box_attrs(note, interactive=interactive)}>'
+        + _objid_badge(note["objid"], interactive=interactive)
+        + _clamped(note["raw"], "wi-sum", interactive=interactive)
+        + _relto_chips_html(note["relto"], interactive=interactive)
+        + "</div>"
     )
 
 
@@ -542,7 +685,7 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool, focus_objid: st
 # live inside Summary/Body as .hash and only .raw is rendered), so nothing
 # opaque reaches the generic path.
 _DEDICATED_FIELDS = frozenset(
-    {"Id", "Summary", "LongSummary", "Body", "Parent", "WorkItems", "Subtodos", "State"}
+    {"Id", "Summary", "LongSummary", "Body", "Notes", "Parent", "WorkItems", "Subtodos", "State"}
 )
 
 # Size past which a section starts COLLAPSED. Measured on the content's text,
@@ -721,19 +864,24 @@ def _sections_html(
     witems: List[JsonDict],
     stodos: List[JsonDict],
     parents: List[JsonDict],
+    notes: List[JsonDict],
     *,
     interactive: bool,
     github: str = "",
     focus_objid: str = "",
 ) -> str:
     """Render the labeled todo representation: Id, State, Parent, Summary, Body,
-    work items, subtodos, and remaining non-opaque fields.
+    notes, work items, subtodos, and remaining non-opaque fields.
 
     A section holding *focus_objid* renders OPEN even when its size would
     otherwise collapse it, and nothing ever renders closed that was open."""
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
+    body_field = todo.get("Body")
+    body_relto = _relto_view(
+        todo, body_field.get("relto") if isinstance(body_field, dict) else None
+    )
     parents_html = _parents_html(parents, interactive=interactive, focus_objid=focus_objid)
     # Only when present: an empty "Long summary" heading on every todo that has
     # none is noise. Rendered as its own section rather than through _meta_html,
@@ -752,6 +900,21 @@ def _sections_html(
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
     st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
+    # Absent, not "0 notes": a record that carries no Notes renders exactly as
+    # it did before this field existed, the way Long summary already does.
+    notes_html = (
+        _section(
+            "Notes",
+            f'<div class="row">{"".join(_note_box(n, interactive=interactive) for n in notes)}</div>',
+            interactive=interactive,
+            text="".join(str(n["raw"]) for n in notes),
+            items=len(notes),
+            hint=_size_hint(len(notes), "notes"),
+            is_open=_holds(todo.get("Notes"), focus_objid),
+        )
+        if notes
+        else ""
+    )
     return (
         f'<section class="part"><h2>Id</h2>'
         f'<div class="val mono">{html.escape(tid or "?")}</div>'
@@ -770,13 +933,15 @@ def _sections_html(
         + long_summary_html
         + _section(
             "Body",
-            _md_field_html(body, interactive=interactive, monospace=True, label="Body"),
+            _md_field_html(body, interactive=interactive, monospace=True, label="Body")
+            + _relto_chips_html(body_relto, interactive=interactive),
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
             objid=_first_objid(todo.get("Body")),
             text=body,
             is_open=_holds(todo.get("Body"), focus_objid),
         )
+        + notes_html
         + _section(
             "Work items",
             wi_row,
@@ -805,9 +970,10 @@ def _static_repr_html(root: Path, child: JsonDict, github: str = "") -> str:
     witems = _workitems_view(child)
     stodos = _subtodos_view(root, child)
     parents = _parents_view(root, child)
+    notes = _notes_view(child)
     return (
         '<div class="static-repr">'
-        f"{_sections_html(child, witems, stodos, parents, interactive=False, github=github)}"
+        f"{_sections_html(child, witems, stodos, parents, notes, interactive=False, github=github)}"
         "</div>"
     )
 
@@ -818,10 +984,11 @@ def _page_data(
     witems: List[JsonDict],
     stodos: List[JsonDict],
     parents: List[JsonDict],
+    notes: List[JsonDict],
     github: Optional[str],
 ) -> JsonDict:
-    """Assemble the embedded JSON: per-work-item message/diff and per-subtodo /
-    per-parent repr HTML."""
+    """Assemble the embedded JSON: per-work-item message/diff, per-note full
+    text, and per-subtodo / per-parent repr HTML."""
     github = github or ""
     # ONE map, keyed by objid: what to put in the fold, and which other boxes to
     # mark related. Cross-references are resolved to objids HERE rather than in
@@ -870,6 +1037,22 @@ def _page_data(
             "html": _static_repr_html(root, p["child"], github),
             "hi": [],
         }
+    for n in notes:
+        if not n["objid"]:
+            continue
+        # A note tile only ever shows the clamped preview; the fold is where
+        # the fact is read in full. `hi` reuses the SAME cross-highlight
+        # mechanism a subtodo/work-item box already gets: a locally-resolved
+        # relto target lights up for free, at zero extra client cost.
+        objects[n["objid"]] = {
+            "mode": "repr",
+            "html": (
+                '<div class="note-fold"><h3>Note</h3>'
+                + _md_field_html(n["raw"], interactive=False, monospace=True, label="Note")
+                + "</div>"
+            ),
+            "hi": [chip["objid"] for chip in n["relto"] if chip["objid"]],
+        }
     return {"id": str(todo.get("Id") or ""), "objects": objects}
 
 
@@ -893,12 +1076,21 @@ _STYLE = """<style>
   header { padding: 8px 16px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; flex: 0 0 auto; }
   header .title { font-weight: 700; }
   header .meta { color: #57606a; font-size: 12px; overflow-wrap: anywhere; }
-  #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; }
+  /* border-box: the divider drag script sets this height directly from mouse
+     Y, so it must equal the rendered (padding-included) height or the pane
+     jumps by the padding total (24px) on the first move of every drag. */
+  #top { height: 45vh; overflow: auto; padding: 8px 16px 16px; box-sizing: border-box; }
   /* Search page has no fold/preview: results fill below the header and scroll here. */
   body.search #top { height: auto; flex: 1 1 auto; }
   #divider { flex: 0 0 auto; height: 7px; background: #d8dee4; cursor: row-resize; }
   #divider:hover { background: #8c959f; }
-  #fold { flex: 1 1 auto; overflow: auto; padding: 12px 16px; background: #fff; }
+  /* flex-basis 0, not auto: an "auto" basis on a flex item with real content
+     (the message/diff panels) is computed from that content's own size, so a
+     long message made #fold's basis huge, which made the shrink algorithm
+     react to any #top resize by shrinking #top further and growing #fold --
+     exactly backwards. A zero basis means #fold's size is purely "whatever
+     flex-grow leaves it", regardless of its content's own preferred size. */
+  #fold { flex: 1 1 0; min-height: 0; overflow: auto; padding: 12px 16px; background: #fff; }
   .part { margin: 10px 0; }
   .part h2 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
              color: #57606a; }
@@ -951,7 +1143,24 @@ _STYLE = """<style>
   .st-state { font-size: 11px; color: #57606a; }
   .wi.active, .st.active { border-color: #0969da; box-shadow: 0 0 0 2px #ddf4ff; }
   .wi.hi, .st.hi { border-color: #bf8700; box-shadow: 0 0 0 2px #fff8c5; }
+  /* A note is a fact, not a task: same tile, a quiet accent to tell the two
+     box kinds apart at a glance. */
+  .wi.note { border-left: 3px solid #8250df; }
+  .relto-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .relto-chip { font-size: 11px; color: #57606a; background: #f6f8fa; border: 1px solid #d8dee4;
+                border-radius: 10px; padding: 1px 8px; }
+  a.relto-chip { color: #0969da; }
+  /* A doctor-derived mention reads differently from a manual relates without
+     a second color: italic is legible even where a chip's background can't
+     carry a third hue next to done/blocked/hi. */
+  .relto-mention { font-style: italic; }
   .fold.split-fold { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
+  /* A grid item's automatic minimum size is its content's full intrinsic
+     size unless the item itself (not just a descendant) sets overflow --
+     .fold-diff gets this from .diff-code, but .fold-msg had nothing, so a
+     long message/commit-body forced this whole row to grow past #fold's
+     height, pushing #top off past 100vh and scrolling the whole page. */
+  .fold-msg { overflow-y: auto; }
   .fold-msg pre { background: #f6f8fa; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
   .fold-msg .wi-raw { background: #f6f8fa; padding: 12px; border-radius: 6px;
                       white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1235,11 +1444,25 @@ function focusOn(objid){
 focusOn(FOCUS);
 initMdToggles(document.getElementById('top'));
 
+// Delta from the mousedown point, not an absolute position re-derived from
+// getBoundingClientRect() on every move: a real (trusted) mousedown over text
+// content can start a native text-selection drag unless prevented, and a
+// selection drag can auto-scroll -- shifting topPane's measured position mid-
+// gesture and corrupting an absolute calc. Delta-tracking never re-reads that
+// position, so it is immune regardless of the cause.
 var dragging = false;
-divider.addEventListener('mousedown', function(){ dragging = true; document.body.style.userSelect = 'none'; });
+var dragStartY = 0;
+var dragStartHeight = 0;
+divider.addEventListener('mousedown', function(e){
+  dragging = true;
+  dragStartY = e.clientY;
+  dragStartHeight = topPane.getBoundingClientRect().height;
+  document.body.style.userSelect = 'none';
+  e.preventDefault();
+});
 window.addEventListener('mousemove', function(e){
   if (!dragging) return;
-  var h = e.clientY - topPane.getBoundingClientRect().top;
+  var h = dragStartHeight + (e.clientY - dragStartY);
   if (h > 60 && h < window.innerHeight - 60) { topPane.style.height = h + 'px'; }
 });
 window.addEventListener('mouseup', function(){ dragging = false; document.body.style.userSelect = ''; });
@@ -1262,10 +1485,17 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
     witems = _workitems_view(todo)
     stodos = _subtodos_view(root, todo)
     parents = _parents_view(root, todo)
+    notes = _notes_view(todo)
     github = github_repo_url(repo_origin(root))
-    data = _page_data(root, todo, witems, stodos, parents, github)
+    data = _page_data(root, todo, witems, stodos, parents, notes, github)
     top_html = _sections_html(
-        todo, witems, stodos, parents, interactive=True, github=github or "",
+        todo,
+        witems,
+        stodos,
+        parents,
+        notes,
+        interactive=True,
+        github=github or "",
         focus_objid=focus_objid,
     )
     title = html.escape(_summary_text(todo) or "todo")
@@ -1356,14 +1586,16 @@ def _focusable_objids(
     witems: List[JsonDict],
     stodos: List[JsonDict],
     parents: List[JsonDict],
+    notes: List[JsonDict],
 ) -> set:
     """objids the page can actually focus: every box, plus every section.
 
-    Anything nested INSIDE a box (a work item's ``execution`` block, say) is not
-    drawn on its own and so cannot be focused -- the caller walks outward to the
-    box that contains it.
+    Anything nested INSIDE a box (a work item's ``execution`` block, or a
+    note's own ``relto`` entry) is not drawn on its own and so cannot be
+    focused -- the caller walks outward to the box that contains it, a note
+    included, exactly the way it already does for a work item.
     """
-    focusable = {v["objid"] for v in (*witems, *stodos, *parents) if v.get("objid")}
+    focusable = {v["objid"] for v in (*witems, *stodos, *parents, *notes) if v.get("objid")}
     focusable.update(_objids_within(todo.get("Summary")))
     focusable.update(_objids_within(todo.get("Body")))
     for key, value in todo.items():
@@ -1386,6 +1618,7 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
         _workitems_view(todo),
         _subtodos_view(root, todo),
         _parents_view(root, todo),
+        _notes_view(todo),
     )
     for objid in todo_url.objid_chain(todo, json_path):
         if objid in focusable:

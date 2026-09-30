@@ -20,7 +20,8 @@ at hand.
 ## What it became
 
 A `todo` is a managed, structured, memory; managed by the `todo` tool. 
-It supports facts for agentic read-write recallable memory, 
+It supports facts for agentic read-write recallable memory -- the `Notes` list, one
+status-free fact per entry, cross-referenced via `relto` -- 
 but the main use case is tool-managed workflow for coding and research tasks. 
 
 It allows a high-capability (HICAP) agent (e.g. Claude/Fable) to create a durable implementation plan, which the user
@@ -42,8 +43,8 @@ Todos as tool-assisted PLAN.md work well.
 
 ## What is not yet there.
 
-But the associative memory of fact-based todos to allow an agent to ask itself "what do I know about ESP32 controllers"
-is not quite ready yet.  The facts are meant to be associatively retrievable via cosine angle vector embeddings, but I
+But the associative memory of fact-based todos (`Notes`) to allow an agent to ask itself "what do I know about ESP32
+controllers" is not quite ready yet.  The facts are meant to be associatively retrievable via cosine angle vector embeddings, but I
 put all my eggs into Apple's NLContextualEmbedding.  That was a very poor choice, as all vector-embeddings compressed
 into a very narrow region, yielding no differentiation between very different search terms.
 
@@ -64,8 +65,8 @@ Todos are built for a split workforce, not one monolithic session.
 | Orchestrator | Parent context    | Bookkeeping, child launch, synthesis after merge -- not necessarily the same model as the child |
 
 The todo is a structured document, much like a highly worked jira ticket. With subtodos, sequence of steps to be worked
-on this todo (both implementation and fork/join of subtodos), acceptance criteria, status, and also summary for parent
-Todo (if any) to report in /its/ join step. 
+on this todo (both implementation and fork/join of subtodos), acceptance criteria, status, notes (status-free facts and
+findings, cross-referenced via relto), and also summary for parent Todo (if any) to report in /its/ join step. 
 
 **Capability tiers** Every piece of work is tagged with what level agent should implement it.  (`[HICAP]`,
 `[MIDCAP]`, `[LOCAP]`). Claude anchors stay Opus / Sonnet / Haiku; the Cursor model map lives in

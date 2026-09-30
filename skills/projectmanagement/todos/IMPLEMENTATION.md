@@ -60,6 +60,7 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 | Worktrees (convention) | `<todo-dir>/worktrees/<repo-path>/<branch>` |
 | Embeddings | In ticket JSON; sqlite also mirrors a derived index |
 | Search config | `<todo-dir>/config.json` (`search_stopwords`, `search_stopword_min_idf`, `embedder`) -- see [Search ranking](#search-ranking) |
+| File-store git sync | `<todo-dir>/config.json` (`autocommit`, `autopush`) -- see [File-store autocommit and autopush](#file-store-autocommit-and-autopush). Ignored for sqlite |
 
 `TODO_USE_JSON=1` enables legacy file mode (import-oriented). There is **no
 `--repo` flag** -- `cd` into the target repo/worktree; CWD must be a git repo.
@@ -84,6 +85,27 @@ be code history.
 on every invocation when the resolved store is inside the current repository
 and is not ignored. The warning should name the resolved path and explain the
 intermingling risk, but must not block supported workflows.
+
+### File-store autocommit and autopush
+
+Two `config.json` lists, honored only by the file backend (`file://`). Sqlite
+ignores both. Each entry is a subcommand **class** name, not the CLI spelling:
+`SetCommand`, not `set`. Matching is case-insensitive, and naming a non-leaf
+class selects that class and every subclass (`TodoFieldCommand` covers `set`,
+`read`, `rm`, and the other field commands; `WorkItemCommand` covers the whole
+work-item group).
+
+| Key | After a successful command |
+|-----|----------------------------|
+| `autocommit` | `git add` and `git commit` only the store files that command wrote (the ticket `.json`, a `.deleted` tombstone, `.data_version`). Other dirty files in the store repo stay unstaged |
+| `autopush` | `git push` the store repo (its configured upstream) |
+
+A read that matches through a parent class still does nothing: it wrote no
+file, so there is nothing to commit or push. A command listed in `autopush`
+but not `autocommit` pushes existing commits and leaves the new write
+uncommitted. Both run only when the command exits 0. The git repository is the
+one that contains the storage directory -- the todo dir when that dir is itself
+a repo -- not the project checkout the command was invoked from.
 
 ## Selectors
 
@@ -112,7 +134,7 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `init [--id <id>] [--summary=...]` | Promote `groom` -> branch + `ready`, or fresh one-shot create. `--stay-on-parent` returns to previous branch. Refuses second ticket on current branch |
 | `ls [--states=<expr>] [-s] [-t\|-tc\|-tu\|-g]` | List short id + summary. Hides FINAL by default |
 | `read <selector>` | Print ticket JSON |
-| `prompt <selector>` | Ancestor Summary/Body chain (farthest first) -- startup context |
+| `prompt <selector>` | Ancestor Summary/Body chain (farthest first), plus the notes each Body reaches -- startup context |
 | `search <term>...` | Vector + lexical IDF search; same state/column flags as `ls`. See [Search ranking](#search-ranking) |
 | `embedders` | List selectable search embedders |
 | `log <selector>\|ALL` | Graph of `Subtodos` tree (`-n`, `-v`, `-t`) |
@@ -195,11 +217,28 @@ the final move the plan reads in exactly that order. It is **not** a substitute
 for `work-item-blocked`: reorder is for a step that is fine but mistimed,
 `work-item-blocked` is for one that cannot be done as written.
 
+### Note and relto commands
+
+| Command | Behavior |
+|---------|----------|
+| `note-add <selector> --raw=... [--relto=TARGET[:TYPE]]` | Append a note; prints the new objid. `--relto` (repeatable) adds a cross-reference; `mention` refused here |
+| `note-read <selector> [target]` | One note (index or `objid:<hex>`), or every note when target is omitted. No cursor default |
+| `note-replace <selector> <target> --raw=...` | Overwrite a note's `raw` in place. Keeps `objid` and `relto` |
+| `note-delete <selector> <target>` | Delete a note. Drops `Notes` entirely when it was the last one |
+| `relto-add <selector> <host> --target=... [--type=TYPE]` | Append a cross-reference to HOST's relto list. `--type` defaults to `relates`; `mention` refused here |
+| `relto-remove <selector> <host> --target=...` | Remove a cross-reference, matched by exact target. Refuses to remove a `mention` -- edit the node's prose instead |
+| `relto-read <selector> [host]` | HOST's relto list, or every relation in the record when host is omitted (each entry then carries its host path and objid) |
+
+`target` addresses a note the same way [work items are
+addressed](#addressing-one-work-item): a 0-based index (negative counts from
+the end) or `objid:<hex>` (leading zeros optional); there is no cursor
+default. `host` spellings: [Notes and relto](#notes-and-relto).
+
 ### Maintenance and I/O
 
 | Command | Behavior |
 |---------|----------|
-| `doctor <selector>\|ALL [--dry-run]` | Audit + repair (INFO backlinks, schema sweep, PR reconcile via `gh`) |
+| `doctor <selector>\|ALL [--dry-run]` | Audit + repair (INFO backlinks, relto mention sync, schema sweep, PR reconcile via `gh`) |
 | `migrate-to-latest [--dry-run]` | Explicit record sweep to `SCHEMA_VERSION` |
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
@@ -326,7 +365,7 @@ it already refuses to backfill vectors.
 
 Allowed top-level fields (unknown keys -> doctor findings):
 `AC`, `ActualSummary`, `Agent`, `BaseSha`, `Body`, `Branch`, `Id`, `LongSummary`,
-`Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
+`Notes`, `Parent`, `Scope`, `State`, `Subtodos`, `Summary`, `Tag`, `Tags` (legacy),
 `WorkItems`, `create_dt`, `update_dt`, `_schema`, `_nextobjid`.
 
 Required: `Branch`, `Id`, `State`, `Summary`.
@@ -373,9 +412,10 @@ appear in current examples.
 | `AC` | string |
 | `ActualSummary` | optional string at finish; reused by `merge-subtodo` |
 | `Tag` | optional list of `{raw, manual, ...}`; manual sticky; auto-tagging dormant |
+| `Notes` | optional list of `{objid, raw, relto?}`; status-free facts and findings -- see [Notes and relto](#notes-and-relto) |
 
-`Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`
-and `Tag` are optional and omitted when unused.
+`Summary.raw` and `Body.raw` are always present. `ActualSummary`, `LongSummary`,
+`Tag` and `Notes` are optional and omitted when unused.
 
 ### LongSummary: the field contract
 
@@ -406,6 +446,56 @@ case is a HICAP agent rewriting a `LongSummary` a MIDCAP agent wrote, touching
 nothing else. The consequence is that **staleness is on you**: materially change
 a `Body` while a `LongSummary` exists and you rewrite it in the same breath,
 because nothing else will notice.
+
+### Notes and relto
+
+A `Notes` element holds exactly `objid`, `raw`, and optional `relto` -- no
+`kind`, no `done`, no status of any sort:
+
+    { "objid": "<hex>", "raw": "<the fact or finding>", "relto": [...] }
+
+A `relto` element holds exactly `objid`, `type`, and `target`:
+
+    { "objid": "<hex>", "type": "<relation type>", "target": "<qualified target>" }
+
+`relto` is **not** a top-level field -- `ALLOWED_TOP_LEVEL_FIELDS` does not
+contain it. It is nested, and legal only on three node kinds: `Body`, a
+`Notes` element, or a `WorkItems` element.
+
+Target grammar, always namespace-qualified, every hex component 4+ characters
+(the permalink floor, not the CLI's zero-padding shortcut on work items):
+
+| Form | Means |
+|------|-------|
+| `objid:<hex>` | an object in THIS record -- any object, not only a note |
+| `todo:<hex>` | a whole todo |
+| `todo:<hex>/objid:<hex>` | an object in another todo's record |
+
+A target is stored as written and resolved at use time, exactly like every
+other selector the tool takes; a prefix that later goes ambiguous is a doctor
+finding, not a silent mismatch. Prose that SHOWS the grammar writes the
+placeholder spelling above -- a well-formed target in prose is a citation, and
+doctor derives a `mention` from it, so an illustrative example spelled as a
+real target would derive a relation to an object that was never meant to
+exist.
+
+Relation types: `mention` (derived, doctor-owned; refused from the CLI) and
+`relates` (the manual default, and the only one a caller writes). An unknown
+type is an error, never a silent pass-through.
+
+Host spellings, shared by `relto-add`, `relto-remove`, and `relto-read`:
+
+| Host | Means |
+|------|-------|
+| `body` | the `Body` field's own `relto` list |
+| `objid:<hex>` | any object in the record (4+ hex, record-wide), checked against the three legal hosts |
+| `note:<index>` | the `Notes` element at that 0-based index (negative counts from the end) |
+| `workitem:<index>` | the `WorkItems` element at that 0-based index (negative counts from the end) |
+
+Command syntax: [Note and relto commands](#note-and-relto-commands). Doctor's
+`mention` sync: [Doctor checks](#doctor-checks-summary). What `Body.relto`
+publishes to `prompt`, and what stays Body vs Note vs WorkItem vs subtodo:
+[`BODY.md`](BODY.md).
 
 ### WorkItems and invariants
 
@@ -536,7 +626,12 @@ Path grammar (served by `todo.py web`; CLI: `resolveurl`):
 | `/<todoid>/workitem/idx/5/summary` | the same, written out; `idx` is the default key |
 | `/<todoid>/workitem/sha/883368/summary` | where-clause on `sha` (4+ prefix) |
 | `/<todoid>/subtodo/subtodo_id/13e5` | where-clause on `subtodo_id` (4+ prefix) |
+| `/<todoid>/note/0/raw` | 0-based index into `Notes` (drop-the-s alias) |
 | `/<todoid>/objid/0a3f` | canonical object link |
+
+A note needed no grammar change: `/<todoid>/note/0/raw` resolves via the
+existing drop-the-s alias (`Notes` -> `note`), and `/<todoid>/objid/<hex>`
+already finds a note like any other object in the record.
 
 Indexes are 0-based, matching the json dot-path, `jq`, and `doctor` finding
 labels. A bare segment is **always** an index -- there is no bare-hex fallback,
@@ -649,8 +744,19 @@ semantic backend appears (related: ticket `91e28fd0`).
 Hard findings fail (exit 1); soft warnings never fail. Includes: selector
 resolution, allowed fields, State shape, references, wait-graph acyclicity,
 subtodo merge completeness (tracked only; INFO excluded), WorkItem invariants,
-objid integrity, PR disposition for root todos, unlock of stale locks, schema
-sweep.
+objid integrity, relto mention sync, PR disposition for root todos, unlock of
+stale locks, schema sweep.
+
+**relto mention sync.** Every run, doctor reconciles each relto-bearing node's
+derived `mention` entries against that node's own editable prose --
+`Body.raw`, a note's `raw`, a WorkItem's `summary`, never a work item's
+git-copied `message` -- adding one for a target the prose gained and dropping
+one for a target it lost; every entry of another type is left untouched.
+Idempotent to the byte: an unchanged record allocates no objid, changes no
+byte, and bumps no `update_dt` on a second consecutive run. A dangling LOCAL
+target is a hard finding; an unresolvable CROSS-TODO target is a soft warning
+only, since the store is per-repo and a target naming a todo in another
+repo's store is legitimately unresolvable here.
 
 ---
 
