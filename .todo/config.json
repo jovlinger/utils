@@ -1,4 +1,3 @@
 {
-  "todo_dir": "../../dottodo",
-  "todo_storage": "file://$TODOBASEDIR/storage"
+  "todo_dir": "~/github.com/jovlinger/dottodo"
 }
