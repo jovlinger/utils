@@ -11,11 +11,11 @@ The path part is shell-expanded: ``$TODOBASEDIR`` / ``${TODOBASEDIR}`` resolve
 to ``todo basedir`` (the resolved ``.todo`` dir), ``~`` and other ``$VAR`` are
 expanded too.
 
-If ``config.json`` is missing, one is created from the on-disk layout (first
-match wins): ``sqlite.db`` -> sqlite DSN, ``storage/`` -> file DSN, else the
-default sqlite DSN. Legacy flat keys (``store`` / ``tickets_dir``) are migrated
-into a DSN when ``todo_storage`` is absent so every basedir ends with an
-explicit ``todo_storage``.
+When ``todo_storage`` is absent the DSN is inferred in memory: first from the
+legacy flat keys (``store`` / ``tickets_dir``), then from the on-disk layout
+(``sqlite.db`` -> sqlite DSN, ``storage/`` -> file DSN), else the default sqlite
+DSN. Selecting a store never writes ``config.json``; ``update_config`` is the
+only writer, called for a config change the user asked for.
 
 Each todo is one ``<ID>.json`` file on the JSON backend. Embeddings live inside
 the ticket JSON (stamped per field), so both backends carry them. The sqlite
@@ -615,7 +615,7 @@ def _infer_storage_dsn(base: Path, config: JsonDict) -> str:
     dsn = config.get("todo_storage")
     if isinstance(dsn, str) and dsn.strip():
         return dsn.strip()
-    # Legacy flat keys (promoted to a DSN the next time config is written).
+    # Legacy flat keys, honoured in place.
     kind = str(config.get("store", "")).strip().lower()
     if kind == "json":
         tickets_dir = config.get("tickets_dir")
@@ -652,8 +652,9 @@ _STORE: Optional[TodoStore] = None
 def get_store() -> TodoStore:
     """Return the process-wide ticket store, chosen only from ``config.json``.
 
-    Missing ``todo_storage`` is filled in (and written) from legacy keys or the
-    on-disk layout (``sqlite.db``, else ``storage/``, else sqlite default).
+    Missing ``todo_storage`` is resolved in memory from legacy keys or the
+    on-disk layout (``sqlite.db``, else ``storage/``, else sqlite default);
+    ``config.json`` is left untouched.
     """
     global _STORE
     if _STORE is not None:
@@ -661,12 +662,6 @@ def get_store() -> TodoStore:
     base = todo_db.todo_dir()
     config = _load_config(base)
     dsn = _infer_storage_dsn(base, config)
-    if config.get("todo_storage") != dsn:
-        # Config missing or lacked an explicit DSN -- persist the resolved one.
-        written = {k: v for k, v in config.items() if k not in ("store", "tickets_dir")}
-        written["todo_storage"] = dsn
-        _write_config(base, written)
-        config = written
     grace = _float_config(config, "lock_grace", DEFAULT_LOCK_GRACE)
     ttl = _float_config(config, "lock_ttl", DEFAULT_LOCK_TTL)
     _STORE = _store_from_dsn(dsn, base, grace=grace, ttl=ttl)

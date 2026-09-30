@@ -15,6 +15,7 @@ from pathlib import Path
 
 import todo_db
 import todo_store
+import pytest
 
 
 def _init_git_repo(path: Path) -> None:
@@ -43,6 +44,7 @@ def _touch_sqlite_db(directory: Path) -> Path:
 
 class TodoDirResolutionTest(unittest.TestCase):
     """resolve_todo_dir() search order and per-call caching."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_db.reset_todo_dir()
@@ -154,9 +156,140 @@ class TodoDirResolutionTest(unittest.TestCase):
                 resolved = todo_db.resolve_todo_dir(repo_path)
                 self.assertEqual(resolved, (repo_path / ".todo").resolve())
 
+    def test_config_todo_dir_redirect_relative(self) -> None:
+        """A relative todo_dir resolves against the redirecting config.json's own dir."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as sibling:
+            repo_path = Path(repo)
+            sibling_path = Path(sibling)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "../../" + sibling_path.name + "/target"}),
+                encoding="utf-8",
+            )
+            _touch_sqlite_db(sibling_path / "target")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (sibling_path / "target").resolve())
+
+    def test_config_todo_dir_redirect_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as target:
+            repo_path = Path(repo)
+            target_path = Path(target)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(target_path.resolve())}),
+                encoding="utf-8",
+            )
+            _touch_sqlite_db(target_path)
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, target_path.resolve())
+
+    def test_config_todo_dir_redirect_expands_home(self) -> None:
+        """A leading ``~`` resolves against $HOME, not a directory literally named "~"."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
+            repo_path = Path(repo)
+            home_path = Path(home)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "~/store"}), encoding="utf-8"
+            )
+            _touch_sqlite_db(home_path / "store")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["HOME"] = str(home_path)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (home_path / "store").resolve())
+            self.assertFalse((repo_path / ".todo" / "~").exists())
+
+    def test_config_todo_dir_redirect_expands_env_var(self) -> None:
+        """A ``$VAR`` in todo_dir expands from the environment."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as target:
+            repo_path = Path(repo)
+            target_path = Path(target)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "$TODO_REDIRECT_TARGET/store"}), encoding="utf-8"
+            )
+            _touch_sqlite_db(target_path / "store")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["TODO_REDIRECT_TARGET"] = str(target_path.resolve())
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (target_path / "store").resolve())
+
+    def test_config_todo_dir_redirect_chained(self) -> None:
+        """A -> B -> C: the final non-redirecting directory wins."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as mid, \
+                tempfile.TemporaryDirectory() as final:
+            repo_path = Path(repo)
+            mid_path = Path(mid)
+            final_path = Path(final)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(mid_path.resolve())}), encoding="utf-8"
+            )
+            mid_path.mkdir(exist_ok=True)
+            (mid_path / "config.json").write_text(
+                json.dumps({"todo_dir": str(final_path.resolve())}), encoding="utf-8"
+            )
+            _touch_sqlite_db(final_path)
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, final_path.resolve())
+
+    def test_config_todo_dir_redirect_direct_cycle_raises(self) -> None:
+        """A todo_dir pointing back at its own directory is a hard error."""
+        with tempfile.TemporaryDirectory() as repo:
+            repo_path = Path(repo)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "."}), encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(todo_db.CircularTodoRedirectError):
+                    todo_db.resolve_todo_dir(repo_path)
+
+    def test_config_todo_dir_redirect_indirect_cycle_raises(self) -> None:
+        """A -> B -> A is caught too, not just the direct A -> A case."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as other:
+            repo_path = Path(repo)
+            other_path = Path(other)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": str(other_path.resolve())}), encoding="utf-8"
+            )
+            (other_path / "config.json").write_text(
+                json.dumps({"todo_dir": str((repo_path / ".todo").resolve())}),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(todo_db.CircularTodoRedirectError):
+                    todo_db.resolve_todo_dir(repo_path)
+
 
 class RepoIdentityMigrationTest(unittest.TestCase):
     """repo_identity_from_url() and the v3 repo_path normalization migration."""
+    pytestmark = pytest.mark.integration
 
     def test_url_shapes_canonicalize(self) -> None:
         self.assertEqual(
@@ -211,6 +344,7 @@ class RepoIdentityMigrationTest(unittest.TestCase):
 
 class JsonDirStoreTest(unittest.TestCase):
     """The JSON-directory backend of the storage DAL."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()
@@ -250,15 +384,12 @@ class JsonDirStoreTest(unittest.TestCase):
                 store = todo_store.get_store()
                 self.assertIsInstance(store, todo_store.JsonDirTodoStore)
                 self.assertEqual(store.dir, Path(d) / "storage")
-        with tempfile.TemporaryDirectory() as d2:  # no config.json -> write sqlite default
+        with tempfile.TemporaryDirectory() as d2:  # no config.json -> sqlite default
             base = Path(d2)
             with unittest.mock.patch.object(todo_db, "todo_dir", return_value=base):
                 todo_store.reset_store()
                 self.assertIsInstance(todo_store.get_store(), todo_store.SqliteTodoStore)
-                written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-                self.assertEqual(
-                    written["todo_storage"], "sqlite://$TODOBASEDIR/sqlite.db"
-                )
+                self.assertFalse((base / "config.json").exists())
 
     def test_cached_for_subsequent_calls(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
@@ -285,6 +416,7 @@ class JsonDirStoreTest(unittest.TestCase):
 
 class TodoStorageDsnTest(unittest.TestCase):
     """The todo_storage DSN in config.json and its back-compat fallbacks."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()
@@ -322,15 +454,14 @@ class TodoStorageDsnTest(unittest.TestCase):
             )
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
 
-    def test_legacy_keys_migrated_to_dsn(self) -> None:
+    def test_legacy_keys_honoured_without_rewriting_config(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
             store = self._store_for_config(base, {"store": "json"})
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
             self.assertEqual(store.dir, base / "tickets")
-            written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(written["todo_storage"], "file://$TODOBASEDIR/tickets")
-            self.assertNotIn("store", written)
+            config = json.loads((base / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(config, {"store": "json"})
 
     def test_layout_infers_storage_dir_when_no_config(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -341,8 +472,7 @@ class TodoStorageDsnTest(unittest.TestCase):
                 store = todo_store.get_store()
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
             self.assertEqual(store.dir, base / "storage")
-            written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(written["todo_storage"], "file://$TODOBASEDIR/storage")
+            self.assertFalse((base / "config.json").exists())
 
     def test_layout_prefers_sqlite_db_over_storage_dir(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -385,6 +515,7 @@ class TodoStorageDsnTest(unittest.TestCase):
 
 class PerTodoLockTest(unittest.TestCase):
     """Per-TODO advisory locking on both backends."""
+    pytestmark = pytest.mark.integration
 
     TID = "a" * 64
     OTHER_TID = "b" * 64
@@ -580,6 +711,7 @@ class DataVersionMarkerTest(unittest.TestCase):
     Distinct from the sqlite table's schema_version, which auto-applies on
     connect regardless of this marker.
     """
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()

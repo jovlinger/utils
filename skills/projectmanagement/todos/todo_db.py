@@ -197,6 +197,10 @@ class TodoDbError(Exception):
     """User-facing todo database error."""
 
 
+class CircularTodoRedirectError(TodoDbError):
+    """A chain of config.json "todo_dir" redirects loops back on itself."""
+
+
 def reset_todo_dir() -> None:
     """Clear cached todo directory (tests only)."""
     global _RESOLVED_TODO_DIR
@@ -292,6 +296,53 @@ def _candidate_is_populated(candidate: Path) -> bool:
     )
 
 
+def _redirect_target(candidate: Path) -> Optional[Path]:
+    """Read *candidate*'s ``config.json`` ``todo_dir`` key, or None when absent.
+
+    A relative value is anchored on *candidate* itself (the redirecting
+    ``config.json``'s own directory), the same anchor ``$TODOBASEDIR`` path
+    values use elsewhere in the store; ``~`` and ``$VAR`` expand the same way.
+    An absolute value is used as-is. Missing/unreadable ``config.json``, a
+    non-dict parse, or a blank/absent ``todo_dir`` all mean "no redirect".
+    """
+    try:
+        parsed = json.loads((candidate / "config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    raw = parsed.get("todo_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    expanded = os.path.expanduser(os.path.expandvars(raw.strip()))
+    target = Path(expanded)
+    return target if target.is_absolute() else candidate / target
+
+
+def _follow_redirects(base: Path) -> Path:
+    """Follow ``config.json`` ``todo_dir`` redirects from *base* to the final dir.
+
+    Tracks directories already visited by resolved (realpath) identity, so a
+    relative and an absolute spelling of the same directory collide as one
+    entry. A redirect that repeats a visited directory -- directly (A -> A) or
+    through a longer chain (A -> B -> A) -- raises CircularTodoRedirectError
+    immediately; it never loops and never silently falls back to an earlier
+    directory in the chain.
+    """
+    visited = [base.resolve()]
+    current = base
+    while True:
+        target = _redirect_target(current)
+        if target is None:
+            return current.resolve()
+        resolved = target.resolve()
+        if resolved in visited:
+            chain = " -> ".join(str(p) for p in visited + [resolved])
+            raise CircularTodoRedirectError(f"circular todo_dir redirect: {chain}")
+        visited.append(resolved)
+        current = target
+
+
 def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     """Resolve the todo directory once per process.
 
@@ -302,8 +353,11 @@ def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     first candidate that already holds a store (``config.json``, ``sqlite.db``,
     or ``storage/``) wins; otherwise the default create location is the first
     entry that applies (``$TODO_DIR``, else main-checkout ``.todo``, else home).
-    All paths (db, worktrees, storage) live under the chosen directory for the
-    rest of the call.
+    A winning candidate's own ``config.json`` may then redirect to a different
+    directory via ``todo_dir`` (see ``_follow_redirects``); when it does, the
+    redirect target -- not the originally selected candidate -- is what gets
+    cached and returned. All paths (db, worktrees, storage) live under the
+    chosen directory for the rest of the call.
     """
     global _RESOLVED_TODO_DIR
     if _RESOLVED_TODO_DIR is not None:
@@ -311,7 +365,7 @@ def resolve_todo_dir(git_root: Optional[Path] = None) -> Path:
     root = git_root if git_root is not None else main_checkout_root()
     for candidate in _todo_dir_candidates(root):
         if _candidate_is_populated(candidate):
-            _RESOLVED_TODO_DIR = candidate.resolve()
+            _RESOLVED_TODO_DIR = _follow_redirects(candidate)
             return _RESOLVED_TODO_DIR
     _RESOLVED_TODO_DIR = _default_todo_dir(root).resolve()
     return _RESOLVED_TODO_DIR

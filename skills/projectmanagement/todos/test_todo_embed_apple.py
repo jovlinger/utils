@@ -19,6 +19,7 @@ from pathlib import Path
 
 import todo_embed
 from todo_embed_apple import AppleEmbedder, AppleEmbedderError
+import pytest
 
 # A stand-in for apple_embedder/nlce-embed. Behavior switches on $FAKE_MODE:
 #   normal (default) -- info + deterministic normalized embed vectors
@@ -72,6 +73,7 @@ for line in sys.stdin:
 
 
 class AppleEmbedderTest(unittest.TestCase):
+    pytestmark = pytest.mark.integration
     def setUp(self) -> None:
         self._dir = tempfile.mkdtemp(prefix="nlce-fake-")
         self._bin = os.path.join(self._dir, "fake-nlce")

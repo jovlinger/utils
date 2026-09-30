@@ -54,6 +54,11 @@ linked worktree -- every worktree of a repo shares one store.
 If none exist, create under the first applicable default: `$TODO_DIR`, else
 `<main-checkout-root>/.todo/`, else `$HOME/.todo/`.
 
+The winning directory's own `config.json` may then redirect to a different
+directory via `todo_dir` -- see [Redirecting to another directory](#redirecting-to-another-directory)
+-- and the redirect target, not the originally selected directory, is what
+gets used for everything below.
+
 | Item | Location |
 |------|----------|
 | Tickets | `<todo-dir>/sqlite.db` or `<todo-dir>/storage/*.json` |
@@ -61,6 +66,26 @@ If none exist, create under the first applicable default: `$TODO_DIR`, else
 | Embeddings | In ticket JSON; sqlite also mirrors a derived index |
 | Search config | `<todo-dir>/config.json` (`search_stopwords`, `search_stopword_min_idf`, `embedder`) -- see [Search ranking](#search-ranking) |
 | File-store git sync | `<todo-dir>/config.json` (`autocommit`, `autopush`) -- see [File-store autocommit and autopush](#file-store-autocommit-and-autopush). Ignored for sqlite |
+| Redirect | `<todo-dir>/config.json` (`todo_dir`) -- see [Redirecting to another directory](#redirecting-to-another-directory) |
+
+### Redirecting to another directory
+
+A resolved candidate's `config.json` may carry a `todo_dir` key: a path to a
+different directory, which becomes the actual todo dir for the rest of the
+invocation (storage, locks, worktrees -- everything keyed off the resolved
+todo dir). A relative value is anchored on the redirecting `config.json`'s own
+directory, not CWD; an absolute value is used as-is; `~` and `$VAR` expand the
+same way other config path values do.
+
+```json
+{"todo_dir": "../../dottodo"}
+```
+
+The target's own `config.json` may itself carry a `todo_dir`, chaining the
+redirect further. A chain that revisits a directory already seen -- directly
+(`A` redirects to itself) or through intermediate hops (`A` -> `B` -> `A`) --
+raises `CircularTodoRedirectError` immediately; it never loops and never
+silently falls back to an earlier directory in the chain.
 
 `TODO_USE_JSON=1` enables legacy file mode (import-oriented). There is **no
 `--repo` flag** -- `cd` into the target repo/worktree; CWD must be a git repo.
