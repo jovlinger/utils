@@ -8,11 +8,13 @@ APPLE_BIN := apple_embedder/nlce-embed
 binlinks:
 	ln -sf ../skills/projectmanagement/todos/todo.py $(BINLINKS)/todo
 
-# No venv wired up yet; run `python3 -m pytest` by hand in this dir.
+# Fast suite: every surface minus the spawn-bound CLI files. `run-tests.py
+# --list` shows the map; `--surface <name>` runs one.
 test:
-	@:
+	./run-tests.py
 
-all-tests: test
+all-tests:
+	./run-tests.py --all
 
 # Build the macOS-only Apple NLContextualEmbedding sidecar (requires swiftc,
 # macOS 14+). Optional: only needed for TODO_EMBEDDER=apple.
