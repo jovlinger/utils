@@ -28,6 +28,12 @@ class FakeGitTest(unittest.TestCase):
         git.expect("rev-parse", stdout="general\n")
         self.assertEqual("specific\n", git.run(None, "rev-parse", "--show-toplevel").stdout)
 
+    def test_re_registering_a_prefix_replaces_the_earlier_answer(self) -> None:
+        git = git_command.FakeGit()
+        git.expect("branch", "--show-current", stdout="first\n")
+        git.expect("branch", "--show-current", stdout="second\n")
+        self.assertEqual("second\n", git.run(None, "branch", "--show-current").stdout)
+
     def test_a_prefix_stub_covers_trailing_arguments_it_never_named(self) -> None:
         """Why prefixes: the tool puts per-test temp paths and shas in its arguments."""
         git = git_command.FakeGit()

@@ -113,9 +113,15 @@ class FakeGit(Git):
         stderr: str = "",
         returncode: int = 0,
     ) -> "FakeGit":
-        """Register a response for any call whose arguments start with *args*."""
+        """Register a response for any call whose arguments start with *args*.
+
+        Re-registering the same prefix replaces the earlier answer, so a harness
+        can restate a changing fact (the current branch, say) mid-test.
+        """
+        prefix = tuple(args)
+        self._responses = [pair for pair in self._responses if pair[0] != prefix]
         self._responses.append(
-            (tuple(args), CompletedGit(["git", *args], returncode, stdout, stderr))
+            (prefix, CompletedGit(["git", *args], returncode, stdout, stderr))
         )
         # Longest prefix wins, so a specific stub beats a general one whatever
         # order the test registered them in.
