@@ -24,19 +24,50 @@ tier than the harness it actually runs on. ``integration`` is declared, because
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
+from typing import List
+
 TIERS: tuple[str, ...] = ("e2e", "integration", "unit")
 DEFAULT_TIER = "unit"
 
 # Names that mean a test reaches a real store, a real database, or the
-# filesystem. A class whose body mentions one of these cannot be `unit`.
-HEAVY_NAMES: tuple[str, ...] = (
-    "subprocess",
-    "tempfile",
-    "mkdtemp",
-    "TemporaryDirectory",
-    "NamedTemporary",
-    "sqlite3",
+# filesystem. A class that REFERENCES one of these cannot be `unit`.
+HEAVY_NAMES: frozenset[str] = frozenset(
+    {
+        "subprocess",
+        "tempfile",
+        "mkdtemp",
+        "TemporaryDirectory",
+        "NamedTemporaryFile",
+        "sqlite3",
+    }
 )
+
+
+def heavy_names_used(cls: type) -> List[str]:
+    """The I/O names *cls* actually references, as identifiers.
+
+    Reads the class body as code rather than as text, so a method named
+    ``test_..._like_subprocess_does`` or a docstring mentioning tempfile is not
+    mistaken for a class that opens one.
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(cls))
+    except (OSError, TypeError):
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover - the class came from a parsed module
+        return []
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in HEAVY_NAMES:
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in HEAVY_NAMES:
+            found.add(node.attr)
+    return sorted(found)
 
 
 def e2e_base() -> type:

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
+import git_command
 import todo_db
 import todo_objid
 import todo_ref
@@ -210,13 +211,7 @@ def edit_value_via_editor(todo_id: str, field: str) -> str:
 def repo_root(start: Optional[Path] = None) -> Path:
     """Return git toplevel for *start* (default cwd)."""
     cwd: Path = start or Path.cwd()
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = git_command.get_git().run(cwd, "rev-parse", "--show-toplevel")
     if result.returncode != 0:
         raise TodoError(f"not a git repository: {cwd}")
     return Path(result.stdout.strip())
@@ -229,20 +224,7 @@ def utc_now() -> str:
 
 def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a git command in *root*."""
-    try:
-        result: subprocess.CompletedProcess[str] = subprocess.run(
-            ["git", *args],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        # *root* may be an unreachable working directory; treat it as a normal
-        # git failure rather than crashing.
-        result = subprocess.CompletedProcess(
-            ["git", *args], returncode=1, stdout="", stderr=str(exc)
-        )
+    result = git_command.get_git().run(root, *args)
     if check and result.returncode != 0:
         detail: str = (result.stderr or result.stdout or "").strip()
         raise TodoError(f"git {' '.join(args)} failed: {detail}")
@@ -253,39 +235,22 @@ def git_fetch_if_remote(root: Path) -> None:
     """Best-effort fetch when a remote exists; never fatal."""
     if not FETCH_ENABLED:
         return
-    remotes: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "remote"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    remotes = git_command.get_git().run(root, "remote", check=True)
     if not remotes.stdout.strip():
         return
-    fetched: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "fetch", "--quiet"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    fetched = git_command.get_git().run(root, "fetch", "--quiet")
     if fetched.returncode != 0:
         print("todo.py: fetch failed; using cached refs", file=sys.stderr)
 
 
 def list_branch_refs(root: Path) -> List[str]:
     """Short names for local branches and remote-tracking branches."""
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        [
-            "git",
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/heads",
-            "refs/remotes",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
+    result = git_command.get_git().run(
+        root,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+        "refs/remotes",
         check=True,
     )
     refs: List[str] = []
@@ -401,17 +366,8 @@ def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
         ticket = todo_store.get_store().get(repo_key(root), ref)
         if ticket is not None:
             return normalize_todo_schema(ticket)
-    try:
-        show: subprocess.CompletedProcess[str] = subprocess.run(
-            ["git", "show", f"{ref}:TODO.json"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        # *root* recorded on another machine and absent here: ticket unavailable.
-        return None
+    # *root* recorded on another machine and absent here comes back non-zero.
+    show = git_command.get_git().run(root, "show", f"{ref}:TODO.json")
     if show.returncode != 0:
         return None
     try:
@@ -807,13 +763,7 @@ def commit_todo(root: Path, message: str) -> None:
 
 def head_sha(root: Path) -> Optional[str]:
     """Return the current HEAD commit sha, or None when there is no commit."""
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = git_command.get_git().run(root, "rev-parse", "HEAD")
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
@@ -832,13 +782,7 @@ def sha_matches(head: str, candidate: str) -> bool:
 
 def current_branch(root: Path) -> Optional[str]:
     """Return short name of the checked-out branch, if any."""
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "branch", "--show-current"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    result = git_command.get_git().run(root, "branch", "--show-current", check=True)
     name: str = result.stdout.strip()
     return name or None
 
@@ -2116,13 +2060,7 @@ def import_all_json_refs(root: Path) -> int:
 
 def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
     """Read TODO.json from git only (ignore sqlite)."""
-    show: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "show", f"{ref}:TODO.json"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    show = git_command.get_git().run(root, "show", f"{ref}:TODO.json")
     if show.returncode != 0:
         return None
     try:
@@ -6723,14 +6661,14 @@ def _ticket_commits(repo: Path, ticket: JsonDict, timestamps: bool = False) -> L
     if not base or not branch_exists(repo, base):
         return []
     fmt = "%h %cd %s" if timestamps else "%h %s"
-    cmd = ["git", "log", f"--format={fmt}"]
+    cmd = ["log", f"--format={fmt}"]
     env = None
     if timestamps:
         # UTC, to match the node's stored update_dt (RFC3339 Z) -- no mixed zones.
         cmd.append("--date=format-local:%Y-%m-%d %H:%M")
         env = {**os.environ, "TZ": "UTC0"}
     cmd.append(f"{base}..{branch}")
-    result = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, check=False, env=env)
+    result = git_command.get_git().run(repo, *cmd, env=env)
     if result.returncode != 0:
         return []
     return result.stdout.splitlines()
@@ -7959,17 +7897,7 @@ def _git_with_index(
     """Run git against *index* instead of the repository's real index."""
     env = os.environ.copy()
     env["GIT_INDEX_FILE"] = index
-    try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        return subprocess.CompletedProcess(["git", *args], returncode=1, stdout="", stderr=str(exc))
+    return git_command.get_git().run(root, *args, env=env)
 
 
 def _commit_store_paths(root: Path, paths: Sequence[Path], message: str) -> None:

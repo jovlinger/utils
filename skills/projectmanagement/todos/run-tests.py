@@ -48,6 +48,7 @@ SURFACES: dict[str, tuple[str, ...]] = {
     "search": ("test_todo_search.py", "test_todo_search_idf.py"),
     "tag": ("test_todo_tag.py", "test_todo_tag_impl.py"),
     "cli": ("test_todo.py", "test_todo_all_sentinel.py"),
+    "git": ("test_git_command.py",),
     "meta": ("test_todo_tiering.py",),
 }
 
