@@ -250,15 +250,12 @@ class JsonDirStoreTest(unittest.TestCase):
                 store = todo_store.get_store()
                 self.assertIsInstance(store, todo_store.JsonDirTodoStore)
                 self.assertEqual(store.dir, Path(d) / "storage")
-        with tempfile.TemporaryDirectory() as d2:  # no config.json -> write sqlite default
+        with tempfile.TemporaryDirectory() as d2:  # no config.json -> sqlite default
             base = Path(d2)
             with unittest.mock.patch.object(todo_db, "todo_dir", return_value=base):
                 todo_store.reset_store()
                 self.assertIsInstance(todo_store.get_store(), todo_store.SqliteTodoStore)
-                written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-                self.assertEqual(
-                    written["todo_storage"], "sqlite://$TODOBASEDIR/sqlite.db"
-                )
+                self.assertFalse((base / "config.json").exists())
 
     def test_cached_for_subsequent_calls(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
@@ -322,15 +319,14 @@ class TodoStorageDsnTest(unittest.TestCase):
             )
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
 
-    def test_legacy_keys_migrated_to_dsn(self) -> None:
+    def test_legacy_keys_honoured_without_rewriting_config(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
             store = self._store_for_config(base, {"store": "json"})
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
             self.assertEqual(store.dir, base / "tickets")
-            written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(written["todo_storage"], "file://$TODOBASEDIR/tickets")
-            self.assertNotIn("store", written)
+            config = json.loads((base / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(config, {"store": "json"})
 
     def test_layout_infers_storage_dir_when_no_config(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -341,8 +337,7 @@ class TodoStorageDsnTest(unittest.TestCase):
                 store = todo_store.get_store()
             self.assertIsInstance(store, todo_store.JsonDirTodoStore)
             self.assertEqual(store.dir, base / "storage")
-            written = json.loads((base / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(written["todo_storage"], "file://$TODOBASEDIR/storage")
+            self.assertFalse((base / "config.json").exists())
 
     def test_layout_prefers_sqlite_db_over_storage_dir(self) -> None:
         with tempfile.TemporaryDirectory() as d:
