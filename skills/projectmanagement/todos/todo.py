@@ -7362,7 +7362,10 @@ class BaseDirCommand(EnvironmentCommand):
         "Resolution order: $TODO_DIR, then .todo at each level from "
         "<main-checkout-root> up to and including $HOME (the walk stops at $HOME), "
         "then $HOME/.todo. The repo anchor is the repo's MAIN checkout root, not the "
-        "current worktree, so all worktrees of a repo share one store."
+        "current worktree, so all worktrees of a repo share one store. The winning "
+        "directory's own config.json may then redirect elsewhere via a todo_dir key "
+        "(relative or absolute; chains follow; a cycle is a hard error) -- basedir "
+        "prints the final, post-redirect directory."
     )
 
     @classmethod
@@ -7543,6 +7546,10 @@ Repo & todo identity:
   todo dir     resolved once per invocation: $TODO_DIR, else .todo walked from
                <main-checkout-root> up to and including ~ (stops at ~), else
                ~/.todo (first with sqlite.db wins; same dir for db and worktrees).
+               That directory's own config.json may redirect elsewhere via a
+               todo_dir key (relative to config.json's dir, or absolute; chains
+               follow; a cycle is a hard error) -- the redirect target is what
+               actually gets used.
   FQT          fully-qualified todo = repo-root + todo_id (the branch name is a
                git-storage artifact, so repo-root + branch-name is an accepted
                fallback for todos written on dev/master).
