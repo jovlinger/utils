@@ -32,6 +32,7 @@ from pathlib import Path
 import todo
 import todo_db
 import todo_store
+import pytest
 
 # A pre-versioning record: no _schema, plus legacy shapes migrate_record must
 # normalize (Chunks->WorkItems, Subtickets->Subtodos, singular Parent dict->list,
@@ -55,6 +56,7 @@ LEGACY_RECORD = {
 
 class MigrateToLatestEndTest(unittest.TestCase):
     """migrate-to-latest brings a below-latest store to SCHEMA_VERSION on both backends."""
+    pytestmark = pytest.mark.integration
 
     def _seed(self, store) -> None:
         store.put("test/repo", LEGACY_RECORD["Branch"], json.loads(json.dumps(LEGACY_RECORD)))

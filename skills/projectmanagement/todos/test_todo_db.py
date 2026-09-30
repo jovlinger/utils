@@ -15,6 +15,7 @@ from pathlib import Path
 
 import todo_db
 import todo_store
+import pytest
 
 
 def _init_git_repo(path: Path) -> None:
@@ -43,6 +44,7 @@ def _touch_sqlite_db(directory: Path) -> Path:
 
 class TodoDirResolutionTest(unittest.TestCase):
     """resolve_todo_dir() search order and per-call caching."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_db.reset_todo_dir()
@@ -287,6 +289,7 @@ class TodoDirResolutionTest(unittest.TestCase):
 
 class RepoIdentityMigrationTest(unittest.TestCase):
     """repo_identity_from_url() and the v3 repo_path normalization migration."""
+    pytestmark = pytest.mark.integration
 
     def test_url_shapes_canonicalize(self) -> None:
         self.assertEqual(
@@ -341,6 +344,7 @@ class RepoIdentityMigrationTest(unittest.TestCase):
 
 class JsonDirStoreTest(unittest.TestCase):
     """The JSON-directory backend of the storage DAL."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()
@@ -412,6 +416,7 @@ class JsonDirStoreTest(unittest.TestCase):
 
 class TodoStorageDsnTest(unittest.TestCase):
     """The todo_storage DSN in config.json and its back-compat fallbacks."""
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()
@@ -510,6 +515,7 @@ class TodoStorageDsnTest(unittest.TestCase):
 
 class PerTodoLockTest(unittest.TestCase):
     """Per-TODO advisory locking on both backends."""
+    pytestmark = pytest.mark.integration
 
     TID = "a" * 64
     OTHER_TID = "b" * 64
@@ -705,6 +711,7 @@ class DataVersionMarkerTest(unittest.TestCase):
     Distinct from the sqlite table's schema_version, which auto-applies on
     connect regardless of this marker.
     """
+    pytestmark = pytest.mark.integration
 
     def tearDown(self) -> None:
         todo_store.reset_store()

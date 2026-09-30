@@ -24,6 +24,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 from typing import Any, Dict, Optional
+import pytest
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -4744,6 +4745,7 @@ class CommandTaxonomyTests(unittest.TestCase):
 
 class FileStoreGitSyncTests(unittest.TestCase):
     """autocommit / autopush act on the file-store repo, never on sqlite."""
+    pytestmark = pytest.mark.integration
 
     def setUp(self) -> None:
         self.project: Path = Path(tempfile.mkdtemp(prefix="todo-test-"))

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Timeboxed pytest driver for the todos CLI, grouped by surface area.
+"""Timeboxed pytest driver for the todos CLI, selectable by tier and by surface.
 
-Plain ``./run-tests.py`` is the fast suite: every surface, minus the files whose
-cost is CLI subprocess spawns (measured at 0.24s each, which is 91% of the slow
-files' wall time). ``--all`` adds those back. ``--surface web --surface store``
-runs named surfaces only, slow files included.
+Plain ``./run-tests.py`` is the fast suite: every test except the ``e2e`` tier,
+which is the only tier that starts a fresh CLI and a fresh store per test.
+``--all`` adds those back. Tiers and what belongs in each are defined in
+``tiering.py``.
 
-The run is capped at ``$TODO_TEST_TIMEOUT`` seconds, defaulting to 60 for the
-fast suite and 900 for ``--all``. On expiry the process group is killed and the
-exit code is 124, the same code ``timeout(1)`` uses. Unrecognised arguments pass
-through to pytest, so ``./run-tests.py --surface store -k redirect -vv`` works.
+  ./run-tests.py                     fast: unit + integration, all surfaces
+  ./run-tests.py --all               everything, including e2e
+  ./run-tests.py --tier e2e          one tier
+  ./run-tests.py --surface web       one surface (see --list)
+  ./run-tests.py --surface store -k redirect -vv   unknown args go to pytest
+
+The run is capped at ``$TODO_TEST_TIMEOUT`` seconds, defaulting to 60 when no
+e2e test is selected and 900 when one is. On expiry the process group is killed
+and the exit code is 124, the same code ``timeout(1)`` uses.
 """
 
 from __future__ import annotations
@@ -21,8 +26,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import tiering
+
 HERE = Path(__file__).resolve().parent
 
+# Surface area, an axis orthogonal to tier: which part of the tool a file covers.
 SURFACES: dict[str, tuple[str, ...]] = {
     "store": ("test_todo_db.py", "test_todo_migrate.py"),
     "objid": ("test_todo_objid.py", "test_todo_ref.py"),
@@ -31,25 +39,15 @@ SURFACES: dict[str, tuple[str, ...]] = {
     "search": ("test_todo_search.py", "test_todo_search_idf.py"),
     "tag": ("test_todo_tag.py", "test_todo_tag_impl.py"),
     "cli": ("test_todo.py", "test_todo_all_sentinel.py"),
+    "meta": ("test_todo_tiering.py",),
 }
 
-# Dominated by out-of-process `todo.py` invocations: test_todo.py alone runs
-# 5m46s for 373 tests. Held out of the fast suite, kept under --all.
-SLOW: frozenset[str] = frozenset(
-    {
-        "test_todo.py",
-        "test_todo_search.py",
-        "test_todo_search_idf.py",
-        "test_todo_tag_impl.py",
-    }
-)
-
 FAST_TIMEOUT = 60.0
-ALL_TIMEOUT = 900.0
+E2E_TIMEOUT = 900.0
 TIMEOUT_EXIT = 124
 
 
-def _classified() -> dict[str, str]:
+def _files_by_surface() -> dict[str, str]:
     """Map test file -> surface, refusing to run if a file belongs to none.
 
     A new test file is a deliberate choice of surface, so an unclassified one is
@@ -59,72 +57,79 @@ def _classified() -> dict[str, str]:
     on_disk = {p.name for p in HERE.glob("test_*.py")}
     unknown = sorted(on_disk - set(by_file))
     if unknown:
-        sys.exit(
-            "run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown)
-        )
+        sys.exit("run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown))
     missing = sorted(set(by_file) - on_disk)
     if missing:
         sys.exit("run-tests: SURFACES names files that do not exist: " + ", ".join(missing))
     return by_file
 
 
-def _select(surfaces: list[str], run_all: bool) -> list[str]:
-    by_file = _classified()
-    if surfaces:
-        unknown = sorted(set(surfaces) - set(SURFACES))
-        if unknown:
-            sys.exit(
-                f"run-tests: unknown surface(s) {', '.join(unknown)}; "
-                f"known: {', '.join(sorted(SURFACES))}"
-            )
-        chosen = [f for f in by_file if by_file[f] in surfaces]
-    else:
-        chosen = [f for f in by_file if run_all or f not in SLOW]
-    return sorted(chosen)
+def _surface_files(surfaces: list[str]) -> list[str]:
+    by_file = _files_by_surface()
+    if not surfaces:
+        return []
+    unknown = sorted(set(surfaces) - set(SURFACES))
+    if unknown:
+        sys.exit(
+            f"run-tests: unknown surface(s) {', '.join(unknown)}; "
+            f"known: {', '.join(sorted(SURFACES))}"
+        )
+    return sorted(f for f in by_file if by_file[f] in surfaces)
 
 
-def _limit(run_all: bool, whole_suite: bool) -> float:
+def _marker_expression(tiers: list[str], run_all: bool) -> str:
+    if tiers:
+        return " or ".join(sorted(set(tiers)))
+    return "" if run_all else "not e2e"
+
+
+def _limit(expression: str) -> float:
     raw = os.environ.get("TODO_TEST_TIMEOUT", "").strip()
     if raw:
         try:
             return float(raw)
         except ValueError:
             sys.exit(f"run-tests: TODO_TEST_TIMEOUT is not a number: {raw!r}")
-    return ALL_TIMEOUT if (run_all or whole_suite) else FAST_TIMEOUT
+    selects_e2e = expression == "" or ("e2e" in expression and "not e2e" not in expression)
+    return E2E_TIMEOUT if selects_e2e else FAST_TIMEOUT
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--all", action="store_true", help="include the slow CLI files")
+    parser.add_argument("--all", action="store_true", help="include the e2e tier")
+    parser.add_argument(
+        "--tier", action="append", default=[], metavar="NAME", choices=tiering.TIERS,
+        help=f"run one tier only (repeatable): {', '.join(tiering.TIERS)}",
+    )
     parser.add_argument(
         "--surface", action="append", default=[], metavar="NAME",
         help=f"run one surface only (repeatable): {', '.join(sorted(SURFACES))}",
     )
-    parser.add_argument(
-        "--list", action="store_true", help="print the surface map and exit"
-    )
+    parser.add_argument("--list", action="store_true", help="print the surface map and exit")
     args, pytest_args = parser.parse_known_args()
 
     if args.list:
         for surface in sorted(SURFACES):
             for name in SURFACES[surface]:
-                print(f"{surface:8} {name}{'  [slow]' if name in SLOW else ''}")
+                print(f"{surface:8} {name}")
         return 0
 
-    files = _select(args.surface, args.all)
-    slow_selected = bool(set(files) & SLOW)
-    limit = _limit(args.all, slow_selected)
+    _files_by_surface()  # fail fast on an unclassified file, whatever the selection
+    files = _surface_files(args.surface)
+    expression = _marker_expression(args.tier, args.all)
+    selection = ["-m", expression] if expression else []
 
     # Own process group: todo.py shells out to git, so a timeout has to take the
     # children with it.
     proc = subprocess.Popen(
-        [sys.executable, "-m", "pytest", "-q", *pytest_args, *files],
+        [sys.executable, "-m", "pytest", "-q", *selection, *pytest_args, *files],
         cwd=HERE,
         start_new_session=True,
     )
     try:
-        return proc.wait(timeout=limit)
+        return proc.wait(timeout=_limit(expression))
     except subprocess.TimeoutExpired:
+        limit = _limit(expression)
         os.killpg(proc.pid, signal.SIGTERM)
         try:
             proc.wait(timeout=5)
