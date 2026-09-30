@@ -1,6 +1,6 @@
 {
   "AC": "Done when:\n\n1. Design recorded in this ticket (Body) is agreed enough to implement: inputs, positive synonym signal, axis/non-synonym signal, reviewable output format.\n2. A script under `skills/groom-musicology-tags/scripts/` (name TBD, e.g. `propose_synonyms.py`) reads album sidecars + optional inventory, emits a reviewable candidate report (and optional map-patch proposal) without rewriting committed synonym maps by default.\n3. Report demonstrably surfaces: (a) cross-provider near-duplicates that slug-merge today or should; (b) at least one axis separation class (e.g. decade vs decade, or year-like vs genre) flagged as non-synonym.\n4. Skill.md workflow gains a step: propose \u2192 human review \u2192 edit maps / OVERRIDES \u2192 `build_synonym_maps` / commit \u2192 postingest `--force_retag` (no `--force_provider`).\n5. Tests or a checked-in sample fixture cover one multi-provider album bag \u2192 expected candidate / non-candidate pairs.",
-  "ActualSummary": "Shipped skills/groom-musicology-tags/scripts/propose_synonyms.py: album-aligned discogs/lastfm/musicbrainz bags \u2192 slug-equal synonym candidates + clusters (optional map_patch), related-only high-PMI different-slug pairs, and axis non-synonyms (year\u2260genre, 80s\u226090s). SKILL workflow documents propose\u2192review\u2192retag; fixture tests cover CCR-style overlap. Live smoke on 299 albums: 56 candidates, 144 related, 111 non-synonyms. Branch 18cb75f1-co-occurrence-synonym-p not merged to master yet.",
+  "ActualSummary": "Co-occurrence synonym proposer + agent alternate generator landed on master via merge of leftover branch tip after ticket was already done (2026-09-14).",
   "BaseSha": "d8a86bb678b652f78ada38055a90419cb396e9da",
   "Body": {
     "objid": "0002",
@@ -26,7 +26,10 @@
     "path_from_root": "skills/groom-musicology-tags"
   },
   "State": {
-    "done": {}
+    "merged": {
+      "merge_commit": "1d2591fe02dbbf1b39024c3e76518c9942229643",
+      "merged_into": "master"
+    }
   },
   "Summary": {
     "objid": "0001",
@@ -72,5 +75,5 @@
   ],
   "_nextobjid": 14,
   "create_dt": "2026-08-21T04:48:18Z",
-  "update_dt": "2026-08-21T05:13:31Z"
+  "update_dt": "2026-09-14T13:07:00Z"
 }
