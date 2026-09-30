@@ -189,6 +189,43 @@ class TodoDirResolutionTest(unittest.TestCase):
                 resolved = todo_db.resolve_todo_dir(repo_path)
                 self.assertEqual(resolved, target_path.resolve())
 
+    def test_config_todo_dir_redirect_expands_home(self) -> None:
+        """A leading ``~`` resolves against $HOME, not a directory literally named "~"."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
+            repo_path = Path(repo)
+            home_path = Path(home)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "~/store"}), encoding="utf-8"
+            )
+            _touch_sqlite_db(home_path / "store")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["HOME"] = str(home_path)
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (home_path / "store").resolve())
+            self.assertFalse((repo_path / ".todo" / "~").exists())
+
+    def test_config_todo_dir_redirect_expands_env_var(self) -> None:
+        """A ``$VAR`` in todo_dir expands from the environment."""
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as target:
+            repo_path = Path(repo)
+            target_path = Path(target)
+            _init_git_repo(repo_path)
+            (repo_path / ".todo").mkdir()
+            (repo_path / ".todo" / "config.json").write_text(
+                json.dumps({"todo_dir": "$TODO_REDIRECT_TARGET/store"}), encoding="utf-8"
+            )
+            _touch_sqlite_db(target_path / "store")
+            env = os.environ.copy()
+            env.pop("TODO_DIR", None)
+            env["TODO_REDIRECT_TARGET"] = str(target_path.resolve())
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                resolved = todo_db.resolve_todo_dir(repo_path)
+                self.assertEqual(resolved, (target_path / "store").resolve())
+
     def test_config_todo_dir_redirect_chained(self) -> None:
         """A -> B -> C: the final non-redirecting directory wins."""
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as mid, \
