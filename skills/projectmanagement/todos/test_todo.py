@@ -271,10 +271,29 @@ class TodoIntegrationCase(TodoHelpers, unittest.TestCase):
         """Tell the fake which branch is checked out, as a real checkout would."""
         self.git.checkout(branch)
 
+    # Verbs the fake actually models, so a setup call through _git is truthful.
+    BRANCH_VERBS = frozenset({"checkout", "branch", "show-ref"})
+    # Accepted and recorded, but they create no history: nothing in this harness
+    # reads the commit graph, because the store is what the tests assert on.
+    NO_HISTORY_VERBS = frozenset({"commit", "add"})
+
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Setup-only git, limited to what the fake can answer honestly.
+
+        A verb that would need real history or a real worktree raises instead of
+        quietly succeeding, because a test that passes against a fiction is
+        worse than one that fails.
+        """
+        verb = args[0] if args else ""
+        if verb in self.NO_HISTORY_VERBS:
+            self.git.calls.append((self.repo, tuple(args)))
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        if verb in self.BRANCH_VERBS:
+            return self.git.run(self.repo, *args)
         raise AssertionError(
-            "TodoIntegrationCase fakes git; a test that drives a real repo "
-            f"belongs on TodoCase (asked for: git {' '.join(args)})"
+            "TodoIntegrationCase models branches only; `git "
+            f"{' '.join(args)}` needs a real repo, so this test belongs on "
+            "TodoCase"
         )
 
     def todo(
@@ -658,7 +677,7 @@ class InitTests(TodoCase):
         self.assertEqual(self.todo("ls").stdout.strip(), "")
 
 
-class SetStateViaSetTests(TodoCase):
+class SetStateViaSetTests(TodoIntegrationCase):
     def test_set_state_flag_replaces_set_state_subcommand(self) -> None:
         """`set --state` transitions State; the old `set-state` subcommand is gone."""
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -672,7 +691,7 @@ class SetStateViaSetTests(TodoCase):
         self.assertNotEqual(gone.returncode, 0)
 
 
-class RmTests(TodoCase):
+class RmTests(TodoIntegrationCase):
     def test_rm_soft_deletes_from_store(self) -> None:
         """`todo rm` tombstones the todo; it is no longer readable by id."""
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -1281,7 +1300,7 @@ class PathTests(TodoCase):
         self.assertNotIn("Subtickets", loaded)
 
 
-class GetCommandTests(TodoCase):
+class GetCommandTests(TodoIntegrationCase):
     """`get` is a friendly-field wrapper that expands to `get-json-path`."""
 
     def test_get_summary_matches_get_json_path(self) -> None:
@@ -3389,7 +3408,7 @@ class WorkItemInvariantTests(TodoCase):
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
 
-class WorkItemAddressingTests(TodoCase):
+class WorkItemAddressingTests(TodoIntegrationCase):
     """Naming one work item by index or objid, and moving one within the plan."""
 
     def _plan(self, *summaries: str) -> None:
@@ -3629,7 +3648,7 @@ class WorkItemAddressUnitTests(unittest.TestCase):
                 todo._workitem_index_by_number(items, address)
 
 
-class NoCommitDispositionTests(TodoCase):
+class NoCommitDispositionTests(TodoIntegrationCase):
     """checkpoint / blocked / obsolete: one close mechanism, three claims.
 
     The claims differ and are tested per command; what is asserted here is that
@@ -3839,7 +3858,7 @@ class WorkItemObsoleteTests(TodoCase):
                 )
 
 
-class BaseDirRepoDirTests(TodoCase):
+class BaseDirRepoDirTests(TodoIntegrationCase):
     def test_basedir_prints_resolved_todo_dir(self) -> None:
         self.todo("init", "--summary=seed the db")  # ensure the db dir is materialized
         proc = self.todo("basedir")
@@ -4394,7 +4413,31 @@ class StateFilterTests(TodoIntegrationCase):
         self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
 
 
-class ObjidWiringTests(TodoCase):
+class SubtodoObjidScopeTests(TodoCase):
+    """add-subtodo cuts a real child branch, so objid scoping is checked on e2e."""
+
+    @staticmethod
+    def _objids(record: Any) -> list:
+        return ObjidWiringTests._objids(record)
+
+    def test_subtodo_is_a_separate_id_scope(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn a child")
+        proc = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_id = json.loads(proc.stdout)["Id"]
+        child = json.loads(self.todo("read", child_id).stdout)
+        # The child counts from scratch rather than continuing the parent's
+        # sequence: its own ids start at 0000 and its cursor is back near zero.
+        self.assertEqual("0000", min(self._objids(child)))
+        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
+        parent = json.loads(self.todo("read", parent_id).stdout)
+        self.assertEqual("0000", min(self._objids(parent)))
+
+
+class ObjidWiringTests(TodoIntegrationCase):
     """Every persisted record carries objids, stamped at the write choke point."""
 
     @staticmethod
@@ -4466,22 +4509,6 @@ class ObjidWiringTests(TodoCase):
         todo_json = self.read_cur()
         highest = max(int(objid, 16) for objid in self._objids(todo_json))
         self.assertGreater(todo_json["_nextobjid"], highest)
-
-    def test_subtodo_is_a_separate_id_scope(self) -> None:
-        self._git("commit", "--allow-empty", "-qm", "seed")
-        self.init_ok("--summary=parent")
-        parent_id = self.tid
-        self.todo("work-item-add", parent_id, "--summary=spawn a child")
-        proc = self.todo("add-subtodo", parent_id, "--summary=child")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        child_id = json.loads(proc.stdout)["Id"]
-        child = json.loads(self.todo("read", child_id).stdout)
-        # The child counts from scratch rather than continuing the parent's
-        # sequence: its own ids start at 0000 and its cursor is back near zero.
-        self.assertEqual("0000", min(self._objids(child)))
-        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
-        parent = json.loads(self.todo("read", parent_id).stdout)
-        self.assertEqual("0000", min(self._objids(parent)))
 
     def test_doctor_accepts_nextobjid(self) -> None:
         self.init_ok("--summary=hello")
