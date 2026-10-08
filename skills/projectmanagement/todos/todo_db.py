@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sqlite3
+
+import git_command
 import struct
 import subprocess
 from contextlib import contextmanager
@@ -216,13 +218,7 @@ def main_checkout_root(start: Optional[Path] = None) -> Optional[Path]:
     hosting is out of scope.)
     """
     cwd: Path = start or Path.cwd()
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = git_command.get_git().run(cwd, "worktree", "list", "--porcelain")
     if result.returncode != 0:
         return None
     for line in result.stdout.splitlines():

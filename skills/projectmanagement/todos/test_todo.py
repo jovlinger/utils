@@ -30,8 +30,14 @@ TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
+import git_command  # noqa: E402  (the seam an integration test fakes)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
+import todo_db  # noqa: E402  (cache resets between in-process invocations)
+import todo_store  # noqa: E402  (cache resets between in-process invocations)
 import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
 import todo_url  # noqa: E402  (MIN_PREFIX, asserted at unit level)
 
@@ -46,7 +52,33 @@ ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
 BOW = fake_nlce.FINGERPRINT
 
 
-class TodoCase(unittest.TestCase):
+class TodoHelpers:
+    """Helpers written purely in terms of ``self.todo``, so both harnesses share them."""
+
+    def read_cur(self) -> Dict[str, Any]:
+        """Return the tracked current ticket (self.tid)."""
+        proc = self.todo("read", self.tid)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def init_ok(self, *args: str, cwd: Optional[Path] = None) -> Dict[str, Any]:
+        """Run init, assert success, track the new Id, return init's payload."""
+        proc = self.todo("init", *args, cwd=cwd)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.tid = payload["Id"]
+        return payload
+
+    def mint(self) -> str:
+        """Mint an Id and assert the shape, returning it."""
+        proc = self.todo("mint")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket_id = proc.stdout.strip()
+        self.assertRegex(ticket_id, HEX64)
+        return ticket_id
+
+
+class TodoCase(TodoHelpers, unittest.TestCase):
     """Base: a fresh temp git repo per test, plus subprocess helpers."""
 
     def setUp(self) -> None:
@@ -89,20 +121,6 @@ class TodoCase(unittest.TestCase):
             check=False, env=self._env,
         )
 
-    def read_cur(self) -> Dict[str, Any]:
-        """Return the tracked current ticket (self.tid) via the binary."""
-        proc = self.todo("read", self.tid)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return json.loads(proc.stdout)
-
-    def init_ok(self, *args: str, cwd: Optional[Path] = None) -> Dict[str, Any]:
-        """Run init, assert success, track the new Id, return init's payload."""
-        proc = self.todo("init", *args, cwd=cwd)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        payload = json.loads(proc.stdout)
-        self.tid = payload["Id"]
-        return payload
-
     def write_ticket(
         self,
         branch: str,
@@ -134,21 +152,216 @@ class TodoCase(unittest.TestCase):
         if commit:
             self._git("commit", "--allow-empty", "-qm", f"ticket {ticket_id[:8]}")
 
-    def mint(self) -> str:
-        """Mint an Id via the binary and assert the shape, returning it."""
-        proc = self.todo("mint")
+
+class _RepoFake(git_command.FakeGit):
+    """FakeGit plus the branch bookkeeping a store-level test actually needs.
+
+    Models the branch set and which one is checked out, so ``init`` can cut a
+    branch and a later ``read`` finds it. Everything else -- commits, worktrees,
+    merges -- keeps answering from the static table, which is why a test that
+    cares about those belongs on TodoCase.
+    """
+
+    HEADS = "refs/heads/"
+
+    def __init__(self, current: str) -> None:
+        super().__init__()
+        self.current = current
+        self.branches = {current}
+        self.sync()
+
+    def sync(self) -> None:
+        """Restate the answers that depend on the branch set."""
+        self.expect("branch", "--show-current", stdout=self.current + "\n")
+        self.expect(
+            "for-each-ref", stdout="".join(b + "\n" for b in sorted(self.branches))
+        )
+
+    def checkout(self, name: str, *, create: bool = True) -> None:
+        """Switch to *name*, as a real checkout would."""
+        if create:
+            self.branches.add(name)
+        self.current = name
+        self.sync()
+
+    def run(
+        self, root, *args: str, env=None, check: bool = False,
+    ) -> git_command.CompletedGit:
+        response = self._branch_response(args)
+        if response is None:
+            return super().run(root, *args, env=env, check=check)
+        self.calls.append((root, tuple(args)))
+        return self._checked(response, check)
+
+    def _branch_response(self, args):
+        if not args:
+            return None
+        verb, rest = args[0], list(args[1:])
+        if verb == "checkout":
+            names = [a for a in rest if not a.startswith("-")]
+            if not names:
+                return None
+            name = names[-1]
+            if "-b" not in rest and name not in self.branches:
+                return git_command.CompletedGit(
+                    ["git", *args], 1, "", "pathspec '" + name + "' did not match\n"
+                )
+            self.checkout(name, create="-b" in rest)
+            return git_command.CompletedGit(["git", *args], 0, "", "")
+        if verb == "show-ref" and rest and rest[-1].startswith(self.HEADS):
+            name = rest[-1][len(self.HEADS):]
+            code = 0 if name in self.branches else 1
+            return git_command.CompletedGit(["git", *args], code, "", "")
+        return None
+
+
+class TodoIntegrationCase(TodoHelpers, unittest.TestCase):
+    """Real store, no subprocess: todo.main() in-process with git faked.
+
+    Same helper surface as TodoCase, so a class moves between the two harnesses
+    by changing its base and nothing else. What it gives up is git: FakeGit
+    answers from a table describing one notional repo, so a test that needs real
+    branches, worktrees or commit history belongs on TodoCase. Calling
+    ``self._git`` here fails on purpose, saying so.
+
+    The store is a real sqlite file, fresh per test, which costs about 7 ms --
+    cheap enough that sharing one across tests would buy nothing and cost
+    isolation.
+    """
+
+    pytestmark = pytest.mark.integration
+
+    REPO: Path = Path("/integration/repo")
+    GIT_URL = "https://github.com/o/n.git"
+    BRANCH = "main"
+
+    def setUp(self) -> None:
+        self._db_dir: Path = Path(tempfile.mkdtemp(prefix="todo-int-"))
+        (self._db_dir / "config.json").write_text(
+            '{"todo_storage": "sqlite://$TODOBASEDIR/sqlite.db"}\n', encoding="utf-8"
+        )
+        self.repo: Path = self.REPO
+        self.tid: str = ""
+        self._env: Dict[str, str] = {
+            **ENV,
+            "TODO_DIR": str(self._db_dir),
+            "TODO_APPLE_NLCE_BIN": fake_nlce.install(str(self._db_dir)),
+        }
+        self.git = self._fake_git(self.BRANCH)
+        git_command.set_git(self.git)
+        self.addCleanup(git_command.reset_git)
+        self.addCleanup(todo_store.reset_store)
+        self.addCleanup(todo_db.reset_todo_dir)
+        self.addCleanup(shutil.rmtree, self._db_dir, ignore_errors=True)
+
+    def _fake_git(self, branch: str) -> "_RepoFake":
+        """One notional repo: a root, a remote, a branch, and no TODO.json in git."""
+        git = _RepoFake(branch)
+        git.expect("worktree", "list", "--porcelain", stdout=f"worktree {self.REPO}\n")
+        git.expect("rev-parse", "--show-toplevel", stdout=f"{self.REPO}\n")
+        git.expect("rev-parse", "HEAD", stdout=f"{'0' * 40}\n")
+        git.expect("remote", "get-url", stdout=f"{self.GIT_URL}\n")
+        git.expect("remote", stdout="origin\n")
+        # The store is authoritative here; nothing is committed to git.
+        git.expect("show", returncode=1)
+        git.sync()
+        return git
+
+    def on_branch(self, branch: str) -> None:
+        """Tell the fake which branch is checked out, as a real checkout would."""
+        self.git.checkout(branch)
+
+    # Verbs the fake actually models, so a setup call through _git is truthful.
+    BRANCH_VERBS = frozenset({"checkout", "branch", "show-ref"})
+    # Accepted and recorded, but they create no history: nothing in this harness
+    # reads the commit graph, because the store is what the tests assert on.
+    NO_HISTORY_VERBS = frozenset({"commit", "add"})
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Setup-only git, limited to what the fake can answer honestly.
+
+        A verb that would need real history or a real worktree raises instead of
+        quietly succeeding, because a test that passes against a fiction is
+        worse than one that fails.
+        """
+        verb = args[0] if args else ""
+        if verb in self.NO_HISTORY_VERBS:
+            self.git.calls.append((self.repo, tuple(args)))
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        if verb in self.BRANCH_VERBS:
+            return self.git.run(self.repo, *args)
+        raise AssertionError(
+            "TodoIntegrationCase models branches only; `git "
+            f"{' '.join(args)}` needs a real repo, so this test belongs on "
+            "TodoCase"
+        )
+
+    def todo(
+        self, *args: str, cwd: Optional[Path] = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run todo.main() in this process; return the same shape as a subprocess.
+
+        Resets the caches a fresh process would not have: the resolved todo dir,
+        the store handle, the repo-key map and the gh gate.
+        """
+        del cwd  # git is faked, so the working directory decides nothing here
+        argv = [str(a) for a in args]
+        todo_store.reset_store()
+        todo_db.reset_todo_dir()
+        todo._REPO_KEY_CACHE.clear()
+        todo._GH_GATE["disabled"] = None
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.dict(os.environ, self._env, clear=True):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    code = todo.main(argv)
+                except SystemExit as exc:  # argparse usage errors
+                    code = exc.code if isinstance(exc.code, int) else 1
+        return subprocess.CompletedProcess(
+            argv, code or 0, out.getvalue(), err.getvalue()
+        )
+
+    def write_ticket(
+        self,
+        branch: str,
+        ticket_id: str,
+        summary: str = "x",
+        *,
+        body: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
+    ) -> None:
+        """Seed a ticket through import-json, in-process, with no branch to cut."""
+        del commit  # nothing is committed to git in this harness
+        ticket: Dict[str, Any] = {
+            "Id": ticket_id,
+            "Branch": branch,
+            "State": {"init": {}},
+            "Summary": {"raw": summary},
+        }
+        if body:
+            ticket["Body"] = {"raw": body}
+        if extra:
+            ticket.update(extra)
+        self.tid = ticket_id
+        self.on_branch(branch)
+        seed = self._db_dir / f"seed-{ticket_id[:8]}.json"
+        seed.write_text(json.dumps(ticket), encoding="utf-8")
+        proc = self.todo("import-json", f"--from-json={seed}")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        ticket_id = proc.stdout.strip()
-        self.assertRegex(ticket_id, HEX64)
-        return ticket_id
+        seed.unlink()
 
 
-class MintTests(TodoCase):
+class MintTests(TodoIntegrationCase):
     def test_mint_prints_64_lowercase_hex(self) -> None:
         self.assertRegex(self.mint(), HEX64)
 
     def test_mint_is_unique_across_calls(self) -> None:
         self.assertNotEqual(self.mint(), self.mint())
+
+
+class MintOutsideRepoTests(TodoCase):
+    """Whether cwd is a repo at all is a real-git question, so it stays on e2e."""
 
     def test_mint_outside_git_repo_errors_cleanly(self) -> None:
         nongit = Path(tempfile.mkdtemp(prefix="todo-nongit-"))
@@ -292,7 +505,7 @@ class MintSetInitFlowTests(TodoCase):
         self.assertEqual(out2["worktree"], out["worktree"])
 
 
-class ReadTests(TodoCase):
+class ReadTests(TodoIntegrationCase):
     def test_read_committed_by_8hex_prefix(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-demo", tid)
@@ -406,7 +619,7 @@ class LocalFirstTests(TodoCase):
         self.assertNotIn("fetch failed", proc.stderr)
 
 
-class CliTests(TodoCase):
+class CliTests(TodoIntegrationCase):
     def test_no_subcommand_is_usage_error(self) -> None:
         proc = self.todo()
         self.assertEqual(proc.returncode, 2)
@@ -464,7 +677,7 @@ class InitTests(TodoCase):
         self.assertEqual(self.todo("ls").stdout.strip(), "")
 
 
-class SetStateViaSetTests(TodoCase):
+class SetStateViaSetTests(TodoIntegrationCase):
     def test_set_state_flag_replaces_set_state_subcommand(self) -> None:
         """`set --state` transitions State; the old `set-state` subcommand is gone."""
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -478,7 +691,7 @@ class SetStateViaSetTests(TodoCase):
         self.assertNotEqual(gone.returncode, 0)
 
 
-class RmTests(TodoCase):
+class RmTests(TodoIntegrationCase):
     def test_rm_soft_deletes_from_store(self) -> None:
         """`todo rm` tombstones the todo; it is no longer readable by id."""
         self._git("commit", "--allow-empty", "-qm", "seed")
@@ -537,7 +750,7 @@ class AddSubtodoTests(TodoCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
 
 
-class FieldAndWorkItemTests(TodoCase):
+class FieldAndWorkItemTests(TodoIntegrationCase):
     def test_set_updates_top_level_editable_fields(self) -> None:
         tid = self.mint()
         self.write_ticket(f"{tid[:8]}-fields", tid)
@@ -579,7 +792,7 @@ class FieldAndWorkItemTests(TodoCase):
         self.assertEqual(second, {"kind": "task", "summary": "second item", "done": False})
 
 
-class NoteTests(TodoCase):
+class NoteTests(TodoIntegrationCase):
     """note-add / note-read: status-free facts, addressed by objid, no cursor."""
 
     def test_note_add_prints_the_new_objid_and_it_round_trips(self) -> None:
@@ -820,7 +1033,7 @@ class NoteTests(TodoCase):
         self.assertEqual(["first-v2"], [n["raw"] for n in self.read_cur()["Notes"]])
 
 
-class ReltoTests(TodoCase):
+class ReltoTests(TodoIntegrationCase):
     """relto-add / relto-remove / relto-read: one host-addressed family serving
     Body, a Notes element and a WorkItems element alike, not a per-kind one."""
 
@@ -1087,7 +1300,7 @@ class PathTests(TodoCase):
         self.assertNotIn("Subtickets", loaded)
 
 
-class GetCommandTests(TodoCase):
+class GetCommandTests(TodoIntegrationCase):
     """`get` is a friendly-field wrapper that expands to `get-json-path`."""
 
     def test_get_summary_matches_get_json_path(self) -> None:
@@ -1840,7 +2053,7 @@ class LogTests(TodoCase):
         self.assertIn("feat: verbose work", verbose.stdout)
 
 
-class SearchTests(TodoCase):
+class SearchTests(TodoIntegrationCase):
     def _emb_rows(self) -> list:
         """Return (ticket_id, field_path, embedder) rows straight from sqlite."""
         conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
@@ -3195,7 +3408,7 @@ class WorkItemInvariantTests(TodoCase):
         self.assertTrue(any("BaseSha" in w for w in payload["warnings"]))
 
 
-class WorkItemAddressingTests(TodoCase):
+class WorkItemAddressingTests(TodoIntegrationCase):
     """Naming one work item by index or objid, and moving one within the plan."""
 
     def _plan(self, *summaries: str) -> None:
@@ -3435,7 +3648,7 @@ class WorkItemAddressUnitTests(unittest.TestCase):
                 todo._workitem_index_by_number(items, address)
 
 
-class NoCommitDispositionTests(TodoCase):
+class NoCommitDispositionTests(TodoIntegrationCase):
     """checkpoint / blocked / obsolete: one close mechanism, three claims.
 
     The claims differ and are tested per command; what is asserted here is that
@@ -3645,7 +3858,7 @@ class WorkItemObsoleteTests(TodoCase):
                 )
 
 
-class BaseDirRepoDirTests(TodoCase):
+class BaseDirRepoDirTests(TodoIntegrationCase):
     def test_basedir_prints_resolved_todo_dir(self) -> None:
         self.todo("init", "--summary=seed the db")  # ensure the db dir is materialized
         proc = self.todo("basedir")
@@ -3671,7 +3884,7 @@ def _tag_raws(todo_dict: Dict[str, Any]) -> list:
     return [e["raw"] for e in todo_dict.get("Tag", [])]
 
 
-class TagTests(TodoCase):
+class TagTests(TodoIntegrationCase):
     """set --tag/--untag and search --tag against the plural Tag field.
 
     Adjusted for ee1799aa (WI6): `set --tag`/`--untag` now alias
@@ -4056,7 +4269,7 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
         self.assertFalse(again["changed"])
 
 
-class PrStateCliTests(TodoCase):
+class PrStateCliTests(TodoIntegrationCase):
     """`set --state merged --pr N` / `--state rejected`, and FINAL hiding rejected."""
 
     def test_merged_with_pr_number(self) -> None:
@@ -4131,7 +4344,7 @@ class ParseStateFilterUnitTests(unittest.TestCase):
             todo.parse_state_filter("BOGUS")
 
 
-class StateFilterTests(TodoCase):
+class StateFilterTests(TodoIntegrationCase):
     """Default FINAL hiding plus the -s / --states model on ls."""
 
     def _seed(self, state: str, name: str) -> str:
@@ -4200,7 +4413,31 @@ class StateFilterTests(TodoCase):
         self.assertIn(ready[:8], self.todo("ls", "-s").stdout)
 
 
-class ObjidWiringTests(TodoCase):
+class SubtodoObjidScopeTests(TodoCase):
+    """add-subtodo cuts a real child branch, so objid scoping is checked on e2e."""
+
+    @staticmethod
+    def _objids(record: Any) -> list:
+        return ObjidWiringTests._objids(record)
+
+    def test_subtodo_is_a_separate_id_scope(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=parent")
+        parent_id = self.tid
+        self.todo("work-item-add", parent_id, "--summary=spawn a child")
+        proc = self.todo("add-subtodo", parent_id, "--summary=child")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_id = json.loads(proc.stdout)["Id"]
+        child = json.loads(self.todo("read", child_id).stdout)
+        # The child counts from scratch rather than continuing the parent's
+        # sequence: its own ids start at 0000 and its cursor is back near zero.
+        self.assertEqual("0000", min(self._objids(child)))
+        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
+        parent = json.loads(self.todo("read", parent_id).stdout)
+        self.assertEqual("0000", min(self._objids(parent)))
+
+
+class ObjidWiringTests(TodoIntegrationCase):
     """Every persisted record carries objids, stamped at the write choke point."""
 
     @staticmethod
@@ -4273,22 +4510,6 @@ class ObjidWiringTests(TodoCase):
         highest = max(int(objid, 16) for objid in self._objids(todo_json))
         self.assertGreater(todo_json["_nextobjid"], highest)
 
-    def test_subtodo_is_a_separate_id_scope(self) -> None:
-        self._git("commit", "--allow-empty", "-qm", "seed")
-        self.init_ok("--summary=parent")
-        parent_id = self.tid
-        self.todo("work-item-add", parent_id, "--summary=spawn a child")
-        proc = self.todo("add-subtodo", parent_id, "--summary=child")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        child_id = json.loads(proc.stdout)["Id"]
-        child = json.loads(self.todo("read", child_id).stdout)
-        # The child counts from scratch rather than continuing the parent's
-        # sequence: its own ids start at 0000 and its cursor is back near zero.
-        self.assertEqual("0000", min(self._objids(child)))
-        self.assertLessEqual(child["_nextobjid"], len(self._objids(child)))
-        parent = json.loads(self.todo("read", parent_id).stdout)
-        self.assertEqual("0000", min(self._objids(parent)))
-
     def test_doctor_accepts_nextobjid(self) -> None:
         self.init_ok("--summary=hello")
         proc = self.todo("doctor", self.tid)
@@ -4296,7 +4517,7 @@ class ObjidWiringTests(TodoCase):
         self.assertNotIn("unknown top-level fields", proc.stdout)
 
 
-class LongSummaryTests(TodoCase):
+class LongSummaryTests(TodoIntegrationCase):
     """LongSummary: a derived, reader-first summary of Body -- and NOT coupled to it."""
 
     def test_absent_by_default(self) -> None:
@@ -4395,7 +4616,7 @@ class LongSummaryDoctorAndViewTests(TodoCase):
         self.assertNotIn("Long summary", self.todo("web", "--dump-html", self.tid).stdout)
 
 
-class ResolveUrlTests(TodoCase):
+class ResolveUrlTests(TodoIntegrationCase):
     """resolveurl dereferences a permalink to the value it addresses."""
 
     def _seed(self) -> Dict[str, Any]:
@@ -4555,7 +4776,7 @@ class PermalinkAnchorTests(TodoCase):
         self.assertEqual(len(anchors), len(set(anchors)), anchors)
 
 
-class ObjidDoctorTests(TodoCase):
+class ObjidDoctorTests(TodoIntegrationCase):
     """doctor hard-fails a record whose objids were broken outside todo.py."""
 
     def _corrupt(self, mutate) -> None:

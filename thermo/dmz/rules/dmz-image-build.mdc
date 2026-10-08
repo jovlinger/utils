@@ -1,0 +1,11 @@
+---
+description: After DMZ image changes, always build the image; user writes to SD
+alwaysApply: false
+---
+
+# DMZ image build
+
+When you change anything that affects the Pi 1B bootable image (e.g. `thermo/dmz/image/create-image.sh`, `thermo/dmz/install/dmz-init.start`, `thermo/dmz/install/*`, `thermo/dmz/Dockerfile`, overlay/apkovl logic), **always** build the image after the change. Do not leave it to the user.
+
+- **Command:** From repo root: `thermo/dmz/image/create-image.sh --output /tmp/dmz-test.img` (or from `thermo/dmz/image`: `./create-image.sh --output /tmp/dmz-test.img`).
+- **Output:** Image at `/tmp/dmz-test.img`. Tell the user it is ready; they will write it to SD card themselves.

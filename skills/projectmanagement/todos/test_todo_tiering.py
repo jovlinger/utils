@@ -59,11 +59,7 @@ class TierClassificationTest(unittest.TestCase):
             tier = tiering.tier_for(cls, _declared(cls))
             if tier != "unit":
                 continue
-            try:
-                src = inspect.getsource(cls)
-            except OSError:  # pragma: no cover - source always available here
-                continue
-            found = sorted(n for n in tiering.HEAVY_NAMES if n in src)
+            found = tiering.heavy_names_used(cls)
             with self.subTest(cls=f"{where}::{cls.__name__}"):
                 self.assertEqual(
                     [], found,
