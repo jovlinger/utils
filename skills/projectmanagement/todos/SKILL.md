@@ -37,8 +37,9 @@ tool feature; agents do not need to know it. Legacy `TODO.json` is import-only.
 | MIDCAP | Default workhorse | Sonnet-class (e.g. Sonnet 5) |
 | LOCAP | Small/fast/cheap | Haiku-class (e.g. Haiku 4.5) |
 
-Tag WorkItems / subtodos `[HICAP]` / `[MIDCAP]` / `[LOCAP]`. Full tier rules and
-the Cursor model map: [`GROOMING.md`](GROOMING.md#capability-tiers).
+Tag WorkItems / subtodos `[HICAP]` / `[MIDCAP]` / `[LOCAP]`. In Cursor, the HICAP
+choice is Grok 4.6 at high effort with Fast off. Full tier rules, the Claude
+anchors, and that choice: [`GROOMING.md`](GROOMING.md#capability-tiers).
 
 ## Intent router
 

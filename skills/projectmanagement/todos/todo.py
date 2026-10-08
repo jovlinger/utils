@@ -2061,12 +2061,12 @@ def resolve_ticket_by_id(root: Path, query: str) -> tuple[str, JsonDict]:
         locations: str = ", ".join(loc for loc, _ in matches)
         raise TodoError(f"ambiguous id {query!r}; matches on: {locations}")
     loc, ticket = matches[0]
-    # Complain when the resolved todo lives in a different repo than the CWD.
+    # Complain when this ticket's implementation repo is not the CWD repo.
     current = repo_key(root)
     other = loc.rsplit(":", 1)[0]
     if ":" in loc and other not in {"worktree", current} and "/" in other:
         print(
-            f"todo: {query!r} lives in {other}, not the current repo {current}",
+            f"todo: implementation of {query!r} is in {other}, not the current repo {current}",
             file=sys.stderr,
         )
     return matches[0]

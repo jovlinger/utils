@@ -51,6 +51,12 @@ Nano / Flash variants drop one tier unless the WorkItem is already LOCAP.
 
 Refresh this table when Cursor's model lineup shifts; the Claude anchors stay.
 
+### Cursor HICAP choice
+
+When the work runs in Cursor, pick **Grok 4.6 at high effort with Fast off**. That is the HICAP selection for this tier. It is the lowest token rate on the HICAP row and, on Pro, draws from the larger Cursor Models pool at $2 / $0.50 cached / $6 per million input, cache-read, and output tokens.
+
+Fast is the Pro default and is not this choice: it doubles those rates ($4 / $1 / $12) and, like other Fast variants, drops a tier. Grok 4.6 at medium or daily effort stays MIDCAP. Claude Fable 5, Claude Opus 5, GPT-5.6 Sol, and GPT-5.5 stay on the HICAP row as shape anchors; they bill from the smaller Other Models pool at their API rates. The Claude examples table above stays the stable reference.
+
 Rules:
 
 1. **Default MIDCAP.** Escalate/de-escalate on shape, not importance theater.
