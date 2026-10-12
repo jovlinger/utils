@@ -423,8 +423,9 @@ that gets fixed lands as a WorkItem on this todo (`work-item-add`, then
 | 4 | Fix EVERY Copilot finding now, push, re-request the Copilot review | HICAP fixer (Opus-class) | one commit per finding, why-per-file messages; deferring a finding to a later todo needs the user's explicit yes in chat first -- never a unilateral "tracked as todo:X" |
 | 5 | Re-review the branch after the fixes | HICAP reviewer (Fable-class) | exit gate; loop to 3 only if step 4 changed behavior, not wording |
 
-Within HICAP the reviewer is the most capable model available (Fable-class) and the
-fixer is the HICAP workhorse (Opus-class). Tiers: [`GROOMING.md`](GROOMING.md#capability-tiers).
+Within HICAP the Claude mapping stays reviewer = Fable-class and fixer = Opus-class.
+In Cursor, both roles use the [Cursor HICAP choice](GROOMING.md#cursor-hicap-choice):
+Grok 4.6 at high effort with Fast off. Tiers: [`GROOMING.md`](GROOMING.md#capability-tiers).
 
 **Practice what you preach: self-review resolves its own citations.** When steps 1 or 5 touch
 a skill, rule, or doc file that cites a file path, a symbol, or a line number, resolving those

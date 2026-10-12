@@ -42,6 +42,19 @@ destructive reset, mass delete, prod deploy, broad irreversible data rewrite,
 and similar). That is not confirmation theater: name the risk in one line and
 wait. If the user already ordered that exact risky step, do not re-confirm.
 
+### P0: deletion needs an explicit confirmation
+
+Deletion is not covered by the "already ordered" exception above, and it
+overrides "do not ask, just do." Do not delete, clean, uninstall, or remove
+files, caches, packages, or installed tools until the user confirms that exact
+deletion. "I don't want X", "dead end", or "reclaim space" is not a delete
+order. A shell allowlist is not confirmation.
+
+If the user said not to update, write, or delete ("make no changes",
+"investigate only", "read only"), that ban stays in force on later turns. A
+later complaint does not lift it. State the paths and commands, then wait.
+See `confirm-before-deletion.mdc`.
+
 ## P1: after two failures, ask
 
 If the same concrete step fails twice (missing tool/path, wrong flags, empty

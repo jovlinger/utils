@@ -55,11 +55,15 @@ def exclusive_store_lock(shadir: str) -> Iterator[None]:
 
     Reentrant in the holding process so a command can lock around a helper that
     also locks. A second process blocks until the holder releases it.
+
+    The lock lives under ``data/`` because the store root is often not writable
+    by the user who can already create and unlink blobs there.
     """
     global _store_lock_depth, _store_lock_fh
     if _store_lock_depth == 0:
-        os.makedirs(shadir, exist_ok=True)
-        fh = open(os.path.join(shadir, LOCK_NAME), "a+")
+        lock_dir = os.path.join(shadir, DATA_DIR_NAME)
+        os.makedirs(lock_dir, exist_ok=True)
+        fh = open(os.path.join(lock_dir, LOCK_NAME), "a+")
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         _store_lock_fh = fh
     _store_lock_depth += 1
@@ -439,7 +443,6 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recurse into child paths"
     )
     p_rm.add_argument(
-        "-n",
         "--dry-run",
         action="store_true",
         help="Print paths and blobs that would be removed and change nothing",
@@ -463,10 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
         description=gc_help,
     )
     p_gc.add_argument(
-        "-n",
         "--dry-run",
         action="store_true",
-        help="Print blobs that would be unlinked and change nothing",
+        help=(
+            "Print each unreferenced blob and the soft-deleted paths that name it, "
+            "and change nothing"
+        ),
     )
 
     p_rmhash = sub.add_parser(
@@ -3106,18 +3111,48 @@ def unreferenced_blob_digests(conn: sqlite3.Connection, shadir: str) -> list[str
     return orphaned
 
 
+def soft_deleted_paths_for_hash(conn: sqlite3.Connection, digest: str) -> list[str]:
+    """Stored paths marked deleted that still name *digest*, in path order."""
+    rows = conn.execute(
+        """
+        SELECT root_rel, dirpath, filename
+        FROM stored_files
+        WHERE shasum = ? AND deleted = 1
+        ORDER BY root_rel, dirpath, filename
+        """,
+        (digest,),
+    ).fetchall()
+    paths: list[str] = []
+    seen: set[str] = set()
+    for root_rel, dirpath, filename in rows:
+        path = _stored_path_from_parts(root_rel, dirpath, filename)
+        if path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
 def handle_gc(conn: sqlite3.Connection, shadir: str, *, dry_run: bool) -> None:
     """Unlink every blob with no live reference.
 
     This is the whole store, not the target of one ``rm``. It does not mark
-    paths deleted.
+    paths deleted. ``--dry-run`` prints each digest with the soft-deleted
+    paths that still name it, so the hash can be recognized.
     """
     with exclusive_store_lock(shadir):
         orphaned = unreferenced_blob_digests(conn, shadir)
+        if dry_run:
+            for digest in orphaned:
+                paths = soft_deleted_paths_for_hash(conn, digest)
+                if not paths:
+                    out_csv(["gc", digest, ""])
+                    continue
+                for path in paths:
+                    out_csv(["gc", digest, path])
+            return
         for digest in orphaned:
             out_csv(["gc", digest])
-        if dry_run:
-            return
         removed = 0
         for digest in orphaned:
             remaining = conn.execute(
