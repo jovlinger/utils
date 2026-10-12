@@ -1,0 +1,18 @@
+# Render reads a blueprint from the repository root. Copy this file to
+# the repo root before using "New Blueprint", or run `render_exit_util up`,
+# which creates the same service through the API.
+services:
+  - type: web
+    name: tailscale-exit
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: master
+    rootDir: render_exit/render
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: false
+    envVars:
+      - key: TS_AUTHKEY
+        sync: false
