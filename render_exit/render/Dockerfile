@@ -1,6 +1,7 @@
 # Userspace Tailscale on Render's free tier.
 # No /dev/net/tun and no iptables: containerboot runs with TS_USERSPACE
-# (tailscaled --tun=userspace-networking) and --netfilter-mode=off.
+# (tailscaled --tun=userspace-networking). Current tailscaled has no
+# --netfilter-mode flag; userspace mode does not use netfilter.
 # Tailscale Serve publishes the egress proxies on the node's 100.x address.
 # tailscaled's own SOCKS/HTTP listeners are left unset; those proxies enter
 # the tailnet, and this image needs the opposite direction.
@@ -26,7 +27,6 @@ ENV TS_KUBE_SECRET="" \
     TS_ACCEPT_DNS=false \
     TS_AUTH_ONCE=false \
     TS_EXTRA_ARGS=--advertise-tags=tag:render \
-    TS_TAILSCALED_EXTRA_ARGS=--netfilter-mode=off \
     HOME=/tmp/tailscale \
     SOCKS_PORT=1080 \
     HTTP_PROXY_PORT=1055

@@ -4,7 +4,7 @@
 Render free containers have no /dev/net/tun and no root netfilter, so this
 is not a kernel exit node. ``up`` deploys ``render_exit/render`` as a free web
 service. tailscaled runs with userspace networking
-(``--tun=userspace-networking``, ``--netfilter-mode=off``). Tailscale Serve
+(``--tun=userspace-networking``). Tailscale Serve
 publishes a SOCKS5 proxy on port 1080 and an HTTP proxy on port 1055 at the
 node's 100.x address. Clients on the tailnet connect there; the container
 dials the public internet, so the far side sees Render's address.

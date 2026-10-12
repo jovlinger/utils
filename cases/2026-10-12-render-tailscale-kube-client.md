@@ -29,3 +29,7 @@ Push the utils commit, then `render_exit_util up --deploy`. A push alone does no
 ## Discussion
 
 The same boot line shows up on Azure Container Apps, which also exports `KUBERNETES_SERVICE_HOST` without a usable service-account mount. Blanking only `TS_KUBE_SECRET` is enough to skip the client. Blanking `KUBERNETES_SERVICE_HOST` as well avoids the other Kubernetes-only branches in `containerboot`.
+
+After the kube-client crash was fixed, the next boot died with `flag provided but not defined: -netfilter-mode`, then `timed out waiting for tailscaled socket`. `TS_TAILSCALED_EXTRA_ARGS=--netfilter-mode=off` was passed to current `tailscaled`, which no longer has that flag. Userspace mode (`TS_USERSPACE=true`) already skips netfilter, so the extra arg was removed.
+
+A later `render_exit_util up` can report `service did not publish a tailnet address (The read operation timed out)` while the service is still on this failed deploy. `up` starts a build on create, and on an existing service only when the auth key changed or `--deploy` is set. The failed deploy `dep-db6mr9ui0phs73d5s4e0` was commit `sha:9e5ffbb` (`new`). The kube fix is `sha:fd631a1` (`fixcrash`). Health checks hit Render's public URL, the instance is not listening, and the client read times out.
