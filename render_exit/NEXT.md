@@ -75,15 +75,19 @@ Lock the file.
 
 ## 6. Publish
 
-From the utils checkout, push. Render builds the pushed branch, directory `render_exit/render`.
+From the utils checkout, push. This only puts the commit on GitHub.
 
     git push
 
 ## 7. Bring it up
 
-Create or wake service `tailscale-exit` and print the tailnet address.
+`up` creates service `tailscale-exit` if it is missing. That call tells Render to build `render_exit/render` on the pushed branch.
 
     render_exit_util up
+
+A later `git push` does not rebuild. This starts a new build of the already-pushed branch.
+
+    render_exit_util up --deploy
 
 Run the curl it prints, with that address. The answer should be Render's public IP.
 
