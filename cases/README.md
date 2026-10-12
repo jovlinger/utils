@@ -10,5 +10,6 @@ Each CASE is one incident. Read the CASE skill before writing or applying one:
 | File | One line |
 |------|----------|
 | [2026-08-11-gmk-minidsp-cifs.md](2026-08-11-gmk-minidsp-cifs.md) | Volumio/SHD lost gmk Samba; zombie CIFS (last FLACs ~Aug 6–7) |
+| [2026-10-12-render-tailscale-kube-client.md](2026-10-12-render-tailscale-kube-client.md) | Render Tailscale containerboot exits looking for a kube service account |
 
 Copy [TEMPLATE.md](TEMPLATE.md) for a new file. Name: `YYYY-MM-DD-short-slug.md`.

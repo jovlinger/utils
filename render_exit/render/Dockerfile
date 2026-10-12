@@ -17,7 +17,8 @@ COPY --chown=ts:ts render_proxy.py /usr/local/bin/render-proxy.py
 COPY --chown=ts:ts entrypoint.sh /usr/local/bin/render-entrypoint.sh
 RUN chmod 755 /usr/local/bin/render-proxy.py /usr/local/bin/render-entrypoint.sh
 
-ENV TS_USERSPACE=true \
+ENV TS_KUBE_SECRET="" \
+    TS_USERSPACE=true \
     TS_STATE_DIR=/tmp/tailscale \
     TS_SOCKET=/tmp/tailscale/tailscaled.sock \
     TS_SERVE_CONFIG=/config/serve.json \
