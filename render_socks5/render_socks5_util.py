@@ -13,10 +13,12 @@ dials the public internet, so the far side sees Render's address.
     render_socks5_util down
 
 ``down`` suspends the service. An ephemeral node then drops off the tailnet.
-A free instance also sleeps after 15 minutes without an HTTP request to its
-public URL. ``up`` wakes it, checks that the SOCKS port accepts a connection,
-and starts a new build when it does not. Pass nothing. A failure exits
-non-zero.
+A free instance also sleeps after 15 minutes without an inbound request on
+its public URL. Tailscale clients do not hit that URL, so a proxy connection
+requests it, and repeats every 4 minutes while the connection stays open.
+``up`` wakes a sleeping service, checks that the SOCKS port accepts a
+connection, and starts a new build when it does not. Pass nothing. A failure
+exits non-zero.
 
 Keys live in the environment or in ~/.config/render_socks5_util/config.json
 (mode 0600). Environment variables win.

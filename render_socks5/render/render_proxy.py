@@ -5,6 +5,11 @@ SOCKS5 on $SOCKS_PORT (1080) and an HTTP proxy on $HTTP_PROXY_PORT (1055)
 dial the public internet with normal sockets. Tailscale Serve publishes
 those ports on the node 100.x address. $PORT (Render sets this) serves
 /healthz so the free web service has an HTTP listener.
+
+Render sleeps a free web service 15 minutes after the last inbound request
+on its public URL. Tailscale traffic does not arrive there. While a proxy
+connection is open, this process GETs $RENDER_EXTERNAL_URL/healthz so that
+clock resets, and repeats that every few minutes until the client leaves.
 """
 
 from __future__ import annotations
@@ -17,7 +22,9 @@ import socketserver
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional, Sequence, Tuple
 
@@ -88,8 +95,100 @@ def _socks_reply(conn: socket.socket, rep: int) -> None:
     conn.sendall(bytes((5, rep, 0, 1, 0, 0, 0, 0, 0, 0)))
 
 
+# Render's free-tier idle window is 15 minutes. Ping well inside it.
+KEEPALIVE_INTERVAL: float = 4 * 60
+
+
+class _ProxyActivity:
+    """Tracks proxy connections so the public-URL ping runs only while used."""
+
+    def __init__(self) -> None:
+        self._open = 0
+        self._since_ping = False
+        self._cond = threading.Condition()
+
+    def enter(self) -> None:
+        with self._cond:
+            self._open += 1
+            self._since_ping = True
+            self._cond.notify_all()
+
+    def leave(self) -> None:
+        with self._cond:
+            if self._open > 0:
+                self._open -= 1
+
+    def wants_ping(self) -> bool:
+        with self._cond:
+            return self._open > 0 or self._since_ping
+
+    def note_ping(self) -> None:
+        with self._cond:
+            self._since_ping = False
+
+    def wait_for_work(self, timeout: float) -> None:
+        with self._cond:
+            if self._open > 0 or self._since_ping:
+                return
+            self._cond.wait(timeout)
+
+
+_activity = _ProxyActivity()
+
+
+def public_keepalive_url() -> Optional[str]:
+    """Public /healthz URL, or None when Render did not set one."""
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if not base:
+        return None
+    return base + "/healthz"
+
+
+def fetch_public(url: str) -> None:
+    """GET url. The request has to leave the container and come back through Render's edge."""
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read(65536)
+
+
+def run_keepalive(
+    url: str,
+    fetch: Callable[[str], None],
+    interval: float,
+    stop: threading.Event,
+    activity: _ProxyActivity,
+) -> None:
+    """Request url soon after proxy use, then every interval while use continues."""
+    last = 0.0
+    while not stop.is_set():
+        if not activity.wants_ping():
+            activity.wait_for_work(0.5)
+            continue
+        remaining = interval - (time.monotonic() - last)
+        if remaining > 0:
+            if stop.wait(remaining):
+                return
+            continue
+        try:
+            fetch(url)
+        except (OSError, urllib.error.URLError) as exc:
+            print(f"keepalive: {url} failed: {exc}", flush=True)
+        else:
+            print(f"keepalive: {url}", flush=True)
+        last = time.monotonic()
+        activity.note_ping()
+
+
 def handle_socks(conn: socket.socket) -> None:
     """Serve one SOCKS5 CONNECT (no authentication)."""
+    _activity.enter()
+    try:
+        _serve_socks(conn)
+    finally:
+        _activity.leave()
+
+
+def _serve_socks(conn: socket.socket) -> None:
     conn.settimeout(30)
     try:
         header = _read_exact(conn, 2)
@@ -157,6 +256,14 @@ def _read_headers(conn: socket.socket) -> bytes:
 
 def handle_http_proxy(conn: socket.socket) -> None:
     """Serve one HTTP proxy request (CONNECT, or an absolute-form GET)."""
+    _activity.enter()
+    try:
+        _serve_http_proxy(conn)
+    finally:
+        _activity.leave()
+
+
+def _serve_http_proxy(conn: socket.socket) -> None:
     conn.settimeout(30)
     try:
         raw = _read_headers(conn)
@@ -312,6 +419,13 @@ def _cached_ip(socket_path: Optional[str]) -> Optional[str]:
 
 def main() -> None:
     servers = start_servers()
+    url = public_keepalive_url()
+    if url:
+        threading.Thread(
+            target=run_keepalive,
+            args=(url, fetch_public, KEEPALIVE_INTERVAL, threading.Event(), _activity),
+            daemon=True,
+        ).start()
     threads = []
     for server in servers:
         thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -8,6 +8,7 @@ import json
 import socket
 import sys
 import threading
+import time
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -474,3 +475,108 @@ def test_socks_and_http_proxy_and_health() -> None:
         for server in servers:
             server.shutdown()
             server.server_close()
+
+
+def test_public_keepalive_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert render_proxy.public_keepalive_url() is None
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://example.onrender.com/")
+    assert render_proxy.public_keepalive_url() == "https://example.onrender.com/healthz"
+
+
+def test_keepalive_stays_quiet_when_idle() -> None:
+    activity = render_proxy._ProxyActivity()
+    stop = threading.Event()
+    seen: list[str] = []
+
+    def fetch(url: str) -> None:
+        seen.append(url)
+
+    thread = threading.Thread(
+        target=render_proxy.run_keepalive,
+        args=("https://example.test/healthz", fetch, 60, stop, activity),
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.3)
+    stop.set()
+    thread.join(2)
+    assert seen == []
+    assert not thread.is_alive()
+
+
+def test_keepalive_pings_after_a_short_connection() -> None:
+    activity = render_proxy._ProxyActivity()
+    stop = threading.Event()
+    seen: list[str] = []
+
+    def fetch(url: str) -> None:
+        seen.append(url)
+        stop.set()
+
+    activity.enter()
+    activity.leave()
+    thread = threading.Thread(
+        target=render_proxy.run_keepalive,
+        args=("https://example.test/healthz", fetch, 60, stop, activity),
+        daemon=True,
+    )
+    thread.start()
+    thread.join(2)
+    assert seen == ["https://example.test/healthz"]
+    assert activity.wants_ping() is False
+
+
+def test_keepalive_repeats_while_a_connection_stays_open() -> None:
+    activity = render_proxy._ProxyActivity()
+    stop = threading.Event()
+    seen: list[str] = []
+
+    def fetch(url: str) -> None:
+        seen.append(url)
+        if len(seen) >= 2:
+            stop.set()
+
+    activity.enter()
+    try:
+        thread = threading.Thread(
+            target=render_proxy.run_keepalive,
+            args=("https://example.test/healthz", fetch, 0.05, stop, activity),
+            daemon=True,
+        )
+        thread.start()
+        thread.join(2)
+    finally:
+        activity.leave()
+    assert len(seen) >= 2
+
+
+def test_socks_accept_arms_keepalive() -> None:
+    previous = render_proxy._activity
+    render_proxy._activity = render_proxy._ProxyActivity()
+    servers = render_proxy.start_servers(
+        host="127.0.0.1",
+        http_port=0,
+        socks_port=0,
+        proxy_port=0,
+        ip_lookup=lambda: None,
+    )
+    threads = []
+    for server in servers:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        threads.append(thread)
+    try:
+        socks_port = servers[1].server_address[1]
+        with socket.create_connection(("127.0.0.1", socks_port)) as socks:
+            socks.sendall(b"\x05\x01\x00")
+            socks.recv(2)
+        deadline = time.monotonic() + 2
+        while render_proxy._activity.wants_ping() is False and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert render_proxy._activity.wants_ping() is True
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        render_proxy._activity = previous
