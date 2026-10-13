@@ -1,4 +1,6 @@
-# Per repo convention: venv lives in env/ and is not committed
+# Generated virtualenv stays local. Commit only the .venv/README.md marker.
 env
-.venv
+.venv/*
+!.venv/README.md
 .venv-tools/
+.pio/
