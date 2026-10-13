@@ -6,6 +6,9 @@ from typing import Any, Protocol
 
 from .api import VolumioAPI
 
+# LAN probe 2026-09-07: volumio.local did not resolve; this host did.
+HARDWIRED_VOLUMIO_HOST = "miniDSP-SHD.local"
+
 
 class Zone(Protocol):
     def get_state(self) -> dict[str, Any]:
@@ -92,3 +95,8 @@ class VolumioZone:
 
     def volume_down(self) -> None:
         self.api.volume_down()
+
+
+def hardwired_volumio_zone() -> VolumioZone:
+    """The one Volumio host this harness talks to."""
+    return VolumioZone(VolumioAPI(host=HARDWIRED_VOLUMIO_HOST))

@@ -7,7 +7,7 @@ from typing import Any
 
 from flask import Flask, Response, redirect, request
 
-from .zone import FakeZone, Zone
+from .zone import FakeZone, Zone, hardwired_volumio_zone
 
 
 def _follow_page(state: dict[str, Any]) -> str:
@@ -77,7 +77,7 @@ def create_app(zone: Zone | None = None) -> Flask:
 
 
 def main() -> None:
-    create_app().run(host="127.0.0.1", port=5000)
+    create_app(hardwired_volumio_zone()).run(host="127.0.0.1", port=5000)
 
 
 if __name__ == "__main__":
