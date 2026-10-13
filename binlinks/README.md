@@ -19,6 +19,6 @@ make binlinks
 | `todo` | `skills/projectmanagement/todos/todo.py` -- branch-bound todo ticket CLI |
 | `manage` | `thermo/dmz/manage` -- DMZ HTTP CLI |
 | `onboardctl` | `thermo/onboard/onboardctl/onboardctl` -- direct onboard debug CLI (bypasses DMZ) |
-| `render_exit_util` | `render_exit/render_exit_util.py` -- bring the Render Tailscale egress proxy up or down |
+| `render_socks5_util` | `render_socks5/render_socks5_util.py` -- bring the Render SOCKS5 proxy up or down |
 
 Agent notes (e.g. do not symlink `ingest.py`): [`AGENTS.md`](AGENTS.md).

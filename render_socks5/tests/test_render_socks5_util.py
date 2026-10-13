@@ -1,5 +1,5 @@
 # Run with, from the utils repo:
-# make -C render_exit test
+# make -C render_socks5 test
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "render"))
 sys.path.insert(0, str(ROOT))
 
 import render_proxy  # noqa: E402
-import render_exit_util  # noqa: E402
+import render_socks5_util  # noqa: E402
 
 
 class _Resp:
@@ -47,6 +47,7 @@ class FakeRender:
         self.resumes: list[str] = []
         self.suspends: list[str] = []
         self.puts: list[str] = []
+        self.roots: list[str] = []
         self.status = "live"
         self.redacted = False
 
@@ -65,7 +66,7 @@ class FakeRender:
         }
         self.services.append(service)
         self.created.append(body)
-        self.env[render_exit_util.AUTH_ENV] = body["envVars"][0]["value"]
+        self.env[render_socks5_util.AUTH_ENV] = body["envVars"][0]["value"]
         return service
 
     def retrieve(self, service_id: str) -> dict[str, Any]:
@@ -83,6 +84,10 @@ class FakeRender:
     def deploy(self, service_id: str) -> None:
         self.deploys.append(service_id)
 
+    def set_root_dir(self, service_id: str, root_dir: str) -> None:
+        self.roots.append(root_dir)
+        self.services[0]["rootDir"] = root_dir
+
     def latest_deploy_status(self, service_id: str) -> str:
         return self.status
 
@@ -95,8 +100,8 @@ class FakeRender:
         self.services[0]["suspended"] = "suspended"
 
 
-def _cfg(auth: str = "tskey-auth-test") -> render_exit_util.Config:
-    return render_exit_util.Config(
+def _cfg(auth: str = "tskey-auth-test") -> render_socks5_util.Config:
+    return render_socks5_util.Config(
         render_api_key="rnd_test",
         ts_authkey=auth,
         owner_id="own-1",
@@ -104,8 +109,12 @@ def _cfg(auth: str = "tskey-auth-test") -> render_exit_util.Config:
         repo="https://github.com/jovlinger/utils",
         branch="master",
         region="oregon",
-        root_dir="render_exit/render",
+        root_dir="render_socks5/render",
     )
+
+
+def _open(_ip: str, _port: int) -> None:
+    return
 
 
 def _health(_url: str) -> dict[str, Any]:
@@ -123,36 +132,39 @@ def _isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "RENDER_API_KEY",
         "TS_AUTHKEY",
         "RENDER_OWNER_ID",
-        "RENDER_EXIT_UTIL_NAME",
-        "RENDER_EXIT_UTIL_REPO",
-        "RENDER_EXIT_UTIL_BRANCH",
-        "RENDER_EXIT_UTIL_REGION",
+        "RENDER_SOCKS5_UTIL_NAME",
+        "RENDER_SOCKS5_UTIL_REPO",
+        "RENDER_SOCKS5_UTIL_BRANCH",
+        "RENDER_SOCKS5_UTIL_REGION",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
 def test_missing_keys_exit_2() -> None:
     with pytest.raises(SystemExit) as caught:
-        render_exit_util.main(["up"])
+        render_socks5_util.main(["up"])
     assert caught.value.code == 2
 
 
 def test_up_creates_free_web_service(capsys: pytest.CaptureFixture[str]) -> None:
     api = FakeRender()
-    code = render_exit_util.cmd_up(
-        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health
+    code = render_socks5_util.cmd_up(
+        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health, probe=_open
     )
     assert code == 0
     body = api.created[0]
     assert body["serviceDetails"]["plan"] == "free"
     assert body["serviceDetails"]["runtime"] == "docker"
     assert body["serviceDetails"]["healthCheckPath"] == "/healthz"
-    assert body["rootDir"] == "render_exit/render"
+    assert body["rootDir"] == "render_socks5/render"
     assert body["envVars"] == [{"key": "TS_AUTHKEY", "value": "tskey-auth-test"}]
     assert api.deploys == []
     out = capsys.readouterr().out
     assert "socks5: 100.1.2.3:1080" in out
-    assert "curl --socks5-hostname 100.1.2.3:1080 https://ifconfig.me" in out
+    assert (
+        "curl --connect-timeout 5 --socks5-hostname 100.1.2.3:1080 https://ifconfig.me"
+        in out
+    )
 
 
 def test_up_resumes_suspended_service_without_redeploy() -> None:
@@ -166,8 +178,8 @@ def test_up_resumes_suspended_service_without_redeploy() -> None:
         }
     )
     api.env["TS_AUTHKEY"] = "tskey-auth-test"
-    render_exit_util.cmd_up(
-        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health
+    render_socks5_util.cmd_up(
+        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health, probe=_open
     )
     assert api.created == []
     assert api.deploys == []
@@ -186,11 +198,12 @@ def test_up_rotates_auth_key() -> None:
         }
     )
     api.env["TS_AUTHKEY"] = "tskey-auth-old"
-    render_exit_util.cmd_up(
+    render_socks5_util.cmd_up(
         _cfg("tskey-auth-new"),
         api,
         poll_sleep=lambda _seconds: None,
         fetch=_health,
+        probe=_open,
     )
     assert api.puts == ["tskey-auth-new"]
     assert api.deploys == ["srv-9"]
@@ -207,18 +220,96 @@ def test_up_skips_redeploy_when_render_redacts_the_same_key(tmp_path: Path) -> N
             "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
         }
     )
-    digest = render_exit_util._sha256("tskey-auth-test")
-    state = tmp_path / ".config" / "render_exit_util"
+    digest = render_socks5_util._sha256("tskey-auth-test")
+    state = tmp_path / ".config" / "render_socks5_util"
     state.mkdir(parents=True)
     (state / "state.json").write_text(
         json.dumps({"service_id": "srv-9", "authkey_sha256": digest}),
         encoding="utf-8",
     )
-    render_exit_util.cmd_up(
-        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health
+    render_socks5_util.cmd_up(
+        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health, probe=_open
     )
     assert api.puts == []
     assert api.deploys == []
+
+
+def test_up_rebuilds_when_socks_is_closed() -> None:
+    api = FakeRender()
+    api.services.append(
+        {
+            "id": "srv-9",
+            "name": "tailscale-exit",
+            "suspended": "not_suspended",
+            "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
+        }
+    )
+    api.env["TS_AUTHKEY"] = "tskey-auth-test"
+    attempts = {"n": 0}
+
+    def probe(_ip: str, _port: int) -> None:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("cannot connect to 100.1.2.3:1080 within 5s")
+
+    render_socks5_util.cmd_up(
+        _cfg(),
+        api,
+        poll_sleep=lambda _seconds: None,
+        fetch=_health,
+        probe=probe,
+    )
+    assert api.deploys == ["srv-9"]
+
+
+def test_up_exits_when_socks_stays_closed() -> None:
+    api = FakeRender()
+    api.services.append(
+        {
+            "id": "srv-9",
+            "name": "tailscale-exit",
+            "suspended": "not_suspended",
+            "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
+        }
+    )
+    api.env["TS_AUTHKEY"] = "tskey-auth-test"
+
+    def probe(_ip: str, _port: int) -> None:
+        raise OSError("cannot connect to 100.1.2.3:1080 within 5s")
+
+    with pytest.raises(SystemExit) as caught:
+        render_socks5_util.cmd_up(
+            _cfg(),
+            api,
+            poll_sleep=lambda _seconds: None,
+            fetch=_health,
+            probe=probe,
+        )
+    assert caught.value.code == 1
+    assert api.deploys == ["srv-9"]
+
+
+def test_up_updates_root_dir_and_deploys() -> None:
+    api = FakeRender()
+    api.services.append(
+        {
+            "id": "srv-9",
+            "name": "tailscale-exit",
+            "suspended": "not_suspended",
+            "rootDir": "render_exit/render",
+            "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
+        }
+    )
+    api.env["TS_AUTHKEY"] = "tskey-auth-test"
+    render_socks5_util.cmd_up(
+        _cfg(),
+        api,
+        poll_sleep=lambda _seconds: None,
+        fetch=_health,
+        probe=_open,
+    )
+    assert api.roots == ["render_socks5/render"]
+    assert api.deploys == ["srv-9"]
 
 
 def test_down_suspends() -> None:
@@ -231,17 +322,17 @@ def test_down_suspends() -> None:
             "serviceDetails": {},
         }
     )
-    code = render_exit_util.cmd_down(_cfg(), api)
+    code = render_socks5_util.cmd_down(_cfg(), api)
     assert code == 0
     assert api.suspends == ["srv-9"]
-    code = render_exit_util.cmd_down(_cfg(), api)
+    code = render_socks5_util.cmd_down(_cfg(), api)
     assert code == 0
     assert api.suspends == ["srv-9"]
 
 
 def test_normalize_git_url() -> None:
     assert (
-        render_exit_util.normalize_git_url("git@github.com:jovlinger/utils.git")
+        render_socks5_util.normalize_git_url("git@github.com:jovlinger/utils.git")
         == "https://github.com/jovlinger/utils"
     )
 
@@ -249,16 +340,16 @@ def test_normalize_git_url() -> None:
 def test_config_file_loads_keys(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    path = tmp_path / ".config" / "render_exit_util" / "config.json"
+    path = tmp_path / ".config" / "render_socks5_util" / "config.json"
     path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps({"render_api_key": "rnd_file", "ts_authkey": "tskey-auth-file"}),
         encoding="utf-8",
     )
     path.chmod(0o644)
-    monkeypatch.setenv("RENDER_EXIT_UTIL_REPO", "https://github.com/jovlinger/utils")
-    monkeypatch.setenv("RENDER_EXIT_UTIL_BRANCH", "master")
-    cfg = render_exit_util.load_config()
+    monkeypatch.setenv("RENDER_SOCKS5_UTIL_REPO", "https://github.com/jovlinger/utils")
+    monkeypatch.setenv("RENDER_SOCKS5_UTIL_BRANCH", "master")
+    cfg = render_socks5_util.load_config()
     assert cfg.render_api_key == "rnd_file"
     assert cfg.ts_authkey == "tskey-auth-file"
     assert "chmod 600" in capsys.readouterr().err
@@ -274,7 +365,7 @@ def test_render_client_put_env_redacts_secret(
         assert json.loads(req.data.decode()) == {"value": "tskey-auth-secret"}
         return _Resp(400, b'{"message":"bad tskey-auth-secret"}')
 
-    api = render_exit_util.RenderClient("rnd_secret", opener=opener)
+    api = render_socks5_util.RenderClient("rnd_secret", opener=opener)
     with pytest.raises(SystemExit):
         api.put_env("srv-1", "TS_AUTHKEY", "tskey-auth-secret")
     err = capsys.readouterr().err
@@ -286,12 +377,12 @@ def test_render_client_get_env_404() -> None:
     def opener(req: urllib.request.Request, timeout: int = 0) -> _Resp:
         raise urllib.error.HTTPError(req.full_url, 404, "missing", {}, io.BytesIO(b""))
 
-    api = render_exit_util.RenderClient("rnd_secret", opener=opener)
+    api = render_socks5_util.RenderClient("rnd_secret", opener=opener)
     assert api.get_env("srv-1", "TS_AUTHKEY") is None
 
 
 def test_parse_up_deploy_flag() -> None:
-    args = render_exit_util.parse_args(["up", "--deploy"])
+    args = render_socks5_util.parse_args(["up", "--deploy"])
     assert args.command == "up"
     assert args.deploy is True
 

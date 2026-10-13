@@ -1,5 +1,5 @@
 # Render reads a blueprint from the repository root. Copy this file to
-# the repo root before using "New Blueprint", or run `render_exit_util up`,
+# the repo root before using "New Blueprint", or run `render_socks5_util up`,
 # which creates the same service through the API.
 services:
   - type: web
@@ -8,7 +8,7 @@ services:
     plan: free
     region: oregon
     branch: master
-    rootDir: render_exit/render
+    rootDir: render_socks5/render
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /healthz

@@ -54,15 +54,15 @@ Confirm GitHub is listed under Git Deployment Credentials.
 
 Create the config directory.
 
-    mkdir -p ~/.config/render_exit_util
+    mkdir -p ~/.config/render_socks5_util
 
 Make the directory owner-only.
 
-    chmod 700 ~/.config/render_exit_util
+    chmod 700 ~/.config/render_socks5_util
 
 Write a JSON object. `ts_authkey` is the `tskey-client-` secret, not the client id.
 
-    cat > ~/.config/render_exit_util/config.json << 'EOF'
+    cat > ~/.config/render_socks5_util/config.json << 'EOF'
     {
       "render_api_key": "rnd_...",
       "ts_authkey": "tskey-client-..."
@@ -71,7 +71,7 @@ Write a JSON object. `ts_authkey` is the `tskey-client-` secret, not the client 
 
 Lock the file.
 
-    chmod 600 ~/.config/render_exit_util/config.json
+    chmod 600 ~/.config/render_socks5_util/config.json
 
 ## 6. Publish
 
@@ -81,29 +81,19 @@ From the utils checkout, push. This only puts the commit on GitHub.
 
 ## 7. Bring it up
 
-`up` creates service `tailscale-exit` if it is missing. That call tells Render to build `render_exit/render` on the pushed branch.
+`up` wakes the proxy. If the SOCKS port does not accept a connection, it starts a new build. No flag.
 
-    render_exit_util up
+    render_socks5_util up
 
-A later `git push` does not rebuild. This starts a new build of the already-pushed branch.
+Run the curl it prints. It gives up after 5 seconds. If it fails, run `render_socks5_util up` again.
 
-    render_exit_util up --deploy
-
-Run the curl it prints, with that address. The answer should be Render's public IP.
-
-    curl --socks5-hostname 100.x.y.z:1080 https://ifconfig.me
-
-SOCKS5 is port 1080. The HTTP proxy is port 1055 on the same address.
-
-A free instance sleeps after 15 minutes with no request to its public URL. Wake it the same way.
-
-    render_exit_util up
+    curl --connect-timeout 5 --socks5-hostname 100.x.y.z:1080 https://ifconfig.me
 
 ## 8. Un-deploy
 
 Suspend the service. The ephemeral node leaves the tailnet. The service remains.
 
-    render_exit_util down
+    render_socks5_util down
 
 Delete the service. `down` does not do this. The id is the `srv-...` value that `down` prints.
 
@@ -133,4 +123,4 @@ At the bottom, choose Delete Render Account.
 
 Delete the local secrets.
 
-    rm -rf ~/.config/render_exit_util
+    rm -rf ~/.config/render_socks5_util

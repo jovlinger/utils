@@ -2,21 +2,23 @@
 """Bring a userspace Tailscale egress proxy up or down on Render's free tier.
 
 Render free containers have no /dev/net/tun and no root netfilter, so this
-is not a kernel exit node. ``up`` deploys ``render_exit/render`` as a free web
+is not a kernel exit node. ``up`` deploys ``render_socks5/render`` as a free web
 service. tailscaled runs with userspace networking
 (``--tun=userspace-networking``). Tailscale Serve
 publishes a SOCKS5 proxy on port 1080 and an HTTP proxy on port 1055 at the
 node's 100.x address. Clients on the tailnet connect there; the container
 dials the public internet, so the far side sees Render's address.
 
-    render_exit_util up
-    render_exit_util down
+    render_socks5_util up
+    render_socks5_util down
 
 ``down`` suspends the service. An ephemeral node then drops off the tailnet.
 A free instance also sleeps after 15 minutes without an HTTP request to its
-public URL. ``up`` sends that request and waits for a tailnet address.
+public URL. ``up`` wakes it, checks that the SOCKS port accepts a connection,
+and starts a new build when it does not. Pass nothing. A failure exits
+non-zero.
 
-Keys live in the environment or in ~/.config/render_exit_util/config.json
+Keys live in the environment or in ~/.config/render_socks5_util/config.json
 (mode 0600). Environment variables win.
 
     RENDER_API_KEY   render_api_key
@@ -24,7 +26,7 @@ Keys live in the environment or in ~/.config/render_exit_util/config.json
 
 TS_AUTHKEY is either an OAuth client secret (tskey-client-...) or an
 ephemeral reusable auth key. Both must carry tag:render. A one-time auth
-key cannot log in again after Render sleeps. See ``render_exit_util --help``.
+key cannot log in again after Render sleeps. See ``render_socks5_util --help``.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -44,7 +47,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 API_ROOT = "https://api.render.com/v1"
 SERVICE_NAME = "tailscale-exit"
-ROOT_DIR = "render_exit/render"
+ROOT_DIR = "render_socks5/render"
 AUTH_ENV = "TS_AUTHKEY"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,9 +59,9 @@ keys
   RENDER_API_KEY   render_api_key   dashboard.render.com account settings, API keys
   TS_AUTHKEY       ts_authkey       Tailscale OAuth client secret or auth key
 
-  Optional: RENDER_OWNER_ID (owner_id), RENDER_EXIT_UTIL_NAME (service_name),
-  RENDER_EXIT_UTIL_REGION (region), RENDER_EXIT_UTIL_REPO (repo),
-  RENDER_EXIT_UTIL_BRANCH (branch).
+  Optional: RENDER_OWNER_ID (owner_id), RENDER_SOCKS5_UTIL_NAME (service_name),
+  RENDER_SOCKS5_UTIL_REGION (region), RENDER_SOCKS5_UTIL_REPO (repo),
+  RENDER_SOCKS5_UTIL_BRANCH (branch).
 
 Tailscale tag
   In Access controls, tag:render must be owned by you. If the tailnet is
@@ -77,12 +80,12 @@ Tailscale tag
 
 Render builds the git repo and branch in the config (default origin of
 this checkout, https://github.com/jovlinger/utils, directory
-render_exit/render), not the unpushed working tree.
+render_socks5/render), not the unpushed working tree.
 """
 
 
 def _die(message: str, code: int = 1) -> None:
-    print(f"render_exit_util: {message}", file=sys.stderr)
+    print(f"render_socks5_util: {message}", file=sys.stderr)
     raise SystemExit(code)
 
 
@@ -143,7 +146,7 @@ def unpushed_warning(root: Path, branch: str) -> Optional[str]:
             "status",
             "--porcelain",
             "--",
-            "render_exit",
+            "render_socks5",
         ],
         capture_output=True,
         text=True,
@@ -156,10 +159,10 @@ def unpushed_warning(root: Path, branch: str) -> Optional[str]:
                 f"origin/{branch} does not match HEAD; Render builds the pushed branch"
             )
     if dirty.stdout.strip():
-        messages.append("uncommitted changes under render_exit/ are not deployed")
+        messages.append("uncommitted changes under render_socks5/ are not deployed")
     if not messages:
         return None
-    return "render_exit_util: " + "; ".join(messages)
+    return "render_socks5_util: " + "; ".join(messages)
 
 
 class Config:
@@ -185,7 +188,7 @@ class Config:
 
 
 def _config_dir() -> Path:
-    return Path.home() / ".config" / "render_exit_util"
+    return Path.home() / ".config" / "render_socks5_util"
 
 
 def _config_path() -> Path:
@@ -203,7 +206,7 @@ def _file_config() -> dict[str, Any]:
     mode = path.stat().st_mode
     if mode & 0o077:
         print(
-            f"render_exit_util: {path} is readable by others; chmod 600",
+            f"render_socks5_util: {path} is readable by others; chmod 600",
             file=sys.stderr,
         )
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -226,10 +229,10 @@ def _pick(
 
 def load_config(root: Path = REPO_ROOT) -> Config:
     file_data = _file_config()
-    repo = _pick("RENDER_EXIT_UTIL_REPO", file_data, "repo", "")
+    repo = _pick("RENDER_SOCKS5_UTIL_REPO", file_data, "repo", "")
     if not repo:
         repo = _origin_https(root)
-    branch = _pick("RENDER_EXIT_UTIL_BRANCH", file_data, "branch", "")
+    branch = _pick("RENDER_SOCKS5_UTIL_BRANCH", file_data, "branch", "")
     if not branch:
         branch = _current_branch(root)
     return Config(
@@ -237,12 +240,12 @@ def load_config(root: Path = REPO_ROOT) -> Config:
         ts_authkey=_pick("TS_AUTHKEY", file_data, "ts_authkey", ""),
         owner_id=_pick("RENDER_OWNER_ID", file_data, "owner_id", ""),
         service_name=_pick(
-            "RENDER_EXIT_UTIL_NAME", file_data, "service_name", SERVICE_NAME
+            "RENDER_SOCKS5_UTIL_NAME", file_data, "service_name", SERVICE_NAME
         ),
         repo=repo,
         branch=branch,
-        region=_pick("RENDER_EXIT_UTIL_REGION", file_data, "region", "oregon"),
-        root_dir=_pick("RENDER_EXIT_UTIL_ROOT", file_data, "root_dir", ROOT_DIR),
+        region=_pick("RENDER_SOCKS5_UTIL_REGION", file_data, "region", "oregon"),
+        root_dir=_pick("RENDER_SOCKS5_UTIL_ROOT", file_data, "root_dir", ROOT_DIR),
     )
 
 
@@ -391,6 +394,14 @@ class RenderClient:
             ok=(200, 201, 202),
         )
 
+    def set_root_dir(self, service_id: str, root_dir: str) -> None:
+        self._request(
+            "PATCH",
+            f"/services/{service_id}",
+            {"rootDir": root_dir},
+            ok=(200, 202),
+        )
+
     def latest_deploy_status(self, service_id: str) -> str:
         _status, payload = self._request(
             "GET", f"/services/{service_id}/deploys?limit=1"
@@ -433,6 +444,18 @@ def _as_service(payload: Any) -> dict[str, Any]:
     if isinstance(nested, dict):
         return nested
     return payload
+
+
+def service_root_dir(service: Mapping[str, Any]) -> str:
+    root = service.get("rootDir")
+    if isinstance(root, str) and root:
+        return root
+    details = service.get("serviceDetails")
+    if isinstance(details, dict):
+        nested = details.get("rootDir")
+        if isinstance(nested, str) and nested:
+            return nested
+    return ""
 
 
 def service_url(service: Mapping[str, Any]) -> str:
@@ -543,6 +566,17 @@ def _wait_health(
         poll_sleep(5)
 
 
+def probe_socks(ip: str, port: int, timeout: float = 5) -> None:
+    """Raise if this machine cannot open TCP to the proxy within timeout."""
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return
+    except OSError as exc:
+        raise OSError(
+            f"cannot connect to {ip}:{port} within {timeout:.0f}s ({exc})"
+        ) from exc
+
+
 def fetch_health(url: str) -> dict[str, Any]:
     req = urllib.request.Request(
         url.rstrip("/") + "/healthz",
@@ -563,6 +597,25 @@ def _key_changed(previous: Optional[str], authkey: str, previous_hash: str) -> b
     return True
 
 
+def _proxy_ports(health: Mapping[str, Any]) -> tuple[str, int, int]:
+    ip = health["tailscale_ip"]
+    if not isinstance(ip, str) or not ip:
+        _die("service did not publish a tailnet address")
+    socks_port = health.get("socks_port", 1080)
+    http_port = health.get("http_port", 1055)
+    return ip, int(socks_port), int(http_port)
+
+
+def _print_ready(url: str, ip: str, socks_port: int, http_port: int) -> None:
+    print(f"service: {url}")
+    print(f"socks5: {ip}:{socks_port}")
+    print(f"http: {ip}:{http_port}")
+    print(
+        f"curl --connect-timeout 5 --socks5-hostname {ip}:{socks_port} "
+        "https://ifconfig.me"
+    )
+
+
 def cmd_up(
     cfg: Config,
     api: RenderClient,
@@ -570,13 +623,14 @@ def cmd_up(
     deploy: bool = False,
     poll_sleep: SleepFn = time.sleep,
     fetch: Callable[[str], Mapping[str, Any]] = fetch_health,
+    probe: Callable[[str, int], None] = probe_socks,
     deploy_timeout: float = 900,
     health_timeout: float = 180,
 ) -> int:
     if not cfg.render_api_key or not cfg.ts_authkey:
         _die("set RENDER_API_KEY and TS_AUTHKEY", 2)
     if not cfg.repo:
-        _die("set RENDER_EXIT_UTIL_REPO to the GitHub repo Render should build")
+        _die("set RENDER_SOCKS5_UTIL_REPO to the GitHub repo Render should build")
     owner_id = _owner_id(cfg, api)
     service = _find_service(cfg, api)
     created = service is None
@@ -591,6 +645,12 @@ def cmd_up(
         previous_hash = ""
     need_deploy = deploy
     if not created:
+        current_root = service_root_dir(service) or service_root_dir(
+            api.retrieve(service_id)
+        )
+        if current_root and current_root != cfg.root_dir:
+            api.set_root_dir(service_id, cfg.root_dir)
+            need_deploy = True
         previous = api.get_env(service_id, AUTH_ENV)
         if _key_changed(previous, cfg.ts_authkey, previous_hash):
             api.put_env(service_id, AUTH_ENV, cfg.ts_authkey)
@@ -608,13 +668,26 @@ def cmd_up(
     if not url:
         _die("Render did not return a service URL")
     health = _wait_health(url, health_timeout, poll_sleep, fetch)
-    ip = health["tailscale_ip"]
-    socks_port = health.get("socks_port", 1080)
-    http_port = health.get("http_port", 1055)
-    print(f"service: {url}")
-    print(f"socks5: {ip}:{socks_port}")
-    print(f"http: {ip}:{http_port}")
-    print(f"curl --socks5-hostname {ip}:{socks_port} https://ifconfig.me")
+    ip, socks_port, http_port = _proxy_ports(health)
+    try:
+        probe(ip, socks_port)
+    except OSError as exc:
+        if created or need_deploy:
+            _die(f"{exc}. Run render_socks5_util up")
+        api.deploy(service_id)
+        if service.get("suspended") == "suspended":
+            api.resume(service_id)
+        _wait_live(api, service_id, deploy_timeout, poll_sleep)
+        fresh = service_url(api.retrieve(service_id))
+        if fresh:
+            url = fresh
+        health = _wait_health(url, health_timeout, poll_sleep, fetch)
+        ip, socks_port, http_port = _proxy_ports(health)
+        try:
+            probe(ip, socks_port)
+        except OSError as again:
+            _die(f"{again}. Run render_socks5_util up")
+    _print_ready(url, ip, socks_port, http_port)
     return 0
 
 
@@ -638,7 +711,7 @@ def cmd_down(cfg: Config, api: RenderClient) -> int:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="render_exit_util",
+        prog="render_socks5_util",
         description=(
             "Deploy or suspend a userspace Tailscale SOCKS5/HTTP egress "
             "proxy on a Render free web service."
@@ -653,7 +726,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     up.add_argument(
         "--deploy",
         action="store_true",
-        help="start a new Render build even when TS_AUTHKEY is unchanged",
+        help="rebuild even when the SOCKS port is already accepting connections",
     )
     sub.add_parser(
         "down", help="suspend the service so the ephemeral node leaves the tailnet"
