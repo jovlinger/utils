@@ -374,6 +374,48 @@ def test_render_client_put_env_redacts_secret(
     assert "***" in err
 
 
+def test_resume_ignores_non_user_suspend() -> None:
+    body = b'{"message":"only services suspended by a user can be resumed"}'
+
+    def opener(req: urllib.request.Request, timeout: int = 0) -> _Resp:
+        raise urllib.error.HTTPError(
+            req.full_url, 400, "bad", {}, io.BytesIO(body)
+        )
+
+    api = render_socks5_util.RenderClient("rnd_secret", opener=opener)
+    assert api.resume("srv-db6mr9mi0phs73d5s2cg") is False
+
+
+def test_up_prints_ip_when_resume_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    api = FakeRender()
+    api.services.append(
+        {
+            "id": "srv-9",
+            "name": "tailscale-exit",
+            "suspended": "suspended",
+            "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
+        }
+    )
+    api.env["TS_AUTHKEY"] = "tskey-auth-test"
+
+    def resume(service_id: str) -> bool:
+        api.resumes.append(service_id)
+        return False
+
+    api.resume = resume  # type: ignore[method-assign]
+    code = render_socks5_util.cmd_up(
+        _cfg(), api, poll_sleep=lambda _seconds: None, fetch=_health, probe=_open
+    )
+    assert code == 0
+    assert api.resumes == ["srv-9"]
+    assert api.deploys == []
+    out = capsys.readouterr().out
+    assert "socks5: 100.1.2.3:1080" in out
+    assert "http: 100.1.2.3:1055" in out
+
+
 def test_render_client_get_env_404() -> None:
     def opener(req: urllib.request.Request, timeout: int = 0) -> _Resp:
         raise urllib.error.HTTPError(req.full_url, 404, "missing", {}, io.BytesIO(b""))

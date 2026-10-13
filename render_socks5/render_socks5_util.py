@@ -417,8 +417,28 @@ class RenderClient:
             return item["status"]
         return ""
 
-    def resume(self, service_id: str) -> None:
-        self._request("POST", f"/services/{service_id}/resume", ok=(200, 202))
+    def resume(self, service_id: str) -> bool:
+        """Resume a user-suspended service.
+
+        Render returns 400 when the service was not suspended by a user
+        (a free-tier sleep is in that set). That is not a failure: the
+        caller checks the service and its health instead.
+        """
+        status, payload = self._request(
+            "POST",
+            f"/services/{service_id}/resume",
+            ok=(200, 202, 400),
+        )
+        if status != 400:
+            return True
+        message = ""
+        if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+            message = payload["message"]
+        if "only services suspended by a user can be resumed" in message:
+            return False
+        text = json.dumps(payload) if payload is not None else ""
+        _die(f"Render POST /services/{service_id}/resume returned 400: {text[:500]}")
+        return False
 
     def suspend(self, service_id: str) -> None:
         self._request("POST", f"/services/{service_id}/suspend", ok=(200, 202))
@@ -662,6 +682,7 @@ def cmd_up(
         api.deploy(service_id)
     if service.get("suspended") == "suspended":
         api.resume(service_id)
+        service = api.retrieve(service_id)
     if created or need_deploy:
         _wait_live(api, service_id, deploy_timeout, poll_sleep)
     url = service_url(service)
