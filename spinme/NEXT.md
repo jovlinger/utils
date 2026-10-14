@@ -54,10 +54,9 @@ the ESP-IDF RGB LCD driver.
       flash stays blank until the attempt finishes, then draws once.
       https://github.com/espressif/esp-faq/blob/fad305a/docs/en/software-framework/peripherals/lcd.rst
       If a settled black frame is still striped, that stall is not it.
-- [ ] Flash Waveshare `08_LVGL_Test` unchanged. Not flashed. The demo
-      is ESP-IDF 5.3.2 and `idf.py` is not installed. Clean demo would
-      mean our transport still has a phase error. Stripes on the demo
-      would mean the panel or the init table.
+- [x] Flash Waveshare `08_LVGL_Test` unchanged. Skipped 2026-10-13:
+      no `idf.py`, and the demo is ESP-IDF 5.3.2. Sensing touch and
+      rotation instead.
 
 ## Do not try (links from that thread, other hardware)
 
