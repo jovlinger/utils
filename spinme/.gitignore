@@ -4,3 +4,7 @@ env
 !.venv/README.md
 .venv-tools/
 .pio/
+firmware/waveshare-knob-touch-lcd-1.8/include/wifi_local.h
+screenmock/preview/
+__pycache__/
+.pytest_cache/
