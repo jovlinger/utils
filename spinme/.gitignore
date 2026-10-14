@@ -2,3 +2,6 @@
 env
 .venv
 .venv-tools/
+
+# Per-unit WiFi. Same shape as the on-device config wifi object.
+wifi.local.json
