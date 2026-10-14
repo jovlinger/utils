@@ -2,7 +2,20 @@
 
 ## Clickbait
 
-A **Waveshare ESP32-S3-Knob-Touch-LCD-1.8** (also searched as ESP32-S3 knob touch LCD 1.8, round 1.8 inch display, circular glass, 360x360) shows **vertical stripes**, **pinstripes**, full-height columns, streaks, faint vertical lines, or a stippled ghost down the panel. The controller on this board is the **ST77916** on **QSPI** (quad SPI), not parallel RGB and not MIPI. The type can still be readable, and a phone photo makes the columns look darker than they look in the room. The lines stay after the vendor init table, after **COLMOD** `0x3A` = `0x55` (**RGB565**), and after a solid black fill. Driving the command phase in 4-bit mode can make the same glyphs illegible on top of the streaks. The picture shows up from **Arduino-ESP32**, **PlatformIO**, **ESP-IDF** `esp_lcd`, the Waveshare **08_LVGL_Test** demo (that sketch drives this ST77916 through `esp_lcd_sh8601`), **LVGL**, **Arduino_GFX**, and **LovyanGFX**, on an ESP32-S3 with octal PSRAM. The same words (vertical lines, tearing, every other column, flicker) also appear in **ST7701S** and **EK9716** threads about HSYNC, HBP, HFP, `avoid_tearing`, and RGB bounce buffers, which are a different kind of panel. People also describe this glass as **flickering**, a flash of the whole round picture, at a 20 MHz or 10 MHz QSPI pixel clock.
+A **Waveshare ESP32-S3-Knob-Touch-LCD-1.8** (also searched as ESP32-S3 knob touch LCD 1.8, round 1.8 inch display,
+circular glass, 360x360) shows **vertical stripes**, **pinstripes**, full-height columns, streaks, faint vertical lines,
+or a stippled ghost down the panel. The controller on this board is the **ST77916** on **QSPI** (quad SPI), not parallel
+RGB and not MIPI. We disovered this while displaying text, and the pinstripes appear more as a background pattern, not
+obscuring the foreground.
+
+Two photos: one with plain white text was the initial expression - very hard to read; the second with color is much improved (autocontrast enhancement by the phone makes those appear worse). 
+
+Some dead-end solutions ended up with clear black background, no pinstripe, but with low hz flickering (every +- 3s). 
+Eventually, the problem is completely solved. 
+
+
+On our glass, after the vendor init table, after **COLMOD** `0x3A` = `0x55` (**RGB565**), and after a solid black fill, the lines were still there and the text was still readable. When we sent the command phase in 4-bit mode, those glyphs became illegible. Both of those are our own runs on this board (Arduino core 2.0.17 and our SPI driver), not reports we copied. We have not flashed the Waveshare **08_LVGL_Test** demo, **LVGL**, **Arduino_GFX**, or **LovyanGFX** for this symptom, so we are not saying the picture comes from those stacks. We have seen references on fora to similar symptoms (vertical lines, tearing, every other column, flicker) on **ST7701S** and **EK9716** panels, next to HSYNC, HBP, HFP, `avoid_tearing`, and RGB bounce buffers. Those threads describe a different kind of display. We did not treat them as measurements of this knob. The low-rate flicker in those dead ends is from our own 20 MHz and 10 MHz QSPI clocks on this glass, not from a forum post.
+
 
 ---
 
@@ -26,9 +39,9 @@ A **Waveshare ESP32-S3-Knob-Touch-LCD-1.8** (also searched as ESP32-S3 knob touc
 
 The first photo is the readable-but-striped glass. The second is the same glass after forcing `COLMOD 0x55` before and after the vendor table. The type got clearer. The columns stayed.
 
-![First photo: status text is readable and full-height columns cover the glass](waveshare-knob-1.8-pinstripe-1.jpg)
+![First photo: status text is readable and full-height columns cover the glass](media/waveshare-knob-1.8-pinstripe-1.jpg)
 
-![Second photo: after COLMOD 0x55 the type is clearer and the columns remain](waveshare-knob-1.8-pinstripe-2.jpg)
+![Second photo: after COLMOD 0x55 the type is clearer and the columns remain](media/waveshare-knob-1.8-pinstripe-2.jpg)
 
 - Full-height columns across a round 360x360 frame. Text is legible once the bus framing is right.
 - The columns survive a correct vendor init and a correct 16-bit pixel format.
