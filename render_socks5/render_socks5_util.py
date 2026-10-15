@@ -10,7 +10,11 @@ node's 100.x address. Clients on the tailnet connect there; the container
 dials the public internet, so the far side sees Render's address.
 
     render_socks5_util up
+    render_socks5_util up -socks5-file /path/to/socks5
     render_socks5_util down
+
+``-socks5-file`` writes ``host:port`` (for example ``100.117.81.123:1080``)
+on success. A failure truncates that file to empty.
 
 ``down`` suspends the service. An ephemeral node then drops off the tailnet.
 A free instance also sleeps after 15 minutes without an inbound request on
@@ -599,6 +603,82 @@ def probe_socks(ip: str, port: int, timeout: float = 5) -> None:
         ) from exc
 
 
+def _peer_for_ip(payload: Mapping[str, Any], ip: str) -> Optional[Mapping[str, Any]]:
+    peers = payload.get("Peer")
+    if not isinstance(peers, dict):
+        return None
+    for peer in peers.values():
+        if not isinstance(peer, dict):
+            continue
+        ips = peer.get("TailscaleIPs")
+        if isinstance(ips, list) and ip in ips:
+            return peer
+    return None
+
+
+def describe_tailscale(payload: Any, ip: str) -> str:
+    """One line from `tailscale status --json`. Stopped means the daemon is up and the network is down."""
+    if not isinstance(payload, dict):
+        return (
+            "local tailscale status was not JSON. "
+            "The process can be running while the network is down. Run tailscale status"
+        )
+    state = payload.get("BackendState")
+    if not isinstance(state, str) or not state:
+        state = "unknown"
+    if state != "Running":
+        return (
+            f"local tailscale is {state}. "
+            "The process can be running while the network is down. Run tailscale up"
+        )
+    peer = _peer_for_ip(payload, ip)
+    if peer is None:
+        return (
+            f"local tailscale is Running but does not list {ip}. Run tailscale status"
+        )
+    if peer.get("Online") is False:
+        return f"local tailscale is Running. {ip} is listed and offline"
+    return f"local tailscale is Running and lists {ip}"
+
+
+def local_tailscale_hint(ip: str) -> str:
+    """Query this machine's tailscale. A running daemon is not the same as BackendState Running."""
+    try:
+        proc = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except FileNotFoundError:
+        return (
+            "tailscale is not on PATH. "
+            "The process can be running while the network is down. Run tailscale status"
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return (
+            f"local tailscale status failed ({exc}). "
+            "The process can be running while the network is down. Run tailscale status"
+        )
+    raw = proc.stdout.strip()
+    if not raw:
+        err = proc.stderr.strip().splitlines()
+        detail = err[0] if err else f"exit {proc.returncode}"
+        return (
+            f"local tailscale status failed ({detail}). "
+            "The process can be running while the network is down. Run tailscale status"
+        )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return (
+            "local tailscale status was not JSON. "
+            "The process can be running while the network is down. Run tailscale status"
+        )
+    return describe_tailscale(payload, ip)
+
+
 def fetch_health(url: str) -> dict[str, Any]:
     req = urllib.request.Request(
         url.rstrip("/") + "/healthz",
@@ -638,7 +718,27 @@ def _print_ready(url: str, ip: str, socks_port: int, http_port: int) -> None:
     )
 
 
-def cmd_up(
+def _truncate_socks_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+
+def _write_socks_endpoint(path: Path, ip: str, port: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{ip}:{port}\n", encoding="utf-8")
+
+
+def _safe_truncate_socks_file(path: Path) -> None:
+    try:
+        _truncate_socks_file(path)
+    except OSError as exc:
+        print(
+            f"render_socks5_util: cannot truncate {path}: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _cmd_up(
     cfg: Config,
     api: RenderClient,
     *,
@@ -646,9 +746,10 @@ def cmd_up(
     poll_sleep: SleepFn = time.sleep,
     fetch: Callable[[str], Mapping[str, Any]] = fetch_health,
     probe: Callable[[str, int], None] = probe_socks,
+    tailscale_hint: Callable[[str], str] = local_tailscale_hint,
     deploy_timeout: float = 900,
     health_timeout: float = 180,
-) -> int:
+) -> tuple[str, str, int, int]:
     if not cfg.render_api_key or not cfg.ts_authkey:
         _die("set RENDER_API_KEY and TS_AUTHKEY", 2)
     if not cfg.repo:
@@ -696,7 +797,7 @@ def cmd_up(
         probe(ip, socks_port)
     except OSError as exc:
         if created or need_deploy:
-            _die(f"{exc}. Run render_socks5_util up")
+            _die(f"{exc}. {tailscale_hint(ip)}")
         api.deploy(service_id)
         if service.get("suspended") == "suspended":
             api.resume(service_id)
@@ -709,8 +810,44 @@ def cmd_up(
         try:
             probe(ip, socks_port)
         except OSError as again:
-            _die(f"{again}. Run render_socks5_util up")
-    _print_ready(url, ip, socks_port, http_port)
+            _die(f"{again}. {tailscale_hint(ip)}")
+    return url, ip, socks_port, http_port
+
+
+def cmd_up(
+    cfg: Config,
+    api: RenderClient,
+    *,
+    deploy: bool = False,
+    poll_sleep: SleepFn = time.sleep,
+    fetch: Callable[[str], Mapping[str, Any]] = fetch_health,
+    probe: Callable[[str, int], None] = probe_socks,
+    tailscale_hint: Callable[[str], str] = local_tailscale_hint,
+    deploy_timeout: float = 900,
+    health_timeout: float = 180,
+    socks5_file: Optional[str] = None,
+) -> int:
+    """Wake the proxy. Write host:port to socks5_file, or empty it on failure."""
+    path = Path(socks5_file) if socks5_file else None
+    try:
+        url, ip, socks_port, http_port = _cmd_up(
+            cfg,
+            api,
+            deploy=deploy,
+            poll_sleep=poll_sleep,
+            fetch=fetch,
+            probe=probe,
+            tailscale_hint=tailscale_hint,
+            deploy_timeout=deploy_timeout,
+            health_timeout=health_timeout,
+        )
+        if path is not None:
+            _write_socks_endpoint(path, ip, socks_port)
+        _print_ready(url, ip, socks_port, http_port)
+    except BaseException:
+        if path is not None:
+            _safe_truncate_socks_file(path)
+        raise
     return 0
 
 
@@ -751,6 +888,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="rebuild even when the SOCKS port is already accepting connections",
     )
+    up.add_argument(
+        "-socks5-file",
+        metavar="PATH",
+        default=None,
+        help="write host:port on success; truncate this file to empty on failure",
+    )
     sub.add_parser(
         "down", help="suspend the service so the ephemeral node leaves the tailnet"
     )
@@ -768,7 +911,9 @@ def main(
             print(warning, file=sys.stderr)
     api = client or RenderClient(cfg.render_api_key)
     if args.command == "up":
-        return cmd_up(cfg, api, deploy=bool(args.deploy))
+        return cmd_up(
+            cfg, api, deploy=bool(args.deploy), socks5_file=args.socks5_file
+        )
     return cmd_down(cfg, api)
 
 

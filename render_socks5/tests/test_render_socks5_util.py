@@ -263,7 +263,31 @@ def test_up_rebuilds_when_socks_is_closed() -> None:
     assert api.deploys == ["srv-9"]
 
 
-def test_up_exits_when_socks_stays_closed() -> None:
+def test_describe_tailscale_stopped_is_not_running() -> None:
+    text = render_socks5_util.describe_tailscale(
+        {"BackendState": "Stopped", "Peer": {}}, "100.1.2.3"
+    )
+    assert "Stopped" in text
+    assert "tailscale up" in text
+
+
+def test_describe_tailscale_running_lists_peer() -> None:
+    payload = {
+        "BackendState": "Running",
+        "Peer": {"nodekey:abc": {"TailscaleIPs": ["100.1.2.3"], "Online": True}},
+    }
+    text = render_socks5_util.describe_tailscale(payload, "100.1.2.3")
+    assert text == "local tailscale is Running and lists 100.1.2.3"
+    missing = render_socks5_util.describe_tailscale(payload, "100.9.9.9")
+    assert "does not list 100.9.9.9" in missing
+    offline = {
+        "BackendState": "Running",
+        "Peer": {"nodekey:abc": {"TailscaleIPs": ["100.1.2.3"], "Online": False}},
+    }
+    assert "offline" in render_socks5_util.describe_tailscale(offline, "100.1.2.3")
+
+
+def test_up_exits_when_socks_stays_closed(capsys: pytest.CaptureFixture[str]) -> None:
     api = FakeRender()
     api.services.append(
         {
@@ -285,9 +309,14 @@ def test_up_exits_when_socks_stays_closed() -> None:
             poll_sleep=lambda _seconds: None,
             fetch=_health,
             probe=probe,
+            tailscale_hint=lambda ip: f"local tailscale is Stopped. Run tailscale up ({ip})",
         )
     assert caught.value.code == 1
     assert api.deploys == ["srv-9"]
+    err = capsys.readouterr().err
+    assert "cannot connect to 100.1.2.3:1080" in err
+    assert "local tailscale is Stopped" in err
+    assert "100.1.2.3" in err
 
 
 def test_up_updates_root_dir_and_deploys() -> None:
@@ -428,6 +457,58 @@ def test_parse_up_deploy_flag() -> None:
     args = render_socks5_util.parse_args(["up", "--deploy"])
     assert args.command == "up"
     assert args.deploy is True
+    assert args.socks5_file is None
+
+
+def test_parse_socks5_file() -> None:
+    args = render_socks5_util.parse_args(["up", "-socks5-file", "/tmp/socks5"])
+    assert args.socks5_file == "/tmp/socks5"
+
+
+def test_up_writes_socks5_file(tmp_path: Path) -> None:
+    api = FakeRender()
+    dest = tmp_path / "nested" / "socks5"
+    code = render_socks5_util.cmd_up(
+        _cfg(),
+        api,
+        poll_sleep=lambda _seconds: None,
+        fetch=_health,
+        probe=_open,
+        socks5_file=str(dest),
+    )
+    assert code == 0
+    assert dest.read_text(encoding="utf-8") == "100.1.2.3:1080\n"
+
+
+def test_up_truncates_socks5_file_on_failure(tmp_path: Path) -> None:
+    api = FakeRender()
+    api.services.append(
+        {
+            "id": "srv-9",
+            "name": "tailscale-exit",
+            "suspended": "not_suspended",
+            "serviceDetails": {"url": "https://tailscale-exit.onrender.com"},
+        }
+    )
+    api.env["TS_AUTHKEY"] = "tskey-auth-test"
+    dest = tmp_path / "socks5"
+    dest.write_text("100.117.81.123:1080\n", encoding="utf-8")
+
+    def probe(_ip: str, _port: int) -> None:
+        raise OSError("cannot connect to 100.1.2.3:1080 within 5s")
+
+    with pytest.raises(SystemExit) as caught:
+        render_socks5_util.cmd_up(
+            _cfg(),
+            api,
+            poll_sleep=lambda _seconds: None,
+            fetch=_health,
+            probe=probe,
+            tailscale_hint=lambda ip: f"local tailscale is Stopped ({ip})",
+            socks5_file=str(dest),
+        )
+    assert caught.value.code == 1
+    assert dest.read_text(encoding="utf-8") == ""
 
 
 class _Quiet(BaseHTTPRequestHandler):
