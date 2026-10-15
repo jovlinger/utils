@@ -305,6 +305,50 @@ static bool touch_pressed(uint16_t *x, uint16_t *y) {
   return true;
 }
 
+static void reply_query(void) {
+  char player[sizeof(gStatus)];
+  size_t i = 0;
+  for (; gStatus[i] != '\0' && i + 1 < sizeof(player); ++i) {
+    player[i] = (gStatus[i] == ' ') ? '_' : gStatus[i];
+  }
+  player[i] = '\0';
+  const int backlight = digitalRead(PIN_LCD_BL) == HIGH ? 1 : 0;
+  const uint32_t idle_ms = millis() - gLastActivityMs;
+  /* GPIO1 is ADC1. Reading it powers the SAR, and GPIO7/GPIO8 (the
+   * encoder) are ADC1 pins too. After that read they chatter, and the
+   * chatter was putting the backlight to sleep. */
+  Serial.printf(
+      "query backlight=%d awake=%d idle_ms=%lu idle_sleep=%d cpu_sleep=0 "
+      "wifi=%s player=%s volume=%d system_mv=na power_w=unavailable\n",
+      backlight, gAwake ? 1 : 0, static_cast<unsigned long>(idle_ms),
+      gAwake ? 0 : 1, WiFi.status() == WL_CONNECTED ? "connected" : "down",
+      player, gVolume);
+}
+
+static void service_query(void) {
+  static char buf[8];
+  static size_t n = 0;
+  while (Serial.available() > 0) {
+    const int c = Serial.read();
+    if (c < 0) {
+      return;
+    }
+    if (c == '\n' || c == '\r') {
+      buf[n] = '\0';
+      if (strcmp(buf, "query") == 0) {
+        reply_query();
+      }
+      n = 0;
+      continue;
+    }
+    if (n + 1 < sizeof(buf)) {
+      buf[n++] = static_cast<char>(c);
+    } else {
+      n = 0;
+    }
+  }
+}
+
 static int encoder_delta(void) {
   static uint8_t last = 0;
   static int acc = 0;
@@ -355,6 +399,7 @@ void setup() {
 }
 
 void loop() {
+  service_query();
   const uint32_t now = millis();
   uint16_t x = 0;
   uint16_t y = 0;
@@ -395,7 +440,9 @@ void loop() {
     draw_status();
   }
 
-  if (gAwake && now - gLastActivityMs > kIdleSleepMs) {
+  /* Sample millis() here. wake_display() above stores a newer tick, and
+   * subtracting that from the older `now` wraps and trips this immediately. */
+  if (gAwake && millis() - gLastActivityMs > kIdleSleepMs) {
     gAwake = false;
     digitalWrite(PIN_LCD_BL, LOW);
     Serial.println("sleep");
