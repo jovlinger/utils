@@ -6,17 +6,25 @@ HTTP, DNS, or WiFi. The worker is the only application task that opens a
 socket.
 
 The player snapshot is the last good status, artist, title, and volume.
-A failed poll or volume write leaves those fields as they are. Failure is
-not a status string on the glass.
+Volumio is the source of truth for volume. A poll writes that volume into
+the snapshot every time it succeeds. A failed poll leaves the previous
+snapshot in place. Failure is not a status string on the glass.
+
+The UI core also keeps a desired volume: the absolute level the knob is
+aiming at. With no outstanding turn, desired equals the polled volume.
+Each detent changes desired immediately. Desired and polled volume diverge
+for the short time until a later poll reports the level Volumio reached.
+The UI core posts one coalesced absolute volume for that desired level.
+Toggle is its own event.
+
+The real volume is drawn in the normal ink. While desired differs, the
+same line is drawn again in a second color at alpha 0.5, on top of the
+real digits. When the polled volume equals desired, only the real volume
+is drawn.
 
 While the backlight is on, the UI core posts a poll about once a second.
-After the backlight turns off, it posts no polls. A run of knob steps is
-one coalesced absolute volume on the queue. Toggle is its own event.
-
-The UI core keeps unsent steps locally and paints them before the worker
-sends. A poll result does not replace volume while unsent steps are still
-outstanding. The worker resolves `miniDSP-SHD.local` once and reuses the
-address until a connect fails.
+After the backlight turns off, it posts no polls. The worker resolves
+`miniDSP-SHD.local` once and reuses the address until a connect fails.
 
 ```mermaid
 flowchart LR
@@ -31,8 +39,9 @@ flowchart LR
 
 ## Volume turn
 
-The glass updates from the local step count. The worker sends one absolute
-volume and publishes a snapshot only when Volumio accepts it.
+The real digits stay on the last polled volume. The desired digits are
+the overlay. The worker asks Volumio to move. A later poll is what moves
+the real digits.
 
 ```mermaid
 sequenceDiagram
@@ -43,19 +52,12 @@ sequenceDiagram
     participant V as Volumio
 
     Knob->>UI: detent
-    UI->>UI: add the step locally
-    UI->>UI: paint snapshot plus local steps
-    UI->>Q: absolute volume
-    Q->>W: absolute volume
+    UI->>UI: set desired volume
+    UI->>UI: paint real volume, overlay desired at alpha 0.5
+    UI->>Q: absolute desired volume
+    Q->>W: absolute desired volume
     W->>V: set volume
-    alt accepted
-        V-->>W: ok
-        W->>UI: snapshot
-        UI->>UI: paint if the number changed
-    else failed
-        V-->>W: fail
-        W->>W: keep the last good snapshot
-    end
+    Note over UI,V: real digits stay put until a poll
 ```
 
 ## Poll while the glass is lit
@@ -74,9 +76,12 @@ sequenceDiagram
         W->>V: getState
         alt response
             V-->>W: status, artist, title, volume
-            W->>W: store the snapshot
+            W->>W: store the snapshot, including volume
             W->>UI: snapshot
-            UI->>UI: paint the diff
+            UI->>UI: paint real volume from the poll
+            opt desired differs
+                UI->>UI: overlay desired at alpha 0.5
+            end
         else failed
             V-->>W: fail
             W->>W: leave the snapshot
