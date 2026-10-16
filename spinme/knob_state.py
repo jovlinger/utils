@@ -82,6 +82,7 @@ def main() -> int:
         "wifi",
         "player",
         "volume",
+        "rotation",
         "system_mv",
         "power_w",
     ]
