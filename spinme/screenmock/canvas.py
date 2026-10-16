@@ -1,17 +1,18 @@
-"""RGB565 framebuffer with the classic GFX 5x7 cursor rules."""
+"""RGB framebuffer. Text is the mapped DejaVu glyph file."""
 
 from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
-from screenmock.font5x7 import FONT5X7
+from screenmock.compose import VAlign, l2r
+from screenmock.glyphfile import text_items, text_width as glyph_text_width
 
 WIDTH = 360
 HEIGHT = 360
 CENTER = WIDTH // 2
 RADIUS = WIDTH // 2
 GLYPH_W = 6
-GLYPH_H = 8
+GLYPH_H = 36
 
 Rgb = tuple[int, int, int]
 BLACK: Rgb = (0, 0, 0)
@@ -48,8 +49,21 @@ def box_inside_circle(x: int, y: int, w: int, h: int) -> bool:
     return True
 
 
+def text_width(s: str) -> int:
+    return glyph_text_width(s)
+
+
+def _blend(dst: Rgb, src: Rgb, alpha: int) -> Rgb:
+    if alpha <= 0:
+        return dst
+    if alpha >= 255:
+        return src
+    inv = 255 - alpha
+    return tuple((src[i] * alpha + dst[i] * inv) // 255 for i in range(3))
+
+
 class Canvas:
-    """Square panel buffer. Text matches GFX glcdfont at the given size."""
+    """Square panel buffer. Glyphs come from the mapped RGBA file."""
 
     def __init__(self, width: int = WIDTH, height: int = HEIGHT) -> None:
         self.image = Image.new("RGB", (width, height), BLACK)
@@ -67,24 +81,25 @@ class Canvas:
                     self._px[px, py] = color
 
     def text(self, s: str, x: int, y: int, size: int, color: Rgb) -> None:
-        cursor_x = x
-        for ch in s:
-            code = ord(ch)
-            if code < 0 or code > 255:
-                code = ord("?")
-            base = code * 5
-            for col in range(5):
-                bits = FONT5X7[base + col]
-                for row in range(8):
-                    if bits & (1 << row):
-                        self.fill_rect(
-                            cursor_x + col * size,
-                            y + row * size,
-                            size,
-                            size,
-                            color,
-                        )
-            cursor_x += GLYPH_W * size
+        del size
+        items = text_items(s)
+        if not items:
+            return
+        union = l2r([box for box, _glyph in items], VAlign.bot)
+        for child, (_box, glyph) in zip(union.children, items):
+            if glyph is None:
+                continue
+            left = x + child.left() - union.x
+            top = y + child.top() - union.y
+            for row in range(glyph.h):
+                py = top + row
+                for col in range(glyph.w):
+                    alpha = glyph.rgba[(row * glyph.w + col) * 4 + 3]
+                    if alpha == 0:
+                        continue
+                    px = left + col
+                    if 0 <= px < self.image.width and 0 <= py < self.image.height:
+                        self._px[px, py] = _blend(self._px[px, py], color, alpha)
 
     def ink_outside_circle(self, background: Rgb = BLACK) -> int:
         count = 0

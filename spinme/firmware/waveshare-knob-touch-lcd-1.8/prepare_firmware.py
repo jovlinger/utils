@@ -107,9 +107,33 @@ def _firmware_dir() -> Path:
         return Path.cwd()
 
 
+def write_glyph_embed(firmware_dir: Path) -> None:
+    """Link glyphs.bin into .rodata so the ESP32 flash cache maps it."""
+    blob = firmware_dir / "glyphs.bin"
+    if not blob.is_file():
+        raise SystemExit("glyphs.bin missing; run screenmock/gen_font12.py")
+    asm = firmware_dir / "src" / "glyphs_embed.S"
+    asm.write_text(
+        "\n".join(
+            [
+                "/* Generated. glyphs.bin is mapped through the flash cache. */",
+                ".section .rodata",
+                ".global glyphs_bin_start",
+                ".global glyphs_bin_end",
+                ".align 4",
+                "glyphs_bin_start:",
+                '.incbin "{0}"'.format(blob),
+                "glyphs_bin_end:",
+                "",
+            ]
+        )
+    )
+
+
 def main() -> None:
     firmware_dir = _firmware_dir()
     write_wifi_header(firmware_dir)
+    write_glyph_embed(firmware_dir)
     patch_qspi_ramwr(firmware_dir)
 
 

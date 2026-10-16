@@ -17,13 +17,8 @@ python -m volctrl discover
 
 ## Cursor / agent flash loop
 
-Work with the ESP32 tree open: edit, then flash/monitor via PlatformIO (or
-Arduino / ESP-IDF equivalent) in the integrated terminal:
+Waveshare knob upload: [`firmware/waveshare-knob-touch-lcd-1.8/AGENTS.md`](firmware/waveshare-knob-touch-lcd-1.8/AGENTS.md).
 
-```bash
-pio run -t upload
-pio device monitor
-```
-
-There is no separate Cursor CLI for the board loop. Prefer documenting the exact
-flash command in-repo so the agent does not invent toolchain flags.
+`pio` is not on `PATH`. Use `spinme/.venv-tools/bin/pio`, then
+`pio run -t upload` from that firmware directory. The glass does not
+change until that upload exits 0.

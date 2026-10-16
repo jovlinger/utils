@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from screenmock.canvas import BLACK, YELLOW
+
+from screenmock.__main__ import write_screenshot
 from screenmock.layout import (
     Status,
     ink_outside,
@@ -10,7 +14,19 @@ from screenmock.layout import (
     render_legacy_square,
     render_round,
     render_square,
+    volumio_placeholder,
 )
+
+
+def test_screenshot_uses_volumio_placeholders(tmp_path: Path) -> None:
+    shown = volumio_placeholder()
+    assert shown.status == "play"
+    assert shown.artist == "Sample Artist"
+    assert shown.title == "Sample Title"
+    assert shown.volume == 42
+    path = write_screenshot(tmp_path / "screenshot.png", shown)
+    assert path.is_file()
+    assert ink_outside(render_square(shown)) == 0
 
 
 def test_fitted_text_stays_inside_the_circle() -> None:
