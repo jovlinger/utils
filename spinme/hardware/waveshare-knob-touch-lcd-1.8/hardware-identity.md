@@ -25,9 +25,4 @@ Device-end Type-C flip selects MCU. **S3 orientation is the UI/remote target.**
 S3 factory image: Arduino/PlatformIO + LVGL + ST77916 + CST816S; OTA `app0`/`app1`
 present; WiFi config portal; SD/DAC/haptic tasks in boot log.
 
-Details: [usb-enumerate-2026-09-07.md](usb-enumerate-2026-09-07.md),
-[frameworks-ota.md](frameworks-ota.md).
-
-Full Q/A and plan notes: [README.md](README.md).
-
-Sibling board: [../elecrow-crowpanel-1.28/](../elecrow-crowpanel-1.28/).
+S3 USB is Espressif USB-Serial/JTAG. Flash that orientation.

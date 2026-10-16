@@ -17,8 +17,7 @@ integration of both tracks stays on the parent after merge.
 **Hardware (RATIFIED 2026-09-07):** Waveshare ESP32-S3-Knob-Touch-LCD-1.8
 (ESP32-S3 half; device-end Type-C). Round 360x360 touch LCD + rotary encoder
 **without** a hardware push-click. Touch replaces "click" for discrete actions.
-Elecrow CrowPanel (push-dial) is sibling research only -- see
-`hardware/elecrow-crowpanel-1.28/`.
+The runtime split of glass and Volumio is [`DESIGN.md`](DESIGN.md).
 
 **Targets:** Sonos S1 (LAN UPnP) and Volumio (LAN HTTP). No cloud Sonos Control
 API for MVP.
@@ -371,7 +370,6 @@ pair's driver.
 
 | Path | Content |
 |------|---------|
-| `hardware/waveshare-knob-touch-lcd-1.8/` | Board identity, USB orientations, OTA partitions, display |
-| `firmware/waveshare-knob-touch-lcd-1.8/` | PlatformIO scaffold |
-| `docs/docs-volumio-probe-2026-09-07.md` | Host REST probe (`miniDSP-SHD.local`) |
-| `hardware/elecrow-crowpanel-1.28/` | Sibling board (not MVP target) |
+| `DESIGN.md` | UI core and Volumio worker |
+| `hardware/waveshare-knob-touch-lcd-1.8/` | Board identity and panel |
+| `firmware/waveshare-knob-touch-lcd-1.8/` | Knob firmware |
