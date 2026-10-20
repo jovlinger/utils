@@ -1,0 +1,55 @@
+This layer of abstraction turns your system into a deeply elegant hierarchical scene graph backed by a virtualized texturing system.
+Because the atlas shapes use the exact same packed-index addressing scheme as the canvas, your renderer becomes completely recursive and uniform. A shape in the atlas doesn't care if it is a primitive or a complex composition; it just evaluates its own layout map.
+
+1. The Unified Addressing Architecture
+
+To achieve this, every item in your system—from the 400x400 canvas down to a complex button or a simple character—is represented by a Grid Map.
+Instead of treating the canvas as a special case, the canvas is simply Shape ID #0 (the root shape, sized 400x400).
+[Level 2: Canvas (Shape #0)] ──► References Composed Atlas Shapes (e.g., Shape #200 "Window")
+       │
+       └─► [Level 1: Composed Shape (#200)] ──► References Primitive Shapes (e.g., Shape #12 "Circle")
+                 │
+                 └─► [Level 0: Primitive Shape (#12)] ──► References Raw Color Palette / Bitmaps
+
+2. How the Scanline Summary List Works
+
+Your scanline list tracks the outermost active bounding boxes intersecting line \(Y\) on the canvas.
+Because you want to defer color lookup until the absolute last millisecond, the items in your scanline list do not store raw colors. They store the top-level Canvas Element instances and their spatial transformations.
+c
+struct CanvasElementInstance {
+    uint16_t shape_id; // The top-level atlas shape ID (e.g., a fully composed UI window)
+    int16_t x, y;      // Where this shape sits on the 400x400 canvas
+    uint16_t z_order;  // Z-depth for sorting priority on this line
+};
+Use code with caution.
+
+3. Deferring the Resolution: The Scanline Pipeline
+
+When you process scanline \(Y\), you execute a two-phase evaluation pipeline to resolve the nested addresses.
+
+Phase 1: Compile the Packed Scanline Buffer (Z-Resolution)
+
+1. Grab the list of CanvasElementInstances that touch line \(Y\).
+2. Sort them Front-to-Back based on z_order.
+3. For each pixel \(X\) from 0 to 399:
+    • Find the foremost instance covering \((X, Y)\).
+    • Calculate the local coordinate within that shape: local_x = X - instance.x, local_y = Y - instance.y.
+    • Evaluate the Atlas Hierarchy: Query instance.shape_id at (local_x, local_y). If that shape is a composition, it looks up its child shape ID at its own internal offset. This recurses until you hit a leaf node (a primitive shape index).
+    • Write that final Primitive Leaf ID into your 400-pixel packed scanline buffer.
+
+Phase 2: Mass Unpack to Screen
+
+Once your 400-pixel scanline buffer is populated with pure, flattened primitive IDs:
+1. Loop through your packed 32-bit words.
+2. Unpack the 3 or 4 primitive IDs.
+3. Look up the raw 32-bit RGBA colors from your core Level 0 Bitmaps.
+4. Blast those colors directly to your hardware front-buffer.
+
+4. The Massive Memory & Performance Win
+
+This approach yields incredible efficiency:
+• Zero Color Overdraw: You never blend colors or look up RGBA textures for things hidden behind other UI elements. The recursion in Phase 1 only happens for the visible surface.
+• Trivial Animation & Moving UI: If a complex window shifts position on the screen, you don't rewrite pixels or re-render an atlas. You simply change the x, y coordinate of its CanvasElementInstance in your scene graph. The scanline engine handles the rest dynamically on the next frame.
+To refine how the recursion evaluates, tell me:
+• Are the dimensions of your atlas shapes fixed powers of two (e.g., 16x16, 32x32), or can they be arbitrary rectangular sizes?
+• How deeply nested do you expect your shape compositions to go (e.g., maximum 2 or 3 layers of composition)?
