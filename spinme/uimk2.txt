@@ -1,3 +1,80 @@
+New UI
+------
+
+
+The idea : we will composite RGBA bitmaps.  How bitmaps are generated is separate from how they are displayed. This library handles both, but we start with the display.
+
+(these are in pseudo code - actually c structs)
+
+# positition an item against a larger (implied) background
+type LayoutItem { # 1 word
+  int2 pad
+  int10 x,y, idx
+}	
+
+bitmaps = (*BitMap)[1024]; # zero terminated. indexed by 10bit. 
+
+# bitmaps are 0,0 in top left
+# bitmaps are union of several types
+type BitMap = RGBABitMap | XYBitMap 
+
+# just data
+type RGBABitMap {
+  int3  type = 0x0;  # 3 bits for union tag
+  bool1 dirty;   # needs repaint	
+  int14 x, y;  # max size = 16k
+  *rgba[] data;
+}
+
+
+# complete freedom. This is also our root viewport. So we will add some redraw support. 
+# each line (y) will contain the subset LayoutItem of items that overlap with that line. 
+# if any is invalid, we need to redraw line (in other buf, since we double buf)
+type LayoutBitMap
+  int3  type = 0x1;
+  bool1 dirty;  
+  int14 x, y;  # 
+  *LayoutItem[] items;
+  *rgba[] data;
+}
+
+type L2RBitMap {
+  int3  type = 0x2;
+  bool1 dirty;
+  int14 x, y;  # 
+  int     hsep ; # hspace between items. laid out left to right with this space inbetween
+  IdxList items; # 
+  *rgba[] data;
+}
+
+type T2BBitMap {
+  int3  type = 0x3;
+  bool1 dirty;
+  int14 x, y;   
+  int     vsep ; # vspace between items. laid out top-to-bottom.
+  IdxList items; # 
+  *rgba[] data;
+}
+
+type ViewportBitMap {
+  int3  type = 0x4;
+  bool1 dirty;
+  int14 x, y;   
+  LayoutItem item;  # data are cutting out a this.x * this.y rect from item.idx at item.x, item.y
+  *rgba[] data;
+
+
+IdxList = *int[], zero terminated, packed per below, iterated using idxlist iterator
+
+We need a general tree-walker. when we edit some item (the viewport, for example), we call invalidate(root, viewport),
+and that walks from root to viewport recursively, and on the way out, it marks data invalid. (we may need a bit, if we can steal from type). 
+
+
+
+
+
+
+
 This layer of abstraction turns your system into a deeply elegant hierarchical scene graph backed by a virtualized texturing system.
 Because the atlas shapes use the exact same packed-index addressing scheme as the canvas, your renderer becomes completely recursive and uniform. A shape in the atlas doesn't care if it is a primitive or a complex composition; it just evaluates its own layout map.
 
