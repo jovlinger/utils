@@ -128,7 +128,10 @@ static void sample(BitmapTable *t, uint16_t idx, int x, int y, uint8_t out[4])
         return;
     }
     if (n->kind == BM_KIND_GLYPH) {
-        memset(out, 0, 4);
+        out[0] = 255;
+        out[1] = 255;
+        out[2] = 255;
+        out[3] = n->glyph ? n->glyph[(size_t)y * n->w + (size_t)x] : 0;
         return;
     }
     memset(&acc, 0, sizeof acc);
@@ -191,6 +194,17 @@ uint16_t bm_new(BitmapTable *t, uint8_t kind, uint16_t w, uint16_t h)
     n->kind = kind;
     n->w = w;
     n->h = h;
+    return idx;
+}
+
+uint16_t bm_new_glyph(BitmapTable *t, const uint8_t *alpha, uint16_t w,
+                      uint16_t h)
+{
+    uint16_t idx = bm_new(t, BM_KIND_GLYPH, w, h);
+
+    if (idx != BM_NULL) {
+        t->nodes[idx].glyph = alpha;
+    }
     return idx;
 }
 

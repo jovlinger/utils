@@ -11,7 +11,8 @@
  * its children, front to back, with straight-alpha src-over, and writes the
  * owner's paper color under whatever the children leave uncovered.
  *
- * Sampling of Glyph nodes is not in this unit: a Glyph contributes nothing.
+ * A Glyph node reads its alpha from read-only flash (w * h bytes, one per
+ * pixel) and samples as white with that alpha. It owns no pixels.
  * Combiners are not applied yet (combiner index stays 0).
  */
 #ifndef UIMK2_BITMAP_H
@@ -51,6 +52,7 @@ typedef struct {
     uint16_t combiner;
     uint16_t w, h;
     uint8_t *pixels;     /* w * h * 4 bytes, straight RGBA; NULL if not an owner */
+    const uint8_t *glyph; /* Glyph alpha, w * h bytes in flash; NULL otherwise */
     uint8_t paper[3];    /* owner background, used where no child covers */
     uint16_t first_item; /* slice of BitmapTable.items */
     uint16_t n_items;
@@ -69,6 +71,10 @@ void bm_init(BitmapTable *t);
 
 /* Returns BM_NULL when the table is full. */
 uint16_t bm_new(BitmapTable *t, uint8_t kind, uint16_t w, uint16_t h);
+
+/* Glyph node over flash alpha (w * h bytes). Returns BM_NULL when full. */
+uint16_t bm_new_glyph(BitmapTable *t, const uint8_t *alpha, uint16_t w,
+                      uint16_t h);
 
 /* Makes idx a pixel owner over px (w * h * 4 bytes). */
 void bm_set_owner(BitmapTable *t, uint16_t idx, uint8_t *px,
