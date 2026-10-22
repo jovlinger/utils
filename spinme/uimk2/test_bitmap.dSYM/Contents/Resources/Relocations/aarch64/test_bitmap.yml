@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     'uimk2/test_bitmap'
+relocations:     []
+...
