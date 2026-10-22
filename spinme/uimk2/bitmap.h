@@ -48,6 +48,14 @@ typedef struct {
   const LayoutItem *items;
   uint16_t nitems;
 
+  /* Root Layout: per-row overlap lists in caller storage. Row y owns
+   * rowlist[y * rowcap ...], a zero-terminated list of the child indexes
+   * whose box covers y, back to front. rowcap counts the terminator.
+   * Rebuilt by bm_repaint only when geom_dirty is set. */
+  uint16_t *rowlist;
+  uint16_t rowcap;
+  uint8_t rows_valid;
+
   /* L2R / T2B: zero-terminated child index list and separator. */
   const uint16_t *list;
   int32_t sep;
@@ -76,6 +84,7 @@ typedef struct {
   uint32_t samples; /* leaf reads (RGBA pixel or Glyph alpha); test probe */
   const Combiner *combiners; /* indexed by Bitmap.combiner; [0] unused */
   uint16_t ncombiners;
+  uint32_t row_rebuilds; /* per-row list rebuilds; test probe */
 } BitmapTable;
 
 Rect rect_union(Rect a, Rect b);
@@ -101,5 +110,24 @@ void bm_invalidate(BitmapTable *t, uint16_t idx, Rect local_rect,
  * alpha src-over, stopping at accumulator alpha 255); an uncovered pixel
  * becomes paper. Clears dirty, geom_dirty, and damage. */
 void bm_repaint(BitmapTable *t, uint16_t idx);
+
+/* Rebuild a Layout's per-row overlap lists from its items. Returns 0, or -1
+ * when the node has no row storage or a row would not fit rowcap. */
+int bm_build_rows(BitmapTable *t, uint16_t idx);
+
+/* Round bezel: the largest circle inside a w x h panel. Sets the half-open
+ * pixel span [*x0, *x1) of row y inside the circle (pixel centers); an empty
+ * row gives x0 == x1. */
+void bm_bezel_span(int32_t w, int32_t h, int32_t y, int32_t *x0, int32_t *x1);
+
+/* Blit callback: len pixels of straight-alpha RGBA starting at (x, y). */
+typedef void (*BlitFn)(void *ctx, int32_t x, int32_t y, int32_t len,
+                       const uint8_t *rgba);
+
+/* Blit rect (clamped to the owner's pixels) of an owner node row by row,
+ * clipped to the round bezel. The clip is applied here, at blit time; the
+ * pixels in the buffer are untouched. */
+void bm_blit_bezel(const BitmapTable *t, uint16_t idx, Rect r, BlitFn fn,
+                   void *ctx);
 
 #endif

@@ -24,7 +24,7 @@ static const Combiner combs[] = {
     {0, 0, {0, 0, 0, 0}},
     {7, COMB_SET, {255, 0, 0, 0}}, /* SET rgb = red, alpha untouched */
 };
-static BitmapTable T = {tbl, N, 0, combs, 2};
+static BitmapTable T = {tbl, N, 0, combs, 2, 0};
 static const GlyphFont font = {glyph_table, GLYPH_COUNT, glyph_alpha, GLYPH_H,
                                GLYPH_B};
 static uint8_t heap[16384];

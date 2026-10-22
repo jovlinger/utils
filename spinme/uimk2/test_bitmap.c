@@ -18,11 +18,12 @@ static int checks;
 
 #define N 16
 static Bitmap tbl[N];
-static BitmapTable T = {tbl, N, 0, NULL, 0};
+static BitmapTable T = {tbl, N, 0, NULL, 0, 0};
 
 static void reset(void) {
   memset(tbl, 0, sizeof tbl);
   T.samples = 0;
+  T.row_rebuilds = 0;
 }
 
 static uint8_t *px(Bitmap *b, int x, int y) {
@@ -312,6 +313,119 @@ static void test_glyph_alpha_blend(void) {
   CHECK(p[0] >= 127 && p[0] <= 129 && p[3] == 255);
 }
 
+/* Root with row lists: rows rebuilt only when geom_dirty, lists hold exactly
+ * the overlapping children, back to front. */
+static void test_row_lists(void) {
+  reset();
+  static uint8_t root[8 * 6 * 4], c2[3 * 2 * 4], c3[4 * 3 * 4];
+  static uint16_t rows[6 * 4];
+  static const LayoutItem items[] = {{0, 1, 2}, {2, 2, 3}};
+  memset(c2, 255, sizeof c2);
+  memset(c3, 255, sizeof c3);
+  init_node(1, BM_LAYOUT, 0, 8, 6);
+  tbl[1].pix = root;
+  tbl[1].items = items;
+  tbl[1].nitems = 2;
+  tbl[1].rowlist = rows;
+  tbl[1].rowcap = 4;
+  tbl[1].paper[3] = 255;
+  init_node(2, BM_RGBA, 1, 3, 2);
+  tbl[2].pix = c2;
+  init_node(3, BM_RGBA, 1, 4, 3);
+  tbl[3].pix = c3;
+  bm_invalidate(&T, 1, (Rect){0, 0, 8, 6}, 1);
+  bm_repaint(&T, 1);
+  CHECK(T.row_rebuilds == 1);
+  /* child 2 covers rows 1-2, child 3 covers rows 2-4 */
+  CHECK(rows[0 * 4] == 0);
+  CHECK(rows[1 * 4] == 2 && rows[1 * 4 + 1] == 0);
+  CHECK(rows[2 * 4] == 2 && rows[2 * 4 + 1] == 3 && rows[2 * 4 + 2] == 0);
+  CHECK(rows[3 * 4] == 3 && rows[3 * 4 + 1] == 0);
+  CHECK(rows[4 * 4] == 3 && rows[4 * 4 + 1] == 0);
+  CHECK(rows[5 * 4] == 0);
+  CHECK(is(px(&tbl[1], 0, 1), 255, 255, 255, 255));
+  CHECK(is(px(&tbl[1], 7, 1), 0, 0, 0, 255));
+
+  /* damage without geometry does not rebuild */
+  bm_invalidate(&T, 2, (Rect){0, 0, 3, 2}, 0);
+  bm_repaint(&T, 1);
+  CHECK(T.row_rebuilds == 1);
+  /* geometry damage rebuilds, and a moved child shows in the new rows */
+  static const LayoutItem moved[] = {{0, 4, 2}, {2, 2, 3}};
+  tbl[1].items = moved;
+  bm_invalidate(&T, 1, (Rect){0, 0, 8, 6}, 1);
+  bm_repaint(&T, 1);
+  CHECK(T.row_rebuilds == 2);
+  CHECK(rows[1 * 4] == 0);
+  CHECK(rows[4 * 4] == 2 && rows[4 * 4 + 1] == 3 && rows[4 * 4 + 2] == 0);
+  CHECK(rows[5 * 4] == 2 && rows[5 * 4 + 1] == 0);
+  CHECK(is(px(&tbl[1], 0, 1), 0, 0, 0, 255));
+  CHECK(is(px(&tbl[1], 0, 4), 255, 255, 255, 255));
+}
+
+static int blit_pixels, blit_spans, blit_bad;
+static void count_blit(void *ctx, int32_t x, int32_t y, int32_t len,
+                       const uint8_t *rgba) {
+  (void)ctx;
+  (void)x;
+  (void)y;
+  (void)rgba;
+  blit_pixels += len;
+  blit_spans++;
+  if (len <= 0) blit_bad = 1;
+}
+
+/* Brute-force definition: pixel center inside the circle of diameter
+ * min(w, h) centered on the panel. */
+static int inside(int w, int h, int x, int y) {
+  int d = w < h ? w : h;
+  long dx = 2L * x + 1 - w, dy = 2L * y + 1 - h;
+  return dx * dx + dy * dy <= (long)d * d;
+}
+
+static void test_bezel_clip(void) {
+  /* span matches the brute-force circle on odd, even, and non-square sizes */
+  int sizes[][2] = {{360, 360}, {7, 7}, {8, 8}, {9, 6}, {1, 1}};
+  int span_ok = 1;
+  for (int s = 0; s < 5; s++) {
+    int w = sizes[s][0], h = sizes[s][1];
+    for (int y = 0; y < h; y++) {
+      int32_t x0, x1;
+      bm_bezel_span(w, h, y, &x0, &x1);
+      for (int x = 0; x < w; x++)
+        if ((x >= x0 && x < x1) != inside(w, h, x, y)) span_ok = 0;
+    }
+  }
+  CHECK(span_ok);
+
+  /* a 360x360 blit of the whole buffer drops the corners, keeps the center */
+  static uint8_t big[360 * 360 * 4];
+  reset();
+  init_node(1, BM_LAYOUT, 0, 360, 360);
+  tbl[1].pix = big;
+  blit_pixels = blit_spans = blit_bad = 0;
+  bm_blit_bezel(&T, 1, (Rect){0, 0, 360, 360}, count_blit, NULL);
+  int want = 0;
+  for (int y = 0; y < 360; y++)
+    for (int x = 0; x < 360; x++) want += inside(360, 360, x, y);
+  CHECK(blit_pixels == want && !blit_bad);
+  CHECK(blit_pixels < 360 * 360 && blit_pixels > 100000);
+  int32_t x0, x1;
+  bm_bezel_span(360, 360, 0, &x0, &x1);
+  CHECK(x0 > 100 && x1 < 260); /* top row is a short chord, not the full width */
+  bm_bezel_span(360, 360, 180, &x0, &x1);
+  CHECK(x0 == 0 && x1 == 360);
+
+  /* a damage rect wholly in a corner blits nothing; one across the center
+   * is clamped to the damage rect */
+  blit_pixels = blit_spans = 0;
+  bm_blit_bezel(&T, 1, (Rect){0, 0, 20, 20}, count_blit, NULL);
+  CHECK(blit_pixels == 0 && blit_spans == 0);
+  blit_pixels = blit_spans = 0;
+  bm_blit_bezel(&T, 1, (Rect){170, 170, 20, 20}, count_blit, NULL);
+  CHECK(blit_pixels == 400 && blit_spans == 20);
+}
+
 int main(void) {
   test_measure_and_offsets();
   test_one_parent_and_invalidate();
@@ -321,6 +435,8 @@ int main(void) {
   test_transparent_rgba_is_a_real_color();
   test_viewport_clips();
   test_glyph_alpha_blend();
+  test_row_lists();
+  test_bezel_clip();
   printf("%d checks, %d failures\n", checks, failures);
   return failures ? 1 : 0;
 }

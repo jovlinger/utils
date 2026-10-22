@@ -94,6 +94,29 @@ int bm_child_offset(const BitmapTable *t, uint16_t parent, uint16_t child,
   }
 }
 
+int bm_build_rows(BitmapTable *t, uint16_t idx) {
+  Bitmap *b = &t->b[idx];
+  if (b->kind != BM_LAYOUT || !b->rowlist || b->rowcap == 0) return -1;
+  for (int32_t y = 0; y < b->h; y++) {
+    uint16_t *row = b->rowlist + (size_t)y * b->rowcap;
+    uint16_t n = 0;
+    for (uint16_t i = 0; i < b->nitems; i++) {
+      const LayoutItem *it = &b->items[i];
+      const Bitmap *c = &t->b[it->idx];
+      if (y < it->y || y >= it->y + c->h) continue;
+      if (n + 1 >= b->rowcap) {
+        row[n] = 0;
+        return -1;
+      }
+      row[n++] = it->idx;
+    }
+    row[n] = 0;
+  }
+  b->rows_valid = 1;
+  t->row_rebuilds++;
+  return 0;
+}
+
 void bm_invalidate(BitmapTable *t, uint16_t idx, Rect r, int geometry) {
   while (idx) {
     Bitmap *b = &t->b[idx];
@@ -260,7 +283,13 @@ static void paint_owner(BitmapTable *t, uint16_t idx) {
       Acc acc = {0, 0, 0, 0};
       int hit = 0;
       /* front to back: a later Layout item is in front */
-      if (b->kind == BM_LAYOUT) {
+      if (b->kind == BM_LAYOUT && b->rows_valid) {
+        const uint16_t *row = b->rowlist + (size_t)y * b->rowcap;
+        int cnt = 0;
+        while (row[cnt]) cnt++;
+        for (int i = cnt - 1; i >= 0 && acc.a < 255; i--)
+          hit |= add_child(t, idx, row[i], x, y, &acc);
+      } else if (b->kind == BM_LAYOUT) {
         for (int i = nk - 1; i >= 0 && acc.a < 255; i--)
           hit |= add_child(t, idx, kids[i], x, y, &acc);
       } else {
@@ -290,9 +319,55 @@ void bm_repaint(BitmapTable *t, uint16_t idx) {
   if (idx == 0 || !b->dirty) return;
   int nk = children(t, idx, kids, BM_MAX_CHILDREN);
   for (int i = 0; i < nk; i++) bm_repaint(t, kids[i]);
+  if (b->kind == BM_LAYOUT && b->rowlist && (b->geom_dirty || !b->rows_valid))
+    (void)bm_build_rows(t, idx);
   /* pixel data with no children (a plain bitmap) has nothing to repaint */
   if (owns_pixels(b) && nk > 0) paint_owner(t, idx);
   b->dirty = 0;
   b->geom_dirty = 0;
   b->damage.x = b->damage.y = b->damage.w = b->damage.h = 0;
+}
+
+/* ---- round bezel clip -------------------------------------------------- */
+
+static int32_t isqrt32(int64_t v) {
+  int64_t r = 0;
+  while ((r + 1) * (r + 1) <= v) r++;
+  return (int32_t)r;
+}
+
+void bm_bezel_span(int32_t w, int32_t h, int32_t y, int32_t *x0, int32_t *x1) {
+  int32_t d = w < h ? w : h;
+  int64_t dy = 2 * (int64_t)y + 1 - h;
+  int64_t rem = (int64_t)d * d - dy * dy;
+  *x0 = *x1 = 0;
+  if (y < 0 || y >= h || rem < 0) return;
+  /* pixel x is inside when |2x + 1 - w| <= s */
+  int32_t s = isqrt32(rem);
+  int32_t lo = w - 1 - s; /* 2x >= lo */
+  int32_t hi = w - 1 + s; /* 2x <= hi */
+  int32_t a = lo <= 0 ? 0 : (lo + 1) / 2;
+  int32_t z = hi < 0 ? -1 : hi / 2;
+  if (a < 0) a = 0;
+  if (z > w - 1) z = w - 1;
+  if (z < a) return;
+  *x0 = a;
+  *x1 = z + 1;
+}
+
+void bm_blit_bezel(const BitmapTable *t, uint16_t idx, Rect r, BlitFn fn,
+                   void *ctx) {
+  const Bitmap *b = &t->b[idx];
+  int32_t xa = r.x < 0 ? 0 : r.x, ya = r.y < 0 ? 0 : r.y;
+  int32_t xb = r.x + r.w > b->w ? b->w : r.x + r.w;
+  int32_t yb = r.y + r.h > b->h ? b->h : r.y + r.h;
+  if (!b->pix) return;
+  for (int32_t y = ya; y < yb; y++) {
+    int32_t s0, s1;
+    bm_bezel_span(b->w, b->h, y, &s0, &s1);
+    if (s0 < xa) s0 = xa;
+    if (s1 > xb) s1 = xb;
+    if (s1 <= s0) continue;
+    fn(ctx, s0, y, s1 - s0, b->pix + ((size_t)y * (size_t)b->w + (size_t)s0) * 4);
+  }
 }
