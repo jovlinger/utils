@@ -12,19 +12,36 @@ void bitmap_table_init(BitmapTable *t, Bitmap *storage, uint16_t cap) {
   t->ncomb = 0;
 }
 
-/* Apply the node's combiner to one leaf sample. SET only so far. */
+static uint8_t combine_channel(uint8_t op, uint8_t c, uint8_t v) {
+  switch (op) {
+    case CB_SET:
+      return v;
+    case CB_SCALE:
+      return (uint8_t)(((uint32_t)c * v + 127) / 255);
+    case CB_CURVE: {
+      int delta = (int)v - 128;
+      int r = (int)c + delta * (int)c * (255 - (int)c) / 32768;
+      return (uint8_t)(r < 0 ? 0 : (r > 255 ? 255 : r));
+    }
+    default:
+      return c;
+  }
+}
+
+Px bitmap_combine(const Combiner *c, Px p) {
+  if (c->mask & 1) p.r = combine_channel(c->op, p.r, c->value[0]);
+  if (c->mask & 2) p.g = combine_channel(c->op, p.g, c->value[1]);
+  if (c->mask & 4) p.b = combine_channel(c->op, p.b, c->value[2]);
+  if (c->mask & 8) p.a = combine_channel(c->op, p.a, c->value[3]);
+  return p;
+}
+
+/* Apply the node's combiner to one leaf sample. */
 static Px apply_combiner(const BitmapTable *t, const Bitmap *n, Px p) {
   if (n->combiner == 0 || n->combiner >= t->ncomb) {
     return p;
   }
-  const Combiner *c = &t->comb[n->combiner];
-  if (c->op == CB_SET) {
-    if (c->mask & 1) p.r = c->value[0];
-    if (c->mask & 2) p.g = c->value[1];
-    if (c->mask & 4) p.b = c->value[2];
-    if (c->mask & 8) p.a = c->value[3];
-  }
-  return p;
+  return bitmap_combine(&t->comb[n->combiner], p);
 }
 
 uint16_t bitmap_new(BitmapTable *t, BitmapKind kind, uint16_t w, uint16_t h) {

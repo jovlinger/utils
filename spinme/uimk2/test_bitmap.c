@@ -454,6 +454,80 @@ static void test_bezel_clip(void) {
   CHECK(s.rows == 2 && s.px == 60 && s.minx[170] == 150 && s.maxx[171] == 179);
 }
 
+static void test_combiner(void) {
+  Px p = {10, 20, 30, 40};
+  Combiner set_r0 = {1, CB_SET, {0, 99, 99, 99}};
+  CHECK(px_eq(bitmap_combine(&set_r0, p), 0, 20, 30, 40));
+  Combiner set_rgb = {7, CB_SET, {1, 2, 3, 99}};
+  CHECK(px_eq(bitmap_combine(&set_rgb, p), 1, 2, 3, 40));
+  Combiner none = {0, CB_SET, {9, 9, 9, 9}};
+  CHECK(px_eq(bitmap_combine(&none, p), 10, 20, 30, 40));
+
+  for (int v = 0; v < 256; v++) {
+    Combiner sc = {8, CB_SCALE, {0, 0, 0, (uint8_t)v}};
+    Px z = {1, 2, 3, 0}, f = {1, 2, 3, 255};
+    CHECK(bitmap_combine(&sc, z).a == 0);
+    CHECK(bitmap_combine(&sc, f).a == v);
+    CHECK(bitmap_combine(&sc, f).r == 1);
+  }
+  Combiner half = {8, CB_SCALE, {0, 0, 0, 128}};
+  Px a101 = {0, 0, 0, 101}; /* 101*128/255 = 50.69 -> 51 */
+  CHECK(bitmap_combine(&half, a101).a == 51);
+  Combiner sc_rgb = {7, CB_SCALE, {255, 128, 0, 0}};
+  Px q = {200, 200, 200, 77};
+  CHECK(px_eq(bitmap_combine(&sc_rgb, q), 200, 100, 0, 77));
+
+  int identity_ok = 1, up_ok = 1, down_ok = 1, up_moved = 0, down_moved = 0;
+  for (int v = 0; v < 256; v++) {
+    Combiner cv = {8, CB_CURVE, {0, 0, 0, (uint8_t)v}};
+    for (int c = 0; c < 256; c++) {
+      Px s = {5, 6, 7, (uint8_t)c};
+      Px o = bitmap_combine(&cv, s);
+      if (o.r != 5 || o.g != 6 || o.b != 7) identity_ok = 0;
+      if (c == 0 || c == 255) {
+        if (o.a != c) identity_ok = 0;
+      } else if (v == 128) {
+        if (o.a != c) identity_ok = 0;
+      } else if (v > 128) {
+        if (o.a < c) up_ok = 0;
+        if (o.a > c) up_moved++;
+      } else {
+        if (o.a > c) down_ok = 0;
+        if (o.a < c) down_moved++;
+      }
+    }
+  }
+  CHECK(identity_ok);
+  CHECK(up_ok && down_ok);
+  CHECK(up_moved > 0 && down_moved > 0);
+  Combiner c255 = {8, CB_CURVE, {0, 0, 0, 255}}, c0 = {8, CB_CURVE, {0, 0, 0, 0}};
+  Px mid = {0, 0, 0, 128};
+  CHECK(bitmap_combine(&c255, mid).a > 128);
+  CHECK(bitmap_combine(&c0, mid).a < 128);
+
+  /* apply-before-blend in repaint: SCALE alpha 128 on an opaque RGBA child
+   * over paper gives a half blend, not an opaque pixel */
+  Fix f;
+  Px root_px[RW * RH], child_px[4];
+  static const Combiner tab[2] = {{0, 0, {0, 0, 0, 0}}, {8, CB_SCALE, {0, 0, 0, 128}}};
+  bitmap_table_init(&f.t, f.store, CAP);
+  f.t.comb = tab;
+  f.t.ncomb = 2;
+  f.next_items = 0;
+  uint16_t root = mk(&f, BK_LAYOUT, RW, RH);
+  f.t.b[root].pixels = root_px;
+  f.t.b[root].paper = (Px){0, 0, 0, 255};
+  uint16_t ch = mk(&f, BK_RGBA, 2, 2);
+  for (int i = 0; i < 4; i++) child_px[i] = (Px){255, 255, 255, 255};
+  f.t.b[ch].pixels = child_px;
+  f.t.b[ch].combiner = 1;
+  CHECK(bitmap_add(&f.t, root, ch, 0, 0));
+  bitmap_invalidate(&f.t, root, (Rect){0, 0, RW, RH}, true);
+  bitmap_repaint(&f.t, root);
+  Px r = root_px[0];
+  CHECK(r.a == 255 && r.r > 120 && r.r < 135);
+}
+
 int main(void) {
   test_parent_and_invalidate();
   test_viewport_and_layout_kinds();
@@ -463,6 +537,7 @@ int main(void) {
   test_row_lists();
   test_viewport_crop();
   test_bezel_clip();
+  test_combiner();
   if (failures) {
     printf("%d check(s) failed\n", failures);
     return 1;

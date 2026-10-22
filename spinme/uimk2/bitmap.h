@@ -35,6 +35,12 @@ typedef struct {
   uint8_t value[4];
 } Combiner;
 
+/* Apply one combiner to a sample. Per channel in the mask, c the channel and
+ * v its value byte: SET c = v; SCALE c = c * v / 255 rounded to nearest;
+ * CURVE c' = c + (v - 128) * c * (255 - c) / 32768 clamped to 0..255.
+ * Channels outside the mask pass through. */
+Px bitmap_combine(const Combiner *c, Px p);
+
 typedef struct {
   int16_t x, y;
   uint16_t idx;
