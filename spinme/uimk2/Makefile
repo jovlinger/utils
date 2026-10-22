@@ -7,7 +7,7 @@ WARN := -std=c99 -pedantic -Wall -Wextra -Werror -O1 -g \
 	-fsanitize=address,undefined -fno-omit-frame-pointer
 BUILD := build
 
-TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap
+TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line
 
 .PHONY: test test-glyphs clean
 
@@ -29,6 +29,12 @@ $(BUILD)/test_arena: test_arena.c uimk2_arena.c uimk2_arena.h | $(BUILD)
 
 $(BUILD)/test_bitmap: test_bitmap.c uimk2_bitmap.c uimk2_bitmap.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_bitmap.c uimk2_bitmap.c
+
+LINE_SRC := test_line.c uimk2_line.c uimk2_bitmap.c uimk2_arena.c
+LINE_HDR := uimk2_line.h uimk2_bitmap.h uimk2_arena.h uimk2_glyphs.h
+
+$(BUILD)/test_line: $(LINE_SRC) $(LINE_HDR) $(BUILD)/glyphs_12.c | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -I. -o $@ $(LINE_SRC) $(BUILD)/glyphs_12.c
 
 $(BUILD):
 	mkdir -p $@

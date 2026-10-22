@@ -75,15 +75,44 @@ typedef struct {
     } u;
 } uimk2_bm;
 
+/* Color combiner channel mask bits; value[] is in R, G, B, A order. */
+#define UIMK2_COMB_R 0x1u
+#define UIMK2_COMB_G 0x2u
+#define UIMK2_COMB_B 0x4u
+#define UIMK2_COMB_A 0x8u
+#define UIMK2_COMB_RGB (UIMK2_COMB_R | UIMK2_COMB_G | UIMK2_COMB_B)
+
+typedef enum {
+    UIMK2_COMB_SET = 0 /* c = v */
+} uimk2_comb_op;
+
+/* Applied to every sample of a node before it is blended into its parent.
+ * Channels outside mask pass through unchanged. */
+typedef struct {
+    uint8_t mask; /* UIMK2_COMB_* bits */
+    uint8_t op;   /* uimk2_comb_op */
+    uint8_t value[4];
+} uimk2_combiner;
+
 typedef struct {
     uimk2_bm *bm;    /* bm[0] is the null header */
     uint16_t cap;    /* headers in bm */
     uint16_t count;  /* next free index */
     uint16_t root;   /* index of the root Layout */
     uint32_t samples; /* child samples taken by repaint, for tests */
+    const uimk2_combiner *comb; /* comb[0] is unused: index 0 = none */
+    uint16_t ncomb;             /* entries in comb */
 } uimk2_bmtab;
 
 void uimk2_bmtab_init(uimk2_bmtab *t, uimk2_bm *storage, uint16_t cap);
+
+/* Install the fixed combiner table. A header combiner index of 0, or one at
+ * or past n, applies nothing. */
+void uimk2_bmtab_set_combiners(uimk2_bmtab *t, const uimk2_combiner *comb,
+                               uint16_t n);
+
+/* Apply combiner index ci of t to the sample s in place. */
+void uimk2_combine(const uimk2_bmtab *t, uint8_t ci, uint8_t s[4]);
 
 /* A zeroed header of kind; returns its index, or 0 when the table is full. */
 uint16_t uimk2_bm_new(uimk2_bmtab *t, uimk2_bm_kind kind);

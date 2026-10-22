@@ -57,6 +57,8 @@ void uimk2_bmtab_init(uimk2_bmtab *t, uimk2_bm *storage, uint16_t cap) {
     t->count = 1;
     t->root = 0;
     t->samples = 0;
+    t->comb = NULL;
+    t->ncomb = 0;
     if (cap > 0) {
         memset(&storage[0], 0, sizeof storage[0]);
     }
@@ -71,6 +73,35 @@ uint16_t uimk2_bm_new(uimk2_bmtab *t, uimk2_bm_kind kind) {
     memset(&t->bm[i], 0, sizeof t->bm[i]);
     t->bm[i].kind = (uint8_t)kind;
     return i;
+}
+
+/* ---- combiner ---------------------------------------------------------- */
+
+void uimk2_bmtab_set_combiners(uimk2_bmtab *t, const uimk2_combiner *comb,
+                               uint16_t n) {
+    t->comb = comb;
+    t->ncomb = n;
+}
+
+void uimk2_combine(const uimk2_bmtab *t, uint8_t ci, uint8_t s[4]) {
+    const uimk2_combiner *k;
+    int c;
+    if (ci == 0 || ci >= t->ncomb || t->comb == NULL) {
+        return;
+    }
+    k = &t->comb[ci];
+    for (c = 0; c < 4; c++) {
+        if ((k->mask & (1u << c)) == 0) {
+            continue;
+        }
+        switch ((uimk2_comb_op)k->op) {
+        case UIMK2_COMB_SET:
+            s[c] = k->value[c];
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 /* ---- children ---------------------------------------------------------- */
@@ -260,6 +291,7 @@ static bool composite(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
         uint8_t s[4];
         t->samples++;
         if (sample(t, c, x - dx, y - dy, s)) {
+            uimk2_combine(t, t->bm[c].combiner, s);
             covered = true;
             acc_under(acc, s);
         }
