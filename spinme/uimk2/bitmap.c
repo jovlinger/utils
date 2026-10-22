@@ -8,6 +8,23 @@ void bitmap_table_init(BitmapTable *t, Bitmap *storage, uint16_t cap) {
   t->cap = cap;
   t->used = 1;
   t->samples = 0;
+  t->comb = NULL;
+  t->ncomb = 0;
+}
+
+/* Apply the node's combiner to one leaf sample. SET only so far. */
+static Px apply_combiner(const BitmapTable *t, const Bitmap *n, Px p) {
+  if (n->combiner == 0 || n->combiner >= t->ncomb) {
+    return p;
+  }
+  const Combiner *c = &t->comb[n->combiner];
+  if (c->op == CB_SET) {
+    if (c->mask & 1) p.r = c->value[0];
+    if (c->mask & 2) p.g = c->value[1];
+    if (c->mask & 4) p.b = c->value[2];
+    if (c->mask & 8) p.a = c->value[3];
+  }
+  return p;
 }
 
 uint16_t bitmap_new(BitmapTable *t, BitmapKind kind, uint16_t w, uint16_t h) {
@@ -197,13 +214,13 @@ static bool sample(BitmapTable *t, uint16_t idx, int x, int y, Px *acc) {
   }
   if (n->pixels) {
     t->samples++;
-    blend_under(acc, n->pixels[y * n->w + x]);
+    blend_under(acc, apply_combiner(t, n, n->pixels[y * n->w + x]));
     return true;
   }
   if (n->kind == BK_GLYPH) {
     t->samples++;
     Px p = {255, 255, 255, n->alpha[y * n->w + x]};
-    blend_under(acc, p);
+    blend_under(acc, apply_combiner(t, n, p));
     return true;
   }
   bool covered = false;

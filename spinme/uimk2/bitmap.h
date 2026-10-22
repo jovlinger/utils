@@ -27,6 +27,14 @@ typedef struct {
   int16_t x, y, w, h;
 } Rect;
 
+/* Color combiner table entry. mask bit 0 R, 1 G, 2 B, 3 A; value is R,G,B,A. */
+typedef enum { CB_SET = 0, CB_SCALE, CB_CURVE } CombinerOp;
+typedef struct {
+  uint8_t mask;
+  uint8_t op;
+  uint8_t value[4];
+} Combiner;
+
 typedef struct {
   int16_t x, y;
   uint16_t idx;
@@ -55,6 +63,8 @@ typedef struct {
   Bitmap *b;
   uint16_t cap;       /* table entries, including the null entry 0 */
   uint16_t used;      /* next free index */
+  const Combiner *comb; /* sealed table; index 0 is none */
+  uint16_t ncomb;
   unsigned long samples; /* leaf samples taken while repainting */
 } BitmapTable;
 
