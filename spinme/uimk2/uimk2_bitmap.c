@@ -99,6 +99,17 @@ void uimk2_combine(const uimk2_bmtab *t, uint8_t ci, uint8_t s[4]) {
         case UIMK2_COMB_SET:
             s[c] = k->value[c];
             break;
+        case UIMK2_COMB_SCALE:
+            s[c] = (uint8_t)(((uint32_t)s[c] * k->value[c] + 127u) / 255u);
+            break;
+        case UIMK2_COMB_CURVE: {
+            /* C99 division truncates toward zero */
+            int32_t v = (int32_t)s[c];
+            int32_t d = (int32_t)k->value[c] - 128;
+            v += d * v * (255 - v) / 32768;
+            s[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+            break;
+        }
         default:
             break;
         }

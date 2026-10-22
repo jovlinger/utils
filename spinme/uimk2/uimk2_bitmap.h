@@ -94,7 +94,10 @@ typedef struct {
 #define UIMK2_COMB_RGB (UIMK2_COMB_R | UIMK2_COMB_G | UIMK2_COMB_B)
 
 typedef enum {
-    UIMK2_COMB_SET = 0 /* c = v */
+    UIMK2_COMB_SET = 0,   /* c = v */
+    UIMK2_COMB_SCALE = 1, /* c = c * v / 255, rounded to nearest */
+    UIMK2_COMB_CURVE = 2  /* c += (v - 128) * c * (255 - c) / 32768, clamped;
+                           * 0 and 255 are fixed, v = 128 is the identity */
 } uimk2_comb_op;
 
 /* Applied to every sample of a node before it is blended into its parent.

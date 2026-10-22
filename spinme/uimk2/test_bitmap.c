@@ -753,6 +753,182 @@ static void test_bezel(void) {
     check_spans(1, 1, R(0, 0, 1, 1));
 }
 
+/* ---- color combiner --------------------------------------------------- */
+
+enum {
+    C_NONE,
+    C_ZERO_R,
+    C_SET_RGB,
+    C_SCALE_A,
+    C_CURVE_A,
+    NCOMB
+};
+
+/* value bytes of the SCALE and CURVE entries are set per check */
+static uimk2_combiner combs[NCOMB] = {
+    {0, UIMK2_COMB_SET, {0, 0, 0, 0}},
+    {UIMK2_COMB_R, UIMK2_COMB_SET, {0, 0, 0, 0}},
+    {UIMK2_COMB_RGB, UIMK2_COMB_SET, {200, 100, 50, 0}},
+    {UIMK2_COMB_A, UIMK2_COMB_SCALE, {0, 0, 0, 128}},
+    {UIMK2_COMB_A, UIMK2_COMB_CURVE, {0, 0, 0, 128}},
+};
+
+/* alpha c through the alpha-only entry ci with value v; RGB must pass */
+static int comb_alpha(uimk2_bmtab *t, uint8_t ci, int v, int c) {
+    uint8_t s[4];
+    s[0] = 11;
+    s[1] = 22;
+    s[2] = 33;
+    s[3] = (uint8_t)c;
+    combs[ci].value[3] = (uint8_t)v;
+    uimk2_combine(t, ci, s);
+    if (s[0] != 11 || s[1] != 22 || s[2] != 33) {
+        return -1;
+    }
+    return s[3];
+}
+
+static void test_combiner_ops(void) {
+    uimk2_bmtab t;
+    uint8_t s[4];
+    int v, c, ok;
+
+    uimk2_bmtab_init(&t, storage, CAP);
+    uimk2_bmtab_set_combiners(&t, combs, NCOMB);
+
+    /* SET red to 0 leaves G, B, A */
+    s[0] = 11;
+    s[1] = 22;
+    s[2] = 33;
+    s[3] = 44;
+    uimk2_combine(&t, C_ZERO_R, s);
+    CHECK(px_eq(s, 0, 22, 33, 44));
+    /* SET RGB leaves A */
+    uimk2_combine(&t, C_SET_RGB, s);
+    CHECK(px_eq(s, 200, 100, 50, 44));
+    /* index 0 and indexes past the table are none */
+    uimk2_combine(&t, C_NONE, s);
+    CHECK(px_eq(s, 200, 100, 50, 44));
+    uimk2_combine(&t, NCOMB, s);
+    CHECK(px_eq(s, 200, 100, 50, 44));
+
+    /* SCALE alpha: 0 stays 0 and 255 becomes v, for every v */
+    ok = 1;
+    for (v = 0; v < 256; v++) {
+        ok &= comb_alpha(&t, C_SCALE_A, v, 0) == 0;
+        ok &= comb_alpha(&t, C_SCALE_A, v, 255) == v;
+    }
+    CHECK(ok);
+    /* rounded to nearest: c * v / 255 */
+    ok = 1;
+    for (v = 0; v < 256; v++) {
+        for (c = 0; c < 256; c++) {
+            int got = comb_alpha(&t, C_SCALE_A, v, c);
+            int lo = c * v / 255;
+            int want = (c * v - lo * 255) * 2 > 255 ? lo + 1 : lo;
+            ok &= got == want;
+        }
+    }
+    CHECK(ok);
+    CHECK(comb_alpha(&t, C_SCALE_A, 128, 1) == 1); /* 0.502 */
+    CHECK(comb_alpha(&t, C_SCALE_A, 127, 1) == 0); /* 0.498 */
+    CHECK(comb_alpha(&t, C_SCALE_A, 128, 200) == 100); /* 100.39 */
+
+    /* CURVE alpha: 0 and 255 never move, for every v */
+    ok = 1;
+    for (v = 0; v < 256; v++) {
+        ok &= comb_alpha(&t, C_CURVE_A, v, 0) == 0;
+        ok &= comb_alpha(&t, C_CURVE_A, v, 255) == 255;
+    }
+    CHECK(ok);
+    /* v = 128 is the identity */
+    ok = 1;
+    for (c = 0; c < 256; c++) {
+        ok &= comb_alpha(&t, C_CURVE_A, 128, c) == c;
+    }
+    CHECK(ok);
+    /* above 128 nothing moves down, below 128 nothing moves up, and the
+     * result stays in 0..255 */
+    ok = 1;
+    for (v = 0; v < 256; v++) {
+        for (c = 0; c < 256; c++) {
+            int got = comb_alpha(&t, C_CURVE_A, v, c);
+            ok &= got >= 0 && got <= 255;
+            ok &= v > 128 ? got >= c : (v < 128 ? got <= c : got == c);
+        }
+    }
+    CHECK(ok);
+    /* midtones move strictly */
+    ok = 1;
+    for (c = 64; c <= 191; c++) {
+        ok &= comb_alpha(&t, C_CURVE_A, 160, c) > c;
+        ok &= comb_alpha(&t, C_CURVE_A, 255, c) > c;
+        ok &= comb_alpha(&t, C_CURVE_A, 96, c) < c;
+        ok &= comb_alpha(&t, C_CURVE_A, 0, c) < c;
+    }
+    CHECK(ok);
+    /* 128 + 127 * 128 * 127 / 32768 = 128 + 63.5, truncated */
+    CHECK(comb_alpha(&t, C_CURVE_A, 255, 128) == 191);
+    /* 128 - 128 * 128 * 127 / 32768 = 128 - 63.5, truncated toward 0 */
+    CHECK(comb_alpha(&t, C_CURVE_A, 0, 128) == 65);
+    /* 64 + 64 * 64 * 191 / 32768 = 64 + 23.875 */
+    CHECK(comb_alpha(&t, C_CURVE_A, 192, 64) == 87);
+}
+
+/* The child's combiner applies to its samples before the blend, and the
+ * child's own pixels are not changed. */
+static void test_combiner_before_blend(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[2];
+    static uint8_t back[2 * 2 * 4], front[2 * 2 * 4];
+    uint16_t root, rb, rf;
+    uint32_t before;
+
+    root = make_root(&t, items, 0);
+    uimk2_bmtab_set_combiners(&t, combs, NCOMB);
+    rb = make_raster(&t, 2, 2, back);
+    rf = make_raster(&t, 2, 2, front);
+    fill(back, 4, 0, 0, 255, 255);
+    fill(front, 4, 255, 255, 255, 255);
+    items[0].x = 0;
+    items[0].y = 0;
+    items[0].idx = rb;
+    items[1].x = 0;
+    items[1].y = 0;
+    items[1].idx = rf;
+    t.bm[root].u.layout.n = 2;
+    t.bm[rb].parent = root;
+    t.bm[rf].parent = root;
+
+    /* no combiner: the opaque white front hides the back */
+    uimk2_invalidate(&t, root, R(0, 0, 2, 2), false);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(screen, SW, 0, 0), 255, 255, 255, 255));
+
+    /* SCALE alpha by 128: the front is half covered, the back is sampled */
+    combs[C_SCALE_A].value[3] = 128;
+    t.bm[rf].combiner = C_SCALE_A;
+    uimk2_invalidate(&t, root, R(0, 0, 2, 2), false);
+    before = t.samples;
+    uimk2_repaint(&t);
+    CHECK(t.samples - before == 8);
+    CHECK(px_eq(px_at(screen, SW, 1, 1), 128, 128, 255, 255));
+    CHECK(px_eq(px_at(front, 2, 1, 1), 255, 255, 255, 255));
+
+    /* SET R to 0 on the front: cyan over blue */
+    t.bm[rf].combiner = C_ZERO_R;
+    uimk2_invalidate(&t, root, R(0, 0, 2, 2), false);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(screen, SW, 0, 1), 0, 255, 255, 255));
+
+    /* SCALE alpha by 0 on the front: only the back shows */
+    combs[C_SCALE_A].value[3] = 0;
+    t.bm[rf].combiner = C_SCALE_A;
+    uimk2_invalidate(&t, root, R(0, 0, 2, 2), false);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(screen, SW, 1, 0), 0, 0, 255, 255));
+}
+
 int main(void) {
     test_kinds_offsets_and_measure();
     test_kinds_sample();
@@ -763,6 +939,8 @@ int main(void) {
     test_root_rows_match_linear();
     test_pack_and_viewport_pixels();
     test_bezel();
+    test_combiner_ops();
+    test_combiner_before_blend();
     printf("test_bitmap: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
