@@ -12,6 +12,7 @@ test_bitmap: test_bitmap.c bitmap.c bitmap.h
 test: test_arena test_bitmap
 	./test_arena
 	./test_bitmap
+	python3 test_glyphgen.py
 
 clean:
 	rm -rf test_arena test_arena.dSYM test_bitmap test_bitmap.dSYM
