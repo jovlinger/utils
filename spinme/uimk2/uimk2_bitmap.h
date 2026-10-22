@@ -60,6 +60,17 @@ typedef struct {
             uint16_t n;
             uint8_t *px; /* root only: the screen buffer, w * h * 4 */
             uint8_t paper[4];
+            /* Root only, optional: per-row overlap lists. Row y lists the
+             * positions in items[] of the items whose box overlaps y,
+             * front to back, at row_item[row_start[y] .. row_start[y+1]).
+             * row_start has h + 1 entries and row_item row_cap entries.
+             * Rebuilt by repaint when geom_dirty is set or rows_ok is
+             * false. With no storage, or when the lists do not fit in
+             * row_cap, repaint walks every item. */
+            uint32_t *row_start;
+            uint16_t *row_item;
+            uint32_t row_cap;
+            bool rows_ok;
         } layout;
         struct {
             const uint16_t *items; /* IdxList: zero-terminated */
@@ -100,6 +111,7 @@ typedef struct {
     uint16_t count;  /* next free index */
     uint16_t root;   /* index of the root Layout */
     uint32_t samples; /* child samples taken by repaint, for tests */
+    uint32_t row_rebuilds; /* root overlap-list rebuilds, for tests */
     const uimk2_combiner *comb; /* comb[0] is unused: index 0 = none */
     uint16_t ncomb;             /* entries in comb */
 } uimk2_bmtab;
@@ -140,5 +152,18 @@ void uimk2_invalidate(uimk2_bmtab *t, uint16_t node, uimk2_rect local_rect,
 uimk2_rect uimk2_repaint(uimk2_bmtab *t);
 
 uimk2_rect uimk2_rect_union(uimk2_rect a, uimk2_rect b);
+
+/* The round bezel, a clip applied at blit time. The visible disc of a w x h
+ * panel has diameter min(w, h) and is centered on the panel; pixel (x, y)
+ * is visible when its center lies in the disc:
+ * (2x + 1 - w)^2 + (2y + 1 - h)^2 <= min(w, h)^2. */
+bool uimk2_bezel_visible(uint16_t w, uint16_t h, int32_t x, int32_t y);
+
+/* The visible span of row y of a w x h panel inside the blit rect r:
+ * columns [*x0, *x1). Returns false (and an empty span) when row y of r has
+ * no visible pixel. The blit sends, for each row of the root damage rect,
+ * only this span. */
+bool uimk2_bezel_span(uint16_t w, uint16_t h, uimk2_rect r, int32_t y,
+                      int32_t *x0, int32_t *x1);
 
 #endif /* UIMK2_BITMAP_H */

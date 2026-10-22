@@ -469,12 +469,300 @@ static void test_opaque_stops_blend(void) {
     CHECK(px_eq(px_at(screen, SW, 0, 0), 0, 0, 255, 255));
 }
 
+/* ---- root per-row overlap lists ---------------------------------------- */
+
+static uint32_t row_start[SH + 1];
+static uint16_t row_item[SH * 8];
+
+static void give_rows(uimk2_bmtab *t, uint16_t root, uint32_t cap) {
+    t->bm[root].u.layout.row_start = row_start;
+    t->bm[root].u.layout.row_item = row_item;
+    t->bm[root].u.layout.row_cap = cap;
+    t->bm[root].u.layout.rows_ok = false;
+}
+
+static int row_is(int y, const uint16_t *want, int n) {
+    int k;
+    if ((int)(row_start[y + 1] - row_start[y]) != n) {
+        return 0;
+    }
+    for (k = 0; k < n; k++) {
+        if (row_item[row_start[y] + (uint32_t)k] != want[k]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void test_root_rows(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[3];
+    static uint8_t ra[4 * 2 * 4], rb[4 * 2 * 4], rc[3 * 6 * 4];
+    uint16_t root, a, b, c;
+    static const uint16_t front_c[1] = {2}, c_then_a[2] = {2, 0},
+                          only_a[1] = {0}, only_b[1] = {1};
+    uint32_t before;
+    int y;
+
+    root = make_root(&t, items, 0);
+    give_rows(&t, root, SH * 8);
+    a = make_raster(&t, 4, 2, ra);
+    b = make_raster(&t, 4, 2, rb);
+    c = make_raster(&t, 3, 6, rc);
+    fill(ra, 8, 200, 0, 0, 255);
+    fill(rb, 8, 0, 200, 0, 255);
+    fill(rc, 18, 0, 0, 200, 255);
+    items[0].x = 2; /* a: rows 2..3 */
+    items[0].y = 2;
+    items[0].idx = a;
+    items[1].x = 2; /* b: rows 10..11 */
+    items[1].y = 10;
+    items[1].idx = b;
+    items[2].x = 30; /* c, in front: rows 0..2, clipped above the root */
+    items[2].y = -3;
+    items[2].idx = c;
+    t.bm[root].u.layout.n = 3;
+    t.bm[a].parent = root;
+    t.bm[b].parent = root;
+    t.bm[c].parent = root;
+
+    /* first repaint builds the lists even without geometry */
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), false);
+    uimk2_repaint(&t);
+    CHECK(t.row_rebuilds == 1 && t.bm[root].u.layout.rows_ok);
+    CHECK(row_is(0, front_c, 1) && row_is(1, front_c, 1));
+    CHECK(row_is(2, c_then_a, 2)); /* front to back */
+    CHECK(row_is(3, only_a, 1));
+    CHECK(row_is(4, NULL, 0) && row_is(9, NULL, 0));
+    CHECK(row_is(10, only_b, 1) && row_is(11, only_b, 1));
+    CHECK(row_is(12, NULL, 0) && row_is(SH - 1, NULL, 0));
+    CHECK(px_eq(px_at(screen, SW, 2, 2), 200, 0, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 5, 11), 0, 200, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 31, 2), 0, 0, 200, 255));
+    CHECK(px_eq(px_at(screen, SW, 31, 3), 10, 20, 30, 255));
+
+    /* a non-geometry change does not rebuild, and row 3 walks only a */
+    fill(ra, 8, 0, 0, 0, 255);
+    uimk2_invalidate(&t, a, R(0, 1, 4, 1), false);
+    before = t.samples;
+    uimk2_repaint(&t);
+    CHECK(t.row_rebuilds == 1);
+    CHECK(t.samples - before == 4);
+    CHECK(px_eq(px_at(screen, SW, 2, 3), 0, 0, 0, 255));
+
+    /* move b; a geometry invalidate of old and new boxes rebuilds */
+    items[1].y = 3;
+    uimk2_invalidate(&t, root, R(2, 3, 4, 9), true);
+    uimk2_repaint(&t);
+    CHECK(t.row_rebuilds == 2);
+    for (y = 4; y < SH; y++) {
+        if (y == 4) {
+            CHECK(row_is(y, only_b, 1));
+        } else {
+            CHECK(row_is(y, NULL, 0));
+        }
+    }
+    CHECK(px_eq(px_at(screen, SW, 2, 3), 0, 200, 0, 255)); /* b over a */
+    CHECK(px_eq(px_at(screen, SW, 2, 4), 0, 200, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 2, 10), 10, 20, 30, 255));
+    CHECK(!t.bm[root].geom_dirty);
+
+    /* a clean frame does not rebuild */
+    uimk2_repaint(&t);
+    CHECK(t.row_rebuilds == 2);
+
+    /* lists that do not fit fall back to walking every item */
+    give_rows(&t, root, 3);
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), true);
+    uimk2_repaint(&t);
+    CHECK(t.row_rebuilds == 3 && !t.bm[root].u.layout.rows_ok);
+    CHECK(px_eq(px_at(screen, SW, 2, 4), 0, 200, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 31, 0), 0, 0, 200, 255));
+}
+
+/* The lists change what is walked, never the pixels: a scene of
+ * overlapping half-alpha rasters renders byte-identical with and without
+ * them, and with fewer samples. */
+static void test_root_rows_match_linear(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[6];
+    static uint8_t px[6][7 * 5 * 4];
+    static uint8_t linear[SW * SH * 4];
+    uint16_t root, k;
+    uint32_t s_linear, s_rows;
+
+    root = make_root(&t, items, 6);
+    for (k = 0; k < 6; k++) {
+        uint16_t r = make_raster(&t, 7, 5, px[k]);
+        fill(px[k], 35, 40 * k, 255 - 40 * k, 17 * k, 100 + 30 * k);
+        items[k].x = (int16_t)(k * 5 - 2);
+        items[k].y = (int16_t)((k * 7) % 17 - 2);
+        items[k].idx = r;
+        t.bm[r].parent = root;
+    }
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), true);
+    t.samples = 0;
+    uimk2_repaint(&t);
+    s_linear = t.samples;
+    memcpy(linear, screen, sizeof screen);
+
+    memset(screen, SENTINEL, sizeof screen);
+    give_rows(&t, root, SH * 8);
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), true);
+    t.samples = 0;
+    uimk2_repaint(&t);
+    s_rows = t.samples;
+    CHECK(memcmp(linear, screen, sizeof screen) == 0);
+    CHECK(s_rows < s_linear);
+}
+
+/* ---- pack alignment and viewport crop, in pixels ----------------------- */
+
+static void test_pack_and_viewport_pixels(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[3];
+    static const uint8_t tall[1 * 4] = {255, 255, 255, 255};
+    static const uint8_t shrt[1 * 2] = {255, 255};
+    static const uint8_t wide[5 * 1] = {255, 255, 255, 255, 255};
+    static const uint8_t narrow[2 * 1] = {255, 255};
+    static uint16_t l2r_list[3], t2b_list[3];
+    static uint8_t raster[6 * 6 * 4];
+    uint16_t root, gt, gs, gw, gn, l2r, t2b, ras, vp;
+    int x, y;
+
+    root = make_root(&t, items, 3);
+    /* L2R: a 1x4 and a 1x2 glyph with hsep 1, bottom-aligned at (0, 0) */
+    gt = make_glyph(&t, 1, 4, tall);
+    gs = make_glyph(&t, 1, 2, shrt);
+    l2r = uimk2_bm_new(&t, UIMK2_BM_L2R);
+    l2r_list[0] = gt;
+    l2r_list[1] = gs;
+    l2r_list[2] = 0;
+    t.bm[l2r].u.pack.items = l2r_list;
+    t.bm[l2r].u.pack.sep = 1;
+    t.bm[gt].parent = l2r;
+    t.bm[gs].parent = l2r;
+    uimk2_bm_measure(&t, l2r);
+    /* T2B: a 5x1 and a 2x1 glyph with vsep 1, centered at (10, 0) */
+    gw = make_glyph(&t, 5, 1, wide);
+    gn = make_glyph(&t, 2, 1, narrow);
+    t2b = uimk2_bm_new(&t, UIMK2_BM_T2B);
+    t2b_list[0] = gw;
+    t2b_list[1] = gn;
+    t2b_list[2] = 0;
+    t.bm[t2b].u.pack.items = t2b_list;
+    t.bm[t2b].u.pack.sep = 1;
+    t.bm[gw].parent = t2b;
+    t.bm[gn].parent = t2b;
+    uimk2_bm_measure(&t, t2b);
+    /* Viewport 3x2 at origin (1, 2) over a 6x6 raster, at (20, 5) */
+    ras = make_raster(&t, 6, 6, raster);
+    fill(raster, 36, 0, 0, 255, 255);
+    vp = uimk2_bm_new(&t, UIMK2_BM_VIEWPORT);
+    t.bm[vp].w = 3;
+    t.bm[vp].h = 2;
+    t.bm[vp].u.viewport.child = ras;
+    t.bm[vp].u.viewport.ox = 1;
+    t.bm[vp].u.viewport.oy = 2;
+    t.bm[ras].parent = vp;
+
+    items[0].x = 0;
+    items[0].y = 0;
+    items[0].idx = l2r;
+    items[1].x = 10;
+    items[1].y = 0;
+    items[1].idx = t2b;
+    items[2].x = 20;
+    items[2].y = 5;
+    items[2].idx = vp;
+    t.bm[l2r].parent = root;
+    t.bm[t2b].parent = root;
+    t.bm[vp].parent = root;
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), true);
+    uimk2_repaint(&t);
+
+#define WHITE(x, y) px_eq(px_at(screen, SW, (x), (y)), 255, 255, 255, 255)
+#define PAPERP(x, y) px_eq(px_at(screen, SW, (x), (y)), 10, 20, 30, 255)
+    /* L2R 3x4: tall in column 0 rows 0..3; short in column 2 rows 2..3 */
+    for (y = 0; y < 4; y++) {
+        CHECK(WHITE(0, y));
+        CHECK(PAPERP(1, y));
+        CHECK(y >= 2 ? WHITE(2, y) : PAPERP(2, y));
+    }
+    /* T2B 5x3: wide on row 0; narrow on row 2 at x = (5 - 2) / 2 = 1 */
+    for (x = 0; x < 5; x++) {
+        CHECK(WHITE(10 + x, 0));
+        CHECK(PAPERP(10 + x, 1));
+        CHECK(x == 1 || x == 2 ? WHITE(10 + x, 2) : PAPERP(10 + x, 2));
+    }
+    /* Viewport: exactly its 3x2 box shows the raster; the raster's other
+     * pixels around it are cropped to paper */
+    for (y = 3; y < 9; y++) {
+        for (x = 18; x < 26; x++) {
+            int in = x >= 20 && x < 23 && y >= 5 && y < 7;
+            CHECK(in ? px_eq(px_at(screen, SW, x, y), 0, 0, 255, 255)
+                     : PAPERP(x, y));
+        }
+    }
+#undef WHITE
+#undef PAPERP
+}
+
+/* ---- bezel blit clip --------------------------------------------------- */
+
+static void check_spans(uint16_t w, uint16_t h, uimk2_rect r) {
+    int32_t x, y, x0, x1;
+    for (y = -1; y <= h; y++) {
+        bool any = uimk2_bezel_span(w, h, r, y, &x0, &x1);
+        int ok = 1, seen = 0;
+        for (x = -1; x <= w; x++) {
+            int want = y >= r.y && y < r.y + r.h && x >= r.x &&
+                       x < r.x + r.w && uimk2_bezel_visible(w, h, x, y);
+            int got = any && x >= x0 && x < x1;
+            seen |= want;
+            ok &= want == got;
+        }
+        CHECK(ok && (any == (seen != 0)));
+    }
+}
+
+static void test_bezel(void) {
+    int32_t x0, x1;
+    uimk2_rect all = R(0, 0, 360, 360);
+    CHECK(!uimk2_bezel_visible(360, 360, 0, 0));
+    CHECK(!uimk2_bezel_visible(360, 360, 359, 359));
+    CHECK(uimk2_bezel_visible(360, 360, 180, 180));
+    CHECK(uimk2_bezel_visible(360, 360, 0, 180));
+    CHECK(uimk2_bezel_visible(360, 360, 359, 179));
+    CHECK(!uimk2_bezel_visible(360, 360, 360, 180));
+    /* the middle row is the full width; the top row is a short chord */
+    CHECK(uimk2_bezel_span(360, 360, all, 180, &x0, &x1) && x0 == 0 &&
+          x1 == 360);
+    CHECK(uimk2_bezel_span(360, 360, all, 0, &x0, &x1) && x0 == 167 &&
+          x1 == 193);
+    /* a damage rect in the corner has nothing to send */
+    CHECK(!uimk2_bezel_span(360, 360, R(0, 0, 40, 40), 10, &x0, &x1));
+    CHECK(!uimk2_bezel_span(360, 360, R(0, 0, 0, 0), 180, &x0, &x1));
+    /* every row equals the per-pixel predicate inside the rect */
+    check_spans(360, 360, all);
+    check_spans(360, 360, R(100, 2, 200, 50));
+    check_spans(360, 360, R(-5, 170, 30, 20));
+    check_spans(9, 9, R(0, 0, 9, 9));
+    check_spans(10, 10, R(0, 0, 10, 10));
+    check_spans(7, 5, R(0, 0, 7, 5));
+    check_spans(1, 1, R(0, 0, 1, 1));
+}
+
 int main(void) {
     test_kinds_offsets_and_measure();
     test_kinds_sample();
     test_invalidate_walks_parents();
     test_repaint_paper_and_clean_sibling();
     test_opaque_stops_blend();
+    test_root_rows();
+    test_root_rows_match_linear();
+    test_pack_and_viewport_pixels();
+    test_bezel();
     printf("test_bitmap: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

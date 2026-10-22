@@ -57,6 +57,7 @@ void uimk2_bmtab_init(uimk2_bmtab *t, uimk2_bm *storage, uint16_t cap) {
     t->count = 1;
     t->root = 0;
     t->samples = 0;
+    t->row_rebuilds = 0;
     t->comb = NULL;
     t->ncomb = 0;
     if (cap > 0) {
@@ -114,6 +115,8 @@ typedef struct {
     const uimk2_bm *p;
     uint16_t k;
     int32_t run;
+    const uint16_t *row; /* a root row's overlap list, or NULL */
+    uint32_t rown;
 } child_it;
 
 static void it_init(child_it *it, const uimk2_bmtab *t, uint16_t parent) {
@@ -121,6 +124,22 @@ static void it_init(child_it *it, const uimk2_bmtab *t, uint16_t parent) {
     it->p = &t->bm[parent];
     it->k = 0;
     it->run = 0;
+    it->row = NULL;
+    it->rown = 0;
+}
+
+/* Children of parent that may cover row y: the row's overlap list when
+ * parent is a Layout whose lists are built, otherwise every child. */
+static void it_init_row(child_it *it, const uimk2_bmtab *t, uint16_t parent,
+                        int32_t y) {
+    const uimk2_bm *p = &t->bm[parent];
+    it_init(it, t, parent);
+    if (p->kind == UIMK2_BM_LAYOUT && p->u.layout.rows_ok &&
+        p->u.layout.row_start != NULL && y >= 0 && y < p->h) {
+        const uint32_t *rs = p->u.layout.row_start;
+        it->row = &p->u.layout.row_item[rs[y]];
+        it->rown = rs[y + 1] - rs[y];
+    }
 }
 
 static uint16_t it_next(child_it *it, int32_t *dx, int32_t *dy) {
@@ -137,10 +156,17 @@ static uint16_t it_next(child_it *it, int32_t *dx, int32_t *dy) {
         return p->u.rgba.child;
     case UIMK2_BM_LAYOUT: {
         const uimk2_layout_item *li;
-        if (it->k >= p->u.layout.n) {
-            return 0;
+        if (it->row != NULL) {
+            if (it->k >= it->rown) {
+                return 0;
+            }
+            li = &p->u.layout.items[it->row[it->k++]];
+        } else {
+            if (it->k >= p->u.layout.n) {
+                return 0;
+            }
+            li = &p->u.layout.items[p->u.layout.n - 1u - it->k++];
         }
-        li = &p->u.layout.items[p->u.layout.n - 1u - it->k++];
         *dx = li->x;
         *dy = li->y;
         return li->idx;
@@ -286,7 +312,7 @@ static bool composite(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
     uint16_t c;
     int32_t dx, dy;
     bool covered = false;
-    it_init(&it, t, idx);
+    it_init_row(&it, t, idx, y);
     while (acc->a < 255u && (c = it_next(&it, &dx, &dy)) != 0) {
         uint8_t s[4];
         t->samples++;
@@ -342,6 +368,59 @@ static bool sample(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
     }
 }
 
+/* ---- root overlap lists ------------------------------------------------ */
+
+/* Rows [*y0, *y1) of a Layout of height h that item li overlaps. */
+static void item_rows(const uimk2_bmtab *t, const uimk2_layout_item *li,
+                      uint16_t h, int32_t *y0, int32_t *y1) {
+    const uimk2_bm *c = &t->bm[li->idx];
+    *y0 = li->y < 0 ? 0 : li->y;
+    *y1 = (int32_t)li->y + c->h;
+    if (*y1 > h) {
+        *y1 = h;
+    }
+}
+
+/* Rebuild the per-row overlap lists, front to back. rows_ok is false
+ * afterwards when they do not fit in row_cap. */
+static void rebuild_rows(uimk2_bmtab *t, uint16_t idx) {
+    uimk2_bm *b = &t->bm[idx];
+    uint32_t *rs = b->u.layout.row_start;
+    uint32_t total = 0;
+    int32_t y, y0, y1;
+    uint16_t k;
+    t->row_rebuilds++;
+    b->u.layout.rows_ok = false;
+    memset(rs, 0, ((size_t)b->h + 1u) * sizeof rs[0]);
+    /* count into rs[y + 1], then prefix-sum into starts */
+    for (k = 0; k < b->u.layout.n; k++) {
+        item_rows(t, &b->u.layout.items[k], b->h, &y0, &y1);
+        for (y = y0; y < y1; y++) {
+            rs[y + 1]++;
+        }
+    }
+    for (y = 0; y < b->h; y++) {
+        total += rs[y + 1];
+        rs[y + 1] = total;
+    }
+    if (total > b->u.layout.row_cap) {
+        return;
+    }
+    /* fill front to back, using rs[y] as each row's cursor */
+    for (k = b->u.layout.n; k-- > 0;) {
+        item_rows(t, &b->u.layout.items[k], b->h, &y0, &y1);
+        for (y = y0; y < y1; y++) {
+            b->u.layout.row_item[rs[y]++] = k;
+        }
+    }
+    /* each cursor now sits at the next row's start; shift back */
+    for (y = b->h; y > 0; y--) {
+        rs[y] = rs[y - 1];
+    }
+    rs[0] = 0;
+    b->u.layout.rows_ok = true;
+}
+
 /* ---- repaint ----------------------------------------------------------- */
 
 /* Recompose the owner's damage rect into px; uncovered pixels take paper,
@@ -384,6 +463,10 @@ static void repaint_node(uimk2_bmtab *t, uint16_t idx) {
     if (b->kind == UIMK2_BM_RGBA && b->u.rgba.child != 0) {
         recompose(t, idx, b->u.rgba.px, b->u.rgba.paper);
     } else if (b->kind == UIMK2_BM_LAYOUT && b->u.layout.px != NULL) {
+        if (b->u.layout.row_start != NULL &&
+            (b->geom_dirty || !b->u.layout.rows_ok)) {
+            rebuild_rows(t, idx);
+        }
         recompose(t, idx, b->u.layout.px, b->u.layout.paper);
     }
     b->dirty = false;
@@ -403,4 +486,66 @@ uimk2_rect uimk2_repaint(uimk2_bmtab *t) {
     }
     repaint_node(t, t->root);
     return blit;
+}
+
+/* ---- bezel ------------------------------------------------------------- */
+
+static int64_t diam2(uint16_t w, uint16_t h) {
+    int64_t d = w < h ? w : h;
+    return d * d;
+}
+
+bool uimk2_bezel_visible(uint16_t w, uint16_t h, int32_t x, int32_t y) {
+    int64_t ex = 2 * (int64_t)x + 1 - w, ey = 2 * (int64_t)y + 1 - h;
+    if (x < 0 || y < 0 || x >= w || y >= h) {
+        return false;
+    }
+    return ex * ex + ey * ey <= diam2(w, h);
+}
+
+/* floor(sqrt(v)) for v >= 0 */
+static int64_t isqrt64(int64_t v) {
+    int64_t lo = 0, hi = 1;
+    while (hi * hi <= v) {
+        hi *= 2;
+    }
+    while (hi - lo > 1) {
+        int64_t mid = lo + (hi - lo) / 2;
+        if (mid * mid <= v) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+static int64_t floor_div2(int64_t v) { return v >= 0 ? v / 2 : -((1 - v) / 2); }
+
+bool uimk2_bezel_span(uint16_t w, uint16_t h, uimk2_rect r, int32_t y,
+                      int32_t *x0, int32_t *x1) {
+    int64_t ey = 2 * (int64_t)y + 1 - h, rem, s, lo, hi;
+    *x0 = *x1 = 0;
+    if (rect_empty(r) || y < 0 || y >= h || y < r.y ||
+        y >= (int32_t)r.y + r.h) {
+        return false;
+    }
+    rem = diam2(w, h) - ey * ey;
+    if (rem < 0) {
+        return false;
+    }
+    /* |2x + 1 - w| <= s, so x in [ceil((w-1-s)/2), floor((w-1+s)/2)] */
+    s = isqrt64(rem);
+    lo = -floor_div2(-((int64_t)w - 1 - s));
+    hi = floor_div2((int64_t)w - 1 + s) + 1;
+    if (lo < 0) lo = 0;
+    if (hi > w) hi = w;
+    if (lo < r.x) lo = r.x;
+    if (hi > (int64_t)r.x + r.w) hi = (int64_t)r.x + r.w;
+    if (hi <= lo) {
+        return false;
+    }
+    *x0 = (int32_t)lo;
+    *x1 = (int32_t)hi;
+    return true;
 }
