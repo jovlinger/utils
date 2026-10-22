@@ -231,6 +231,40 @@ static bool sample(BitmapTable *t, uint16_t idx, int x, int y, Px *acc) {
   return covered;
 }
 
+/* Rebuild the root's per-row overlap lists. Returns false (lists unusable,
+ * repaint walks all children) when row_items is too small. */
+static void rebuild_rows(BitmapTable *t, Bitmap *n) {
+  uint16_t total = 0;
+  bool fits = true;
+  n->rebuilds++;
+  for (int pass = 0; pass < 2 && fits; pass++) {
+    uint16_t pos = 0;
+    for (int y = 0; y < n->h; y++) {
+      if (pass == 1) {
+        n->row_start[y] = pos;
+      }
+      for (uint16_t i = 0; i < n->nitems; i++) {
+        const LayoutItem *it = &n->items[i];
+        const Bitmap *c = &t->b[it->idx];
+        if (y >= it->y && y < it->y + c->h) {
+          if (pass == 1) {
+            n->row_items[pos] = i;
+          }
+          pos++;
+        }
+      }
+    }
+    if (pass == 0) {
+      total = pos;
+      fits = total <= n->row_cap;
+    }
+  }
+  if (fits) {
+    n->row_start[n->h] = total;
+  }
+  n->rows_built = fits;
+}
+
 void bitmap_repaint(BitmapTable *t, uint16_t idx) {
   Bitmap *n = &t->b[idx];
   if (idx == 0 || !n->dirty) {
@@ -241,12 +275,27 @@ void bitmap_repaint(BitmapTable *t, uint16_t idx) {
   }
   if (n->pixels) {
     Rect d = rect_clip(n->damage, n->w, n->h);
+    bool rows = false;
+    if (n->kind == BK_LAYOUT && n->row_start != NULL) {
+      if (n->geom_dirty || !n->rows_built) {
+        rebuild_rows(t, n);
+      }
+      rows = n->rows_built;
+    }
     for (int y = d.y; y < d.y + d.h; y++) {
       for (int x = d.x; x < d.x + d.w; x++) {
         Px acc = {0, 0, 0, 0};
-        for (int i = (int)child_count(n) - 1; i >= 0 && acc.a != 255; i--) {
-          LayoutItem it = child_item(n, (uint16_t)i);
-          sample(t, it.idx, x - it.x, y - it.y, &acc);
+        if (rows) {
+          for (int k = (int)n->row_start[y + 1] - 1;
+               k >= (int)n->row_start[y] && acc.a != 255; k--) {
+            LayoutItem it = n->items[n->row_items[k]];
+            sample(t, it.idx, x - it.x, y - it.y, &acc);
+          }
+        } else {
+          for (int i = (int)child_count(n) - 1; i >= 0 && acc.a != 255; i--) {
+            LayoutItem it = child_item(n, (uint16_t)i);
+            sample(t, it.idx, x - it.x, y - it.y, &acc);
+          }
         }
         blend_under(&acc, n->paper); /* no child covered: paper */
         n->pixels[y * n->w + x] = acc;
@@ -259,4 +308,39 @@ void bitmap_repaint(BitmapTable *t, uint16_t idx) {
   n->dirty = false;
   n->geom_dirty = false;
   memset(&n->damage, 0, sizeof(n->damage));
+}
+
+static int isqrt_floor(int v) {
+  int r = 0;
+  while ((r + 1) * (r + 1) <= v) {
+    r++;
+  }
+  return r;
+}
+
+void bitmap_blit_round(const Bitmap *root, Rect damage, int diameter,
+                       BlitSpanFn fn, void *ctx) {
+  Rect d = rect_clip(damage, root->w, root->h);
+  for (int y = d.y; y < d.y + d.h; y++) {
+    int dy = 2 * y + 1 - diameter;
+    int rem = diameter * diameter - dy * dy;
+    if (rem < 0) {
+      continue;
+    }
+    int half = isqrt_floor(rem); /* inside when |2x + 1 - diameter| <= half */
+    int x0 = (diameter - 1 - half + 1) / 2; /* ceil((diameter - 1 - half) / 2) */
+    int x1 = (diameter - 1 + half) / 2;     /* floor, inclusive */
+    if (diameter - 1 - half < 0) {
+      x0 = 0;
+    }
+    if (x0 < d.x) {
+      x0 = d.x;
+    }
+    if (x1 > d.x + d.w - 1) {
+      x1 = d.x + d.w - 1;
+    }
+    if (x1 >= x0) {
+      fn(ctx, x0, y, x1 - x0 + 1, &root->pixels[y * root->w + x0]);
+    }
+  }
 }

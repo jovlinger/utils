@@ -303,12 +303,166 @@ static void test_glyph_has_no_pixel_buffer(void) {
   CHECK(bitmap_new(&f.t, BK_RGBA, 1, 1) == 0);
 }
 
+
+/* Root Layout with per-row lists: a 40x30 root, child A at rows 2..5, child B
+ * at rows 4..9. Lists rebuild only when geom_dirty is set. */
+static void test_row_lists(void) {
+  Fix f;
+  Px root_px[RW * RH];
+  Px a_px[6 * 4], b_px[6 * 6];
+  uint16_t row_start[RH + 1];
+  uint16_t row_items[16];
+  bitmap_table_init(&f.t, f.store, CAP);
+  f.next_items = 0;
+  uint16_t root = mk(&f, BK_LAYOUT, RW, RH);
+  uint16_t a = mk(&f, BK_RGBA, 6, 4);
+  uint16_t b = mk(&f, BK_RGBA, 6, 6);
+  f.t.b[root].pixels = root_px;
+  f.t.b[root].row_start = row_start;
+  f.t.b[root].row_items = row_items;
+  f.t.b[root].row_cap = 16;
+  f.t.b[a].pixels = a_px;
+  f.t.b[b].pixels = b_px;
+  for (int i = 0; i < 24; i++) a_px[i] = (Px){255, 0, 0, 255};
+  for (int i = 0; i < 36; i++) b_px[i] = (Px){0, 0, 255, 255};
+  CHECK(bitmap_add(&f.t, root, a, 3, 2));
+  CHECK(bitmap_add(&f.t, root, b, 10, 4));
+  Rect all = {0, 0, RW, RH};
+  bitmap_invalidate(&f.t, root, all, true);
+  bitmap_repaint(&f.t, root);
+  Bitmap *r = &f.t.b[root];
+  CHECK(r->rebuilds == 1 && r->rows_built);
+  /* row 0: none; row 2: A; row 4: A then B; row 6: B; row 10: none */
+  CHECK(r->row_start[1] - r->row_start[0] == 0);
+  CHECK(r->row_start[3] - r->row_start[2] == 1 && r->row_items[r->row_start[2]] == 0);
+  CHECK(r->row_start[5] - r->row_start[4] == 2);
+  CHECK(r->row_items[r->row_start[4]] == 0 && r->row_items[r->row_start[4] + 1] == 1);
+  CHECK(r->row_start[7] - r->row_start[6] == 1 && r->row_items[r->row_start[6]] == 1);
+  CHECK(r->row_start[11] - r->row_start[10] == 0);
+  CHECK(px_eq(root_px[2 * RW + 3], 255, 0, 0, 255));
+  CHECK(px_eq(root_px[4 * RW + 10], 0, 0, 255, 255));
+  CHECK(px_eq(root_px[20 * RW + 20], 0, 0, 0, 0));
+
+  /* non-geometry damage does not rebuild */
+  Rect small = {0, 0, 2, 2};
+  bitmap_invalidate(&f.t, a, small, false);
+  bitmap_repaint(&f.t, root);
+  CHECK(r->rebuilds == 1);
+  for (int i = 0; i < 24; i++) a_px[i] = (Px){255, 0, 0, 255}; /* repaint cleared the leaf */
+
+  /* geometry change rebuilds and the lists follow the new geometry */
+  f.t.b[root].items[1].y = 12;
+  bitmap_invalidate(&f.t, root, all, true);
+  bitmap_repaint(&f.t, root);
+  CHECK(r->rebuilds == 2);
+  CHECK(r->row_start[5] - r->row_start[4] == 1);
+  CHECK(r->row_start[13] - r->row_start[12] == 1 && r->row_items[r->row_start[12]] == 1);
+  CHECK(px_eq(root_px[12 * RW + 10], 0, 0, 255, 255));
+  CHECK(px_eq(root_px[5 * RW + 10], 0, 0, 0, 0));
+
+  /* too small a row_items falls back to walking all children, same pixels */
+  r->row_cap = 1;
+  bitmap_invalidate(&f.t, root, all, true);
+  bitmap_repaint(&f.t, root);
+  CHECK(!r->rows_built);
+  CHECK(px_eq(root_px[12 * RW + 10], 0, 0, 255, 255));
+  CHECK(px_eq(root_px[2 * RW + 3], 255, 0, 0, 255));
+}
+
+/* Viewport crops one child at (ox + x, oy + y) and clips to its own w, h. */
+static void test_viewport_crop(void) {
+  Fix f;
+  Px root_px[RW * RH];
+  Px big_px[20 * 20];
+  bitmap_table_init(&f.t, f.store, CAP);
+  f.next_items = 0;
+  uint16_t root = mk(&f, BK_LAYOUT, RW, RH);
+  uint16_t vp = mk(&f, BK_VIEWPORT, 4, 3);
+  uint16_t big = mk(&f, BK_RGBA, 20, 20);
+  f.t.b[root].pixels = root_px;
+  f.t.b[big].pixels = big_px;
+  for (int y = 0; y < 20; y++)
+    for (int x = 0; x < 20; x++) big_px[y * 20 + x] = (Px){(uint8_t)x, (uint8_t)y, 9, 255};
+  f.t.b[vp].ox = 10;
+  f.t.b[vp].oy = 6;
+  CHECK(bitmap_set_child(&f.t, vp, big));
+  CHECK(bitmap_add(&f.t, root, vp, 5, 7));
+  Rect all = {0, 0, RW, RH};
+  bitmap_invalidate(&f.t, root, all, true);
+  bitmap_repaint(&f.t, root);
+  CHECK(px_eq(root_px[7 * RW + 5], 10, 6, 9, 255));
+  CHECK(px_eq(root_px[9 * RW + 8], 13, 8, 9, 255));
+  CHECK(px_eq(root_px[7 * RW + 9], 0, 0, 0, 0));  /* right of the window */
+  CHECK(px_eq(root_px[10 * RW + 5], 0, 0, 0, 0)); /* below the window */
+  CHECK(px_eq(root_px[6 * RW + 5], 0, 0, 0, 0));  /* above the window */
+}
+
+enum { BD = 360 };
+typedef struct {
+  int rows;
+  long px;
+  int minx[BD], maxx[BD];
+} Spans;
+static void span_fn(void *ctx, int x, int y, int n, const Px *p) {
+  Spans *s = ctx;
+  (void)p;
+  s->rows++;
+  s->px += n;
+  s->minx[y] = x;
+  s->maxx[y] = x + n - 1;
+}
+
+/* The round bezel is a blit clip: spans match the circle test per pixel. */
+static void test_bezel_clip(void) {
+  static Px buf[BD * BD];
+  Bitmap root;
+  memset(&root, 0, sizeof(root));
+  root.kind = BK_LAYOUT;
+  root.w = BD;
+  root.h = BD;
+  root.pixels = buf;
+  Spans s;
+  memset(&s, 0, sizeof(s));
+  Rect full = {0, 0, BD, BD};
+  bitmap_blit_round(&root, full, BD, span_fn, &s);
+  long want = 0;
+  bool exact = true;
+  for (int y = 0; y < BD; y++) {
+    int lo = -1, hi = -1;
+    for (int x = 0; x < BD; x++) {
+      int dx = 2 * x + 1 - BD, dy = 2 * y + 1 - BD;
+      if (dx * dx + dy * dy <= BD * BD) {
+        want++;
+        if (lo < 0) lo = x;
+        hi = x;
+      }
+    }
+    if (lo >= 0 && (s.minx[y] != lo || s.maxx[y] != hi)) exact = false;
+  }
+  CHECK(exact);
+  CHECK(s.px == want);
+  CHECK(s.minx[0] > 100 && s.minx[180] == 0 && s.maxx[180] == 359); /* corners cut */
+  /* a damage rect in the top-left corner is clipped away entirely */
+  memset(&s, 0, sizeof(s));
+  Rect corner = {0, 0, 20, 20};
+  bitmap_blit_round(&root, corner, BD, span_fn, &s);
+  CHECK(s.rows == 0 && s.px == 0);
+  /* a damage rect is also clipped on its own edges */
+  memset(&s, 0, sizeof(s));
+  Rect mid = {150, 170, 30, 2};
+  bitmap_blit_round(&root, mid, BD, span_fn, &s);
+  CHECK(s.rows == 2 && s.px == 60 && s.minx[170] == 150 && s.maxx[171] == 179);
+}
+
 int main(void) {
   test_parent_and_invalidate();
   test_viewport_and_layout_kinds();
   test_repaint();
   test_opaque_stops_blend();
   test_glyph_has_no_pixel_buffer();
+  test_row_lists();
+  test_viewport_crop();
+  test_bezel_clip();
   if (failures) {
     printf("%d check(s) failed\n", failures);
     return 1;

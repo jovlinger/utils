@@ -57,6 +57,15 @@ typedef struct {
   int16_t ox, oy;     /* Viewport origin */
   const uint8_t *alpha; /* Glyph: w*h coverage bytes, read-only, RGB white */
   unsigned repaints;  /* times this node wrote its pixels */
+  /* Root Layout per-row overlap lists (CSR). Caller supplies row_start
+   * (h + 1 entries) and row_items (row_cap entries); row_items holds item
+   * positions in items[], back to front within a row. NULL row_start means
+   * no lists: repaint walks every child. */
+  uint16_t *row_start;
+  uint16_t *row_items;
+  uint16_t row_cap;
+  bool rows_built;
+  unsigned rebuilds;  /* times the lists were rebuilt */
 } Bitmap;
 
 typedef struct {
@@ -94,5 +103,14 @@ void bitmap_invalidate(BitmapTable *t, uint16_t idx, Rect local_rect,
 /* Repaint dirty children first, then write this node's damage rect when it
  * owns pixels, then clear dirty, geom_dirty, and damage. A clean node returns. */
 void bitmap_repaint(BitmapTable *t, uint16_t idx);
+
+/* Receives one run of n pixels starting at panel (x, y). */
+typedef void (*BlitSpanFn)(void *ctx, int x, int y, int n, const Px *px);
+
+/* Round bezel clip at blit time: sends the part of `damage` (root
+ * coordinates) inside the circle inscribed in a diameter x diameter screen,
+ * one span per row. A pixel is inside when its center is within the circle. */
+void bitmap_blit_round(const Bitmap *root, Rect damage, int diameter,
+                       BlitSpanFn fn, void *ctx);
 
 #endif
