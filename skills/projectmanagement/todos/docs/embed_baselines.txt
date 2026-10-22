@@ -1,0 +1,81 @@
+# embed_eval baselines for todo:1e3c7e0f objid:0006
+# command: python3 embed_eval.py --embedder apple --repro (run from skills/projectmanagement/todos, 2026-10-22)
+# st/all-MiniLM-L6-v2: not run, sentence-transformers not installed (see WorkItem objid:0006 blocked)
+
+embedder apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1 dim=512 docs=55
+domain sizes {'W': 3217, 'P': 4394, 'D': 14}
+embed wall-clock 64.7s over 7642 texts; total 80.7s
+
+domain correction spread_range within_sd ratio anisotropy hubness_skew p@1 p@3
+     W        raw 0.1965 0.0268   7.33 0.9259 16.675 0.17 0.17
+     P        raw 0.1965 0.0268   7.33 0.9259 5.934 0.67 0.83
+     D        raw 0.1965 0.0268   7.33 0.9259 -0.956 0.00 0.50
+     W   centered 0.0078 0.1610   0.05 -0.0160 6.081 0.00 0.00
+     P   centered 0.0078 0.1610   0.05 -0.0160 4.778 0.83 0.83
+     D   centered 0.0078 0.1610   0.05 -0.0160 0.791 0.33 0.67
+     W          z 0.0000 1.0000   0.00 -0.0164 3.541 0.17 0.17
+     P          z 0.0000 1.0000   0.00 -0.0137 3.146 0.67 0.83
+     D          z 0.0000 1.0000   0.00 -0.0173 0.522 0.50 0.67
+
+length bias [raw] inverted=False
+  +0.3879  git
+  +0.8057  git branch checkout worktree
+  +0.8506  git branch checkout worktree inventory teardown stale
+  +0.8763  git branch checkout worktree inventory teardown stale commit push merge rebase origin master
+  +0.5947  flac
+  +0.6040  audio metadata
+  +0.8403  flac audio metadata directory naming
+length bias [centered] inverted=True
+  -0.1756  git
+  -0.1494  git branch checkout worktree
+  -0.0972  git branch checkout worktree inventory teardown stale
+  -0.1792  git branch checkout worktree inventory teardown stale commit push merge rebase origin master
+  -0.1331  flac
+  -0.1530  audio metadata
+  -0.0944  flac audio metadata directory naming
+length bias [z] inverted=True
+  -2.0068  git
+  -1.5780  git branch checkout worktree
+  -1.1618  git branch checkout worktree inventory teardown stale
+  -2.1314  git branch checkout worktree inventory teardown stale commit push merge rebase origin master
+  -1.5497  flac
+  -1.6028  audio metadata
+  -1.1421  flac audio metadata directory naming
+
+reproduction vs todo:32ca7662 (tolerance +-0.01)
+  ok   label mean: billing and invoicing: recorded 0.8138 measured 0.8121 delta -0.0017
+  ok   label sd: billing and invoicing: recorded 0.0174 measured 0.0177 delta +0.0003
+  ok   label mean: command line interface: recorded 0.7776 measured 0.7765 delta -0.0011
+  ok   label sd: command line interface: recorded 0.0260 measured 0.0269 delta +0.0009
+  ok   label mean: embedded hardware: recorded 0.7685 measured 0.7673 delta -0.0012
+  ok   label sd: embedded hardware: recorded 0.0207 measured 0.0219 delta +0.0012
+  ok   label mean: git worktrees: recorded 0.7428 measured 0.7415 delta -0.0013
+  ok   label sd: git worktrees: recorded 0.0211 measured 0.0222 delta +0.0011
+  ok   label mean: semantic tagging: recorded 0.7280 measured 0.7265 delta -0.0015
+  ok   label sd: semantic tagging: recorded 0.0178 measured 0.0191 delta +0.0013
+  ok   label mean: audio file metadata: recorded 0.7150 measured 0.7142 delta -0.0008
+  ok   label sd: audio file metadata: recorded 0.0251 measured 0.0259 delta +0.0008
+  ok   label mean: sqlite storage: recorded 0.7140 measured 0.7132 delta -0.0008
+  ok   label sd: sqlite storage: recorded 0.0310 measured 0.0317 delta +0.0007
+  ok   label mean: automated testing: recorded 0.7120 measured 0.7102 delta -0.0018
+  ok   label sd: automated testing: recorded 0.0266 measured 0.0278 delta +0.0012
+  ok   label mean: vector search: recorded 0.7090 measured 0.7082 delta -0.0008
+  ok   label sd: vector search: recorded 0.0301 measured 0.0308 delta +0.0007
+  ok   label mean: user interface design: recorded 0.6942 measured 0.6933 delta -0.0009
+  ok   label sd: user interface design: recorded 0.0256 measured 0.0262 delta +0.0006
+  ok   label mean: schema migration: recorded 0.6924 measured 0.6915 delta -0.0009
+  ok   label sd: schema migration: recorded 0.0240 measured 0.0248 delta +0.0008
+  ok   label mean: network routing: recorded 0.6913 measured 0.6895 delta -0.0018
+  ok   label sd: network routing: recorded 0.0304 measured 0.0322 delta +0.0018
+  ok   label mean: firmware updates: recorded 0.6688 measured 0.6674 delta -0.0014
+  ok   label sd: firmware updates: recorded 0.0331 measured 0.0331 delta -0.0000
+  ok   label mean: access control: recorded 0.6173 measured 0.6156 delta -0.0017
+  ok   label sd: access control: recorded 0.0331 measured 0.0352 delta +0.0021
+  MISS length series: 'git': recorded 0.4760 measured 0.3879 delta -0.0881
+  MISS length series: 'git branch checkout worktree': recorded 0.8320 measured 0.8057 delta -0.0263
+  MISS length series: 'git branch checkout worktree inventory teardown stale': recorded 0.8750 measured 0.8506 delta -0.0244
+  MISS length series: 'git branch checkout worktree inventory teardown stale commit push merge rebase origin master': recorded 0.8950 measured 0.8763 delta -0.0187
+  MISS length series: 'flac': recorded 0.6450 measured 0.5947 delta -0.0503
+  MISS length series: 'audio metadata': recorded 0.6980 measured 0.6040 delta -0.0940
+  MISS length series: 'flac audio metadata directory naming': recorded 0.9160 measured 0.8403 delta -0.0757
+  28 of 35 within tolerance
