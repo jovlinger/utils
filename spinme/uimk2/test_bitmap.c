@@ -426,6 +426,82 @@ static void test_bezel_clip(void) {
   CHECK(blit_pixels == 400 && blit_spans == 20);
 }
 
+
+static int combine_ch(uint8_t mask, CombinerOp op, uint8_t v, int ch, int in) {
+  Combiner c = {mask, (uint8_t)op, {v, v, v, v}};
+  uint8_t s[4] = {10, 20, 30, 40};
+  s[ch] = (uint8_t)in;
+  bm_combine(&c, s);
+  return s[ch];
+}
+
+static void test_combiner_ops(void) {
+  uint8_t s[4] = {200, 100, 50, 77};
+  Combiner set_r = {1, COMB_SET, {0, 0, 0, 0}};
+  bm_combine(&set_r, s);
+  CHECK(is(s, 0, 100, 50, 77)); /* G, B, A pass through */
+  Combiner set_rgb = {7, COMB_SET, {9, 8, 7, 99}};
+  uint8_t s2[4] = {1, 2, 3, 77};
+  bm_combine(&set_rgb, s2);
+  CHECK(is(s2, 9, 8, 7, 77)); /* alpha untouched */
+
+  CHECK(combine_ch(8, COMB_SCALE, 128, 3, 0) == 0);
+  CHECK(combine_ch(8, COMB_SCALE, 128, 3, 255) == 128);
+  CHECK(combine_ch(8, COMB_SCALE, 37, 3, 255) == 37);
+  CHECK(combine_ch(8, COMB_SCALE, 255, 3, 200) == 200);
+  CHECK(combine_ch(8, COMB_SCALE, 128, 3, 100) == 50); /* 12800/255 = 50.2 */
+  CHECK(combine_ch(8, COMB_SCALE, 128, 3, 3) == 2);    /* 384/255 = 1.5 -> 2 */
+  uint8_t s3[4] = {200, 100, 50, 255};
+  Combiner sc_a = {8, COMB_SCALE, {0, 0, 0, 128}};
+  bm_combine(&sc_a, s3);
+  CHECK(is(s3, 200, 100, 50, 128));
+
+  for (int v = 0; v < 256; v++) {
+    CHECK(combine_ch(8, COMB_CURVE, (uint8_t)v, 3, 0) == 0);
+    CHECK(combine_ch(8, COMB_CURVE, (uint8_t)v, 3, 255) == 255);
+  }
+  CHECK(combine_ch(8, COMB_CURVE, 255, 3, 128) > 128);
+  CHECK(combine_ch(8, COMB_CURVE, 0, 3, 128) < 128);
+  int ident = 1, up = 1, down = 1;
+  for (int c = 0; c < 256; c++) {
+    int a = combine_ch(8, COMB_CURVE, 128, 3, c);
+    int u = combine_ch(8, COMB_CURVE, 200, 3, c);
+    int d = combine_ch(8, COMB_CURVE, 50, 3, c);
+    if (a != c) ident = 0;
+    if (u < c || (c > 0 && c < 255 && c > 8 && c < 247 && u <= c)) up = 0;
+    if (d > c || (c > 8 && c < 247 && d >= c)) down = 0;
+  }
+  CHECK(ident && up && down);
+}
+
+static void test_combiner_in_repaint(void) {
+  static const Combiner combs[] = {{0, 0, {0, 0, 0, 0}}, {8, COMB_SCALE, {0, 0, 0, 128}}};
+  BitmapTable tc = {tbl, N, 0, combs, 2, 0};
+  reset();
+  uint8_t pix[1 * 1 * 4];
+  uint8_t ga[1] = {255};
+  init_node(1, BM_LAYOUT, 0, 1, 1);
+  tbl[1].pix = pix;
+  tbl[1].paper[0] = 0;
+  tbl[1].paper[1] = 0;
+  tbl[1].paper[2] = 0;
+  tbl[1].paper[3] = 255;
+  static LayoutItem items[] = {{0, 0, 2}};
+  tbl[1].items = items;
+  tbl[1].nitems = 1;
+  init_node(2, BM_GLYPH, 1, 1, 1);
+  tbl[2].alpha = ga;
+  tbl[2].combiner = 1;
+  bm_invalidate(&tc, 2, (Rect){0, 0, 1, 1}, 1);
+  bm_repaint(&tc, 1);
+  /* white ink at alpha 128 over opaque black paper: 255*128/255 = 128 */
+  CHECK(pix[0] == 128 && pix[3] == 255);
+  tbl[2].combiner = 0;
+  bm_invalidate(&tc, 2, (Rect){0, 0, 1, 1}, 0);
+  bm_repaint(&tc, 1);
+  CHECK(pix[0] == 255 && pix[3] == 255);
+}
+
 int main(void) {
   test_measure_and_offsets();
   test_one_parent_and_invalidate();
@@ -437,6 +513,8 @@ int main(void) {
   test_glyph_alpha_blend();
   test_row_lists();
   test_bezel_clip();
+  test_combiner_ops();
+  test_combiner_in_repaint();
   printf("%d checks, %d failures\n", checks, failures);
   return failures ? 1 : 0;
 }

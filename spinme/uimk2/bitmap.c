@@ -169,15 +169,35 @@ static void acc_straight(const Acc *acc, uint8_t out[4]) {
 static int sample(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
                   uint8_t out[4]);
 
-/* Apply the node's combiner to one sample; channels outside the mask pass
- * through. */
-static void apply_combiner(const BitmapTable *t, uint16_t cidx, uint8_t s[4]) {
-  if (cidx == 0 || cidx >= t->ncombiners) return;
-  const Combiner *c = &t->combiners[cidx];
+/* Apply one combiner to a sample; channels outside the mask pass through.
+ * SCALE rounds to nearest. CURVE moves c by delta*c*(255-c)/32768 (integer
+ * division), clamped to 0..255. */
+void bm_combine(const Combiner *c, uint8_t s[4]) {
   for (int ch = 0; ch < 4; ch++) {
     if (!(c->mask & (1u << ch))) continue;
-    if (c->op == COMB_SET) s[ch] = c->value[ch];
+    int32_t cv = s[ch], v = c->value[ch], r;
+    switch (c->op) {
+      case COMB_SET:
+        r = v;
+        break;
+      case COMB_SCALE:
+        r = (cv * v + 127) / 255;
+        break;
+      case COMB_CURVE:
+        r = cv + (v - 128) * cv * (255 - cv) / 32768;
+        break;
+      default:
+        r = cv;
+        break;
+    }
+    s[ch] = (uint8_t)(r < 0 ? 0 : r > 255 ? 255 : r);
   }
+}
+
+/* Apply the node's combiner (by table index) to one sample. */
+static void apply_combiner(const BitmapTable *t, uint16_t cidx, uint8_t s[4]) {
+  if (cidx == 0 || cidx >= t->ncombiners) return;
+  bm_combine(&t->combiners[cidx], s);
 }
 
 /* Sample one child of a composite at (x, y) in the composite's coordinates,

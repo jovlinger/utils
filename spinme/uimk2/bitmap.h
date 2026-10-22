@@ -69,7 +69,7 @@ typedef struct {
 } Bitmap;
 
 /* Color combiner table entry. mask bit 0 R, 1 G, 2 B, 3 A; value is one byte
- * per channel in R, G, B, A order. Only COMB_SET is applied so far. */
+ * per channel in R, G, B, A order. */
 typedef enum { COMB_SET = 0, COMB_SCALE, COMB_CURVE } CombinerOp;
 
 typedef struct {
@@ -86,6 +86,11 @@ typedef struct {
   uint16_t ncombiners;
   uint32_t row_rebuilds; /* per-row list rebuilds; test probe */
 } BitmapTable;
+
+/* Apply a combiner to one straight-alpha RGBA sample in place. SET: c = v.
+ * SCALE: c = c * v / 255 rounded to nearest. CURVE: with delta = v - 128,
+ * c' = c + delta * c * (255 - c) / 32768, clamped to 0..255. */
+void bm_combine(const Combiner *c, uint8_t s[4]);
 
 Rect rect_union(Rect a, Rect b);
 int rect_empty(Rect r);
