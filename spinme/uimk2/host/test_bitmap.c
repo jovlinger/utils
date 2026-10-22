@@ -493,8 +493,171 @@ static void test_bezel_span(void)
     }
 }
 
+#define CH_R 0x1
+#define CH_G 0x2
+#define CH_B 0x4
+#define CH_A 0x8
+
+static uint16_t combiner(BitmapTable *t, uint8_t mask, uint8_t op, int r,
+                         int g, int b, int a)
+{
+    uint8_t v[4];
+    v[0] = (uint8_t)r;
+    v[1] = (uint8_t)g;
+    v[2] = (uint8_t)b;
+    v[3] = (uint8_t)a;
+    return bm_new_combiner(t, mask, op, v);
+}
+
+static void set4(uint8_t *p, int r, int g, int b, int a)
+{
+    p[0] = (uint8_t)r;
+    p[1] = (uint8_t)g;
+    p[2] = (uint8_t)b;
+    p[3] = (uint8_t)a;
+}
+
+static int eq4(const uint8_t *p, int r, int g, int b, int a)
+{
+    return p[0] == r && p[1] == g && p[2] == b && p[3] == a;
+}
+
+static void test_combiner_math(void)
+{
+    BitmapTable t;
+    uint8_t px[4];
+    uint16_t set_r0, set_rgb, scale_a0, scale_a77, scale_a128;
+    uint16_t curve_a0, curve_a128, curve_a255;
+    int c;
+
+    bm_init(&t);
+    set_r0 = combiner(&t, CH_R, BM_OP_SET, 0, 0, 0, 0);
+    set_rgb = combiner(&t, CH_R | CH_G | CH_B, BM_OP_SET, 1, 2, 3, 0);
+    scale_a0 = combiner(&t, CH_A, BM_OP_SCALE, 0, 0, 0, 0);
+    scale_a77 = combiner(&t, CH_A, BM_OP_SCALE, 0, 0, 0, 77);
+    scale_a128 = combiner(&t, CH_A, BM_OP_SCALE, 0, 0, 0, 128);
+    curve_a0 = combiner(&t, CH_A, BM_OP_CURVE, 0, 0, 0, 0);
+    curve_a128 = combiner(&t, CH_A, BM_OP_CURVE, 0, 0, 0, 128);
+    curve_a255 = combiner(&t, CH_A, BM_OP_CURVE, 0, 0, 0, 255);
+    CHECK(set_r0 != BM_NULL && set_rgb != BM_NULL && scale_a0 != BM_NULL);
+    CHECK(scale_a77 != BM_NULL && scale_a128 != BM_NULL);
+    CHECK(curve_a0 != BM_NULL && curve_a128 != BM_NULL);
+    CHECK(curve_a255 != BM_NULL);
+
+    /* Combiner 0 is no combiner. */
+    set4(px, 1, 2, 3, 4);
+    bm_combine(&t, BM_NULL, px);
+    CHECK(eq4(px, 1, 2, 3, 4));
+
+    /* SET mask R value 0 zeroes red and leaves G, B, A. */
+    set4(px, 200, 100, 50, 128);
+    bm_combine(&t, set_r0, px);
+    CHECK(eq4(px, 0, 100, 50, 128));
+
+    /* SET mask RGB sets rgb and leaves A. */
+    set4(px, 9, 9, 9, 77);
+    bm_combine(&t, set_rgb, px);
+    CHECK(eq4(px, 1, 2, 3, 77));
+
+    /* SCALE on alpha maps 0 to 0 and 255 to v, and leaves rgb alone. */
+    set4(px, 9, 8, 7, 0);
+    bm_combine(&t, scale_a0, px);
+    CHECK(eq4(px, 9, 8, 7, 0));
+    set4(px, 9, 8, 7, 255);
+    bm_combine(&t, scale_a77, px);
+    CHECK(eq4(px, 9, 8, 7, 77));
+    set4(px, 9, 8, 7, 255);
+    bm_combine(&t, scale_a128, px);
+    CHECK(eq4(px, 9, 8, 7, 128));
+
+    /* SCALE rounds to nearest: 3 * 128 / 255 = 1.5 rounds up to 2. */
+    set4(px, 9, 8, 7, 3);
+    bm_combine(&t, scale_a128, px);
+    CHECK(eq4(px, 9, 8, 7, 2));
+
+    /* CURVE at v = 128 is the identity on alpha. */
+    for (c = 0; c <= 255; c++) {
+        set4(px, 9, 8, 7, c);
+        bm_combine(&t, curve_a128, px);
+        CHECK(eq4(px, 9, 8, 7, c));
+    }
+
+    /* CURVE fixes alpha 0 and 255 at every v. */
+    set4(px, 9, 8, 7, 0);
+    bm_combine(&t, curve_a255, px);
+    CHECK(eq4(px, 9, 8, 7, 0));
+    set4(px, 9, 8, 7, 255);
+    bm_combine(&t, curve_a255, px);
+    CHECK(eq4(px, 9, 8, 7, 255));
+    set4(px, 9, 8, 7, 0);
+    bm_combine(&t, curve_a0, px);
+    CHECK(eq4(px, 9, 8, 7, 0));
+    set4(px, 9, 8, 7, 255);
+    bm_combine(&t, curve_a0, px);
+    CHECK(eq4(px, 9, 8, 7, 255));
+
+    /* CURVE with v above 128 moves every middle alpha up, and v below 128
+     * moves every middle alpha down. Values checked by hand: v = 255 gives
+     * 128 + 63.004 -> 191, v = 0 gives 64 - 47.75 -> 16. */
+    set4(px, 9, 8, 7, 128);
+    bm_combine(&t, curve_a255, px);
+    CHECK(eq4(px, 9, 8, 7, 191));
+    set4(px, 9, 8, 7, 64);
+    bm_combine(&t, curve_a0, px);
+    CHECK(eq4(px, 9, 8, 7, 16));
+    for (c = 1; c <= 254; c++) {
+        set4(px, 9, 8, 7, c);
+        bm_combine(&t, curve_a255, px);
+        CHECK(px[3] > c);
+        set4(px, 9, 8, 7, c);
+        bm_combine(&t, curve_a0, px);
+        CHECK(px[3] < c);
+    }
+}
+
+static void test_combiner_before_blend(void)
+{
+    BitmapTable t;
+    LayoutItem items[3];
+    uint8_t screen[3 * 4];
+    uint8_t px_a[4], px_b[4], px_c[4];
+    uint16_t root, ca, cb, cc, set_r0, scale_a0;
+
+    bm_init(&t);
+    root = bm_new(&t, BM_KIND_LAYOUT, 3, 1);
+    ca = bm_new(&t, BM_KIND_RGBA, 1, 1);
+    cb = bm_new(&t, BM_KIND_RGBA, 1, 1);
+    cc = bm_new(&t, BM_KIND_RGBA, 1, 1);
+    bm_set_owner(&t, root, screen, PAPER);
+    bm_set_owner(&t, ca, px_a, PAPER);
+    bm_set_owner(&t, cb, px_b, PAPER);
+    bm_set_owner(&t, cc, px_c, PAPER);
+    items[0] = item(0, 0, ca);
+    items[1] = item(1, 0, cb);
+    items[2] = item(2, 0, cc);
+    CHECK(bm_set_children(&t, root, items, 3));
+
+    /* ca has SET red 0, cb has no combiner, cc has SCALE alpha 0. */
+    set_r0 = combiner(&t, CH_R, BM_OP_SET, 0, 0, 0, 0);
+    scale_a0 = combiner(&t, CH_A, BM_OP_SCALE, 0, 0, 0, 0);
+    bm_set_combiner(&t, ca, set_r0);
+    bm_set_combiner(&t, cc, scale_a0);
+    set4(px_a, 200, 100, 50, 255);
+    set4(px_b, 200, 100, 50, 255);
+    set4(px_c, 200, 100, 50, 128);
+
+    bm_invalidate(&t, root, rect(0, 0, 3, 1), 1);
+    bm_repaint(&t, root);
+    CHECK(is(screen, 3, 0, 0, 0, 100, 50, 255));
+    CHECK(is(screen, 3, 1, 0, 200, 100, 50, 255));
+    /* The combined alpha is 0, so the child adds nothing and paper shows. */
+    CHECK(is(screen, 3, 2, 0, PAPER[0], PAPER[1], PAPER[2], 255));
+}
+
 int main(void)
 {
+    test_combiner_math();
+    test_combiner_before_blend();
     test_kinds_and_parents();
     test_invalidate_walks_parents();
     test_repaint_paper_and_clean_sibling();

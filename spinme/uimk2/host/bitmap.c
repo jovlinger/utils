@@ -2,6 +2,53 @@
 
 #include "bitmap.h"
 
+static int clamp255(int v)
+{
+    return v < 0 ? 0 : (v > 255 ? 255 : v);
+}
+
+/* n / d rounded to nearest, ties away from zero. d > 0. */
+static int div_round(int n, int d)
+{
+    if (n >= 0) {
+        return (n + d / 2) / d;
+    }
+    return -((-n + d / 2) / d);
+}
+
+void bm_combine(const BitmapTable *t, uint16_t comb, uint8_t px[4])
+{
+    const Combiner *cb;
+    int k;
+
+    if (comb == BM_NULL || comb >= t->n_combiners) {
+        return;
+    }
+    cb = &t->combiners[comb];
+    for (k = 0; k < 4; k++) {
+        int c = px[k];
+        int v = cb->value[k];
+
+        if (!(cb->mask & (1u << k))) {
+            continue;
+        }
+        switch (cb->op) {
+        case BM_OP_SET:
+            c = v;
+            break;
+        case BM_OP_SCALE:
+            c = div_round(c * v, 255);
+            break;
+        case BM_OP_CURVE:
+            c = clamp255(c + div_round((v - 128) * c * (255 - c), 32768));
+            break;
+        default:
+            break;
+        }
+        px[k] = (uint8_t)c;
+    }
+}
+
 /* Front-to-back accumulator. num[k] holds sum(c_k * w) over the layers taken
  * so far, and a holds sum(w), so a straight color is num / a. */
 typedef struct {
@@ -99,6 +146,7 @@ static void composite_item(BitmapTable *t, const Bitmap *n, uint16_t i,
     }
     t->child_samples++;
     sample(t, it.idx, cx, cy, s);
+    bm_combine(t, c->combiner, s);
     acc_add(acc, s);
 }
 
@@ -225,6 +273,7 @@ void bm_init(BitmapTable *t)
 {
     memset(t, 0, sizeof *t);
     t->n_nodes = 1; /* index 0 is null */
+    t->n_combiners = 1; /* combiner index 0 is none */
 }
 
 uint16_t bm_new(BitmapTable *t, uint8_t kind, uint16_t w, uint16_t h)
@@ -289,6 +338,28 @@ int bm_set_children(BitmapTable *t, uint16_t parent,
         t->row_valid = 0;
     }
     return 1;
+}
+
+uint16_t bm_new_combiner(BitmapTable *t, uint8_t mask, uint8_t op,
+                         const uint8_t value[4])
+{
+    uint16_t idx;
+    Combiner *cb;
+
+    if (t->n_combiners >= BM_MAX_COMBINERS) {
+        return BM_NULL;
+    }
+    idx = t->n_combiners++;
+    cb = &t->combiners[idx];
+    cb->mask = mask;
+    cb->op = op;
+    memcpy(cb->value, value, 4);
+    return idx;
+}
+
+void bm_set_combiner(BitmapTable *t, uint16_t idx, uint16_t comb)
+{
+    t->nodes[idx].combiner = comb;
 }
 
 void bm_set_viewport_origin(BitmapTable *t, uint16_t idx, int16_t ox,

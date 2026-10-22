@@ -13,7 +13,9 @@
  *
  * A Glyph node reads its alpha from read-only flash (w * h bytes, one per
  * pixel) and samples as white with that alpha. It owns no pixels.
- * Combiners are not applied yet (combiner index stays 0).
+ *
+ * A node's combiner index (0 = none) applies to each of its samples before
+ * the sample blends into its parent. Combiners live in a fixed table.
  */
 #ifndef UIMK2_BITMAP_H
 #define UIMK2_BITMAP_H
@@ -37,6 +39,23 @@ typedef enum {
  * than this, or a row pool that overflows, falls back to a full child scan. */
 #define BM_MAX_ROWS 360
 #define BM_ROW_POOL 2048
+/* Combiner index 0 is "none", so the table holds BM_MAX_COMBINERS - 1 usable
+ * entries. */
+#define BM_MAX_COMBINERS 16
+
+typedef enum {
+    BM_OP_SET = 1,
+    BM_OP_SCALE,
+    BM_OP_CURVE
+} CombinerOp;
+
+/* mask bit 0 R, 1 G, 2 B, 3 A. value holds one byte per channel in R, G, B,
+ * A order. Channels outside mask pass through. */
+typedef struct {
+    uint8_t mask;
+    uint8_t op;
+    uint8_t value[4];
+} Combiner;
 
 typedef struct {
     int16_t x, y;
@@ -70,6 +89,8 @@ typedef struct {
     uint16_t n_nodes;
     uint16_t n_items;
     uint32_t child_samples; /* child samples taken by repaint */
+    Combiner combiners[BM_MAX_COMBINERS]; /* entry 0 unused */
+    uint16_t n_combiners;
     /* Per-row overlap lists of the one Layout pixel owner (the root). Row y
      * holds row_items[row_off[y] .. row_off[y+1]), each an item slot index of
      * that owner, front to back. Rebuilt only on repaint with geom_dirty. */
@@ -97,6 +118,18 @@ void bm_set_owner(BitmapTable *t, uint16_t idx, uint8_t *px,
  * Returns 0 if the pool is full or an item names a bad node. */
 int bm_set_children(BitmapTable *t, uint16_t parent,
                     const LayoutItem *items, uint16_t n);
+
+/* Returns the new combiner index, or BM_NULL when the table is full. */
+uint16_t bm_new_combiner(BitmapTable *t, uint8_t mask, uint8_t op,
+                         const uint8_t value[4]);
+
+/* Sets the combiner index (0 = none) that node idx applies to its samples.
+ * The caller invalidates idx. */
+void bm_set_combiner(BitmapTable *t, uint16_t idx, uint16_t comb);
+
+/* Applies combiner comb to one straight RGBA sample in place. Index 0, or an
+ * index not in the table, leaves px unchanged. */
+void bm_combine(const BitmapTable *t, uint16_t comb, uint8_t px[4]);
 
 void bm_set_viewport_origin(BitmapTable *t, uint16_t idx, int16_t ox,
                             int16_t oy);
