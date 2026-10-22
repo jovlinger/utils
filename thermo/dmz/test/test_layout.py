@@ -20,6 +20,18 @@ def test_start_sh_invokes_su_exec_and_run_sh(dmz_dir: Path) -> None:
     assert "/app/run.sh" in text
 
 
+def test_dockerfile_rebuilds_markupsafe_without_c_extension(dmz_dir: Path) -> None:
+    """Pi 1B SIGSEGVs on MarkupSafe's prebuilt ARM v7 _speedups.so. The image must
+    rebuild that package from the sdist with the compile forced to fail so setup.py
+    retries pure Python, not delete a .so after installing the wheel.
+    """
+    text = (dmz_dir / "Dockerfile").read_text(encoding="utf-8")
+    assert "--no-binary=markupsafe" in text
+    assert "CC=false" in text
+    assert "--force-reinstall" in text
+    assert 'assert not sos' in text
+
+
 def test_dockerfile_non_root_and_entrypoint(dmz_dir: Path) -> None:
     p = dmz_dir / "Dockerfile"
     assert p.is_file()
