@@ -1,0 +1,1141 @@
+{
+  "domains": {
+    "L": {
+      "centered": {
+        "hit_at_3": 0.6666666666666666,
+        "hubness_skew": -0.49026122923894283,
+        "labels": {
+          "access control": {
+            "mean": -0.0240258907677163,
+            "sd": 0.18255762388367605
+          },
+          "audio file metadata": {
+            "mean": -0.019967378875267477,
+            "sd": 0.16074900292620145
+          },
+          "automated testing": {
+            "mean": -0.02020368138926817,
+            "sd": 0.16486062395048984
+          },
+          "billing and invoicing": {
+            "mean": -0.014473756965096975,
+            "sd": 0.14037894421779498
+          },
+          "command line interface": {
+            "mean": -0.023188292422199466,
+            "sd": 0.18770559993719657
+          },
+          "embedded hardware": {
+            "mean": -0.019731915770133984,
+            "sd": 0.1529170527177364
+          },
+          "firmware updates": {
+            "mean": -0.021615909989101772,
+            "sd": 0.18325614089365438
+          },
+          "git worktrees": {
+            "mean": -0.020883279325831373,
+            "sd": 0.13936023913849513
+          },
+          "network routing": {
+            "mean": -0.024788103846308494,
+            "sd": 0.18345867842702437
+          },
+          "schema migration": {
+            "mean": -0.021374083516320065,
+            "sd": 0.15625706965830577
+          },
+          "semantic tagging": {
+            "mean": -0.01816566569515389,
+            "sd": 0.12926966113849017
+          },
+          "sqlite storage": {
+            "mean": -0.0267285642694987,
+            "sd": 0.19146143698308984
+          },
+          "user interface design": {
+            "mean": -0.020548052869641353,
+            "sd": 0.16528617605803533
+          },
+          "vector search": {
+            "mean": -0.02320751696143286,
+            "sd": 0.17761681066094986
+          }
+        },
+        "p_at_1": 0.6666666666666666,
+        "p_at_3": 0.2222222222222222,
+        "spread": {
+          "between_sd": 0.002914721426423508,
+          "range": 0.012254807304401726,
+          "signal_ratio": 56.73502398654154,
+          "within_sd": 0.1653667900422243
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "firmware updates",
+              0.1095
+            ],
+            [
+              "sqlite storage",
+              0.0319
+            ],
+            [
+              "audio file metadata",
+              0.0251
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "sqlite storage",
+              0.4632
+            ],
+            [
+              "firmware updates",
+              0.402
+            ],
+            [
+              "network routing",
+              0.3823
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "vector search",
+              0.2734
+            ],
+            [
+              "network routing",
+              0.2545
+            ],
+            [
+              "automated testing",
+              0.2438
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "billing and invoicing",
+              0.107
+            ],
+            [
+              "semantic tagging",
+              0.0227
+            ],
+            [
+              "git worktrees",
+              -0.0273
+            ]
+          ],
+          "cc756c32": [
+            [
+              "git worktrees",
+              0.4456
+            ],
+            [
+              "automated testing",
+              0.188
+            ],
+            [
+              "billing and invoicing",
+              0.1736
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "semantic tagging",
+              -0.0942
+            ],
+            [
+              "billing and invoicing",
+              -0.1221
+            ],
+            [
+              "git worktrees",
+              -0.1676
+            ]
+          ]
+        }
+      },
+      "raw": {
+        "hit_at_3": 0.5,
+        "hubness_skew": -0.9133335132498193,
+        "labels": {
+          "access control": {
+            "mean": 0.6032143744664369,
+            "sd": 0.03407199950561503
+          },
+          "audio file metadata": {
+            "mean": 0.7064946402670035,
+            "sd": 0.025078059623199058
+          },
+          "automated testing": {
+            "mean": 0.7056879488821904,
+            "sd": 0.0255440213959527
+          },
+          "billing and invoicing": {
+            "mean": 0.8156513740131186,
+            "sd": 0.017968667638738847
+          },
+          "command line interface": {
+            "mean": 0.7680149990436794,
+            "sd": 0.026081603735373406
+          },
+          "embedded hardware": {
+            "mean": 0.7622443593067483,
+            "sd": 0.02008076488600414
+          },
+          "firmware updates": {
+            "mean": 0.6579824176385335,
+            "sd": 0.03156397750201594
+          },
+          "git worktrees": {
+            "mean": 0.7373833064505592,
+            "sd": 0.019064243825169445
+          },
+          "network routing": {
+            "mean": 0.6811464292337487,
+            "sd": 0.02970227153961045
+          },
+          "schema migration": {
+            "mean": 0.6819124459475129,
+            "sd": 0.024623206831115137
+          },
+          "semantic tagging": {
+            "mean": 0.7223067734673517,
+            "sd": 0.017993954298468937
+          },
+          "sqlite storage": {
+            "mean": 0.7025403923265836,
+            "sd": 0.030072627452542154
+          },
+          "user interface design": {
+            "mean": 0.6837823907060865,
+            "sd": 0.026561816395653512
+          },
+          "vector search": {
+            "mean": 0.6979214371536306,
+            "sd": 0.029113063839933243
+          }
+        },
+        "p_at_1": 0.0,
+        "p_at_3": 0.16666666666666666,
+        "spread": {
+          "between_sd": 0.04985372084186076,
+          "range": 0.21243699954668172,
+          "signal_ratio": 0.5122418611204418,
+          "within_sd": 0.025537162747813712
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "billing and invoicing",
+              0.7985
+            ],
+            [
+              "command line interface",
+              0.7681
+            ],
+            [
+              "embedded hardware",
+              0.7666
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "command line interface",
+              0.8157
+            ],
+            [
+              "billing and invoicing",
+              0.7963
+            ],
+            [
+              "sqlite storage",
+              0.7917
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "billing and invoicing",
+              0.8286
+            ],
+            [
+              "command line interface",
+              0.7812
+            ],
+            [
+              "git worktrees",
+              0.7429
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "billing and invoicing",
+              0.8279
+            ],
+            [
+              "embedded hardware",
+              0.7438
+            ],
+            [
+              "command line interface",
+              0.7292
+            ]
+          ],
+          "cc756c32": [
+            [
+              "billing and invoicing",
+              0.8219
+            ],
+            [
+              "git worktrees",
+              0.8146
+            ],
+            [
+              "embedded hardware",
+              0.7644
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "billing and invoicing",
+              0.8097
+            ],
+            [
+              "embedded hardware",
+              0.744
+            ],
+            [
+              "command line interface",
+              0.7359
+            ]
+          ]
+        }
+      },
+      "z": {
+        "hit_at_3": 0.6666666666666666,
+        "hubness_skew": 0.04188516003890567,
+        "labels": {
+          "access control": {
+            "mean": 3.979700968321742e-16,
+            "sd": 0.9999999999999999
+          },
+          "audio file metadata": {
+            "mean": -5.351534311091683e-16,
+            "sd": 1.0
+          },
+          "automated testing": {
+            "mean": 1.4542053290361006e-15,
+            "sd": 1.0
+          },
+          "billing and invoicing": {
+            "mean": 4.8715941494047666e-15,
+            "sd": 1.0
+          },
+          "command line interface": {
+            "mean": -1.2477830917782467e-15,
+            "sd": 0.9999999999999999
+          },
+          "embedded hardware": {
+            "mean": -2.058321684391314e-15,
+            "sd": 1.0
+          },
+          "firmware updates": {
+            "mean": -7.802488313134672e-16,
+            "sd": 1.0
+          },
+          "git worktrees": {
+            "mean": -3.4679575429085835e-15,
+            "sd": 1.0
+          },
+          "network routing": {
+            "mean": 2.557823481638772e-15,
+            "sd": 1.0
+          },
+          "schema migration": {
+            "mean": 3.6946280771028864e-15,
+            "sd": 1.0
+          },
+          "semantic tagging": {
+            "mean": -7.549726836963304e-16,
+            "sd": 1.0
+          },
+          "sqlite storage": {
+            "mean": 1.4274145838386128e-15,
+            "sd": 1.0
+          },
+          "user interface design": {
+            "mean": -1.729180903052616e-15,
+            "sd": 1.0
+          },
+          "vector search": {
+            "mean": -2.3859905791443346e-15,
+            "sd": 1.0
+          }
+        },
+        "p_at_1": 0.6666666666666666,
+        "p_at_3": 0.2222222222222222,
+        "spread": {
+          "between_sd": 2.330778352144272e-15,
+          "range": 8.33955169231335e-15,
+          "signal_ratio": 429041225254224.1,
+          "within_sd": 1.0
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "firmware updates",
+              0.7746
+            ],
+            [
+              "audio file metadata",
+              0.3278
+            ],
+            [
+              "sqlite storage",
+              0.3136
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "sqlite storage",
+              2.9645
+            ],
+            [
+              "firmware updates",
+              2.5922
+            ],
+            [
+              "network routing",
+              2.4369
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "vector search",
+              1.3471
+            ],
+            [
+              "network routing",
+              1.2205
+            ],
+            [
+              "automated testing",
+              1.1882
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "billing and invoicing",
+              0.681
+            ],
+            [
+              "semantic tagging",
+              0.038
+            ],
+            [
+              "git worktrees",
+              -0.4484
+            ]
+          ],
+          "cc756c32": [
+            [
+              "git worktrees",
+              4.0516
+            ],
+            [
+              "automated testing",
+              0.7886
+            ],
+            [
+              "billing and invoicing",
+              0.3497
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "semantic tagging",
+              -0.3138
+            ],
+            [
+              "billing and invoicing",
+              -0.3305
+            ],
+            [
+              "git worktrees",
+              -0.8407
+            ]
+          ]
+        }
+      }
+    },
+    "P": {
+      "centered": {
+        "hit_at_3": 0.5,
+        "hubness_skew": 5.1140867115092865,
+        "p_at_1": 0.3333333333333333,
+        "p_at_3": 0.2222222222222222,
+        "spread": {
+          "between_sd": 0.007793603386125527,
+          "range": 0.05873482931016336,
+          "signal_ratio": 20.725013401437273,
+          "within_sd": 0.16152253462293845
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "device: minidsp shd streamer module (nanopi neo3 aarch64, ~986mb ram, no swap) bonjour: _volumio._tcp instance \"minidsp shd\" -> minidsp-shd.local:3000 (192.168.88.163) volumio 3.912, variant minidspshd, build 2026-03-05; updater reports latest",
+              0.6135
+            ],
+            [
+              "hash  (cheap; the one auto-tags use)     apple (semantic; never used) +0.1313  user interface                  +0.7823  deployment +0.0000  testing                         +0.6951  testing",
+              0.605
+            ],
+            [
+              "+0.6688  sd=0.0331  firmware updates +0.6173  sd=0.0331  access control             <-- distractor",
+              0.6026
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "rewrite skill.md: sqlite db, no todo.json, search, worktree path, deferred section cleanup",
+              0.6503
+            ],
+            [
+              "resolve via existing zone.env / deployment config",
+              0.5999
+            ],
+            [
+              "| resolve via existing zone.env / deployment config",
+              0.592
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "grader order of preference: deterministic (state, schema, counts, budgets), then llm-judge with per-dimension rubric, then human review for validating graders and auditing high-impact cases",
+              0.5452
+            ],
+            [
+              "grader order of preference: deterministic (state, schema, counts, budgets), then llm-judge with per-dimension rubric, then human review for validating graders and auditing high-impact cases repeat nondeterministic cases n times and record pass rate, safety-violation rate, invalid-call rate, median/p95 calls, cost, recovery rate; safety failures are hard gates, never averaged",
+              0.5131
+            ],
+            [
+              "1 cosine ranks candidate length, not topic",
+              0.5114
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "a note is a fact, and a fact has no disposition to record; that absence is the point anything that needs a",
+              0.5467
+            ],
+            [
+              "build them together, not as four separate features parting thought (reviewer, beyond the point text) the design is unusually coherent because it keeps rediscovering the same invariant from",
+              0.5465
+            ],
+            [
+              "it is also the source for a summary embedding -- the expectation is that body is too long for most embedders to handle well, and that second use shapes how the",
+              0.5372
+            ]
+          ],
+          "cc756c32": [
+            [
+              "that branch and its worktree",
+              0.5509
+            ],
+            [
+              "isolation: repo jovlinger/utils; work in an exclusive worktree of this todo's",
+              0.5493
+            ],
+            [
+              "- a segment matches a record field name case-insensitively: workitems, workitems, scope, oxen, geese all resolve to the field of that name",
+              0.5373
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "goal: find a containerized embedder whose vector space resists compression on our todo corpus, and make it the search embedder \"compression\" is the failure todo:32ca7662 measured on apple (nlcontextualembedding, 512d): every cosine lands in a narrow high band (curated labels average +0.62..+0.81 against all docs, per-label sd ~0.02-0.03), and cosine ranks candidate length over topic (a 13-word irrelevant candidate +0.895 beats the 2-word relevant \"audio metadata\" +0.698) a good space spreads scores, does not reward length, and ranks topic first",
+              0.5464
+            ],
+            [
+              "goal: find a containerized embedder whose vector space resists compression on our todo corpus, and make it the search embedder \"compression\" is the failure todo:32ca7662 measured on apple (nlcontextualembedding, 512d): every cosine lands in a narrow high band (curated labels average +0.62..+0.81 against all docs, per-label sd ~0.02-0.03), and cosine ranks candidate length over topic (a 13-word irrelevant candidate +0.895 beats the 2-word relevant \"audio metadata\" +0.698)",
+              0.5257
+            ],
+            [
+              "\"compression\" is the failure todo:32ca7662 measured on apple (nlcontextualembedding, 512d): every cosine lands in a narrow high band (curated labels average +0.62..+0.81 against all docs, per-label sd ~0.02-0.03), and cosine ranks candidate length over topic (a 13-word irrelevant candidate +0.895 beats the 2-word relevant \"audio metadata\" +0.698) a good space spreads scores, does not reward length, and ranks topic first evaluation corpus (same as todo:32ca7662, so results are comparable):",
+              0.5019
+            ]
+          ]
+        }
+      },
+      "raw": {
+        "hit_at_3": 0.5,
+        "hubness_skew": 8.397724499366532,
+        "p_at_1": 0.3333333333333333,
+        "p_at_3": 0.2222222222222222,
+        "spread": {
+          "between_sd": 0.0591044353286824,
+          "range": 0.49152952322557336,
+          "signal_ratio": 0.32001165423122335,
+          "within_sd": 0.018914108121934014
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "- stagehand-mcp-local forks (github weijiafu14/stagehand-mcp-local 7 stars, last push 2025-12-08; 1000ml-io/stagehand-mcp-local 0 stars, adds baseurl for custom gateways, last push 2026-03-14): local mode, pin @browserbasehq/stagehand ^3.0.3 single-maintainer, near-zero adoption -- supply-chain risk; use as reference code, not as a dependency - stagehand sdk itself (browserbase/stagehand, mit, ~25k stars, active): v3 supports a local on-disk cache via cachedir (caches act() and agent() results; key = instruction + page content + options; works in local env)",
+              0.9731
+            ],
+            [
+              "- three implementation routes: (a) wrap stagehand v3 sdk (act/observe/extract/agent + local cachedir already built; ~200 lines of mcp glue; risk: v3 is the previous major and v4 dropped local caching) (b) wrap browser-use and add our own cache (agent loop + claude support built in; python; langchain coupling in current version not yet verified) (c) from scratch on playwright + anthropic sdk (~500-1000 lines; fewest new dependencies to get approved; full control)",
+              0.972
+            ],
+            [
+              "rejected (requirement 1) - stagehand-mcp-local forks (github weijiafu14/stagehand-mcp-local 7 stars, last push 2025-12-08; 1000ml-io/stagehand-mcp-local 0 stars, adds baseurl for custom gateways, last push 2026-03-14): local mode, pin @browserbasehq/stagehand ^3.0.3 single-maintainer, near-zero adoption -- supply-chain risk; use as reference code, not as a dependency",
+              0.9705
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "rewrite skill.md: sqlite db, no todo.json, search, worktree path, deferred section cleanup",
+              0.9601
+            ],
+            [
+              "one-shot import: scan git refs/worktrees for todo.json, load into sqlite, verify round-trip",
+              0.9563
+            ],
+            [
+              "- concurrent mpd library update/rescan of nas/gmk (updatedb: true in state)",
+              0.95
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "- report (tsv/json): candidate clusters \u2192 proposed `type;value`, confidence, supporting album count, conflicting axis flags",
+              0.9427
+            ],
+            [
+              "### outputs - report (tsv/json): candidate clusters \u2192 proposed `type;value`, confidence, supporting album count, conflicting axis flags",
+              0.9418
+            ],
+            [
+              "7 **output format.** csv/parquet tables, sqlite, a markdown or html report with rankings, static charts, or an interactive map any geojson requirement for the parcel geometry",
+              0.94
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "groom notes: (1) enumerate today's relationship kinds and their storage shape -- parent[] refs on the child, subtodos[] rows on the parent with state tracked/info/merged; (2) decide the relationship vocabulary (e.g parent/child, tracks/tracked-by, info) and whether both sides are always named explicitly as in the example; (3) relate must stay store-only (no branch checkout, no commit), consistent with the id-only selector model; (4) existing commands become sugar over relate or are removed user expects this to be fairly straightforward",
+              0.9695
+            ],
+            [
+              "groom notes: (1) enumerate today's relationship kinds and their storage shape -- parent[] refs on the child, subtodos[] rows on the parent with state tracked/info/merged; (2) decide the relationship vocabulary (e.g parent/child, tracks/tracked-by, info) and whether both sides are always named explicitly as in the example; (3) relate must stay store-only (no branch checkout, no commit), consistent with the id-only selector model; (4) existing commands become sugar over relate or are removed",
+              0.9685
+            ],
+            [
+              "one command names the relationship from each side, replacing the current scattered mechanisms (set --parent make-it-so writes, add-subtodo's subtodos registration, info back-links, merge bookkeeping's state flips) groom notes: (1) enumerate today's relationship kinds and their storage shape -- parent[] refs on the child, subtodos[] rows on the parent with state tracked/info/merged; (2) decide the relationship vocabulary (e.g parent/child, tracks/tracked-by, info) and whether both sides are always named explicitly as in the example; (3) relate must stay store-only (no branch checkout, no commit), consistent with the id-only selector model; (4) existing commands become sugar over relate or are removed",
+              0.9664
+            ]
+          ],
+          "cc756c32": [
+            [
+              "`git worktree list` against todo states and report (or remove) orphans, and",
+              0.9476
+            ],
+            [
+              "skills/projectmanagement/plan.md -- the model-assignment doc for ac-gated workitems each workitem ac is a frozen test; a sonnet subagent codes to green,",
+              0.945
+            ],
+            [
+              "(2493fb7d); nothing here is discarded if the complete design lands later seed workitems -- promote to real workitems at init (tool gap: set-json-path cannot write workitems on a branchless pre-init todo):",
+              0.945
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "goal: find a containerized embedder whose vector space resists compression on our todo corpus, and make it the search embedder \"compression\" is the failure todo:32ca7662 measured on apple (nlcontextualembedding, 512d): every cosine lands in a narrow high band (curated labels average +0.62..+0.81 against all docs, per-label sd ~0.02-0.03), and cosine ranks candidate length over topic (a 13-word irrelevant candidate +0.895 beats the 2-word relevant \"audio metadata\" +0.698) a good space spreads scores, does not reward length, and ranks topic first",
+              0.9682
+            ],
+            [
+              "model (sdf-like, not a retained-mode widget kit): - an object maps local coordinates to 32-bit straight rgba (sample) and to a boolean hit (hit) local coordinates are center-based and in pixels: for a circle, hit is euclidean distance from the object center to the queried pixel",
+              0.9675
+            ],
+            [
+              "mention to security resolution via an alias table plus sec `company_tickers.json` / `sec-cik-mapper` and the openfigi `/v3/mapping` endpoint, with a name-mismatch veto rather than emitting a plausible wrong ticker sentiment must be entity-level, not document-level: economist paragraphs routinely praise one firm while damning another in the same sentence candidate scorers behind one interface -- vader as a floor, the loughran-mcdonald finance dictionary, finbert and finbert-tone, `deberta-v3-base-absa` (target-aware; the strongest fine-tuned macro-f1 in 2025-26 target-based financial sentiment benchmarks), optionally a local llm -- all evaluated against a hand-labeled gold set of mention/sentiment pairs",
+              0.9675
+            ]
+          ]
+        }
+      },
+      "z": {
+        "hit_at_3": 0.5,
+        "hubness_skew": 3.76142993359097,
+        "p_at_1": 0.3333333333333333,
+        "p_at_3": 0.27777777777777773,
+        "spread": {
+          "between_sd": 2.926473765062795e-15,
+          "range": 1.888812479037866e-14,
+          "signal_ratio": 341708171772570.94,
+          "within_sd": 1.0
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "+0.6688  sd=0.0331  firmware updates",
+              2.9614
+            ],
+            [
+              "- cdp has no auth: bind 127.0.0.1 only",
+              2.843
+            ],
+            [
+              "inside a 0.10 band",
+              2.8204
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "tests: test_todo.py",
+              3.139
+            ],
+            [
+              "docs update skill sqlite",
+              2.9688
+            ],
+            [
+              "test search e2e",
+              2.9131
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "6 score compression",
+              3.2067
+            ],
+            [
+              "d8 statistical ambition",
+              3.1235
+            ],
+            [
+              "(survey recommendation) | factor | note |",
+              3.1125
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "curating the vocabulary does not save it",
+              2.3567
+            ],
+            [
+              "5 curating the vocabulary does not save it",
+              2.3146
+            ],
+            [
+              "- may contain spaces - no taxonomy / controlled vocabulary",
+              2.2789
+            ]
+          ],
+          "cc756c32": [
+            [
+              "wt-teardown legacy tree",
+              4.148
+            ],
+            [
+              "that branch and its worktree",
+              3.572
+            ],
+            [
+              "workitems",
+              3.0935
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "\"semantic tagging\" kept; \"the semantic tagging\" rejected on stopword edge; \"3 5\" rejected)",
+              1.9038
+            ],
+            [
+              "- integer pixel (i, j) is sampled and picked at continuous coordinate (i+0.5, j+0.5), the center of that pixel sample/hit take floats so rotation does not snap",
+              1.8876
+            ],
+            [
+              "coordinates (ratified for image markup): - viewport buffer: (0,0) is the top-left pixel, +x right, +y down",
+              1.8777
+            ]
+          ]
+        }
+      }
+    },
+    "W": {
+      "centered": {
+        "hit_at_3": 0.16666666666666666,
+        "hubness_skew": 7.389253380581333,
+        "p_at_1": 0.16666666666666666,
+        "p_at_3": 0.16666666666666666,
+        "spread": {
+          "between_sd": 0.003688175791164621,
+          "range": 0.027606837903043337,
+          "signal_ratio": 36.23460250082333,
+          "within_sd": 0.13363958374600962
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "168 88 163",
+              0.4432
+            ],
+            [
+              "192 168 88",
+              0.4393
+            ],
+            [
+              "xhost 127 0",
+              0.4234
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "file imgcomp stack",
+              0.5628
+            ],
+            [
+              "search stat",
+              0.4873
+            ],
+            [
+              "vec search command",
+              0.4736
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "rank candidat length",
+              0.5054
+            ],
+            [
+              "search rank",
+              0.4635
+            ],
+            [
+              "and rank",
+              0.453
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "arguably",
+              0.2643
+            ],
+            [
+              "applied to",
+              0.2633
+            ],
+            [
+              "materially",
+              0.259
+            ]
+          ],
+          "cc756c32": [
+            [
+              "inventory old worktre",
+              0.4289
+            ],
+            [
+              "tree",
+              0.4053
+            ],
+            [
+              "long fragment mined",
+              0.4018
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "2026 07 20",
+              0.1565
+            ],
+            [
+              "2026 08 23",
+              0.1555
+            ],
+            [
+              "2026 08 06",
+              0.1515
+            ]
+          ]
+        }
+      },
+      "raw": {
+        "hit_at_3": 0.3333333333333333,
+        "hubness_skew": 22.645282532424783,
+        "p_at_1": 0.16666666666666666,
+        "p_at_3": 0.1111111111111111,
+        "spread": {
+          "between_sd": 0.08149400865447974,
+          "range": 0.5671924631772775,
+          "signal_ratio": 0.2754920633111671,
+          "within_sd": 0.022450952591720735
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "a custom llmclient",
+              0.844
+            ],
+            [
+              "a31d8f24 vec search",
+              0.8434
+            ],
+            [
+              "xhost 127 0",
+              0.835
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "file imgcomp stack",
+              0.8923
+            ],
+            [
+              "imgcomp stack c",
+              0.8741
+            ],
+            [
+              "custom llmclient e",
+              0.8686
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "rank candidat length",
+              0.8692
+            ],
+            [
+              "embed scor persist",
+              0.8641
+            ],
+            [
+              "selector method argument",
+              0.8579
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "unsupervised semantic term",
+              0.8396
+            ],
+            [
+              "or unusual flow",
+              0.8358
+            ],
+            [
+              "applied to",
+              0.8328
+            ]
+          ],
+          "cc756c32": [
+            [
+              "automated scrap the",
+              0.8555
+            ],
+            [
+              "inventory old worktre",
+              0.853
+            ],
+            [
+              "as automated scrap",
+              0.848
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "selector method argument",
+              0.8296
+            ],
+            [
+              "plural embedded tag",
+              0.8255
+            ],
+            [
+              "shrink the domain",
+              0.8197
+            ]
+          ]
+        }
+      },
+      "z": {
+        "hit_at_3": 0.16666666666666666,
+        "hubness_skew": 4.716730462799816,
+        "p_at_1": 0.16666666666666666,
+        "p_at_3": 0.16666666666666666,
+        "spread": {
+          "between_sd": 2.2805578143668726e-15,
+          "range": 1.6847961849645913e-14,
+          "signal_ratio": 438489212463846.06,
+          "within_sd": 1.0
+        },
+        "top3": {
+          "21e3454c": [
+            [
+              "88 163",
+              3.1865
+            ],
+            [
+              "639",
+              3.1829
+            ],
+            [
+              "127 0",
+              3.1663
+            ]
+          ],
+          "515fc9ea": [
+            [
+              "cybersecurity",
+              3.138
+            ],
+            [
+              "microsoft",
+              2.9217
+            ],
+            [
+              "linux",
+              2.9005
+            ]
+          ],
+          "a31d8f24": [
+            [
+              "rank candidat length",
+              4.0898
+            ],
+            [
+              "rank candidat",
+              3.7181
+            ],
+            [
+              "rank 1",
+              3.4565
+            ]
+          ],
+          "a46c04b0": [
+            [
+              "at all",
+              2.1676
+            ],
+            [
+              "identify",
+              2.0804
+            ],
+            [
+              "different",
+              2.0616
+            ]
+          ],
+          "cc756c32": [
+            [
+              "tree",
+              3.9817
+            ],
+            [
+              "owned",
+              3.7999
+            ],
+            [
+              "hundred",
+              3.4996
+            ]
+          ],
+          "ef4ad78d": [
+            [
+              "1000ml io",
+              1.275
+            ],
+            [
+              "1000ml",
+              1.2354
+            ],
+            [
+              "0 0000",
+              1.226
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "meta": {
+    "as_of": null,
+    "dimension": 512,
+    "documents": 99,
+    "domain_sizes": {
+      "L": 14,
+      "P": 11119,
+      "W": 8643
+    },
+    "embed_seconds": {
+      "candidates": 167.0169147918932,
+      "documents": 2.1657816669903696
+    },
+    "embedder_key": "apple",
+    "exclude": [],
+    "fingerprint": "apple_nlce:5C45D94E-BAB4-4927-94B6-8B5745C46289:r1:pool=mean:norm=l2:v1",
+    "granularity": "whole",
+    "hubness_k": 10,
+    "include": [],
+    "subjects_found": [
+      "21e3454c",
+      "515fc9ea",
+      "a31d8f24",
+      "a46c04b0",
+      "cc756c32",
+      "ef4ad78d"
+    ],
+    "wall_seconds": 215.9988585410174
+  },
+  "space": {
+    "centered": {
+      "anisotropy": -0.0068996139770407736,
+      "length_bias": {
+        "inversion_margin": 0.07623275542286367,
+        "series": {
+          "audio metadata": -0.1383515120934496,
+          "flac": -0.11704104006457174,
+          "flac audio metadata directory naming": -0.08680587407274552,
+          "git": -0.15907708167119483,
+          "git branch checkout worktree": -0.16721091728098658,
+          "git branch checkout worktree inventory teardown stale": -0.13121969823588478,
+          "git branch checkout worktree inventory teardown stale commit push merge rebase origin master": -0.21458426751631327
+        }
+      }
+    },
+    "raw": {
+      "anisotropy": 0.9346480875213568,
+      "length_bias": {
+        "inversion_margin": -0.2723387702108906,
+        "series": {
+          "audio metadata": 0.6039738417735169,
+          "flac": 0.5947184392136776,
+          "flac audio metadata directory naming": 0.8402800538969437,
+          "git": 0.387946124360489,
+          "git branch checkout worktree": 0.8056884748025103,
+          "git branch checkout worktree inventory teardown stale": 0.850631986906351,
+          "git branch checkout worktree inventory teardown stale commit push merge rebase origin master": 0.8763126119844075
+        }
+      }
+    },
+    "z": {
+      "length_bias": {
+        "inversion_margin": 0.9747522090937886,
+        "series": {
+          "audio metadata": -1.307771767769137,
+          "flac": -1.2296163322477505,
+          "flac audio metadata directory naming": -0.9033316436021047,
+          "git": -1.6032037597449116,
+          "git branch checkout worktree": -1.695211894974975,
+          "git branch checkout worktree inventory teardown stale": -1.381183626232898,
+          "git branch checkout worktree inventory teardown stale commit push merge rebase origin master": -2.2825239768629255
+        }
+      }
+    }
+  }
+}
