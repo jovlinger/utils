@@ -146,6 +146,17 @@ static void acc_straight(const Acc *acc, uint8_t out[4]) {
 static int sample(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
                   uint8_t out[4]);
 
+/* Apply the node's combiner to one sample; channels outside the mask pass
+ * through. */
+static void apply_combiner(const BitmapTable *t, uint16_t cidx, uint8_t s[4]) {
+  if (cidx == 0 || cidx >= t->ncombiners) return;
+  const Combiner *c = &t->combiners[cidx];
+  for (int ch = 0; ch < 4; ch++) {
+    if (!(c->mask & (1u << ch))) continue;
+    if (c->op == COMB_SET) s[ch] = c->value[ch];
+  }
+}
+
 /* Sample one child of a composite at (x, y) in the composite's coordinates,
  * adding it to acc. Returns 1 when the child covers the point. */
 static int add_child(BitmapTable *t, uint16_t parent, uint16_t child,
@@ -158,8 +169,8 @@ static int add_child(BitmapTable *t, uint16_t parent, uint16_t child,
   return 1;
 }
 
-static int sample(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
-                  uint8_t out[4]) {
+static int sample_raw(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
+                      uint8_t out[4]) {
   const Bitmap *b = &t->b[idx];
   Acc acc = {0, 0, 0, 0};
   int hit = 0;
@@ -197,6 +208,13 @@ static int sample(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
       return 0;
   }
   acc_straight(&acc, out);
+  return hit;
+}
+
+static int sample(BitmapTable *t, uint16_t idx, int32_t x, int32_t y,
+                  uint8_t out[4]) {
+  int hit = sample_raw(t, idx, x, y, out);
+  if (hit) apply_combiner(t, t->b[idx].combiner, out);
   return hit;
 }
 

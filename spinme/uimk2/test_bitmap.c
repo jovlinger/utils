@@ -18,7 +18,7 @@ static int checks;
 
 #define N 16
 static Bitmap tbl[N];
-static BitmapTable T = {tbl, N, 0};
+static BitmapTable T = {tbl, N, 0, NULL, 0};
 
 static void reset(void) {
   memset(tbl, 0, sizeof tbl);

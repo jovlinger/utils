@@ -3,3 +3,6 @@ test_arena.dSYM/
 test_bitmap
 test_bitmap.dSYM/
 __pycache__/
+test_glyph
+test_glyph.dSYM/
+glyphs_test.h

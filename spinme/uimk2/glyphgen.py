@@ -98,7 +98,7 @@ def write_header(path, h_px, base, table, blob):
         "#define GLYPH_H %d" % h_px,
         "#define GLYPH_B %d" % base,
         "#define GLYPH_COUNT %d" % len(table),
-        "typedef struct { uint16_t codepoint; uint16_t width; uint32_t offset; } GlyphEntry;",
+        '#include "glyph.h"',
         "static const GlyphEntry glyph_table[GLYPH_COUNT] = {",
     ]
     for cp, w, off in table:

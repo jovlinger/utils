@@ -60,10 +60,22 @@ typedef struct {
   uint16_t codepoint;
 } Bitmap;
 
+/* Color combiner table entry. mask bit 0 R, 1 G, 2 B, 3 A; value is one byte
+ * per channel in R, G, B, A order. Only COMB_SET is applied so far. */
+typedef enum { COMB_SET = 0, COMB_SCALE, COMB_CURVE } CombinerOp;
+
+typedef struct {
+  uint8_t mask;
+  uint8_t op; /* CombinerOp */
+  uint8_t value[4];
+} Combiner;
+
 typedef struct {
   Bitmap *b;      /* b[0] is the null header; the table is not terminated */
   uint16_t n;
   uint32_t samples; /* leaf reads (RGBA pixel or Glyph alpha); test probe */
+  const Combiner *combiners; /* indexed by Bitmap.combiner; [0] unused */
+  uint16_t ncombiners;
 } BitmapTable;
 
 Rect rect_union(Rect a, Rect b);
