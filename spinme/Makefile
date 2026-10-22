@@ -4,6 +4,6 @@ binlinks:
 	@:
 
 test:
-	@:
+	$(MAKE) -C uimk2 test
 
 all-tests: test
