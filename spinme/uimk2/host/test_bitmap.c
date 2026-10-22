@@ -285,6 +285,214 @@ static void test_viewport_crop(void)
     CHECK(is(screen, 2, 1, 1, 20, 20, 0, 255));
 }
 
+static LayoutItem child_at(const BitmapTable *t, uint16_t parent, int i)
+{
+    return t->items[t->nodes[parent].first_item + i];
+}
+
+static void test_l2r_bottom_aligns(void)
+{
+    BitmapTable t;
+    LayoutItem items[3];
+    uint16_t line, a, b, c;
+
+    bm_init(&t);
+    line = bm_new(&t, BM_KIND_L2R, 0, 0);
+    a = bm_new(&t, BM_KIND_RGBA, 2, 1);
+    b = bm_new(&t, BM_KIND_RGBA, 3, 3);
+    c = bm_new(&t, BM_KIND_RGBA, 1, 2);
+    items[0] = item(0, 0, a);
+    items[1] = item(0, 0, b);
+    items[2] = item(0, 0, c);
+    CHECK(bm_set_children(&t, line, items, 3));
+    bm_set_sep(&t, line, 1);
+    bm_layout(&t, line);
+
+    /* Width is the child widths plus one sep between each pair; height is
+     * the tallest child. Every child's bottom edge sits on the same row. */
+    CHECK(t.nodes[line].w == 8 && t.nodes[line].h == 3);
+    CHECK(child_at(&t, line, 0).x == 0 && child_at(&t, line, 0).y == 2);
+    CHECK(child_at(&t, line, 1).x == 3 && child_at(&t, line, 1).y == 0);
+    CHECK(child_at(&t, line, 2).x == 7 && child_at(&t, line, 2).y == 1);
+
+    bm_set_sep(&t, line, 0);
+    bm_layout(&t, line);
+    CHECK(t.nodes[line].w == 6 && t.nodes[line].h == 3);
+    CHECK(child_at(&t, line, 1).x == 2 && child_at(&t, line, 2).x == 5);
+}
+
+static void test_t2b_centers_cross_axis(void)
+{
+    BitmapTable t;
+    LayoutItem items[3];
+    uint16_t col, a, b, c;
+
+    bm_init(&t);
+    col = bm_new(&t, BM_KIND_T2B, 0, 0);
+    a = bm_new(&t, BM_KIND_RGBA, 2, 1);
+    b = bm_new(&t, BM_KIND_RGBA, 4, 2);
+    c = bm_new(&t, BM_KIND_RGBA, 3, 1);
+    items[0] = item(0, 0, a);
+    items[1] = item(0, 0, b);
+    items[2] = item(0, 0, c);
+    CHECK(bm_set_children(&t, col, items, 3));
+    bm_set_sep(&t, col, 1);
+    bm_layout(&t, col);
+
+    /* Height is the child heights plus seps; width is the widest child.
+     * Each child is centred on the cross axis, rounding down on odd gaps. */
+    CHECK(t.nodes[col].w == 4 && t.nodes[col].h == 6);
+    CHECK(child_at(&t, col, 0).x == 1 && child_at(&t, col, 0).y == 0);
+    CHECK(child_at(&t, col, 1).x == 0 && child_at(&t, col, 1).y == 2);
+    CHECK(child_at(&t, col, 2).x == 0 && child_at(&t, col, 2).y == 5);
+}
+
+static void test_nested_layout_and_empty(void)
+{
+    BitmapTable t;
+    LayoutItem outer_items[2];
+    LayoutItem inner_items[2];
+    uint16_t outer, inner, r, a, b, empty;
+
+    bm_init(&t);
+    outer = bm_new(&t, BM_KIND_L2R, 0, 0);
+    inner = bm_new(&t, BM_KIND_T2B, 0, 0);
+    r = bm_new(&t, BM_KIND_RGBA, 2, 2);
+    a = bm_new(&t, BM_KIND_RGBA, 2, 1);
+    b = bm_new(&t, BM_KIND_RGBA, 4, 2);
+    outer_items[0] = item(0, 0, inner);
+    outer_items[1] = item(0, 0, r);
+    CHECK(bm_set_children(&t, outer, outer_items, 2));
+    inner_items[0] = item(0, 0, a);
+    inner_items[1] = item(0, 0, b);
+    CHECK(bm_set_children(&t, inner, inner_items, 2));
+    bm_layout(&t, outer);
+
+    /* The inner column is laid out first, so the outer line sees its size. */
+    CHECK(t.nodes[inner].w == 4 && t.nodes[inner].h == 3);
+    CHECK(t.nodes[outer].w == 6 && t.nodes[outer].h == 3);
+    CHECK(child_at(&t, outer, 0).x == 0 && child_at(&t, outer, 0).y == 0);
+    CHECK(child_at(&t, outer, 1).x == 4 && child_at(&t, outer, 1).y == 1);
+    CHECK(child_at(&t, inner, 0).x == 1 && child_at(&t, inner, 0).y == 0);
+    CHECK(child_at(&t, inner, 1).x == 0 && child_at(&t, inner, 1).y == 1);
+
+    empty = bm_new(&t, BM_KIND_L2R, 9, 9);
+    bm_layout(&t, empty);
+    CHECK(t.nodes[empty].w == 0 && t.nodes[empty].h == 0);
+}
+
+static void test_root_rows_rebuild_on_geometry(void)
+{
+    BitmapTable t;
+    LayoutItem items[2];
+    uint8_t screen[6 * 4 * 4];
+    uint8_t left_px[3 * 2 * 4];
+    uint8_t right_px[3 * 2 * 4];
+    uint16_t root, left, right;
+
+    bm_init(&t);
+    root = bm_new(&t, BM_KIND_LAYOUT, 6, 4);
+    left = bm_new(&t, BM_KIND_RGBA, 3, 2);
+    right = bm_new(&t, BM_KIND_RGBA, 3, 2);
+    bm_set_owner(&t, root, screen, PAPER);
+    bm_set_owner(&t, left, left_px, PAPER);
+    bm_set_owner(&t, right, right_px, PAPER);
+    items[0] = item(0, 0, left);
+    items[1] = item(3, 0, right);
+    CHECK(bm_set_children(&t, root, items, 2));
+    fill(left_px, 3, 2, 200, 0, 0, 255);
+    fill(right_px, 3, 2, 0, 200, 0, 255);
+
+    /* The first geometry repaint builds the per-row lists. */
+    bm_invalidate(&t, root, rect(0, 0, 6, 4), 1);
+    bm_repaint(&t, root);
+    CHECK(t.row_builds == 1 && t.row_valid && t.row_owner == root);
+    CHECK(t.row_off[1] - t.row_off[0] == 2);
+    CHECK(t.row_off[3] - t.row_off[2] == 0);
+
+    /* Content-only damage does not rebuild the lists. */
+    fill(right_px, 3, 2, 0, 0, 200, 255);
+    bm_invalidate(&t, root, rect(3, 0, 3, 2), 0);
+    bm_repaint(&t, root);
+    CHECK(t.row_builds == 1);
+    CHECK(is(screen, 6, 3, 0, 0, 0, 200, 255));
+
+    /* Moving the right line down to row 2 with geometry rebuilds the lists,
+     * so row 2 now lists it and the repaint shows it there. */
+    t.items[t.nodes[root].first_item + 1].y = 2;
+    bm_invalidate(&t, root, rect(0, 0, 6, 4), 1);
+    bm_repaint(&t, root);
+    CHECK(t.row_builds == 2);
+    CHECK(t.row_off[3] - t.row_off[2] == 1);
+    CHECK(is(screen, 6, 3, 0, PAPER[0], PAPER[1], PAPER[2], 255));
+    CHECK(is(screen, 6, 3, 2, 0, 0, 200, 255));
+    CHECK(is(screen, 6, 0, 0, 200, 0, 0, 255));
+}
+
+static void test_viewport_clips_to_its_rect(void)
+{
+    BitmapTable t;
+    LayoutItem root_items[1];
+    LayoutItem v_items[1];
+    uint8_t screen[3 * 3 * 4];
+    uint8_t child_px[4 * 4 * 4];
+    uint16_t root, v, c;
+    int x, y;
+
+    bm_init(&t);
+    root = bm_new(&t, BM_KIND_LAYOUT, 3, 3);
+    v = bm_new(&t, BM_KIND_VIEWPORT, 2, 2);
+    c = bm_new(&t, BM_KIND_RGBA, 4, 4);
+    bm_set_owner(&t, root, screen, PAPER);
+    bm_set_owner(&t, c, child_px, PAPER);
+    bm_set_viewport_origin(&t, v, 2, 2);
+    root_items[0] = item(0, 0, v);
+    v_items[0] = item(0, 0, c);
+    CHECK(bm_set_children(&t, root, root_items, 1));
+    CHECK(bm_set_children(&t, v, v_items, 1));
+    for (y = 0; y < 4; y++) {
+        for (x = 0; x < 4; x++) {
+            put(child_px, 4, x, y, (uint8_t)(x * 10), (uint8_t)(y * 10), 0,
+                255);
+        }
+    }
+
+    /* The 2x2 viewport samples child (2..3, 2..3). Pixels outside its rect
+     * are not covered by it and take paper. */
+    bm_invalidate(&t, root, rect(0, 0, 3, 3), 1);
+    bm_repaint(&t, root);
+    CHECK(is(screen, 3, 0, 0, 20, 20, 0, 255));
+    CHECK(is(screen, 3, 1, 1, 30, 30, 0, 255));
+    CHECK(is(screen, 3, 2, 0, PAPER[0], PAPER[1], PAPER[2], 255));
+    CHECK(is(screen, 3, 0, 2, PAPER[0], PAPER[1], PAPER[2], 255));
+}
+
+static void test_bezel_span(void)
+{
+    int x0 = -1, x1 = -1;
+    int y;
+
+    /* Size 8: pixel centres inside a radius-4 circle. */
+    CHECK(bm_bezel_span(8, 0, &x0, &x1) && x0 == 2 && x1 == 5);
+    CHECK(bm_bezel_span(8, 3, &x0, &x1) && x0 == 0 && x1 == 7);
+    CHECK(bm_bezel_span(8, 7, &x0, &x1) && x0 == 2 && x1 == 5);
+    CHECK(!bm_bezel_span(8, 8, &x0, &x1));
+    CHECK(!bm_bezel_span(8, -1, &x0, &x1));
+
+    /* The device round panel: 360 across. */
+    CHECK(bm_bezel_span(360, 0, &x0, &x1) && x0 == 167 && x1 == 192);
+    CHECK(bm_bezel_span(360, 180, &x0, &x1) && x0 == 0 && x1 == 359);
+
+    /* The circle is symmetric top to bottom and left to right. */
+    for (y = 0; y < 360; y++) {
+        int a0 = -1, a1 = -1, b0 = -1, b1 = -1;
+        CHECK(bm_bezel_span(360, y, &a0, &a1));
+        CHECK(bm_bezel_span(360, 359 - y, &b0, &b1));
+        CHECK(a0 == b0 && a1 == b1);
+        CHECK(a0 + a1 == 359);
+    }
+}
+
 int main(void)
 {
     test_kinds_and_parents();
@@ -292,6 +500,12 @@ int main(void)
     test_repaint_paper_and_clean_sibling();
     test_opaque_stops_blend();
     test_viewport_crop();
+    test_l2r_bottom_aligns();
+    test_t2b_centers_cross_axis();
+    test_nested_layout_and_empty();
+    test_root_rows_rebuild_on_geometry();
+    test_viewport_clips_to_its_rect();
+    test_bezel_span();
 
     if (failures) {
         fprintf(stderr, "test_bitmap: %d check(s) failed\n", failures);

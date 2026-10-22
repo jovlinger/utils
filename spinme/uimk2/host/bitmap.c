@@ -85,8 +85,26 @@ static BmRect to_parent(const BitmapTable *t, uint16_t p, uint16_t child,
 
 static void sample(BitmapTable *t, uint16_t idx, int x, int y, uint8_t out[4]);
 
+static void composite_item(BitmapTable *t, const Bitmap *n, uint16_t i,
+                           int px, int py, Acc *acc)
+{
+    LayoutItem it = t->items[n->first_item + i];
+    const Bitmap *c = &t->nodes[it.idx];
+    int cx = px - it.x;
+    int cy = py - it.y;
+    uint8_t s[4];
+
+    if (cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) {
+        return;
+    }
+    t->child_samples++;
+    sample(t, it.idx, cx, cy, s);
+    acc_add(acc, s);
+}
+
 /* Composites the children of idx that cover (x, y), in node coordinates,
- * front to back. Stops as soon as the accumulator is opaque. */
+ * front to back. Stops as soon as the accumulator is opaque. The root uses
+ * its per-row list when one is valid for this row. */
 static void composite_children(BitmapTable *t, uint16_t idx, int x, int y,
                                Acc *acc)
 {
@@ -101,19 +119,15 @@ static void composite_children(BitmapTable *t, uint16_t idx, int x, int y,
         px += n->ox;
         py += n->oy;
     }
-    for (i = 0; i < n->n_items && acc->a < 255u; i++) {
-        LayoutItem it = t->items[n->first_item + i];
-        const Bitmap *c = &t->nodes[it.idx];
-        int cx = px - it.x;
-        int cy = py - it.y;
-        uint8_t s[4];
-
-        if (cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) {
-            continue;
+    if (idx == t->row_owner && t->row_valid && y >= 0 && y < n->h) {
+        uint16_t k;
+        for (k = t->row_off[y]; k < t->row_off[y + 1] && acc->a < 255u; k++) {
+            composite_item(t, n, t->row_items[k], px, py, acc);
         }
-        t->child_samples++;
-        sample(t, it.idx, cx, cy, s);
-        acc_add(acc, s);
+        return;
+    }
+    for (i = 0; i < n->n_items && acc->a < 255u; i++) {
+        composite_item(t, n, i, px, py, acc);
     }
 }
 
@@ -137,6 +151,39 @@ static void sample(BitmapTable *t, uint16_t idx, int x, int y, uint8_t out[4])
     memset(&acc, 0, sizeof acc);
     composite_children(t, idx, x, y, &acc);
     acc_color(&acc, out);
+}
+
+/* Rebuilds the per-row overlap lists of the Layout owner idx. An item covers
+ * row y when y is in [it.y, it.y + child h). A full pool leaves the lists
+ * invalid, so composite falls back to the full scan. */
+static void rows_rebuild(BitmapTable *t, uint16_t idx)
+{
+    const Bitmap *n = &t->nodes[idx];
+    int y;
+    uint16_t i, k = 0;
+
+    t->row_builds++;
+    t->row_owner = idx;
+    t->row_valid = 0;
+    if (n->h > BM_MAX_ROWS) {
+        return;
+    }
+    for (y = 0; y < n->h; y++) {
+        t->row_off[y] = k;
+        for (i = 0; i < n->n_items; i++) {
+            const LayoutItem *it = &t->items[n->first_item + i];
+            const Bitmap *c = &t->nodes[it->idx];
+
+            if (y >= it->y && y < it->y + c->h) {
+                if (k >= BM_ROW_POOL) {
+                    return;
+                }
+                t->row_items[k++] = i;
+            }
+        }
+    }
+    t->row_off[n->h] = k;
+    t->row_valid = 1;
 }
 
 static void composite_owner(BitmapTable *t, uint16_t idx)
@@ -238,6 +285,9 @@ int bm_set_children(BitmapTable *t, uint16_t parent,
         t->nodes[items[i].idx].parent = parent;
     }
     t->n_items = (uint16_t)(t->n_items + n);
+    if (parent == t->row_owner) {
+        t->row_valid = 0;
+    }
     return 1;
 }
 
@@ -285,9 +335,93 @@ void bm_repaint(BitmapTable *t, uint16_t idx)
         }
     }
     if (n->pixels) {
+        if (n->kind == BM_KIND_LAYOUT && n->geom_dirty) {
+            rows_rebuild(t, idx);
+        }
         composite_owner(t, idx);
     }
     n->dirty = 0;
     n->geom_dirty = 0;
     n->damage = zero;
+}
+
+void bm_set_sep(BitmapTable *t, uint16_t idx, int16_t sep)
+{
+    t->nodes[idx].sep = sep;
+}
+
+void bm_layout(BitmapTable *t, uint16_t idx)
+{
+    Bitmap *n = &t->nodes[idx];
+    uint16_t i;
+    int main_len = 0, cross_len = 0, pos = 0;
+    int l2r;
+
+    for (i = 0; i < n->n_items; i++) {
+        bm_layout(t, t->items[n->first_item + i].idx);
+    }
+    l2r = n->kind == BM_KIND_L2R;
+    if (!l2r && n->kind != BM_KIND_T2B) {
+        return;
+    }
+    for (i = 0; i < n->n_items; i++) {
+        const Bitmap *c = &t->nodes[t->items[n->first_item + i].idx];
+        int along = l2r ? c->w : c->h;
+        int across = l2r ? c->h : c->w;
+
+        if (i) {
+            main_len += n->sep;
+        }
+        main_len += along;
+        if (across > cross_len) {
+            cross_len = across;
+        }
+    }
+    n->w = (uint16_t)(l2r ? main_len : cross_len);
+    n->h = (uint16_t)(l2r ? cross_len : main_len);
+    for (i = 0; i < n->n_items; i++) {
+        LayoutItem *it = &t->items[n->first_item + i];
+        const Bitmap *c = &t->nodes[it->idx];
+
+        if (l2r) {
+            it->x = (int16_t)pos;
+            it->y = (int16_t)(cross_len - c->h);
+            pos += c->w + n->sep;
+        } else {
+            it->x = (int16_t)((cross_len - c->w) / 2);
+            it->y = (int16_t)pos;
+            pos += c->h + n->sep;
+        }
+    }
+}
+
+int bm_bezel_span(int size, int y, int *x0, int *x1)
+{
+    int dy, dx2, r = 0, a, b, lo, hi;
+
+    if (size <= 0 || y < 0 || y >= size) {
+        return 0;
+    }
+    dy = 2 * y + 1 - size;
+    dx2 = size * size - dy * dy;
+    if (dx2 < 0) {
+        return 0;
+    }
+    while ((r + 1) * (r + 1) <= dx2) {
+        r++;
+    }
+    /* Pixel x is inside when 2x is in [size - 1 - r, size - 1 + r]. */
+    a = size - 1 - r;
+    b = size - 1 + r;
+    lo = a < 0 ? 0 : (a + 1) / 2;
+    hi = b / 2;
+    if (hi > size - 1) {
+        hi = size - 1;
+    }
+    if (lo > hi) {
+        return 0;
+    }
+    *x0 = lo;
+    *x1 = hi;
+    return 1;
 }

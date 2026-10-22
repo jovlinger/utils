@@ -33,6 +33,10 @@ typedef enum {
 #define BM_NULL 0
 #define BM_MAX_NODES 64
 #define BM_MAX_ITEMS 256
+/* Row lists cover the root screen height (360 on the device). A root taller
+ * than this, or a row pool that overflows, falls back to a full child scan. */
+#define BM_MAX_ROWS 360
+#define BM_ROW_POOL 2048
 
 typedef struct {
     int16_t x, y;
@@ -57,6 +61,7 @@ typedef struct {
     uint16_t first_item; /* slice of BitmapTable.items */
     uint16_t n_items;
     int16_t ox, oy;      /* Viewport origin */
+    int16_t sep;         /* L2R hsep or T2B vsep, between children */
 } Bitmap;
 
 typedef struct {
@@ -65,6 +70,14 @@ typedef struct {
     uint16_t n_nodes;
     uint16_t n_items;
     uint32_t child_samples; /* child samples taken by repaint */
+    /* Per-row overlap lists of the one Layout pixel owner (the root). Row y
+     * holds row_items[row_off[y] .. row_off[y+1]), each an item slot index of
+     * that owner, front to back. Rebuilt only on repaint with geom_dirty. */
+    uint16_t row_owner;
+    uint8_t row_valid;
+    uint32_t row_builds;
+    uint16_t row_off[BM_MAX_ROWS + 1];
+    uint16_t row_items[BM_ROW_POOL];
 } BitmapTable;
 
 void bm_init(BitmapTable *t);
@@ -87,6 +100,20 @@ int bm_set_children(BitmapTable *t, uint16_t parent,
 
 void bm_set_viewport_origin(BitmapTable *t, uint16_t idx, int16_t ox,
                             int16_t oy);
+
+void bm_set_sep(BitmapTable *t, uint16_t idx, int16_t sep);
+
+/* Lays out every L2R and T2B under idx, children first, and sets their w, h
+ * and their children's LayoutItem x, y. L2R: children left to right, bottoms
+ * on the tallest child's bottom edge. T2B: children top to bottom, centred on
+ * the widest child (odd gaps round down). Gaps are sep between neighbours.
+ * Sizes change, so the caller invalidates the node with geometry set. */
+void bm_layout(BitmapTable *t, uint16_t idx);
+
+/* Round panel clip for a size x size display, pixel centres inside the circle
+ * of diameter size. Sets the inclusive x range [*x0, *x1] of row y and returns
+ * 1, or returns 0 when the row has no pixel inside. */
+int bm_bezel_span(int size, int y, int *x0, int *x1);
 
 /* Unions local_rect into idx and each ancestor, in that node's coordinates. */
 void bm_invalidate(BitmapTable *t, uint16_t idx, BmRect local_rect,
