@@ -27,7 +27,8 @@ typedef enum {
     UIMK2_BM_L2R,
     UIMK2_BM_T2B,
     UIMK2_BM_VIEWPORT,
-    UIMK2_BM_GLYPH
+    UIMK2_BM_GLYPH,
+    UIMK2_BM_CACHE /* fg composited over bg, stored; rebakes only when dirty */
 } uimk2_bm_kind;
 
 typedef struct {
@@ -45,14 +46,6 @@ typedef struct {
     uint8_t kind;      /* uimk2_bm_kind */
     bool dirty;
     bool geom_dirty;
-    /* Hint, default false: the caller-provided pixel buffer (rgba.px or
-     * layout.px) is a finished picture of this subtree whenever the node is
-     * clean. A parent's sample of a clean hinted node with a buffer reads
-     * those bytes and never composites the node's children. A dirty hinted
-     * node is recomposed into its buffer by repaint, children first, before
-     * its parent samples it. The library never allocates the buffer. Glyphs
-     * have no buffer, so the hint does nothing for them. */
-    bool cache_backing;
     uint8_t combiner;  /* 0 = none */
     uimk2_rect damage; /* in this node's coordinates */
     uint16_t parent;   /* 0 = root (or detached) */
@@ -91,6 +84,11 @@ typedef struct {
         struct {
             const uint8_t *alpha; /* w * h coverage bytes, read-only */
         } glyph;
+        struct {
+            uint16_t bg; /* backdrop; 0 = nothing behind fg */
+            uint16_t fg; /* content composited over bg; 0 = none */
+            uint8_t *px; /* stored w * h * 4; caller-owned, never allocated */
+        } cache;
     } u;
 } uimk2_bm;
 
@@ -154,9 +152,17 @@ bool uimk2_bm_child_offset(const uimk2_bmtab *t, uint16_t parent,
 
 /* Union local_rect into node's damage, set dirty, or geom_dirty with
  * geometry, transform the rect into the parent, and repeat up to the root.
- * The rect is clipped to each node's box. */
+ * The rect is clipped to each node's box. A walk whose parent is a Cache
+ * stops after marking the child: the Cache is marked only when node is the
+ * Cache itself. */
 void uimk2_invalidate(uimk2_bmtab *t, uint16_t node, uimk2_rect local_rect,
                       bool geometry);
+
+/* Mark a Cache dirty over its whole box and continue the walk from the
+ * Cache upward. A non-Cache index does nothing. The bake reads bg, then
+ * composites fg over it, and writes px. It does not blend onto the previous
+ * contents of px. */
+void uimk2_cache_dirty(uimk2_bmtab *t, uint16_t cache);
 
 /* Scroll a Viewport: add dx to its ox and dy to its oy (each sum clamped to
  * int16), then invalidate the whole viewport box {0, 0, w, h}. There is no

@@ -81,9 +81,10 @@ bool uimk2_line_build(uimk2_bmtab *t, uimk2_arena *a, uimk2_line *line,
                       const char *utf8, uint16_t hsep, uint8_t comb,
                       const uint8_t paper[4]) {
     const unsigned char *s;
-    uint32_t n = 0, width = 0, idx_bytes, px_bytes;
+    uint32_t n = 0, width = 0, idx_bytes, px_bytes, need;
     uint8_t *block;
-    uint16_t first, cache, pack, k;
+    uint8_t *paper_px;
+    uint16_t first, cache, paper_i, pack, k;
     uimk2_rect all;
 
     /* measure first, so a full arena or table changes nothing */
@@ -98,18 +99,33 @@ bool uimk2_line_build(uimk2_bmtab *t, uimk2_arena *a, uimk2_line *line,
     if (n > 1) {
         width += (n - 1u) * hsep;
     }
-    if (width > UINT16_MAX || n + 2u > (uint32_t)(t->cap - t->count)) {
+    /* cache + pack + glyphs, and a paper raster when the line has pixels */
+    need = n + 2u + (width > 0u ? 1u : 0u);
+    if (width > UINT16_MAX || need > (uint32_t)(t->cap - t->count)) {
         return false;
     }
     idx_bytes = align4((n + 1u) * (uint32_t)sizeof(uint16_t));
-    px_bytes = width * uimk2_glyph_h * 4u;
-    block = (uint8_t *)uimk2_arena_alloc(a, idx_bytes + px_bytes);
+    px_bytes = width * (uint32_t)uimk2_glyph_h * 4u;
+    block = (uint8_t *)uimk2_arena_alloc(a, idx_bytes + px_bytes + px_bytes);
     if (block == NULL) {
         return false;
     }
 
     first = t->count;
-    cache = uimk2_bm_new(t, UIMK2_BM_RGBA);
+    cache = uimk2_bm_new(t, UIMK2_BM_CACHE);
+    paper_i = 0;
+    paper_px = block + idx_bytes;
+    if (width > 0u) {
+        uint32_t i;
+        paper_i = uimk2_bm_new(t, UIMK2_BM_RGBA);
+        t->bm[paper_i].w = (uint16_t)width;
+        t->bm[paper_i].h = uimk2_glyph_h;
+        t->bm[paper_i].u.rgba.px = paper_px;
+        t->bm[paper_i].parent = cache;
+        for (i = 0; i < width * (uint32_t)uimk2_glyph_h; i++) {
+            memcpy(paper_px + i * 4u, paper, 4);
+        }
+    }
     pack = uimk2_bm_new(t, UIMK2_BM_L2R);
     line->idx = (uint16_t *)(void *)block;
     k = 0;
@@ -128,15 +144,15 @@ bool uimk2_line_build(uimk2_bmtab *t, uimk2_arena *a, uimk2_line *line,
 
     t->bm[cache].w = t->bm[pack].w;
     t->bm[cache].h = t->bm[pack].h;
-    t->bm[cache].u.rgba.px = block + idx_bytes;
-    t->bm[cache].u.rgba.child = pack;
-    memcpy(t->bm[cache].u.rgba.paper, paper, 4);
+    t->bm[cache].u.cache.bg = paper_i;
+    t->bm[cache].u.cache.fg = pack;
+    t->bm[cache].u.cache.px = paper_px + px_bytes;
 
     line->cache = cache;
     line->pack = pack;
     line->first_hdr = first;
     line->arena_off = uimk2_arena_off(a, block);
-    line->arena_len = idx_bytes + px_bytes;
+    line->arena_len = idx_bytes + px_bytes + px_bytes;
 
     all.x = 0;
     all.y = 0;

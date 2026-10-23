@@ -5,11 +5,12 @@
  * baseline is row uimk2_glyph_b. It allocates no pixels. A missing
  * codepoint uses '?'.
  *
- * A text line is an RGBA cache that owns the line's pixels, over an L2R of
- * one Glyph node per codepoint. The L2R's IdxList and the cache are the
- * only arena bytes the line takes. The L2R carries the line's combiner,
- * normally SET on RGB to the ink color, so the white glyph ink is tinted
- * before it is blended into the cache.
+ * A text line is a Cache. Its foreground is an L2R of one Glyph node per
+ * codepoint. Its background is a paper raster of the same size. The IdxList,
+ * the paper, and the stored picture are one arena block. The L2R carries
+ * the line's combiner, normally SET on RGB to the ink color, so the white
+ * glyph ink is tinted before it is baked over the paper. The Cache rebakes
+ * only when that node is marked dirty.
  *
  * Portable C99, no platform headers.
  */
@@ -31,7 +32,7 @@ const uimk2_glyph_entry *uimk2_glyph_find(uint32_t cp);
 uint16_t uimk2_glyph_new(uimk2_bmtab *t, uint32_t cp);
 
 typedef struct {
-    uint16_t cache;      /* RGBA owner of the line's pixels */
+    uint16_t cache;      /* Cache: fg over paper, stored pixels */
     uint16_t pack;       /* L2R of the glyphs, child of cache */
     uint16_t first_hdr;  /* first header index this line took */
     uint16_t *idx;       /* the L2R's IdxList, in the arena */
@@ -41,9 +42,9 @@ typedef struct {
 
 /* Build a line from UTF-8 text: one Glyph per codepoint (an invalid byte
  * is one '?'), packed L2R with hsep, tinted by combiner index comb on the
- * L2R, and cached in an RGBA of the L2R's size with paper behind it. The
- * IdxList and the cache come from one arena alloc. The cache's parent is 0
- * (the caller places it) and its whole box is damaged with geometry set.
+ * L2R, and baked into a Cache over a paper raster of the L2R's size. The
+ * IdxList, the paper, and the store come from one arena alloc. The cache's
+ * parent is 0 (the caller places it) and its whole box is marked dirty.
  * Returns false when the arena or the table is full; no headers are kept
  * then, and the arena is unchanged. */
 bool uimk2_line_build(uimk2_bmtab *t, uimk2_arena *a, uimk2_line *line,

@@ -22,7 +22,7 @@ static int checks;
 #define CAP 64
 #define SW 64
 #define SH 20
-#define ARENA_BYTES 8192
+#define ARENA_BYTES 65536
 
 static uimk2_bm storage[CAP];
 static uint8_t screen[SW * SH * 4];
@@ -200,11 +200,12 @@ static void test_line_build_and_tint(void) {
     }
     want_w += 3u * hsep;
 
-    CHECK(t.count == before + 2 + 4);
+    CHECK(t.count == before + 3 + 4);
     CHECK(line.first_hdr == before);
-    CHECK(t.bm[line.cache].kind == UIMK2_BM_RGBA);
+    CHECK(t.bm[line.cache].kind == UIMK2_BM_CACHE);
     CHECK(t.bm[line.pack].kind == UIMK2_BM_L2R);
-    CHECK(t.bm[line.cache].u.rgba.child == line.pack);
+    CHECK(t.bm[line.cache].u.cache.fg == line.pack);
+    CHECK(t.bm[t.bm[line.cache].u.cache.bg].kind == UIMK2_BM_RGBA);
     CHECK(t.bm[line.pack].parent == line.cache);
     CHECK(t.bm[line.cache].parent == 0);
     CHECK(t.bm[line.pack].combiner == INK_COMB);
@@ -214,7 +215,7 @@ static void test_line_build_and_tint(void) {
 
     /* the only arena bytes: the IdxList and the cache, one block */
     CHECK(line.arena_off == top0);
-    CHECK(line.arena_len == align4(5u * 2u) + want_w * uimk2_glyph_h * 4u);
+    CHECK(line.arena_len == align4(5u * 2u) + 2u * want_w * uimk2_glyph_h * 4u);
     CHECK(a.top - top0 == line.arena_len);
     CHECK(line.idx[4] == 0);
     for (k = 0; k < 4; k++) {
@@ -241,7 +242,7 @@ static void test_line_build_and_tint(void) {
             for (x = 0; x < e->width; x++) {
                 int al = uimk2_glyph_alpha[e->offset + y * e->width + x];
                 const uint8_t *p =
-                    &t.bm[line.cache].u.rgba.px[(y * want_w + cx + x) * 4u];
+                    &t.bm[line.cache].u.cache.px[(y * want_w + cx + x) * 4u];
                 ok_px = ok_px && near(p[0], 200 * al / 255) &&
                         near(p[1], 100 * al / 255) &&
                         near(p[2], 50 * al / 255) && p[3] == 255;
@@ -254,7 +255,7 @@ static void test_line_build_and_tint(void) {
             }
             if (k < 3) {
                 const uint8_t *p =
-                    &t.bm[line.cache].u.rgba.px[(y * want_w + cx + e->width) * 4u];
+                    &t.bm[line.cache].u.cache.px[(y * want_w + cx + e->width) * 4u];
                 ok_px = ok_px && px_eq(p, 0, 0, 0, 255);
             }
         }
@@ -277,7 +278,7 @@ static void test_line_build_and_tint(void) {
         for (x = 0; x < want_w; x++) {
             ok_root = ok_root &&
                       memcmp(&screen[((y + 4) * SW + x + 3) * 4],
-                             &t.bm[line.cache].u.rgba.px[(y * want_w + x) * 4u],
+                             &t.bm[line.cache].u.cache.px[(y * want_w + x) * 4u],
                              4) == 0;
         }
     }
@@ -336,6 +337,7 @@ static void test_line_full_changes_nothing(void) {
     t.cap = (uint16_t)(t.count + 3);
     CHECK(!uimk2_line_build(&t, &a, &line, "Hello", 1, INK_COMB, BLACK));
     CHECK(t.count == count && a.top == 0);
+    t.cap = (uint16_t)(t.count + 4);
     CHECK(uimk2_line_build(&t, &a, &line, "H", 1, INK_COMB, BLACK));
     t.cap = CAP;
 }

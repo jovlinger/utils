@@ -210,6 +210,17 @@ static uint16_t it_next(child_it *it, int32_t *dx, int32_t *dy) {
         *dx = -(int32_t)p->u.viewport.ox;
         *dy = -(int32_t)p->u.viewport.oy;
         return p->u.viewport.child;
+    case UIMK2_BM_CACHE:
+        while (it->k < 2u) {
+            uint16_t id = it->k == 0 ? p->u.cache.bg : p->u.cache.fg;
+            it->k++;
+            if (id != 0) {
+                *dx = 0;
+                *dy = 0;
+                return id;
+            }
+        }
+        return 0;
     case UIMK2_BM_NULL:
     case UIMK2_BM_GLYPH:
     default:
@@ -271,6 +282,10 @@ void uimk2_invalidate(uimk2_bmtab *t, uint16_t node, uimk2_rect r,
         b->damage = uimk2_rect_union(b->damage, r);
         b->dirty = true;
         b->geom_dirty = b->geom_dirty || geometry;
+        /* A Cache stores a snapshot. Marking a child does not mark it. */
+        if (parent != 0 && t->bm[parent].kind == UIMK2_BM_CACHE) {
+            return;
+        }
         if (parent == 0 || !uimk2_bm_child_offset(t, parent, node, &dx, &dy)) {
             return;
         }
@@ -313,6 +328,21 @@ void uimk2_view_scroll(uimk2_bmtab *t, uint16_t viewport, int32_t dx,
     box.w = b->w;
     box.h = b->h;
     uimk2_invalidate(t, viewport, box, false);
+}
+
+void uimk2_cache_dirty(uimk2_bmtab *t, uint16_t cache) {
+    uimk2_bm *b;
+    uimk2_rect box;
+    if (cache == 0 || cache >= t->count ||
+        t->bm[cache].kind != UIMK2_BM_CACHE) {
+        return;
+    }
+    b = &t->bm[cache];
+    box.x = 0;
+    box.y = 0;
+    box.w = b->w;
+    box.h = b->h;
+    uimk2_invalidate(t, cache, box, false);
 }
 
 /* ---- sampling and blend ------------------------------------------------ */
@@ -369,34 +399,23 @@ static bool composite(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
     return covered;
 }
 
-/* The caller-provided pixel buffer of a node, or NULL when it has none. */
-static const uint8_t *backing_px(const uimk2_bm *b) {
-    switch ((uimk2_bm_kind)b->kind) {
-    case UIMK2_BM_RGBA:
-        return b->u.rgba.px;
-    case UIMK2_BM_LAYOUT:
-        return b->u.layout.px;
-    default:
-        return NULL;
-    }
-}
-
 static bool sample(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
                    uint8_t out[4]) {
     const uimk2_bm *b = &t->bm[idx];
-    const uint8_t *bp;
     accum acc;
     if (x < 0 || y < 0 || x >= b->w || y >= b->h) {
         return false;
     }
-    /* a clean hinted node with a buffer is its own finished picture: read
-     * it and do not composite the children */
-    bp = b->cache_backing && !b->dirty ? backing_px(b) : NULL;
-    if (bp != NULL) {
-        memcpy(out, &bp[((uint32_t)y * b->w + (uint32_t)x) * 4u], 4);
-        return true;
-    }
     switch ((uimk2_bm_kind)b->kind) {
+    case UIMK2_BM_CACHE:
+        /* The store is the picture, clean or dirty. Repaint is what writes
+         * it, and only when this node itself is dirty. */
+        if (b->u.cache.px == NULL) {
+            return false;
+        }
+        memcpy(out, &b->u.cache.px[((uint32_t)y * b->w + (uint32_t)x) * 4u],
+               4);
+        return true;
     case UIMK2_BM_RGBA:
         memcpy(out, &b->u.rgba.px[((uint32_t)y * b->w + (uint32_t)x) * 4u], 4);
         return true;
@@ -512,6 +531,47 @@ static void recompose(uimk2_bmtab *t, uint16_t idx, uint8_t *px,
     }
 }
 
+/* Start from bg, composite fg over it, write px. A miss on both leaves
+ * transparent. The previous bytes in px are not a layer. */
+static void bake_cache(uimk2_bmtab *t, uint16_t idx) {
+    uimk2_bm *b = &t->bm[idx];
+    uimk2_rect r = rect_clip_box(b->damage, b->w, b->h);
+    uint16_t fg = b->u.cache.fg;
+    uint16_t bg = b->u.cache.bg;
+    int32_t x, y;
+    if (b->u.cache.px == NULL) {
+        return;
+    }
+    for (y = r.y; y < (int32_t)r.y + r.h; y++) {
+        for (x = r.x; x < (int32_t)r.x + r.w; x++) {
+            uint8_t *dst =
+                &b->u.cache.px[((uint32_t)y * b->w + (uint32_t)x) * 4u];
+            accum acc;
+            uint8_t s[4];
+            memset(&acc, 0, sizeof acc);
+            if (fg != 0) {
+                t->samples++;
+                if (sample(t, fg, x, y, s)) {
+                    uimk2_combine(t, t->bm[fg].combiner, s);
+                    acc_under(&acc, s);
+                }
+            }
+            if (acc.a < 255u && bg != 0) {
+                t->samples++;
+                if (sample(t, bg, x, y, s)) {
+                    uimk2_combine(t, t->bm[bg].combiner, s);
+                    acc_under(&acc, s);
+                }
+            }
+            if (acc.a == 0) {
+                memset(dst, 0, 4);
+            } else {
+                acc_out(&acc, dst);
+            }
+        }
+    }
+}
+
 static void repaint_node(uimk2_bmtab *t, uint16_t idx) {
     uimk2_bm *b = &t->bm[idx];
     child_it it;
@@ -532,6 +592,8 @@ static void repaint_node(uimk2_bmtab *t, uint16_t idx) {
             rebuild_rows(t, idx);
         }
         recompose(t, idx, b->u.layout.px, b->u.layout.paper);
+    } else if (b->kind == UIMK2_BM_CACHE) {
+        bake_cache(t, idx);
     }
     b->dirty = false;
     b->geom_dirty = false;

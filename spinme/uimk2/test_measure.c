@@ -3,7 +3,7 @@
  * The redraw path stays row-major. This file records two facts:
  * an x-scroll memmove of a row-major buffer is one copy per row, while
  * the same shift of a y-major buffer is one contiguous copy; and a clean
- * cache_backing blit samples fewer children than recompositing a stack.
+ * Cache blit samples fewer children than rebaking a stack.
  * Times are printed. They do not select a winner inside the library.
  */
 #include "uimk2_bitmap.h"
@@ -99,7 +99,7 @@ static void fill_layer(uint8_t *px, int n, int tag) {
 
 static void build(uimk2_bmtab *t, uimk2_layout_item *root_items,
                   uimk2_layout_item *kids) {
-    uint16_t root, node, c;
+    uint16_t root, node, stack, c;
     int i;
     uimk2_bmtab_init(t, storage, CAP);
     memset(screen, 0xee, sizeof screen);
@@ -112,15 +112,18 @@ static void build(uimk2_bmtab *t, uimk2_layout_item *root_items,
     t->bm[root].u.layout.n = 1;
     t->bm[root].u.layout.px = screen;
     memcpy(t->bm[root].u.layout.paper, PAPER, 4);
-    node = uimk2_bm_new(t, UIMK2_BM_LAYOUT);
+    stack = uimk2_bm_new(t, UIMK2_BM_LAYOUT);
+    t->bm[stack].w = W;
+    t->bm[stack].h = H;
+    t->bm[stack].u.layout.items = kids;
+    t->bm[stack].u.layout.n = LAYERS;
+    node = uimk2_bm_new(t, UIMK2_BM_CACHE);
     t->bm[node].w = W;
     t->bm[node].h = H;
-    t->bm[node].cache_backing = true;
-    t->bm[node].u.layout.items = kids;
-    t->bm[node].u.layout.n = LAYERS;
-    t->bm[node].u.layout.px = cache;
-    memcpy(t->bm[node].u.layout.paper, PAPER, 4);
+    t->bm[node].u.cache.fg = stack;
+    t->bm[node].u.cache.px = cache;
     t->bm[node].parent = root;
+    t->bm[stack].parent = node;
     root_items[0].x = 0;
     root_items[0].y = 0;
     root_items[0].idx = node;
@@ -130,7 +133,7 @@ static void build(uimk2_bmtab *t, uimk2_layout_item *root_items,
         t->bm[c].w = W;
         t->bm[c].h = H;
         t->bm[c].u.rgba.px = layer[i];
-        t->bm[c].parent = node;
+        t->bm[c].parent = stack;
         kids[i].x = 0;
         kids[i].y = 0;
         kids[i].idx = c;
@@ -152,13 +155,15 @@ static void test_cache_versus_redraw(void) {
     build(&t, root_items, kids);
     node = root_items[0].idx;
 
-    uimk2_invalidate(&t, kids[0].idx, box(0, 0, W, H), false);
+    uimk2_cache_dirty(&t, node);
     before = t.samples;
     uimk2_repaint(&t);
-    CHECK(t.samples - before == (uint32_t)(LAYERS * area + area));
+    /* bake samples the stack, the stack samples each layer, the root
+     * samples the store */
+    CHECK(t.samples - before == (uint32_t)((LAYERS + 2) * area));
     memcpy(fresh, screen, sizeof screen);
 
-    /* Clean hinted node: the root copies the store and does not descend. */
+    /* Clean Cache: the root copies the store and does not descend. */
     uimk2_invalidate(&t, t.root, box(0, 0, W, H), false);
     CHECK(!t.bm[node].dirty);
     before = t.samples;
@@ -177,7 +182,7 @@ static void test_cache_versus_redraw(void) {
 
     t0 = nsec();
     for (i = 0; i < REPS; i++) {
-        uimk2_invalidate(&t, kids[0].idx, box(0, 0, W, H), false);
+        uimk2_cache_dirty(&t, node);
         uimk2_repaint(&t);
     }
     t1 = nsec();
@@ -201,7 +206,7 @@ static void test_cache_versus_redraw(void) {
 
     t0 = nsec();
     for (i = 0; i < REPS; i++) {
-        uimk2_invalidate(&t, kids[0].idx, box(0, 0, 8, 8), false);
+        uimk2_invalidate(&t, node, box(0, 0, 8, 8), false);
         uimk2_repaint(&t);
     }
     t1 = nsec();

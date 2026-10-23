@@ -929,7 +929,7 @@ static void test_combiner_before_blend(void) {
     CHECK(px_eq(px_at(screen, SW, 1, 0), 0, 0, 255, 255));
 }
 
-/* ---- scroll and cache_backing ------------------------------------------ */
+/* ---- scroll and cache --------------------------------------------------- */
 
 #define VW 6 /* scroll tests: viewport and line cache size */
 #define VH 4
@@ -1101,7 +1101,6 @@ static void test_scroll_through_cache(void) {
     t.bm[ras].parent = vp;
     line = make_raster(&t, VW, VH, cache);
     t.bm[line].u.rgba.child = vp;
-    t.bm[line].cache_backing = true;
     t.bm[vp].parent = line;
     items[0].x = 5;
     items[0].y = 3;
@@ -1136,188 +1135,117 @@ static void test_scroll_through_cache(void) {
     CHECK(outside_is(screen, snap, 5, 3));
 }
 
-/* Scene: root -> node N (4 x 2 at (2, 2)) -> three rasters. The back is
- * opaque; the two in front are (0,0,0,0), which cover and add nothing, so
- * every N pixel samples all three children. N has the caller's buffer. */
-typedef struct {
+/* Cache is its own kind. It stores fg composited over bg. A child
+ * invalidate does not mark it. uimk2_cache_dirty does, and the bake starts
+ * from bg again rather than from the bytes already in the store. */
+static void test_cache_bakes_over_background(void) {
     uimk2_bmtab t;
-    uimk2_layout_item root_items[1];
-    uimk2_layout_item n_items[3];
-    uint8_t cache[4 * 2 * 4];
-    uint8_t back[4 * 2 * 4], clear1[4 * 2 * 4], clear2[4 * 2 * 4];
-    uint16_t root, n, b0, b1, b2;
-} backed_scene;
-
-static backed_scene bs;
-
-/* N is a non-root Layout with the buffer; hint sets its cache_backing. */
-static void backed_build(bool hint) {
-    backed_scene *s = &bs;
-    memset(s->cache, 0x55, sizeof s->cache);
-    fill(s->back, 8, 0, 0, 255, 255);
-    fill(s->clear1, 8, 0, 0, 0, 0);
-    fill(s->clear2, 8, 0, 0, 0, 0);
-    s->root = make_root(&s->t, s->root_items, 1);
-    s->b0 = make_raster(&s->t, 4, 2, s->back);
-    s->b1 = make_raster(&s->t, 4, 2, s->clear1);
-    s->b2 = make_raster(&s->t, 4, 2, s->clear2);
-    s->n = uimk2_bm_new(&s->t, UIMK2_BM_LAYOUT);
-    s->t.bm[s->n].w = 4;
-    s->t.bm[s->n].h = 2;
-    s->t.bm[s->n].cache_backing = hint;
-    s->n_items[0].idx = s->b0; /* back to front */
-    s->n_items[1].idx = s->b1;
-    s->n_items[2].idx = s->b2;
-    s->n_items[0].x = s->n_items[1].x = s->n_items[2].x = 0;
-    s->n_items[0].y = s->n_items[1].y = s->n_items[2].y = 0;
-    s->t.bm[s->n].u.layout.items = s->n_items;
-    s->t.bm[s->n].u.layout.n = 3;
-    s->t.bm[s->n].u.layout.px = s->cache;
-    memcpy(s->t.bm[s->n].u.layout.paper, PAPER, 4);
-    s->t.bm[s->b0].parent = s->n;
-    s->t.bm[s->b1].parent = s->n;
-    s->t.bm[s->b2].parent = s->n;
-    s->root_items[0].x = 2;
-    s->root_items[0].y = 2;
-    s->root_items[0].idx = s->n;
-    s->t.bm[s->n].parent = s->root;
-}
-
-static void test_cache_backing_clean_not_descended(void) {
-    backed_scene *s = &bs;
-    uint8_t snap_cache[4 * 2 * 4];
+    static uimk2_layout_item items[1];
+    static uint8_t store[4 * 2 * 4], fgpx[4 * 2 * 4], bgpx[4 * 2 * 4];
+    uint16_t root, cache, fg, bg;
     uint32_t before;
     int x, y;
 
-    backed_build(true);
-    CHECK(!s->t.bm[s->b0].cache_backing && !s->t.bm[s->root].cache_backing);
-    CHECK(s->t.bm[s->n].cache_backing);
-    /* paint once: N recomposes (3 samples x 8) and the root copies (8) */
-    uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
-    before = s->t.samples;
-    uimk2_repaint(&s->t);
-    CHECK(s->t.samples - before == 3 * 8 + 8);
+    memset(store, 0x55, sizeof store);
+    fill(bgpx, 8, 255, 0, 0, 255);
+    fill(fgpx, 8, 0, 0, 0, 0);
     for (y = 0; y < 2; y++) {
-        for (x = 0; x < 4; x++) {
-            CHECK(px_eq(px_at(s->cache, 4, x, y), 0, 0, 255, 255));
+        for (x = 0; x < 2; x++) {
+            uint8_t *p = (uint8_t *)px_at(fgpx, 4, x, y);
+            p[0] = 0;
+            p[1] = 0;
+            p[2] = 255;
+            p[3] = 255;
+        }
+    }
+    root = make_root(&t, items, 1);
+    bg = make_raster(&t, 4, 2, bgpx);
+    fg = make_raster(&t, 4, 2, fgpx);
+    cache = uimk2_bm_new(&t, UIMK2_BM_CACHE);
+    t.bm[cache].w = 4;
+    t.bm[cache].h = 2;
+    t.bm[cache].u.cache.bg = bg;
+    t.bm[cache].u.cache.fg = fg;
+    t.bm[cache].u.cache.px = store;
+    t.bm[bg].parent = cache;
+    t.bm[fg].parent = cache;
+    items[0].x = 2;
+    items[0].y = 2;
+    items[0].idx = cache;
+    t.bm[cache].parent = root;
+
+    uimk2_cache_dirty(&t, bg);
+    CHECK(!t.bm[bg].dirty);
+    uimk2_cache_dirty(&t, cache);
+    CHECK(t.bm[cache].dirty);
+    CHECK(t.bm[root].dirty);
+    before = t.samples;
+    uimk2_repaint(&t);
+    /* left half: fg only (4). right half: fg then bg (8). root copies 8. */
+    CHECK(t.samples - before == 4 + 8 + 8);
+    CHECK(!t.bm[cache].dirty);
+    for (y = 0; y < 2; y++) {
+        for (x = 0; x < 2; x++) {
+            CHECK(px_eq(px_at(store, 4, x, y), 0, 0, 255, 255));
             CHECK(px_eq(px_at(screen, SW, 2 + x, 2 + y), 0, 0, 255, 255));
+        }
+        for (x = 2; x < 4; x++) {
+            CHECK(px_eq(px_at(store, 4, x, y), 255, 0, 0, 255));
+            CHECK(px_eq(px_at(screen, SW, 2 + x, 2 + y), 255, 0, 0, 255));
         }
     }
 
-    /* the children change behind the cache, with no invalidate of them; a
-     * root-only repaint reads the store and samples N once per pixel */
-    fill(s->back, 8, 255, 0, 0, 255);
-    memcpy(snap_cache, s->cache, sizeof s->cache);
-    uimk2_invalidate(&s->t, s->root, R(2, 2, 4, 2), false);
-    CHECK(!s->t.bm[s->n].dirty);
-    before = s->t.samples;
-    uimk2_repaint(&s->t);
-    CHECK(s->t.samples - before == 8); /* one per pixel, no grandchildren */
-    CHECK(memcmp(s->cache, snap_cache, sizeof s->cache) == 0);
-    CHECK(px_eq(px_at(screen, SW, 2, 2), 0, 0, 255, 255));
-    CHECK(px_eq(px_at(screen, SW, 5, 3), 0, 0, 255, 255));
-
-    /* the store, not the child, is what the screen shows */
-    s->cache[0] = 9;
-    s->cache[1] = 8;
-    s->cache[2] = 7;
-    s->cache[3] = 255;
-    uimk2_invalidate(&s->t, s->root, R(2, 2, 1, 1), false);
-    uimk2_repaint(&s->t);
-    CHECK(px_eq(px_at(screen, SW, 2, 2), 9, 8, 7, 255));
-}
-
-static void test_cache_backing_dirty_or_unhinted_resampled(void) {
-    backed_scene *s = &bs;
-    uint32_t before;
-    int hint;
-
-    for (hint = 1; hint >= 0; hint--) {
-        backed_build(hint != 0);
-        uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
-        uimk2_repaint(&s->t);
-        CHECK(px_eq(px_at(screen, SW, 3, 3), 0, 0, 255, 255));
-
-        /* a dirty node (hinted or not) is resampled from its children, and
-         * then the parent samples it once per pixel */
-        fill(s->back, 8, 255, 0, 0, 255);
-        uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
-        CHECK(s->t.bm[s->n].dirty);
-        before = s->t.samples;
-        uimk2_repaint(&s->t);
-        CHECK(s->t.samples - before == 3 * 8 + 8);
-        CHECK(px_eq(px_at(s->cache, 4, 0, 0), 255, 0, 0, 255));
-        CHECK(px_eq(px_at(s->cache, 4, 3, 1), 255, 0, 0, 255));
-        CHECK(px_eq(px_at(screen, SW, 2, 2), 255, 0, 0, 255));
-        CHECK(px_eq(px_at(screen, SW, 5, 3), 255, 0, 0, 255));
-        CHECK(!s->t.bm[s->n].dirty);
-
-        /* a partial child invalidate resamples only its pixels */
-        fill(s->back, 8, 0, 255, 0, 255);
-        uimk2_invalidate(&s->t, s->b0, R(1, 1, 2, 1), false);
-        before = s->t.samples;
-        uimk2_repaint(&s->t);
-        CHECK(s->t.samples - before == 3 * 2 + 2);
-        CHECK(px_eq(px_at(s->cache, 4, 1, 1), 0, 255, 0, 255));
-        CHECK(px_eq(px_at(s->cache, 4, 2, 1), 0, 255, 0, 255));
-        CHECK(px_eq(px_at(s->cache, 4, 0, 1), 255, 0, 0, 255));
-        CHECK(px_eq(px_at(screen, SW, 3, 3), 0, 255, 0, 255));
-        CHECK(px_eq(px_at(screen, SW, 2, 3), 255, 0, 0, 255));
+    /* children move; the store stays until the Cache itself is marked */
+    fill(bgpx, 8, 0, 255, 0, 255);
+    for (y = 0; y < 2; y++) {
+        for (x = 0; x < 2; x++) {
+            uint8_t *p = (uint8_t *)px_at(fgpx, 4, x, y);
+            p[0] = 255;
+            p[1] = 255;
+            p[2] = 255;
+            p[3] = 255;
+        }
     }
-}
-
-/* An RGBA node with a buffer and a hint over a Layout child recomposes the
- * same way: children first, then the store. */
-static void test_cache_backing_rgba_over_layout(void) {
-    uimk2_bmtab t;
-    static uimk2_layout_item root_items[1], inner_items[3];
-    static uint8_t cache[4 * 2 * 4];
-    static uint8_t back[4 * 2 * 4], clear1[4 * 2 * 4], clear2[4 * 2 * 4];
-    uint16_t root, node, inner, b0, b1, b2;
-    uint32_t before;
-
-    root = make_root(&t, root_items, 1);
-    fill(back, 8, 0, 0, 255, 255);
-    fill(clear1, 8, 0, 0, 0, 0);
-    fill(clear2, 8, 0, 0, 0, 0);
-    b0 = make_raster(&t, 4, 2, back);
-    b1 = make_raster(&t, 4, 2, clear1);
-    b2 = make_raster(&t, 4, 2, clear2);
-    inner = uimk2_bm_new(&t, UIMK2_BM_LAYOUT); /* no buffer: always descended */
-    t.bm[inner].w = 4;
-    t.bm[inner].h = 2;
-    inner_items[0].idx = b0;
-    inner_items[1].idx = b1;
-    inner_items[2].idx = b2;
-    t.bm[inner].u.layout.items = inner_items;
-    t.bm[inner].u.layout.n = 3;
-    node = make_raster(&t, 4, 2, cache);
-    t.bm[node].u.rgba.child = inner;
-    t.bm[node].cache_backing = true;
-    t.bm[b0].parent = inner;
-    t.bm[b1].parent = inner;
-    t.bm[b2].parent = inner;
-    t.bm[inner].parent = node;
-    root_items[0].x = 2;
-    root_items[0].y = 2;
-    root_items[0].idx = node;
-    t.bm[node].parent = root;
-
-    uimk2_invalidate(&t, b0, R(0, 0, 4, 2), false);
+    uimk2_invalidate(&t, fg, R(0, 0, 4, 2), false);
+    CHECK(t.bm[fg].dirty);
+    CHECK(!t.bm[cache].dirty);
+    CHECK(!t.bm[root].dirty);
     before = t.samples;
     uimk2_repaint(&t);
-    /* node recomposes: 8 pixels x one sample of inner, inner 3 each; root 8 */
-    CHECK(t.samples - before == 8 * (1 + 3) + 8);
-    CHECK(px_eq(px_at(cache, 4, 2, 1), 0, 0, 255, 255));
-    CHECK(px_eq(px_at(screen, SW, 4, 3), 0, 0, 255, 255));
+    CHECK(t.samples - before == 0);
+    CHECK(px_eq(px_at(store, 4, 0, 0), 0, 0, 255, 255));
+    CHECK(px_eq(px_at(store, 4, 3, 1), 255, 0, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 2, 2), 0, 0, 255, 255));
 
-    /* clean: the root sample of node stops at the store */
-    fill(back, 8, 255, 0, 0, 255);
-    uimk2_invalidate(&t, root, R(2, 2, 4, 2), false);
-    before = t.samples;
+    /* a second bake reads the new bg and fg, not the previous store */
+    uimk2_cache_dirty(&t, cache);
     uimk2_repaint(&t);
-    CHECK(t.samples - before == 8);
-    CHECK(px_eq(px_at(screen, SW, 4, 3), 0, 0, 255, 255));
+    CHECK(px_eq(px_at(store, 4, 0, 0), 255, 255, 255, 255));
+    CHECK(px_eq(px_at(store, 4, 1, 1), 255, 255, 255, 255));
+    CHECK(px_eq(px_at(store, 4, 2, 0), 0, 255, 0, 255));
+    CHECK(px_eq(px_at(store, 4, 3, 1), 0, 255, 0, 255));
+    CHECK(px_eq(px_at(screen, SW, 2, 2), 255, 255, 255, 255));
+    CHECK(px_eq(px_at(screen, SW, 5, 3), 0, 255, 0, 255));
+
+    /* an explicit sub-rect rebakes only that rect, from the current bg */
+    bgpx[(0 * 4 + 2) * 4 + 0] = 1;
+    bgpx[(0 * 4 + 2) * 4 + 1] = 2;
+    bgpx[(0 * 4 + 2) * 4 + 2] = 3;
+    bgpx[(0 * 4 + 2) * 4 + 3] = 255;
+    uimk2_invalidate(&t, cache, R(2, 0, 1, 1), false);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(store, 4, 2, 0), 1, 2, 3, 255));
+    CHECK(px_eq(px_at(store, 4, 3, 0), 0, 255, 0, 255));
+    CHECK(px_eq(px_at(store, 4, 0, 0), 255, 255, 255, 255));
+
+    /* a miss on both bg and fg stores transparent, not paper and not the
+     * previous pixel */
+    t.bm[cache].u.cache.bg = 0;
+    t.bm[cache].u.cache.fg = 0;
+    uimk2_invalidate(&t, cache, R(1, 1, 1, 1), false);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(store, 4, 1, 1), 0, 0, 0, 0));
+    CHECK(px_eq(px_at(store, 4, 0, 0), 255, 255, 255, 255));
 }
 
 /* Pixel (x, y) of a w x h buffer is at index (y * w + x) * 4, in every
@@ -1348,7 +1276,6 @@ static void test_row_major_buffers(void) {
     t.bm[ras].parent = vp;
     line = make_raster(&t, VW, VH, cache);
     t.bm[line].u.rgba.child = vp;
-    t.bm[line].cache_backing = true;
     t.bm[vp].parent = line;
     items[0].x = 7;
     items[0].y = 5;
@@ -1390,9 +1317,7 @@ int main(void) {
     test_scroll_viewport_direct();
     test_scroll_clamp();
     test_scroll_through_cache();
-    test_cache_backing_clean_not_descended();
-    test_cache_backing_dirty_or_unhinted_resampled();
-    test_cache_backing_rgba_over_layout();
+    test_cache_bakes_over_background();
     test_row_major_buffers();
     printf("test_bitmap: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
