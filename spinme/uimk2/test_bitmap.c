@@ -929,6 +929,452 @@ static void test_combiner_before_blend(void) {
     CHECK(px_eq(px_at(screen, SW, 1, 0), 0, 0, 255, 255));
 }
 
+/* ---- scroll and cache_backing ------------------------------------------ */
+
+#define VW 6 /* scroll tests: viewport and line cache size */
+#define VH 4
+#define RW 12 /* backing raster size, wider than tall */
+#define RH 10
+
+/* raster pixel (x, y) = (x, y, 0, 255) */
+static void fill_coords(uint8_t *px, int w, int h) {
+    int x, y;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            uint8_t *p = &px[(y * w + x) * 4];
+            p[0] = (uint8_t)x;
+            p[1] = (uint8_t)y;
+            p[2] = 0;
+            p[3] = 255;
+        }
+    }
+}
+
+/* The VW x VH window of px at (bx, by) shows the coordinate raster seen
+ * from origin (ox, oy). */
+static int window_is(const uint8_t *px, int stride, int bx, int by, int ox,
+                     int oy) {
+    int x, y, ok = 1;
+    for (y = 0; y < VH; y++) {
+        for (x = 0; x < VW; x++) {
+            ok &= px_eq(px_at(px, stride, bx + x, by + y), x + ox, y + oy, 0,
+                        255);
+        }
+    }
+    return ok;
+}
+
+static int outside_is(const uint8_t *px, const uint8_t *snap, int bx, int by) {
+    int x, y, ok = 1;
+    for (y = 0; y < SH; y++) {
+        for (x = 0; x < SW; x++) {
+            if (x >= bx && x < bx + VW && y >= by && y < by + VH) {
+                continue;
+            }
+            ok &= memcmp(px_at(px, SW, x, y), px_at(snap, SW, x, y), 4) == 0;
+        }
+    }
+    return ok;
+}
+
+static void test_scroll_viewport_direct(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[1];
+    static uint8_t raster[RW * RH * 4], snap[SW * SH * 4];
+    uint16_t root, ras, vp;
+    uimk2_rect blit;
+
+    root = make_root(&t, items, 1);
+    ras = make_raster(&t, RW, RH, raster);
+    fill_coords(raster, RW, RH);
+    vp = uimk2_bm_new(&t, UIMK2_BM_VIEWPORT);
+    t.bm[vp].w = VW;
+    t.bm[vp].h = VH;
+    t.bm[vp].u.viewport.child = ras;
+    t.bm[vp].u.viewport.ox = 2;
+    t.bm[vp].u.viewport.oy = 1;
+    t.bm[ras].parent = vp;
+    items[0].x = 5;
+    items[0].y = 3;
+    items[0].idx = vp;
+    t.bm[vp].parent = root;
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), false);
+    uimk2_repaint(&t);
+    CHECK(window_is(screen, SW, 5, 3, 2, 1));
+    CHECK(px_eq(px_at(screen, SW, 4, 3), 10, 20, 30, 255)); /* paper */
+
+    /* a mark outside the viewport that only a stray write would change */
+    screen[(0 * SW + 0) * 4] = 0x77;
+    memcpy(snap, screen, sizeof screen);
+
+    /* zero scroll, and a non-viewport index, do nothing */
+    uimk2_view_scroll(&t, vp, 0, 0);
+    CHECK(!t.bm[vp].dirty && !t.bm[root].dirty);
+    CHECK(t.bm[vp].u.viewport.ox == 2 && t.bm[vp].u.viewport.oy == 1);
+    uimk2_view_scroll(&t, ras, 3, 3);
+    uimk2_view_scroll(&t, root, 3, 3);
+    uimk2_view_scroll(&t, 0, 3, 3);
+    uimk2_view_scroll(&t, CAP - 1, 3, 3); /* past count */
+    CHECK(!t.bm[vp].dirty && !t.bm[ras].dirty && !t.bm[root].dirty);
+    CHECK(t.bm[vp].u.viewport.ox == 2 && t.bm[vp].u.viewport.oy == 1);
+
+    /* a scroll adds to the origin and dirties the whole viewport box */
+    uimk2_view_scroll(&t, vp, 3, 2);
+    CHECK(t.bm[vp].u.viewport.ox == 5 && t.bm[vp].u.viewport.oy == 3);
+    CHECK(t.bm[vp].dirty && !t.bm[vp].geom_dirty);
+    CHECK(rect_eq(t.bm[vp].damage, 0, 0, VW, VH));
+    CHECK(t.bm[root].dirty && rect_eq(t.bm[root].damage, 5, 3, VW, VH));
+    CHECK(!t.bm[ras].dirty);
+    blit = uimk2_repaint(&t);
+    CHECK(rect_eq(blit, 5, 3, VW, VH));
+    CHECK(window_is(screen, SW, 5, 3, 5, 3));
+    CHECK(outside_is(screen, snap, 5, 3));
+    CHECK(screen[0] == 0x77);
+
+    /* negative scroll, and a scroll past the raster shows paper */
+    memcpy(snap, screen, sizeof screen);
+    uimk2_view_scroll(&t, vp, -5, -3);
+    CHECK(t.bm[vp].u.viewport.ox == 0 && t.bm[vp].u.viewport.oy == 0);
+    uimk2_repaint(&t);
+    CHECK(window_is(screen, SW, 5, 3, 0, 0));
+    CHECK(outside_is(screen, snap, 5, 3));
+    uimk2_view_scroll(&t, vp, RW + 1, 0);
+    uimk2_repaint(&t);
+    CHECK(px_eq(px_at(screen, SW, 5, 3), 10, 20, 30, 255));
+    CHECK(px_eq(px_at(screen, SW, 10, 6), 10, 20, 30, 255));
+    CHECK(outside_is(screen, snap, 5, 3));
+}
+
+/* Sums clamp to int16; the damage is the whole box either way. */
+static void test_scroll_clamp(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[1];
+    static uint8_t raster[RW * RH * 4];
+    uint16_t root, ras, vp;
+
+    root = make_root(&t, items, 1);
+    ras = make_raster(&t, RW, RH, raster);
+    vp = uimk2_bm_new(&t, UIMK2_BM_VIEWPORT);
+    t.bm[vp].w = VW;
+    t.bm[vp].h = VH;
+    t.bm[vp].u.viewport.child = ras;
+    t.bm[ras].parent = vp;
+    items[0].x = 5;
+    items[0].y = 3;
+    items[0].idx = vp;
+    t.bm[vp].parent = root;
+
+    t.bm[vp].u.viewport.ox = 32760;
+    t.bm[vp].u.viewport.oy = -32760;
+    uimk2_view_scroll(&t, vp, 100, -100);
+    CHECK(t.bm[vp].u.viewport.ox == 32767 && t.bm[vp].u.viewport.oy == -32768);
+    CHECK(rect_eq(t.bm[vp].damage, 0, 0, VW, VH));
+    uimk2_repaint(&t);
+    uimk2_view_scroll(&t, vp, 2147483647, -2147483647 - 1);
+    CHECK(t.bm[vp].u.viewport.ox == 32767 && t.bm[vp].u.viewport.oy == -32768);
+    CHECK(rect_eq(t.bm[vp].damage, 0, 0, VW, VH));
+    uimk2_repaint(&t);
+    /* only one axis moves: the other keeps its value */
+    uimk2_view_scroll(&t, vp, 0, 40000);
+    CHECK(t.bm[vp].u.viewport.ox == 32767 && t.bm[vp].u.viewport.oy == 7232);
+    CHECK(t.bm[vp].dirty);
+}
+
+/* Scene: root -> hinted line cache (VW x VH, at (5, 3)) -> viewport ->
+ * coordinate raster. Scrolling resamples the whole line and the screen
+ * window, and nothing outside it. */
+static void test_scroll_through_cache(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[1];
+    static uint8_t raster[RW * RH * 4], cache[VW * VH * 4];
+    static uint8_t snap[SW * SH * 4];
+    uint16_t root, ras, vp, line;
+    uimk2_rect blit;
+
+    root = make_root(&t, items, 1);
+    ras = make_raster(&t, RW, RH, raster);
+    fill_coords(raster, RW, RH);
+    vp = uimk2_bm_new(&t, UIMK2_BM_VIEWPORT);
+    t.bm[vp].w = VW;
+    t.bm[vp].h = VH;
+    t.bm[vp].u.viewport.child = ras;
+    t.bm[ras].parent = vp;
+    line = make_raster(&t, VW, VH, cache);
+    t.bm[line].u.rgba.child = vp;
+    t.bm[line].cache_backing = true;
+    t.bm[vp].parent = line;
+    items[0].x = 5;
+    items[0].y = 3;
+    items[0].idx = line;
+    t.bm[line].parent = root;
+
+    /* first paint: the line is dirty, so it is recomposed into its store */
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), false);
+    uimk2_invalidate(&t, vp, R(0, 0, VW, VH), false);
+    uimk2_repaint(&t);
+    CHECK(window_is(cache, VW, 0, 0, 0, 0));
+    CHECK(window_is(screen, SW, 5, 3, 0, 0));
+    screen[0] = 0x77;
+    memcpy(snap, screen, sizeof screen);
+
+    uimk2_view_scroll(&t, vp, 4, 5);
+    CHECK(t.bm[line].dirty && rect_eq(t.bm[line].damage, 0, 0, VW, VH));
+    CHECK(rect_eq(t.bm[root].damage, 5, 3, VW, VH));
+    blit = uimk2_repaint(&t);
+    CHECK(rect_eq(blit, 5, 3, VW, VH));
+    CHECK(window_is(cache, VW, 0, 0, 4, 5));
+    CHECK(window_is(screen, SW, 5, 3, 4, 5));
+    CHECK(outside_is(screen, snap, 5, 3));
+    CHECK(!t.bm[line].dirty && !t.bm[vp].dirty && !t.bm[root].dirty);
+
+    /* the line is clean again: a second scroll still redoes every pixel */
+    memcpy(snap, screen, sizeof screen);
+    uimk2_view_scroll(&t, vp, -1, -2);
+    uimk2_repaint(&t);
+    CHECK(window_is(cache, VW, 0, 0, 3, 3));
+    CHECK(window_is(screen, SW, 5, 3, 3, 3));
+    CHECK(outside_is(screen, snap, 5, 3));
+}
+
+/* Scene: root -> node N (4 x 2 at (2, 2)) -> three rasters. The back is
+ * opaque; the two in front are (0,0,0,0), which cover and add nothing, so
+ * every N pixel samples all three children. N has the caller's buffer. */
+typedef struct {
+    uimk2_bmtab t;
+    uimk2_layout_item root_items[1];
+    uimk2_layout_item n_items[3];
+    uint8_t cache[4 * 2 * 4];
+    uint8_t back[4 * 2 * 4], clear1[4 * 2 * 4], clear2[4 * 2 * 4];
+    uint16_t root, n, b0, b1, b2;
+} backed_scene;
+
+static backed_scene bs;
+
+/* N is a non-root Layout with the buffer; hint sets its cache_backing. */
+static void backed_build(bool hint) {
+    backed_scene *s = &bs;
+    memset(s->cache, 0x55, sizeof s->cache);
+    fill(s->back, 8, 0, 0, 255, 255);
+    fill(s->clear1, 8, 0, 0, 0, 0);
+    fill(s->clear2, 8, 0, 0, 0, 0);
+    s->root = make_root(&s->t, s->root_items, 1);
+    s->b0 = make_raster(&s->t, 4, 2, s->back);
+    s->b1 = make_raster(&s->t, 4, 2, s->clear1);
+    s->b2 = make_raster(&s->t, 4, 2, s->clear2);
+    s->n = uimk2_bm_new(&s->t, UIMK2_BM_LAYOUT);
+    s->t.bm[s->n].w = 4;
+    s->t.bm[s->n].h = 2;
+    s->t.bm[s->n].cache_backing = hint;
+    s->n_items[0].idx = s->b0; /* back to front */
+    s->n_items[1].idx = s->b1;
+    s->n_items[2].idx = s->b2;
+    s->n_items[0].x = s->n_items[1].x = s->n_items[2].x = 0;
+    s->n_items[0].y = s->n_items[1].y = s->n_items[2].y = 0;
+    s->t.bm[s->n].u.layout.items = s->n_items;
+    s->t.bm[s->n].u.layout.n = 3;
+    s->t.bm[s->n].u.layout.px = s->cache;
+    memcpy(s->t.bm[s->n].u.layout.paper, PAPER, 4);
+    s->t.bm[s->b0].parent = s->n;
+    s->t.bm[s->b1].parent = s->n;
+    s->t.bm[s->b2].parent = s->n;
+    s->root_items[0].x = 2;
+    s->root_items[0].y = 2;
+    s->root_items[0].idx = s->n;
+    s->t.bm[s->n].parent = s->root;
+}
+
+static void test_cache_backing_clean_not_descended(void) {
+    backed_scene *s = &bs;
+    uint8_t snap_cache[4 * 2 * 4];
+    uint32_t before;
+    int x, y;
+
+    backed_build(true);
+    CHECK(!s->t.bm[s->b0].cache_backing && !s->t.bm[s->root].cache_backing);
+    CHECK(s->t.bm[s->n].cache_backing);
+    /* paint once: N recomposes (3 samples x 8) and the root copies (8) */
+    uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
+    before = s->t.samples;
+    uimk2_repaint(&s->t);
+    CHECK(s->t.samples - before == 3 * 8 + 8);
+    for (y = 0; y < 2; y++) {
+        for (x = 0; x < 4; x++) {
+            CHECK(px_eq(px_at(s->cache, 4, x, y), 0, 0, 255, 255));
+            CHECK(px_eq(px_at(screen, SW, 2 + x, 2 + y), 0, 0, 255, 255));
+        }
+    }
+
+    /* the children change behind the cache, with no invalidate of them; a
+     * root-only repaint reads the store and samples N once per pixel */
+    fill(s->back, 8, 255, 0, 0, 255);
+    memcpy(snap_cache, s->cache, sizeof s->cache);
+    uimk2_invalidate(&s->t, s->root, R(2, 2, 4, 2), false);
+    CHECK(!s->t.bm[s->n].dirty);
+    before = s->t.samples;
+    uimk2_repaint(&s->t);
+    CHECK(s->t.samples - before == 8); /* one per pixel, no grandchildren */
+    CHECK(memcmp(s->cache, snap_cache, sizeof s->cache) == 0);
+    CHECK(px_eq(px_at(screen, SW, 2, 2), 0, 0, 255, 255));
+    CHECK(px_eq(px_at(screen, SW, 5, 3), 0, 0, 255, 255));
+
+    /* the store, not the child, is what the screen shows */
+    s->cache[0] = 9;
+    s->cache[1] = 8;
+    s->cache[2] = 7;
+    s->cache[3] = 255;
+    uimk2_invalidate(&s->t, s->root, R(2, 2, 1, 1), false);
+    uimk2_repaint(&s->t);
+    CHECK(px_eq(px_at(screen, SW, 2, 2), 9, 8, 7, 255));
+}
+
+static void test_cache_backing_dirty_or_unhinted_resampled(void) {
+    backed_scene *s = &bs;
+    uint32_t before;
+    int hint;
+
+    for (hint = 1; hint >= 0; hint--) {
+        backed_build(hint != 0);
+        uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
+        uimk2_repaint(&s->t);
+        CHECK(px_eq(px_at(screen, SW, 3, 3), 0, 0, 255, 255));
+
+        /* a dirty node (hinted or not) is resampled from its children, and
+         * then the parent samples it once per pixel */
+        fill(s->back, 8, 255, 0, 0, 255);
+        uimk2_invalidate(&s->t, s->b0, R(0, 0, 4, 2), false);
+        CHECK(s->t.bm[s->n].dirty);
+        before = s->t.samples;
+        uimk2_repaint(&s->t);
+        CHECK(s->t.samples - before == 3 * 8 + 8);
+        CHECK(px_eq(px_at(s->cache, 4, 0, 0), 255, 0, 0, 255));
+        CHECK(px_eq(px_at(s->cache, 4, 3, 1), 255, 0, 0, 255));
+        CHECK(px_eq(px_at(screen, SW, 2, 2), 255, 0, 0, 255));
+        CHECK(px_eq(px_at(screen, SW, 5, 3), 255, 0, 0, 255));
+        CHECK(!s->t.bm[s->n].dirty);
+
+        /* a partial child invalidate resamples only its pixels */
+        fill(s->back, 8, 0, 255, 0, 255);
+        uimk2_invalidate(&s->t, s->b0, R(1, 1, 2, 1), false);
+        before = s->t.samples;
+        uimk2_repaint(&s->t);
+        CHECK(s->t.samples - before == 3 * 2 + 2);
+        CHECK(px_eq(px_at(s->cache, 4, 1, 1), 0, 255, 0, 255));
+        CHECK(px_eq(px_at(s->cache, 4, 2, 1), 0, 255, 0, 255));
+        CHECK(px_eq(px_at(s->cache, 4, 0, 1), 255, 0, 0, 255));
+        CHECK(px_eq(px_at(screen, SW, 3, 3), 0, 255, 0, 255));
+        CHECK(px_eq(px_at(screen, SW, 2, 3), 255, 0, 0, 255));
+    }
+}
+
+/* An RGBA node with a buffer and a hint over a Layout child recomposes the
+ * same way: children first, then the store. */
+static void test_cache_backing_rgba_over_layout(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item root_items[1], inner_items[3];
+    static uint8_t cache[4 * 2 * 4];
+    static uint8_t back[4 * 2 * 4], clear1[4 * 2 * 4], clear2[4 * 2 * 4];
+    uint16_t root, node, inner, b0, b1, b2;
+    uint32_t before;
+
+    root = make_root(&t, root_items, 1);
+    fill(back, 8, 0, 0, 255, 255);
+    fill(clear1, 8, 0, 0, 0, 0);
+    fill(clear2, 8, 0, 0, 0, 0);
+    b0 = make_raster(&t, 4, 2, back);
+    b1 = make_raster(&t, 4, 2, clear1);
+    b2 = make_raster(&t, 4, 2, clear2);
+    inner = uimk2_bm_new(&t, UIMK2_BM_LAYOUT); /* no buffer: always descended */
+    t.bm[inner].w = 4;
+    t.bm[inner].h = 2;
+    inner_items[0].idx = b0;
+    inner_items[1].idx = b1;
+    inner_items[2].idx = b2;
+    t.bm[inner].u.layout.items = inner_items;
+    t.bm[inner].u.layout.n = 3;
+    node = make_raster(&t, 4, 2, cache);
+    t.bm[node].u.rgba.child = inner;
+    t.bm[node].cache_backing = true;
+    t.bm[b0].parent = inner;
+    t.bm[b1].parent = inner;
+    t.bm[b2].parent = inner;
+    t.bm[inner].parent = node;
+    root_items[0].x = 2;
+    root_items[0].y = 2;
+    root_items[0].idx = node;
+    t.bm[node].parent = root;
+
+    uimk2_invalidate(&t, b0, R(0, 0, 4, 2), false);
+    before = t.samples;
+    uimk2_repaint(&t);
+    /* node recomposes: 8 pixels x one sample of inner, inner 3 each; root 8 */
+    CHECK(t.samples - before == 8 * (1 + 3) + 8);
+    CHECK(px_eq(px_at(cache, 4, 2, 1), 0, 0, 255, 255));
+    CHECK(px_eq(px_at(screen, SW, 4, 3), 0, 0, 255, 255));
+
+    /* clean: the root sample of node stops at the store */
+    fill(back, 8, 255, 0, 0, 255);
+    uimk2_invalidate(&t, root, R(2, 2, 4, 2), false);
+    before = t.samples;
+    uimk2_repaint(&t);
+    CHECK(t.samples - before == 8);
+    CHECK(px_eq(px_at(screen, SW, 4, 3), 0, 0, 255, 255));
+}
+
+/* Pixel (x, y) of a w x h buffer is at index (y * w + x) * 4, in every
+ * buffer the library writes: wide and tall shapes tell it from y-major. */
+static void test_row_major_buffers(void) {
+    uimk2_bmtab t;
+    static uimk2_layout_item items[1];
+    static uint8_t raster[RW * RH * 4], cache[VW * VH * 4];
+    uint16_t root, ras, vp, line;
+    int x, y, ok;
+
+    root = make_root(&t, items, 1);
+    ras = make_raster(&t, RW, RH, raster);
+    for (y = 0; y < RH; y++) {
+        for (x = 0; x < RW; x++) {
+            raster[(y * RW + x) * 4 + 0] = (uint8_t)(x + 1);
+            raster[(y * RW + x) * 4 + 1] = (uint8_t)(y + 1);
+            raster[(y * RW + x) * 4 + 2] = (uint8_t)(y * RW + x);
+            raster[(y * RW + x) * 4 + 3] = 255;
+        }
+    }
+    vp = uimk2_bm_new(&t, UIMK2_BM_VIEWPORT);
+    t.bm[vp].w = VW;
+    t.bm[vp].h = VH;
+    t.bm[vp].u.viewport.child = ras;
+    t.bm[vp].u.viewport.ox = 3;
+    t.bm[vp].u.viewport.oy = 2;
+    t.bm[ras].parent = vp;
+    line = make_raster(&t, VW, VH, cache);
+    t.bm[line].u.rgba.child = vp;
+    t.bm[line].cache_backing = true;
+    t.bm[vp].parent = line;
+    items[0].x = 7;
+    items[0].y = 5;
+    items[0].idx = line;
+    t.bm[line].parent = root;
+    uimk2_invalidate(&t, root, R(0, 0, SW, SH), false);
+    uimk2_invalidate(&t, vp, R(0, 0, VW, VH), false);
+    uimk2_repaint(&t);
+
+    ok = 1;
+    for (y = 0; y < VH; y++) {
+        for (x = 0; x < VW; x++) {
+            int sx = x + 3, sy = y + 2;
+            const uint8_t *c = &cache[(y * VW + x) * 4];
+            const uint8_t *s = &screen[((5 + y) * SW + (7 + x)) * 4];
+            ok &= px_eq(c, sx + 1, sy + 1, sy * RW + sx, 255);
+            ok &= px_eq(s, sx + 1, sy + 1, sy * RW + sx, 255);
+        }
+    }
+    CHECK(ok);
+    /* the screen row stride is the root width, not the cache width */
+    CHECK(px_eq(&screen[(5 * SW + 7) * 4], 4, 3, 2 * RW + 3, 255));
+    CHECK(px_eq(&screen[(6 * SW + 7) * 4], 4, 4, 3 * RW + 3, 255));
+    CHECK(px_eq(&cache[(1 * VW + 0) * 4], 4, 4, 3 * RW + 3, 255));
+}
+
 int main(void) {
     test_kinds_offsets_and_measure();
     test_kinds_sample();
@@ -941,6 +1387,13 @@ int main(void) {
     test_bezel();
     test_combiner_ops();
     test_combiner_before_blend();
+    test_scroll_viewport_direct();
+    test_scroll_clamp();
+    test_scroll_through_cache();
+    test_cache_backing_clean_not_descended();
+    test_cache_backing_dirty_or_unhinted_resampled();
+    test_cache_backing_rgba_over_layout();
+    test_row_major_buffers();
     printf("test_bitmap: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

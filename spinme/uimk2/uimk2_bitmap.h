@@ -45,6 +45,14 @@ typedef struct {
     uint8_t kind;      /* uimk2_bm_kind */
     bool dirty;
     bool geom_dirty;
+    /* Hint, default false: the caller-provided pixel buffer (rgba.px or
+     * layout.px) is a finished picture of this subtree whenever the node is
+     * clean. A parent's sample of a clean hinted node with a buffer reads
+     * those bytes and never composites the node's children. A dirty hinted
+     * node is recomposed into its buffer by repaint, children first, before
+     * its parent samples it. The library never allocates the buffer. Glyphs
+     * have no buffer, so the hint does nothing for them. */
+    bool cache_backing;
     uint8_t combiner;  /* 0 = none */
     uimk2_rect damage; /* in this node's coordinates */
     uint16_t parent;   /* 0 = root (or detached) */
@@ -149,6 +157,14 @@ bool uimk2_bm_child_offset(const uimk2_bmtab *t, uint16_t parent,
  * The rect is clipped to each node's box. */
 void uimk2_invalidate(uimk2_bmtab *t, uint16_t node, uimk2_rect local_rect,
                       bool geometry);
+
+/* Scroll a Viewport: add dx to its ox and dy to its oy (each sum clamped to
+ * int16), then invalidate the whole viewport box {0, 0, w, h}. There is no
+ * pixel move and no exposed-slab bookkeeping: every window pixel is damage
+ * and repaint resamples it. dx == 0 and dy == 0 do nothing, as does an
+ * index that is not a Viewport. */
+void uimk2_view_scroll(uimk2_bmtab *t, uint16_t viewport, int32_t dx,
+                       int32_t dy);
 
 /* Repaint from the root. Returns the root damage rect that was written (the
  * panel blit rect); empty when the frame was clean. */

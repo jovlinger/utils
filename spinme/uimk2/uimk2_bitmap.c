@@ -282,6 +282,39 @@ void uimk2_invalidate(uimk2_bmtab *t, uint16_t node, uimk2_rect r,
     }
 }
 
+/* ---- scroll ------------------------------------------------------------ */
+
+static int16_t clamp_i16(int64_t v) {
+    if (v < INT16_MIN) {
+        return INT16_MIN;
+    }
+    if (v > INT16_MAX) {
+        return INT16_MAX;
+    }
+    return (int16_t)v;
+}
+
+void uimk2_view_scroll(uimk2_bmtab *t, uint16_t viewport, int32_t dx,
+                       int32_t dy) {
+    uimk2_bm *b;
+    uimk2_rect box;
+    if (viewport == 0 || viewport >= t->count ||
+        t->bm[viewport].kind != UIMK2_BM_VIEWPORT) {
+        return;
+    }
+    if (dx == 0 && dy == 0) {
+        return;
+    }
+    b = &t->bm[viewport];
+    b->u.viewport.ox = clamp_i16((int64_t)b->u.viewport.ox + dx);
+    b->u.viewport.oy = clamp_i16((int64_t)b->u.viewport.oy + dy);
+    box.x = 0;
+    box.y = 0;
+    box.w = b->w;
+    box.h = b->h;
+    uimk2_invalidate(t, viewport, box, false);
+}
+
 /* ---- sampling and blend ------------------------------------------------ */
 
 /* Front-to-back straight-alpha src-over. cp holds premultiplied color in
@@ -336,12 +369,32 @@ static bool composite(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
     return covered;
 }
 
+/* The caller-provided pixel buffer of a node, or NULL when it has none. */
+static const uint8_t *backing_px(const uimk2_bm *b) {
+    switch ((uimk2_bm_kind)b->kind) {
+    case UIMK2_BM_RGBA:
+        return b->u.rgba.px;
+    case UIMK2_BM_LAYOUT:
+        return b->u.layout.px;
+    default:
+        return NULL;
+    }
+}
+
 static bool sample(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
                    uint8_t out[4]) {
     const uimk2_bm *b = &t->bm[idx];
+    const uint8_t *bp;
     accum acc;
     if (x < 0 || y < 0 || x >= b->w || y >= b->h) {
         return false;
+    }
+    /* a clean hinted node with a buffer is its own finished picture: read
+     * it and do not composite the children */
+    bp = b->cache_backing && !b->dirty ? backing_px(b) : NULL;
+    if (bp != NULL) {
+        memcpy(out, &bp[((uint32_t)y * b->w + (uint32_t)x) * 4u], 4);
+        return true;
     }
     switch ((uimk2_bm_kind)b->kind) {
     case UIMK2_BM_RGBA:
