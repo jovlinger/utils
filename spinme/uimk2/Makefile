@@ -8,7 +8,7 @@ WARN := -std=c99 -pedantic -Wall -Wextra -Werror -O1 -g \
 BUILD := build
 
 TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line \
-	$(BUILD)/test_sched
+	$(BUILD)/test_sched $(BUILD)/test_measure
 
 .PHONY: test test-glyphs clean
 
@@ -30,6 +30,9 @@ $(BUILD)/test_arena: test_arena.c uimk2_arena.c uimk2_arena.h | $(BUILD)
 
 $(BUILD)/test_sched: test_sched.c uimk2_sched.c uimk2_sched.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_sched.c uimk2_sched.c
+
+$(BUILD)/test_measure: test_measure.c uimk2_bitmap.c uimk2_bitmap.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_measure.c uimk2_bitmap.c
 
 $(BUILD)/test_bitmap: test_bitmap.c uimk2_bitmap.c uimk2_bitmap.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_bitmap.c uimk2_bitmap.c
