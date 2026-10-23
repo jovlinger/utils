@@ -1,4 +1,6 @@
 flask
+# Jinja2 pulls MarkupSafe. The Dockerfile rebuilds that exact version pure-Python:
+# the musllinux arm wheel's _speedups.so is ARM v7-A and SIGSEGVs on Pi 1B.
 pydantic<2
 authlib
 # cryptography 43+ uses Cargo.lock v4; Alpine 3.19 cargo cannot parse it when building from sdist.

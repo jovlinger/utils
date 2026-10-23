@@ -30,9 +30,15 @@ WORKDIR /app
 COPY requirements.txt strip_charset_normalizer_so.py .
 # pydantic<2 still uses pydantic-core; build from source on musl / odd arches when needed.
 # charset_normalizer ships mypyc/native *.so wheels; on linux/arm/v6 + musl they can SIGSEGV (see cd.*.so).
-# Strip them in this layer (the cross-built image) so Python uses the pure modules — same idea as pip's vendor tree.
+# Strip them in this layer (the cross-built image) so Python uses the pure modules - same idea as pip's vendor tree.
+# MarkupSafe's musllinux arm wheel is ARM v7-A (_speedups.so) and SIGSEGVs on Pi 1B (armv6).
+# setup.py has no skip flag; CC=false fails the compile so it retries a pure-Python build
+# (no _speedups.so at all, rather than deleting one after the fact).
 RUN pip install --no-cache-dir --break-system-packages --no-binary=pydantic-core -r requirements.txt \
-	&& python3 /app/strip_charset_normalizer_so.py
+	&& MS_VER="$(python3 -c 'import importlib.metadata as m; print(m.version("markupsafe"))')" \
+	&& CC=false pip install --no-cache-dir --break-system-packages --no-binary=markupsafe --force-reinstall --no-deps "markupsafe==${MS_VER}" \
+	&& python3 /app/strip_charset_normalizer_so.py \
+	&& python3 -c 'import markupsafe, pathlib; root=pathlib.Path(markupsafe.__file__).parent; sos=list(root.rglob("*.so")); assert not sos, sos'
 
 # -----------------------------------------------------------------------------
 # Runtime

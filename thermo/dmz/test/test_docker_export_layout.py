@@ -86,3 +86,19 @@ def test_armv6_export_contains_paths_used_by_pi_chroot_launch() -> None:
         "docker export tarball missing Pi chroot prerequisites; rebuild jovlinger/thermo/dmz:armv6:\n"
         + "\n".join(f"  - {p}" for p in missing)
     )
+    # Runtime interpreter is Alpine Python 3.11. A developer .venv copied in via
+    # the build context is not on that path and is not what Flask imports.
+    speedups = sorted(
+        name
+        for name in names
+        if name.startswith("usr/lib/python3.11/site-packages/markupsafe/")
+        and name.endswith(".so")
+    )
+    assert not speedups, (
+        "armv6 image still contains MarkupSafe native modules (Pi 1B SIGSEGV):\n"
+        + "\n".join(f"  - {p}" for p in speedups)
+    )
+    assert any(
+        name.startswith("usr/lib/python3.11/site-packages/markupsafe/__init__.py")
+        for name in names
+    ), "runtime MarkupSafe package missing from the armv6 image"
