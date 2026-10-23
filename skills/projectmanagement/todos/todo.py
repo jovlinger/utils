@@ -6835,7 +6835,7 @@ class WebCommand(EnvironmentCommand):
             default=None,
             help="todo selector: 4+ hex Id prefix or full digest (default: search page)",
         )
-        parser.add_argument("--host", default="127.0.0.1", help="bind host")
+        parser.add_argument("--host", default="::", help="bind host (:: serves IPv4 and IPv6)")
         parser.add_argument("--port", type=int, default=8765, help="bind port")
         parser.add_argument(
             "--dump-html",

@@ -26,6 +26,8 @@ import html
 import json
 import os
 import re
+import socket
+import socketserver
 import subprocess
 import sys
 import time
@@ -1626,10 +1628,30 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
     return ""
 
 
+WILDCARD_HOSTS = ("::", "0.0.0.0")
+
+
+class _DualStackServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that binds IPv6 literals and serves v4 and v6 on ``::``."""
+
+    def __init__(self, server_address, handler):  # type: ignore[no-untyped-def]
+        if ":" in server_address[0]:
+            self.address_family = socket.AF_INET6
+        super().__init__(server_address, handler)
+
+    def server_bind(self) -> None:
+        if self.address_family == socket.AF_INET6:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        # HTTPServer.server_bind resolves getfqdn(host); for a wildcard host that is a
+        # lookup of this machine's own name, which stalls on VPN DNS. Nothing here uses it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def serve(
     root: Path,
     *,
-    host: str = "127.0.0.1",
+    host: str = "::",
     port: int = 8765,
     initial_id: Optional[str] = None,
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
@@ -1707,8 +1729,9 @@ def serve(
             if os.environ.get("TODO_WEB_LOG") or _debug_enabled():
                 super().log_message(format, *args)
 
-    server = ThreadingHTTPServer((host, port), Handler)
-    base = f"http://{host}:{server.server_port}/"
+    server = _DualStackServer((host, port), Handler)
+    shown = "localhost" if host in WILDCARD_HOSTS else f"[{host}]" if ":" in host else host
+    base = f"http://{shown}:{server.server_port}/"
     url = f"{base}{initial_id}" if initial_id else base
     print(url, flush=True)
     try:

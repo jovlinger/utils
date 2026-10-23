@@ -43,7 +43,12 @@ HERE = Path(__file__).resolve().parent
 SURFACES: dict[str, tuple[str, ...]] = {
     "store": ("test_todo_db.py", "test_todo_migrate.py"),
     "objid": ("test_todo_objid.py", "test_todo_ref.py"),
-    "web": ("test_todo_url.py", "test_todo_web_permalink.py", "test_todo_web_render.py"),
+    "web": (
+        "test_todo_url.py",
+        "test_todo_web_bind.py",
+        "test_todo_web_permalink.py",
+        "test_todo_web_render.py",
+    ),
     "embed": ("test_todo_embed.py", "test_todo_embed_apple.py"),
     "search": ("test_todo_search.py", "test_todo_search_idf.py"),
     "tag": ("test_todo_tag.py", "test_todo_tag_impl.py"),
