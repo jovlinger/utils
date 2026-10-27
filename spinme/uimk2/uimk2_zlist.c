@@ -17,6 +17,10 @@ static void schedule_redraw_retry(uimk2_zlist *z, int attempt) {
         attempt = 1;
     }
     z->redraw_attempt = attempt;
+    if (z->hold_redraw) {
+        z->redraw_held = true;
+        return;
+    }
     if (attempt >= (int)REDRAW_ATTEMPT_CAP) {
         UIMK2_ZLIST_LOG_ERROR(REDRAW_ATTEMPT_CAP);
     }
@@ -247,6 +251,73 @@ void uimk2_zlist_set_clock(uimk2_zlist *z, int32_t sec, uint32_t tick) {
     z->clock_tick = tick;
 }
 
+static bool exterior_has(const uimk2_shape *s, int x, int y) {
+    int32_t x0 = s->x;
+    int32_t y0 = s->y;
+    int32_t x1 = x0 + (int32_t)s->w;
+    int32_t y1 = y0 + (int32_t)s->h;
+    int32_t px = x;
+    int32_t py = y;
+    return px >= x0 && py >= y0 && px < x1 && py < y1;
+}
+
+/* Opacity percent: alpha/255 >= pct/100, i.e. alpha * 100 >= pct * 255.
+ * pct 0 is off and accepts every sample. */
+static bool alpha_ok(uint8_t alpha, unsigned pct) {
+    if (pct == 0u) {
+        return true;
+    }
+    return (unsigned)alpha * 100u >= pct * 255u;
+}
+
+static uint8_t shape_alpha(const uimk2_shape *s, int x, int y) {
+    uint32_t off;
+    int32_t lx;
+    int32_t ly;
+    if (s->px == NULL) {
+        return s->rgba[3];
+    }
+    if (s->is_base) {
+        if (x < 0 || y < 0 || x >= (int)PANEL_W || y >= (int)PANEL_H) {
+            return 0;
+        }
+        off = ((uint32_t)y * PANEL_W + (uint32_t)x) * 4u + 3u;
+        return s->px[off];
+    }
+    lx = (int32_t)x - (int32_t)s->x;
+    ly = (int32_t)y - (int32_t)s->y;
+    if (lx < 0 || ly < 0 || lx >= (int32_t)s->w || ly >= (int32_t)s->h) {
+        return 0;
+    }
+    off = ((uint32_t)ly * (uint32_t)s->w + (uint32_t)lx) * 4u + 3u;
+    return s->px[off];
+}
+
+int uimk2_zlist_hit_test_pct(const uimk2_zlist *z, int x, int y, unsigned pct) {
+    uint16_t i;
+    if (z == NULL) {
+        return -1;
+    }
+    for (i = 0; i < z->n; i++) {
+        const uimk2_shape *s = &z->shape[i];
+        if (!s->accept_hit) {
+            continue;
+        }
+        if (!exterior_has(s, x, y)) {
+            continue;
+        }
+        if (pct != 0u && !alpha_ok(shape_alpha(s, x, y), pct)) {
+            continue;
+        }
+        return (int)i;
+    }
+    return -1;
+}
+
+int uimk2_zlist_hit_test(const uimk2_zlist *z, int x, int y) {
+    return uimk2_zlist_hit_test_pct(z, x, y, HIT_OPAQUE_PCT);
+}
+
 bool uimk2_zlist_row_dirty(const uimk2_zlist *z, uint16_t y) {
     uint8_t bit;
     if (y >= (uint16_t)PANEL_H) {
@@ -266,6 +337,8 @@ static bool copy_shape(uimk2_shape *s, const uimk2_shape_desc *d, uint16_t n) {
     }
     s->update_selector = d->update_selector;
     s->is_base = d->is_base;
+    s->accept_hit = d->accept_hit;
+    s->is_transport = d->is_transport;
     s->x = d->x;
     s->y = d->y;
     s->w = d->w;

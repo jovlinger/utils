@@ -14,10 +14,16 @@
  *
  * update_render_draw is the one entry: update every shape, mark dirty
  * from each root, render into next, then compare. When busy-by-core-A
- * is set, a redraw retry is pushed on the event ring (attempt += 1,
- * ERROR at REDRAW_ATTEMPT_CAP) and curr is left alone. Otherwise the
- * PANEL_H-bit row bitmap is filled from the curr/next diff. Any set
- * bit swaps the two buffers, sets busy, and pings A.
+ * is set, curr is left alone and a redraw retry is recorded
+ * (attempt += 1). If hold_redraw is set, the host scheduler arms that
+ * retry as a one-off. If hold_redraw is clear, the retry is pushed on
+ * the event ring and ERROR is logged at REDRAW_ATTEMPT_CAP. When busy
+ * is clear, the PANEL_H-bit row bitmap is filled from the curr/next
+ * diff. Any set bit swaps the two buffers, sets busy, and pings A.
+ *
+ * Hit-test walks index 0 upward. The first accept_hit shape whose
+ * exterior contains the point wins. HIT_OPAQUE_PCT 0 skips the opacity
+ * sample; a non-zero percent also requires the pixel alpha.
  *
  * The follow-view Cache path is a different module and is not used here.
  *
@@ -51,6 +57,8 @@ typedef struct {
     uint8_t update_selector; /* uimk2_update_sel */
     bool dirty;
     bool is_base; /* farthest layer: full-frame RGBA memcpy into next */
+    bool accept_hit; /* hit-test may return this shape; caches leave it clear */
+    bool is_transport; /* press on this shape asks B to enqueue Toggle */
     int16_t x, y; /* position, sealed at build */
     uint16_t w, h; /* exterior box, sealed at build */
     int16_t ox, oy; /* scroll viewport origin */
@@ -66,6 +74,8 @@ typedef struct {
 typedef struct {
     uint8_t update_selector;
     bool is_base;
+    bool accept_hit;
+    bool is_transport;
     int16_t x, y;
     uint16_t w, h;
     int16_t step_x, step_y;
@@ -86,7 +96,12 @@ typedef struct {
     uint8_t row_dirty[(PANEL_H + 7u) / 8u];
     bool busy; /* busy-by-core-A; A clears it, B only sets it */
     int redraw_attempt;
-    uimk2_ring *ring; /* redraw retries; NULL skips the push */
+    /* When hold_redraw is set, a busy ping records redraw_attempt and
+     * sets redraw_held instead of pushing UIMK2_EV_REDRAW. The host
+     * scheduler reads redraw_held and arms a one-off. */
+    bool hold_redraw;
+    bool redraw_held;
+    uimk2_ring *ring; /* redraw retries when hold_redraw is clear */
     uimk2_zlist_ping_fn ping_a;
     void *ping_ctx;
     int32_t clock_sec;
@@ -126,5 +141,13 @@ void uimk2_zlist_redraw(uimk2_zlist *z, int attempt);
 
 /* Row y of the dirty bitmap. False when y is outside the panel. */
 bool uimk2_zlist_row_dirty(const uimk2_zlist *z, uint16_t y);
+
+/* Closest-first hit (index 0 upward). -1 on a miss. pct 0 accepts any
+ * exterior hit. A non-zero pct also requires alpha/255 >= pct/100.
+ * uimk2_zlist_hit_test passes HIT_OPAQUE_PCT. A base shape with px
+ * samples the full frame at (x, y); any other px is w*h RGBA in local
+ * coordinates. A NULL px uses rgba[3] for the whole exterior. */
+int uimk2_zlist_hit_test_pct(const uimk2_zlist *z, int x, int y, unsigned pct);
+int uimk2_zlist_hit_test(const uimk2_zlist *z, int x, int y);
 
 #endif /* UIMK2_ZLIST_H */
