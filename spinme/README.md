@@ -3,7 +3,7 @@
 **Goal:** On-device music controller (follow now-playing + knob volume + zone
 pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
 
-**UX / stack map:** [`HILEVEL.md`](HILEVEL.md).
+**UI and the two cores:** [`DESIGN.md`](DESIGN.md).
 
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
@@ -35,13 +35,13 @@ Index: [`hardware/README.md`](hardware/README.md).
 | Item | Status |
 |------|--------|
 | **Hardware choice** | **Waveshare** (S3); Elecrow sibling docs kept |
-| **HILEVEL UX** | [`HILEVEL.md`](HILEVEL.md) -- zones as pairs, follow, volume regimes, LVGL |
+| **UI** | [`DESIGN.md`](DESIGN.md) -- follow view, bitmap types, two cores |
 | **Board probes** | Both boards documented under `hardware/` |
 | **Volumio API** | `miniDSP-SHD.local` getState OK (2026-09-07) |
 | **Firmware** | Scaffolds under `firmware/`; controller impl next |
 
-**Next steps:** Config schema; Sonos SSDP/SOAP + Volumio drivers; LVGL follow +
-zone list on Waveshare.
+**Next steps:** The follow view and the two-core queue are specified in
+[`DESIGN.md`](DESIGN.md). Firmware stays a scaffold until that design is built.
 
 ## Shared: Volumio API
 
