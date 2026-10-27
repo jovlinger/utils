@@ -6,6 +6,8 @@
  */
 #include "uimk2_zlist.h"
 
+#include "uimk2_blit.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +86,20 @@ static const uint8_t *pel(const uint8_t *px, uint32_t x, uint32_t y) {
 
 static int px_is(const uint8_t *p, int r, int g, int b, int a) {
     return p[0] == r && p[1] == g && p[2] == b && p[3] == a;
+}
+
+/* Frames are pack66; compare the packed word of the RGBA sample. */
+static int pack_is(const uint8_t *frame, uint32_t x, uint32_t y, int r, int g,
+                   int b, int a) {
+    uint8_t rgba[4];
+    uint32_t want;
+    const uint32_t *fb = (const uint32_t *)(const void *)frame;
+    rgba[0] = (uint8_t)r;
+    rgba[1] = (uint8_t)g;
+    rgba[2] = (uint8_t)b;
+    rgba[3] = (uint8_t)a;
+    want = uimk2_blit_pack66(rgba);
+    return fb[y * PANEL_W + x] == want;
 }
 
 static int is_root(uint16_t idx) {
@@ -319,11 +335,11 @@ static void test_paint_order_and_base(void) {
     z.shape[1].dirty = true;
     CHECK(!z.shape[0].dirty);
     uimk2_zlist_render(&z);
-    CHECK(px_is(pel(next_mem, 1, 1), 0, 0, 200, 255));
-    CHECK(px_is(pel(next_mem, 0, 0), 200, 0, 0, 255));
-    CHECK(px_is(pel(next_mem, 5, 5), 200, 0, 0, 255));
-    CHECK(px_is(pel(next_mem, 100, 80), 100, 80, 0x40, 0xFF));
-    CHECK(px_is(pel(next_mem, 6, 6), 6, 6, 0x40, 0xFF));
+    CHECK(pack_is(next_mem, 1, 1, 0, 0, 200, 255));
+    CHECK(pack_is(next_mem, 0, 0, 200, 0, 0, 255));
+    CHECK(pack_is(next_mem, 5, 5, 200, 0, 0, 255));
+    CHECK(pack_is(next_mem, 100, 80, 100, 80, 0x40, 0xFF));
+    CHECK(pack_is(next_mem, 6, 6, 6, 6, 0x40, 0xFF));
     CHECK(!z.shape[0].dirty && !z.shape[1].dirty && !z.shape[2].dirty);
 
     wipe_frames();
@@ -331,14 +347,14 @@ static void test_paint_order_and_base(void) {
     pix[0] = 1;
     pix[1] = 2;
     pix[2] = 3;
-    pix[3] = 4;
+    pix[3] = 255; /* A2 != 0 so the word is paint, not a skip */
     d[0] = solid(UIMK2_UPD_FIXED, 8, 9, 1, 1, 0, 0, 0, 0);
     d[0].px = pix;
-    d[1] = solid(UIMK2_UPD_FIXED, 4, 5, 1, 1, 9, 8, 7, 6);
+    d[1] = solid(UIMK2_UPD_FIXED, 4, 5, 1, 1, 9, 8, 7, 255);
     CHECK(build(d, 2));
     uimk2_zlist_render(&z);
-    CHECK(px_is(pel(next_mem, 8, 9), 1, 2, 3, 4));
-    CHECK(px_is(pel(next_mem, 4, 5), 9, 8, 7, 6));
+    CHECK(pack_is(next_mem, 8, 9, 1, 2, 3, 255));
+    CHECK(pack_is(next_mem, 4, 5, 9, 8, 7, 255));
     CHECK(px_is(pel(next_mem, 0, 0), 0xAB, 0xAB, 0xAB, 0xAB));
     CHECK(px_is(pel(next_mem, 4, 6), 0xAB, 0xAB, 0xAB, 0xAB));
     CHECK(px_is(pel(next_mem, PANEL_W - 1u, PANEL_H - 1u), 0xAB, 0xAB, 0xAB,
@@ -350,9 +366,9 @@ static void test_paint_order_and_base(void) {
     d[0].is_base = true;
     CHECK(build(&d[0], 1));
     uimk2_zlist_render(&z);
-    CHECK(px_is(pel(next_mem, 0, 0), 7, 8, 9, 255));
-    CHECK(px_is(pel(next_mem, 50, 50), 7, 8, 9, 255));
-    CHECK(px_is(pel(next_mem, PANEL_W - 1u, PANEL_H - 1u), 7, 8, 9, 255));
+    CHECK(pack_is(next_mem, 0, 0, 7, 8, 9, 255));
+    CHECK(pack_is(next_mem, 50, 50, 7, 8, 9, 255));
+    CHECK(pack_is(next_mem, PANEL_W - 1u, PANEL_H - 1u, 7, 8, 9, 255));
 }
 
 /* First frame swaps and sets every row bit. The same picture again
@@ -371,7 +387,7 @@ static void test_row_diff_swap_identical(void) {
     CHECK(uimk2_zlist_row_dirty(&z, 0));
     CHECK(uimk2_zlist_row_dirty(&z, (uint16_t)(PANEL_H - 1u)));
     CHECK(!uimk2_zlist_row_dirty(&z, (uint16_t)PANEL_H));
-    CHECK(px_is(pel(z.curr, 100, 80), 100, 80, 0x40, 0xFF));
+    CHECK(pack_is(z.curr, 100, 80, 100, 80, 0x40, 0xFF));
 
     front = z.curr;
     z.busy = false;
@@ -431,8 +447,8 @@ static void test_busy_redraw_retry(void) {
     CHECK(z.curr != front);
     CHECK(z.redraw_attempt == 0);
     CHECK(uimk2_ring_len(&ring) == 1);
-    CHECK(px_is(pel(z.curr, 0, 0), (int)(uint8_t)(base_mem[0]), base_mem[1],
-                base_mem[2], base_mem[3]));
+    CHECK(pack_is(z.curr, 0, 0, (int)base_mem[0], (int)base_mem[1],
+                  (int)base_mem[2], (int)base_mem[3]));
 
     CHECK(build_base_only());
     z.busy = true;

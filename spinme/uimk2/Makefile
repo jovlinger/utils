@@ -65,21 +65,25 @@ $(BUILD)/test_follow: $(FOLLOW_SRC) uimk2_follow.h $(LINE_HDR) uimk2_sched.h \
 	$(CC) $(WARN) $(CFLAGS) -I. -o $@ $(FOLLOW_SRC) $(BUILD)/glyphs_12.c
 
 $(BUILD)/test_zlist: test_zlist.c uimk2_zlist.c uimk2_zlist.h \
-		uimk2_event.c uimk2_event.h uimk2_config.h | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -o $@ test_zlist.c uimk2_zlist.c uimk2_event.c
+		uimk2_blit.c uimk2_blit.h uimk2_event.c uimk2_event.h \
+		uimk2_config.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_zlist.c uimk2_zlist.c uimk2_blit.c \
+		uimk2_event.c
 
 $(BUILD)/test_blit: test_blit.c uimk2_blit.c uimk2_blit.h uimk2_config.h \
 		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_blit.c uimk2_blit.c
 
-HOST_SRC := test_host.c uimk2_host.c uimk2_zlist.c uimk2_event.c
-HOST_HDR := uimk2_host.h uimk2_zlist.h uimk2_event.h uimk2_config.h
+HOST_SRC := test_host.c uimk2_host.c uimk2_zlist.c uimk2_blit.c uimk2_event.c
+HOST_HDR := uimk2_host.h uimk2_zlist.h uimk2_blit.h uimk2_event.h \
+	uimk2_config.h
 
 $(BUILD)/test_host: $(HOST_SRC) $(HOST_HDR) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(HOST_SRC)
 
-BENCH_SRC := bench_ui.c uimk2_host.c uimk2_zlist.c uimk2_event.c
-BENCH_HDR := uimk2_host.h uimk2_zlist.h uimk2_event.h uimk2_config.h
+BENCH_SRC := bench_ui.c uimk2_host.c uimk2_zlist.c uimk2_blit.c uimk2_event.c
+BENCH_HDR := uimk2_host.h uimk2_zlist.h uimk2_blit.h uimk2_event.h \
+	uimk2_config.h
 
 $(BUILD)/bench_ui: $(BENCH_SRC) $(BENCH_HDR) bench_time.h | $(BUILD)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRC) -lm
@@ -97,9 +101,10 @@ bench-blit: $(BUILD)/bench_blit
 # Timed Core B integration sequence. No -fsanitize (BENCH_CFLAGS).
 # From this directory: make integ-bench
 # N=100, sample stdev, same clock as bench-ui. Writes build/integ_bench.txt.
-INTEG_SRC := integ_script.c uimk2_host.c uimk2_zlist.c uimk2_event.c
-INTEG_HDR := integ_script.h uimk2_host.h uimk2_zlist.h uimk2_event.h \
-	uimk2_config.h
+INTEG_SRC := integ_script.c uimk2_host.c uimk2_zlist.c uimk2_blit.c \
+	uimk2_event.c
+INTEG_HDR := integ_script.h uimk2_host.h uimk2_zlist.h uimk2_blit.h \
+	uimk2_event.h uimk2_config.h
 
 $(BUILD)/test_integ: test_integ.c $(INTEG_SRC) $(INTEG_HDR) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_integ.c $(INTEG_SRC)

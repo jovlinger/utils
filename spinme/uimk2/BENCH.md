@@ -14,11 +14,26 @@ Serial line:
 
 ## 2026-10-27 update_render_draw
 
+Baseline tech (pre pack66 wire-in): `paint_shape` / `paint_base` wrote
+**RGBA8888 opaque overwrite** -- per-pixel stores for boxes, row `memcpy` for
+solid base, full-frame `memcpy` for base-with-px. **No** src-over multiply or
+divide on this path. `short_title_noscroll` is solid boxes only (`px` NULL).
+
 - mac mean_us: 20.23 (re-run on this tree; stdev_us 1.56). Prior note for sha:bafe588 was about 18.61.
 - device mean_us: 17954.36 (stdev_us 9.05, min_us 17938, max_us 17965, n=100)
 - slowdown: 17954.36 / 20.23 = 887.51
 
 Re-flash on blit-tile-alpha: device mean_us 17936.78 (stdev_us 6.86).
+
+### After pack66 frame wire-in
+
+Frames store pack66; solids fill packed words by row `memcpy`; px sources pack
+then `src_over66` (skip-RLE + PIE on ESP). Panel push unpacks to RGBA for the bus.
+
+- mac mean_us: 8.94 (short_title_noscroll update_render_draw; was ~20.23)
+- device mean_us: 17327.30 (stdev_us 7.41, min_us 17316, max_us 17339, n=100)
+- vs prior device 17936.78: about **1.04x** (solids + full-frame row diff still
+  dominate; skip-RLE/PIE barely exercised on this scene)
 
 ## Tiled blit_src_over (clear base, alpha 0)
 

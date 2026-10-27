@@ -41,6 +41,8 @@
 #define UIMK2_ZLIST_MAX 16u
 #define UIMK2_SHAPE_MAX_CHILDREN 8u
 #define UIMK2_ZLIST_TEXT 32u
+/* Each pixel is one pack66 uint32 (RGB666+A2 / skip-RLE); same byte size
+ * as RGBA8888. See uimk2_blit.h. */
 #define UIMK2_FRAME_BYTES (PANEL_W * PANEL_H * 4u)
 
 /* Function selector for shape update. Dispatch is a switch. */
@@ -56,7 +58,7 @@ typedef void (*uimk2_zlist_ping_fn)(void *ctx);
 typedef struct {
     uint8_t update_selector; /* uimk2_update_sel */
     bool dirty;
-    bool is_base; /* farthest layer: full-frame RGBA memcpy into next */
+    bool is_base; /* farthest layer: full-frame pack66 into next */
     bool accept_hit; /* hit-test may return this shape; caches leave it clear */
     bool is_transport; /* press on this shape asks B to enqueue Toggle */
     int16_t x, y; /* position, sealed at build */

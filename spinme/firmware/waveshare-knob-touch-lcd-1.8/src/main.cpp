@@ -17,6 +17,7 @@
 #include "player_http.h"
 
 extern "C" {
+#include "uimk2_blit.h"
 #include "uimk2_host.h"
 }
 
@@ -223,15 +224,23 @@ static void core_a_push(void) {
   for (y = 0; y < LCD_HEIGHT; ++y) {
     int x0 = 0;
     int x1 = 0;
-    const uint8_t *row;
+    int w;
+    int i;
+    const uint32_t *row66;
+    uint8_t rgba_row[LCD_WIDTH * 4];
     if (!uimk2_zlist_row_dirty(&gZ, (uint16_t)y)) {
       continue;
     }
     if (!bezel_span(y, &x0, &x1)) {
       continue;
     }
-    row = frame + ((size_t)y * (size_t)PANEL_W + (size_t)x0) * 4u;
-    panel_push_rgba_span(x0, y, x1 - x0 + 1, row);
+    w = x1 - x0 + 1;
+    row66 = (const uint32_t *)(const void *)(frame +
+            ((size_t)y * (size_t)PANEL_W + (size_t)x0) * 4u);
+    for (i = 0; i < w; ++i) {
+      uimk2_blit_unpack66(row66[i], rgba_row + (size_t)i * 4u);
+    }
+    panel_push_rgba_span(x0, y, w, rgba_row);
     rows++;
     if ((y & 31) == 0) {
       delay(0);
