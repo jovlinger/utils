@@ -73,21 +73,16 @@ static void compare_swap_ping(uimk2_zlist *z) {
     }
 }
 
-static int16_t clamp_add(int16_t cur, int16_t step) {
-    int32_t sum = (int32_t)cur + (int32_t)step;
-    if (sum > 32767) {
-        sum = 32767;
-    }
-    if (sum < -32768) {
-        sum = -32768;
-    }
-    return (int16_t)sum;
-}
-
+/* 24h HH:MM:SS from the global clock (CLOCK_RES millis in clock_tick). */
 static void format_clock(char dst[UIMK2_ZLIST_TEXT], int32_t sec, uint32_t tick) {
+    uint32_t s;
     int wrote;
+    (void)sec;
+    s = (tick / 1000u) % 86400u;
     memset(dst, 0, UIMK2_ZLIST_TEXT);
-    wrote = snprintf(dst, UIMK2_ZLIST_TEXT, "%" PRId32 ":%" PRIu32, sec, tick);
+    wrote = snprintf(dst, UIMK2_ZLIST_TEXT, "%02u:%02u:%02u",
+                     (unsigned)(s / 3600u), (unsigned)((s / 60u) % 60u),
+                     (unsigned)(s % 60u));
     if (wrote < 0 || wrote >= (int)UIMK2_ZLIST_TEXT) {
         dst[0] = '\0';
     }
@@ -98,8 +93,14 @@ static void update_one(uimk2_zlist *z, uimk2_shape *s) {
     case UIMK2_UPD_FIXED:
         return;
     case UIMK2_UPD_SCROLL: {
-        int16_t nx = clamp_add(s->ox, s->step_x);
-        int16_t ny = clamp_add(s->oy, s->step_y);
+        /* Endless: ox = (millis / SCROLL_MS_PER_OX) % backing_w. */
+        uint16_t pw = s->pw != 0u ? s->pw : s->w;
+        int16_t nx;
+        int16_t ny = 0;
+        if (pw == 0u) {
+            return;
+        }
+        nx = (int16_t)((z->clock_tick / SCROLL_MS_PER_OX) % (uint32_t)pw);
         if (nx != s->ox || ny != s->oy) {
             s->ox = nx;
             s->oy = ny;
@@ -211,28 +212,65 @@ static void clip_shape(const uimk2_shape *s, int32_t *x0, int32_t *y0,
     }
 }
 
+/* Viewport (w,h) over a full-width text map (pw,ph). Sample
+ * px[(ly+oy) * pw + (lx+ox)]. Outside the map is transparent. */
 static void paint_shape(uimk2_zlist *z, const uimk2_shape *s) {
     int32_t x0;
     int32_t y0;
     int32_t x1;
     int32_t y1;
     int32_t y;
+    int32_t x;
     uint32_t *fb = frame66(z->next);
     uint32_t tmp[PANEL_W];
     uint32_t bw;
+    uint16_t pw;
+    uint16_t ph;
+    uint8_t miss[4];
     clip_shape(s, &x0, &y0, &x1, &y1);
     if (x0 >= x1 || y0 >= y1) {
         return;
     }
     bw = (uint32_t)(x1 - x0);
     if (s->px != NULL) {
+        pw = s->pw != 0u ? s->pw : s->w;
+        ph = s->ph != 0u ? s->ph : s->h;
+        miss[0] = 0;
+        miss[1] = 0;
+        miss[2] = 0;
+        miss[3] = 0;
         for (y = y0; y < y1; y++) {
             int32_t ly = y - (int32_t)s->y;
-            int32_t lx0 = x0 - (int32_t)s->x;
-            const uint8_t *srow =
-                s->px + ((uint32_t)ly * (uint32_t)s->w + (uint32_t)lx0) * 4u;
-            uimk2_blit_rgba_row_to_pack66(tmp, srow, bw);
-            /* src_over66 into the clipped span (skip-RLE + PIE on ESP). */
+            int32_t sy = ly + (int32_t)s->oy;
+            for (x = x0; x < x1; x++) {
+                int32_t lx = x - (int32_t)s->x;
+                int32_t sx = lx + (int32_t)s->ox;
+                uint32_t ti = (uint32_t)(x - x0);
+                if (s->update_selector == (uint8_t)UIMK2_UPD_SCROLL &&
+                    pw > 0u) {
+                    /* Endless wrap over the backing map. */
+                    sx %= (int32_t)pw;
+                    if (sx < 0) {
+                        sx += (int32_t)pw;
+                    }
+                    if (ph > 0u) {
+                        sy %= (int32_t)ph;
+                        if (sy < 0) {
+                            sy += (int32_t)ph;
+                        }
+                    }
+                }
+                if (sx < 0 || sy < 0 || sx >= (int32_t)pw ||
+                    sy >= (int32_t)ph) {
+                    tmp[ti] = uimk2_blit_pack66(miss);
+                } else {
+                    const uint8_t *src =
+                        s->px + ((uint32_t)sy * (uint32_t)pw + (uint32_t)sx) *
+                                    4u;
+                    tmp[ti] = uimk2_blit_pack66(src);
+                }
+            }
+            uimk2_blit_encode_row_skips(tmp, bw);
             uimk2_blit_src_over66(fb + (uint32_t)y * PANEL_W + (uint32_t)x0, bw,
                                   tmp, bw, bw, 1u, bw, 1u);
         }
@@ -323,8 +361,29 @@ static uint8_t shape_alpha(const uimk2_shape *s, int x, int y) {
     if (lx < 0 || ly < 0 || lx >= (int32_t)s->w || ly >= (int32_t)s->h) {
         return 0;
     }
-    off = ((uint32_t)ly * (uint32_t)s->w + (uint32_t)lx) * 4u + 3u;
-    return s->px[off];
+    {
+        uint16_t pw = s->pw != 0u ? s->pw : s->w;
+        uint16_t ph = s->ph != 0u ? s->ph : s->h;
+        int32_t sx = lx + (int32_t)s->ox;
+        int32_t sy = ly + (int32_t)s->oy;
+        if (s->update_selector == (uint8_t)UIMK2_UPD_SCROLL && pw > 0u) {
+            sx %= (int32_t)pw;
+            if (sx < 0) {
+                sx += (int32_t)pw;
+            }
+            if (ph > 0u) {
+                sy %= (int32_t)ph;
+                if (sy < 0) {
+                    sy += (int32_t)ph;
+                }
+            }
+        }
+        if (sx < 0 || sy < 0 || sx >= (int32_t)pw || sy >= (int32_t)ph) {
+            return 0;
+        }
+        off = ((uint32_t)sy * (uint32_t)pw + (uint32_t)sx) * 4u + 3u;
+        return s->px[off];
+    }
 }
 
 int uimk2_zlist_hit_test_pct(const uimk2_zlist *z, int x, int y, unsigned pct) {
@@ -377,6 +436,8 @@ static bool copy_shape(uimk2_shape *s, const uimk2_shape_desc *d, uint16_t n) {
     s->y = d->y;
     s->w = d->w;
     s->h = d->h;
+    s->pw = d->pw;
+    s->ph = d->ph;
     s->step_x = d->step_x;
     s->step_y = d->step_y;
     s->px = d->px;

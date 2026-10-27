@@ -212,27 +212,26 @@ static void test_update_dirty_sealed(void) {
 
     wipe_frames();
     d = solid(UIMK2_UPD_SCROLL, 4, 5, 6, 7, 1, 2, 3, 4);
-    d.step_x = 3;
-    d.step_y = -1;
+    d.pw = 50;
+    d.ph = 7;
     CHECK(build(&d, 1));
     x = z.shape[0].x;
     y = z.shape[0].y;
     w = z.shape[0].w;
     h = z.shape[0].h;
     memset(next_mem, 0xCD, sizeof next_mem);
+    uimk2_zlist_set_clock(&z, 0, 350); /* ox = 350/50 % 50 = 7 */
     uimk2_zlist_update(&z);
     CHECK(z.shape[0].dirty);
-    CHECK(z.shape[0].ox == 3 && z.shape[0].oy == -1);
+    CHECK(z.shape[0].ox == 7 && z.shape[0].oy == 0);
     CHECK(z.shape[0].x == x && z.shape[0].y == y);
     CHECK(z.shape[0].w == w && z.shape[0].h == h);
     CHECK(next_mem[0] == 0xCD);
     CHECK(next_mem[sizeof next_mem - 1] == 0xCD);
     z.shape[0].dirty = false;
-    z.shape[0].step_x = 0;
-    z.shape[0].step_y = 0;
     uimk2_zlist_update(&z);
     CHECK(!z.shape[0].dirty);
-    CHECK(z.shape[0].ox == 3 && z.shape[0].oy == -1);
+    CHECK(z.shape[0].ox == 7 && z.shape[0].oy == 0);
 
     wipe_frames();
     d = solid(UIMK2_UPD_CLOCKTEXT, 8, 9, 2, 2, 0, 0, 0, 255);
@@ -241,20 +240,22 @@ static void test_update_dirty_sealed(void) {
     y = z.shape[0].y;
     w = z.shape[0].w;
     h = z.shape[0].h;
-    uimk2_zlist_set_clock(&z, 12, 34);
+    /* tick is global millis: 12:34:00 and 12:34:01. */
+    uimk2_zlist_set_clock(&z, 0, 12u * 3600u * 1000u + 34u * 60u * 1000u);
     uimk2_zlist_update(&z);
     CHECK(z.shape[0].dirty);
-    CHECK(strcmp(z.shape[0].text, "12:34") == 0);
+    CHECK(strcmp(z.shape[0].text, "12:34:00") == 0);
     CHECK(z.shape[0].x == x && z.shape[0].y == y);
     CHECK(z.shape[0].w == w && z.shape[0].h == h);
     z.shape[0].dirty = false;
     uimk2_zlist_update(&z);
     CHECK(!z.shape[0].dirty);
-    CHECK(strcmp(z.shape[0].text, "12:34") == 0);
-    uimk2_zlist_set_clock(&z, 12, 35);
+    CHECK(strcmp(z.shape[0].text, "12:34:00") == 0);
+    uimk2_zlist_set_clock(&z, 0,
+                           12u * 3600u * 1000u + 34u * 60u * 1000u + 1000u);
     uimk2_zlist_update(&z);
     CHECK(z.shape[0].dirty);
-    CHECK(strcmp(z.shape[0].text, "12:35") == 0);
+    CHECK(strcmp(z.shape[0].text, "12:34:01") == 0);
     CHECK(z.shape[0].x == x && z.shape[0].w == w);
 }
 
@@ -467,6 +468,48 @@ static void test_busy_redraw_retry(void) {
     }
 }
 
+/* Full-width map; ox = (millis/SCROLL_MS_PER_OX) % pw; wrap mod pw. */
+static void test_scroll_viewport_over_map(void) {
+    uimk2_shape_desc d[2];
+    uint8_t map[8 * 1 * 4];
+    uint32_t i;
+
+    wipe_frames();
+    for (i = 0; i < 8u; i++) {
+        map[i * 4u + 0u] = (uint8_t)(10u * i);
+        map[i * 4u + 1u] = 0;
+        map[i * 4u + 2u] = 0;
+        map[i * 4u + 3u] = 255;
+    }
+    d[0] = solid(UIMK2_UPD_SCROLL, 0, 0, 4, 1, 0, 0, 0, 0);
+    d[0].pw = 8;
+    d[0].ph = 1;
+    d[0].px = map;
+    d[1] = solid(UIMK2_UPD_FIXED, 0, 0, (int)PANEL_W, (int)PANEL_H, 0, 0, 0,
+                 255);
+    d[1].is_base = true;
+    CHECK(build(d, 2));
+    uimk2_zlist_set_clock(&z, 0, 0);
+    uimk2_zlist_update(&z);
+    uimk2_zlist_render(&z);
+    CHECK(z.shape[0].ox == 0);
+    CHECK(pack_is(next_mem, 0, 0, 0, 0, 0, 255));
+    CHECK(pack_is(next_mem, 3, 0, 30, 0, 0, 255));
+    uimk2_zlist_set_clock(&z, 0, 100); /* ox = 100/50 = 2 */
+    uimk2_zlist_update(&z);
+    CHECK(z.shape[0].ox == 2);
+    uimk2_zlist_render(&z);
+    CHECK(pack_is(next_mem, 0, 0, 20, 0, 0, 255));
+    CHECK(pack_is(next_mem, 3, 0, 50, 0, 0, 255));
+    /* ox near end wraps samples: map[7], map[0], map[1], map[2] */
+    uimk2_zlist_set_clock(&z, 0, 350); /* ox = 350/50 = 7 */
+    uimk2_zlist_update(&z);
+    CHECK(z.shape[0].ox == 7);
+    uimk2_zlist_render(&z);
+    CHECK(pack_is(next_mem, 0, 0, 70, 0, 0, 255));
+    CHECK(pack_is(next_mem, 1, 0, 0, 0, 0, 255));
+}
+
 int main(void) {
     test_build_order_and_children();
     test_update_dirty_sealed();
@@ -474,6 +517,7 @@ int main(void) {
     test_paint_order_and_base();
     test_row_diff_swap_identical();
     test_busy_redraw_retry();
+    test_scroll_viewport_over_map();
     printf("test_zlist: %d checks, %d failures\n", checks, failures);
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

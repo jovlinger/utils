@@ -8,3 +8,4 @@ wifi.local.json
 .pio/
 firmware/waveshare-knob-touch-lcd-1.8/include/wifi_local.h
 firmware/waveshare-knob-touch-lcd-1.8/src/glyphs_embed.S
+firmware/waveshare-knob-touch-lcd-1.8/src/bg_embed.S

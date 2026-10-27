@@ -8,8 +8,8 @@ WARN := -std=c99 -pedantic -Wall -Wextra -Werror -O1 -g \
 BUILD := build
 
 TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line \
-	$(BUILD)/test_event $(BUILD)/test_sched $(BUILD)/test_measure \
-	$(BUILD)/test_follow $(BUILD)/test_zlist $(BUILD)/test_host \
+	$(BUILD)/test_event $(BUILD)/test_measure \
+	$(BUILD)/test_zlist $(BUILD)/test_host \
 	$(BUILD)/test_integ $(BUILD)/test_blit
 
 .PHONY: test test-glyphs clean bench bench-ui bench-blit integ-bench
@@ -39,9 +39,6 @@ $(BUILD)/test_event: test_event.c uimk2_event.c uimk2_event.h uimk2_config.h \
 		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_event.c uimk2_event.c
 
-$(BUILD)/test_sched: test_sched.c uimk2_sched.c uimk2_sched.h | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -o $@ test_sched.c uimk2_sched.c
-
 $(BUILD)/test_measure: test_measure.c uimk2_bitmap.c uimk2_blit.c \
 		uimk2_bitmap.h uimk2_blit.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_measure.c uimk2_bitmap.c uimk2_blit.c
@@ -56,13 +53,6 @@ LINE_HDR := uimk2_line.h uimk2_bitmap.h uimk2_blit.h uimk2_arena.h \
 
 $(BUILD)/test_line: $(LINE_SRC) $(LINE_HDR) $(BUILD)/glyphs_12.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -I. -o $@ $(LINE_SRC) $(BUILD)/glyphs_12.c
-
-FOLLOW_SRC := test_follow.c uimk2_follow.c uimk2_line.c uimk2_bitmap.c \
-	uimk2_blit.c uimk2_arena.c uimk2_sched.c
-
-$(BUILD)/test_follow: $(FOLLOW_SRC) uimk2_follow.h $(LINE_HDR) uimk2_sched.h \
-		$(BUILD)/glyphs_12.c | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -I. -o $@ $(FOLLOW_SRC) $(BUILD)/glyphs_12.c
 
 $(BUILD)/test_zlist: test_zlist.c uimk2_zlist.c uimk2_zlist.h \
 		uimk2_blit.c uimk2_blit.h uimk2_event.c uimk2_event.h \

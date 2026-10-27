@@ -51,6 +51,10 @@
 #ifndef HIT_OPAQUE_PCT
 #define HIT_OPAQUE_PCT 0u /* min opacity percent for an opaque hit, 0 = off */
 #endif
+#ifndef SCROLL_MS_PER_OX
+/* Millis per px of SCROLL ox. 50 => 2x the prior 100 ms/px cadence. */
+#define SCROLL_MS_PER_OX 50u
+#endif
 
 /* Default blit tile. Override before including uimk2_blit.h. Working set
  * is 2*TILE_W*TILE_H*4 bytes (src+dst); keep under the S3 D-cache. */

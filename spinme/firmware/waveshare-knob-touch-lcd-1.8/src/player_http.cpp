@@ -1,11 +1,14 @@
 #include "player_http.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 
 #include "wifi_local.h"
 
@@ -61,6 +64,10 @@ static bool ensure_wifi(uint32_t timeout_ms) {
   }
   gVolumioResolved = false;
   Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
+  /* US Eastern for the demo 24h clock. */
+  setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0/2", 1);
+  tzset();
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   return true;
 }
 
@@ -209,12 +216,136 @@ bool player_http_poll(PlayerSnapshot *out) {
   (void)json_string_field(json, "artist", out->artist, sizeof out->artist);
   (void)json_string_field(json, "album", out->album, sizeof out->album);
   (void)json_string_field(json, "title", out->title, sizeof out->title);
+  (void)json_string_field(json, "albumart", out->albumart, sizeof out->albumart);
   out->have_status = out->status[0] != '\0';
   out->playing = strcmp(out->status, "play") == 0 ||
                  strcmp(out->status, "playing") == 0;
   out->volume = json_int_field(json, "volume", -1);
   if (out->volume < 0 || out->volume > 100) {
     out->volume = -1;
+  }
+  return true;
+}
+
+bool player_http_fetch_albumart(const char *albumart, size_t cap,
+                                uint8_t **buf_out, size_t *bytes_out,
+                                uint32_t *ms_out) {
+  HTTPClient http;
+  WiFiClient *stream;
+  int code;
+  size_t got = 0;
+  size_t alloc = 0;
+  uint32_t t0;
+  uint8_t *buf = nullptr;
+  int content_len;
+  if (buf_out != nullptr) {
+    *buf_out = nullptr;
+  }
+  if (bytes_out != nullptr) {
+    *bytes_out = 0;
+  }
+  if (ms_out != nullptr) {
+    *ms_out = 0;
+  }
+  if (albumart == nullptr || albumart[0] == '\0' || buf_out == nullptr) {
+    return false;
+  }
+  if (!player_http_configured()) {
+    note_missing_ssid();
+    return false;
+  }
+  if (!ensure_wifi(3000)) {
+    return false;
+  }
+  t0 = millis();
+  if (strncmp(albumart, "http://", 7) == 0 ||
+      strncmp(albumart, "https://", 8) == 0) {
+    if (!http.begin(albumart)) {
+      Serial.println("albumart begin fail");
+      return false;
+    }
+  } else {
+    const char *path = albumart;
+    if (!ensure_volumio_ip()) {
+      return false;
+    }
+    if (path[0] != '/') {
+      Serial.println("albumart path not absolute");
+      return false;
+    }
+    if (!http.begin(gVolumioIp.toString(), (uint16_t)VOLUMIO_PORT, path)) {
+      gVolumioResolved = false;
+      Serial.println("albumart begin fail");
+      return false;
+    }
+  }
+  http.setConnectTimeout(1000);
+  http.setTimeout(4000);
+  code = http.GET();
+  if (code != 200) {
+    http.end();
+    if (code < 0) {
+      gVolumioResolved = false;
+    }
+    Serial.printf("albumart http %d\n", code);
+    return false;
+  }
+  content_len = http.getSize();
+  if (content_len > 0) {
+    alloc = (size_t)content_len;
+  } else {
+    alloc = 64u * 1024u;
+  }
+  if (cap != 0u && alloc > cap) {
+    alloc = cap;
+  }
+  buf = static_cast<uint8_t *>(
+      heap_caps_malloc(alloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (buf == nullptr) {
+    buf = static_cast<uint8_t *>(malloc(alloc));
+  }
+  if (buf == nullptr) {
+    http.end();
+    return false;
+  }
+  stream = http.getStreamPtr();
+  if (stream == nullptr) {
+    free(buf);
+    http.end();
+    return false;
+  }
+  while (http.connected() && got < alloc) {
+    size_t avail = stream->available();
+    size_t n;
+    size_t want;
+    if (avail == 0u) {
+      delay(1);
+      if (!stream->connected() && stream->available() == 0) {
+        break;
+      }
+      continue;
+    }
+    want = avail;
+    if (want > alloc - got) {
+      want = alloc - got;
+    }
+    n = stream->readBytes(buf + got, want);
+    if (n == 0u) {
+      break;
+    }
+    got += n;
+  }
+  http.end();
+  if (got == 0u) {
+    free(buf);
+    return false;
+  }
+  *buf_out = buf;
+  if (bytes_out != nullptr) {
+    *bytes_out = got;
+  }
+  if (ms_out != nullptr) {
+    *ms_out = millis() - t0;
   }
   return true;
 }

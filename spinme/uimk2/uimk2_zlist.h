@@ -7,10 +7,10 @@
  * those details change.
  *
  * mark_dirty_from_children walks children first, then sets this shape
- * dirty if any child is dirty. Render does not consult Cache and does
- * not clear next. The base shape (farthest, a full-frame static RGBA)
- * is painted with a memcpy into next; closer shapes draw over it.
- * Drawing a shape clears its dirty bit.
+ * dirty if any child is dirty. Render does not clear next. The base
+ * shape (farthest, full-frame static RGBA) is packed row-by-row into
+ * next as pack66; closer shapes src-over66 over it. Drawing a shape
+ * clears its dirty bit.
  *
  * update_render_draw is the one entry: update every shape, mark dirty
  * from each root, render into next, then compare. When busy-by-core-A
@@ -24,8 +24,6 @@
  * Hit-test walks index 0 upward. The first accept_hit shape whose
  * exterior contains the point wins. HIT_OPAQUE_PCT 0 skips the opacity
  * sample; a non-zero percent also requires the pixel alpha.
- *
- * The follow-view Cache path is a different module and is not used here.
  *
  * Portable C99, no platform headers.
  */
@@ -48,8 +46,8 @@
 /* Function selector for shape update. Dispatch is a switch. */
 typedef enum {
     UIMK2_UPD_FIXED = 0, /* return; dirty stays as it was */
-    UIMK2_UPD_SCROLL,    /* step the viewport origin */
-    UIMK2_UPD_CLOCKTEXT  /* rewrite the string from the clock */
+    UIMK2_UPD_SCROLL,    /* ox = (clock_tick/SCROLL_MS_PER_OX) % pw */
+    UIMK2_UPD_CLOCKTEXT  /* rewrite text to 24h HH:MM:SS from clock_tick */
 } uimk2_update_sel;
 
 /* Host stand-in for Core A.redraw(). Not a shape dispatch. */
@@ -62,9 +60,12 @@ typedef struct {
     bool accept_hit; /* hit-test may return this shape; caches leave it clear */
     bool is_transport; /* press on this shape asks B to enqueue Toggle */
     int16_t x, y; /* position, sealed at build */
-    uint16_t w, h; /* exterior box, sealed at build */
-    int16_t ox, oy; /* scroll viewport origin */
-    int16_t step_x, step_y; /* added to the origin on each scroll update */
+    uint16_t w, h; /* exterior / viewport box on the panel */
+    /* px buffer size. 0 means same as w,h. SCROLL samples px at
+     * (local + ox, local + oy) with stride pw. */
+    uint16_t pw, ph;
+    int16_t ox, oy; /* scroll origin into px; SCROLL sets ox from clock */
+    int16_t step_x, step_y; /* unused by SCROLL (kept for desc ABI) */
     uint16_t child[UIMK2_SHAPE_MAX_CHILDREN]; /* child indices, no parent */
     uint16_t nchild;
     const uint8_t *px; /* static RGBA, or NULL to paint rgba[] */
@@ -80,6 +81,7 @@ typedef struct {
     bool is_transport;
     int16_t x, y;
     uint16_t w, h;
+    uint16_t pw, ph; /* 0 => pw=w, ph=h */
     int16_t step_x, step_y;
     const uint16_t *children;
     uint16_t nchildren;
