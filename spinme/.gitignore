@@ -5,3 +5,6 @@ env
 
 # Per-unit WiFi. Same shape as the on-device config wifi object.
 wifi.local.json
+.pio/
+firmware/waveshare-knob-touch-lcd-1.8/include/wifi_local.h
+firmware/waveshare-knob-touch-lcd-1.8/src/glyphs_embed.S
