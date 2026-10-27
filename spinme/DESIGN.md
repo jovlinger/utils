@@ -1,12 +1,33 @@
 # Follow view and the two cores
 
-The glass shows the active zone. The knob sets volume. Touch replaces the missing dial click. The picture is a uimk2 bitmap tree. LVGL is not on this path.
+The glass shows the active zone. The knob sets volume. Touch replaces the missing dial click. The picture is a uimk2 shape set in an explicit zlist. LVGL is not on this path.
 
-The UI core is synchronous: encoder and touch interrupts, and the panel bus. The async core owns the tree, the arena, the sockets, the timers, and both frame buffers. The samples below are the design. Host code still has the earlier two-queue model until that design is built.
+Core A is UI only: touch, rotary count and pooled rotation clicks, and painting the panel. Everything else is Core B, including the player. There are two framebuffers. The samples below are the design. Host code still has the earlier two-queue model until that design is built.
+
+## Constants
+
+Panel size, ring length, the clock tick, and the scheduler periods are implementation constants. The loops use the names. A board file sets the values. Changing a value does not change the control flow.
+
+| Name | Meaning | Current Waveshare setting |
+|------|---------|---------------------------|
+| PANEL_W | framebuffer width in pixels | 360 |
+| PANEL_H | framebuffer height in pixels | 360 |
+| QUEUE_DEPTH | event-ring slots | 8 |
+| CLOCK_RES | one tick of the absolute clock | 1 ms |
+| CLOCKS_PER_SEC | ticks in one logical second | 1000 |
+| POLL_EVERY_START | poll gap armed on wake | 1 s |
+| POLL_EVERY_MAX | poll gap cap | 16 s |
+| SCREEN_OFF_EVERY | backlight-off delay | 30 s |
+| UPDATE_RENDER_EVERY | update_render_draw cadence while awake | 200 ms |
+| REDRAW_RETRY_EVERY | delay before a busy redraw is retried | 50 ms |
+| REDRAW_ATTEMPT_CAP | busy redraws before ERROR | 5 |
+| HIT_OPAQUE_PCT | min opacity percent for an opaque hit (0 = off) | 0 |
+
+`last_run`, `every`, and `expire_by` count CLOCK_RES ticks. Each framebuffer is PANEL_W by PANEL_H, PANEL_W * PANEL_H * 4 bytes. The dirty bitmap is PANEL_H bits, one per row, filled only by comparing curr to next.
 
 ## The glass
 
-Waveshare ESP32-S3 knob, 360 by 360, round bezel. No hardware push-click. Volumio is the player. A follow-view detent changes volume. A scrolling-view detent scrolls. Touch on the transport button toggles play and stop.
+Waveshare ESP32-S3 knob, round bezel. No hardware push-click. Volumio is the player. A follow-view detent changes volume. A scrolling-view detent scrolls. Touch on the transport button toggles play and stop.
 
 ```
           +----------------------+
@@ -25,7 +46,7 @@ Zone, the button, and the digits are fixed slots below static_top. Artist then a
 
 ## Types
 
-Index 0 is null. One parent per composited node. Pixels are straight-alpha RGBA, 8 bits per channel, R then G then B then A. A sample outside the box is a miss. (0,0,0,0) inside the box is a real color. Buffers are row-major: index (y * w + x) * 4.
+Index 0 is null. One parent per composited node. Each shape is a tagged union. Pixels are straight-alpha RGBA, 8 bits per channel, R then G then B then A. A sample outside the box is a miss. (0,0,0,0) inside the box is a real color. Buffers are row-major: index (y * w + x) * 4.
 
 | Kind | Role |
 |------|------|
@@ -35,7 +56,7 @@ Index 0 is null. One parent per composited node. Pixels are straight-alpha RGBA,
 | T2B | Children packed top to bottom, vsep between them, centered on x. |
 | Viewport | One child, origin (ox, oy). Pixel (vx, vy) reads the child at (vx + ox, vy + oy), clipped to the viewport. |
 | Glyph | Flash coverage. White RGB. Alpha is filled*255/64 from an 8 by 8 grid. Shared height H, baseline row B, tight ink width. |
-| Cache | Foreground composited over a background into a caller-owned buffer. A sample reads that buffer and does not descend. It rebakes only when this node is marked dirty. A child invalidate stops at the Cache. |
+| Cache | Reserved. A stored foreground over a background. Not used on the naive path. Kept in the kind set so scroll dirty and child invalidate have a place to stop later. |
 
 A combiner is {mask, op, value[4]}. mask bits are R=1, G=2, B=4, A=8. SET stores v. SCALE is c * v / 255, rounded. CURVE is c + (v - 128) * c * (255 - c) / 32768, with 0 and 255 fixed and v = 128 the identity. The combiner runs on a sample before it blends into its parent.
 
@@ -56,47 +77,95 @@ offset  size  field
               host sizeof(uimk2_bm) = 80
 ```
 
-Cache arm: uint16 bg, uint16 fg, pad, uint8 *px.
+Cache arm (reserved): uint16 bg, uint16 fg, pad, uint8 *px.
+
+A shape update, an event, and a scheduler each carry a function selector. See Function selector.
 
 ## How a frame is built
 
 ```
-root   = Layout 360 x 360, px = the buffer being drawn, paper = black
+root   = Layout PANEL_W x PANEL_H, px = next, paper = black
 button = RGBA, white, size = max(play, stop) + pad
-play   = Cache("play",  ink = black, paper = white)
-stop   = Cache("stop",  ink = black, paper = white)
-zone   = Cache("spinme", ink = yellow, paper = black)
-vol    = Cache(three widest digits, ink = white, paper = black)
-desire = Cache(three widest digits, ink = cyan, paper = clear)
+play   = line("play",  ink = black, paper = white)
+stop   = line("stop",  ink = black, paper = white)
+zone   = line("spinme", ink = yellow, paper = black)
+vol    = line(three widest digits, ink = white, paper = black)
+desire = line(three widest digits, ink = cyan, paper = clear)
 desire.combiner = SCALE alpha 128
 seal the arena                         # static_top
 
-artist, album = Cache lines at album_mark
+artist, album = lines at album_mark
 mark song
-title = Cache line at song_mark
+title = line at song_mark
 
 place, top to bottom:
-  button at ((360 - button.w) / 2, 8)
+  button at ((PANEL_W - button.w) / 2, 8)
   the shown label centered inside the button
   zone, artist, album, title, vol at x = 24
   desire at vol's box only while desire != vol
 ```
 
-A line is one arena block: a zero-terminated uint16 index list, aligned to 4, then a paper raster, then the stored picture. The Cache's foreground is an L2R of one Glyph per codepoint. hsep is 1. The L2R combiner tints the white glyphs. Repaint bakes foreground over paper into the store. A later sample of a clean Cache copies the store.
+A line is an L2R of one Glyph per codepoint, hsep 1, with paper behind. The L2R combiner tints the white glyphs. This pass paints those children live into next. A later Cache wrapper may store a baked line; that is not required now.
+
+## Update then render
+
+Shapes live in an explicit zlist. The zlist and exterior boxes are built once at startup. Update and render both follow that list. A function selector is a small int enum; dispatch is a switch. Invalidate is not an event.
+
+Prefer one large function: update, render into next, then ping Core A to draw (compare, swap when free, A.redraw()).
+
+The zlist is draw / hit order. Index 0 is closest. Draw most distant first (high index to 0). Hit-test closest first (0 upward). A shape stores children only; there is no parent index. Child-dirty is a recursive descent over children.
+
+### Update
+
+Update runs the per-shape selector and changes dynamic fields only. Layout position and exterior cannot change here.
 
 ```
-bake(cache):
-  if cache is not dirty: return
-  for each pixel in cache.damage:
-    acc = 0
-    if fg covers the pixel: blend fg in front
-    if acc.a < 255 and bg covers it: blend bg behind
-    if acc.a == 0: store transparent
-    else: store acc
-  clear dirty
+update(shape):
+  switch shape.update_selector:
+    fixed:     return
+    scroll:    step the viewport origin
+    clocktext: rewrite the string from the clock
+    ...
+  if details changed: shape.dirty = true
+
+mark_dirty_from_children(shape):
+  for c in shape.children:
+    mark_dirty_from_children(c)
+  if any child is dirty: shape.dirty = true
 ```
 
-Scroll of a viewport adds (dx, dy) to the origin, clamped to int16, and invalidates the whole viewport with geometry false. It does not rewind, does not rebuild the index list, and does not mark the line Cache dirty. The viewport reads stored line pixels. There is no memmove on this path.
+Child-dirty is useless on the naive path. It is the hook Cache will need later. Update does not write pixels.
+
+### Render
+
+Render walks the zlist most distant first into next. Baseline: redraw the whole backing from scratch. No Cache. No clear of next first. The base layer is a normal shape (static for now; later a JPEG downsampled to PANEL_W x PANEL_H). On the naive path that shape may be a full-buffer memcpy into next; closer shapes draw over it. Drawing a shape resets its dirty bit.
+
+```
+update_render_draw():
+  for shape in zlist: update(shape)
+  for root in roots: mark_dirty_from_children(root)
+  for i from len(zlist)-1 down to 0:
+    paint(zlist[i], zlist[i].pos, next)
+    zlist[i].dirty = false
+  if busy-by-core-A: schedule redraw retry; return
+  compare curr and next; set row dirty bits
+  if any bit set:
+    swap curr and next
+    busy-by-core-A = 1
+    ping A.redraw()
+
+paint(shape, offset, base):
+  box = shape.bounds translated by offset
+  overlap = intersection(box, base.bounds)
+  for each pixel in overlap:
+    write that pixel of shape into base
+```
+
+Scroll is an update arm. It does not rewind and does not rebuild an index list. The viewport origin moves; the next render shows the new pixels. There is no memmove of line pixels on this path.
+
+### Hit test
+
+Walk the zlist closest first (index 0 upward). Return the first shape with accept_hit set whose exterior contains the point. Caches will not accept hits. If HIT_OPAQUE_PCT is non-zero, also require the sample at that point to be at least that opaque. The base shape is the bottom layer; nothing sits below it.
 
 ## A 24-character title
 
@@ -113,7 +182,7 @@ N 7   a 6   m 9   e 6
 Ink is 125 pixels wide. Twenty-three separators add 23. The line is 148 by 13.
 
 ```
-arena block, one allocation, 15444 bytes
+measured host line with a Cache wrapper (later form), 15444 bytes
 
   0     50   uint16 index[25]   24 glyph headers, then 0
   50     2   pad to 4
@@ -121,102 +190,154 @@ arena block, one allocation, 15444 bytes
 7868   7696   Cache store       148 * 13 * 4
 ```
 
-One store row is 148 * 4 = 592 contiguous bytes. Glyph coverage stays in flash: width * 13 bytes per glyph, not RGBA. The bitmap table takes 27 headers for this line: the Cache, the paper RGBA, the L2R, and 24 Glyphs. Those headers are the table, not this block. On the host each header is 80 bytes.
-
-Marking the title dirty rebakes this store from the glyphs and the paper. A child invalidate does not. A scroll of a viewport over this Cache does not.
+One store row is 148 * 4 = 592 contiguous bytes. Glyph coverage stays in flash: width * 13 bytes per glyph, not RGBA. With a Cache wrapper the table takes 27 headers for this line: the Cache, the paper RGBA, the L2R, and 24 Glyphs. On the host each header is 80 bytes. This pass may paint the L2R live and skip the store; the layout above is the budget when Cache is turned on.
 
 ## Two cores
 
 ```
 encoder IRQ ----+
-touch IRQ ------+--> UI core ---- posts events ----> async queue
-                |         ^                              |
-                |         | done bit                     | compose next
-                |         | dirty-line bits              | sockets, timers
-                +---- panel bus <--- curr ---------------+
-                              next is the other buffer
+touch IRQ ------+--> Core A ---- posts event values ----> Core B ring
+                |         ^                                  |
+                |         | busy-by-core-A                   | schedulers
+                |         | dirty-line bits                  | update / render
+                +---- panel bus <--- curr                    | paint into next
+                                  next belongs only to B
 ```
 
-curr is the buffer sent to the panel. next is the buffer being drawn. Async is the only writer of next. The UI core is the only writer of the panel bus.
+Core A is UI only. It decodes a screen press and the whole rotary (count and pool rotation clicks) even when that starves the rest of its work. It posts press (x, y) and pooled rotation/volume messages to B. It does not know about play/pause, Toggle, or the player. Desired volume and the player write live on B. A runs `redraw`. It does not see next, does not composite, does not hit-test, and does not open a player socket.
+
+Two framebuffers. `curr` and `next` are their names. Swap exchanges the names. `curr` is the one installed for the panel. `next` is the one B is drawing, and the root layout's px. A does not see next. `busy-by-core-A` is set while A is pushing curr. While it is set, B draws into next, the other of the two. Swap waits until busy is clear.
+
+The dirty bitmap is PANEL_H bits, one per row. Paint does not set those bits. Redraw fills them by comparing curr to next.
+
+## Function selector
+
+An event, a scheduler, and a shape update each carry a function selector: a small int enum that indexes into a switch. That is the only meaning of dispatch here.
+
+## Event queue
+
+An event is a tagged union, stored by value in a ring of QUEUE_DEPTH slots. The selector is the enum. A push writes the struct at the tail and then advances the tail. A pop advances the head. Peek returns a pointer into the ring, or zero when the ring is empty. The handler runs on that pointer, and only then does pop run, so the slot stays owned for the whole handler.
 
 ```
 struct event {
-  const char *name;          /* debug */
-  void (*fn)(void *arg);
-  void *arg;                 /* a struct when the call needs more */
+  uint8_t selector;
+  union {
+    struct { int x, y; } press;
+    struct { int new_val; } volume;
+    struct { int attempt; } redraw;
+    /* screen_on, screen_off, render, clock, player_poll: selector only */
+  };
 };
+
+handle(event):
+  switch event.selector:
+    press:              hit-test (x, y) down the zlist
+    volume:             set desired from A's pooled clicks; B may command the player
+    toggle:             set local play/pause and command the player
+    screen_on:          backlight on, arm the poll and screen-off schedulers
+    screen_off:         backlight off, stop the poll scheduler
+    update_render_draw: update, render into next, ping A when free
+    redraw:             retry the compare/swap/ping if A was busy
+    clock:              store the logical second and the absolute tick
+    player_poll:        refresh player variables over the net
 ```
 
-A timer event, and pooled volume, are not enqueued when that function is already on the queue. Toggle always appends.
+Invalidate is not an event. Dirty lives on the shape; update and render consume it.
 
-The UI core posts only:
+A press is only (x, y). B hit-tests. A transport hit enqueues Toggle (and may enqueue Poll). Toggle sets the local play/pause mode used for drawing (paused shows the play label) and sends the toggle command to the player.
 
-- rotation: a decoded detent
-- touch: x, y
-- volume: the absolute level a follow-view detent is aiming at, pooled
+An event is the unit of locking: a mutation, or a read that has to be uniform, goes through the ring. There are no locks.
 
-Async hit-tests touch against the layout boxes of curr. The pixels are not the map. A hit on the transport button appends Toggle.
+A full ring logs ERROR and does not store the new event. Most events are missable and idempotent. Hiding poll latency behind the ring is later.
+
+Core A posts these, and each post wakes B's sleep:
+
+- screen press: x, y
+- volume / rotation: pooled clicks from A; B owns desired and the player write
+- screen on
+- screen off
+
+B hit-tests a press down the zlist closest first: first accept_hit shape whose exterior contains the point. A hit on the transport button enqueues Toggle (and possibly Poll). A does not know that mapping.
+
+## Schedulers
+
+B keeps a list of schedulers. Each pass of the loop runs every scheduler through its function selector, the same way events are handled. A scheduler does one thing: it pushes one event.
+
+Every scheduler has `last_run` and `every`, in CLOCK_RES ticks. When `last_run + every < now`, it is overdue and we run. It sets `last_run = now` before the push. Permanent schedulers stay on the list. A second, short list holds one-offs. That list is packed to the front and zero-terminated. Each one-off has `every` and `expire_by`. They are often equal. When one expires, the tail item moves into its slot and the tail is zeroed.
 
 ```
-async, after composing next:
-  set the dirty bits of the rows just written
-  if done == 0: return          # UI still owns the bus; keep drawing next
-  swap curr, next
-  done = 0
-  signal the UI core            # one trigger: a new buffer
-
-UI refresh, when the bus is free:
-  if done == 1: return          # nothing new to push
-  for each set bit in the dirty vector of curr:
-    push that row, clipped to the bezel
-  clear those bits
-  done = 1                      # async may flip again
+loop:
+  e = peek()
+  if e != 0:
+    handle(e)
+    pop()
+  delay = run schedulers
+  sleep until now + delay, interruptible by a post from A
 ```
 
-Async keeps filling the new next while done is 0. That overlaps compose with the push. The push waits until a flip has cleared done, so it never sends a half-drawn buffer. The dirty vector is 360 bits, 45 bytes, one bit per row.
+Permanent schedulers:
+
+- update_render_draw. Push the one large update / render / ping-A function. `every` is UPDATE_RENDER_EVERY. Zlist index 0 is closest.
+- clock. Push the clock event.
+- player poll. Push the poll event. `every` starts at POLL_EVERY_START on wake and doubles after each idle fire, up to POLL_EVERY_MAX. It is removed when the backlight goes off.
+
+The screen-off scheduler is a one-off armed at wake with `expire_by` SCREEN_OFF_EVERY past now. It pushes `screen_off`. A detent or a press is what arms it again. A poll result does not.
+
+If the ping step finds busy-by-core-A, arm a one-off that pushes `redraw` after REDRAW_RETRY_EVERY, attempt += 1, and log ERROR at REDRAW_ATTEMPT_CAP.
+
+```
+A.redraw():
+  for each set bit:
+    push that row of curr, clipped to the bezel
+  clear the bits
+  busy-by-core-A = 0
+```
+
+The bits are the actual pixel diff of the two finished framebuffers. A pushes curr only after that swap, so the rows on the bus are a finished framebuffer.
 
 ## Sample queue
 
-Start: screen off, queue empty, done = 1.
+Start: screen off, ring empty, busy clear.
 
-Wake, from a detent at t = 0. The UI core arms the timers and posts one Poll. Desired becomes 41. Volume is pooled.
-
-```
-queue: [ poll ]
-done:  1
-```
-
-Poll runs. The socket is slow. Before it returns, another detent aims at 42. Volume replaces nothing yet, because volume is not on the queue. The UI core posts it. A second detent to 43 replaces that entry in place. The poll stays in front.
+A detent at t = 0. A pools the rotation and posts screen-on plus a volume message for B. B sets desired to 41 and may command the player. That wakes B.
 
 ```
-queue: [ poll, volume(43) ]
-done:  1
+ring: [ screen_on, volume(41) ]
+busy: 0
 ```
 
-Poll returns the old snapshot, volume 40, title unchanged. Async writes the real digits "040" into next, sets those rows dirty, sees done, flips, clears done, signals. The UI core pushes those rows and sets done. Volume(43) then runs: desired digits "043" at alpha 128 over the real digits, dirty the same rows, flip, signal, push. The panel never waited on the socket.
-
-A second poll timer fire while a poll is already queued does not grow the queue.
+`screen_on` arms poll at POLL_EVERY_START and screen-off at SCREEN_OFF_EVERY. The volume message is pooled clicks from A; B sets desired to 41. Render then paints next from scratch and pushes redraw.
 
 ```
-queue: [ poll ]          # the armed timer sees poll already there and skips
+ring: [ redraw(0) ]
 ```
 
-Touch at (180, 20), on the button, and a second touch before the first is handled. Touch is not exclusive. Async hit-tests each point against curr's layout. Each hit appends Toggle.
+Busy is clear, so redraw diffs, swaps, sets busy, and pings A. A pushes the dirty rows and clears busy.
+
+The poll scheduler fires while a poll handler is still in the socket. A pools further clicks and messages B with 42, then 43. Two volume messages may sit behind the poll; the ring holds values, so 43 does not replace 42. B owns desired.
 
 ```
-queue: [ touch(180,20), touch(180,22), toggle, toggle ]
+ring: [ player_poll, volume(42), volume(43) ]
 ```
 
-Title longer than the viewport. The scroll timer is exclusive.
+The poll handler writes the real digits from the old snapshot. Each volume message updates desired on B. The last one leaves 43. The overlay is those digits at alpha 128 over the real digits. The panel push does not wait on the socket.
+
+A push into a ring that already holds QUEUE_DEPTH events logs ERROR and is dropped. The dropped event is the one that did not fit.
+
+A second poll tick pushes another poll only when the ring has a free slot. Two poll events are idempotent: the later snapshot wins.
+
+Touch at (180, 20) and a second touch before the first is handled:
 
 ```
-queue: [ scroll(title) ]
+ring: [ press(180,20), press(180,22) ]
 ```
 
-It steps the viewport by one pixel, or it re-lays the characters. Either way it marks the title Cache dirty, rebakes that store into next, sets the title's rows in the bitvector, and flips when done is set. A second scroll tick while scroll is queued does not enqueue another.
+Each press is hit-tested. A hit on the transport button enqueues Toggle (and possibly Poll). The presses are both kept. When paused, render shows the play label.
 
-Screen-on is 30s. When it fires, the backlight goes off and the poll timer is removed. A snapshot that arrives in the dark updates next and does not signal the panel. A detent or a touch is what arms the poll timer again, at a 1s gap. The gap doubles after each idle fire, up to 16s.
+The title is wider than its viewport. During update, the scroll arm steps the viewport origin and sets dirty. Render then draws the new origin. There is no scroll event on the ring.
+
+A snapshot that arrives while the backlight is off updates next and does not ping A. A detent or a press arms the poll scheduler again at POLL_EVERY_START.
 
 ## Out of scope
 
-Greenthreads. The queue is the channel. LVGL. A primitive-id scanline pass. Memmove of a scrolled line, and a y-major pixel order.
+Greenthreads. The ring is the channel. LVGL. A primitive-id scanline pass. Memmove of a scrolled line, and a y-major pixel order. Selective damage into next. Cache as an active compose path. Invalidate as an event. Recursive tree walk for update or render. Function pointers for dispatch.

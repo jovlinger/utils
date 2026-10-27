@@ -1,6 +1,10 @@
 /* uimk2 scheduler model: the work queue (network core) and the UI queue
  * (display core), plus the awake / poll-backoff clocks.
  *
+ * SUPERSEDED by the Core B event ring in uimk2_event.h (spinme/DESIGN.md
+ * "Event queue"). This two-queue model stays only because uimk2_follow still
+ * posts through it; it goes when follow moves onto the ring.
+ *
  * Host-testable, no FreeRTOS. The firmware wraps these in its own locking.
  *
  * Work queue (depth 8): Poll, SetVolume(absolute), Toggle. A new SetVolume or
