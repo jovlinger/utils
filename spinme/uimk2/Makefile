@@ -9,9 +9,10 @@ BUILD := build
 
 TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line \
 	$(BUILD)/test_event $(BUILD)/test_sched $(BUILD)/test_measure \
-	$(BUILD)/test_follow $(BUILD)/test_zlist $(BUILD)/test_host
+	$(BUILD)/test_follow $(BUILD)/test_zlist $(BUILD)/test_host \
+	$(BUILD)/test_integ
 
-.PHONY: test test-glyphs clean bench bench-ui
+.PHONY: test test-glyphs clean bench bench-ui integ-bench
 
 # Timed host UI binary. Does not inherit WARN: no -fsanitize, and -O2
 # rather than the test binary's -O1, so us/op is a fair host number.
@@ -73,11 +74,28 @@ $(BUILD)/test_host: $(HOST_SRC) $(HOST_HDR) | $(BUILD)
 BENCH_SRC := bench_ui.c uimk2_host.c uimk2_zlist.c uimk2_event.c
 BENCH_HDR := uimk2_host.h uimk2_zlist.h uimk2_event.h uimk2_config.h
 
-$(BUILD)/bench_ui: $(BENCH_SRC) $(BENCH_HDR) | $(BUILD)
+$(BUILD)/bench_ui: $(BENCH_SRC) $(BENCH_HDR) bench_time.h | $(BUILD)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRC) -lm
 
 bench bench-ui: $(BUILD)/bench_ui
 	./$(BUILD)/bench_ui
+
+# Timed Core B integration sequence. No -fsanitize (BENCH_CFLAGS).
+# From this directory: make integ-bench
+# N=100, sample stdev, same clock as bench-ui. Writes build/integ_bench.txt.
+INTEG_SRC := integ_script.c uimk2_host.c uimk2_zlist.c uimk2_event.c
+INTEG_HDR := integ_script.h uimk2_host.h uimk2_zlist.h uimk2_event.h \
+	uimk2_config.h
+
+$(BUILD)/test_integ: test_integ.c $(INTEG_SRC) $(INTEG_HDR) | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_integ.c $(INTEG_SRC)
+
+$(BUILD)/integ_bench: integ_bench.c $(INTEG_SRC) $(INTEG_HDR) bench_time.h \
+		| $(BUILD)
+	$(CC) $(BENCH_CFLAGS) -o $@ integ_bench.c $(INTEG_SRC) -lm
+
+integ-bench: $(BUILD)/integ_bench
+	./$(BUILD)/integ_bench
 
 $(BUILD):
 	mkdir -p $@

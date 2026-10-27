@@ -17,22 +17,12 @@
  *
  * Run from spinme/uimk2 so the optional report lands in build/bench_ui.txt.
  */
-#if !defined(__APPLE__)
-#define _POSIX_C_SOURCE 199309L
-#endif
-
+#include "bench_time.h"
 #include "uimk2_host.h"
 
-#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-
-#if defined(__APPLE__)
-#include <mach/mach_time.h>
-#else
-#include <time.h>
-#endif
 
 #define BENCH_N 100
 #define BENCH_WARMUP 8
@@ -63,39 +53,6 @@ static uimk2_host host;
 static uimk2_ring ring;
 static volatile uint32_t bench_sink;
 static FILE *report;
-
-#if defined(__APPLE__)
-static double ns_per_tick;
-static const char *CLOCK_NAME = "mach_absolute_time";
-
-static void clock_init(void) {
-    mach_timebase_info_data_t tb;
-    mach_timebase_info(&tb);
-    ns_per_tick = (double)tb.numer / (double)tb.denom;
-}
-
-static uint64_t mono_ticks(void) {
-    return mach_absolute_time();
-}
-
-static double ticks_to_us(uint64_t dt) {
-    return (double)dt * ns_per_tick / 1000.0;
-}
-#else
-static const char *CLOCK_NAME = "CLOCK_MONOTONIC";
-
-static void clock_init(void) {}
-
-static uint64_t mono_ticks(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-
-static double ticks_to_us(uint64_t dt) {
-    return (double)dt / 1000.0;
-}
-#endif
 
 static const bench_scene SCENES[] = {
     {"short_title_noscroll", "Song", 0, 0, 0, "play", 0, 40, 40, 0, 0},
@@ -242,37 +199,6 @@ static void prep_host(const bench_scene *sc) {
     }
 }
 
-typedef struct {
-    double mean_us;
-    double stdev_us;
-    double min_us;
-    double max_us;
-} bench_stats;
-
-/* Sample standard deviation: divisor is n-1. */
-static void stats_of(const double *us, int n, bench_stats *s) {
-    int i;
-    double sum = 0.0;
-    double acc = 0.0;
-    s->min_us = us[0];
-    s->max_us = us[0];
-    for (i = 0; i < n; i++) {
-        sum += us[i];
-        if (us[i] < s->min_us) {
-            s->min_us = us[i];
-        }
-        if (us[i] > s->max_us) {
-            s->max_us = us[i];
-        }
-    }
-    s->mean_us = sum / (double)n;
-    for (i = 0; i < n; i++) {
-        double diff = us[i] - s->mean_us;
-        acc += diff * diff;
-    }
-    s->stdev_us = sqrt(acc / (double)(n - 1));
-}
-
 static void print_row(const char *scenario, const char *op, const bench_stats *s) {
     emit("%-22s %-20s %5d %10.2f %10.2f %10.2f %10.2f\n", scenario, op, BENCH_N,
          s->mean_us, s->stdev_us, s->min_us, s->max_us);
@@ -384,7 +310,7 @@ int main(void) {
     emit("uimk2 host UI bench\n");
     emit("N=%d per-op warmup=%d discarded global_warmup=%d discarded "
          "stdev=sample(n-1) clock=%s cflags=-O2 sanitize=off\n",
-         BENCH_N, BENCH_WARMUP, GLOBAL_WARMUP, CLOCK_NAME);
+         BENCH_N, BENCH_WARMUP, GLOBAL_WARMUP, clock_name());
     emit("mean_us is us/op. phase is title ox restored before each sample; "
          "long titles use step_x=2.\n");
     emit("%-22s %-20s %5s %10s %10s %10s %10s\n", "scenario", "op", "n",
