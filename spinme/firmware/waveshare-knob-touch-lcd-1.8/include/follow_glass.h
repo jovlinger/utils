@@ -4,8 +4,8 @@
  * title, and three volume digits. Desired digits are pre-blended at alpha
  * 128 into their own shape so the zlist replace-blit still shows the overlay.
  *
- * Player HTTP is not here. The strings and the polled volume are stand-ins
- * until a poll handler writes them.
+ * follow_glass_set_track replaces the boot stand-in artist, album, and
+ * title. The caller passes the polled volume and desired overlay.
  */
 
 #include <stdbool.h>
@@ -31,6 +31,10 @@ enum {
 
 bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
                         uimk2_ring *ring, uimk2_zlist_ping_fn ping, void *ctx);
+
+/* Copy artist, album, and title. Null becomes empty. Raster paints them. */
+void follow_glass_set_track(const char *artist, const char *album,
+                            const char *title);
 
 /* Rewrite the button, the polled digits, and the desired overlay.
  * desired_on is false when the overlay should match the polled digits. */

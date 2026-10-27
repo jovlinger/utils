@@ -19,11 +19,11 @@ static const int kLineCap = 312;
 static const int kItemCap = 96;
 static const int kDesireAlpha = 128;
 
-/* TODO: player HTTP should replace these stand-ins from a poll snapshot. */
-static const char *kZone = "spinme";
-static const char *kArtist = "Artist";
-static const char *kAlbum = "Album";
-static const char *kTitle = "The Long Track Name.flac";
+/* Boot stand-ins. player HTTP replaces artist, album, and title. */
+static char gZone[32] = "spinme";
+static char gArtist[96] = "Artist";
+static char gAlbum[96] = "Album";
+static char gTitle[96] = "The Long Track Name.flac";
 
 static uint8_t *gPx[FOLLOW_COUNT];
 static int gW[FOLLOW_COUNT];
@@ -150,6 +150,29 @@ static void measure(const char *text, int *w, int *h) {
   *h = th;
 }
 
+static void copy_cap(char *dst, size_t dst_len, const char *src) {
+  size_t i = 0;
+  if (dst_len == 0) {
+    return;
+  }
+  if (src == nullptr) {
+    dst[0] = '\0';
+    return;
+  }
+  while (src[i] != '\0' && i + 1 < dst_len) {
+    dst[i] = src[i];
+    i++;
+  }
+  dst[i] = '\0';
+}
+
+void follow_glass_set_track(const char *artist, const char *album,
+                            const char *title) {
+  copy_cap(gArtist, sizeof gArtist, artist);
+  copy_cap(gAlbum, sizeof gAlbum, album);
+  copy_cap(gTitle, sizeof gTitle, title);
+}
+
 static void clear_desc(uimk2_shape_desc *d) { memset(d, 0, sizeof *d); }
 
 static void place_line(uimk2_shape_desc *d, int index, int x, int y, int w,
@@ -174,7 +197,8 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   int bh;
   int y;
   int i;
-  const char *lines[5];
+  int text_w = 0;
+  int text_h = 0;
   static_assert(FOLLOW_ZONE - 1 == FOLLOW_ARTIST, "line order");
   static_assert(FOLLOW_ARTIST - 1 == FOLLOW_ALBUM, "line order");
   static_assert(FOLLOW_ALBUM - 1 == FOLLOW_TITLE, "line order");
@@ -191,27 +215,21 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   }
   gW[FOLLOW_TRANSPORT] = bw;
   gH[FOLLOW_TRANSPORT] = bh;
-  lines[0] = kZone;
-  lines[1] = kArtist;
-  lines[2] = kAlbum;
-  lines[3] = kTitle;
-  lines[4] = "888";
-  for (i = 0; i < 5; ++i) {
-    int w = 0;
-    int h = 0;
-    measure(lines[i], &w, &h);
-    /* zone, artist, album, title, then volume/desire share "888". */
-    if (i == 4) {
-      gW[FOLLOW_VOLUME] = w;
-      gH[FOLLOW_VOLUME] = h;
-      gW[FOLLOW_DESIRE] = w;
-      gH[FOLLOW_DESIRE] = h;
-    } else {
-      const int idx = FOLLOW_ZONE - i;
-      gW[idx] = w;
-      gH[idx] = h;
-    }
-  }
+  /* Wide enough for a polled title. The boot stand-in is shorter. */
+  measure("Mg", &text_w, &text_h);
+  gW[FOLLOW_ZONE] = kLineCap;
+  gH[FOLLOW_ZONE] = text_h;
+  gW[FOLLOW_ARTIST] = kLineCap;
+  gH[FOLLOW_ARTIST] = text_h;
+  gW[FOLLOW_ALBUM] = kLineCap;
+  gH[FOLLOW_ALBUM] = text_h;
+  gW[FOLLOW_TITLE] = kLineCap;
+  gH[FOLLOW_TITLE] = text_h;
+  measure("888", &text_w, &text_h);
+  gW[FOLLOW_VOLUME] = text_w;
+  gH[FOLLOW_VOLUME] = text_h;
+  gW[FOLLOW_DESIRE] = text_w;
+  gH[FOLLOW_DESIRE] = text_h;
   for (i = 0; i < FOLLOW_COUNT; ++i) {
     gPx[i] = nullptr;
   }
@@ -305,16 +323,16 @@ void follow_glass_raster(int polled, int desired, bool playing,
     return;
   }
   fill_px(gPx[FOLLOW_ZONE], gW[FOLLOW_ZONE], gH[FOLLOW_ZONE], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_ZONE], gW[FOLLOW_ZONE], gH[FOLLOW_ZONE], 0, 0, kZone, 255,
+  blit_line(gPx[FOLLOW_ZONE], gW[FOLLOW_ZONE], gH[FOLLOW_ZONE], 0, 0, gZone, 255,
             255, 0, 255);
   fill_px(gPx[FOLLOW_ARTIST], gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST], 0, 0, 0, 255);
   blit_line(gPx[FOLLOW_ARTIST], gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST], 0, 0,
-            kArtist, 255, 255, 255, 255);
+            gArtist, 255, 255, 255, 255);
   fill_px(gPx[FOLLOW_ALBUM], gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_ALBUM], gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM], 0, 0, kAlbum,
+  blit_line(gPx[FOLLOW_ALBUM], gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM], 0, 0, gAlbum,
             255, 255, 255, 255);
   fill_px(gPx[FOLLOW_TITLE], gW[FOLLOW_TITLE], gH[FOLLOW_TITLE], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_TITLE], gW[FOLLOW_TITLE], gH[FOLLOW_TITLE], 0, 0, kTitle,
+  blit_line(gPx[FOLLOW_TITLE], gW[FOLLOW_TITLE], gH[FOLLOW_TITLE], 0, 0, gTitle,
             255, 255, 255, 255);
 
   paint_digits(gPx[FOLLOW_VOLUME], gW[FOLLOW_VOLUME], gH[FOLLOW_VOLUME], polled,

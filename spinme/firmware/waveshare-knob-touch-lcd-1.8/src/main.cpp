@@ -14,6 +14,7 @@
 #include "follow_glass.h"
 #include "panel_init.h"
 #include "panel_io.h"
+#include "player_http.h"
 
 extern "C" {
 #include "uimk2_host.h"
@@ -38,7 +39,9 @@ static int gPolled = kBootVolume;
 static int gDesiredA = kBootVolume;
 static bool gDisplayOk = false;
 static bool gBuilt = false;
-static bool gPollNoted = false;
+/* False until a knob volume event commands the player. Polls before that
+ * copy the player volume onto desired so the boot stand-in does not stick. */
+static bool gVolumeSent = false;
 
 static volatile int gRotation = 0;
 static volatile uint8_t gEncLast = 0;
@@ -119,6 +122,81 @@ static void notify_b(void) {
   }
 }
 
+static void paint_follow(void) {
+  int desired;
+  bool playing;
+  int polled;
+  xSemaphoreTake(gMu, portMAX_DELAY);
+  desired = gHost.desired;
+  playing = gHost.playing;
+  polled = gPolled;
+  xSemaphoreGive(gMu);
+  follow_glass_raster(polled, desired, playing, desired != polled);
+}
+
+/* HTTP stays off gMu so Core A can keep posting. */
+static void apply_poll(void) {
+  PlayerSnapshot snap;
+  int shown;
+  if (!player_http_configured()) {
+    Serial.println("player poll skipped: WIFI_SSID empty");
+    return;
+  }
+  if (!player_http_poll(&snap)) {
+    Serial.println("player poll fail");
+    return;
+  }
+  follow_glass_set_track(snap.artist, snap.album, snap.title);
+  xSemaphoreTake(gMu, portMAX_DELAY);
+  if (snap.volume >= 0) {
+    gPolled = snap.volume;
+    if (!gVolumeSent && gDesiredA == gHost.desired) {
+      gHost.desired = gPolled;
+      gDesiredA = gPolled;
+    }
+  }
+  if (snap.have_status) {
+    gHost.playing = snap.playing;
+  }
+  shown = gPolled;
+  xSemaphoreGive(gMu);
+  paint_follow();
+  Serial.printf("player poll %s vol %d\n",
+                snap.status[0] != '\0' ? snap.status : "?", shown);
+}
+
+static void apply_toggle(void) {
+  if (!player_http_configured()) {
+    Serial.println("player toggle skipped: WIFI_SSID empty");
+    return;
+  }
+  if (!player_http_toggle()) {
+    Serial.println("player toggle fail");
+    return;
+  }
+  paint_follow();
+  Serial.println("player toggle");
+}
+
+static void apply_volume(int before, int after, bool more_volume) {
+  if (after == before) {
+    return;
+  }
+  gVolumeSent = true;
+  if (more_volume) {
+    return;
+  }
+  if (!player_http_configured()) {
+    Serial.printf("player volume skipped: WIFI_SSID empty (%d)\n", after);
+    return;
+  }
+  if (!player_http_set_volume(after)) {
+    Serial.printf("player volume fail %d\n", after);
+    return;
+  }
+  Serial.printf("player volume %d\n", after);
+}
+
 /* Caller holds gMu. A dark tap or detent posts screen_on and lights the pin. */
 static void wake_locked(void) {
   if (gBacklight) {
@@ -169,6 +247,7 @@ static void core_a_push(void) {
 static void core_b_task(void *arg) {
   (void)arg;
   Serial.println("core B up");
+  player_http_boot();
   for (;;) {
     uint32_t now = millis();
     uint32_t wait;
@@ -178,33 +257,43 @@ static void core_b_task(void *arg) {
     for (;;) {
       bool have;
       bool stepped;
-      uint32_t polls;
-      int desired;
-      bool playing;
+      uint8_t sel = (uint8_t)UIMK2_EV_NONE;
+      int desired_before = 0;
+      int desired_after = 0;
+      bool more_volume = false;
       xSemaphoreTake(gMu, portMAX_DELAY);
       have = uimk2_ring_peek(&gRing) != nullptr;
       xSemaphoreGive(gMu);
       if (!have) {
         break;
       }
+      paint_follow();
       xSemaphoreTake(gMu, portMAX_DELAY);
-      desired = gHost.desired;
-      playing = gHost.playing;
-      xSemaphoreGive(gMu);
-      follow_glass_raster(gPolled, desired, playing, desired != gPolled);
-      xSemaphoreTake(gMu, portMAX_DELAY);
-      stepped = uimk2_host_step(&gHost, now);
-      polls = gHost.polls;
-      gBacklight = gHost.backlight;
-      xSemaphoreGive(gMu);
-      if (!gPollNoted && polls > 0) {
-        gPollNoted = true;
-        /* TODO: GET the player, write artist/album/title/volume, send toggle
-         * and the desired volume. The ring already delivers player_poll. */
-        Serial.println("TODO player HTTP poll");
+      {
+        const uimk2_event *ev = uimk2_ring_peek(&gRing);
+        if (ev != nullptr) {
+          sel = ev->selector;
+        }
+        desired_before = gHost.desired;
+        stepped = uimk2_host_step(&gHost, now);
+        desired_after = gHost.desired;
+        gBacklight = gHost.backlight;
+        if (sel == (uint8_t)UIMK2_EV_VOLUME) {
+          const uimk2_event *next = uimk2_ring_peek(&gRing);
+          more_volume =
+              next != nullptr && next->selector == (uint8_t)UIMK2_EV_VOLUME;
+        }
       }
+      xSemaphoreGive(gMu);
       if (!stepped) {
         break;
+      }
+      if (sel == (uint8_t)UIMK2_EV_PLAYER_POLL) {
+        apply_poll();
+      } else if (sel == (uint8_t)UIMK2_EV_TOGGLE) {
+        apply_toggle();
+      } else if (sel == (uint8_t)UIMK2_EV_VOLUME) {
+        apply_volume(desired_before, desired_after, more_volume);
       }
     }
     if (wait == 0u) {
@@ -295,18 +384,20 @@ static void take_rotation(void) {
   const int rot = gRotation;
   const int delta = rot - gTakenRot;
   bool woke = false;
+  int shown = 0;
   gTakenRot = rot;
   if (delta == 0 || gMu == nullptr) {
     return;
   }
-  gDesiredA = clamp_volume(gDesiredA + delta);
   xSemaphoreTake(gMu, portMAX_DELAY);
+  gDesiredA = clamp_volume(gDesiredA + delta);
+  shown = gDesiredA;
   woke = !gBacklight;
   wake_locked();
-  (void)uimk2_post_volume(&gRing, gDesiredA);
+  (void)uimk2_post_volume(&gRing, shown);
   xSemaphoreGive(gMu);
   notify_b();
-  Serial.printf("vol %d%s\n", gDesiredA, woke ? " wake" : "");
+  Serial.printf("vol %d%s\n", shown, woke ? " wake" : "");
 }
 
 static void take_touch(void) {
@@ -353,6 +444,7 @@ static void service_query(void) {
   while (Serial.available() > 0) {
     const int c = Serial.read();
     int desired = 0;
+    int polled = 0;
     int polls = 0;
     int playing = 0;
     int lit = 0;
@@ -374,13 +466,14 @@ static void service_query(void) {
     }
     xSemaphoreTake(gMu, portMAX_DELAY);
     desired = gHost.desired;
+    polled = gPolled;
     polls = (int)gHost.polls;
     playing = gHost.playing ? 1 : 0;
     lit = gBacklight ? 1 : 0;
     xSemaphoreGive(gMu);
     Serial.printf("query backlight=%d playing=%d desired=%d polled=%d polls=%d "
                   "busy=%d\n",
-                  lit, playing, desired, gPolled, polls, gZ.busy ? 1 : 0);
+                  lit, playing, desired, polled, polls, gZ.busy ? 1 : 0);
   }
 }
 
@@ -437,7 +530,8 @@ void setup() {
   touch_init();
   encoder_begin();
   gUiTask = xTaskGetCurrentTaskHandle();
-  xTaskCreatePinnedToCore(core_b_task, "uimk2", 24576, nullptr, 1, &gWorker, 0);
+  /* HTTPClient on Core B needs more than the paint path. */
+  xTaskCreatePinnedToCore(core_b_task, "uimk2", 32768, nullptr, 1, &gWorker, 0);
 }
 
 void loop() {
