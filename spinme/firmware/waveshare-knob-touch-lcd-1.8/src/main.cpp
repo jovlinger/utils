@@ -516,6 +516,7 @@ void setup() {
     /* Before the worker starts, so the probe is not fighting Core B for
      * PSRAM. Frames are zeroed again for the follow view. */
     (void)bench_probe_short_title(gCurr, gNext);
+    (void)bench_probe_blit(gCurr, gNext);
     memset(gCurr, 0, (size_t)UIMK2_FRAME_BYTES);
     memset(gNext, 0, (size_t)UIMK2_FRAME_BYTES);
     gBuilt = follow_glass_build(&gZ, gCurr, gNext, &gRing, ping_core_a, nullptr);

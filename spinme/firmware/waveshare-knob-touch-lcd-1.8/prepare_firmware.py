@@ -108,7 +108,8 @@ def add_uimk2(env, firmware_dir: Path) -> None:
     env.BuildSources(
         env.subst("$BUILD_DIR/uimk2"),
         str(uimk2),
-        src_filter="+<uimk2_event.c> +<uimk2_host.c> +<uimk2_zlist.c>",
+        src_filter="+<uimk2_event.c> +<uimk2_host.c> +<uimk2_zlist.c> "
+        "+<uimk2_blit.c> +<uimk2_blit_pie.S>",
     )
 
 

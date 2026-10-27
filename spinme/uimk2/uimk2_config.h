@@ -52,4 +52,13 @@
 #define HIT_OPAQUE_PCT 0u /* min opacity percent for an opaque hit, 0 = off */
 #endif
 
+/* Default blit tile. Override before including uimk2_blit.h. Working set
+ * is 2*TILE_W*TILE_H*4 bytes (src+dst); keep under the S3 D-cache. */
+#ifndef TILE_W
+#define TILE_W 32u
+#endif
+#ifndef TILE_H
+#define TILE_H 32u
+#endif
+
 #endif /* UIMK2_CONFIG_H */

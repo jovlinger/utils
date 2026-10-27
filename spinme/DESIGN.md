@@ -341,3 +341,10 @@ A snapshot that arrives while the backlight is off updates next and does not pin
 ## Out of scope
 
 Greenthreads. The ring is the channel. LVGL. A primitive-id scanline pass. Memmove of a scrolled line, and a y-major pixel order. Selective damage into next. Cache as an active compose path. Invalidate as an event. Recursive tree walk for update or render. Function pointers for dispatch.
+
+## Parked (not owed)
+
+Further SWAR/PIE ideas on todo:c029d7c6. On the blit-tile-alpha branch, pack66
+(6+6+6 + 2-bit A) is in use for L2R Cache bakes: when A2==0 the low 24 bits are
+a word skip to the next non-transparent pixel; bake_cache encodes those runs
+per row after compositing.

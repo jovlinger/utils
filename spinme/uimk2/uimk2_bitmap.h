@@ -87,7 +87,9 @@ typedef struct {
         struct {
             uint16_t bg; /* backdrop; 0 = nothing behind fg */
             uint16_t fg; /* content composited over bg; 0 = none */
-            uint8_t *px; /* stored w * h * 4; caller-owned, never allocated */
+            /* stored w * h * 4; caller-owned. When fg is L2R, bake writes
+             * pack66 with transparent skip runs (see uimk2_blit.h). */
+            uint8_t *px;
         } cache;
     } u;
 } uimk2_bm;
