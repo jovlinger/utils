@@ -9,7 +9,7 @@ BUILD := build
 
 TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line \
 	$(BUILD)/test_event $(BUILD)/test_sched $(BUILD)/test_measure \
-	$(BUILD)/test_follow
+	$(BUILD)/test_follow $(BUILD)/test_zlist
 
 .PHONY: test test-glyphs clean
 
@@ -54,6 +54,10 @@ FOLLOW_SRC := test_follow.c uimk2_follow.c uimk2_line.c uimk2_bitmap.c \
 $(BUILD)/test_follow: $(FOLLOW_SRC) uimk2_follow.h $(LINE_HDR) uimk2_sched.h \
 		$(BUILD)/glyphs_12.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -I. -o $@ $(FOLLOW_SRC) $(BUILD)/glyphs_12.c
+
+$(BUILD)/test_zlist: test_zlist.c uimk2_zlist.c uimk2_zlist.h \
+		uimk2_event.c uimk2_event.h uimk2_config.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_zlist.c uimk2_zlist.c uimk2_event.c
 
 $(BUILD):
 	mkdir -p $@
