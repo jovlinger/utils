@@ -11,7 +11,12 @@ TESTS := $(BUILD)/test_arena $(BUILD)/test_bitmap $(BUILD)/test_line \
 	$(BUILD)/test_event $(BUILD)/test_sched $(BUILD)/test_measure \
 	$(BUILD)/test_follow $(BUILD)/test_zlist $(BUILD)/test_host
 
-.PHONY: test test-glyphs clean
+.PHONY: test test-glyphs clean bench bench-ui
+
+# Timed host UI binary. Does not inherit WARN: no -fsanitize, and -O2
+# rather than the test binary's -O1, so us/op is a fair host number.
+# CFLAGS is intentionally omitted so a sanitize flag cannot leak in.
+BENCH_CFLAGS := -std=c99 -pedantic -Wall -Wextra -Werror -O2
 
 test: $(TESTS) test-glyphs
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -64,6 +69,15 @@ HOST_HDR := uimk2_host.h uimk2_zlist.h uimk2_event.h uimk2_config.h
 
 $(BUILD)/test_host: $(HOST_SRC) $(HOST_HDR) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(HOST_SRC)
+
+BENCH_SRC := bench_ui.c uimk2_host.c uimk2_zlist.c uimk2_event.c
+BENCH_HDR := uimk2_host.h uimk2_zlist.h uimk2_event.h uimk2_config.h
+
+$(BUILD)/bench_ui: $(BENCH_SRC) $(BENCH_HDR) | $(BUILD)
+	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRC) -lm
+
+bench bench-ui: $(BUILD)/bench_ui
+	./$(BUILD)/bench_ui
 
 $(BUILD):
 	mkdir -p $@
