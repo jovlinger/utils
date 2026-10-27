@@ -14,3 +14,8 @@ pio run -e waveshare_knob_18_s3 -t upload
 
 `pio` is `spinme/.venv-tools/bin/pio` from the device-ui worktree when this
 checkout has no venv. Do not upload any env other than `waveshare_knob_18_s3`.
+
+Boot prints one line for the host `short_title_noscroll` /
+`update_render_draw` path (`esp_timer_get_time`, N=100). On 2026-10-27 that
+mean was 17954.36 us against a Mac mean of 20.23 us (slowdown 887.51). See
+`spinme/uimk2/BENCH.md`.

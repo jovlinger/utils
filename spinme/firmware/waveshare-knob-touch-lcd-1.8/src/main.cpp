@@ -8,6 +8,7 @@
 #include <freertos/task.h>
 #include <string.h>
 
+#include "bench_probe.h"
 #include "board_pins.h"
 #include "encoder_decode.h"
 #include "follow_glass.h"
@@ -419,6 +420,11 @@ void setup() {
   uimk2_host_init(&gHost, &gRing, millis());
   gHost.desired = kBootVolume;
   if (alloc_frames()) {
+    /* Before the worker starts, so the probe is not fighting Core B for
+     * PSRAM. Frames are zeroed again for the follow view. */
+    (void)bench_probe_short_title(gCurr, gNext);
+    memset(gCurr, 0, (size_t)UIMK2_FRAME_BYTES);
+    memset(gNext, 0, (size_t)UIMK2_FRAME_BYTES);
     gBuilt = follow_glass_build(&gZ, gCurr, gNext, &gRing, ping_core_a, nullptr);
   }
   Serial.printf("zlist %s\n", gBuilt ? "ok" : "fail");
