@@ -180,6 +180,10 @@ static void handle(uimk2_host *h, const uimk2_event *e) {
     case UIMK2_EV_UPDATE_RENDER_DRAW:
         h->renders++;
         if (h->zlist != NULL) {
+            /* Global millis into the zlist so SCROLL can read it. */
+            h->clock_tick = h->now;
+            h->clock_sec = (int32_t)(h->now / CLOCKS_PER_SEC_TICKS);
+            uimk2_zlist_set_clock(h->zlist, h->clock_sec, h->clock_tick);
             h->zlist->hold_redraw = true;
             uimk2_zlist_update_render_draw(h->zlist);
             arm_held_redraw(h);

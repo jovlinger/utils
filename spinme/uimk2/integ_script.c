@@ -163,8 +163,14 @@ static int step_one(void) {
         record_cmd(&sim.player, buf);
     } else if (sel == (uint8_t)UIMK2_EV_UPDATE_RENDER_DRAW) {
         sim.urds++;
-        if (sim.host.clock_tick == POLL_EVERY_START + 1u && !sim.saw_clock_line) {
-            CHECK(strcmp(sim.z.shape[sim.clock_i].text, "1:1001") == 0);
+        /* CLOCKTEXT is 24h HH:MM:SS from clock_tick (millis). */
+        if (!sim.saw_clock_line && sim.host.clock_tick >= 1000u) {
+            char want[16];
+            uint32_t s = (sim.host.clock_tick / 1000u) % 86400u;
+            snprintf(want, sizeof want, "%02u:%02u:%02u",
+                     (unsigned)(s / 3600u), (unsigned)((s / 60u) % 60u),
+                     (unsigned)(s % 60u));
+            CHECK(strcmp(sim.z.shape[sim.clock_i].text, want) == 0);
             sim.saw_clock_line = 1;
         }
     } else if (sel == (uint8_t)UIMK2_EV_SCREEN_OFF) {
@@ -202,7 +208,8 @@ static void build_scene(void) {
     d[0] = box(100, 8, 160, 32, 1, 1);
     d[1] = box(16, 36, 300, 28, 0, 0);
     d[1].update_selector = (uint8_t)UIMK2_UPD_SCROLL;
-    d[1].step_x = 2;
+    d[1].pw = 300; /* ox = (clock_tick/SCROLL_MS_PER_OX) % pw */
+    d[1].ph = 28;
     d[2] = box(16, 300, 120, 20, 0, 0);
     d[2].update_selector = (uint8_t)UIMK2_UPD_CLOCKTEXT;
     d[3] = box(0, 0, (int)PANEL_W, (int)PANEL_H, 0, 0);
@@ -229,7 +236,8 @@ static void wake_asserts(void) {
     CHECK(sim.host.renders == 1u);
     CHECK(sim.urds == 1u);
     CHECK(sim.pings == 1);
-    CHECK(sim.z.shape[sim.title_i].ox == 2);
+    /* First URD at now=0 => ox = (0/100) % 300. */
+    CHECK(sim.z.shape[sim.title_i].ox == 0);
     CHECK(sim.host.perm[UIMK2_HOST_PERM_POLL].every == POLL_EVERY_START);
     CHECK(sim.host.perm[UIMK2_HOST_PERM_POLL].last_run == 0u);
     CHECK(once_n(&sim.host) == 1u);
@@ -243,41 +251,44 @@ static void wake_asserts(void) {
     CHECK(sim.ring.dropped == 0u);
 }
 
-/* Poll is already in the ring. Volumes sit behind it. Then a transport
- * press and a miss, still at this now. */
+/* Poll is in the ring (possibly behind URD/CLOCK). Volumes sit behind it.
+ * Then a transport press and a miss, still at this now. */
 static void behind_poll_and_presses(void) {
     uint32_t off_last;
     uint32_t toggles;
-    CHECK(sim.now == POLL_EVERY_START + 1u);
-    CHECK(uimk2_ring_len(&sim.ring) == 2u);
-    CHECK(sel_at(&sim.ring, 0) == UIMK2_EV_CLOCK);
-    CHECK(sel_at(&sim.ring, 1) == UIMK2_EV_PLAYER_POLL);
+    int guard = 0;
+    CHECK(sim.now >= POLL_EVERY_START + 1u);
+    CHECK(ring_has(&sim.ring, UIMK2_EV_PLAYER_POLL));
+    while (sel_at(&sim.ring, 0) != UIMK2_EV_PLAYER_POLL) {
+        CHECK(step_one());
+        if (++guard > 32) {
+            CHECK(0);
+            return;
+        }
+    }
     CHECK(uimk2_post_volume(&sim.ring, 42));
     CHECK(uimk2_post_volume(&sim.ring, 43));
-    CHECK(uimk2_ring_len(&sim.ring) == 4u);
+    CHECK(sel_at(&sim.ring, 0) == UIMK2_EV_PLAYER_POLL);
+    CHECK(sel_at(&sim.ring, 1) == UIMK2_EV_VOLUME);
     CHECK(sel_at(&sim.ring, 2) == UIMK2_EV_VOLUME);
-    CHECK(sel_at(&sim.ring, 3) == UIMK2_EV_VOLUME);
-    CHECK(vol_at(&sim.ring, 2) == 42);
-    CHECK(vol_at(&sim.ring, 3) == 43);
+    CHECK(vol_at(&sim.ring, 1) == 42);
+    CHECK(vol_at(&sim.ring, 2) == 43);
 
     off_last = sim.host.once[0].last_run;
-    CHECK(step_one());
-    CHECK(sim.host.clock_tick == sim.now);
-    CHECK(sim.host.clock_sec == 1);
+    CHECK(step_one()); /* poll */
     CHECK(sim.host.perm[UIMK2_HOST_PERM_POLL].every == POLL_EVERY_START * 2u);
-    CHECK(step_one());
     CHECK(sim.host.once[0].last_run == off_last);
     CHECK(sim.host.once[0].expire_by == SCREEN_OFF_EVERY);
     CHECK(sim.host.desired == 41);
     CHECK(sim.player.volume == 40);
     CHECK(strcmp(sim.player.status, "pause") == 0);
     CHECK(!sim.host.playing);
-    CHECK(step_one());
+    CHECK(step_one()); /* volume 42 */
     CHECK(sim.host.desired == 42);
     CHECK(sim.host.once[0].last_run == sim.now);
     CHECK(sim.host.once[0].expire_by == sim.now + SCREEN_OFF_EVERY);
     CHECK(sim.host.perm[UIMK2_HOST_PERM_POLL].every == POLL_EVERY_START);
-    CHECK(step_one());
+    CHECK(step_one()); /* volume 43 */
     CHECK(sim.host.desired == 43);
     CHECK(sim.host.polls == 1u);
     CHECK(sim.player.snaps_applied == 1);
@@ -374,11 +385,13 @@ static void sequence(void) {
     CHECK(sim.now == 1001u + SCREEN_OFF_EVERY + 1u);
     CHECK(sim.urds > 1u);
     CHECK(sim.host.renders == sim.urds);
-    CHECK(sim.z.shape[sim.title_i].ox == (int16_t)(2 * (int)sim.urds));
+    CHECK(sim.z.shape[sim.title_i].ox ==
+          (int16_t)((sim.host.clock_tick / SCROLL_MS_PER_OX) % 300u));
     CHECK(sim.saw_clock_line);
     CHECK(sim.host.clocks >= 2u);
-    CHECK(sim.host.clock_sec == 30);
-    CHECK(sim.host.clock_tick == 30030u);
+    CHECK(sim.host.clock_sec ==
+          (int32_t)(sim.host.clock_tick / CLOCKS_PER_SEC_TICKS));
+    CHECK(sim.host.clock_tick >= 1000u);
     CHECK(once_n(&sim.host) == 0u);
     CHECK(sim.ring.dropped == 0u);
     CHECK(sim.pings == 1);
@@ -434,7 +447,8 @@ static void overflow(void) {
     CHECK(uimk2_host_run(&sim.host, UPDATE_RENDER_EVERY + 1u) > 0u);
     CHECK(sim.host.perm[UIMK2_HOST_PERM_RENDER].last_run ==
           UPDATE_RENDER_EVERY + 1u);
-    CHECK(sim.ring.dropped == 2u);
+    /* Full ring: refused URD and clock (same 200 ms cadence). */
+    CHECK(sim.ring.dropped == 3u);
     CHECK(uimk2_ring_len(&sim.ring) == QUEUE_DEPTH);
     CHECK(!ring_has(&sim.ring, UIMK2_EV_UPDATE_RENDER_DRAW));
     CHECK(vol_at(&sim.ring, 0) == 42);

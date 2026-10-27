@@ -1,12 +1,16 @@
 #include "follow_glass.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <esp_heap_caps.h>
 
+#include "bg_embed.h"
 #include "glyph_file.h"
 #include "layout_box.h"
+
+#include <Arduino.h>
 
 static const int kPadX = 12;
 static const int kPadY = 6;
@@ -15,20 +19,29 @@ static const int kTextX = 24;
 /* First row whose bezel chord still contains x = 24. */
 static const int kTextY = 96;
 static const int kGap = 4;
-static const int kLineCap = 312;
+/* Exterior viewport width on the panel for artist/album/title/zone. */
+static const int kViewW = 312;
+static const int kContentMax = 1024;
 static const int kItemCap = 96;
 static const int kDesireAlpha = 128;
 
-/* Boot stand-ins. player HTTP replaces artist, album, and title. */
+/* Boot stand-ins until the first successful poll. */
 static char gZone[32] = "spinme";
-static char gArtist[96] = "Artist";
-static char gAlbum[96] = "Album";
-static char gTitle[96] = "The Long Track Name.flac";
+static char gArtist[96] = "This is artist";
+static char gAlbum[96] = "We made an album";
+static char gTitle[96] = "and the song names are very very very long";
 
+/* gW/gH = exterior (viewport). gPw/gPh = full-width L2R text map. */
 static uint8_t *gPx[FOLLOW_COUNT];
 static int gW[FOLLOW_COUNT];
 static int gH[FOLLOW_COUNT];
+static int gPw[FOLLOW_COUNT];
+static int gPh[FOLLOW_COUNT];
+static uimk2_zlist *gZ = nullptr;
+static bool gRewindOrigins = false;
 static bool gReady = false;
+/* Sole panel-sized pixmap; also FOLLOW_BASE.px in the zlist. */
+static uint8_t *gBg = nullptr;
 
 static uint8_t *alloc_px(int w, int h) {
   size_t bytes;
@@ -49,6 +62,33 @@ static uint8_t *alloc_px(int w, int h) {
     memset(p, 0, bytes);
   }
   return p;
+}
+
+static void free_px(uint8_t *p) {
+  if (p != nullptr) {
+    free(p);
+  }
+}
+
+/* Grow or shrink the text map for index. Keeps exterior gW/gH unchanged. */
+static bool ensure_map(int index, int pw, int ph) {
+  if (pw < 1) {
+    pw = 1;
+  }
+  if (ph < 1) {
+    ph = 1;
+  }
+  if (pw > kContentMax) {
+    pw = kContentMax;
+  }
+  if (gPx[index] != nullptr && gPw[index] == pw && gPh[index] == ph) {
+    return true;
+  }
+  free_px(gPx[index]);
+  gPx[index] = alloc_px(pw, ph);
+  gPw[index] = pw;
+  gPh[index] = ph;
+  return gPx[index] != nullptr;
 }
 
 static void fill_px(uint8_t *dst, int w, int h, uint8_t r, uint8_t g, uint8_t b,
@@ -136,18 +176,26 @@ static void blit_line(uint8_t *dst, int dw, int dh, int ox, int oy,
   }
 }
 
-static void measure(const char *text, int *w, int *h) {
+/* Full L2R ink width (clamped only by kContentMax). */
+static void measure_content(const char *text, int *w, int *h) {
   int tw = 0;
   int th = 0;
   if (glyph_line_size(text, &tw, &th) == 0 || tw < 1 || th < 1) {
     tw = 8;
     th = 13;
   }
-  if (tw > kLineCap) {
-    tw = kLineCap;
+  if (tw > kContentMax) {
+    tw = kContentMax;
   }
   *w = tw;
   *h = th;
+}
+
+static void measure(const char *text, int *w, int *h) {
+  measure_content(text, w, h);
+  if (*w > kViewW) {
+    *w = kViewW;
+  }
 }
 
 static void copy_cap(char *dst, size_t dst_len, const char *src) {
@@ -171,10 +219,12 @@ void follow_glass_set_track(const char *artist, const char *album,
   copy_cap(gArtist, sizeof gArtist, artist);
   copy_cap(gAlbum, sizeof gAlbum, album);
   copy_cap(gTitle, sizeof gTitle, title);
+  gRewindOrigins = true;
 }
 
 static void clear_desc(uimk2_shape_desc *d) { memset(d, 0, sizeof *d); }
 
+/* Exterior is the viewport; pw/ph describe the full-width text map. */
 static void place_line(uimk2_shape_desc *d, int index, int x, int y, int w,
                        int h) {
   clear_desc(d);
@@ -183,7 +233,73 @@ static void place_line(uimk2_shape_desc *d, int index, int x, int y, int w,
   d->y = (int16_t)y;
   d->w = (uint16_t)w;
   d->h = (uint16_t)h;
+  d->pw = (uint16_t)gPw[index];
+  d->ph = (uint16_t)gPh[index];
   d->px = gPx[index];
+}
+
+/* Paint full-width L2R into the text map. Update selector:
+ * CLOCKTEXT stays CLOCKTEXT (string comes from the update switch);
+ * otherwise SCROLL when the map is wider than the viewport, else FIXED.
+ * Scrolling maps append three spaces so the wrap seam has a gap. */
+static void paint_text_map(int index, const char *text, uint8_t r, uint8_t g,
+                           uint8_t b) {
+  char padded[160];
+  const char *draw = text != nullptr ? text : "";
+  int cw = 0;
+  int ch = 0;
+  uint8_t keep_sel = (uint8_t)UIMK2_UPD_FIXED;
+  measure_content(draw, &cw, &ch);
+  if (cw > gW[index]) {
+    snprintf(padded, sizeof padded, "%s   ", draw);
+    draw = padded;
+    measure_content(draw, &cw, &ch);
+  } else if (cw < gW[index]) {
+    cw = gW[index];
+  }
+  if (ch < gH[index]) {
+    ch = gH[index];
+  }
+  if (!ensure_map(index, cw, ch)) {
+    return;
+  }
+  /* Transparent paper so the photo base shows through skip-RLE. */
+  fill_px(gPx[index], gPw[index], gPh[index], 0, 0, 0, 0);
+  blit_line(gPx[index], gPw[index], gPh[index], 0, 0, draw, r, g, b, 255);
+  if (gZ == nullptr || index >= (int)gZ->n) {
+    return;
+  }
+  {
+    uimk2_shape *s = &gZ->shape[index];
+    keep_sel = s->update_selector;
+    s->px = gPx[index];
+    s->pw = (uint16_t)gPw[index];
+    s->ph = (uint16_t)gPh[index];
+    s->w = (uint16_t)gW[index];
+    s->h = (uint16_t)gH[index];
+    if (keep_sel == (uint8_t)UIMK2_UPD_CLOCKTEXT) {
+      s->update_selector = (uint8_t)UIMK2_UPD_CLOCKTEXT;
+      s->step_x = 0;
+      s->step_y = 0;
+      return;
+    }
+    if (gRewindOrigins) {
+      s->ox = 0;
+      s->oy = 0;
+    }
+    if (gPw[index] > gW[index]) {
+      s->update_selector = (uint8_t)UIMK2_UPD_SCROLL;
+      s->step_x = 0;
+      s->step_y = 0;
+      s->dirty = true;
+    } else {
+      s->update_selector = (uint8_t)UIMK2_UPD_FIXED;
+      s->step_x = 0;
+      s->step_y = 0;
+      s->ox = 0;
+      s->oy = 0;
+    }
+  }
 }
 
 bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
@@ -202,6 +318,7 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   static_assert(FOLLOW_ZONE - 1 == FOLLOW_ARTIST, "line order");
   static_assert(FOLLOW_ARTIST - 1 == FOLLOW_ALBUM, "line order");
   static_assert(FOLLOW_ALBUM - 1 == FOLLOW_TITLE, "line order");
+  static_assert(FOLLOW_TITLE - 1 == FOLLOW_CLOCK, "line order");
   gReady = false;
   if (!glyph_file_mmap()) {
     return false;
@@ -215,16 +332,19 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   }
   gW[FOLLOW_TRANSPORT] = bw;
   gH[FOLLOW_TRANSPORT] = bh;
-  /* Wide enough for a polled title. The boot stand-in is shorter. */
+  /* Exterior viewport for text lines; maps are grown to full L2R width. */
   measure("Mg", &text_w, &text_h);
-  gW[FOLLOW_ZONE] = kLineCap;
+  gW[FOLLOW_ZONE] = kViewW;
   gH[FOLLOW_ZONE] = text_h;
-  gW[FOLLOW_ARTIST] = kLineCap;
+  gW[FOLLOW_ARTIST] = kViewW;
   gH[FOLLOW_ARTIST] = text_h;
-  gW[FOLLOW_ALBUM] = kLineCap;
+  gW[FOLLOW_ALBUM] = kViewW;
   gH[FOLLOW_ALBUM] = text_h;
-  gW[FOLLOW_TITLE] = kLineCap;
+  gW[FOLLOW_TITLE] = kViewW;
   gH[FOLLOW_TITLE] = text_h;
+  measure("88:88:88", &text_w, &text_h);
+  gW[FOLLOW_CLOCK] = text_w;
+  gH[FOLLOW_CLOCK] = text_h;
   measure("888", &text_w, &text_h);
   gW[FOLLOW_VOLUME] = text_w;
   gH[FOLLOW_VOLUME] = text_h;
@@ -232,18 +352,19 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   gH[FOLLOW_DESIRE] = text_h;
   for (i = 0; i < FOLLOW_COUNT; ++i) {
     gPx[i] = nullptr;
+    gPw[i] = 0;
+    gPh[i] = 0;
   }
-  gPx[FOLLOW_TRANSPORT] = alloc_px(gW[FOLLOW_TRANSPORT], gH[FOLLOW_TRANSPORT]);
-  gPx[FOLLOW_DESIRE] = alloc_px(gW[FOLLOW_DESIRE], gH[FOLLOW_DESIRE]);
-  gPx[FOLLOW_VOLUME] = alloc_px(gW[FOLLOW_VOLUME], gH[FOLLOW_VOLUME]);
-  gPx[FOLLOW_TITLE] = alloc_px(gW[FOLLOW_TITLE], gH[FOLLOW_TITLE]);
-  gPx[FOLLOW_ALBUM] = alloc_px(gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM]);
-  gPx[FOLLOW_ARTIST] = alloc_px(gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST]);
-  gPx[FOLLOW_ZONE] = alloc_px(gW[FOLLOW_ZONE], gH[FOLLOW_ZONE]);
-  for (i = FOLLOW_TRANSPORT; i <= FOLLOW_ZONE; ++i) {
-    if (gPx[i] == nullptr) {
-      return false;
-    }
+  if (!ensure_map(FOLLOW_TRANSPORT, gW[FOLLOW_TRANSPORT],
+                  gH[FOLLOW_TRANSPORT]) ||
+      !ensure_map(FOLLOW_DESIRE, gW[FOLLOW_DESIRE], gH[FOLLOW_DESIRE]) ||
+      !ensure_map(FOLLOW_VOLUME, gW[FOLLOW_VOLUME], gH[FOLLOW_VOLUME]) ||
+      !ensure_map(FOLLOW_CLOCK, gW[FOLLOW_CLOCK], gH[FOLLOW_CLOCK]) ||
+      !ensure_map(FOLLOW_TITLE, gW[FOLLOW_TITLE], gH[FOLLOW_TITLE]) ||
+      !ensure_map(FOLLOW_ALBUM, gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM]) ||
+      !ensure_map(FOLLOW_ARTIST, gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST]) ||
+      !ensure_map(FOLLOW_ZONE, gW[FOLLOW_ZONE], gH[FOLLOW_ZONE])) {
+    return false;
   }
 
   y = kTextY;
@@ -263,6 +384,12 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
              gH[FOLLOW_VOLUME]);
   place_line(&desc[FOLLOW_DESIRE], FOLLOW_DESIRE, kTextX, y, gW[FOLLOW_DESIRE],
              gH[FOLLOW_DESIRE]);
+  /* Clock under the transport button, left-aligned with the text column. */
+  place_line(&desc[FOLLOW_CLOCK], FOLLOW_CLOCK, kTextX,
+             kButtonY + gH[FOLLOW_TRANSPORT] + kGap, gW[FOLLOW_CLOCK],
+             gH[FOLLOW_CLOCK]);
+  /* System clock string: update switch CLOCKTEXT formats clock_tick. */
+  desc[FOLLOW_CLOCK].update_selector = (uint8_t)UIMK2_UPD_CLOCKTEXT;
 
   clear_desc(&desc[FOLLOW_TRANSPORT]);
   desc[FOLLOW_TRANSPORT].update_selector = (uint8_t)UIMK2_UPD_FIXED;
@@ -275,19 +402,40 @@ bool follow_glass_build(uimk2_zlist *z, uint8_t *curr, uint8_t *next,
   desc[FOLLOW_TRANSPORT].h = (uint16_t)gH[FOLLOW_TRANSPORT];
   desc[FOLLOW_TRANSPORT].px = gPx[FOLLOW_TRANSPORT];
 
+  {
+    const size_t bg_bytes =
+        (size_t)PANEL_W * (size_t)PANEL_H * 4u;
+    const size_t embed_bytes =
+        (size_t)(disintegration_360_rgba_end - disintegration_360_rgba_start);
+    if (gBg == nullptr) {
+      gBg = alloc_px((int)PANEL_W, (int)PANEL_H);
+    }
+    if (gBg == nullptr) {
+      return false;
+    }
+    if (embed_bytes >= bg_bytes) {
+      memcpy(gBg, disintegration_360_rgba_start, bg_bytes);
+    } else {
+      fill_px(gBg, (int)PANEL_W, (int)PANEL_H, 0, 0, 0, 255);
+    }
+  }
   clear_desc(&desc[FOLLOW_BASE]);
   desc[FOLLOW_BASE].update_selector = (uint8_t)UIMK2_UPD_FIXED;
   desc[FOLLOW_BASE].is_base = true;
   desc[FOLLOW_BASE].w = (uint16_t)PANEL_W;
   desc[FOLLOW_BASE].h = (uint16_t)PANEL_H;
-  desc[FOLLOW_BASE].rgba[3] = 255;
+  desc[FOLLOW_BASE].pw = (uint16_t)PANEL_W;
+  desc[FOLLOW_BASE].ph = (uint16_t)PANEL_H;
+  desc[FOLLOW_BASE].px = gBg;
 
   /* desc[] is indexed by z-order, which matches FOLLOW_* . */
   if (!uimk2_zlist_build(z, desc, (uint16_t)FOLLOW_COUNT, curr, next, ring, ping,
                          ctx)) {
     return false;
   }
+  gZ = z;
   gReady = true;
+  gRewindOrigins = true;
   follow_glass_raster(0, 0, false, false);
   return true;
 }
@@ -296,7 +444,7 @@ static void paint_digits(uint8_t *dst, int w, int h, int value, uint8_t r,
                          uint8_t g, uint8_t b, int scale, bool clear) {
   char text[8];
   if (clear) {
-    fill_px(dst, w, h, 0, 0, 0, 255);
+    fill_px(dst, w, h, 0, 0, 0, 0);
   }
   if (value < 0) {
     blit_line(dst, w, h, 0, 0, "---", r, g, b, scale);
@@ -315,6 +463,7 @@ static void paint_digits(uint8_t *dst, int w, int h, int value, uint8_t r,
 void follow_glass_raster(int polled, int desired, bool playing,
                          bool desired_on) {
   const char *label = playing ? "stop" : "play";
+  const char *clock_s = "00:00:00";
   int tw = 0;
   int th = 0;
   int ox;
@@ -322,32 +471,31 @@ void follow_glass_raster(int polled, int desired, bool playing,
   if (!gReady) {
     return;
   }
-  fill_px(gPx[FOLLOW_ZONE], gW[FOLLOW_ZONE], gH[FOLLOW_ZONE], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_ZONE], gW[FOLLOW_ZONE], gH[FOLLOW_ZONE], 0, 0, gZone, 255,
-            255, 0, 255);
-  fill_px(gPx[FOLLOW_ARTIST], gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_ARTIST], gW[FOLLOW_ARTIST], gH[FOLLOW_ARTIST], 0, 0,
-            gArtist, 255, 255, 255, 255);
-  fill_px(gPx[FOLLOW_ALBUM], gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_ALBUM], gW[FOLLOW_ALBUM], gH[FOLLOW_ALBUM], 0, 0, gAlbum,
-            255, 255, 255, 255);
-  fill_px(gPx[FOLLOW_TITLE], gW[FOLLOW_TITLE], gH[FOLLOW_TITLE], 0, 0, 0, 255);
-  blit_line(gPx[FOLLOW_TITLE], gW[FOLLOW_TITLE], gH[FOLLOW_TITLE], 0, 0, gTitle,
-            255, 255, 255, 255);
+  paint_text_map(FOLLOW_ZONE, gZone, 255, 255, 0);
+  paint_text_map(FOLLOW_ARTIST, gArtist, 255, 255, 255);
+  paint_text_map(FOLLOW_ALBUM, gAlbum, 255, 255, 255);
+  paint_text_map(FOLLOW_TITLE, gTitle, 255, 255, 255);
+  gRewindOrigins = false;
 
-  paint_digits(gPx[FOLLOW_VOLUME], gW[FOLLOW_VOLUME], gH[FOLLOW_VOLUME], polled,
+  /* Pixels only: CLOCKTEXT already wrote shape.text in update(). */
+  if (gZ != nullptr && FOLLOW_CLOCK < (int)gZ->n &&
+      gZ->shape[FOLLOW_CLOCK].text[0] != '\0') {
+    clock_s = gZ->shape[FOLLOW_CLOCK].text;
+  }
+  paint_text_map(FOLLOW_CLOCK, clock_s, 180, 220, 255);
+
+  paint_digits(gPx[FOLLOW_VOLUME], gPw[FOLLOW_VOLUME], gPh[FOLLOW_VOLUME], polled,
                255, 255, 255, 255, true);
   memcpy(gPx[FOLLOW_DESIRE], gPx[FOLLOW_VOLUME],
-         (size_t)gW[FOLLOW_DESIRE] * (size_t)gH[FOLLOW_DESIRE] * 4u);
+         (size_t)gPw[FOLLOW_DESIRE] * (size_t)gPh[FOLLOW_DESIRE] * 4u);
   if (desired_on) {
-    /* SCALE alpha 128 over the polled digits. Stored opaque so replace-blit
-     * keeps the mix. */
-    paint_digits(gPx[FOLLOW_DESIRE], gW[FOLLOW_DESIRE], gH[FOLLOW_DESIRE],
+    /* SCALE alpha 128 over the polled digits. */
+    paint_digits(gPx[FOLLOW_DESIRE], gPw[FOLLOW_DESIRE], gPh[FOLLOW_DESIRE],
                  desired, 0, 255, 255, kDesireAlpha, false);
   }
 
-  fill_px(gPx[FOLLOW_TRANSPORT], gW[FOLLOW_TRANSPORT], gH[FOLLOW_TRANSPORT], 255,
-          255, 255, 255);
+  fill_px(gPx[FOLLOW_TRANSPORT], gPw[FOLLOW_TRANSPORT], gPh[FOLLOW_TRANSPORT],
+          255, 255, 255, 255);
   measure(label, &tw, &th);
   ox = (gW[FOLLOW_TRANSPORT] - tw) / 2;
   oy = (gH[FOLLOW_TRANSPORT] - th) / 2;
@@ -357,6 +505,16 @@ void follow_glass_raster(int polled, int desired, bool playing,
   if (oy < 0) {
     oy = 0;
   }
-  blit_line(gPx[FOLLOW_TRANSPORT], gW[FOLLOW_TRANSPORT], gH[FOLLOW_TRANSPORT], ox,
-            oy, label, 0, 0, 0, 255);
+  blit_line(gPx[FOLLOW_TRANSPORT], gPw[FOLLOW_TRANSPORT], gPh[FOLLOW_TRANSPORT],
+            ox, oy, label, 0, 0, 0, 255);
+}
+
+uint8_t *follow_glass_bg_rgba(void) { return gBg; }
+
+void follow_glass_bg_mark_dirty(void) {
+  if (gZ == nullptr || FOLLOW_BASE >= (int)gZ->n) {
+    return;
+  }
+  gZ->shape[FOLLOW_BASE].dirty = true;
+  gZ->shape[FOLLOW_BASE].px = gBg;
 }

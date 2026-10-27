@@ -3,7 +3,8 @@
 **Goal:** On-device music controller (follow now-playing + knob volume + zone
 pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
 
-**UI and the two cores:** [`DESIGN.md`](DESIGN.md).
+**UI and the two cores (as-built):** [`DESIGN.md`](DESIGN.md). Follow layout
+is one file, `firmware/.../follow_glass.cpp`.
 
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).

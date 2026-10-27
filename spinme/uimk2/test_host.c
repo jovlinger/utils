@@ -116,7 +116,8 @@ static void test_last_run_before_push(void) {
     CHECK(uimk2_host_run(&h, UPDATE_RENDER_EVERY + 1u) ==
           UPDATE_RENDER_EVERY + 1u);
     CHECK(h.perm[UIMK2_HOST_PERM_RENDER].last_run == UPDATE_RENDER_EVERY + 1u);
-    CHECK(r.dropped == 1u);
+    /* Render and clock share the 200 ms cadence; both refuse on a full ring. */
+    CHECK(r.dropped == 2u);
     CHECK(uimk2_ring_len(&r) == QUEUE_DEPTH);
     CHECK(sel_at(&r, 0) == UIMK2_EV_VOLUME);
     CHECK(!ring_has(&r, UIMK2_EV_UPDATE_RENDER_DRAW));
@@ -141,10 +142,11 @@ static void test_render_cadence(void) {
     CHECK(uimk2_host_run(&h, UPDATE_RENDER_EVERY + 1u) ==
           UPDATE_RENDER_EVERY + 1u);
     CHECK(h.perm[UIMK2_HOST_PERM_RENDER].last_run == UPDATE_RENDER_EVERY + 1u);
-    CHECK(uimk2_ring_len(&r) == 2u);
+    /* Prior URD plus a new URD and a clock tick (same every). */
+    CHECK(uimk2_ring_len(&r) == 3u);
     CHECK(sel_at(&r, 0) == UIMK2_EV_UPDATE_RENDER_DRAW);
-    CHECK(sel_at(&r, 1) == UIMK2_EV_UPDATE_RENDER_DRAW);
-    CHECK(!ring_has(&r, UIMK2_EV_CLOCK));
+    CHECK(ring_has(&r, UIMK2_EV_UPDATE_RENDER_DRAW));
+    CHECK(ring_has(&r, UIMK2_EV_CLOCK));
     CHECK(!ring_has(&r, UIMK2_EV_PLAYER_POLL));
 }
 
@@ -166,7 +168,8 @@ static void test_clock_while_asleep(void) {
     CHECK(!h.backlight);
     CHECK(uimk2_host_step(&h, UIMK2_HOST_CLOCK_EVERY + 1u));
     CHECK(h.clocks == 1u);
-    CHECK(h.clock_sec == 1);
+    CHECK(h.clock_sec ==
+          (int32_t)((UIMK2_HOST_CLOCK_EVERY + 1u) / CLOCKS_PER_SEC_TICKS));
     CHECK(h.clock_tick == UIMK2_HOST_CLOCK_EVERY + 1u);
 }
 
@@ -368,6 +371,10 @@ static void test_redraw_retry(void) {
     for (expect = 1; expect < (int)REDRAW_ATTEMPT_CAP; expect++) {
         uint32_t last = h.once[0].last_run;
         uint32_t due = last + h.once[0].every + 1u;
+        /* Keep permanent clock/render from also pushing on this due. */
+        h.perm[UIMK2_HOST_PERM_CLOCK].last_run = due;
+        h.perm[UIMK2_HOST_PERM_RENDER].last_run = due;
+        h.perm[UIMK2_HOST_PERM_POLL].last_run = due;
         uimk2_ring_init(&r);
         uimk2_host_run(&h, due - 1u);
         CHECK(uimk2_ring_len(&r) == 0u);
@@ -593,7 +600,8 @@ static void test_clock_reaches_zlist(void) {
     CHECK(build(&h, &r, &d, 1));
     uimk2_host_run(&h, UIMK2_HOST_CLOCK_EVERY + 1u);
     CHECK(uimk2_host_step(&h, UIMK2_HOST_CLOCK_EVERY + 1u));
-    CHECK(z.clock_sec == 1);
+    CHECK(z.clock_sec ==
+          (int32_t)((UIMK2_HOST_CLOCK_EVERY + 1u) / CLOCKS_PER_SEC_TICKS));
     CHECK(z.clock_tick == UIMK2_HOST_CLOCK_EVERY + 1u);
 }
 

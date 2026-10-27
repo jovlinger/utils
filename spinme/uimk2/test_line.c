@@ -1,10 +1,19 @@
 /* Host tests for Glyph nodes on the flash font table and for text lines.
  * Linked against the generated Helvetica 12 px table (build/glyphs_12.c). */
+#include "uimk2_blit.h"
 #include "uimk2_line.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* L2R cache store is pack66; expand one sample for RGBA checks. */
+static void cache_rgba(const uimk2_bm *cache, int x, int y, uint8_t out[4]) {
+    const uint32_t *row =
+        (const uint32_t *)(const void *)cache->u.cache.px +
+        (uint32_t)y * cache->w;
+    uimk2_blit_unpack66(row[x], out);
+}
 
 static int failures;
 static int checks;
@@ -44,7 +53,11 @@ static int px_eq(const uint8_t *p, int r, int g, int b, int a) {
     return p[0] == r && p[1] == g && p[2] == b && p[3] == a;
 }
 
-static int near(int got, int want) { return got - want <= 1 && want - got <= 1; }
+/* +/-1 for floaty blend; +/-4 after pack66 6-bit round-trip. */
+static int near(int got, int want) {
+    int d = got - want;
+    return d <= 4 && d >= -4;
+}
 
 static uint16_t make_root(uimk2_bmtab *t, uimk2_layout_item *items,
                           uint16_t n, const uint8_t paper[4]) {
@@ -241,21 +254,22 @@ static void test_line_build_and_tint(void) {
         for (y = 0; y < uimk2_glyph_h; y++) {
             for (x = 0; x < e->width; x++) {
                 int al = uimk2_glyph_alpha[e->offset + y * e->width + x];
-                const uint8_t *p =
-                    &t.bm[line.cache].u.cache.px[(y * want_w + cx + x) * 4u];
+                uint8_t p[4];
+                cache_rgba(&t.bm[line.cache], cx + x, y, p);
                 ok_px = ok_px && near(p[0], 200 * al / 255) &&
                         near(p[1], 100 * al / 255) &&
                         near(p[2], 50 * al / 255) && p[3] == 255;
                 if (al == 255) {
-                    ok_px = ok_px && px_eq(p, 200, 100, 50, 255);
+                    ok_px = ok_px && near(p[0], 200) && near(p[1], 100) &&
+                            near(p[2], 50) && p[3] == 255;
                 }
                 if (al == 0) {
                     ok_px = ok_px && px_eq(p, 0, 0, 0, 255);
                 }
             }
             if (k < 3) {
-                const uint8_t *p =
-                    &t.bm[line.cache].u.cache.px[(y * want_w + cx + e->width) * 4u];
+                uint8_t p[4];
+                cache_rgba(&t.bm[line.cache], cx + (int)e->width, y, p);
                 ok_px = ok_px && px_eq(p, 0, 0, 0, 255);
             }
         }
@@ -273,13 +287,13 @@ static void test_line_build_and_tint(void) {
         CHECK(full);
     }
 
-    /* the root shows the opaque cache verbatim */
+    /* the root shows the opaque cache (unpacked) verbatim */
     for (y = 0; y < uimk2_glyph_h; y++) {
         for (x = 0; x < want_w; x++) {
+            uint8_t p[4];
+            cache_rgba(&t.bm[line.cache], x, y, p);
             ok_root = ok_root &&
-                      memcmp(&screen[((y + 4) * SW + x + 3) * 4],
-                             &t.bm[line.cache].u.cache.px[(y * want_w + x) * 4u],
-                             4) == 0;
+                      memcmp(&screen[((y + 4) * SW + x + 3) * 4], p, 4) == 0;
         }
     }
     CHECK(ok_root);

@@ -1,15 +1,15 @@
 /* Core B scheduler list on the uimk2_event ring.
  *
  * Permanent slots: update_render_draw (UPDATE_RENDER_EVERY, while the
- * backlight is on), clock (one logical second), and player poll
- * (POLL_EVERY_START, doubling after each fire up to POLL_EVERY_MAX,
- * only while armed). One-offs live in a second list, packed to the
- * front and zero-terminated: screen-off, and a redraw retry when
+ * backlight is on), clock (same period: store system tick on the zlist),
+ * and player poll (POLL_EVERY_START, doubling after each fire up to
+ * POLL_EVERY_MAX, only while armed). One-offs live in a second list,
+ * packed to the front and zero-terminated: screen-off, and a redraw retry when
  * busy-by-core-A. Each slot does one thing: it pushes one event.
  * Dispatch is a switch on the selector.
  *
  * A slot is due when last_run + every < now. last_run is set to now
- * before the push. uimk2_sched.h remains the follow-view work queue.
+ * before the push.
  *
  * B owns desired volume and the player mode. A press is only (x, y);
  * B hit-tests. A transport shape enqueues Toggle, and enqueues Poll
@@ -27,8 +27,9 @@
 #include "uimk2_event.h"
 #include "uimk2_zlist.h"
 
-/* Clock period: one logical second, in CLOCK_RES ticks. */
-#define UIMK2_HOST_CLOCK_EVERY CLOCKS_PER_SEC_TICKS
+/* System-clock event period (CLOCK_RES ticks). Same cadence as URD so
+ * CLOCKTEXT / SCROLL see a fresh tick every awake frame. */
+#define UIMK2_HOST_CLOCK_EVERY UPDATE_RENDER_EVERY
 
 /* Usable one-off slots. once[UIMK2_HOST_ONCE] stays the zero terminator. */
 #define UIMK2_HOST_ONCE 4u

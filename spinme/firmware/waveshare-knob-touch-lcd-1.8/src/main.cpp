@@ -6,6 +6,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bench_probe.h"
@@ -15,8 +16,10 @@
 #include "panel_init.h"
 #include "panel_io.h"
 #include "player_http.h"
+#include "rom_jpeg.h"
 
 extern "C" {
+#include "uimk2_blit.h"
 #include "uimk2_host.h"
 }
 
@@ -126,10 +129,17 @@ static void paint_follow(void) {
   int desired;
   bool playing;
   int polled;
+  uint32_t now;
   xSemaphoreTake(gMu, portMAX_DELAY);
   desired = gHost.desired;
   playing = gHost.playing;
   polled = gPolled;
+  now = gHost.now;
+  if (gBuilt) {
+    /* System clock from the host tick; CLOCKTEXT / SCROLL read it in update. */
+    uimk2_zlist_set_clock(&gZ, (int32_t)(now / CLOCKS_PER_SEC_TICKS), now);
+    uimk2_zlist_update(&gZ);
+  }
   xSemaphoreGive(gMu);
   follow_glass_raster(polled, desired, playing, desired != polled);
 }
@@ -163,6 +173,37 @@ static void apply_poll(void) {
   paint_follow();
   Serial.printf("player poll %s vol %d\n",
                 snap.status[0] != '\0' ? snap.status : "?", shown);
+  /* Pull cover; ROM TJpgDec NN into pre-allocated 360x360 opaque base. */
+  if (snap.albumart[0] != '\0') {
+    uint8_t *jpeg = nullptr;
+    uint8_t *bg = follow_glass_bg_rgba();
+    size_t nbytes = 0;
+    uint32_t fetch_ms = 0;
+    RomJpegInfo ji;
+    if (bg == nullptr) {
+      Serial.println("albumart bg null");
+    } else if (!player_http_fetch_albumart(snap.albumart, 512u * 1024u, &jpeg,
+                                           &nbytes, &fetch_ms)) {
+      Serial.println("albumart fetch fail");
+    } else {
+      Serial.printf("albumart fetch %u bytes %u ms\n", (unsigned)nbytes,
+                    (unsigned)fetch_ms);
+      if (rom_jpeg_decode_nn_rgba(jpeg, nbytes, bg, (uint16_t)PANEL_W,
+                                  (uint16_t)PANEL_H, &ji)) {
+        follow_glass_bg_mark_dirty();
+        Serial.printf(
+            "albumart romjpeg ok src=%ux%u via=%ux%u scale=1/%u "
+            "dst=%ux%u decode_ms=%u\n",
+            (unsigned)ji.src_w, (unsigned)ji.src_h, (unsigned)ji.out_w,
+            (unsigned)ji.out_h, 1u << ji.scale, (unsigned)ji.dst_w,
+            (unsigned)ji.dst_h, (unsigned)ji.decode_ms);
+      } else {
+        Serial.printf("albumart romjpeg fail prep=%d decomp=%d ms=%u\n",
+                      ji.jd_prepare, ji.jd_decomp, (unsigned)ji.decode_ms);
+      }
+      free(jpeg);
+    }
+  }
 }
 
 static void apply_toggle(void) {
@@ -223,15 +264,23 @@ static void core_a_push(void) {
   for (y = 0; y < LCD_HEIGHT; ++y) {
     int x0 = 0;
     int x1 = 0;
-    const uint8_t *row;
+    int w;
+    int i;
+    const uint32_t *row66;
+    uint8_t rgba_row[LCD_WIDTH * 4];
     if (!uimk2_zlist_row_dirty(&gZ, (uint16_t)y)) {
       continue;
     }
     if (!bezel_span(y, &x0, &x1)) {
       continue;
     }
-    row = frame + ((size_t)y * (size_t)PANEL_W + (size_t)x0) * 4u;
-    panel_push_rgba_span(x0, y, x1 - x0 + 1, row);
+    w = x1 - x0 + 1;
+    row66 = (const uint32_t *)(const void *)(frame +
+            ((size_t)y * (size_t)PANEL_W + (size_t)x0) * 4u);
+    for (i = 0; i < w; ++i) {
+      uimk2_blit_unpack66(row66[i], rgba_row + (size_t)i * 4u);
+    }
+    panel_push_rgba_span(x0, y, w, rgba_row);
     rows++;
     if ((y & 31) == 0) {
       delay(0);
@@ -516,6 +565,7 @@ void setup() {
     /* Before the worker starts, so the probe is not fighting Core B for
      * PSRAM. Frames are zeroed again for the follow view. */
     (void)bench_probe_short_title(gCurr, gNext);
+    (void)bench_probe_blit(gCurr, gNext);
     memset(gCurr, 0, (size_t)UIMK2_FRAME_BYTES);
     memset(gNext, 0, (size_t)UIMK2_FRAME_BYTES);
     gBuilt = follow_glass_build(&gZ, gCurr, gNext, &gRing, ping_core_a, nullptr);

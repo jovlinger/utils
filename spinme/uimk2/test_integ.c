@@ -1,8 +1,9 @@
 /* Host integration: mocked player, virtual clock, A-side posts.
  *
- * Two expected ERROR lines on stderr, from the overflow section:
+ * Three expected ERROR lines on stderr, from the overflow section:
  *   event ring full, dropped volume
  *   event ring full, dropped update_render_draw
+ *   event ring full, dropped clock
  *
  * The timed path is a separate binary. From this directory:
  *   make integ-bench

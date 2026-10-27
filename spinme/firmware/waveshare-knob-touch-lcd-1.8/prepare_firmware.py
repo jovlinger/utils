@@ -102,13 +102,43 @@ def write_glyph_embed(firmware_dir: Path) -> None:
     )
 
 
+def write_bg_embed(firmware_dir: Path) -> None:
+    """Link disintegration_360.rgba (360x360 RGBA8888) into .rodata."""
+    blob = firmware_dir / "disintegration_360.rgba"
+    if not blob.is_file():
+        raise SystemExit("disintegration_360.rgba missing")
+    if blob.stat().st_size != 360 * 360 * 4:
+        raise SystemExit(
+            "disintegration_360.rgba size {0}, want {1}".format(
+                blob.stat().st_size, 360 * 360 * 4
+            )
+        )
+    asm = firmware_dir / "src" / "bg_embed.S"
+    asm.write_text(
+        "\n".join(
+            [
+                "/* Generated. Panel-sized RGBA base, flash-mapped. */",
+                ".section .rodata",
+                ".global disintegration_360_rgba_start",
+                ".global disintegration_360_rgba_end",
+                ".align 4",
+                "disintegration_360_rgba_start:",
+                '.incbin "{0}"'.format(blob),
+                "disintegration_360_rgba_end:",
+                "",
+            ]
+        )
+    )
+
+
 def add_uimk2(env, firmware_dir: Path) -> None:
     uimk2 = (firmware_dir / ".." / ".." / "uimk2").resolve()
     env.Append(CPPPATH=[str(uimk2)])
     env.BuildSources(
         env.subst("$BUILD_DIR/uimk2"),
         str(uimk2),
-        src_filter="+<uimk2_event.c> +<uimk2_host.c> +<uimk2_zlist.c>",
+        src_filter="+<uimk2_event.c> +<uimk2_host.c> +<uimk2_zlist.c> "
+        "+<uimk2_blit.c> +<uimk2_blit_pie.S>",
     )
 
 
@@ -116,6 +146,7 @@ def main(env=None) -> None:
     firmware_dir = _firmware_dir()
     write_wifi_header(firmware_dir)
     write_glyph_embed(firmware_dir)
+    write_bg_embed(firmware_dir)
     if env is not None:
         add_uimk2(env, firmware_dir)
 

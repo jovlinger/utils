@@ -1,4 +1,5 @@
 #include "uimk2_bitmap.h"
+#include "uimk2_blit.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -409,9 +410,18 @@ static bool sample(uimk2_bmtab *t, uint16_t idx, int32_t x, int32_t y,
     switch ((uimk2_bm_kind)b->kind) {
     case UIMK2_BM_CACHE:
         /* The store is the picture, clean or dirty. Repaint is what writes
-         * it, and only when this node itself is dirty. */
+         * it, and only when this node itself is dirty. An L2R foreground
+         * bake stores pack66 with transparent skip runs. */
         if (b->u.cache.px == NULL) {
             return false;
+        }
+        if (b->u.cache.fg != 0 &&
+            t->bm[b->u.cache.fg].kind == UIMK2_BM_L2R) {
+            const uint32_t *row =
+                (const uint32_t *)(void *)b->u.cache.px +
+                (uint32_t)y * b->w;
+            uimk2_blit_unpack66(row[x], out);
+            return true;
         }
         memcpy(out, &b->u.cache.px[((uint32_t)y * b->w + (uint32_t)x) * 4u],
                4);
@@ -568,6 +578,23 @@ static void bake_cache(uimk2_bmtab *t, uint16_t idx) {
             } else {
                 acc_out(&acc, dst);
             }
+        }
+    }
+    /* L2R text: rewrite each damaged row as pack66 with skip runs so
+     * transparent gaps are one word that jumps to the next ink. */
+    if (fg != 0 && t->bm[fg].kind == UIMK2_BM_L2R && b->w > 0) {
+        for (y = r.y; y < (int32_t)r.y + r.h; y++) {
+            uint8_t *row8 =
+                &b->u.cache.px[((uint32_t)y * b->w + (uint32_t)r.x) * 4u];
+            uint32_t *row32 = (uint32_t *)(void *)row8;
+            uint32_t tw = r.w;
+            uint32_t x;
+            uint8_t tmp[4];
+            for (x = 0; x < tw; x++) {
+                memcpy(tmp, row8 + x * 4u, 4);
+                row32[x] = uimk2_blit_pack66(tmp);
+            }
+            uimk2_blit_encode_row_skips(row32, tw);
         }
     }
 }
