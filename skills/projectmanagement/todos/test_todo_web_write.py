@@ -961,5 +961,89 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         self.assertIn("done prefix", text)
 
 
+class RoundTripConflictTest(WebUpdaterCase):
+    """The whole loop over HTTP: page load, a CLI write, a stale save, a fresh save.
+
+    A real server with the real WebUpdater on a real store, so the token the page
+    carries is the one the server rendered, and the CLI write in between is an
+    ordinary `todo.py set`.
+    """
+
+    def serve(self) -> str:
+        """Start `web --write`'s server for this store; return its base URL."""
+
+        def resolver(selector: str) -> Tuple[Path, Dict[str, Any]]:
+            # The page's repo root only feeds diffs, which come from a real git; the
+            # notional REPO exists only to the faked git the store reads through.
+            try:
+                return Path("."), todo.resolve_ticket_by_id(self.REPO, selector)[1]
+            except todo.TodoError as exc:
+                raise todo_web.TodoWebError(str(exc)) from exc
+
+        printed = io.StringIO()
+
+        def run() -> None:
+            with contextlib.redirect_stdout(printed):
+                todo_web.serve(
+                    Path("."),
+                    host="127.0.0.1",
+                    port=0,
+                    resolver=resolver,
+                    searcher=lambda _q: [],
+                    write=True,
+                    updater=self.updater,
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+        deadline = time.monotonic() + 10
+        while not printed.getvalue().strip() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return printed.getvalue().strip().rstrip("/")
+
+    def load(self, base: str) -> Dict[str, Any]:
+        """GET the todo's page as a browser would; return its embedded DATA."""
+        with urllib.request.urlopen(f"{base}/{self.TID[:8]}", timeout=10) as resp:
+            return page_data(resp.read().decode("utf-8"))
+
+    def save(self, base: str, data: Dict[str, Any], value: str) -> Tuple[int, Dict[str, Any]]:
+        """Save *value* through the page's Body control, as its Save button does."""
+        spec = data["write"]["edits"]["set-body"]
+        return _post(
+            base,
+            "/update",
+            {
+                "id": data["id"],
+                "op": spec["op"],
+                "target": spec["target"],
+                "value": value,
+                "token": data["write"]["token"],
+            },
+        )
+
+    def test_cli_write_between_load_and_save_is_a_409_then_a_fresh_load_saves(self) -> None:
+        with self.in_env():
+            base = self.serve()
+            stale = self.load(base)
+            self.assertEqual("original body", stale["write"]["edits"]["set-body"]["value"])
+
+            proc = self.todo("set", self.TID, "--body=written by the cli")
+            self.assertEqual(0, proc.returncode, proc.stderr)
+
+            status, payload = self.save(base, stale, "the page's draft")
+            self.assertEqual(409, status)
+            self.assertEqual("written by the cli", payload["current"])
+            self.assertEqual("written by the cli", self.stored()["Body"]["raw"])
+
+            fresh = self.load(base)
+            self.assertEqual("written by the cli", fresh["write"]["edits"]["set-body"]["value"])
+            self.assertEqual(payload["token"], fresh["write"]["token"])
+            status, payload = self.save(base, fresh, "the page's draft")
+            self.assertEqual(200, status, payload)
+            self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
+
+            # The token the save returned is the one a reload now carries.
+            self.assertEqual(payload["token"], self.load(base)["write"]["token"])
+
+
 if __name__ == "__main__":
     unittest.main()
