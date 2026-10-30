@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import threading
 import time
 import unittest
@@ -302,6 +303,159 @@ class ReadOnlyServerTest(unittest.TestCase):
                 searcher=mock.Mock(),
                 write=True,
             )
+
+
+PAGE_TID = "5e" * 32
+PAGE_TODO: Dict[str, Any] = {
+    "Id": PAGE_TID,
+    "Branch": "5e5e5e5e-page",
+    "State": {"working": {"owner": "agent"}},
+    "Summary": {"raw": "page summary", "objid": "0000"},
+    "Body": {"raw": "page body", "objid": "0001"},
+    "Tag": [{"raw": "web", "manual": True, "objid": "0002"}],
+    "Scope": {"branch": "5e5e5e5e-page", "git_url": "https://example.invalid/r.git"},
+    "create_dt": "2026-10-30T00:00:00Z",
+    "update_dt": "2026-10-30T00:00:01Z",
+    "_nextobjid": 3,
+}
+FIELD_EDITS = {"set-summary", "set-body", "set-long-summary", "set-ac", "set-actual-summary"}
+
+
+def render(todo_record: Dict[str, Any], **kwargs: Any) -> str:
+    return todo_web.render_todo_page(Path("."), json.loads(json.dumps(todo_record)), **kwargs)
+
+
+def page_data(page: str) -> Dict[str, Any]:
+    """The page's embedded DATA object."""
+    match = re.search(r"const DATA = (\{.*?\});\n", page, re.S)
+    assert match, "page carries no embedded DATA"
+    raw = match.group(1).replace("\\u003c", "<").replace("\\u003e", ">").replace("\\u0026", "&")
+    return json.loads(raw)
+
+
+def edit_keys(page: str) -> List[str]:
+    """Every data-edit key rendered on the page, in page order."""
+    return re.findall(r'class="edit-toggle" data-edit="([^"]+)"', page)
+
+
+def meta_row(page: str, key: str) -> str:
+    """The rendered Fields row for top-level field *key*."""
+    match = re.search(
+        r'<div class="meta-row"[^>]*><h3 class="meta-key">'
+        + re.escape(key)
+        + r"</h3>.*?</div></div>",
+        page,
+        re.S,
+    )
+    assert match, f"no Fields row for {key}"
+    return match.group(0)
+
+
+class FieldEditRenderTest(unittest.TestCase):
+    """Edit controls on Summary/Body/AC/LongSummary/ActualSummary, only under --write."""
+
+    def test_read_only_page_has_no_edit_controls_and_no_write_data(self) -> None:
+        page = render(PAGE_TODO)
+        self.assertEqual([], edit_keys(page))
+        self.assertNotIn("write", page_data(page))
+
+    def test_write_page_has_one_control_per_text_field(self) -> None:
+        page = render(PAGE_TODO, write=True, token="tok")
+        keys = edit_keys(page)
+        self.assertEqual(sorted(FIELD_EDITS), sorted(keys))
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_write_page_embeds_the_token_and_each_request(self) -> None:
+        data = page_data(render(PAGE_TODO, write=True, token="tok"))
+        self.assertEqual("tok", data["write"]["token"])
+        edits = data["write"]["edits"]
+        self.assertEqual(FIELD_EDITS, set(edits))
+        self.assertEqual(
+            {"op": "set-body", "target": "", "value": "page body", "label": "Body"},
+            edits["set-body"],
+        )
+        self.assertEqual("page summary", edits["set-summary"]["value"])
+        self.assertEqual("", edits["set-ac"]["value"])
+
+    def test_empty_editable_fields_get_a_place_to_be_edited(self) -> None:
+        page = render(PAGE_TODO, write=True, token="tok")
+        self.assertIn("<h2>Long summary</h2>", page)
+        self.assertIn('data-edit="set-ac"', meta_row(page, "AC"))
+        self.assertIn('data-edit="set-actual-summary"', meta_row(page, "ActualSummary"))
+
+    def test_read_only_page_does_not_grow_empty_rows(self) -> None:
+        page = render(PAGE_TODO)
+        self.assertNotIn("<h2>Long summary</h2>", page)
+        self.assertNotIn('<h3 class="meta-key">AC</h3>', page)
+        self.assertNotIn('<h3 class="meta-key">ActualSummary</h3>', page)
+
+    def test_stored_ac_and_actual_summary_carry_their_controls(self) -> None:
+        record = {**PAGE_TODO, "AC": "done when x", "ActualSummary": "it went fine"}
+        page = render(record, write=True, token="tok")
+        self.assertIn("done when x", meta_row(page, "AC"))
+        self.assertIn('data-edit="set-ac"', meta_row(page, "AC"))
+        self.assertIn('data-edit="set-actual-summary"', meta_row(page, "ActualSummary"))
+
+    def test_no_control_on_identity_state_tag_scope_or_timestamps(self) -> None:
+        page = render(PAGE_TODO, write=True, token="tok")
+        for key in ("Branch", "Scope", "Tag", "create_dt", "update_dt"):
+            with self.subTest(field=key):
+                self.assertNotIn("edit-toggle", meta_row(page, key))
+        id_section = re.search(r"<section class=\"part\"><h2>Id</h2>.*?</section>", page, re.S)
+        self.assertNotIn("edit-toggle", id_section.group(0))
+        state = re.search(r"<h2>State</h2>.*?</section>", page, re.S)
+        self.assertNotIn("edit-toggle", state.group(0))
+
+    def test_a_subtodo_rendition_in_the_fold_has_no_controls(self) -> None:
+        record = {
+            **PAGE_TODO,
+            "Subtodos": [{"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0003"}],
+            "_nextobjid": 4,
+        }
+        entry = page_data(render(record, write=True, token="tok"))["objects"]["0003"]
+        self.assertNotIn("edit-toggle", entry["html"])
+
+
+class EditPageServeTest(unittest.TestCase):
+    """The running server renders edit controls and the token only under --write."""
+
+    def _page(self, *, write: bool) -> str:
+        updater = FakeUpdater()
+
+        def resolver(_selector: str) -> Tuple[Path, Dict[str, Any]]:
+            return Path("."), json.loads(json.dumps(PAGE_TODO))
+
+        printed = io.StringIO()
+
+        def run() -> None:
+            with contextlib.redirect_stdout(printed):
+                todo_web.serve(
+                    Path("."),
+                    host="127.0.0.1",
+                    port=0,
+                    resolver=resolver,
+                    searcher=lambda _q: [],
+                    write=write,
+                    updater=updater if write else None,
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+        deadline = time.monotonic() + 10
+        while not printed.getvalue().strip() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        base = printed.getvalue().strip().rstrip("/")
+        with urllib.request.urlopen(f"{base}/{PAGE_TID[:8]}", timeout=10) as resp:
+            return resp.read().decode("utf-8")
+
+    def test_write_server_pages_carry_controls_and_the_updater_token(self) -> None:
+        page = self._page(write=True)
+        self.assertEqual(sorted(FIELD_EDITS), sorted(edit_keys(page)))
+        self.assertEqual("t0:" + PAGE_TID, page_data(page)["write"]["token"])
+
+    def test_read_only_server_pages_carry_neither(self) -> None:
+        page = self._page(write=False)
+        self.assertEqual([], edit_keys(page))
+        self.assertNotIn("write", page_data(page))
 
 
 class RecordFingerprintTest(unittest.TestCase):

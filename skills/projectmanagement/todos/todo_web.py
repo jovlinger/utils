@@ -750,17 +750,63 @@ def _section(
     )
 
 
+# Top-level text fields the web can edit, each through its own `set` flag. The
+# key is the todo_web op name, which is also the field's edit-control key.
+_FIELD_EDIT_OPS = {
+    "Summary": "set-summary",
+    "Body": "set-body",
+    "LongSummary": "set-long-summary",
+    "AC": "set-ac",
+    "ActualSummary": "set-actual-summary",
+}
+_FIELD_EDIT_LABELS = {
+    "Summary": "Summary",
+    "Body": "Body",
+    "LongSummary": "Long summary",
+    "AC": "AC",
+    "ActualSummary": "ActualSummary",
+}
+
+
+def _edit_registry(todo: JsonDict) -> JsonDict:
+    """Every edit control the page offers, keyed by the control's ``data-edit``.
+
+    Each entry is the request the control would send minus the token: the op,
+    its target, and the stored value the editor opens on.
+    """
+    edits: JsonDict = {}
+    for field, op in _FIELD_EDIT_OPS.items():
+        edits[op] = {
+            "op": op,
+            "target": "",
+            "value": _raw_field(todo, field),
+            "label": _FIELD_EDIT_LABELS[field],
+        }
+    return edits
+
+
+def _edit_button(key: str, edits: Optional[JsonDict]) -> str:
+    """The Edit control for *key*, or "" when the page offers no such edit."""
+    if not edits or key not in edits:
+        return ""
+    return f'<button type="button" class="edit-toggle" data-edit="{html.escape(key)}">Edit</button>'
+
+
 def _md_field_html(
     text: str,
     *,
     interactive: bool = True,
     monospace: bool = False,
     label: str = "Field",
+    edit_key: str = "",
+    edits: Optional[JsonDict] = None,
 ) -> str:
     """Wrap prose *text* with a Preview control that renders markdown in the fold.
 
     The raw source stays in the upper pane for find/copy; preview is rendered
-    client-side into the lower pane on first toggle.
+    client-side into the lower pane on first toggle. With *edit_key* in *edits*
+    the bar also carries that field's Edit control, whose editor opens in the
+    fold the same way.
     """
     escaped = html.escape(text)
     if not interactive:
@@ -774,27 +820,42 @@ def _md_field_html(
         raw_inner = f'<div class="{raw_cls}">{escaped}</div>'
     return (
         f'<div class="md-field" data-md-label="{html.escape(label)}">'
-        '<div class="md-bar"><button type="button" class="md-toggle" '
-        'aria-pressed="false">Preview</button></div>'
+        f'<div class="md-bar">{_edit_button(edit_key, edits)}'
+        '<button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>'
         f"{raw_inner}"
         "</div>"
     )
 
 
-def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "") -> str:
+def _meta_html(
+    todo: JsonDict,
+    *,
+    interactive: bool = True,
+    focus_objid: str = "",
+    edits: Optional[JsonDict] = None,
+) -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
-    'show everything the todo carries'."""
+    'show everything the todo carries'. An editable field (*edits*) gets its
+    Edit control, and a row even while it is empty, since that is where it is
+    edited."""
     rows: List[str] = []
-    for key, value in todo.items():
+    fields = dict(todo)
+    for key in ("AC", "ActualSummary"):
+        if _FIELD_EDIT_OPS[key] in (edits or {}) and fields.get(key) in (None, ""):
+            fields[key] = ""
+    for key, value in fields.items():
         if key in _DEDICATED_FIELDS:
             continue
-        if value in (None, "", [], {}):
+        edit_key = _FIELD_EDIT_OPS.get(str(key), "")
+        if value in (None, "", [], {}) and not (edit_key and edits and edit_key in edits):
             continue
         if isinstance(value, (dict, list)):
             rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
         else:
-            rendered = _md_field_html(str(value), interactive=interactive, label=str(key))
+            rendered = _md_field_html(
+                str(value), interactive=interactive, label=str(key), edit_key=edit_key, edits=edits
+            )
         attrs = _section_attrs(value, interactive=interactive)
         badge = _objid_badge(_first_objid(value), interactive=interactive)
         rows.append(
@@ -871,12 +932,17 @@ def _sections_html(
     interactive: bool,
     github: str = "",
     focus_objid: str = "",
+    edits: Optional[JsonDict] = None,
 ) -> str:
     """Render the labeled todo representation: Id, State, Parent, Summary, Body,
     notes, work items, subtodos, and remaining non-opaque fields.
 
     A section holding *focus_objid* renders OPEN even when its size would
-    otherwise collapse it, and nothing ever renders closed that was open."""
+    otherwise collapse it, and nothing ever renders closed that was open.
+    *edits* (``_edit_registry``) is given only to an editing page; without it no
+    edit control is rendered."""
+    if not interactive:
+        edits = None
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
@@ -888,16 +954,26 @@ def _sections_html(
     # Only when present: an empty "Long summary" heading on every todo that has
     # none is noise. Rendered as its own section rather than through _meta_html,
     # which would dump the whole dict including embedding vectors.
+    summary_edit = _edit_button("set-summary", edits)
+    summary_bar = f'<div class="md-bar">{summary_edit}</div>' if summary_edit else ""
     long_summary = _raw_field(todo, "LongSummary")
+    long_summary_editable = "set-long-summary" in (edits or {})
     long_summary_html = _section(
         "Long summary",
-        _md_field_html(long_summary, interactive=interactive, monospace=True, label="Long summary"),
+        _md_field_html(
+            long_summary,
+            interactive=interactive,
+            monospace=True,
+            label="Long summary",
+            edit_key="set-long-summary",
+            edits=edits,
+        ),
         interactive=interactive,
         attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
         objid=_first_objid(todo.get("LongSummary")),
         text=long_summary,
         is_open=_holds(todo.get("LongSummary"), focus_objid),
-    ) if long_summary else ""
+    ) if long_summary or long_summary_editable else ""
     wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
@@ -925,7 +1001,8 @@ def _sections_html(
         f"{parents_html}"
         + _section(
             "Summary",
-            f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
+            summary_bar
+            + f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
             interactive=interactive,
             attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
             objid=_first_objid(todo.get("Summary")),
@@ -935,7 +1012,14 @@ def _sections_html(
         + long_summary_html
         + _section(
             "Body",
-            _md_field_html(body, interactive=interactive, monospace=True, label="Body")
+            _md_field_html(
+                body,
+                interactive=interactive,
+                monospace=True,
+                label="Body",
+                edit_key="set-body",
+                edits=edits,
+            )
             + _relto_chips_html(body_relto, interactive=interactive),
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
@@ -962,7 +1046,7 @@ def _sections_html(
             hint=_size_hint(len(stodos), "subtodos"),
             is_open=_holds(todo.get("Subtodos"), focus_objid),
         )
-        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid)
+        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid, edits=edits)
     )
 
 
@@ -1198,6 +1282,18 @@ _STYLE = """<style>
                      background: #eaeef2; padding: 0 3px; border-radius: 3px; font-size: 12px; }
   .md-preview pre.md-code { background: #eaeef2; padding: 10px; border-radius: 6px; overflow: auto; }
   .md-preview pre.md-code code { background: none; padding: 0; }
+  .edit-toggle { font-size: 11px; color: #1a7f37; background: #fff; border: 1px solid #d8dee4;
+                 border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .fold-edit { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+  .fold-edit h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+                  color: #57606a; }
+  .edit-area { flex: 1 1 auto; min-height: 6em; width: 100%; box-sizing: border-box;
+               font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px;
+               border: 1px solid #d8dee4; border-radius: 6px; }
+  .edit-bar { display: flex; gap: 8px; align-items: center; }
+  .edit-status { font-size: 12px; color: #cf222e; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .edit-stored-value { background: #fff8c5; padding: 10px; border-radius: 6px; max-height: 30vh;
+                       overflow: auto; }
 </style>"""
 
 
@@ -1446,6 +1542,83 @@ function focusOn(objid){
 focusOn(FOCUS);
 initMdToggles(document.getElementById('top'));
 
+// Editing exists only on a page served by `todo.py web --write` (DATA.write).
+// Save is explicit and the only write; nothing is saved on input or on close.
+// Every save carries the token the page loaded with, so a todo changed since
+// then answers 409 and the editor shows the stored value beside the draft --
+// it never merges, and it never adopts the newer token: reloading is how the
+// page catches up, which keeps a save from landing over text it never showed.
+var WRITE = DATA.write || null;
+
+function postUpdate(req){
+  return fetch('/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(req)
+  }).then(function(r){
+    return r.text().then(function(t){
+      var body;
+      try { body = JSON.parse(t); } catch (e) { body = {error: t || ('HTTP ' + r.status)}; }
+      return {status: r.status, body: body};
+    });
+  });
+}
+
+function closeEditor(){
+  fold.className = 'fold';
+  fold.innerHTML = foldHint;
+}
+
+function openEditor(key){
+  var spec = WRITE && WRITE.edits[key];
+  if (!spec) return;
+  clearMdPreview();
+  clearHi();
+  fold.className = 'fold';
+  fold.innerHTML =
+    '<div class="fold-edit"><h3>Edit '+esc(spec.label)+'</h3>' +
+    '<textarea class="edit-area" spellcheck="false"></textarea>' +
+    '<div class="edit-bar"><button type="button" class="edit-save">Save</button>' +
+    '<button type="button" class="edit-cancel">Cancel</button>' +
+    '<span class="edit-status" role="status"></span></div>' +
+    '<div class="edit-stored" hidden><h3>Stored value now</h3>' +
+    '<pre class="edit-stored-value"></pre></div></div>';
+  var area = fold.querySelector('.edit-area');
+  var status = fold.querySelector('.edit-status');
+  var save = fold.querySelector('.edit-save');
+  area.value = spec.value;
+  fold.querySelector('.edit-cancel').addEventListener('click', closeEditor);
+  save.addEventListener('click', function(){
+    save.disabled = true;
+    status.textContent = 'saving...';
+    postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: area.value,
+                token: WRITE.token}).then(function(res){
+      if (res.status === 200) { location.reload(); return; }
+      save.disabled = false;
+      if (res.status === 409) {
+        fold.querySelector('.edit-stored').hidden = false;
+        fold.querySelector('.edit-stored-value').textContent =
+          res.body.current == null ? '(no longer present)' : String(res.body.current);
+        status.textContent = (res.body.error || 'conflict') +
+          '. Your draft is unchanged above; reload the page to edit the stored version.';
+        return;
+      }
+      status.textContent = res.body.error || ('HTTP ' + res.status);
+    }, function(err){
+      save.disabled = false;
+      status.textContent = 'save failed: ' + err;
+    });
+  });
+  area.focus();
+}
+
+document.querySelectorAll('#top .edit-toggle').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    openEditor(b.getAttribute('data-edit'));
+  });
+});
+
 // Delta from the mousedown point, not an absolute position re-derived from
 // getBoundingClientRect() on every move: a real (trusted) mousedown over text
 // content can start a native text-selection drag unless prevented, and a
@@ -1471,7 +1644,9 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 </script>"""
 
 
-def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+def render_todo_page(
+    root: Path, todo: JsonDict, *, focus_objid: str = "", write: bool = False, token: str = ""
+) -> str:
     """Render the single-todo viewer: representation on top, message/diff below.
 
     *focus_objid* is the object a permalink resolved to. The page opens with
@@ -1479,17 +1654,23 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
     into view -- so a deep link lands ON the item rather than at the top of
     the todo. An objid naming a non-box section is marked instead; one that
     is not on the page at all is ignored, and the todo simply renders.
+
+    *write* renders the edit controls, and *token* is the stale-page token
+    every save from this page carries (the updater's token of *todo*).
     """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
     started = time.monotonic()
-    _debug(f"render_todo_page id={tid[:8]}", phase="render")
+    _debug(f"render_todo_page id={tid[:8]} write={write}", phase="render")
     witems = _workitems_view(todo)
     stodos = _subtodos_view(root, todo)
     parents = _parents_view(root, todo)
     notes = _notes_view(todo)
     github = github_repo_url(repo_origin(root))
     data = _page_data(root, todo, witems, stodos, parents, notes, github)
+    edits = _edit_registry(todo) if write else None
+    if edits is not None:
+        data["write"] = {"token": token, "edits": edits}
     top_html = _sections_html(
         todo,
         witems,
@@ -1499,6 +1680,7 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
         interactive=True,
         github=github or "",
         focus_objid=focus_objid,
+        edits=edits,
     )
     title = html.escape(_summary_text(todo) or "todo")
     script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data)).replace(
@@ -1810,7 +1992,7 @@ def serve(
             try:
                 if todo_id:
                     todo_root, todo = resolver(todo_id)
-                    payload = render_todo_page(todo_root, todo)
+                    payload = self._page(todo_root, todo)
                 else:
                     payload = render_search_page(root, searcher(""))
             except TodoWebError as exc:
@@ -1830,11 +2012,19 @@ def serve(
                 selector, segments = todo_url.split_url_path(path)
                 todo_root, todo = resolver(selector)
                 focus = resolve_focus(todo_root, todo, segments)
-                payload = render_todo_page(todo_root, todo, focus_objid=focus)
+                payload = self._page(todo_root, todo, focus_objid=focus)
             except (todo_url.TodoUrlError, TodoWebError) as exc:
                 self.send_error(404, str(exc))
                 return
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _page(self, todo_root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+            """The todo page, with edit controls and its token when writes are on."""
+            if not write or updater is None:
+                return render_todo_page(todo_root, todo, focus_objid=focus_objid)
+            return render_todo_page(
+                todo_root, todo, focus_objid=focus_objid, write=True, token=updater.token(todo)
+            )
 
         def _respond(self, body: bytes, content_type: str) -> None:
             self.send_response(200)

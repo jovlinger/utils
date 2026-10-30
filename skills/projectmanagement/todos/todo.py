@@ -7117,7 +7117,12 @@ class WebCommand(EnvironmentCommand):
             if self.dump_html:
                 if initial_id is not None:
                     todo_root, ticket = resolve_todo(initial_id)
-                    print(todo_web.render_todo_page(todo_root, ticket))
+                    token = WebUpdater(root).token(ticket) if self.write else ""
+                    print(
+                        todo_web.render_todo_page(
+                            todo_root, ticket, write=self.write, token=token
+                        )
+                    )
                 else:
                     print(todo_web.render_search_page(basedir, search_rows("")))
             else:
