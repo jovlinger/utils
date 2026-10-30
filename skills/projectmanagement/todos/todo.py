@@ -6861,10 +6861,67 @@ class WebOp:
     current: Callable[[JsonDict, str], Any]  # (record, target)
 
 
+def _web_item_at(record: JsonDict, resolve: Callable[[], int], key: str) -> Optional[JsonDict]:
+    """The list element *resolve* indexes into *key*, or None when it no longer resolves."""
+    try:
+        index = resolve()
+    except TodoError:
+        return None
+    items = record.get(key) or []
+    return items[index] if isinstance(items[index], dict) else None
+
+
+def _web_note_raw(record: JsonDict, target: str) -> Optional[str]:
+    note = _web_item_at(record, lambda: resolve_note_index(record, target), "Notes")
+    return None if note is None else str(note.get("raw", ""))
+
+
+def _web_item_summary(record: JsonDict, target: str) -> Optional[str]:
+    item = _web_item_at(
+        record, lambda: resolve_workitem_index(record, target, what="replace"), "WorkItems"
+    )
+    return None if item is None else str(item.get("summary", ""))
+
+
+def _web_item_index(record: JsonDict, target: str) -> Optional[int]:
+    try:
+        return resolve_workitem_index(record, target, what="reorder")
+    except TodoError:
+        return None
+
+
+def _web_set_op(flag: str, field: str) -> WebOp:
+    """A `set --<flag>=<value>` edit of the text field *field*."""
+    return WebOp(
+        argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid],
+        current=lambda record, _target: _web_raw(record, field),
+    )
+
+
+# The CLI's update surface and nothing else: no op creates, deletes or closes
+# anything. Every positional follows "--", flags before it, so no request field
+# can be parsed as a flag (the "--" must precede ALL positionals: argparse
+# fills an optional positional with nothing before a later "--").
 WEB_OPS: Dict[str, WebOp] = {
-    "set-body": WebOp(
-        argv=lambda tid, _target, value: ["set", tid, f"--body={value}"],
-        current=lambda record, _target: _web_raw(record, "Body"),
+    "set-summary": _web_set_op("summary", "Summary"),
+    "set-body": _web_set_op("body", "Body"),
+    "set-ac": _web_set_op("ac", "AC"),
+    "set-long-summary": _web_set_op("long-summary", "LongSummary"),
+    "set-actual-summary": _web_set_op("actual-summary", "ActualSummary"),
+    "note-replace": WebOp(
+        argv=lambda tid, target, value: ["note-replace", f"--raw={value}", "--", tid, target],
+        current=_web_note_raw,
+    ),
+    "work-item-replace": WebOp(
+        argv=lambda tid, target, value: [
+            "work-item-replace", f"--summary={value}", "--", tid, target
+        ],
+        current=_web_item_summary,
+    ),
+    # value is the destination index, as work-item-reorder's DST.
+    "work-item-reorder": WebOp(
+        argv=lambda tid, target, value: ["work-item-reorder", "--", tid, target, value],
+        current=_web_item_index,
     ),
 }
 

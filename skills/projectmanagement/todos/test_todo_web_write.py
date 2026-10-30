@@ -345,6 +345,70 @@ class RecordFingerprintTest(unittest.TestCase):
         self.assertEqual(before, json.dumps(stamped, sort_keys=True))
 
 
+class WebOpArgvTest(unittest.TestCase):
+    """Each op's argv parses to exactly the fields it means, whatever the request holds."""
+
+    TID = "e7" * 32
+    HOSTILE = "--summary=hijack"  # a flag-shaped request field must stay data
+
+    def parsed(self, op: str, target: str, value: str):
+        return todo.build_parser().parse_args(todo.WEB_OPS[op].argv(self.TID, target, value))
+
+    def test_the_op_set_is_the_cli_update_surface(self) -> None:
+        self.assertEqual(
+            {
+                "set-summary",
+                "set-body",
+                "set-ac",
+                "set-long-summary",
+                "set-actual-summary",
+                "note-replace",
+                "work-item-replace",
+                "work-item-reorder",
+            },
+            set(todo.WEB_OPS),
+        )
+
+    def test_set_ops_write_only_their_own_flag(self) -> None:
+        flags = {
+            "set-summary": "summary",
+            "set-body": "body",
+            "set-ac": "ac",
+            "set-long-summary": "long_summary",
+            "set-actual-summary": "actual_summary",
+        }
+        for op, dest in flags.items():
+            with self.subTest(op=op):
+                ns = self.parsed(op, self.HOSTILE, self.HOSTILE)
+                self.assertEqual("set", ns.command)
+                self.assertEqual(self.TID, ns.id)
+                self.assertEqual(self.HOSTILE, getattr(ns, dest))
+                others = set(flags.values()) - {dest}
+                self.assertEqual({None}, {getattr(ns, other) for other in others})
+                self.assertIsNone(ns.state)
+
+    def test_note_replace(self) -> None:
+        ns = self.parsed("note-replace", self.HOSTILE, self.HOSTILE)
+        self.assertEqual(
+            ("note-replace", self.TID, self.HOSTILE, self.HOSTILE),
+            (ns.command, ns.selector, ns.target, ns.raw),
+        )
+
+    def test_work_item_replace_names_its_target_never_the_cursor(self) -> None:
+        ns = self.parsed("work-item-replace", self.HOSTILE, "new words")
+        self.assertEqual(
+            ("work-item-replace", self.TID, self.HOSTILE, "new words"),
+            (ns.command, ns.selector, ns.target, ns.summary),
+        )
+
+    def test_work_item_reorder_takes_a_negative_destination(self) -> None:
+        ns = self.parsed("work-item-reorder", "objid:0003", "-1")
+        self.assertEqual(
+            ("work-item-reorder", self.TID, "objid:0003", "-1"),
+            (ns.command, ns.selector, ns.src, ns.dst),
+        )
+
+
 class WebUpdaterCase(test_todo.TodoIntegrationCase):
     """A real store, todo.main() in-process, and the WebUpdater that `web --write` injects."""
 
@@ -469,6 +533,122 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
                     )
         self.assertEqual(503, caught.exception.status)
         self.assertEqual("original body", self.stored()["Body"]["raw"])
+
+
+class WebUpdaterOpsTest(WebUpdaterCase):
+    """Every other op, each through its own CLI command, each refusal the CLI's own."""
+
+    def setUp(self) -> None:
+        test_todo.TodoIntegrationCase.setUp(self)
+        extra = {
+            "AC": "original ac",
+            "Notes": [{"raw": "first note"}, {"raw": "second note"}],
+            "WorkItems": [
+                {
+                    "summary": "landed",
+                    "done": True,
+                    "kind": "code",
+                    "sha": "a" * 40,
+                    "message": "landed",
+                },
+                {"summary": "open one", "done": False, "kind": "task"},
+                {"summary": "open two", "done": False, "kind": "task"},
+                {"summary": "open three", "done": False, "kind": "task"},
+            ],
+        }
+        self.write_ticket("e7e7e7e7-web", self.TID, "web edits", body="b", extra=extra)
+        self.updater = todo.WebUpdater(self.REPO)
+
+    def objid(self, key: str, index: int) -> str:
+        return "objid:" + self.stored()[key][index]["objid"]
+
+    def refused(self, **request: Any) -> str:
+        """Run a request that must be refused; assert nothing changed; return the text."""
+        before = self.stored()
+        with self.assertRaises(todo_web.UpdateRefused) as caught:
+            self.update(**request)
+        self.assertEqual(400, caught.exception.status)
+        self.assertEqual(before, self.stored())
+        return str(caught.exception)
+
+    def test_each_set_op_writes_its_field(self) -> None:
+        cases = {
+            "set-summary": ("Summary", "new summary"),
+            "set-ac": ("AC", "new ac"),
+            "set-long-summary": ("LongSummary", "new long summary"),
+            "set-actual-summary": ("ActualSummary", "new actual summary"),
+        }
+        for op, (field, value) in cases.items():
+            with self.subTest(op=op):
+                self.update(op=op, value=value)
+                stored = self.stored()[field]
+                self.assertEqual(value, stored["raw"] if isinstance(stored, dict) else stored)
+
+    def test_each_set_op_surfaces_the_cli_refusal(self) -> None:
+        # `set` captures EDIT through an editor for these flags only; --long-summary
+        # takes it literally, so its refusal case is the unknown todo below.
+        for op in ("set-summary", "set-ac", "set-actual-summary"):
+            with self.subTest(op=op):
+                self.assertIn("requires an interactive terminal", self.refused(op=op, value="EDIT"))
+        for op in ("set-summary", "set-ac", "set-long-summary", "set-actual-summary"):
+            with self.subTest(op=op, case="unknown todo"):
+                self.assertIn("no todo found", self.refused(op=op, id="ffff" * 16, value="x"))
+
+    def test_note_replace_rewrites_that_note_only(self) -> None:
+        target = self.objid("Notes", 1)
+        self.update(op="note-replace", target=target, value="second, rewritten")
+        notes = self.stored()["Notes"]
+        self.assertEqual(["first note", "second, rewritten"], [n["raw"] for n in notes])
+        self.assertEqual(target, "objid:" + notes[1]["objid"])
+
+    def test_note_replace_of_an_unknown_note_is_the_cli_refusal(self) -> None:
+        text = self.refused(op="note-replace", target="objid:fff0", value="x")
+        self.assertIn("note", text)
+
+    def test_note_replace_conflict_carries_the_stored_note(self) -> None:
+        target = self.objid("Notes", 0)
+        stale = self.page_token()
+        proc = self.todo("note-replace", self.TID, target, "--raw=cli wrote this")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        with self.in_env(), self.assertRaises(todo_web.UpdateConflict) as caught:
+            self.updater.update(
+                {
+                    "id": self.TID,
+                    "op": "note-replace",
+                    "target": target,
+                    "value": "d",
+                    "token": stale,
+                }
+            )
+        self.assertEqual("cli wrote this", caught.exception.current)
+
+    def test_work_item_replace_rewords_a_not_done_item(self) -> None:
+        target = self.objid("WorkItems", 2)
+        self.update(op="work-item-replace", target=target, value="open two, reworded")
+        items = self.stored()["WorkItems"]
+        self.assertEqual("open two, reworded", items[2]["summary"])
+        self.assertEqual(target, "objid:" + items[2]["objid"])
+
+    def test_work_item_replace_of_a_done_item_is_the_cli_refusal(self) -> None:
+        text = self.refused(op="work-item-replace", target=self.objid("WorkItems", 0), value="x")
+        self.assertIn("done", text)
+
+    def test_work_item_reorder_moves_a_not_done_item(self) -> None:
+        target = self.objid("WorkItems", 3)
+        self.update(op="work-item-reorder", target=target, value="1")
+        summaries = [i["summary"] for i in self.stored()["WorkItems"]]
+        self.assertEqual(["landed", "open three", "open one", "open two"], summaries)
+
+    def test_work_item_reorder_into_the_done_prefix_is_the_cli_refusal(self) -> None:
+        text = self.refused(op="work-item-reorder", target=self.objid("WorkItems", 2), value="0")
+        self.assertIn("done prefix", text)
+
+    def test_work_item_reorder_of_a_done_item_is_the_cli_refusal(self) -> None:
+        text = self.refused(op="work-item-reorder", target=self.objid("WorkItems", 0), value="2")
+        self.assertIn("done", text)
+
+    def test_a_flag_shaped_target_is_never_parsed_as_a_flag(self) -> None:
+        self.refused(op="note-replace", target="--raw=hijack", value="x")
 
 
 if __name__ == "__main__":
