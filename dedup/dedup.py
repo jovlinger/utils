@@ -7,16 +7,14 @@ This utility creates a deduplicated storage structure where:
 2. Symlinks are created in <target>/files/<path> pointing to the actual file
 3. Multiple files with the same content (same SHA256) share the same storage
 
-Modes:
-  (default)  Deduplicate files from sources into a target store
-  --fix      Fix relative symlinks after files have been moved within files/
+Ingest CLI lives here; symlink repair is ``fixdup.sh`` (relative or absolute).
 """
 
 import os
 import hashlib
 import shutil
 from pathlib import Path
-from typing import Set, Dict, Optional, List
+from typing import Set, Dict, Optional, List, Literal
 import argparse
 import sys
 import re
@@ -295,23 +293,30 @@ def deduplicate_directory(
 
 
 def fix_symlinks(
-    target_dir: Path, verbose: bool = False, dryrun: bool = False
+    target_dir: Path,
+    style: Literal["relative", "absolute"] = "relative",
+    verbose: bool = False,
+    dryrun: bool = False,
 ) -> Dict[str, int]:
     """
-    Fix relative symlinks in files/ after they have been moved.
+    Repair symlinks under files/ so they point at the correct data/ blob.
 
     Scans all symlinks under <target_dir>/files/. For each one, extracts the
     SHA-256 hash from the symlink target, verifies the data file exists, and
-    recalculates the correct relative path from the symlink's current location.
+    rewrites the link as either a relative or absolute path into data/.
 
     Args:
         target_dir: Root of the content-addressed store (contains data/ and files/)
+        style: ``relative`` (after moves within files/) or ``absolute``
         verbose: Whether to print progress information
         dryrun: Whether to skip actual symlink updates
 
     Returns:
         Dictionary with statistics: checked, fixed, skipped, broken
     """
+    if style not in ("relative", "absolute"):
+        raise ValueError(f"style must be 'relative' or 'absolute', got {style!r}")
+
     files_dir = target_dir / "files"
     data_dir = target_dir / "data"
 
@@ -354,10 +359,12 @@ def fix_symlinks(
             broken += 1
             continue
 
-        # Calculate the correct relative path from symlink location to data file
-        correct_relative = os.path.relpath(data_file, path.parent)
+        if style == "relative":
+            correct_target = os.path.relpath(data_file, path.parent)
+        else:
+            correct_target = str(data_file.resolve())
 
-        if current_target == correct_relative:
+        if current_target == correct_target:
             if verbose:
                 print(f"OK: {path}")
             continue
@@ -365,18 +372,68 @@ def fix_symlinks(
         if verbose:
             print(f"Fix: {path}")
             print(f"  was: {current_target}")
-            print(f"  now: {correct_relative}")
+            print(f"  now: {correct_target}")
 
         if not dryrun:
             path.unlink()
-            path.symlink_to(correct_relative)
+            path.symlink_to(correct_target)
         fixed += 1
 
     return {"checked": checked, "fixed": fixed, "skipped": skipped, "broken": broken}
 
 
-def main():
-    """Main entry point."""
+def _print_fix_stats(stats: Dict[str, int], dryrun: bool) -> None:
+    """Print symlink-repair summary lines."""
+    prefix = "Dry run" if dryrun else "Fix"
+    print(f"{prefix} complete!")
+    print(f"Symlinks checked: {stats['checked']}")
+    print(f"Symlinks fixed:   {stats['fixed']}")
+    print(f"Symlinks skipped: {stats['skipped']}")
+    print(f"Broken (missing): {stats['broken']}")
+
+
+def main_fixdup(argv: Optional[List[str]] = None) -> None:
+    """CLI for fixdup.sh: rewrite files/ symlinks as relative or absolute."""
+    parser = argparse.ArgumentParser(
+        prog="fixdup",
+        description="Repair files/ symlinks in a shasrv store (relative or absolute)",
+    )
+    parser.add_argument(
+        "style",
+        choices=("relative", "absolute"),
+        help="Link style to write: relative (after moves) or absolute",
+    )
+    parser.add_argument(
+        "dedup_dir",
+        type=Path,
+        help="Store root containing data/ and files/",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Print verbose output"
+    )
+    parser.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Report needed changes without rewriting symlinks",
+    )
+
+    args = parser.parse_args(argv)
+
+    try:
+        stats = fix_symlinks(
+            args.dedup_dir,
+            style=args.style,
+            verbose=args.verbose,
+            dryrun=args.dryrun,
+        )
+        _print_fix_stats(stats, args.dryrun)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main() -> None:
+    """Ingest / dedup entry point."""
     parser = argparse.ArgumentParser(
         description="shasrv - Content-addressed file storage with SHA-256 deduplication"
     )
@@ -389,11 +446,6 @@ def main():
         help="Calculate without performing actual file operations",
     )
     parser.add_argument(
-        "--fix",
-        action="store_true",
-        help="Fix mode: repair relative symlinks in files/ after moving them",
-    )
-    parser.add_argument(
         "--remove-source",
         action="store_true",
         help="Remove source files after successful dedup (like old ingest.sh)",
@@ -402,55 +454,38 @@ def main():
         "positional",
         nargs="*",
         type=Path,
-        help="In default mode: <sources...> <target_dir>.  In --fix mode: <target_dir>",
+        help="<sources...> <target_dir>",
     )
 
     args = parser.parse_args()
 
-    if args.fix:
-        # Fix mode: single positional argument = target_dir
-        if len(args.positional) != 1:
-            parser.error("--fix mode requires exactly one argument: <target_dir>")
+    if len(args.positional) < 2:
+        parser.error(
+            "Dedup mode requires at least two arguments: <source> [source...] <target_dir>"
+        )
 
-        target_dir = args.positional[0]
+    sources = args.positional[:-1]
+    target_dir = args.positional[-1]
 
-        try:
-            stats = fix_symlinks(target_dir, args.verbose, args.dryrun)
-            prefix = "Dry run" if args.dryrun else "Fix"
-            print(f"{prefix} complete!")
-            print(f"Symlinks checked: {stats['checked']}")
-            print(f"Symlinks fixed:   {stats['fixed']}")
-            print(f"Symlinks skipped: {stats['skipped']}")
-            print(f"Broken (missing): {stats['broken']}")
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        # Dedup mode: <sources...> <target_dir>
-        if len(args.positional) < 2:
-            parser.error(
-                "Dedup mode requires at least two arguments: <source> [source...] <target_dir>"
-            )
+    try:
+        stats = deduplicate_sources(
+            sources, target_dir, args.verbose, args.dryrun, args.remove_source
+        )
 
-        sources = args.positional[:-1]
-        target_dir = args.positional[-1]
-
-        try:
-            stats = deduplicate_sources(
-                sources, target_dir, args.verbose, args.dryrun, args.remove_source
-            )
-
-            prefix = "Dry run" if args.dryrun else "Deduplication"
-            print(f"{prefix} complete!")
-            print(f"Files processed: {stats['files_processed']}")
-            print(f"Unique files:    {stats['unique_files']}")
-            print(f"Duplicates saved: {stats['duplicates_saved']}")
-            if args.remove_source:
-                print(f"Source files removed: {stats['files_processed']}")
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
+        prefix = "Dry run" if args.dryrun else "Deduplication"
+        print(f"{prefix} complete!")
+        print(f"Files processed: {stats['files_processed']}")
+        print(f"Unique files:    {stats['unique_files']}")
+        print(f"Duplicates saved: {stats['duplicates_saved']}")
+        if args.remove_source:
+            print(f"Source files removed: {stats['files_processed']}")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "__fixdup__":
+        main_fixdup(sys.argv[2:])
+    else:
+        main()

@@ -6,19 +6,24 @@
 #
 # Usage: same as dedup.py (all arguments are passed through)
 #   dedup.sh <sources...> <target_dir> [-v] [--dryrun] [--remove-source]
-#   dedup.sh --fix <target_dir> [-v] [--dryrun]
+#
+# Symlink repair: use fixdup.sh {relative|absolute} <dedup_dir> ...
 
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
-  echo "No venv at $SCRIPT_DIR/env." >&2
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ] && [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env or $SCRIPT_DIR/.venv." >&2
   echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
   exit 1
 fi
-. "$SCRIPT_DIR/env/bin/activate"
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  . "$SCRIPT_DIR/.venv/bin/activate"
+else
+  . "$SCRIPT_DIR/env/bin/activate"
+fi
 
 REMOUNTED=false
 MOUNT_POINT=""
@@ -45,32 +50,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- Find the target directory from the arguments ---
-# In --fix mode: the positional arg after --fix is the target
-# In dedup mode: the last positional arg is the target
+# Dedup mode: last positional is the target
 TARGET_DIR=""
-FIX_MODE=false
-
-# Parse args to find target_dir (we don't consume them, just peek)
 positionals=()
 for arg in "$@"; do
     case "$arg" in
-        --fix)       FIX_MODE=true ;;
         -v|--verbose|--dryrun|--remove-source) ;;
         *)           positionals+=("$arg") ;;
     esac
 done
 
-if $FIX_MODE; then
-    # In fix mode, the single positional is the target
-    if [ ${#positionals[@]} -ge 1 ]; then
-        TARGET_DIR="${positionals[0]}"
-    fi
-else
-    # In dedup mode, last positional is the target
-    if [ ${#positionals[@]} -ge 1 ]; then
-        TARGET_DIR="${positionals[-1]}"
-    fi
+if [ ${#positionals[@]} -ge 1 ]; then
+    TARGET_DIR="${positionals[-1]}"
 fi
 
 # If we found a target, check its mount status
@@ -91,5 +82,5 @@ if [ -n "$TARGET_DIR" ]; then
     fi
 fi
 
-# Run the Python deduplication/fix script
+# Run the Python deduplication script
 python "$SCRIPT_DIR/dedup.py" "$@"

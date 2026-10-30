@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_fix.sh - Test the --fix mode (repair symlinks after moving them)
+# test_fix.sh - Test fixdup.sh relative and absolute modes
 
 set -euo pipefail
 
@@ -7,12 +7,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UTILS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_BASE="/tmp/shasrv_test_fix_$$"
 
-if [ ! -f "$SCRIPT_DIR/env/bin/activate" ]; then
-  echo "No venv at $SCRIPT_DIR/env." >&2
+if [ ! -f "$SCRIPT_DIR/env/bin/activate" ] && [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  echo "No venv at $SCRIPT_DIR/env or $SCRIPT_DIR/.venv." >&2
   echo "Run: $UTILS_ROOT/create_pipenv.sh dedup" >&2
   exit 1
 fi
-. "$SCRIPT_DIR/env/bin/activate"
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  . "$SCRIPT_DIR/.venv/bin/activate"
+else
+  . "$SCRIPT_DIR/env/bin/activate"
+fi
 
 cleanup() { rm -rf "$TEST_BASE"; }
 trap cleanup EXIT
@@ -37,7 +41,7 @@ echo ""
 [ -e "$STORE/files/source/album1/track1.flac" ] || fail "initial symlink missing"
 pass "initial ingest"
 
-# ---- Test 1: Move a symlink deeper and fix ----
+# ---- Test 1: Move a symlink deeper and fix (relative) ----
 mkdir -p "$STORE/files/moved/deeper/path"
 mv "$STORE/files/source/album1/track1.flac" "$STORE/files/moved/deeper/path/track1.flac"
 
@@ -48,7 +52,7 @@ fi
 pass "symlink broken after move"
 
 # Run fix
-python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+"$SCRIPT_DIR/fixdup.sh" relative "$STORE" -v
 echo ""
 
 # Symlink should resolve now
@@ -69,7 +73,7 @@ if [ -e "$STORE/files/track2.flac" ]; then
 fi
 pass "symlink broken after shallow move"
 
-python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+"$SCRIPT_DIR/fixdup.sh" relative "$STORE" -v
 echo ""
 
 actual=$(cat "$STORE/files/track2.flac")
@@ -81,7 +85,7 @@ pass "fix restored shallow-moved symlink"
 mkdir -p "$STORE/files/drytest"
 mv "$STORE/files/track2.flac" "$STORE/files/drytest/track2.flac"
 
-python "$SCRIPT_DIR/dedup.py" --fix --dryrun "$STORE" -v
+"$SCRIPT_DIR/fixdup.sh" relative "$STORE" --dryrun -v
 echo ""
 
 # Should still be broken (dryrun)
@@ -91,16 +95,31 @@ fi
 pass "dryrun did not modify symlinks"
 
 # Actually fix it
-python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v
+"$SCRIPT_DIR/fixdup.sh" relative "$STORE" -v
 actual=$(cat "$STORE/files/drytest/track2.flac")
 [ "$actual" = "content B" ] || fail "final fix content mismatch"
 pass "final fix after dryrun"
 
-# ---- Test 4: Already-correct symlinks are untouched ----
-output=$(python "$SCRIPT_DIR/dedup.py" --fix "$STORE" -v 2>&1)
+# ---- Test 4: Already-correct relative symlinks are untouched ----
+output=$("$SCRIPT_DIR/fixdup.sh" relative "$STORE" -v 2>&1)
 fixed=$(echo "$output" | grep "Symlinks fixed:" | awk '{print $NF}')
 [ "$fixed" = "0" ] || fail "expected 0 fixes on already-correct store, got $fixed"
-pass "no-op on already-correct symlinks"
+pass "no-op on already-correct relative symlinks"
+
+# ---- Test 5: absolute mode rewrites to absolute paths ----
+"$SCRIPT_DIR/fixdup.sh" absolute "$STORE" -v
+echo ""
+link_target=$(readlink "$STORE/files/drytest/track2.flac")
+[[ "$link_target" == /* ]] || fail "expected absolute symlink, got: $link_target"
+actual=$(cat "$STORE/files/drytest/track2.flac")
+[ "$actual" = "content B" ] || fail "content mismatch after absolute fix"
+pass "absolute mode rewrote links"
+
+# absolute again should be no-op
+output=$("$SCRIPT_DIR/fixdup.sh" absolute "$STORE" -v 2>&1)
+fixed=$(echo "$output" | grep "Symlinks fixed:" | awk '{print $NF}')
+[ "$fixed" = "0" ] || fail "expected 0 absolute fixes on already-absolute store, got $fixed"
+pass "no-op on already-absolute symlinks"
 
 echo ""
 echo "All fix tests passed!"

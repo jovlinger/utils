@@ -1,12 +1,14 @@
 #pragma once
 
-/* Core B Volumio client. GET /api/v1/getState and the commands API.
- * Volumio sets volume with GET, not POST:
- * /api/v1/commands/?cmd=volume&volume=N
- * Toggle is /api/v1/commands/?cmd=toggle.
+/* Core B Volumio client. Non-blocking: start / select-poll / read / close.
+ * The uimk2 worker must only call player_http_tick; it must never block on
+ * DNS or HTTP. Boot may resolve WiFi + Volumio IP once.
  *
- * WIFI_SSID / WIFI_PASS come from the gitignored wifi header or from
- * build flags. An empty SSID still links; calls return false.
+ * Volumio volume/toggle use GET:
+ *   /api/v1/commands/?cmd=volume&volume=N
+ *   /api/v1/commands/?cmd=toggle
+ *
+ * WIFI_SSID / WIFI_PASS come from the gitignored wifi header or build flags.
  */
 
 #include <stdbool.h>
@@ -25,22 +27,38 @@ struct PlayerSnapshot {
   char albumart[256];
 };
 
-/* Connect when WIFI_SSID is set. Logs a clear line when it is empty. */
+enum PlayerHttpEvent {
+  PLAYER_HTTP_EV_NONE = 0,
+  PLAYER_HTTP_EV_GETSTATE_OK,
+  PLAYER_HTTP_EV_GETSTATE_FAIL,
+  PLAYER_HTTP_EV_CMD_OK,
+  PLAYER_HTTP_EV_CMD_FAIL,
+  PLAYER_HTTP_EV_ALBUMART_OK,
+  PLAYER_HTTP_EV_ALBUMART_FAIL
+};
+
+/* Connect WiFi and cache Volumio IP (blocking, boot only). */
 void player_http_boot(void);
 
 bool player_http_configured(void);
 
-/* GET getState. False when WiFi or HTTP fails. */
-bool player_http_poll(PlayerSnapshot *out);
+/* True while a socket op is in flight. */
+bool player_http_busy(void);
 
-/* PoC: GET albumart into a heap buffer (PSRAM preferred). Caller free()s
- * *buf_out. Cap stops a runaway body. False on HTTP/WiFi failure. */
-bool player_http_fetch_albumart(const char *albumart, size_t cap,
-                                uint8_t **buf_out, size_t *bytes_out,
-                                uint32_t *ms_out);
+/* Queue or start. Latest volume wins. getState coalesces while busy.
+ * Returns false only when not configured. */
+bool player_http_request_getstate(void);
+bool player_http_request_toggle(void);
+bool player_http_request_volume(int volume);
+bool player_http_request_albumart(const char *albumart, size_t cap);
 
-/* GET commands/?cmd=toggle. Does not refresh state. */
-bool player_http_toggle(void);
+/* Zero-timeout select pump. At most one completion event per call. */
+PlayerHttpEvent player_http_tick(void);
 
-/* GET commands/?cmd=volume&volume=N. N is clamped to 0..100. */
-bool player_http_set_volume(int volume);
+/* Valid after PLAYER_HTTP_EV_GETSTATE_OK until the next getState start. */
+const PlayerSnapshot *player_http_snapshot(void);
+
+/* After PLAYER_HTTP_EV_ALBUMART_OK: take ownership of the JPEG buffer
+ * (caller free()s). */
+bool player_http_take_albumart(uint8_t **buf_out, size_t *bytes_out,
+                               uint32_t *ms_out);

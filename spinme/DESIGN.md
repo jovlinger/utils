@@ -81,9 +81,9 @@ RGBA maps; update does not write pixels.
 
 ### Albumart fill of FOLLOW_BASE.px
 
-On `player_poll`, after track text: GET `albumart` (relative URL on the
-Volumio host), buffer JPEG in PSRAM, then ROM TJpgDec (`jd_prepare` /
-`jd_decomp`) into FOLLOW_BASE.px.
+On getState completion (non-blocking HTTP), if `albumart` changed: queue a
+GET of that relative URL, buffer JPEG in PSRAM, then a side task runs ROM
+TJpgDec (`jd_prepare` / `jd_decomp`) into FOLLOW_BASE.px.
 
 Fill strategy (`rom_jpeg_decode_nn_rgba`):
 
@@ -180,47 +180,84 @@ Core A: decode press and rotary; post press / volume / screen_on / screen_off;
 run redraw (push dirty rows of curr, clear busy). A does not know play/pause,
 Toggle, desired, or the player. A never sees next.
 
-Core B: `host_run` (permanent + one-off schedulers push events), then
-`host_step` until the ring is empty; side effects for poll / toggle / volume
-HTTP; sleep interruptible.
+Core B owns three cooperating pieces: the **scheduler**, the **event ring**,
+and the **player HTTP state machine**. Only the ring is the cross-core
+channel. The HTTP machine never pushes onto the ring. JPEG decode is a
+fourth actor (short-lived side task) that only dirties FOLLOW_BASE when done.
 
-## Event queue
+## Scheduler, event queue, and HTTP state machine
+
+### Event queue (`uimk2_ring`)
 
 Ring of QUEUE_DEPTH value slots. Peek, handle, then pop. Full ring: ERROR,
-drop the new event.
+drop the new event. Handlers update host / zlist state and may **arm** player
+IO; they must not block on sockets or DNS.
 
 ```
 handle(event):
   switch selector:
     press:              hit-test (x, y); transport => Toggle (+ maybe Poll)
-    volume:             desired = new_val; command player when burst ends
-    toggle:             flip local playing; command player
+    volume:             desired = new_val; queue volume cmd when burst ends
+    toggle:             flip local playing; queue toggle cmd
     screen_on:          backlight on; arm poll + screen-off; push URD
     screen_off:         backlight off; disarm poll
-    update_render_draw: update_render_draw()
+    update_render_draw: set clock_tick; update_render_draw()
     redraw:             retry compare/swap/ping
-    clock:              clock_tick = now; clock_sec = now/1000; zlist_set_clock
-    player_poll:        GET getState; refresh glass; maybe double poll every
+    clock:              clock_tick = now; zlist_set_clock (no paint alone)
+    player_poll:        queue non-blocking getState
 ```
 
-A posts: press, volume, screen_on, screen_off. Each post wakes B.
+A posts: press, volume, screen_on, screen_off. Each post wakes B (task notify).
+Scheduler posts: URD, CLOCK, PLAYER_POLL, SCREEN_OFF, REDRAW retry.
 
-## Schedulers
+SCROLL / CLOCKTEXT pixels move only when URD runs. CLOCK alone does not paint.
 
-Permanent (`uimk2_host` perm list):
+### Schedulers (`uimk2_host`)
+
+Soft timers: each slot has `last_run` and `every` (CLOCK_RES ms). Due slots
+push **one ring event each**; they never touch sockets.
+
+Permanent (`perm` list):
 
 - update_render_draw -- every UPDATE_RENDER_EVERY while backlight on
-- clock -- every UPDATE_RENDER_EVERY (same cadence)
+- clock -- every UPDATE_RENDER_EVERY (same cadence; redundant with URD tick copy)
 - player_poll -- POLL_EVERY_START on wake, doubles to POLL_EVERY_MAX while armed
 
 One-offs (packed, zero-terminated): screen_off at SCREEN_OFF_EVERY; redraw
 retry at REDRAW_RETRY_EVERY when busy (ERROR at REDRAW_ATTEMPT_CAP).
 
+`host_run(now)` fires due slots, then returns ms until the next due time.
+URD is gated on backlight; poll on `poll_enabled`. Idle screen-off therefore
+stops visible clock/scroll even if CLOCK keeps enqueueing.
+
+### HTTP state machine (`player_http`)
+
+Not on the ring. One in-flight socket op. Pending flags coalesce: getState
+while busy sets a flag; latest volume wins; toggle/albumart queue.
+
+Phases: idle -> connect -> send -> recv headers -> recv body -> idle.
+Advanced only by `player_http_tick()` with `select` timeout 0. Boot may
+block once for WiFi + Volumio DNS; runtime never calls `hostByName`.
+
+Completions are **return codes from tick**, not ring events:
+
+- getState OK -> refresh track/volume/playing; maybe queue albumart if URL changed
+- albumart OK -> hand JPEG to a decode side task (Core B stays free)
+- cmd OK/FAIL -> log; no URD stall
+
+### How they meet (Core B loop)
+
 ```
 B loop:
-  delay = host_run(now)
-  while peek: bake raster if needed; host_step; player side effects
-  sleep interruptible up to delay
+  now = millis()
+  delay = host_run(now)              # scheduler -> ring only
+  while peek:
+    bake raster if needed
+    host_step                        # ring handler; may queue player IO only
+  ev = player_http_tick()            # select(0); never blocks
+  apply ev (snapshot / queue albumart / spawn decode) if any
+  if http busy: delay = 0
+  sleep interruptible up to min(delay, 50ms)   # notify from A wakes early
 ```
 
 ```
@@ -229,20 +266,67 @@ A.redraw():
   clear bits; busy-by-core-A = 0
 ```
 
+Contract: scheduler produces cadence on the ring; ring handlers only arm the
+HTTP machine; the machine runs cooperatively beside the scheduler and must
+not stall URD. Blocking GET/DNS on Core B is a bug.
+
 ## Sample timeline
 
 Start: screen off, ring empty, busy clear.
 
 Detent at t=0: A posts screen_on + volume(41). B arms poll and screen-off,
-sets desired, URD paints, redraw swaps and pings A.
+sets desired, URD paints, redraw swaps and pings A. Volume cmd is queued on
+the HTTP machine; tick completes it without blocking the next URD.
 
-While poll HTTP is in flight, A may post volume(42), volume(43) behind the
-poll; both stay on the ring. Overlay is desire @ alpha 128 over polled digits.
+While getState is in flight, A may post volume(42), volume(43) on the ring;
+handlers run immediately (overlay updates). The HTTP machine keeps the latest
+volume pending behind the in-flight op. Overlay is desire @ alpha 128 over
+polled digits.
 
-Title wider than viewport: SCROLL updates ox from clock_tick; no scroll event
-on the ring.
+Title wider than viewport: SCROLL updates ox from clock_tick inside URD; no
+scroll event on the ring.
 
 Snapshot while backlight off updates next and does not ping A.
+
+## Memory pools (ESP32-S3 Waveshare)
+
+Three pools; only SRAM is DMA-capable for peripherals.
+
+| Pool | On this board | Volatile | CPU access | We put |
+|------|---------------|----------|------------|--------|
+| Internal SRAM | ~512 KB | yes | direct, fastest | stacks, FreeRTOS, ISRs, QSPI staging (`gBand`) |
+| External PSRAM | 8 MB | yes | cached | `curr`/`next`, FOLLOW_BASE.px, albumart JPEG, shape maps |
+| External Flash | 16 MB | no | MMU-mapped + partitions | firmware, embedded glyphs/BG, NVS |
+
+Peripherals (QSPI LCD, Wi-Fi DMA, etc.) **cannot DMA from/to PSRAM**. A full
+360x360 RGB565 frame is ~259 KB; a true SRAM double buffer (~518 KB) does not
+fit. So we do not point GDMA at the PSRAM framebuffers.
+
+Running push path (Strategy A shape, not LVGL dual flush):
+
+1. Compose into PSRAM `next` (pack66), swap with `curr`.
+2. Core A walks dirty rows of `curr`, unpacks pack66 -> RGBA, converts to
+   RGB565 with byte-swap into one internal band `gBand` (up to 16 rows worth
+   of width; BSS/SRAM).
+3. `panel_push_rgba_span` sets the ST77916 window and ships that band over
+   QSPI with **polling** SPI (`spi_device_polling_transmit`). There is no
+   second ping-pong flush buffer and no overlap of "DMA drains A while CPU
+   fills B".
+
+Endianness: ESP32-S3 is little-endian; the panel wants MSB-first on the wire.
+`swap16` on every 565 word before TX.
+
+## Color formats (do not conflate)
+
+| Stage | Format | Why |
+|-------|--------|-----|
+| Shape `px` (glyphs, base art) | RGBA8888 | Host bake / JPEG NN; easy alpha |
+| Framebuffers `curr`/`next` | **pack66** = R6 G6 B6 A2 | Compose matches panel gamut; A2 skip-RLE + PIE |
+| QSPI to ST77916 (our driver) | **RGB565** + byte-swap | Current `panel_io` path; 16-bit words on the bus |
+| Panel IC capability | RGB666 (262K) marketed | We still push 565 today; not a 18-bit packed bus path |
+
+So: composition is 666+A2; the glass wire is 565. "262K colors" in board copy
+is the IC mode, not what `panel_push_rgba_span` sends.
 
 ## Blits (running)
 
@@ -250,7 +334,7 @@ Snapshot while backlight off updates next and does not ping A.
 - Transparent A2==0: skip-RLE in the low 24 bits; encode_row_skips after pack.
 - Paint: src_over66 into next. ESP32-S3: PIE for aligned opaque spans
   (`uimk2_blit_pie.S`).
-- Core A unpacks pack66 rows to RGBA for the panel bus.
+- Core A: pack66 row -> RGBA -> RGB565/`swap16` -> `gBand` -> QSPI.
 
 ## Host library (not the live glass)
 
@@ -268,3 +352,6 @@ TJpgDec is in use). MPD. Sonos. Audio effects.
 ## Parked (not owed)
 
 Further SWAR/PIE ideas on todo:c029d7c6.
+
+Post-rehash ideas (shape-exterior damage, column dirty, etc.):
+`docs/PRINCIPLES.md` -- not running design.

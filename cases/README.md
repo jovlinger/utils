@@ -15,5 +15,7 @@ Each CASE is one incident. Read the CASE skill before writing or applying one:
 | [2026-10-15-render-socks-local-tailscale-down.md](2026-10-15-render-socks-local-tailscale-down.md) | SOCKS timeout when local Tailscale is running but down |
 | [2026-10-16-spinme-ui-lag-dns.md](2026-10-16-spinme-ui-lag-dns.md) | Knob glass lagged seconds because every Volumio call re-resolved .local |
 | [2026-10-22-dmz-oauth-markupsafe-sigsegv.md](2026-10-22-dmz-oauth-markupsafe-sigsegv.md) | DMZ OAuth never starts: markupsafe v7 speedups SIGSEGV on the armv6 Pi |
+| [2026-10-27-spinme-reactivity-dies.md](2026-10-27-spinme-reactivity-dies.md) | Glass clock/scroll die: URD gated on backlight + Core B blocked in poll/albumart |
+| [2026-10-29-readynas-smart-vs-frontview.md](2026-10-29-readynas-smart-vs-frontview.md) | ReadyNAS Frontview hides SMART; smartctl reads both hdc/hde |
 
 Copy [TEMPLATE.md](TEMPLATE.md) for a new file. Name: `YYYY-MM-DD-short-slug.md`.

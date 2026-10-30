@@ -144,98 +144,123 @@ static void paint_follow(void) {
   follow_glass_raster(polled, desired, playing, desired != polled);
 }
 
-/* HTTP stays off gMu so Core A can keep posting. */
-static void apply_poll(void) {
-  PlayerSnapshot snap;
+static char gLastAlbumart[256];
+static volatile bool gDecodeBusy = false;
+
+struct DecodeJob {
+  uint8_t *jpeg;
+  size_t nbytes;
+};
+
+static void albumart_decode_task(void *arg) {
+  DecodeJob *job = static_cast<DecodeJob *>(arg);
+  uint8_t *bg = follow_glass_bg_rgba();
+  RomJpegInfo ji;
+  if (job == nullptr) {
+    gDecodeBusy = false;
+    vTaskDelete(nullptr);
+    return;
+  }
+  if (bg == nullptr) {
+    Serial.println("albumart bg null");
+  } else if (!rom_jpeg_decode_nn_rgba(job->jpeg, job->nbytes, bg,
+                                      (uint16_t)PANEL_W, (uint16_t)PANEL_H,
+                                      &ji)) {
+    Serial.printf("albumart romjpeg fail prep=%d decomp=%d ms=%u\n",
+                  ji.jd_prepare, ji.jd_decomp, (unsigned)ji.decode_ms);
+  } else {
+    follow_glass_bg_mark_dirty();
+    Serial.printf(
+        "albumart romjpeg ok src=%ux%u via=%ux%u scale=1/%u "
+        "dst=%ux%u decode_ms=%u\n",
+        (unsigned)ji.src_w, (unsigned)ji.src_h, (unsigned)ji.out_w,
+        (unsigned)ji.out_h, 1u << ji.scale, (unsigned)ji.dst_w,
+        (unsigned)ji.dst_h, (unsigned)ji.decode_ms);
+  }
+  free(job->jpeg);
+  free(job);
+  gDecodeBusy = false;
+  notify_b();
+  vTaskDelete(nullptr);
+}
+
+static void on_getstate_ok(void) {
+  const PlayerSnapshot *snap = player_http_snapshot();
   int shown;
-  if (!player_http_configured()) {
-    Serial.println("player poll skipped: WIFI_SSID empty");
+  if (snap == nullptr) {
     return;
   }
-  if (!player_http_poll(&snap)) {
-    Serial.println("player poll fail");
-    return;
-  }
-  follow_glass_set_track(snap.artist, snap.album, snap.title);
+  follow_glass_set_track(snap->artist, snap->album, snap->title);
   xSemaphoreTake(gMu, portMAX_DELAY);
-  if (snap.volume >= 0) {
-    gPolled = snap.volume;
+  if (snap->volume >= 0) {
+    gPolled = snap->volume;
     if (!gVolumeSent && gDesiredA == gHost.desired) {
       gHost.desired = gPolled;
       gDesiredA = gPolled;
     }
   }
-  if (snap.have_status) {
-    gHost.playing = snap.playing;
+  if (snap->have_status) {
+    gHost.playing = snap->playing;
   }
   shown = gPolled;
   xSemaphoreGive(gMu);
   paint_follow();
   Serial.printf("player poll %s vol %d\n",
-                snap.status[0] != '\0' ? snap.status : "?", shown);
-  /* Pull cover; ROM TJpgDec NN into pre-allocated 360x360 opaque base. */
-  if (snap.albumart[0] != '\0') {
-    uint8_t *jpeg = nullptr;
-    uint8_t *bg = follow_glass_bg_rgba();
-    size_t nbytes = 0;
-    uint32_t fetch_ms = 0;
-    RomJpegInfo ji;
-    if (bg == nullptr) {
-      Serial.println("albumart bg null");
-    } else if (!player_http_fetch_albumart(snap.albumart, 512u * 1024u, &jpeg,
-                                           &nbytes, &fetch_ms)) {
-      Serial.println("albumart fetch fail");
-    } else {
-      Serial.printf("albumart fetch %u bytes %u ms\n", (unsigned)nbytes,
-                    (unsigned)fetch_ms);
-      if (rom_jpeg_decode_nn_rgba(jpeg, nbytes, bg, (uint16_t)PANEL_W,
-                                  (uint16_t)PANEL_H, &ji)) {
-        follow_glass_bg_mark_dirty();
-        Serial.printf(
-            "albumart romjpeg ok src=%ux%u via=%ux%u scale=1/%u "
-            "dst=%ux%u decode_ms=%u\n",
-            (unsigned)ji.src_w, (unsigned)ji.src_h, (unsigned)ji.out_w,
-            (unsigned)ji.out_h, 1u << ji.scale, (unsigned)ji.dst_w,
-            (unsigned)ji.dst_h, (unsigned)ji.decode_ms);
-      } else {
-        Serial.printf("albumart romjpeg fail prep=%d decomp=%d ms=%u\n",
-                      ji.jd_prepare, ji.jd_decomp, (unsigned)ji.decode_ms);
-      }
-      free(jpeg);
-    }
+                snap->status[0] != '\0' ? snap->status : "?", shown);
+  if (snap->albumart[0] != '\0' &&
+      strncmp(snap->albumart, gLastAlbumart, sizeof gLastAlbumart) != 0) {
+    (void)player_http_request_albumart(snap->albumart, 512u * 1024u);
   }
 }
 
-static void apply_toggle(void) {
-  if (!player_http_configured()) {
-    Serial.println("player toggle skipped: WIFI_SSID empty");
+static void on_albumart_ok(void) {
+  uint8_t *jpeg = nullptr;
+  size_t nbytes = 0;
+  uint32_t fetch_ms = 0;
+  DecodeJob *job;
+  const PlayerSnapshot *snap = player_http_snapshot();
+  if (!player_http_take_albumart(&jpeg, &nbytes, &fetch_ms)) {
     return;
   }
-  if (!player_http_toggle()) {
-    Serial.println("player toggle fail");
+  Serial.printf("albumart fetch %u bytes %u ms\n", (unsigned)nbytes,
+                (unsigned)fetch_ms);
+  if (snap != nullptr) {
+    strncpy(gLastAlbumart, snap->albumart, sizeof gLastAlbumart - 1u);
+    gLastAlbumart[sizeof gLastAlbumart - 1u] = '\0';
+  }
+  if (gDecodeBusy) {
+    free(jpeg);
     return;
   }
-  paint_follow();
-  Serial.println("player toggle");
+  job = static_cast<DecodeJob *>(malloc(sizeof *job));
+  if (job == nullptr) {
+    free(jpeg);
+    return;
+  }
+  job->jpeg = jpeg;
+  job->nbytes = nbytes;
+  gDecodeBusy = true;
+  if (xTaskCreate(albumart_decode_task, "albumart", 8192, job, 1, nullptr) !=
+      pdPASS) {
+    gDecodeBusy = false;
+    free(jpeg);
+    free(job);
+  }
 }
 
-static void apply_volume(int before, int after, bool more_volume) {
-  if (after == before) {
-    return;
+static void pump_player_http(void) {
+  PlayerHttpEvent ev = player_http_tick();
+  if (ev == PLAYER_HTTP_EV_GETSTATE_OK) {
+    on_getstate_ok();
+  } else if (ev == PLAYER_HTTP_EV_GETSTATE_FAIL) {
+    Serial.println("player poll fail");
+  } else if (ev == PLAYER_HTTP_EV_ALBUMART_OK) {
+    on_albumart_ok();
+  } else if (ev == PLAYER_HTTP_EV_ALBUMART_FAIL) {
+    Serial.println("albumart fetch fail");
+  } else if (ev == PLAYER_HTTP_EV_CMD_FAIL) {
+    Serial.println("player cmd fail");
   }
-  gVolumeSent = true;
-  if (more_volume) {
-    return;
-  }
-  if (!player_http_configured()) {
-    Serial.printf("player volume skipped: WIFI_SSID empty (%d)\n", after);
-    return;
-  }
-  if (!player_http_set_volume(after)) {
-    Serial.printf("player volume fail %d\n", after);
-    return;
-  }
-  Serial.printf("player volume %d\n", after);
 }
 
 /* Caller holds gMu. A dark tap or detent posts screen_on and lights the pin. */
@@ -337,20 +362,43 @@ static void core_b_task(void *arg) {
       if (!stepped) {
         break;
       }
+      /* Queue only -- never block on sockets here. */
       if (sel == (uint8_t)UIMK2_EV_PLAYER_POLL) {
-        apply_poll();
+        if (!player_http_request_getstate()) {
+          Serial.println("player poll skipped: WIFI_SSID empty");
+        }
       } else if (sel == (uint8_t)UIMK2_EV_TOGGLE) {
-        apply_toggle();
+        paint_follow();
+        if (!player_http_request_toggle()) {
+          Serial.println("player toggle skipped: WIFI_SSID empty");
+        } else {
+          Serial.println("player toggle queued");
+        }
       } else if (sel == (uint8_t)UIMK2_EV_VOLUME) {
-        apply_volume(desired_before, desired_after, more_volume);
+        if (desired_after != desired_before) {
+          gVolumeSent = true;
+          if (!more_volume) {
+            if (!player_http_request_volume(desired_after)) {
+              Serial.printf("player volume skipped: WIFI_SSID empty (%d)\n",
+                            desired_after);
+            } else {
+              Serial.printf("player volume queued %d\n", desired_after);
+            }
+          }
+        }
       }
+    }
+    pump_player_http();
+    if (player_http_busy()) {
+      /* Keep waking while a socket op is in flight. */
+      wait = 0u;
     }
     if (wait == 0u) {
       taskYIELD();
     } else {
       uint32_t slice = wait;
-      if (slice > 1000u) {
-        slice = 1000u;
+      if (slice > 50u) {
+        slice = 50u;
       }
       (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slice));
     }
