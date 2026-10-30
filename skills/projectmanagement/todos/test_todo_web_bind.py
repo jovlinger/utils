@@ -110,11 +110,13 @@ class WebCommandBindTest(unittest.TestCase):
         kwargs = self._serve_kwargs()
         self.assertEqual("::", kwargs["host"])
         self.assertIs(False, kwargs["write"])
+        self.assertIsNone(kwargs["updater"])
 
     def test_write_binds_loopback_and_enables_writes(self) -> None:
         kwargs = self._serve_kwargs("--write")
         self.assertEqual("localhost", kwargs["host"])
         self.assertIs(True, kwargs["write"])
+        self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
 
     def test_explicit_host_is_honoured_under_write(self) -> None:
         kwargs = self._serve_kwargs("--write", "--host", "0.0.0.0")

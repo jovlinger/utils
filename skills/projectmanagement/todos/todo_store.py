@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -110,6 +111,31 @@ class TodoStoreError(Exception):
 
 class LockTimeout(Exception):
     """A per-TODO lock could not be acquired within the grace period."""
+
+
+# Ticket ids whose lock the current thread holds. Per thread, not per process:
+# the on-disk lock records only a pid, so two threads of one process (the web
+# viewer's request threads) must still exclude each other.
+_HELD = threading.local()
+_THREAD_LOCKS: Dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock(ticket_id: str) -> threading.Lock:
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(ticket_id, threading.Lock())
+
+
+def _held_set() -> set:
+    held = getattr(_HELD, "ids", None)
+    if held is None:
+        held = _HELD.ids = set()
+    return held
+
+
+def held_locks() -> frozenset:
+    """Ticket ids whose lock the calling thread currently holds."""
+    return frozenset(_held_set())
 
 
 class TodoStore(ABC):
@@ -228,21 +254,39 @@ class TodoStore(ABC):
         past *ttl*); raises ``LockTimeout`` if it cannot acquire in time. Hold
         this only around the write of a single ticket -- never nest it around
         another ticket's write -- so no more than one lock is ever held at a
-        time and lock ordering can never deadlock.
+        time and lock ordering can never deadlock. Re-entering the SAME ticket's
+        lock on the thread that holds it is a no-op, so a caller can hold it
+        across a read-check-write whose write takes the lock itself.
         """
+        held = _held_set()
+        if ticket_id in held:
+            # Re-entry by the thread that already holds it: the outer hold covers
+            # this write, and releasing here would end the outer hold early.
+            yield
+            return
         grace = self._grace if grace is None else grace
         ttl = self._ttl if ttl is None else ttl
         deadline = time.monotonic() + grace
-        while not self._try_acquire(ticket_id, ttl):
-            if time.monotonic() >= deadline:
-                raise LockTimeout(
-                    f"could not acquire lock for {ticket_id[:8]} within {grace:g}s"
-                )
-            time.sleep(_POLL_INTERVAL)
+        # The stored lock names only a pid, which every thread of this process
+        # shares (the sqlite backend would grant it twice), so threads queue here.
+        local = _thread_lock(ticket_id)
+        if not local.acquire(timeout=max(grace, 0.0)):
+            raise LockTimeout(f"could not acquire lock for {ticket_id[:8]} within {grace:g}s")
         try:
-            yield
+            while not self._try_acquire(ticket_id, ttl):
+                if time.monotonic() >= deadline:
+                    raise LockTimeout(
+                        f"could not acquire lock for {ticket_id[:8]} within {grace:g}s"
+                    )
+                time.sleep(_POLL_INTERVAL)
+            held.add(ticket_id)
+            try:
+                yield
+            finally:
+                held.discard(ticket_id)
+                self._release(ticket_id)
         finally:
-            self._release(ticket_id)
+            local.release()
 
 
 class SqliteTodoStore(TodoStore):

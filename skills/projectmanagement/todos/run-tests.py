@@ -48,6 +48,7 @@ SURFACES: dict[str, tuple[str, ...]] = {
         "test_todo_web_bind.py",
         "test_todo_web_permalink.py",
         "test_todo_web_render.py",
+        "test_todo_web_write.py",
     ),
     "embed": ("test_todo_embed.py", "test_todo_embed_apple.py"),
     "search": ("test_todo_search.py", "test_todo_search_idf.py"),

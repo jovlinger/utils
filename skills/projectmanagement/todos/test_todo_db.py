@@ -8,6 +8,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -611,6 +612,53 @@ class PerTodoLockTest(unittest.TestCase):
             store._try_acquire(self.TID, 100.0)
             store._try_acquire(self.OTHER_TID, 100.0)
             self.assertEqual(store.force_unlock_all(), 2)
+
+    # -- both backends: re-entry and threads ---------------------------------
+
+    def _both_stores(self, base: Path):
+        (base / "sq").mkdir()
+        (base / "fs").mkdir()
+        return {"sqlite": self._sqlite_store(base / "sq"), "file": self._file_store(base / "fs")}
+
+    def test_reentry_on_the_holding_thread_keeps_the_outer_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            for name, store in self._both_stores(Path(d)).items():
+                with self.subTest(backend=name):
+                    with store.lock(self.TID):
+                        with store.lock(self.TID):
+                            self.assertIn(self.TID, todo_store.held_locks())
+                        # The inner exit released nothing.
+                        self.assertIn(self.TID, todo_store.held_locks())
+                        self.assertFalse(self._lock_free_elsewhere(store))
+                    self.assertNotIn(self.TID, todo_store.held_locks())
+                    with store.lock(self.TID):  # fully released afterwards
+                        pass
+
+    def _lock_free_elsewhere(self, store: todo_store.TodoStore) -> bool:
+        """True when another thread could take TID's lock right now."""
+        got: list = []
+
+        def probe() -> None:
+            try:
+                with store.lock(self.TID, grace=0.05):
+                    got.append(True)
+            except todo_store.LockTimeout:
+                got.append(False)
+
+        worker = threading.Thread(target=probe)
+        worker.start()
+        worker.join(timeout=10)
+        return got == [True]
+
+    def test_another_thread_of_this_process_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            for name, store in self._both_stores(Path(d)).items():
+                with self.subTest(backend=name):
+                    with store.lock(self.TID):
+                        free = self._lock_free_elsewhere(store)
+                    self.assertFalse(free)
+                    self.assertTrue(self._lock_free_elsewhere(store))
+                    self.assertNotIn(self.TID, todo_store.held_locks())
 
 
 class RecordMigrationRegistryTest(unittest.TestCase):

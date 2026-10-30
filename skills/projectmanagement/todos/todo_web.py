@@ -33,7 +33,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 from urllib.parse import parse_qs, urlparse
 
 import todo_ref
@@ -1629,6 +1629,89 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
 
 
 WILDCARD_HOSTS = ("::", "0.0.0.0")
+LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
+UPDATE_PATH = "/update"
+
+
+class UpdateConflict(TodoWebError):
+    """The page's token no longer matches the stored record; nothing was written.
+
+    *current* is the stored value of the field the save addressed and *token*
+    the stored record's token, so the page can show both beside its draft.
+    """
+
+    def __init__(self, message: str, *, current: Any, token: str) -> None:
+        super().__init__(message)
+        self.current = current
+        self.token = token
+
+
+class UpdateRefused(TodoWebError):
+    """The update command refused; the message is the command's own error text."""
+
+    def __init__(self, message: str, *, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class Updater(Protocol):
+    """The write side `todo.py web --write` injects; the viewer never writes itself."""
+
+    def token(self, todo: JsonDict) -> str:
+        """The stale-page token of *todo* as just read."""
+
+    def update(self, request: JsonDict) -> JsonDict:
+        """Apply ``{id, op, target, value, token}``; return ``{"token": <new token>}``.
+
+        Raises UpdateConflict when *token* is stale, UpdateRefused when the
+        command refuses.
+        """
+
+
+def request_refusal(headers: Mapping[str, str], port: int) -> str:
+    """Why a write request must be refused before any command runs, or "".
+
+    The Host must be a loopback name on this server's port, which a DNS-rebound
+    page cannot send. The Origin must be present and be that same origin, which
+    no other page in the browser can claim. The JSON content type cannot be sent
+    cross-origin without a CORS preflight, which this server never answers.
+    """
+    host = str(headers.get("Host") or "").strip().lower()
+    if host not in {f"{name}:{port}" for name in LOOPBACK_NAMES}:
+        return f"write refused: Host {host!r} is not a loopback name on port {port}"
+    origin = str(headers.get("Origin") or "").strip().lower()
+    if origin != f"http://{host}":
+        return f"write refused: Origin {origin!r} is not this viewer's origin http://{host}"
+    content_type = str(headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return f"write refused: Content-Type {content_type!r} is not application/json"
+    return ""
+
+
+def handle_update(
+    headers: Mapping[str, str], body: bytes, port: int, updater: Updater
+) -> "tuple[int, JsonDict]":
+    """Check and apply one POST /update; return ``(status, JSON payload)``.
+
+    403 when the request fails ``request_refusal`` or its body is not JSON, 400
+    when the JSON is not an object, 200 / 409 / the refusal's own status from
+    *updater*. The updater runs only after every check has passed.
+    """
+    refusal = request_refusal(headers, port)
+    if refusal:
+        return 403, {"error": refusal}
+    try:
+        request = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return 403, {"error": "write refused: body is not JSON"}
+    if not isinstance(request, dict):
+        return 400, {"error": "update request must be a JSON object"}
+    try:
+        return 200, updater.update(request)
+    except UpdateConflict as exc:
+        return 409, {"error": str(exc), "current": exc.current, "token": exc.token}
+    except UpdateRefused as exc:
+        return exc.status, {"error": str(exc)}
 
 
 class _DualStackServer(ThreadingHTTPServer):
@@ -1657,6 +1740,7 @@ def serve(
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
     searcher: Callable[[str], List[JsonDict]],
     write: bool = False,
+    updater: Optional[Updater] = None,
 ) -> str:
     """Start the viewer and serve until interrupted.
 
@@ -1665,14 +1749,44 @@ def serve(
     A bare path renders the search page, whose box calls ``/search?q=`` -> a
     JSON list of rows from *searcher(query)* (an empty query lists all todos).
     *initial_id* only shapes the printed URL so the browser opens straight onto
-    that todo. *write* enables in-place edits; without it the viewer is read-only.
+    that todo. *write* enables in-place edits: ``POST /update`` goes through
+    ``handle_update`` to *updater*, which *write* therefore requires. Without
+    *write* every POST is answered 405 and the viewer is read-only.
     """
     _debug(
         f"serve host={host} port={port} root={root} initial_id={initial_id} write={write}",
         phase="serve",
     )
+    if write and updater is None:
+        raise TodoWebError("write mode needs an updater")
 
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            if not write or updater is None:
+                self._respond_json(
+                    405, {"error": "read-only viewer: start it with `todo.py web --write`"}
+                )
+                return
+            if urlparse(self.path).path != UPDATE_PATH:
+                self._respond_json(404, {"error": f"no write endpoint at {self.path}"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._respond_json(400, {"error": "bad Content-Length"})
+                return
+            body = self.rfile.read(max(length, 0))
+            status, payload = handle_update(self.headers, body, self.server.server_port, updater)
+            self._respond_json(status, payload)
+
+        def _respond_json(self, status: int, payload: JsonDict) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             parsed = urlparse(self.path)
             if parsed.path == "/search":

@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import copy
 import hashlib
+import io
 import json
 import logging
 import logging.handlers
@@ -15,13 +18,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import git_command
 import todo_db
@@ -6815,6 +6830,127 @@ WEB_READ_HOST = "::"
 WEB_WRITE_HOST = "localhost"
 
 
+def record_fingerprint(todo: JsonDict) -> str:
+    """The stale-page token: sha256 of *todo*'s canonical JSON, embedding vectors stripped.
+
+    Not ``update_dt``: that has one-second resolution, and the search backfill
+    rewrites records (stamping vectors) without bumping it. Stripping the
+    vectors keeps a backfill from invalidating every open page. *todo* is not
+    modified.
+    """
+    clean = copy.deepcopy(todo)
+    for field_path, _key in _json_embeddings_present(clean):
+        _strip_vectors_at(clean, field_path)
+    canonical = json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def _web_raw(todo: JsonDict, key: str) -> str:
+    """A text field's stored value, whether it is a ``{raw}`` dict or a bare string."""
+    value = todo.get(key)
+    if isinstance(value, dict):
+        value = value.get("raw")
+    return value if isinstance(value, str) else ""
+
+
+@dataclass(frozen=True)
+class WebOp:
+    """One web edit: the CLI argv that applies it, and the stored value a 409 shows."""
+
+    argv: Callable[[str, str, str], List[str]]  # (todo_id, target, value)
+    current: Callable[[JsonDict, str], Any]  # (record, target)
+
+
+WEB_OPS: Dict[str, WebOp] = {
+    "set-body": WebOp(
+        argv=lambda tid, _target, value: ["set", tid, f"--body={value}"],
+        current=lambda record, _target: _web_raw(record, "Body"),
+    ),
+}
+
+
+def _cli_error_text(stderr: str) -> str:
+    """The CLI's own error text from captured stderr, minus the ``todo.py:`` prefix."""
+    prefix = "todo.py: "
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return "\n".join(line[len(prefix) :] if line.startswith(prefix) else line for line in lines)
+
+
+class WebUpdater:
+    """The write side `web --write` injects into todo_web.serve (todo_web.Updater).
+
+    Each update runs the CLI's own command through ``main`` in this process, so
+    its validation and refusals are the CLI's, verbatim. The page token is
+    compared with the stored record and the command runs under ONE hold of the
+    todo's store lock (the command's own write re-enters it), so no other writer
+    can land between the check and the write. Updates are serialized in-process
+    because ``main`` reports through the process-wide stdout/stderr.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._serial = threading.Lock()
+
+    def token(self, todo: JsonDict) -> str:
+        """The stale-page token of *todo* as just read."""
+        return record_fingerprint(todo)
+
+    def update(self, request: JsonDict) -> JsonDict:
+        """Apply one ``{id, op, target, value, token}`` request; return the new token.
+
+        Raises ``todo_web.UpdateConflict`` (nothing written) when the stored
+        record no longer matches *token*, and ``todo_web.UpdateRefused`` with
+        the CLI's error text when the request or the command is refused.
+        """
+        op_name = request.get("op")
+        op = WEB_OPS.get(op_name) if isinstance(op_name, str) else None
+        if op is None:
+            raise todo_web.UpdateRefused(
+                f"unknown web op {op_name!r}; known: {', '.join(sorted(WEB_OPS))}"
+            )
+        fields = {name: request.get(name) for name in ("id", "target", "value", "token")}
+        for name, value in fields.items():
+            if not isinstance(value, str):
+                raise todo_web.UpdateRefused(f"{op_name}: {name} must be a string")
+        if not use_store():
+            raise todo_web.UpdateRefused("web edits need the todo store, not legacy TODO.json mode")
+        with self._serial:
+            todo_id = str(self._read(fields["id"])["Id"])
+            try:
+                with todo_store.get_store().lock(todo_id):
+                    stored = self._read(todo_id)
+                    stored_token = record_fingerprint(stored)
+                    if stored_token != fields["token"]:
+                        raise todo_web.UpdateConflict(
+                            "this todo changed since the page loaded; nothing was saved",
+                            current=op.current(stored, fields["target"]),
+                            token=stored_token,
+                        )
+                    self._run(op.argv(todo_id, fields["target"], fields["value"]))
+            except todo_store.LockTimeout as exc:
+                raise todo_web.UpdateRefused(f"ERETRY: {exc}", status=503) from exc
+            return {"token": record_fingerprint(self._read(todo_id))}
+
+    def _read(self, selector: str) -> JsonDict:
+        try:
+            return resolve_ticket_by_id(self.root, selector)[1]
+        except TodoError as exc:
+            raise todo_web.UpdateRefused(str(exc)) from exc
+
+    def _run(self, argv: List[str]) -> None:
+        """Run ``todo.py <argv>`` in-process; raise UpdateRefused with its stderr on failure."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = main(argv)
+            except SystemExit as exc:  # argparse usage errors
+                code = exc.code if isinstance(exc.code, int) else 2
+        if code == 0:
+            return
+        text = _cli_error_text(err.getvalue()) or f"todo.py {argv[0]} exited {code}"
+        raise todo_web.UpdateRefused(text, status=503 if code == 75 else 400)
+
+
 class WebCommand(EnvironmentCommand):
     command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo viewer"
@@ -6936,6 +7072,7 @@ class WebCommand(EnvironmentCommand):
                     resolver=resolve_todo,
                     searcher=search_rows,
                     write=self.write,
+                    updater=WebUpdater(root) if self.write else None,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
