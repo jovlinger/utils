@@ -416,6 +416,82 @@ class FieldEditRenderTest(unittest.TestCase):
         self.assertNotIn("edit-toggle", entry["html"])
 
 
+LIST_TODO: Dict[str, Any] = {
+    **PAGE_TODO,
+    "Notes": [{"raw": "first note", "objid": "0003"}, {"raw": "second note", "objid": "0004"}],
+    "WorkItems": [
+        {"summary": "landed", "done": True, "kind": "code", "sha": "a" * 40, "objid": "0005"},
+        {"summary": "parked", "done": True, "kind": "blocked", "message": "m", "objid": "0006"},
+        {"summary": "open one", "done": False, "kind": "task", "objid": "0007"},
+        {"summary": "open two", "done": False, "kind": "task", "objid": "0008"},
+    ],
+    "_nextobjid": 9,
+}
+
+
+def tile(page: str, objid: str) -> str:
+    """The rendered tile for *objid*, up to the next tile."""
+    start = r'<div class="wi[ "][^>]*id="obj-'
+    match = re.search(start + objid + r'".*?(?=' + start + r"|</section>)", page, re.S)
+    assert match, f"no tile for objid {objid}"
+    return match.group(0)
+
+
+class ListEditRenderTest(unittest.TestCase):
+    """Edit on each note and each not-done work item, never on the done prefix."""
+
+    def test_read_only_tiles_have_no_controls(self) -> None:
+        page = render(LIST_TODO)
+        for objid in ("0003", "0004", "0005", "0006", "0007", "0008"):
+            with self.subTest(objid=objid):
+                self.assertNotIn("edit-toggle", tile(page, objid))
+
+    def test_every_note_tile_has_its_edit(self) -> None:
+        page = render(LIST_TODO, write=True, token="tok")
+        for objid in ("0003", "0004"):
+            with self.subTest(objid=objid):
+                self.assertIn(f'data-edit="note-replace:{objid}"', tile(page, objid))
+
+    def test_not_done_items_have_an_edit_and_done_items_none(self) -> None:
+        page = render(LIST_TODO, write=True, token="tok")
+        for objid in ("0007", "0008"):
+            with self.subTest(objid=objid, done=False):
+                self.assertIn(f'data-edit="work-item-replace:{objid}"', tile(page, objid))
+        for objid in ("0005", "0006"):
+            with self.subTest(objid=objid, done=True):
+                self.assertNotIn("edit-toggle", tile(page, objid))
+
+    def test_each_control_sends_its_own_command_and_target(self) -> None:
+        edits = page_data(render(LIST_TODO, write=True, token="tok"))["write"]["edits"]
+        self.assertEqual(
+            {
+                "op": "note-replace",
+                "target": "objid:0004",
+                "value": "second note",
+                "label": "note objid:0004",
+            },
+            edits["note-replace:0004"],
+        )
+        self.assertEqual(
+            {
+                "op": "work-item-replace",
+                "target": "objid:0007",
+                "value": "open one",
+                "label": "work item objid:0007",
+            },
+            edits["work-item-replace:0007"],
+        )
+        self.assertNotIn("work-item-replace:0005", edits)
+        self.assertNotIn("work-item-replace:0006", edits)
+
+    def test_no_control_adds_or_removes_anything(self) -> None:
+        edits = page_data(render(LIST_TODO, write=True, token="tok"))["write"]["edits"]
+        ops = {spec["op"] for spec in edits.values()}
+        self.assertEqual(
+            FIELD_EDITS | {"note-replace", "work-item-replace"}, ops - {"work-item-reorder"}
+        )
+
+
 class EditPageServeTest(unittest.TestCase):
     """The running server renders edit controls and the token only under --write."""
 

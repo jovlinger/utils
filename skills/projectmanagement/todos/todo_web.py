@@ -514,7 +514,15 @@ def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
     return f' id="obj-{safe}" data-obj="{safe}"'
 
 
-def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
+def _tile_controls(*buttons: str) -> str:
+    """A tile's row of edit controls, or "" when it has none."""
+    inner = "".join(b for b in buttons if b)
+    return f'<div class="edit-row">{inner}</div>' if inner else ""
+
+
+def _wi_box(
+    item: JsonDict, *, interactive: bool, github: str = "", edits: Optional[JsonDict] = None
+) -> str:
     """Render one work-item box: the box opens the commit message/diff in the
     fold. Any git sha is shown as ``sha:<short>`` (a github hyperlink on
     interactive boxes) and any referenced subtodo as ``todo:<short>`` (a
@@ -562,11 +570,12 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         + _clamped(item["summary"], "wi-sum", interactive=interactive)
         + f"{todo_html}{sep}{sha_html}"
         + _relto_chips_html(item["relto"], interactive=interactive)
+        + _tile_controls(_edit_button(_item_edit_key(item), edits))
         + "</div>"
     )
 
 
-def _note_box(note: JsonDict, *, interactive: bool) -> str:
+def _note_box(note: JsonDict, *, interactive: bool, edits: Optional[JsonDict] = None) -> str:
     """Render one note box: the sibling of ``_wi_box``, built from the same
     primitives, but deliberately NOT a branch inside it. A note is a fact, not
     a task, so its box has no checkbox mark, no ``sha`` chip and no ``todo:``
@@ -584,6 +593,7 @@ def _note_box(note: JsonDict, *, interactive: bool) -> str:
         + _objid_badge(note["objid"], interactive=interactive)
         + _clamped(note["raw"], "wi-sum", interactive=interactive)
         + _relto_chips_html(note["relto"], interactive=interactive)
+        + _tile_controls(_edit_button(_note_edit_key(note), edits))
         + "</div>"
     )
 
@@ -768,11 +778,12 @@ _FIELD_EDIT_LABELS = {
 }
 
 
-def _edit_registry(todo: JsonDict) -> JsonDict:
+def _edit_registry(todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]) -> JsonDict:
     """Every edit control the page offers, keyed by the control's ``data-edit``.
 
     Each entry is the request the control would send minus the token: the op,
-    its target, and the stored value the editor opens on.
+    its target, and the stored value the editor opens on. A done work item gets
+    none: the done prefix is closed, and the CLI refuses to edit it.
     """
     edits: JsonDict = {}
     for field, op in _FIELD_EDIT_OPS.items():
@@ -782,7 +793,31 @@ def _edit_registry(todo: JsonDict) -> JsonDict:
             "value": _raw_field(todo, field),
             "label": _FIELD_EDIT_LABELS[field],
         }
+    for note in notes:
+        if note["objid"]:
+            edits[_note_edit_key(note)] = {
+                "op": "note-replace",
+                "target": f"objid:{note['objid']}",
+                "value": note["raw"],
+                "label": f"note objid:{note['objid']}",
+            }
+    for item in witems:
+        if item["objid"] and not item["done"]:
+            edits[_item_edit_key(item)] = {
+                "op": "work-item-replace",
+                "target": f"objid:{item['objid']}",
+                "value": item["summary"],
+                "label": f"work item objid:{item['objid']}",
+            }
     return edits
+
+
+def _note_edit_key(note: JsonDict) -> str:
+    return f"note-replace:{note['objid']}"
+
+
+def _item_edit_key(item: JsonDict) -> str:
+    return f"work-item-replace:{item['objid']}"
 
 
 def _edit_button(key: str, edits: Optional[JsonDict]) -> str:
@@ -974,7 +1009,10 @@ def _sections_html(
         text=long_summary,
         is_open=_holds(todo.get("LongSummary"), focus_objid),
     ) if long_summary or long_summary_editable else ""
-    wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
+    wi_boxes = "".join(
+        _wi_box(w, interactive=interactive, github=github, edits=edits) for w in witems
+    )
+    note_boxes = "".join(_note_box(n, interactive=interactive, edits=edits) for n in notes)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
     st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
@@ -983,7 +1021,7 @@ def _sections_html(
     notes_html = (
         _section(
             "Notes",
-            f'<div class="row">{"".join(_note_box(n, interactive=interactive) for n in notes)}</div>',
+            f'<div class="row">{note_boxes}</div>',
             interactive=interactive,
             text="".join(str(n["raw"]) for n in notes),
             items=len(notes),
@@ -1291,6 +1329,7 @@ _STYLE = """<style>
                font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px;
                border: 1px solid #d8dee4; border-radius: 6px; }
   .edit-bar { display: flex; gap: 8px; align-items: center; }
+  .edit-row { display: flex; gap: 4px; margin-top: 6px; }
   .edit-status { font-size: 12px; color: #cf222e; overflow-wrap: anywhere; white-space: pre-wrap; }
   .edit-stored-value { background: #fff8c5; padding: 10px; border-radius: 6px; max-height: 30vh;
                        overflow: auto; }
@@ -1668,7 +1707,7 @@ def render_todo_page(
     notes = _notes_view(todo)
     github = github_repo_url(repo_origin(root))
     data = _page_data(root, todo, witems, stodos, parents, notes, github)
-    edits = _edit_registry(todo) if write else None
+    edits = _edit_registry(todo, witems, notes) if write else None
     if edits is not None:
         data["write"] = {"token": token, "edits": edits}
     top_html = _sections_html(
