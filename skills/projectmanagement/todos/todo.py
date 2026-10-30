@@ -6809,6 +6809,12 @@ class LogCommand(CorpusQueryCommand):
         return 0
 
 
+# The read-only viewer binds every interface; an editing one binds loopback only,
+# since its write endpoint has no authentication.
+WEB_READ_HOST = "::"
+WEB_WRITE_HOST = "localhost"
+
+
 class WebCommand(EnvironmentCommand):
     command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo viewer"
@@ -6835,13 +6841,29 @@ class WebCommand(EnvironmentCommand):
             default=None,
             help="todo selector: 4+ hex Id prefix or full digest (default: search page)",
         )
-        parser.add_argument("--host", default="::", help="bind host (:: serves IPv4 and IPv6)")
+        parser.add_argument(
+            "--host",
+            default=None,
+            help=f"bind host (default {WEB_READ_HOST!r}, which serves IPv4 and IPv6; "
+            f"{WEB_WRITE_HOST!r} under --write)",
+        )
         parser.add_argument("--port", type=int, default=8765, help="bind port")
+        parser.add_argument(
+            "--write",
+            action="store_true",
+            help="enable in-place edits of the CLI's update surface (default bind: loopback)",
+        )
         parser.add_argument(
             "--dump-html",
             action="store_true",
             help="print the rendered HTML and exit instead of starting a server",
         )
+
+    def bind_host(self) -> str:
+        """The host to bind: --host as given, else loopback under --write, else dual-stack."""
+        if self.host is not None:
+            return str(self.host)
+        return WEB_WRITE_HOST if self.write else WEB_READ_HOST
 
     def do(self) -> int:
         """Serve or print the todo web viewer."""
@@ -6908,11 +6930,12 @@ class WebCommand(EnvironmentCommand):
             else:
                 todo_web.serve(
                     basedir,
-                    host=self.host,
+                    host=self.bind_host(),
                     port=self.port,
                     initial_id=initial_id,
                     resolver=resolve_todo,
                     searcher=search_rows,
+                    write=self.write,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc

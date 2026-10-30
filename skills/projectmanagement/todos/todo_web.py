@@ -1656,6 +1656,7 @@ def serve(
     initial_id: Optional[str] = None,
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
     searcher: Callable[[str], List[JsonDict]],
+    write: bool = False,
 ) -> str:
     """Start the viewer and serve until interrupted.
 
@@ -1664,9 +1665,12 @@ def serve(
     A bare path renders the search page, whose box calls ``/search?q=`` -> a
     JSON list of rows from *searcher(query)* (an empty query lists all todos).
     *initial_id* only shapes the printed URL so the browser opens straight onto
-    that todo.
+    that todo. *write* enables in-place edits; without it the viewer is read-only.
     """
-    _debug(f"serve host={host} port={port} root={root} initial_id={initial_id}", phase="serve")
+    _debug(
+        f"serve host={host} port={port} root={root} initial_id={initial_id} write={write}",
+        phase="serve",
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
