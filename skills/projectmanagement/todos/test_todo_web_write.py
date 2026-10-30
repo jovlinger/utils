@@ -492,6 +492,60 @@ class ListEditRenderTest(unittest.TestCase):
         )
 
 
+MOVE_TODO: Dict[str, Any] = {
+    **LIST_TODO,
+    "WorkItems": [
+        *LIST_TODO["WorkItems"],
+        {"summary": "open three", "done": False, "kind": "task", "objid": "0009"},
+    ],
+    "_nextobjid": 10,
+}
+
+
+def move_keys(page: str) -> List[str]:
+    return re.findall(r'class="move-btn" data-move="([^"]+)"', page)
+
+
+class MoveRenderTest(unittest.TestCase):
+    """Move-up / move-down on not-done work items only, never out of the frontier."""
+
+    def test_read_only_page_has_no_moves(self) -> None:
+        self.assertEqual([], move_keys(render(MOVE_TODO)))
+
+    def test_moves_stay_inside_the_not_done_frontier(self) -> None:
+        page = render(MOVE_TODO, write=True, token="tok")
+        self.assertEqual(
+            {
+                "work-item-reorder:0007:down",
+                "work-item-reorder:0008:up",
+                "work-item-reorder:0008:down",
+                "work-item-reorder:0009:up",
+            },
+            set(move_keys(page)),
+        )
+        for objid in ("0005", "0006"):
+            with self.subTest(done=objid):
+                self.assertNotIn("move-btn", tile(page, objid))
+
+    def test_each_move_names_its_item_and_destination_index(self) -> None:
+        edits = page_data(render(MOVE_TODO, write=True, token="tok"))["write"]["edits"]
+        self.assertEqual(
+            {
+                "op": "work-item-reorder",
+                "target": "objid:0008",
+                "value": "2",
+                "label": "move work item objid:0008 up",
+            },
+            edits["work-item-reorder:0008:up"],
+        )
+        self.assertEqual("4", edits["work-item-reorder:0008:down"]["value"])
+        self.assertEqual("3", edits["work-item-reorder:0007:down"]["value"])
+
+    def test_a_lone_open_item_has_no_moves(self) -> None:
+        record = {**LIST_TODO, "WorkItems": LIST_TODO["WorkItems"][:3]}
+        self.assertEqual([], move_keys(render(record, write=True, token="tok")))
+
+
 class EditPageServeTest(unittest.TestCase):
     """The running server renders edit controls and the token only under --write."""
 
@@ -879,6 +933,32 @@ class WebUpdaterOpsTest(WebUpdaterCase):
 
     def test_a_flag_shaped_target_is_never_parsed_as_a_flag(self) -> None:
         self.refused(op="note-replace", target="--raw=hijack", value="x")
+
+    def page_moves(self) -> Dict[str, Dict[str, Any]]:
+        """The move requests a write page rendered from the stored record offers."""
+        with self.in_env():
+            stored = self.stored()
+            page = todo_web.render_todo_page(
+                Path("."), stored, write=True, token=self.updater.token(stored)
+            )
+        edits = page_data(page)["write"]["edits"]
+        return {k: v for k, v in edits.items() if v["op"] == "work-item-reorder"}
+
+    def test_every_rendered_move_is_accepted_by_the_cli(self) -> None:
+        moves = self.page_moves()
+        self.assertEqual(4, len(moves))  # three open items: down, up+down, up
+        for key in sorted(moves):
+            with self.subTest(move=key):
+                spec = self.page_moves()[key]
+                self.update(op=spec["op"], target=spec["target"], value=spec["value"])
+                self.assertEqual("landed", self.stored()["WorkItems"][0]["summary"])
+
+    def test_moving_the_cursor_up_across_the_done_prefix_is_refused(self) -> None:
+        moves = self.page_moves()
+        cursor = self.objid("WorkItems", 1)
+        self.assertNotIn(f"work-item-reorder:{cursor[len('objid:'):]}:up", moves)
+        text = self.refused(op="work-item-reorder", target=cursor, value="0")
+        self.assertIn("done prefix", text)
 
 
 if __name__ == "__main__":

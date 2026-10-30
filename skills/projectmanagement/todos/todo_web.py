@@ -570,7 +570,11 @@ def _wi_box(
         + _clamped(item["summary"], "wi-sum", interactive=interactive)
         + f"{todo_html}{sep}{sha_html}"
         + _relto_chips_html(item["relto"], interactive=interactive)
-        + _tile_controls(_edit_button(_item_edit_key(item), edits))
+        + _tile_controls(
+            _edit_button(_item_edit_key(item), edits),
+            _move_button(item, "up", edits),
+            _move_button(item, "down", edits),
+        )
         + "</div>"
     )
 
@@ -801,15 +805,45 @@ def _edit_registry(todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]
                 "value": note["raw"],
                 "label": f"note objid:{note['objid']}",
             }
-    for item in witems:
-        if item["objid"] and not item["done"]:
-            edits[_item_edit_key(item)] = {
-                "op": "work-item-replace",
+    open_items = [item for item in witems if item["objid"] and not item["done"]]
+    for item in open_items:
+        edits[_item_edit_key(item)] = {
+            "op": "work-item-replace",
+            "target": f"objid:{item['objid']}",
+            "value": item["summary"],
+            "label": f"work item objid:{item['objid']}",
+        }
+    # Moves stay inside the not-done frontier: the first open item cannot move up
+    # into the done prefix, and the last item has nowhere further down to go.
+    last_index = len(todo.get("WorkItems") or []) - 1
+    for position, item in enumerate(open_items):
+        for direction, step in (("up", -1), ("down", 1)):
+            if (direction == "up" and position == 0) or (
+                direction == "down" and item["idx"] >= last_index
+            ):
+                continue
+            edits[_move_key(item, direction)] = {
+                "op": "work-item-reorder",
                 "target": f"objid:{item['objid']}",
-                "value": item["summary"],
-                "label": f"work item objid:{item['objid']}",
+                "value": str(item["idx"] + step),
+                "label": f"move work item objid:{item['objid']} {direction}",
             }
     return edits
+
+
+def _move_key(item: JsonDict, direction: str) -> str:
+    return f"work-item-reorder:{item['objid']}:{direction}"
+
+
+def _move_button(item: JsonDict, direction: str, edits: Optional[JsonDict]) -> str:
+    """A move-up / move-down control, or "" when this item cannot move that way."""
+    key = _move_key(item, direction)
+    if not edits or key not in edits:
+        return ""
+    return (
+        f'<button type="button" class="move-btn" data-move="{html.escape(key)}" '
+        f'title="move {direction}">{"Up" if direction == "up" else "Down"}</button>'
+    )
 
 
 def _note_edit_key(note: JsonDict) -> str:
@@ -1320,7 +1354,7 @@ _STYLE = """<style>
                      background: #eaeef2; padding: 0 3px; border-radius: 3px; font-size: 12px; }
   .md-preview pre.md-code { background: #eaeef2; padding: 10px; border-radius: 6px; overflow: auto; }
   .md-preview pre.md-code code { background: none; padding: 0; }
-  .edit-toggle { font-size: 11px; color: #1a7f37; background: #fff; border: 1px solid #d8dee4;
+  .edit-toggle, .move-btn { font-size: 11px; color: #1a7f37; background: #fff; border: 1px solid #d8dee4;
                  border-radius: 4px; padding: 2px 8px; cursor: pointer; }
   .fold-edit { display: flex; flex-direction: column; gap: 8px; height: 100%; }
   .fold-edit h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
@@ -1655,6 +1689,32 @@ document.querySelectorAll('#top .edit-toggle').forEach(function(b){
   b.addEventListener('click', function(e){
     e.stopPropagation();
     openEditor(b.getAttribute('data-edit'));
+  });
+});
+
+// A move is its own explicit act (the click), so it saves at once; a refusal
+// or a stale page is reported in the fold and the plan is left as it was.
+function moveItem(key){
+  var spec = WRITE && WRITE.edits[key];
+  if (!spec) return;
+  clearMdPreview();
+  clearHi();
+  fold.className = 'fold';
+  fold.innerHTML = '<div class="fold-edit"><h3>'+esc(spec.label)+'</h3>' +
+    '<span class="edit-status" role="status">moving...</span></div>';
+  var status = fold.querySelector('.edit-status');
+  postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: spec.value,
+              token: WRITE.token}).then(function(res){
+    if (res.status === 200) { location.reload(); return; }
+    status.textContent = (res.body.error || ('HTTP ' + res.status)) +
+      (res.status === 409 ? '. Nothing moved; reload the page to see the current plan.' : '');
+  }, function(err){ status.textContent = 'move failed: ' + err; });
+}
+
+document.querySelectorAll('#top .move-btn').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    moveItem(b.getAttribute('data-move'));
   });
 });
 
