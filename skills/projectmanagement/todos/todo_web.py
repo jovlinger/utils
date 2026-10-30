@@ -1354,8 +1354,9 @@ _STYLE = """<style>
                      background: #eaeef2; padding: 0 3px; border-radius: 3px; font-size: 12px; }
   .md-preview pre.md-code { background: #eaeef2; padding: 10px; border-radius: 6px; overflow: auto; }
   .md-preview pre.md-code code { background: none; padding: 0; }
-  .edit-toggle, .move-btn { font-size: 11px; color: #1a7f37; background: #fff; border: 1px solid #d8dee4;
-                 border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .edit-toggle, .move-btn { font-size: 11px; color: #1a7f37; background: #fff;
+                            border: 1px solid #d8dee4; border-radius: 4px; padding: 2px 8px;
+                            cursor: pointer; }
   .fold-edit { display: flex; flex-direction: column; gap: 8px; height: 100%; }
   .fold-edit h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
                   color: #57606a; }
