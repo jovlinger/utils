@@ -268,7 +268,7 @@ default. `host` spellings: [Notes and relto](#notes-and-relto).
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
-| `web [selector] [--host] [--port] [--dump-html]` | Serve viewer + permalinks (default bind `localhost:8765`) |
+| `web [selector] [--host] [--port] [--write] [--dump-html]` | Serve viewer + permalinks on port 8765. Read-only by default, bound to `::` (every interface, IPv4 and IPv6). `--write` adds in-place edits of the CLI's update surface and binds `localhost` instead; an explicit `--host` is used as given either way. See [Web edits](#web-edits-web---write) |
 
 ### STUB (not automation)
 
@@ -696,6 +696,65 @@ the same page.
 
 Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
 (`replaceState`), so whatever is on screen is already a copyable permalink.
+
+### Web edits (`web --write`)
+
+`todo.py web --write` turns the todo page into an editor for the fields the
+CLI can **update**, and nothing more: the web reads and updates, it never
+creates or deletes. Without `--write` the server is the read-only viewer above,
+renders no edit controls, and answers every POST with 405.
+
+| Control | Where | CLI command it runs |
+|---------|-------|---------------------|
+| Edit | Summary, Body, Long summary, AC, ActualSummary (shown even when empty) | `set --summary` / `--body` / `--long-summary` / `--ac` / `--actual-summary` |
+| Edit | each note tile | `note-replace <objid>` |
+| Edit | each not-done work item | `work-item-replace <objid>` |
+| Up / Down | each not-done work item; the first open item has no Up, the last item no Down | `work-item-reorder <objid> <index>` |
+
+Nothing else has a control: not State or the closing dispositions (`done`,
+`checkpoint`, `blocked`, `obsolete`), not Tag, relto or Parent, not Id, Branch,
+Scope or the timestamps, and no add or remove of any note, work item, tag,
+relation or todo. The done prefix has no controls at all.
+
+Edit opens an editor in the fold with Save and Cancel. Nothing is saved on
+input; Save is the only write, and a successful save reloads the page. A move
+saves on its click.
+
+Every edit is `POST /update` with a JSON body:
+
+```json
+{"id": "<64-hex todo Id>", "op": "set-body", "target": "", "value": "<new text>", "token": "<page token>"}
+```
+
+| `op` | `target` | `value` |
+|------|----------|---------|
+| `set-summary`, `set-body`, `set-long-summary`, `set-ac`, `set-actual-summary` | `""` | the field's new text |
+| `note-replace` | `objid:<hex>` | the note's new raw text |
+| `work-item-replace` | `objid:<hex>` | the item's new summary |
+| `work-item-reorder` | `objid:<hex>` | the destination index |
+
+The server runs the matching CLI command in-process, so its validation and
+refusals are the CLI's own. **token** is the page's stale-page token: the
+sha256 of the record's canonical JSON with embedding vectors stripped (not
+`update_dt`, which has one-second resolution and is not bumped by the search
+backfill). The server compares it with the stored record and runs the command
+under one hold of that todo's store lock, so no writer lands between the
+check and the write.
+
+| Status | Means | Body |
+|--------|-------|------|
+| 200 | saved | `{"token": <the record's new token>}` |
+| 409 | the record changed since the page loaded; nothing was written | `{"error", "current": <stored value of the addressed field>, "token"}`. The page shows `current` beside the unsaved draft, never merges, and a reload is what lets the page save again |
+| 400 | the command refused, or the request is malformed | `{"error": <the command's own error text>}` |
+| 403 | refused before any command ran | `{"error"}` |
+| 503 | the store lock is held elsewhere (the CLI's ERETRY); retry | `{"error"}` |
+
+A 403 is any of: the `Host` header is not `localhost`, `127.0.0.1` or `[::1]`
+on the server's port (DNS rebinding); `Origin` is missing or is not
+`http://<that Host>` (a cross-site page); the `Content-Type` is not
+`application/json`, or the body is not JSON. The JSON content type is what
+forces any cross-origin request through a CORS preflight, which the server
+never answers. GET requests are not checked.
 
 ### Minimal current skeleton
 

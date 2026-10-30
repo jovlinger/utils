@@ -7022,7 +7022,15 @@ class WebCommand(EnvironmentCommand):
         "lexical search (the same ranking as 'todo search') over every todo, showing update-time "
         "and State columns, with an empty query listing all. It also serves permalinks: "
         "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
-        "(see 'resolveurl' for the grammar)."
+        "(see 'resolveurl' for the grammar). The viewer is read-only and binds '::' (every "
+        "interface). --write makes the todo page an editor of the CLI's update surface: Edit on "
+        "Summary, Body, LongSummary, AC, ActualSummary, each note and each not-done work item, "
+        "and Up/Down on not-done work items, each saved through the matching set / "
+        "note-replace / work-item-replace / work-item-reorder command. Nothing is created or "
+        "deleted. A save made from a page loaded before another write is refused (409) with the "
+        "stored value shown beside the draft. --write binds localhost unless --host is given, "
+        "and refuses any write whose Host, Origin or content type is not this viewer's own "
+        "(see IMPLEMENTATION.md, 'Web edits')."
     )
 
     @classmethod
