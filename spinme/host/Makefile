@@ -7,7 +7,7 @@ BUILD := build
 
 TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail \
-	$(BUILD)/test_kv
+	$(BUILD)/test_kv $(BUILD)/test_draw_events
 
 .PHONY: test clean
 
@@ -43,6 +43,11 @@ $(BUILD)/test_isr_mail: $(ISR_SRCS) ta_isr_mail.h ta_queue.h ta_event.h \
 
 $(BUILD)/test_kv: test_kv.c ta_kv.c ta_kv.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_kv.c ta_kv.c
+
+DRAW_SRCS := test_draw_events.c ta_draw_events.c ta_registry.c ta_event.c
+$(BUILD)/test_draw_events: $(DRAW_SRCS) ta_draw_events.h ta_registry.h \
+		ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(DRAW_SRCS) -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)
