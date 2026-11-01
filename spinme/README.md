@@ -3,8 +3,8 @@
 **Goal:** On-device music controller (follow now-playing + knob volume + zone
 pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
 
-**UI and the two cores (as-built):** [`DESIGN.md`](DESIGN.md). Follow layout
-is one file, `firmware/.../follow_glass.cpp`.
+**UI redesign (direction):** [`PLAN.md`](PLAN.md) -- TaskActors, UILayout vs
+Shape split. Firmware still runs the older follow/uimk2 path until that lands.
 
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
@@ -36,13 +36,13 @@ Index: [`hardware/README.md`](hardware/README.md).
 | Item | Status |
 |------|--------|
 | **Hardware choice** | **Waveshare** (S3); Elecrow sibling docs kept |
-| **UI** | [`DESIGN.md`](DESIGN.md) -- follow view, bitmap types, two cores |
+| **UI** | [`PLAN.md`](PLAN.md) direction; old follow still in firmware |
 | **Board probes** | Both boards documented under `hardware/` |
 | **Volumio API** | `miniDSP-SHD.local` getState OK (2026-09-07) |
 | **Firmware** | Scaffolds under `firmware/`; controller impl next |
 
-**Next steps:** The follow view and the two-core queue are specified in
-[`DESIGN.md`](DESIGN.md). Firmware stays a scaffold until that design is built.
+**Next steps:** Execute [`PLAN.md`](PLAN.md) (UILayout vs Shape, TaskActors).
+Do not extend the old Core A/B zlist as the long-term model.
 
 ## Shared: Volumio API
 
