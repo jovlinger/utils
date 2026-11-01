@@ -8,7 +8,7 @@ BUILD := build
 TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
-	$(BUILD)/test_sched_events
+	$(BUILD)/test_sched_events $(BUILD)/test_controller
 
 .PHONY: test clean
 
@@ -59,6 +59,12 @@ SCHED_SRCS := test_sched_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_sched_events: $(SCHED_SRCS) ta_sched_events.h ta_registry.h \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(SCHED_SRCS) -lpthread
+
+CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
+	ta_net_events.c ta_registry.c ta_event.c
+$(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
+		ta_draw_events.h ta_net_events.h ta_registry.h ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)
