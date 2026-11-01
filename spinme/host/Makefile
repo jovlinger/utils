@@ -6,7 +6,7 @@ WARN := -std=c99 -pedantic -Wall -Wextra -Werror -O1 -g \
 BUILD := build
 
 TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
-	$(BUILD)/test_registry_logger $(BUILD)/test_router
+	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail
 
 .PHONY: test clean
 
@@ -34,6 +34,11 @@ ROUTER_SRCS := test_router.c ta_router.c ta_registry.c ta_event.c
 $(BUILD)/test_router: $(ROUTER_SRCS) ta_router.h ta_registry.h ta_event.h \
 		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(ROUTER_SRCS) -lpthread
+
+ISR_SRCS := test_isr_mail.c ta_isr_mail.c ta_queue.c ta_event.c
+$(BUILD)/test_isr_mail: $(ISR_SRCS) ta_isr_mail.h ta_queue.h ta_event.h \
+		| $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(ISR_SRCS) -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)
