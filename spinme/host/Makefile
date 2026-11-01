@@ -12,8 +12,19 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 
 .PHONY: test clean
 
-test: $(TESTS)
+# test_draw_glass_contract is intentionally red until Draw paint lands.
+RED_TESTS := $(BUILD)/test_draw_glass_contract
+
+test: $(TESTS) $(RED_TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
+	@set -e; for t in $(RED_TESTS); do \
+		if ./$$t; then \
+			echo "UNEXPECTED GREEN: $$t must stay red until Draw impl"; \
+			exit 1; \
+		else \
+			echo "red as expected: $$t"; \
+		fi; \
+	done
 
 $(BUILD)/test_smoke: test_smoke.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_smoke.c
@@ -65,6 +76,9 @@ CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 		ta_draw_events.h ta_net_events.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
+
+$(BUILD)/test_draw_glass_contract: test_draw_glass_contract.c | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_draw_glass_contract.c
 
 $(BUILD):
 	mkdir -p $(BUILD)

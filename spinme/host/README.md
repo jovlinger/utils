@@ -12,6 +12,12 @@ Makefile, and keep the production sources next to the tests (or under
 `../src/` as the tree grows). Do not treat `../uimk2/test_*` as the contract
 for the new design -- those remain the old zlist path until retired.
 
+## Red glass contract
+
+`test_draw_glass_contract` encodes the PLAN update/phase1/phase2/under-image
+rules and is **expected to fail** until Draw paint WorkItems land. `make test`
+asserts that red stays red (unexpected green fails the suite).
+
 ## ISR ingress
 
 `ta_isr_mail_*` is the host stand-in for FreeRTOS `xQueueSendFromISR` into
