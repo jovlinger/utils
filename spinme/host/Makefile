@@ -8,7 +8,7 @@ BUILD := build
 TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
-	$(BUILD)/test_sched_events $(BUILD)/test_controller
+	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout
 
 .PHONY: test clean
 
@@ -79,6 +79,9 @@ $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 
 $(BUILD)/test_draw_glass_contract: test_draw_glass_contract.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_draw_glass_contract.c
+
+$(BUILD)/test_uilayout: test_uilayout.c ta_uilayout.c ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_uilayout.c ta_uilayout.c
 
 $(BUILD):
 	mkdir -p $(BUILD)
