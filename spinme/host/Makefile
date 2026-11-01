@@ -10,7 +10,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
 	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout \
 	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
-	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2
+	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
+	$(BUILD)/test_sched_cadence
 
 .PHONY: test clean
 
@@ -61,9 +62,14 @@ $(BUILD)/test_net_events: $(NET_SRCS) ta_net_events.h ta_registry.h ta_event.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(NET_SRCS) -lpthread
 
 SCHED_SRCS := test_sched_events.c ta_sched_events.c ta_registry.c ta_event.c
-$(BUILD)/test_sched_events: $(SCHED_SRCS) ta_sched_events.h ta_registry.h \
-		ta_event.h | $(BUILD)
+$(BUILD)/test_sched_events: $(SCHED_SRCS) ta_sched_events.h ta_draw_events.h \
+		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(SCHED_SRCS) -lpthread
+
+CAD_SRCS := test_sched_cadence.c ta_sched_events.c ta_registry.c ta_event.c
+$(BUILD)/test_sched_cadence: $(CAD_SRCS) ta_sched_events.h ta_draw_events.h \
+		ta_registry.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(CAD_SRCS) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 	ta_net_events.c ta_registry.c ta_event.c

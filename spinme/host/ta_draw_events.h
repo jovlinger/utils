@@ -14,6 +14,7 @@ enum {
     TA_EV_DRAW_REACT_ROTATE = 0x203,
     TA_EV_DRAW_SET_SHAPE_STACK = 0x204, /* Controller installs stack */
     TA_EV_DRAW_LOG = 0x205,          /* prefix then Logger */
+    TA_EV_DRAW_SCROLL_OX = 0x206,    /* Scheduler scroll cadence; ox i16 */
     /* Completion replies (sent to reply_to when set). */
     TA_EV_DRAW_UPDATE_DONE = 0x210,
     TA_EV_DRAW_PAINT_DONE = 0x211

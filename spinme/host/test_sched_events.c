@@ -59,15 +59,16 @@ int main(void) {
     ta_sched_advance_ms(1);
     CHECK(g_fires == 1);
     CHECK(g_last_session == 55);
+    /* Overdue advances push one event (no catch-up burst). */
     ta_sched_advance_ms(200);
-    CHECK(g_fires == 3);
+    CHECK(g_fires == 2);
 
     ta_event_clear(&ev);
     ev.type = TA_EV_SCHED_STOP;
     CHECK(ta_event_set_src(&ev, "Init") == 0);
     CHECK(ta_registry_post(TA_SCHED_NAME, &ev) == 0);
     ta_sched_advance_ms(500);
-    CHECK(g_fires == 3);
+    CHECK(g_fires == 2);
     CHECK(ta_sched_now_ms() == 800);
 
     if (failures != 0) {
