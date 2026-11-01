@@ -2,6 +2,9 @@
 
 Fast C99 tests for the TaskActor / Draw redesign. No hardware, no `pio`.
 
+Exhaustive actor/event/shape/ISR catalog and flow diagrams:
+[`../EXPOSITION.md`](../EXPOSITION.md).
+
 ```bash
 cd spinme/host
 make test

@@ -26,25 +26,11 @@ int ta_artwork_box_down(const uint8_t *src, size_t sw, size_t sh, uint8_t *dst,
                         size_t dw, size_t dh);
 
 /*
- * Separable quadratic B-spline uprez (Q8 weights). Approximates a mild
- * Gaussian reconstruction. dst must hold dw*dh*4. Returns 0 or -1.
+ * Separable quadratic B-spline uprez (Q8 weights). Soft reconstruction for
+ * calm base. dst must hold dw*dh*4. Returns 0 or -1.
  */
 int ta_artwork_q8_quad_uprez(const uint8_t *src, size_t sw, size_t sh,
                              uint8_t *dst, size_t dw, size_t dh);
-
-/*
- * Separable Gaussian blur in place. sigma_q8 is sigma in Q8 pixels
- * (e.g. 256 ~= 1.0). Returns 0 or -1.
- */
-int ta_artwork_gauss_rgba(uint8_t *rgba, size_t w, size_t h, int sigma_q8);
-
-/*
- * Separable Gaussian-weighted uprez from lores (reference quality).
- * sigma_src_q8 is kernel sigma in *source* pixels (Q8). Returns 0 or -1.
- */
-int ta_artwork_gauss_uprez(const uint8_t *src, size_t sw, size_t sh,
-                           uint8_t *dst, size_t dw, size_t dh,
-                           int sigma_src_q8);
 
 /* Sum of squared RGB diffs over n_px pixels (alpha ignored). */
 uint64_t ta_artwork_rgb_sumsq(const uint8_t *a, const uint8_t *b, size_t n_px);

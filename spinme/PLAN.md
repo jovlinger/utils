@@ -723,16 +723,15 @@ slow periodic poll.
 
 **Calm filter (before or as pack to base):** load/decode (or box-down) to a
 small square (~**90x90**), then **Q8 quadratic B-spline 2D uprez** back to the
-glass/base size -- a cheap Gaussian-like reconstruction -- plus light
-**desaturation** / de-chroma so chrome stays readable. Host compares Q8 uprez
-quality to a separable **Gaussian** uprez reference (`ta_artwork_*` in
-`spinme/host`). Tunable lores edge: `TA_ART_LORES`.
+glass/base size, plus light **desaturation** / de-chroma so chrome stays
+readable. Product path is Q8 only (`ta_artwork_*` in `spinme/host`); no
+on-device Gaussian. Tunable lores edge: `TA_ART_LORES`.
 
-**Not free via JPEG:** selectively ignoring high DCT frequencies is **not** a
-Gaussian and is not a stock TJpgDec knob -- that would mean patching/replacing
-IDCT. Keep **coarse decode scale** for size (already required for NN fit), then
-calm via lores + Q8 quadratic uprez (+ desat), then pack66. Filtered result is
-what under-Caches composite against.
+**Not free via JPEG:** selectively ignoring high DCT frequencies is not a
+soft reconstruction and is not a stock TJpgDec knob. Keep **coarse decode
+scale** for size (already required for NN fit), then calm via lores + Q8
+quadratic uprez (+ desat), then pack66. Filtered result is what under-Caches
+composite against.
 
 ### Follow chrome (product salvage; mapping TBD)
 
