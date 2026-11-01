@@ -9,7 +9,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
 	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout \
-	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update
+	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
+	$(BUILD)/test_draw_phase1
 
 .PHONY: test clean
 
@@ -97,6 +98,11 @@ UPD_SRCS := test_draw_update.c ta_draw_update.c ta_shape_l2r.c ta_uilayout.c
 $(BUILD)/test_draw_update: $(UPD_SRCS) ta_draw_update.h ta_shape_l2r.h \
 		ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(UPD_SRCS)
+
+P1_SRCS := test_draw_phase1.c ta_draw_phase1.c ta_shape_l2r.c ta_uilayout.c
+$(BUILD)/test_draw_phase1: $(P1_SRCS) ta_draw_phase1.h ta_draw_update.h \
+		ta_shape_l2r.h ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(P1_SRCS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
