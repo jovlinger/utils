@@ -11,7 +11,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout \
 	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
 	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
-	$(BUILD)/test_sched_cadence
+	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome
 
 .PHONY: test clean
 
@@ -70,6 +70,11 @@ CAD_SRCS := test_sched_cadence.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_sched_cadence: $(CAD_SRCS) ta_sched_events.h ta_draw_events.h \
 		ta_registry.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CAD_SRCS) -lpthread
+
+$(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
+		ta_uilayout.c ta_follow_chrome.h ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_follow_chrome.c ta_follow_chrome.c \
+		ta_uilayout.c
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 	ta_net_events.c ta_registry.c ta_event.c
