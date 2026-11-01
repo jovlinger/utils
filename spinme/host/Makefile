@@ -10,7 +10,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
 	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout \
 	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
-	$(BUILD)/test_draw_phase1
+	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2
 
 .PHONY: test clean
 
@@ -79,8 +79,11 @@ $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 		ta_draw_events.h ta_net_events.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
 
-$(BUILD)/test_draw_glass_contract: test_draw_glass_contract.c | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -o $@ test_draw_glass_contract.c
+GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \
+	ta_draw_phase2.c ta_shape_l2r.c ta_uilayout.c
+$(BUILD)/test_draw_glass_contract: $(GLASS_SRCS) ta_draw_update.h \
+		ta_draw_phase1.h ta_draw_phase2.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(GLASS_SRCS)
 
 $(BUILD)/test_uilayout: test_uilayout.c ta_uilayout.c ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_uilayout.c ta_uilayout.c
@@ -103,6 +106,11 @@ P1_SRCS := test_draw_phase1.c ta_draw_phase1.c ta_shape_l2r.c ta_uilayout.c
 $(BUILD)/test_draw_phase1: $(P1_SRCS) ta_draw_phase1.h ta_draw_update.h \
 		ta_shape_l2r.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(P1_SRCS)
+
+P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c
+$(BUILD)/test_draw_phase2: $(P2_SRCS) ta_draw_phase2.h ta_draw_update.h \
+		ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(P2_SRCS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
