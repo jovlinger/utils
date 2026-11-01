@@ -12,7 +12,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
 	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
 	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome \
-	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport
+	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
+	$(BUILD)/test_artwork
 
 .PHONY: test clean
 
@@ -91,6 +92,11 @@ $(BUILD)/test_net_mpd: $(MPD_SRCS) ta_net_mpd.h ta_net_events.h | $(BUILD)
 $(BUILD)/test_viewport: test_viewport.c ta_viewport.c ta_uilayout.c \
 		ta_viewport.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_viewport.c ta_viewport.c ta_uilayout.c
+
+ART_SRCS := test_artwork.c ta_artwork.c ta_sched_events.c ta_registry.c \
+	ta_event.c
+$(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(ART_SRCS) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 	ta_net_events.c ta_registry.c ta_event.c
