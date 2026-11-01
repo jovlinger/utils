@@ -6,6 +6,8 @@ pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
 **UI redesign (direction):** [`PLAN.md`](PLAN.md) -- TaskActors, UILayout vs
 Shape split. Firmware still runs the older follow/uimk2 path until that lands.
 
+**As-built host catalog (events, shapes, ISR, flows):** [`EXPOSITION.md`](EXPOSITION.md).
+
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
 
