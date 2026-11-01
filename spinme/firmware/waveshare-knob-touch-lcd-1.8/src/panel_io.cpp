@@ -7,6 +7,7 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "board_pins.h"
 #include "glyph_file.h"
@@ -257,29 +258,50 @@ static int layout_text(const char *s, LayBox *boxes, const uint8_t **rgba,
   return n;
 }
 
-static void push_rect(int x, int y, int w, int h) {
+void panel_push_exterior(int x, int y, int w, int h, const uint16_t *src,
+                         int stride_px, SemaphoreHandle_t band_mu) {
   int row = 0;
+  if (gDev == nullptr || src == nullptr || w <= 0 || h <= 0 || stride_px < w) {
+    return;
+  }
+  if (x < 0 || y < 0 || x + w > LCD_WIDTH || y + h > LCD_HEIGHT) {
+    return;
+  }
   while (row < h) {
     int rows = h - row;
     int max_rows = (LCD_WIDTH * kBandRows) / w;
+    int n = 0;
     if (max_rows < 1) {
       max_rows = 1;
     }
     if (rows > max_rows) {
       rows = max_rows;
     }
-    int n = 0;
+    /* Pack band under optional lock; release before SPI TX. */
+    if (band_mu != nullptr) {
+      xSemaphoreTake(band_mu, portMAX_DELAY);
+    }
     for (int r = 0; r < rows; ++r) {
-      const uint16_t *src =
-          gBack + (size_t)(y + row + r) * LCD_WIDTH + x;
+      const uint16_t *line = src + (size_t)(row + r) * (size_t)stride_px;
       for (int c = 0; c < w; ++c) {
-        gBand[n++] = swap16(src[c]);
+        gBand[n++] = swap16(line[c]);
       }
+    }
+    if (band_mu != nullptr) {
+      xSemaphoreGive(band_mu);
     }
     set_window(x, y + row, w, rows);
     write_pixels(gBand, (size_t)n);
     row += rows;
   }
+}
+
+static void push_rect(int x, int y, int w, int h) {
+  if (gBack == nullptr) {
+    return;
+  }
+  panel_push_exterior(x, y, w, h, gBack + (size_t)y * LCD_WIDTH + x, LCD_WIDTH,
+                      nullptr);
 }
 
 static bool row_dirty_span(int y, int *x0, int *x1) {

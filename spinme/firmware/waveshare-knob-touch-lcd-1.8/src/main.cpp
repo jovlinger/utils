@@ -606,6 +606,16 @@ void setup() {
   }
 
   gMu = xSemaphoreCreateMutex();
+  if (gDisplayOk) {
+    /* QSPI one-rect spike: SRAM band + swap; mutex only while packing. */
+    static uint16_t spike[24 * 24];
+    for (int i = 0; i < 24 * 24; ++i) {
+      spike[i] = 0xF800; /* red, host-order RGB565 */
+    }
+    panel_push_exterior(40, 40, 24, 24, spike, 24, gMu);
+    Serial.println("qspi exterior spike ok");
+  }
+
   uimk2_ring_init(&gRing);
   uimk2_host_init(&gHost, &gRing, millis());
   gHost.desired = kBootVolume;
