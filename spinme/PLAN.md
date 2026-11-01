@@ -721,17 +721,18 @@ changes, fire an event so Net/Controller poll more eagerly. Use
 track end (pre-arm the next status/artwork poll near boundaries), not only
 slow periodic poll.
 
-**Calm filter (before or as pack to base):** after decode (RGBA edge OK), apply
-a calming pass before the base local pixmap is published -- **blur**,
-**desaturation**, and **de-chroma** (reduce colorfulness so chrome/text stay
-readable). Tunable; exact kernels TBD.
+**Calm filter (before or as pack to base):** load/decode (or box-down) to a
+small square (~**90x90**), then **Q8 quadratic B-spline 2D uprez** back to the
+glass/base size -- a cheap Gaussian-like reconstruction -- plus light
+**desaturation** / de-chroma so chrome stays readable. Host compares Q8 uprez
+quality to a separable **Gaussian** uprez reference (`ta_artwork_*` in
+`spinme/host`). Tunable lores edge: `TA_ART_LORES`.
 
 **Not free via JPEG:** selectively ignoring high DCT frequencies is **not** a
 Gaussian and is not a stock TJpgDec knob -- that would mean patching/replacing
-IDCT. Keep **coarse decode scale** for size (already required for NN fit). Do
-calm as a **post-filter** on the RGBA edge (e.g. box or downsample-blur plus
-desat/de-chroma), then pack66. Filtered result is what under-Caches composite
-against.
+IDCT. Keep **coarse decode scale** for size (already required for NN fit), then
+calm via lores + Q8 quadratic uprez (+ desat), then pack66. Filtered result is
+what under-Caches composite against.
 
 ### Follow chrome (product salvage; mapping TBD)
 

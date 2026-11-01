@@ -96,7 +96,7 @@ $(BUILD)/test_viewport: test_viewport.c ta_viewport.c ta_uilayout.c \
 ART_SRCS := test_artwork.c ta_artwork.c ta_sched_events.c ta_registry.c \
 	ta_event.c
 $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -o $@ $(ART_SRCS) -lpthread
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(ART_SRCS) -lpthread -lm
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 	ta_net_events.c ta_registry.c ta_event.c

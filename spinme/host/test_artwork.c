@@ -1,4 +1,4 @@
-/* Host: calm filter, default-art suppress, album-change oneshots. */
+/* Host: calm, Q8 quadratic uprez vs gaussian, default-art, album oneshots. */
 #include "ta_artwork.h"
 #include "ta_draw_events.h"
 #include "ta_net_events.h"
@@ -6,6 +6,7 @@
 #include "ta_sched_events.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -38,6 +39,105 @@ static int draw_sink(const ta_event_t *ev) {
     return 0;
 }
 
+/* Synthetic 360x360: soft ramp + hard edge + chroma. */
+static void fill_synth(uint8_t *rgba, size_t n) {
+    size_t y, x;
+    for (y = 0; y < n; y++) {
+        for (x = 0; x < n; x++) {
+            size_t o = y * n + x;
+            int v = (int)((x * 200) / n);
+            int band = (x > n / 2) ? 40 : 0;
+            rgba[o * 4] = (uint8_t)(v + band);
+            rgba[o * 4 + 1] = (uint8_t)((y * 180) / n);
+            rgba[o * 4 + 2] = (uint8_t)(120 - band / 2);
+            rgba[o * 4 + 3] = 255;
+        }
+    }
+}
+
+static void test_q8_vs_gauss(void) {
+    const size_t N = 360;
+    const size_t L = TA_ART_LORES;
+    uint8_t *src;
+    uint8_t *lo;
+    uint8_t *q8;
+    uint8_t *gauss;
+    uint8_t *nn;
+    uint64_t sum_q8;
+    uint64_t sum_nn;
+    double mse_q8;
+    double mse_nn;
+    size_t n_px = N * N;
+
+    src = (uint8_t *)malloc(n_px * 4u);
+    lo = (uint8_t *)malloc(L * L * 4u);
+    q8 = (uint8_t *)malloc(n_px * 4u);
+    gauss = (uint8_t *)malloc(n_px * 4u);
+    nn = (uint8_t *)malloc(n_px * 4u);
+    CHECK(src && lo && q8 && gauss && nn);
+    if (!src || !lo || !q8 || !gauss || !nn) {
+        free(src);
+        free(lo);
+        free(q8);
+        free(gauss);
+        free(nn);
+        return;
+    }
+
+    fill_synth(src, N);
+    CHECK(ta_artwork_box_down(src, N, N, lo, L, L) == 0);
+    CHECK(ta_artwork_q8_quad_uprez(lo, L, L, q8, N, N) == 0);
+    /* sigma ~ 0.55 src px -- quadratic B-spline lobe width ballpark */
+    CHECK(ta_artwork_gauss_uprez(lo, L, L, gauss, N, N, (TA_ART_Q8_ONE * 55) /
+                                                            100) == 0);
+
+    /* Nearest-neighbor uprez baseline (worse vs gauss). */
+    {
+        size_t y, x;
+        for (y = 0; y < N; y++) {
+            for (x = 0; x < N; x++) {
+                size_t sx = x * L / N;
+                size_t sy = y * L / N;
+                size_t s = sy * L + sx;
+                size_t d = y * N + x;
+                memcpy(nn + d * 4, lo + s * 4, 4);
+            }
+        }
+    }
+
+    sum_q8 = ta_artwork_rgb_sumsq(q8, gauss, n_px);
+    sum_nn = ta_artwork_rgb_sumsq(nn, gauss, n_px);
+    mse_q8 = (double)sum_q8 / (double)(n_px * 3u);
+    mse_nn = (double)sum_nn / (double)(n_px * 3u);
+
+    printf("artwork q8 vs gauss: mse_q8=%.3f mse_nn=%.3f (sumsq %llu vs %llu)\n",
+           mse_q8, mse_nn, (unsigned long long)sum_q8,
+           (unsigned long long)sum_nn);
+
+    /* Q8 quadratic must beat nearest-neighbor vs the gaussian reference. */
+    CHECK(sum_q8 < sum_nn);
+    /* And stay in a reasonable absolute band (not a different image). */
+    CHECK(mse_q8 < 80.0);
+
+    /* Calm path on large buffer uses Q8 path (desat + soft). */
+    {
+        uint8_t *calm = (uint8_t *)malloc(n_px * 4u);
+        CHECK(calm != NULL);
+        if (calm) {
+            memcpy(calm, src, n_px * 4u);
+            ta_artwork_calm_rgba(calm, N, N);
+            CHECK(calm[0] != src[0] || calm[1] != src[1] || calm[2] != src[2]);
+            free(calm);
+        }
+    }
+
+    free(src);
+    free(lo);
+    free(q8);
+    free(gauss);
+    free(nn);
+}
+
 int main(void) {
     uint8_t rgba[4 * 4 * 4];
     size_t i;
@@ -49,7 +149,9 @@ int main(void) {
         rgba[i * 4 + 3] = 255;
     }
     ta_artwork_calm_rgba(rgba, 4, 4);
-    CHECK(rgba[0] < 255); /* blurred/desat */
+    CHECK(rgba[0] < 255); /* small: box+desat fallback */
+
+    test_q8_vs_gauss();
 
     CHECK(ta_artwork_is_default(TA_ART_DEFAULT_FP) == 1);
     CHECK(ta_artwork_is_default(0x1234) == 0);
