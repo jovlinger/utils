@@ -32,6 +32,9 @@ int ta_queue_push(ta_queue_t *q, const ta_event_t *ev);
 /* Consumer: wait until non-empty, copy head into *out without popping. */
 void ta_queue_peek_wait(ta_queue_t *q, ta_event_t *out);
 
+/* Consumer: copy head without wait; returns 0 or -1 if empty. */
+int ta_queue_try_peek(ta_queue_t *q, ta_event_t *out);
+
 /* Consumer: drop head after handle. */
 void ta_queue_pop(ta_queue_t *q);
 
