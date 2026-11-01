@@ -14,7 +14,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 
 .PHONY: test clean
 
-TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract
+TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
+	$(BUILD)/test_input_isr
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -80,6 +81,11 @@ $(BUILD)/test_under_image: test_under_image.c ta_under_image.c ta_uilayout.c \
 		ta_under_image.h ta_draw_update.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_under_image.c ta_under_image.c \
 		ta_uilayout.c
+
+IN_SRCS := test_input_isr.c ta_input_isr.c ta_isr_mail.c ta_queue.c ta_event.c
+$(BUILD)/test_input_isr: $(IN_SRCS) ta_input_isr.h ta_isr_mail.h ta_queue.h \
+		ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(IN_SRCS) -lpthread
 
 $(BUILD)/test_uilayout: test_uilayout.c ta_uilayout.c ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_uilayout.c ta_uilayout.c
