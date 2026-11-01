@@ -9,7 +9,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_registry_logger $(BUILD)/test_router $(BUILD)/test_isr_mail \
 	$(BUILD)/test_kv $(BUILD)/test_draw_events $(BUILD)/test_net_events \
 	$(BUILD)/test_sched_events $(BUILD)/test_controller $(BUILD)/test_uilayout \
-	$(BUILD)/test_shape_l2r
+	$(BUILD)/test_shape_l2r $(BUILD)/test_text
 
 .PHONY: test clean
 
@@ -87,6 +87,11 @@ $(BUILD)/test_uilayout: test_uilayout.c ta_uilayout.c ta_uilayout.h | $(BUILD)
 L2R_SRCS := test_shape_l2r.c ta_shape_l2r.c ta_uilayout.c
 $(BUILD)/test_shape_l2r: $(L2R_SRCS) ta_shape_l2r.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(L2R_SRCS)
+
+TEXT_SRCS := test_text.c ta_text.c ta_shape_l2r.c ta_uilayout.c
+$(BUILD)/test_text: $(TEXT_SRCS) ta_text.h ta_shape_l2r.h ta_uilayout.h \
+		| $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(TEXT_SRCS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
