@@ -12,11 +12,10 @@ Makefile, and keep the production sources next to the tests (or under
 `../src/` as the tree grows). Do not treat `../uimk2/test_*` as the contract
 for the new design -- those remain the old zlist path until retired.
 
-## Red glass contract
+## Glass contract
 
-`test_draw_glass_contract` encodes the PLAN update/phase1/phase2/under-image
-rules and is **expected to fail** until Draw paint WorkItems land. `make test`
-asserts that red stays red (unexpected green fails the suite).
+`test_draw_glass_contract` covers update/phase1/phase2/under-image rules and
+is part of the normal green `make test` suite.
 
 ## ISR ingress
 

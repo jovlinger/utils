@@ -14,19 +14,10 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 
 .PHONY: test clean
 
-# test_draw_glass_contract is intentionally red until Draw paint lands.
-RED_TESTS := $(BUILD)/test_draw_glass_contract
+TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract
 
-test: $(TESTS) $(RED_TESTS)
+test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
-	@set -e; for t in $(RED_TESTS); do \
-		if ./$$t; then \
-			echo "UNEXPECTED GREEN: $$t must stay red until Draw impl"; \
-			exit 1; \
-		else \
-			echo "red as expected: $$t"; \
-		fi; \
-	done
 
 $(BUILD)/test_smoke: test_smoke.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_smoke.c
@@ -80,10 +71,15 @@ $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
 
 GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \
-	ta_draw_phase2.c ta_shape_l2r.c ta_uilayout.c
+	ta_draw_phase2.c ta_under_image.c ta_shape_l2r.c ta_uilayout.c
 $(BUILD)/test_draw_glass_contract: $(GLASS_SRCS) ta_draw_update.h \
-		ta_draw_phase1.h ta_draw_phase2.h | $(BUILD)
+		ta_draw_phase1.h ta_draw_phase2.h ta_under_image.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(GLASS_SRCS)
+
+$(BUILD)/test_under_image: test_under_image.c ta_under_image.c ta_uilayout.c \
+		ta_under_image.h ta_draw_update.h ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_under_image.c ta_under_image.c \
+		ta_uilayout.c
 
 $(BUILD)/test_uilayout: test_uilayout.c ta_uilayout.c ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_uilayout.c ta_uilayout.c
