@@ -12,7 +12,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_shape_l2r $(BUILD)/test_text $(BUILD)/test_draw_update \
 	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
 	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome \
-	$(BUILD)/test_hit_dispatch
+	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd
 
 .PHONY: test clean
 
@@ -83,6 +83,10 @@ HIT_SRCS := test_hit_dispatch.c ta_hit_dispatch.c ta_follow_chrome.c \
 $(BUILD)/test_hit_dispatch: $(HIT_SRCS) ta_hit_dispatch.h ta_follow_chrome.h \
 		ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(HIT_SRCS) -lpthread
+
+MPD_SRCS := test_net_mpd.c ta_net_mpd.c ta_registry.c ta_event.c
+$(BUILD)/test_net_mpd: $(MPD_SRCS) ta_net_mpd.h ta_net_events.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(MPD_SRCS) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
 	ta_net_events.c ta_registry.c ta_event.c
