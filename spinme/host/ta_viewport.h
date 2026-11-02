@@ -6,6 +6,9 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 enum {
     TA_SHAPE_TAG_VIEWPORT = 3
 };
@@ -25,4 +28,7 @@ typedef struct ta_shape_viewport {
  * Does not touch under-image shapes. */
 int ta_viewport_bake(ta_shape_viewport_t *vp);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

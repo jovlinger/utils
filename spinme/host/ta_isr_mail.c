@@ -10,10 +10,14 @@ void ta_isr_mail_reset(ta_isr_mail_t *m) {
     memset(m, 0, sizeof(*m));
 }
 
-int ta_isr_mail_push_from_isr(ta_isr_mail_t *m, const ta_event_t *ev) {
+int TA_ISR_ATTR ta_isr_mail_push_from_isr(ta_isr_mail_t *m,
+                                          const ta_event_t *ev) {
     uint32_t head;
     uint32_t tail;
     uint32_t next;
+    const uint8_t *src;
+    uint8_t *dst;
+    size_t i;
 
     if (m == NULL || ev == NULL) {
         return -1;
@@ -23,16 +27,24 @@ int ta_isr_mail_push_from_isr(ta_isr_mail_t *m, const ta_event_t *ev) {
         return -1;
     }
 
-    head = m->head;
+    head = __atomic_load_n(&m->head, __ATOMIC_ACQUIRE);
     tail = m->tail;
     next = (tail + 1u) % TA_ISR_MAIL_CAP;
     if (next == head) {
         m->drops++;
-        /* Never block in ISR; prefer drop. */
+        /* Never block in ISR; prefer drop. Host logs; device counts only
+         * (the Draw task reports drops on its next pump). */
+#ifndef SPINME_TA_DEVICE
         fprintf(stderr, "ERROR: ISR mail full\n");
+#endif
         return -1;
     }
-    m->slots[tail] = *ev;
+    /* Byte copy: no libc call from IRAM. */
+    src = (const uint8_t *)(const void *)ev;
+    dst = (uint8_t *)(void *)&m->slots[tail];
+    for (i = 0; i < sizeof(ta_event_t); i++) {
+        dst[i] = src[i];
+    }
     /* Publish slot before advancing tail. */
     __atomic_store_n(&m->tail, next, __ATOMIC_RELEASE);
     return 0;

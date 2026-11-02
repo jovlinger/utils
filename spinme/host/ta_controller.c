@@ -24,6 +24,8 @@ typedef struct {
     ta_session_id_t session; /* last ControlEvent session (for Net posts) */
     ta_origin_t inflight_origin;
     ta_origin_t queued_origin;
+    uint8_t polled;  /* player volume from POLL_DONE; 0xFF unknown */
+    uint8_t playing; /* 0/1 from POLL_DONE (toggle flips optimistically) */
 } ta_mpd_state_t;
 
 static ta_mpd_state_t g_mpd;
@@ -32,6 +34,24 @@ static ta_controller_stats_t g_sonos;
 void ta_mpd_reset(void) {
     memset(&g_mpd, 0, sizeof(g_mpd));
     g_mpd.volume = TA_MPD_VOL_DEFAULT;
+    g_mpd.polled = TA_NET_STATUS_UNKNOWN;
+    g_mpd.playing = TA_NET_STATUS_UNKNOWN;
+}
+
+int ta_mpd_polled(void) {
+    return g_mpd.polled == TA_NET_STATUS_UNKNOWN ? -1 : (int)g_mpd.polled;
+}
+
+int ta_mpd_playing(void) {
+    return g_mpd.playing == TA_NET_STATUS_UNKNOWN ? -1 : (int)g_mpd.playing;
+}
+
+/* Chrome follows the model: DRAW_UPDATE status (Draw absent = unit test). */
+static void mpd_post_status(void) {
+    if (ta_draw_post_status(g_mpd.polled, (uint8_t)g_mpd.volume, g_mpd.playing,
+                            g_mpd.session, TA_MPD_NAME) == 0) {
+        g_mpd.st.draw_status_posted++;
+    }
 }
 
 void ta_sonos_reset(void) {
@@ -213,6 +233,12 @@ static int mpd_handle(const ta_event_t *ev) {
         if (origin.reply_type == 0) {
             origin.reply_type = TA_EV_CTRL_TOGGLE;
         }
+        /* Optimistic flip so the transport glyph answers the tap; the
+         * settled POLL corrects it. */
+        if (g_mpd.playing != TA_NET_STATUS_UNKNOWN) {
+            g_mpd.playing = (uint8_t)(g_mpd.playing ? 0 : 1);
+            mpd_post_status();
+        }
         if (g_mpd.set_inflight) {
             st->coalesced++;
             g_mpd.toggle_pending = 1;
@@ -241,6 +267,7 @@ static int mpd_handle(const ta_event_t *ev) {
             origin_reply(st, &origin, TA_EV_CTRL_VOLUME, TA_MPD_NAME);
             return 0;
         }
+        mpd_post_status(); /* desired leads the glass while Net catches up */
         if (g_mpd.set_inflight) {
             st->coalesced++;
             g_mpd.vol_dirty = 1;
@@ -271,7 +298,22 @@ static int mpd_handle(const ta_event_t *ev) {
         st->poll_done++;
         st->handled++;
         g_mpd.poll_inflight = 0;
-        /* Draw WI: DRAW_UPDATE with status fields goes here. */
+        if (ev->payload_len >= TA_NET_STATUS_LEN) {
+            uint8_t vol = ev->payload[TA_NET_STATUS_VOLUME];
+            uint8_t playing = ev->payload[TA_NET_STATUS_PLAYING];
+
+            if (vol != TA_NET_STATUS_UNKNOWN) {
+                g_mpd.polled = vol > 100 ? 100 : vol;
+                /* Nothing pending from the knob: follow the player. */
+                if (!g_mpd.set_inflight && !g_mpd.vol_dirty) {
+                    g_mpd.volume = (int)g_mpd.polled;
+                }
+            }
+            if (playing != TA_NET_STATUS_UNKNOWN) {
+                g_mpd.playing = playing ? 1 : 0;
+            }
+        }
+        mpd_post_status();
         return 0;
     case TA_EV_CTRL_NEXT:
         st->next++;

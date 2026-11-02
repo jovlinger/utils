@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /* Glyph map: ascii 32..126 -> shape idx; 0 means missing. */
 typedef struct ta_glyph_map {
     unsigned idx[95]; /* ascii - 32 */
@@ -23,4 +26,7 @@ int ta_text_build(ta_shape_l2r_t *out, const char *ascii,
                   uint32_t *pack_buf, size_t pack_cap, int8_t *kern_buf,
                   size_t kern_cap);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

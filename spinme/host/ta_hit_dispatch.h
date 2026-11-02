@@ -7,6 +7,9 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef enum {
     TA_HIT_NONE = 0,
     TA_HIT_TRANSPORT = 1,
@@ -27,4 +30,7 @@ int ta_react_touch(const ta_follow_chrome_t *chrome, uint16_t x, uint16_t y,
                    const uint16_t *shape_h);
 int ta_react_rotate(int8_t steps, ta_session_id_t session);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

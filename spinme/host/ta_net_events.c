@@ -42,7 +42,8 @@ static void remember(char *dst, ta_session_id_t *sess, const ta_event_t *ev) {
 }
 
 static void post_done(const char *reply_to, ta_session_id_t session,
-                      ta_event_type_t done_type) {
+                      ta_event_type_t done_type, const uint8_t *payload,
+                      size_t len) {
     ta_event_t reply;
 
     if (reply_to == NULL || reply_to[0] == '\0') {
@@ -52,45 +53,56 @@ static void post_done(const char *reply_to, ta_session_id_t session,
     reply.type = done_type;
     reply.session_id = session;
     (void)ta_event_set_src(&reply, TA_NET_NAME);
+    if (payload != NULL && len > 0) {
+        (void)ta_event_set_payload(&reply, payload, len);
+    }
     if (ta_registry_post(reply_to, &reply) == 0) {
         g_stats.replies_posted++;
     }
 }
 
 static void maybe_reply_immediate(const ta_event_t *ev, ta_event_type_t done) {
-    post_done(ev->reply_to, ev->session_id, done);
+    post_done(ev->reply_to, ev->session_id, done, NULL, 0);
 }
 
 /* Take the pending slot, clear it, then post: the DONE handler may issue a
  * new request of the same class synchronously (MPD coalesced volume), and
  * that new reply_to must survive this completion. */
 static void complete_slot(char *reply, ta_session_id_t *session,
-                          ta_event_type_t done_type) {
+                          ta_event_type_t done_type, const uint8_t *payload,
+                          size_t len) {
     char to[TA_NAME_MAX];
     ta_session_id_t sess = *session;
 
     memcpy(to, reply, TA_NAME_MAX);
     reply[0] = '\0';
-    post_done(to, sess, done_type);
+    post_done(to, sess, done_type, payload, len);
 }
 
-void ta_net_backend_complete(int kind) {
+void ta_net_backend_complete_ex(int kind, const uint8_t *payload, size_t len) {
     switch (kind) {
     case 1: /* poll ok */
     case 2: /* poll fail -- still DONE so Controllers unblock */
-        complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE);
+        complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE,
+                      payload, len);
         break;
     case 3:
     case 4:
-        complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE);
+        complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE, payload,
+                      len);
         break;
     case 5:
     case 6:
-        complete_slot(g_art_reply, &g_art_session, TA_EV_NET_ALBUMART_DONE);
+        complete_slot(g_art_reply, &g_art_session, TA_EV_NET_ALBUMART_DONE,
+                      payload, len);
         break;
     default:
         break;
     }
+}
+
+void ta_net_backend_complete(int kind) {
+    ta_net_backend_complete_ex(kind, NULL, 0);
 }
 
 int ta_net_handle(const ta_event_t *ev) {
@@ -111,7 +123,8 @@ int ta_net_handle(const ta_event_t *ev) {
         }
         remember(g_poll_reply, &g_poll_session, ev);
         if (g_backend->request_poll() != 0) {
-            complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE);
+            complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE,
+                          NULL, 0);
         }
         return 0;
     case TA_EV_NET_SET:
@@ -141,7 +154,8 @@ int ta_net_handle(const ta_event_t *ev) {
                 rc = g_backend->request_volume((int)ev->payload[0]);
             }
             if (rc != 0) {
-                complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE);
+                complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE,
+                              NULL, 0);
             }
         }
         return 0;
@@ -163,7 +177,7 @@ int ta_net_handle(const ta_event_t *ev) {
             path[n] = '\0';
             if (g_backend->request_albumart(path, 512u * 1024u) != 0) {
                 complete_slot(g_art_reply, &g_art_session,
-                              TA_EV_NET_ALBUMART_DONE);
+                              TA_EV_NET_ALBUMART_DONE, NULL, 0);
             }
         }
         return 0;

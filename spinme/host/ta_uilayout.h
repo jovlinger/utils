@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /*
  * accept_hit packing CHOICE (WorkItem 0006): parallel flags array.
  * UILayout stays a tight 32-bit word (dirty/x/y/shape). Hit eligibility
@@ -64,4 +67,7 @@ void ta_shape_table_reset(void);
 int ta_shape_table_set(unsigned idx, ta_shape_bitmap_t *shape);
 ta_shape_bitmap_t *ta_shape_table_get(unsigned idx);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

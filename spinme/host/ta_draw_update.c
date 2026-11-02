@@ -47,7 +47,8 @@ static int update_represent_time(ta_draw_scene_t *scene, ta_draw_node_t *n) {
             }
             idxs[nidx++] = g;
         } else if (ch == ':') {
-            unsigned g = scene->digit_glyph[0];
+            unsigned g = scene->colon_glyph != 0 ? scene->colon_glyph
+                                                 : scene->digit_glyph[0];
             if (g == 0) {
                 return -1;
             }

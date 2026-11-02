@@ -18,7 +18,15 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 .PHONY: test clean
 
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
-	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net
+	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner
+
+# Draw is the glass owner: its actor pulls the whole glass model in.
+DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
+	ta_draw_phase1.c ta_draw_phase2.c ta_follow_chrome.c ta_hit_dispatch.c \
+	ta_text.c ta_shape_l2r.c ta_uilayout.c ta_isr_mail.c ta_queue.c
+DRAW_HDRS := ta_draw_events.h ta_draw_glass.h ta_draw_update.h \
+	ta_draw_phase1.h ta_draw_phase2.h ta_follow_chrome.h ta_hit_dispatch.h \
+	ta_text.h ta_shape_l2r.h ta_uilayout.h ta_isr_mail.h ta_queue.h
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -53,8 +61,8 @@ $(BUILD)/test_isr_mail: $(ISR_SRCS) ta_isr_mail.h ta_queue.h ta_event.h \
 $(BUILD)/test_kv: test_kv.c ta_kv.c ta_kv.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_kv.c ta_kv.c
 
-DRAW_SRCS := test_draw_events.c ta_draw_events.c ta_registry.c ta_event.c
-$(BUILD)/test_draw_events: $(DRAW_SRCS) ta_draw_events.h ta_registry.h \
+DRAW_SRCS := test_draw_events.c $(DRAW_CORE) ta_registry.c ta_event.c
+$(BUILD)/test_draw_events: $(DRAW_SRCS) $(DRAW_HDRS) ta_registry.h \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(DRAW_SRCS) -lpthread
 
@@ -78,11 +86,9 @@ $(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_follow_chrome.c ta_follow_chrome.c \
 		ta_uilayout.c
 
-HIT_SRCS := test_hit_dispatch.c ta_hit_dispatch.c ta_follow_chrome.c \
-	ta_controller.c ta_router.c ta_draw_events.c ta_net_events.c \
-	ta_sched_events.c ta_registry.c ta_event.c ta_uilayout.c
-$(BUILD)/test_hit_dispatch: $(HIT_SRCS) ta_hit_dispatch.h ta_follow_chrome.h \
-		ta_controller.h | $(BUILD)
+HIT_SRCS := test_hit_dispatch.c $(DRAW_CORE) ta_controller.c ta_router.c \
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+$(BUILD)/test_hit_dispatch: $(HIT_SRCS) $(DRAW_HDRS) ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(HIT_SRCS) -lpthread
 
 MPD_SRCS := test_net_mpd.c ta_net_mpd.c ta_registry.c ta_event.c
@@ -98,18 +104,26 @@ ART_SRCS := test_artwork.c ta_artwork.c ta_sched_events.c ta_registry.c \
 $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(ART_SRCS) -lpthread
 
-CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
+CTRL_SRCS := test_controller.c ta_controller.c ta_router.c $(DRAW_CORE) \
 	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
-		ta_draw_events.h ta_net_events.h ta_sched_events.h ta_registry.h \
+		$(DRAW_HDRS) ta_net_events.h ta_sched_events.h ta_registry.h \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
 
-MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c ta_draw_events.c \
+MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c $(DRAW_CORE) \
 	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_mpd_net: $(MPDNET_SRCS) ta_controller.h ta_router.h \
-		ta_net_events.h ta_net_backend.h ta_sched_events.h | $(BUILD)
+		$(DRAW_HDRS) ta_net_events.h ta_net_backend.h ta_sched_events.h \
+		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(MPDNET_SRCS) -lpthread
+
+OWNER_SRCS := test_draw_glass_owner.c ta_controller.c ta_router.c $(DRAW_CORE) \
+	ta_input_isr.c ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+$(BUILD)/test_draw_glass_owner: $(OWNER_SRCS) ta_controller.h ta_router.h \
+		$(DRAW_HDRS) ta_input_isr.h ta_net_events.h ta_net_backend.h \
+		ta_sched_events.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(OWNER_SRCS) -lpthread
 
 GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \
 	ta_draw_phase2.c ta_under_image.c ta_shape_l2r.c ta_uilayout.c
@@ -146,7 +160,7 @@ $(BUILD)/test_draw_update: $(UPD_SRCS) ta_draw_update.h ta_shape_l2r.h \
 
 P1_SRCS := test_draw_phase1.c ta_draw_phase1.c ta_shape_l2r.c ta_uilayout.c
 $(BUILD)/test_draw_phase1: $(P1_SRCS) ta_draw_phase1.h ta_draw_update.h \
-		ta_shape_l2r.h ta_uilayout.h | $(BUILD)
+		ta_shape_l2r.h ta_uilayout.h ta_viewport.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(P1_SRCS)
 
 P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c

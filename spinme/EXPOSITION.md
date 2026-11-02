@@ -151,32 +151,48 @@ Helpers that are **not** actors: artwork (`ta_artwork_*`), hit walk
 
 ### 3.2 Draw
 
-**Start:** `ta_draw_start()`. Stub `ta_draw_handle` increments stats; real
-paint/update live in `ta_draw_update` / `phase1` / `phase2` (called by
-firmware/host glue, not fully wired inside the stub switch yet).
+**Start:** `ta_draw_start()`. Draw is the **sole glass owner**: `ta_draw_events`
+dispatches into `ta_draw_glass` (follow chrome state, text slots, status,
+idle/backlight) which runs update / phase1 / phase2 and executes the push list
+through a `ta_glass_backend_t` (host fake or `panel_push_pack66` on device).
+Nothing else paints. Draw's queue is MP/SC (`ta_draw_bind_queue`); the Draw
+task alone pumps it with `ta_draw_pump(mails, n)`, which also drains the ISR
+mails first.
 
-| Type | Value | Payload (today) | Completion |
-|------|-------|-----------------|------------|
-| `TA_EV_DRAW_UPDATE` | 0x200 | none in stub | if `reply_to` set -> `TA_EV_DRAW_UPDATE_DONE` (0x210) |
+| Type | Value | Payload | Completion |
+|------|-------|---------|------------|
+| `TA_EV_DRAW_UPDATE` | 0x200 | empty = cadence tick (clock represent-time, idle count); `[1][polled][desired][playing]` = status from MPD (0xFF unknown); `[2]` = base (artwork) dirty | paints when anything changed; `reply_to` -> `TA_EV_DRAW_UPDATE_DONE` (0x210) |
 | `TA_EV_DRAW_PAINT` | 0x201 | none | -> `TA_EV_DRAW_PAINT_DONE` (0x211) |
-| `TA_EV_DRAW_REACT_TOUCH` | 0x202 | intended: touch xy (see ISR); stub ignores | none |
-| `TA_EV_DRAW_REACT_ROTATE` | 0x203 | intended: steps; stub ignores | none |
-| `TA_EV_DRAW_SET_SHAPE_STACK` | 0x204 | Controller installs stack (TBD bytes) | none |
+| `TA_EV_DRAW_REACT_TOUCH` / `TA_EV_ISR_TOUCH` | 0x202 / 0x100 | x u16 LE, y u16 LE | hit walk -> ControlEvent to Controller; dark glass: wake only |
+| `TA_EV_DRAW_REACT_ROTATE` / `TA_EV_ISR_ROTARY` | 0x203 / 0x101 | steps i8 | `CTRL_VOLUME` to Controller |
+| `TA_EV_DRAW_SET_SHAPE_STACK` | 0x204 | none (Controller SET_ACTIVE) | installs follow chrome + first full paint |
 | `TA_EV_DRAW_LOG` | 0x205 | log divert | none |
-| `TA_EV_DRAW_SCROLL_OX` | 0x206 | `ox` as i16 LE (2 bytes); from Scheduler scroll | none |
+| `TA_EV_DRAW_SCROLL_OX` | 0x206 | `ox` i16 LE, or **empty** = step `TA_GLASS_SCROLL_STEP` px (Scheduler cadence; Draw owns the position) | repaint title viewport only |
+| `TA_EV_DRAW_SET_TEXT` | 0x207 | `[field u8][flags u8][ascii...]`, chunked (`FIRST` 0x01 / `LAST` 0x02); helper `ta_draw_post_text` | rebuilds the slot L2R on LAST, paints |
 | `TA_EV_DRAW_UPDATE_DONE` | 0x210 | reply | n/a |
 | `TA_EV_DRAW_PAINT_DONE` | 0x211 | reply | n/a |
 
-Glass pipeline (called around UPDATE/PAINT, not separate event types):
+Text fields: `TA_DRAW_TEXT_ZONE/ARTIST/ALBUM/TITLE`. Volume and transport
+lines are derived from status (desired shown while it differs from polled;
+`play`/`stop`). Clock digits come from the backend wall clock or uptime.
+
+Glass pipeline per paint (`ta_glass_paint`):
 
 1. **`ta_draw_update`** -- dirty Shape/UILayout flags only; may run
    `TA_UPD_REPRESENT_TIME` for clock digits. Never touches `*pixels`.
-2. **`ta_under_after_update`** -- if base dirty, invalidate under-Cache;
-   scroll/clock alone does not.
-3. **`ta_draw_phase1`** -- farthest->nearest rebuild dirty local pixmaps;
-   optional under-image under L2R.
-4. **`ta_draw_phase2`** -- nearest->farthest coverage cull; emit exterior
-   push list; clear dirty.
+2. **`ta_draw_phase1`** -- farthest->nearest rebuild dirty local pixmaps.
+   Text paper is transparent, so each dirty L2R/Viewport composites the
+   matching crop of the base (artwork) bitmap under its glyphs
+   (`ta_phase1_opts_t.base_shape_idx`); no panel-sized shadow exists.
+   Viewports blit the child at `-ox` and again at `period - ox` so the
+   scroll wraps with `TA_PHASE1_SCROLL_GAP`.
+3. **`ta_draw_phase2`** -- nearest->farthest coverage cull; emit exterior
+   push list; clear dirty. Draw executes the list **farthest-first** so a
+   farther rect never overpaints a nearer one.
+
+Idle: each cadence UPDATE without input counts; after
+`TA_GLASS_SCREEN_OFF_S` the backend backlight goes off and paints are
+skipped. The next touch wakes (no hit-test) and repaints everything.
 
 ---
 
@@ -191,13 +207,21 @@ and defer POLL/ALBUMART completion until tick (host fake wire).
 | `TA_EV_NET_SET_DIALECT` | 0x300 | TBD (MPD vs Sonos) | none in stub |
 | `TA_EV_NET_POLL` | 0x301 | none | `reply_to` -> `TA_EV_NET_POLL_DONE` (0x310) |
 | `TA_EV_NET_SET` | 0x302 | volume: first byte desired level (coalesced in MPD dialect) | `TA_EV_NET_SET_DONE` (0x311) on stub Net; MPD dialect sends on tick after coalesce |
-| `TA_EV_NET_ALBUMART` | 0x303 | TBD (uri/fp); stub none | `TA_EV_NET_ALBUMART_DONE` (0x312) |
-| `TA_EV_NET_POLL_DONE` | 0x310 | reply (status blob TBD) | n/a |
+| `TA_EV_NET_ALBUMART` | 0x303 | artwork path bytes (device: Volumio albumart URL, truncated to payload) | `TA_EV_NET_ALBUMART_DONE` (0x312) |
+| `TA_EV_NET_POLL_DONE` | 0x310 | reply: `[volume or 0xFF][playing 0/1 or 0xFF]` (`TA_NET_STATUS_*`) | n/a |
 | `TA_EV_NET_SET_DONE` | 0x311 | reply | n/a |
 | `TA_EV_NET_ALBUMART_DONE` | 0x312 | reply (bytes/fp TBD) | n/a |
 
 MPD dialect also no-ops unsupported `TA_EV_CTRL_NEXT` / `PREV` when seen on
 the Net side.
+
+Device backend (`ta_net_player_bind.c`, the dialect edge): a `getState`
+completion fills the POLL_DONE status payload via
+`ta_net_backend_complete_ex`, posts artist/album/title to Draw with
+`ta_draw_post_text`, and requests `NET_ALBUMART` when the artwork path
+changes. MPDController adopts the polled volume into its model (unless a
+SET is in flight), remembers `playing`, and posts `DRAW_UPDATE` status to
+Draw on POLL_DONE, TOGGLE (optimistic flip) and VOLUME.
 
 **Artwork calm (not an event):** after decode to RGBA, product path is
 `ta_artwork_calm_rgba`: box-down to `TA_ART_LORES` (90), Q8 quadratic

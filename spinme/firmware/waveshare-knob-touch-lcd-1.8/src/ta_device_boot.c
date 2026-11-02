@@ -4,6 +4,7 @@
 #include "ta_draw_events.h"
 #include "ta_init.h"
 #include "ta_logger.h"
+#include "ta_queue.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"
 #include "ta_router.h"
@@ -20,6 +21,18 @@ static const char *TAG = "ta";
 
 static int g_fabric_up;
 static TaskHandle_t g_fabric_task;
+
+/* Draw's MP/SC queue: producers on any task (MPD, Net completions, the
+ * albumart decoder) push; only the Draw task pumps. Bound before the
+ * activation posts below so DRAW_SET_SHAPE_STACK waits for the glass glue. */
+#define TA_DRAW_QUEUE_CAP 32
+#define TA_DEVICE_SCROLL_MS 40
+static ta_event_t g_draw_slots[TA_DRAW_QUEUE_CAP];
+static ta_queue_t g_draw_q;
+
+ta_queue_t *ta_device_draw_queue(void) {
+    return &g_draw_q;
+}
 
 static void fabric_task(void *arg) {
     (void)arg;
@@ -51,6 +64,12 @@ void ta_device_boot(void) {
 
     ta_init_run_entries();
     ta_logger_set_policy(0, TA_LOG_POLICY_EXTERNAL);
+    if (ta_queue_init(&g_draw_q, g_draw_slots, TA_DRAW_QUEUE_CAP) != 0) {
+        ESP_LOGE(TAG, "draw queue init fail");
+        g_fabric_up = 0;
+        return;
+    }
+    ta_draw_bind_queue(&g_draw_q);
 
     if (ta_registry_lookup(TA_LOGGER_NAME) == NULL ||
         ta_registry_lookup(TA_DRAW_NAME) == NULL ||
@@ -96,8 +115,14 @@ void ta_device_boot(void) {
         if (ta_registry_post(TA_CONTROLLER_NAME, &ev) != 0) {
             ESP_LOGE(TAG, "set active fail");
         }
-        printf("ta route=%s poll_ms=%u\n", ta_router_current_target(),
-               (unsigned)TA_MPD_POLL_MS);
+        /* Draw cadences: 1 Hz clock/idle tick, title scroll step. */
+        if (ta_sched_arm_clock_1hz(TA_DRAW_NAME, 1) != 0 ||
+            ta_sched_arm_scroll(TA_DRAW_NAME, 1, TA_DEVICE_SCROLL_MS) != 0) {
+            ESP_LOGE(TAG, "draw cadence arm fail");
+        }
+        printf("ta route=%s poll_ms=%u scroll_ms=%u\n",
+               ta_router_current_target(), (unsigned)TA_MPD_POLL_MS,
+               (unsigned)TA_DEVICE_SCROLL_MS);
     }
 }
 

@@ -33,6 +33,20 @@ void ta_net_set_backend(const ta_net_backend_t *backend);
  */
 void ta_net_backend_complete(int kind);
 
+/*
+ * Same, with a completion payload copied into the DONE event. POLL_DONE
+ * status layout (TA_NET_STATUS_*): [volume u8 (0xFF unknown)][playing u8
+ * (0/1, 0xFF unknown)]. Controllers read it to seed their models.
+ */
+void ta_net_backend_complete_ex(int kind, const uint8_t *payload, size_t len);
+
+enum {
+    TA_NET_STATUS_VOLUME = 0,
+    TA_NET_STATUS_PLAYING = 1,
+    TA_NET_STATUS_LEN = 2
+};
+#define TA_NET_STATUS_UNKNOWN 0xFFu
+
 
 #ifdef __cplusplus
 }

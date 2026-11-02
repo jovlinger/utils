@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 enum {
     TA_SHAPE_TAG_L2R = 2
 };
@@ -42,4 +45,7 @@ size_t ta_shapepack_decode_word(uint32_t word, unsigned *idxs, size_t max);
 /* Compute w/h from child bitmaps + kernings; sets l2r->w/h. */
 int ta_shape_l2r_compute_size(ta_shape_l2r_t *l2r);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

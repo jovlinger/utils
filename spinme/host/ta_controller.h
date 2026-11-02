@@ -48,6 +48,7 @@ typedef struct ta_controller_stats {
     unsigned coalesced;     /* volume/toggle deferred behind in-flight SET */
     unsigned set_done;
     unsigned poll_done;
+    unsigned draw_status_posted; /* DRAW_UPDATE status toward Draw */
 } ta_controller_stats_t;
 
 void ta_mpd_reset(void);
@@ -56,6 +57,9 @@ int ta_mpd_enqueue(const ta_event_t *ev);
 const ta_controller_stats_t *ta_mpd_stats(void);
 /* Current volume model (0..100). */
 int ta_mpd_volume(void);
+/* Last player-reported volume / playing from POLL_DONE; -1 unknown. */
+int ta_mpd_polled(void);
+int ta_mpd_playing(void);
 /* Nonzero while a NET_SET / NET_POLL awaits its DONE. */
 int ta_mpd_set_inflight(void);
 int ta_mpd_poll_inflight(void);

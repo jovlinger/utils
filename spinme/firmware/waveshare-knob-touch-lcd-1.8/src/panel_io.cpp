@@ -296,6 +296,63 @@ void panel_push_exterior(int x, int y, int w, int h, const uint16_t *src,
   }
 }
 
+static inline uint16_t pack66_to_565(uint32_t px) {
+  const uint16_t r6 = (uint16_t)(px & 0x3f);
+  const uint16_t g6 = (uint16_t)((px >> 8) & 0x3f);
+  const uint16_t b6 = (uint16_t)((px >> 16) & 0x3f);
+  return (uint16_t)(((r6 >> 1) << 11) | (g6 << 5) | (b6 >> 1));
+}
+
+void panel_push_pack66(int x, int y, int w, int h, const uint32_t *src,
+                       int stride_px) {
+  int row = 0;
+  int sx0 = 0;
+  int sy0 = 0;
+  if (gDev == nullptr || src == nullptr || w <= 0 || h <= 0 || stride_px < w) {
+    return;
+  }
+  if (x < 0) {
+    sx0 = -x;
+    w += x;
+    x = 0;
+  }
+  if (y < 0) {
+    sy0 = -y;
+    h += y;
+    y = 0;
+  }
+  if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w <= 0 || h <= 0) {
+    return;
+  }
+  if (x + w > LCD_WIDTH) {
+    w = LCD_WIDTH - x;
+  }
+  if (y + h > LCD_HEIGHT) {
+    h = LCD_HEIGHT - y;
+  }
+  while (row < h) {
+    int rows = h - row;
+    int max_rows = (LCD_WIDTH * kBandRows) / w;
+    int n = 0;
+    if (max_rows < 1) {
+      max_rows = 1;
+    }
+    if (rows > max_rows) {
+      rows = max_rows;
+    }
+    for (int r = 0; r < rows; ++r) {
+      const uint32_t *line =
+          src + (size_t)(sy0 + row + r) * (size_t)stride_px + (size_t)sx0;
+      for (int c = 0; c < w; ++c) {
+        gBand[n++] = swap16(pack66_to_565(line[c]));
+      }
+    }
+    set_window(x, y + row, w, rows);
+    write_pixels(gBand, (size_t)n);
+    row += rows;
+  }
+}
+
 static void push_rect(int x, int y, int w, int h) {
   if (gBack == nullptr) {
     return;

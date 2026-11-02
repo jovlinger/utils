@@ -39,34 +39,41 @@ int ta_encoder_velocity_steps(uint32_t delta_us, int max_step) {
     return step;
 }
 
-int ta_isr_post_touch(ta_isr_mail_t *mail, uint16_t x, uint16_t y) {
-    ta_event_t ev;
-    uint8_t pl[4];
+/* ISR-context envelope fill: byte loops only, no flash-resident helpers. */
+static void TA_ISR_ATTR isr_event_init(ta_event_t *ev, ta_event_type_t type) {
+    uint8_t *p = (uint8_t *)(void *)ev;
+    size_t i;
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_ISR_TOUCH;
-    (void)ta_event_set_src(&ev, "ISR");
-    pl[0] = (uint8_t)(x & 0xff);
-    pl[1] = (uint8_t)((x >> 8) & 0xff);
-    pl[2] = (uint8_t)(y & 0xff);
-    pl[3] = (uint8_t)((y >> 8) & 0xff);
-    if (ta_event_set_payload(&ev, pl, 4) != 0) {
-        return -1;
+    for (i = 0; i < sizeof(*ev); i++) {
+        p[i] = 0;
     }
+    ev->type = type;
+    ev->src[0] = 'I';
+    ev->src[1] = 'S';
+    ev->src[2] = 'R';
+    ev->src[3] = '\0';
+}
+
+int TA_ISR_ATTR ta_isr_post_touch(ta_isr_mail_t *mail, uint16_t x,
+                                  uint16_t y) {
+    ta_event_t ev;
+
+    isr_event_init(&ev, TA_EV_ISR_TOUCH);
+    ev.payload[0] = (uint8_t)(x & 0xff);
+    ev.payload[1] = (uint8_t)((x >> 8) & 0xff);
+    ev.payload[2] = (uint8_t)(y & 0xff);
+    ev.payload[3] = (uint8_t)((y >> 8) & 0xff);
+    ev.payload_len = 4;
     return ta_isr_mail_push_from_isr(mail, &ev);
 }
 
-int ta_isr_post_rotary(ta_isr_mail_t *mail, int8_t steps, uint8_t vel_q8) {
+int TA_ISR_ATTR ta_isr_post_rotary(ta_isr_mail_t *mail, int8_t steps,
+                                   uint8_t vel_q8) {
     ta_event_t ev;
-    uint8_t pl[2];
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_ISR_ROTARY;
-    (void)ta_event_set_src(&ev, "ISR");
-    pl[0] = (uint8_t)steps;
-    pl[1] = vel_q8;
-    if (ta_event_set_payload(&ev, pl, 2) != 0) {
-        return -1;
-    }
+    isr_event_init(&ev, TA_EV_ISR_ROTARY);
+    ev.payload[0] = (uint8_t)steps;
+    ev.payload[1] = vel_q8;
+    ev.payload_len = 2;
     return ta_isr_mail_push_from_isr(mail, &ev);
 }
