@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
 bool panel_begin(void);
 /* Two PSRAM frames. Draw calls land in the back frame until panel_present. */
 bool panel_buffers_begin(void);
@@ -13,6 +16,11 @@ void panel_present(void);
 void panel_cmd(uint8_t cmd, const uint8_t *data, size_t len);
 void panel_fill_screen(uint16_t color565);
 void panel_fill_rect(int x, int y, int w, int h, uint16_t color565);
+/* One whole exterior via SRAM gBand (RGB565 host-order src, byte-swapped for
+ * QSPI). band_mu is taken only while packing the band -- never held across
+ * SPI TX. Pass NULL when the caller serializes access itself. */
+void panel_push_exterior(int x, int y, int w, int h, const uint16_t *src,
+                         int stride_px, SemaphoreHandle_t band_mu);
 void panel_text(int x, int y, const char *s, int scale, uint16_t color565);
 /* Draw glyphs over existing pixels. ink_scale is 0..255 of the glyph alpha. */
 void panel_text_over(int x, int y, const char *s, int scale, uint16_t color565,
