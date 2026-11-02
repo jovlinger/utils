@@ -1,7 +1,11 @@
 # spinme redesign (direction)
 
-Status: **plan / direction**, not as-built. Firmware and `uimk2/` still
-implement the old Core A/B + follow zlist path until this lands.
+Status: **plan / direction**; the Waveshare firmware now boots this fabric
+only (Draw sole glass owner, MPDController -> Net, Scheduler, Artwork). The
+old Core A/B + follow zlist path is retired and unbuilt
+(`firmware/waveshare-knob-touch-lcd-1.8/retired/uimk2_paint/`); `uimk2/` is a
+standalone host library + bench, not linked into the firmware. As-built
+catalog: [`EXPOSITION.md`](EXPOSITION.md).
 
 FreeRTOS is assumed. No core is special: work is owned by long-lived
 **TaskActors**. Actors are **re-active**: they only advance by processing

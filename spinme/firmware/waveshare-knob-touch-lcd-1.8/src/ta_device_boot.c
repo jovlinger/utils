@@ -95,7 +95,7 @@ void ta_device_boot(void) {
 
     /* Activate the MVP face: Router -> MPDController, which arms the
      * Scheduler poll cadence (CTRL_POLL -> NET_POLL). Scheduler time only
-     * advances via ta_device_tick_ms from the worker task, so the first
+     * advances via ta_device_tick_ms from the Draw task, so the first
      * poll fires after Net is bound to player_http. */
     {
         ta_event_t ev;

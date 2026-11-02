@@ -1,7 +1,8 @@
 #pragma once
 
-/* Core B Volumio client. Non-blocking: start / select-poll / read / close.
- * The uimk2 worker must only call player_http_tick; it must never block on
+/* Volumio HTTP wire behind the Net TaskActor (ta_net_player_bind).
+ * Non-blocking: start / select-poll / read / close. The Draw task (the single
+ * fabric runner) must only call player_http_tick; it must never block on
  * DNS or HTTP. Boot may resolve WiFi + Volumio IP once.
  *
  * Volumio volume/toggle use GET:
