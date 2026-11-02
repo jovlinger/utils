@@ -1,12 +1,15 @@
-# spinme TaskActor exposition (as-built host)
+# spinme TaskActor exposition (as-built)
 
-Status: **as-built** for `spinme/host` C99 tests. Firmware still runs the
-older follow/zlist path until these actors are ported. Directional plan:
+Status: **as-built** for `spinme/host` C99 tests **and** the Waveshare
+firmware TaskActor boot (`todo:3135a46a`, tip merged to master). Directional
+plan (including not-yet-shipped EventRedirector / Rotary / Net-NTP):
 [`PLAN.md`](PLAN.md). Host how-to: [`host/README.md`](host/README.md).
+Board checklist: [`host/SMOKE.md`](host/SMOKE.md).
 
 This document is the event and shape catalog: every registered TaskActor,
 every event type and payload, how completion/"callback" works, every Shape
-tag Draw knows, and the ISR touch/rotary decode path.
+tag Draw knows, and the **as-built** ISR touch/rotary path. Where PLAN and
+ship diverge, section 9 lists the gap and the tracking todo/WorkItem.
 
 ---
 
@@ -198,9 +201,14 @@ skipped. The next touch wakes (no hit-test) and repaints everything.
 
 ### 3.3 Net (+ MPD dialect)
 
-**Start:** `ta_net_start()`. Immediate stub replies on enqueue.
-**Dialect helper:** `ta_net_mpd_handle` / `ta_net_mpd_tick` coalesce volume
-and defer POLL/ALBUMART completion until tick (host fake wire).
+**Owns the TCP/IP / HTTP socket plane** (resource owner; not an
+EventRedirector). Device: `player_http` + `ta_net_backend` seam. Host:
+immediate stub replies on enqueue; `ta_net_mpd_*` coalesces volume and
+defers POLL/ALBUMART until tick.
+
+**NTP:** PLAN puts wall-clock sync under Net (`NTP * Player(...)`). As-built
+still calls `configTime` from `player_http` WiFi boot -- tracked as
+`todo:15b92eaa`, not a second Net actor.
 
 | Type | Value | Payload | Completion |
 |------|-------|---------|------------|
@@ -297,9 +305,11 @@ Overdue policy: one fire, then `next = now + period` (no catch-up burst).
 
 ---
 
-### 3.6 ISR ingress (into Draw only)
+### 3.6 ISR ingress (as-built: into Draw only)
 
-Not a TaskActor. Types allowed on the FromISR path only:
+Not a TaskActor. Types allowed on the FromISR path only. **PLAN** wants
+rotary pooled time/delta into a **Rotary** EventRedirector (not Draw) --
+see section 9; this table is still what ships today:
 
 | Type | Value | Payload |
 |------|-------|---------|
@@ -541,7 +551,12 @@ sequenceDiagram
   MPD->>Draw: DRAW_UPDATE (transport glyph) + PAINT
 ```
 
-### 7.4 Volume (touch strip or rotary)
+### 7.4 Volume (touch strip or rotary) -- as-built
+
+As-built: rotary and touch volume both land on Draw, then Controller ->
+MPDController -> Net. **PLAN** target (not shipped): Rotary EventRedirector
+-> MPDVolume -> Net + Draw Update Screen at 50% alpha target volume
+(section 9).
 
 ```mermaid
 sequenceDiagram
@@ -608,11 +623,31 @@ Run: `(cd spinme/host && make test)`.
 
 ---
 
-## 9. Explicit non-goals / gaps (honest)
+## 9. As-built vs PLAN (gaps + tracking)
+
+### Shipped (faithful in this doc when marked as-built)
+
+- Host TaskActor suite + device fabric boot (Draw glass owner, ISR mail,
+  MPDController -> Net -> `player_http`, Scheduler clock/scroll/poll,
+  calm Q8 artwork -> pack66 base).
+- Dual-stack product path demoted (`retired/uimk2_paint/`); END smoke in
+  `host/SMOKE.md` (`todo:3135a46a` done).
+- Controller facade is a select-N **Router** (`ta_router`); Net is the sole
+  socket / HTTP owner; Draw is the sole glass owner.
+
+### PLAN ratified, not yet implemented (do not read as as-built)
+
+| Gap | PLAN intent | Tracking |
+|-----|-------------|----------|
+| **Rotary EventRedirector** | ISR decode stays under actors; pooled time/delta always -> **Rotary** redirector, not Draw | Follow-on (not yet minted as its own todo); notes on `todo:3135a46a` |
+| **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
+| **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
+| **Net-owned NTP timesource** | Volumio `getState` has no wall ToD (`seek`/`duration` only); Net must own basic SNTP; Draw clock reads `time()` | `todo:15b92eaa` (groom) |
+| **SonosController** | Sibling route target / dialect; stub only | Deferred; non-goal of `todo:3135a46a` |
+| **Delete retired paint tree** | `retired/uimk2_paint/` and optionally `uimk2/` still on disk | Needs explicit user OK to delete |
+
+### Permanent non-goals
 
 - Function-pointer callbacks on events: **not supported**; use `reply_to`.
-- Full HTTP/MPD wire and TJpgDec: firmware / future Net body; host stubs.
-- Draw stub does not yet call phase1/2 inside `ta_draw_handle`.
-- SonosController is a surface stub.
 - LVGL: out (`PLAN.md`).
 - Gaussian calm path: removed; Q8 quadratic only.
