@@ -1,7 +1,9 @@
 # spinme redesign (direction)
 
-Status: **plan / direction**, not as-built. Firmware and `uimk2/` still
-implement the old Core A/B + follow zlist path until this lands.
+Status: **plan / direction**. Host as-built catalog: [`EXPOSITION.md`](EXPOSITION.md).
+Firmware must converge to the **same TaskActor fabric** (reuse libraries OK;
+**no leftover dual-stack** where `uimk2_host` remains a second OS alongside
+actors). See todo for on-device Net that actually drives Volumio.
 
 FreeRTOS is assumed. No core is special: work is owned by long-lived
 **TaskActors**. Actors are **re-active**: they only advance by processing
@@ -13,9 +15,13 @@ FreeRTOS is assumed. No core is special: work is owned by long-lived
 
 - TaskActors are re-active event processors. 1-1 actor-queue. Anyone posts
   typed ADT events to a looked-up `enqueueFn`.
-- Screen (rotary/touch ISR) feeds **Draw** only; Draw posts **ControlEvents**
-  toward the active **Controller**. Scheduler posts time/scroll/poll cadences
-  as events. Controllers coordinate Draw shape stacks and Net wire dialects.
+- Screen ingress splits by modality. **Touch** ISR posts to **Draw** (hit-test
+  -> ControlEvents toward the **Controller** Router). **Rotary** GPIO decode
+  is below TaskActor level (ISR); the pooled time/delta always goes to a
+  **Rotary** TaskActor -- an **EventRedirector** (same primitive as the
+  Controller Router). MVP sole receiver: **MPDVolume**, which posts player
+  state to **Net** and an Update Screen event to **Draw** (new target volume
+  at **50% alpha**). Scheduler posts time/scroll/poll cadences as events.
 - Graphics: tree of **R6G6B6A2** (pack66) bitmaps. Shift/add alpha composite
   onto backing pixmaps. LVGL is out.
 - **Display list and generation graph are separate** (see Layout vs Shapes
@@ -409,35 +415,58 @@ Logger, host harness). Then derive each actor's event interface in isolation.
 After APIs are stable, actors may be worked **in parallel**; a `userneeded` in
 one flow must not block all others.
 
-## Resource ownership (still wins for glass / NIC)
+## Routing events vs owning resources (do not conflate)
 
-**One glass -> one Draw actor. One NIC / socket plane -> one Net actor.**
-Do not create `SonosDraw` / `MPDDraw` / `SonosNet` / `MPDNet` TaskActors.
-Exclusive hardware stays on those singletons.
+Two different mechanisms:
 
-**No TaskActor subclass tree for backends either.** Backend choice is not
-inheritance and not "fat Draw/Net with internal personality switches" as the
-primary mechanism. Use a **Router** (below) to select among N peer actors.
+| Mechanism | What it does | Examples |
+|-----------|--------------|----------|
+| **EventRedirector** | Forwards **events** to a current target; does **not** own exclusive HW | `Controller`, `Rotary` |
+| **Resource owner** | Sole TaskActor that **owns** a scarce plane (loop, panel, NIC) | **Net** (TCP/IP / socket loop), **Draw** (glass / QSPI) |
 
-## Router TaskActor (switchable; select-N)
+**Net always owns the TCP/IP loop.** **Draw always owns the glass.** Never mint
+`SonosNet` / `MPDNet` / `SonosDraw` / `MPDDraw` as alternate owners of those
+planes. Redirectors switch *who receives control traffic*; they do not move
+socket or panel ownership.
 
-A **generic Router** TaskActor processes **almost no events natively**. It
-**routes** inbound events to a current target `enqueueFn`.
+Inside a resource owner, **behavior composition** is a separate choice from
+routing. Net may behave as a product of concerns, e.g.
+`NTP * Player(MPD + Sonos)`:
 
-| Capability | Use |
-|------------|-----|
-| **Select among N alternatives** | **This product.** Well-known facade (e.g. `Controller`) is a Router; targets are `MPDController`, `SonosController`, ... |
-| **Compose TaskActors** | Same primitive can fan or pipeline; not the spinme MVP pattern. |
+- **Internal:** dialects / NTP / player wire stay modules inside the single
+  Net actor (MVP bias: keep the TCP loop and tick in one place).
+- **Delegated message compositors:** optional peer helpers that Net calls or
+  that post *into* Net -- they still must not own the socket loop.
+
+Same split for Draw: one owner of the panel; chrome / calm / hit policy may
+be internal phases or delegated compositors, never a second glass owner.
+
+**No TaskActor subclass tree for backends.** Backend choice is not inheritance.
+Control-path selection uses an **EventRedirector** (below). Wire/dialect
+personality under Net (or layout personality under Draw) is composition
+*inside* the owner, not a second NIC/glass actor.
+
+## EventRedirector TaskActor (Router / Rotary / ...)
+
+A **generic EventRedirector** processes **almost no events natively**. It
+**redirects** inbound events to a current target `enqueueFn` (select-N). The
+spinme **Controller** facade and the **Rotary** facade are both redirectors;
+only the route table and who posts into them differ.
+
+| Instance | Inbound producers | MVP target(s) |
+|----------|-------------------|---------------|
+| **Controller** (Router) | Draw hits, Scheduler/control peers | `MPDController`, `SonosController`, ... |
+| **Rotary** | ISR-pooled detent time/delta (only) | **MPDVolume** (sole receiver so far) |
 
 **Only self-handled event:** change the routing target (`SetRoute` /
 `SetTarget` -- name TBD). Everything else is forwarded unchanged to the
-current target. No ControlEvent semantics inside the Router.
+current target. No product semantics inside the redirector.
 
-Peers (Draw, Scheduler, Net replies) address the **stable facade name**
-registered by the Router. They do not cache the backend Controller's
-`enqueueFn` for control traffic. Config (or whoever owns policy) posts
-`SetRoute` when NVM says MPD vs Sonos; then posts activation work **through**
-the Router (e.g. `SetActive`) so it lands on the new target.
+Peers address the **stable facade name**. They do not cache the backend
+target's `enqueueFn`. Config (or whoever owns policy) posts `SetRoute` when
+NVM says MPD vs Sonos; activation work goes **through** the Controller
+redirector so it lands on the new target. Rotary's route is set the same way
+when a face wants dial ownership (MVP: always MPDVolume).
 
 ## Name registry (one non-actory mutex)
 
@@ -463,7 +492,8 @@ not in Init's core.
 ```
 boot
   -> Init starts every entry in the list
-       (Draw, Net, Config, ControllerRouter, MPDController, SonosController, ...)
+       (Draw, Net, Config, Controller, Rotary, MPDVolume,
+        MPDController, SonosController, ...)
   -> each actor registers name -> enqueueFn
   -> Init -> Config.InformCurrent
        -> NVS (or build default): current control kind = MPD
@@ -500,7 +530,8 @@ Each actor queue is **multi-producer, single-consumer**.
 |-----|------|
 | Consumer (the actor task) | Only task that peeks / processes / pops. Waits on a **semaphore** (or task notify) producers give after push. |
 | Producers (other tasks) | Queue **mutex** only for: write tail slot, advance tail, give semaphore. Release before waiting elsewhere. |
-| ISR producers (touch / rotary) | No task mutex. `FromISR` into **Draw** only; Draw enqueues ControlEvents to the **Controller Router** as a normal producer. |
+| ISR producers (touch) | No task mutex. `FromISR` into **Draw** mail only; Draw hit-tests and enqueues ControlEvents to the **Controller** redirector as a normal producer. |
+| ISR producers (rotary) | No task mutex. Decode in ISR (gray-code / velocity); always `FromISR`-post **pooled time/delta** into the **Rotary** EventRedirector (not Draw). Rotary forwards to its current target (MVP: **MPDVolume**). |
 | Full queue | Log ERROR; drop (prefer missable/idempotent events). Never block in ISR. |
 
 **Peek then process then pop:** consumer owns the head for the whole handler.
@@ -535,10 +566,12 @@ sockets. Permanent vs one-off lists; one-offs front-packed; overdue slot pushes
 
 ### Draw (screen + glass)
 
-Owns: ISR decode edge, `[]UILayout`, shape pixels / local pixmaps, panel push,
-hit-test. Reacts to Scheduler (update/draw cadences), Controllers
-(`SetShapeStack`), Net/Controller completions that dirty glass, and screen
-events.
+**Owns the glass / panel push** (always). Touch ISR ingress + hit-test,
+`[]UILayout`, shape pixels / local pixmaps live here. Chrome / calm /
+coverage may be internal phases or delegated compositors, but never a second
+panel owner. Does **not** own rotary detents (those go to **Rotary**).
+Reacts to Scheduler (update/draw cadences), Controllers (`SetShapeStack`),
+Net/Controller / **MPDVolume** completions that dirty glass, and touch events.
 
 Events (sketch):
 
@@ -546,47 +579,73 @@ Events (sketch):
   pixmaps**.
 - `draw` -- phase1 local pixmaps farthest->nearest; phase2 coverage QSPI
   (see Draw path).
-- `react_touch` / `react_rotate` -- box + `accept_hit`; **enum** dispatch
-  switch (no fn ptrs); case returns true (handled) or false (try next lower;
-  opacity may live here later). Enqueue **ControlEvents** to facade
-  **Controller** (Router), not Net and not a backend name.
+- `react_touch` -- box + `accept_hit`; **enum** dispatch switch (no fn ptrs);
+  case returns true (handled) or false (try next lower; opacity may live
+  here later). Enqueue **ControlEvents** to facade **Controller**
+  (EventRedirector), not Net and not a backend name.
+- Update Screen (from **MPDVolume**) -- show **target** volume at **50%
+  alpha** while the Net set is in flight / as the dial moves desired.
 - `SetShapeStack` -- install the active Controller's follow (or other) layout.
+
+### Rotary (EventRedirector)
+
+Facade for dial detents. ISR (or a tiny post-ISR pooler) always delivers
+**time + delta** here -- never into Draw or Net. Redirector only; MVP
+`SetRoute` target is **MPDVolume**.
+
+### MPDVolume
+
+Sole MVP receiver behind **Rotary**. On pooled delta:
+
+1. Update desired volume model.
+2. Post player-state / volume set toward **Net** (via the usual Controller /
+   MPDController path or a direct Net SET -- product keeps one Net).
+3. Post **Update Screen** to **Draw** so the glass shows the new **target**
+   volume at **50% alpha** (optimistic / in-flight chrome), distinct from the
+   settled polled volume once Net/POLL catches up.
 
 ### Net
 
-Owns: sockets, NTP, and **dialect I/O** configured by the active Controller
-backend. Understands ControlEvents at the actor edge; maps them to MPD vs
-Sonos (etc.) wire messages; noops where the dialect cannot honor an op.
-Salvage `player_http`: non-blocking tick; no `hostByName` on the hot path
-after boot; coalesce in-flight (latest volume wins); albumart GET then hand
-JPEG toward Draw without stalling glass. Completions are events back toward
-the Controller facade / Draw -- not calls into another actor's guts.
+**Owns the TCP/IP / socket loop** (always). Also hosts NTP and player dialect
+I/O as a **composed product** `NTP * Player(MPD + Sonos)` -- internal modules
+for MVP; separate message compositors only if they still feed this one owner.
+Configured by the active Controller backend; maps ControlEvents to wire ops;
+noops where a dialect cannot honor an op. Salvage `player_http`: non-blocking
+tick; no `hostByName` on the hot path after boot; coalesce in-flight (latest
+volume wins); albumart GET then hand JPEG toward Draw without stalling glass.
+Completions are events back toward the Controller facade / Draw -- not calls
+into another actor's guts.
 
-### Controller Router
+### Controller (EventRedirector)
 
-Generic select-N Router registered as `Controller`. Native: `SetRoute` only.
-Forwards all other events to the current backend Controller.
+Generic select-N redirector registered as `Controller`. Native: `SetRoute`
+only. Forwards all other events to the current backend Controller.
 
 ### MPDController / SonosController / ...
 
 Route targets. On routed `SetActive`: arm Draw stack + Net dialect. Coordinate
 poll/set/artwork policy for that face. Implement **MPDController** for MVP;
-keep SonosController as a sibling shell.
+keep SonosController as a sibling shell. Volume dial traffic arrives via
+**Rotary -> MPDVolume**, not as Draw `react_rotate`.
 
 ---
 
 # Interrupts
 
-FreeRTOS + ESP-IDF GPIO ISRs. Rotary: velocity-sensitive decode (salvaged
-from `ROTARY.md`).
+FreeRTOS + ESP-IDF GPIO ISRs. **Below TaskActor level:** pin edges and
+decode only. Do not call Wi-Fi or paint from the ISR.
+
+**Rotary** (salvaged from `ROTARY.md`):
 
 - Gray-code state matrix debounce (4-bit transition filter).
 - Delta-t between detents scales step (slow = 1, flick up to MAX_STEP).
-- ISR body in IRAM; post to UI via `FromISR` notify/queue only.
-- Touch: same rule -- ISR posts press `(x,y)` to UI; UI hit-tests.
+- ISR body in IRAM; always post **pooled time/delta** `FromISR` into the
+  **Rotary** EventRedirector (mail/queue into that actor). Not into Draw.
 
-Draw then enqueues **ControlEvents** to the active Controller. Do not call
-Wi-Fi or paint from the ISR.
+**Touch:**
+
+- ISR posts press `(x,y)` into **Draw** mail only; Draw hit-tests and
+  enqueues **ControlEvents** to the **Controller** redirector.
 
 ---
 
