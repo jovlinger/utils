@@ -129,6 +129,14 @@ int main(void) {
 
     CHECK(ta_artwork_is_default(TA_ART_DEFAULT_FP) == 1);
     CHECK(ta_artwork_is_default(0x1234) == 0);
+    CHECK(ta_artwork_path_looks_default("/albumart?path=default") == 1);
+    CHECK(ta_artwork_path_looks_default("/albumart?web=Something") == 0);
+    {
+        uint8_t tiny[4] = {1, 2, 3, 255};
+        uint32_t fp = ta_artwork_fingerprint_rgba(tiny, 1, 1);
+        CHECK(fp != 0);
+        CHECK(ta_artwork_fingerprint_rgba(tiny, 1, 1) == fp);
+    }
 
     ta_registry_reset();
     ta_sched_reset();

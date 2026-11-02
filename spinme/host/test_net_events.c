@@ -1,5 +1,6 @@
-/* Host: Net dialect/poll/albumart stubs; reply_to completions. */
+/* Host: Net dialect/poll/albumart; reply_to; fake backend seam. */
 #include "ta_event.h"
+#include "ta_net_backend.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"
 
@@ -21,12 +22,34 @@ static int checks;
 
 static ta_event_t g_reply;
 static int g_n;
+static int g_be_poll;
+static int g_be_toggle;
+static int g_be_vol;
+static int g_be_vol_last;
 
 static int mpd_sink(const ta_event_t *ev) {
     g_reply = *ev;
     g_n++;
     return 0;
 }
+
+static int be_poll(void) {
+    g_be_poll++;
+    return 0;
+}
+
+static int be_toggle(void) {
+    g_be_toggle++;
+    return 0;
+}
+
+static int be_volume(int volume) {
+    g_be_vol++;
+    g_be_vol_last = volume;
+    return 0;
+}
+
+static const ta_net_backend_t g_fake_be = {be_poll, be_toggle, be_volume, NULL};
 
 int main(void) {
     ta_event_t ev;
@@ -80,6 +103,51 @@ int main(void) {
     /* ControlEvents enum is declared for Controllers (compile check). */
     CHECK(TA_EV_CTRL_TOGGLE == 0x400);
     CHECK(TA_EV_CTRL_SET_ACTIVE == 0x404);
+
+    /* Fake backend: queue ops, complete later via ta_net_backend_complete. */
+    ta_net_reset();
+    ta_net_start();
+    g_n = 0;
+    g_be_poll = g_be_toggle = g_be_vol = 0;
+    ta_net_set_backend(&g_fake_be);
+    CHECK(ta_registry_register("MPDController", mpd_sink) == 0);
+
+    ta_event_clear(&ev);
+    ev.type = TA_EV_NET_POLL;
+    ev.session_id = 7;
+    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_POLL_DONE) == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    CHECK(g_be_poll == 1);
+    CHECK(g_n == 0); /* deferred until complete */
+    ta_net_backend_complete(1);
+    CHECK(g_n == 1);
+    CHECK(g_reply.type == TA_EV_NET_POLL_DONE);
+    CHECK(g_reply.session_id == 7);
+
+    ta_event_clear(&ev);
+    ev.type = TA_EV_NET_SET;
+    {
+        uint8_t pl[2];
+        pl[0] = (uint8_t)TA_NET_SET_OP_TOGGLE;
+        CHECK(ta_event_set_payload(&ev, pl, 1) == 0);
+    }
+    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_SET_DONE) == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    CHECK(g_be_toggle == 1);
+    ta_net_backend_complete(3);
+    CHECK(g_reply.type == TA_EV_NET_SET_DONE);
+
+    ta_event_clear(&ev);
+    ev.type = TA_EV_NET_SET;
+    {
+        uint8_t pl[2];
+        pl[0] = (uint8_t)TA_NET_SET_OP_VOLUME;
+        pl[1] = 44;
+        CHECK(ta_event_set_payload(&ev, pl, 2) == 0);
+    }
+    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    CHECK(g_be_vol == 1);
+    CHECK(g_be_vol_last == 44);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

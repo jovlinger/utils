@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef struct ta_rect {
     int x, y, w, h;
 } ta_rect_t;
@@ -24,4 +27,7 @@ typedef struct ta_phase2_push {
 int ta_draw_phase2(ta_draw_scene_t *scene, ta_phase2_push_t *out,
                    size_t out_cap);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

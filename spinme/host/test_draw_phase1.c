@@ -2,6 +2,7 @@
 #include "ta_draw_phase1.h"
 #include "ta_shape_l2r.h"
 #include "ta_uilayout.h"
+#include "ta_viewport.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -93,6 +94,54 @@ int main(void) {
     /* Still dirty (phase2 clears). */
     CHECK(text.dirty == 1);
     /* No panel-sized shadow buffer allocated -- only shape local pixels. */
+
+    /* Base crop under a Viewport placed at (1,1): window gets the base
+     * pixel there (blue), the child glyph lands at ox, and a wider child
+     * wraps after TA_PHASE1_SCROLL_GAP. */
+    {
+        ta_pack66_t base_px[16];
+        ta_pack66_t vp_px[2];
+        ta_shape_bitmap_t base;
+        ta_shape_viewport_t vp;
+        ta_uilayout_t uilo2[2];
+        int i;
+
+        for (i = 0; i < 16; i++) {
+            base_px[i] = ta_pack66_rgba(0, 0, 0x3f, 3);
+        }
+        memset(&base, 0, sizeof(base));
+        base.tag = TA_SHAPE_TAG_BITMAP;
+        base.w = 4;
+        base.h = 4;
+        base.pixels = base_px;
+        /* Child: the 2x2 L2R from above (red glyph at (0,0), clear else). */
+        text.dirty = 1;
+        memset(&vp, 0, sizeof(vp));
+        vp.tag = TA_SHAPE_TAG_VIEWPORT;
+        vp.w = 1;
+        vp.h = 2;
+        vp.pixels = vp_px;
+        vp.child_idx = 3;
+        vp.dirty = 1;
+        vp.ox = 1; /* child col 1 is clear -> base shows */
+        CHECK(ta_shape_table_set(4, &base) == 0);
+        CHECK(ta_shape_table_set(5, (ta_shape_bitmap_t *)(void *)&vp) == 0);
+        uilo2[0] = ta_uilo_make(0, 0, 0, 4);
+        uilo2[1] = ta_uilo_make(1, 1, 1, 5);
+        scene.uilo = uilo2;
+        scene.n_uilo = 2;
+        memset(&opts, 0, sizeof(opts));
+        opts.base_shape_idx = 4;
+        CHECK(ta_draw_phase1(&scene, &opts) == 0);
+        ta_unpack66(vp_px[0], &r, &g, &b, &a);
+        CHECK(b == 0x3f && a == 3); /* base under, never transparent */
+        CHECK(text.dirty == 0);     /* child rebuilt by the viewport bake */
+        vp.ox = 0;
+        vp.dirty = 1;
+        CHECK(ta_draw_phase1(&scene, &opts) == 0);
+        ta_unpack66(vp_px[0], &r, &g, &b, &a);
+        CHECK(r == 0x3f && a == 3); /* glyph at ox=0 */
+    }
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

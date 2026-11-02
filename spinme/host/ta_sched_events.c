@@ -223,3 +223,8 @@ int ta_sched_arm_oneshot(const char *dst, ta_session_id_t session,
                          uint32_t delay_ms, ta_event_type_t fire_type) {
     return post_start(dst, session, delay_ms, TA_SCHED_FLAG_ONESHOT, fire_type);
 }
+
+int ta_sched_arm_periodic(const char *dst, ta_session_id_t session,
+                          uint32_t every_ms, ta_event_type_t fire_type) {
+    return post_start(dst, session, every_ms, 0, fire_type);
+}

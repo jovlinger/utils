@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /* Slot roles (index into built arrays). Z order: low index = farthest. */
 enum {
     TA_FOLLOW_BASE = 0,
@@ -30,7 +33,31 @@ typedef struct ta_follow_chrome {
 /* Shape idxs: base, zone, artist, album, title, volume, transport, clock. */
 int ta_follow_chrome_build(ta_follow_chrome_t *out, const unsigned shape_idx[TA_FOLLOW_N]);
 
+/*
+ * Product salvage placements (follow_glass): text column at text_x starting
+ * at text_y (first bezel row that still holds x=24 on the round 360 glass),
+ * one line per slot zone/artist/album/title/volume with text_h + gap;
+ * transport centered at the top (button_y); clock under it, same column.
+ */
+typedef struct ta_follow_metrics {
+    int panel_w;
+    int text_x;
+    int text_y;
+    int text_h;
+    int gap;
+    int button_y;
+    int transport_w;
+    int transport_h;
+} ta_follow_metrics_t;
+
+/* Rewrite x/y of an already built chrome; keeps shape idx, dirty, flags. */
+int ta_follow_chrome_place(ta_follow_chrome_t *chrome,
+                           const ta_follow_metrics_t *m);
+
 /* True if slot is high-z dynamic (clock or scrolling title). */
 int ta_follow_is_high_z_dynamic(unsigned slot);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

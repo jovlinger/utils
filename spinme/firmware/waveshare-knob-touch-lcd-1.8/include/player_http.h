@@ -1,7 +1,8 @@
 #pragma once
 
-/* Core B Volumio client. Non-blocking: start / select-poll / read / close.
- * The uimk2 worker must only call player_http_tick; it must never block on
+/* Volumio HTTP wire behind the Net TaskActor (ta_net_player_bind).
+ * Non-blocking: start / select-poll / read / close. The Draw task (the single
+ * fabric runner) must only call player_http_tick; it must never block on
  * DNS or HTTP. Boot may resolve WiFi + Volumio IP once.
  *
  * Volumio volume/toggle use GET:
@@ -15,7 +16,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct PlayerSnapshot {
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct PlayerSnapshot {
   int volume; /* 0..100, or -1 when the body had no volume */
   bool playing;
   bool have_status;
@@ -25,9 +30,9 @@ struct PlayerSnapshot {
   char title[96];
   /* Relative (/albumart?...) or absolute http(s) URL from getState. */
   char albumart[256];
-};
+} PlayerSnapshot;
 
-enum PlayerHttpEvent {
+typedef enum PlayerHttpEvent {
   PLAYER_HTTP_EV_NONE = 0,
   PLAYER_HTTP_EV_GETSTATE_OK,
   PLAYER_HTTP_EV_GETSTATE_FAIL,
@@ -35,7 +40,7 @@ enum PlayerHttpEvent {
   PLAYER_HTTP_EV_CMD_FAIL,
   PLAYER_HTTP_EV_ALBUMART_OK,
   PLAYER_HTTP_EV_ALBUMART_FAIL
-};
+} PlayerHttpEvent;
 
 /* Connect WiFi and cache Volumio IP (blocking, boot only). */
 void player_http_boot(void);
@@ -62,3 +67,7 @@ const PlayerSnapshot *player_http_snapshot(void);
  * (caller free()s). */
 bool player_http_take_albumart(uint8_t **buf_out, size_t *bytes_out,
                                uint32_t *ms_out);
+
+#ifdef __cplusplus
+}
+#endif

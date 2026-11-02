@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed glyphs.bin, write the gitignored WiFi header, and compile uimk2."""
+"""Embed glyphs.bin and the boot art, and write the gitignored WiFi header."""
 
 from __future__ import annotations
 
@@ -131,24 +131,14 @@ def write_bg_embed(firmware_dir: Path) -> None:
     )
 
 
-def add_uimk2(env, firmware_dir: Path) -> None:
-    uimk2 = (firmware_dir / ".." / ".." / "uimk2").resolve()
-    env.Append(CPPPATH=[str(uimk2)])
-    env.BuildSources(
-        env.subst("$BUILD_DIR/uimk2"),
-        str(uimk2),
-        src_filter="+<uimk2_event.c> +<uimk2_host.c> +<uimk2_zlist.c> "
-        "+<uimk2_blit.c> +<uimk2_blit_pie.S>",
-    )
-
-
 def main(env=None) -> None:
+    """uimk2 is no longer compiled into the firmware: Draw (spinme/host,
+    symlinked under src/ta_host) is the sole glass owner."""
+    del env
     firmware_dir = _firmware_dir()
     write_wifi_header(firmware_dir)
     write_glyph_embed(firmware_dir)
     write_bg_embed(firmware_dir)
-    if env is not None:
-        add_uimk2(env, firmware_dir)
 
 
 try:

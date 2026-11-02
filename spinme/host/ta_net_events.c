@@ -1,32 +1,108 @@
 #include "ta_net_events.h"
 
+#include "ta_net_backend.h"
 #include "ta_registry.h"
 
 #include <string.h>
 
 static ta_net_stats_t g_stats;
+static const ta_net_backend_t *g_backend;
+
+/* Pending completion targets (one in flight per class for now). */
+static char g_poll_reply[TA_NAME_MAX];
+static ta_session_id_t g_poll_session;
+static char g_set_reply[TA_NAME_MAX];
+static ta_session_id_t g_set_session;
+static char g_art_reply[TA_NAME_MAX];
+static ta_session_id_t g_art_session;
 
 void ta_net_reset(void) {
     memset(&g_stats, 0, sizeof(g_stats));
+    g_backend = NULL;
+    g_poll_reply[0] = '\0';
+    g_set_reply[0] = '\0';
+    g_art_reply[0] = '\0';
+}
+
+void ta_net_set_backend(const ta_net_backend_t *backend) {
+    g_backend = backend;
 }
 
 const ta_net_stats_t *ta_net_stats(void) {
     return &g_stats;
 }
 
-static void maybe_reply(const ta_event_t *ev, ta_event_type_t done_type) {
+static void remember(char *dst, ta_session_id_t *sess, const ta_event_t *ev) {
+    if (ev->reply_to[0] != '\0') {
+        memcpy(dst, ev->reply_to, TA_NAME_MAX);
+    } else {
+        dst[0] = '\0';
+    }
+    *sess = ev->session_id;
+}
+
+static void post_done(const char *reply_to, ta_session_id_t session,
+                      ta_event_type_t done_type, const uint8_t *payload,
+                      size_t len) {
     ta_event_t reply;
 
-    if (ev->reply_to[0] == '\0') {
+    if (reply_to == NULL || reply_to[0] == '\0') {
         return;
     }
     ta_event_clear(&reply);
     reply.type = done_type;
-    reply.session_id = ev->session_id;
+    reply.session_id = session;
     (void)ta_event_set_src(&reply, TA_NET_NAME);
-    if (ta_registry_post(ev->reply_to, &reply) == 0) {
+    if (payload != NULL && len > 0) {
+        (void)ta_event_set_payload(&reply, payload, len);
+    }
+    if (ta_registry_post(reply_to, &reply) == 0) {
         g_stats.replies_posted++;
     }
+}
+
+static void maybe_reply_immediate(const ta_event_t *ev, ta_event_type_t done) {
+    post_done(ev->reply_to, ev->session_id, done, NULL, 0);
+}
+
+/* Take the pending slot, clear it, then post: the DONE handler may issue a
+ * new request of the same class synchronously (MPD coalesced volume), and
+ * that new reply_to must survive this completion. */
+static void complete_slot(char *reply, ta_session_id_t *session,
+                          ta_event_type_t done_type, const uint8_t *payload,
+                          size_t len) {
+    char to[TA_NAME_MAX];
+    ta_session_id_t sess = *session;
+
+    memcpy(to, reply, TA_NAME_MAX);
+    reply[0] = '\0';
+    post_done(to, sess, done_type, payload, len);
+}
+
+void ta_net_backend_complete_ex(int kind, const uint8_t *payload, size_t len) {
+    switch (kind) {
+    case 1: /* poll ok */
+    case 2: /* poll fail -- still DONE so Controllers unblock */
+        complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE,
+                      payload, len);
+        break;
+    case 3:
+    case 4:
+        complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE, payload,
+                      len);
+        break;
+    case 5:
+    case 6:
+        complete_slot(g_art_reply, &g_art_session, TA_EV_NET_ALBUMART_DONE,
+                      payload, len);
+        break;
+    default:
+        break;
+    }
+}
+
+void ta_net_backend_complete(int kind) {
+    ta_net_backend_complete_ex(kind, NULL, 0);
 }
 
 int ta_net_handle(const ta_event_t *ev) {
@@ -41,17 +117,69 @@ int ta_net_handle(const ta_event_t *ev) {
     case TA_EV_NET_POLL:
         g_stats.poll++;
         g_stats.handled++;
-        maybe_reply(ev, TA_EV_NET_POLL_DONE);
+        if (g_backend == NULL || g_backend->request_poll == NULL) {
+            maybe_reply_immediate(ev, TA_EV_NET_POLL_DONE);
+            return 0;
+        }
+        remember(g_poll_reply, &g_poll_session, ev);
+        if (g_backend->request_poll() != 0) {
+            complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE,
+                          NULL, 0);
+        }
         return 0;
     case TA_EV_NET_SET:
         g_stats.set++;
         g_stats.handled++;
-        maybe_reply(ev, TA_EV_NET_SET_DONE);
+        if (g_backend == NULL) {
+            maybe_reply_immediate(ev, TA_EV_NET_SET_DONE);
+            return 0;
+        }
+        remember(g_set_reply, &g_set_session, ev);
+        {
+            int rc = -1;
+            uint8_t op = TA_NET_SET_OP_VOLUME;
+            if (ev->payload_len >= 1) {
+                op = ev->payload[0];
+            }
+            if (op == TA_NET_SET_OP_TOGGLE) {
+                if (g_backend->request_toggle != NULL) {
+                    rc = g_backend->request_toggle();
+                }
+            } else if (g_backend->request_volume != NULL &&
+                       ev->payload_len >= 2) {
+                rc = g_backend->request_volume((int)ev->payload[1]);
+            } else if (g_backend->request_volume != NULL &&
+                       ev->payload_len == 1) {
+                /* Single byte: treat as absolute volume 0..100. */
+                rc = g_backend->request_volume((int)ev->payload[0]);
+            }
+            if (rc != 0) {
+                complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE,
+                              NULL, 0);
+            }
+        }
         return 0;
     case TA_EV_NET_ALBUMART:
         g_stats.albumart++;
         g_stats.handled++;
-        maybe_reply(ev, TA_EV_NET_ALBUMART_DONE);
+        if (g_backend == NULL || g_backend->request_albumart == NULL) {
+            maybe_reply_immediate(ev, TA_EV_NET_ALBUMART_DONE);
+            return 0;
+        }
+        remember(g_art_reply, &g_art_session, ev);
+        {
+            char path[TA_PAYLOAD_MAX + 1];
+            size_t n = ev->payload_len;
+            if (n > TA_PAYLOAD_MAX) {
+                n = TA_PAYLOAD_MAX;
+            }
+            memcpy(path, ev->payload, n);
+            path[n] = '\0';
+            if (g_backend->request_albumart(path, 512u * 1024u) != 0) {
+                complete_slot(g_art_reply, &g_art_session,
+                              TA_EV_NET_ALBUMART_DONE, NULL, 0);
+            }
+        }
         return 0;
     default:
         g_stats.unknown++;

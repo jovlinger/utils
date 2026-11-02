@@ -7,6 +7,9 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /* Touch payload: x u16, y u16 (little-endian in event.payload). */
 typedef struct ta_touch_xy {
     uint16_t x;
@@ -29,4 +32,7 @@ int ta_encoder_velocity_steps(uint32_t delta_us, int max_step);
 int ta_isr_post_touch(ta_isr_mail_t *mail, uint16_t x, uint16_t y);
 int ta_isr_post_rotary(ta_isr_mail_t *mail, int8_t steps, uint8_t vel_q8);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

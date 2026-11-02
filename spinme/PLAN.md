@@ -1,9 +1,12 @@
 # spinme redesign (direction)
 
-Status: **plan / direction**. Host as-built catalog: [`EXPOSITION.md`](EXPOSITION.md).
-Firmware must converge to the **same TaskActor fabric** (reuse libraries OK;
-**no leftover dual-stack** where `uimk2_host` remains a second OS alongside
-actors). See todo for on-device Net that actually drives Volumio.
+Status: **plan / direction** with a live TaskActor firmware boot. Waveshare
+boots this fabric only (Draw sole glass owner, MPDController -> Net,
+Scheduler, Artwork). Old Core A/B + follow zlist path is retired/unbuilt
+(`firmware/waveshare-knob-touch-lcd-1.8/retired/uimk2_paint/`); `uimk2/` is a
+standalone host library + bench, not linked into the firmware. As-built
+catalog: [`EXPOSITION.md`](EXPOSITION.md). PLAN still leads on EventRedirector
+/ Rotary / MPDVolume / Net-owned NTP where EXPOSITION marks not-yet-shipped.
 
 FreeRTOS is assumed. No core is special: work is owned by long-lived
 **TaskActors**. Actors are **re-active**: they only advance by processing

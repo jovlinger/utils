@@ -312,6 +312,74 @@ int ta_artwork_is_default(uint32_t fingerprint) {
     return fingerprint == TA_ART_DEFAULT_FP;
 }
 
+uint32_t ta_artwork_fingerprint_rgba(const uint8_t *rgba, size_t w, size_t h) {
+    uint32_t hsh = 2166136261u;
+    size_t n;
+    size_t i;
+
+    if (rgba == NULL || w == 0 || h == 0) {
+        return 0;
+    }
+    hsh ^= (uint32_t)w;
+    hsh *= 16777619u;
+    hsh ^= (uint32_t)h;
+    hsh *= 16777619u;
+    n = w * h;
+    for (i = 0; i < n; i += 16u) {
+        const uint8_t *p = rgba + i * 4u;
+        hsh ^= (uint32_t)p[0];
+        hsh *= 16777619u;
+        hsh ^= (uint32_t)p[1];
+        hsh *= 16777619u;
+        hsh ^= (uint32_t)p[2];
+        hsh *= 16777619u;
+    }
+    return hsh;
+}
+
+static int path_has_ci(const char *hay, const char *needle) {
+    size_t nlen;
+    size_t i;
+    if (hay == NULL || needle == NULL || needle[0] == '\0') {
+        return 0;
+    }
+    nlen = strlen(needle);
+    for (i = 0; hay[i] != '\0'; i++) {
+        size_t j;
+        for (j = 0; j < nlen; j++) {
+            char a = hay[i + j];
+            char b = needle[j];
+            if (a >= 'A' && a <= 'Z') {
+                a = (char)(a - 'A' + 'a');
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = (char)(b - 'A' + 'a');
+            }
+            if (a == '\0' || a != b) {
+                break;
+            }
+        }
+        if (j == nlen) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ta_artwork_path_looks_default(const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    /* Volumio / MPD stock covers commonly carry these path tokens. */
+    if (path_has_ci(path, "default") || path_has_ci(path, "cover-default") ||
+        path_has_ci(path, "albumartunavailable") ||
+        path_has_ci(path, "placeholder") || path_has_ci(path, "noimage") ||
+        path_has_ci(path, "notavailable")) {
+        return 1;
+    }
+    return 0;
+}
+
 int ta_artwork_on_album_change(const char *net_dst, const char *draw_dst,
                                ta_session_id_t session, uint32_t time_remain_ms) {
     if (net_dst == NULL || draw_dst == NULL) {

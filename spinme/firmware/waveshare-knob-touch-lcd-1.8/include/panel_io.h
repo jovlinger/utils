@@ -21,6 +21,12 @@ void panel_fill_rect(int x, int y, int w, int h, uint16_t color565);
  * SPI TX. Pass NULL when the caller serializes access itself. */
 void panel_push_exterior(int x, int y, int w, int h, const uint16_t *src,
                          int stride_px, SemaphoreHandle_t band_mu);
+/* Same, from pack66 (R6|G6<<8|B6<<16|A2<<24) local pixmaps: Draw's glass
+ * path. Converted to swapped RGB565 straight into the SRAM band; A2 is not
+ * blended (phase1 already composited the base under every exterior). Clips
+ * to the panel. Single caller (the Draw task) -- no band lock. */
+void panel_push_pack66(int x, int y, int w, int h, const uint32_t *src,
+                       int stride_px);
 void panel_text(int x, int y, const char *s, int scale, uint16_t color565);
 /* Draw glyphs over existing pixels. ink_scale is 0..255 of the glyph alpha. */
 void panel_text_over(int x, int y, const char *s, int scale, uint16_t color565,

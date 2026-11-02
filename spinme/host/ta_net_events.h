@@ -4,6 +4,11 @@
 
 #include "ta_event.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_NET_NAME "Net"
 
 /* Net-owned type range 0x300.. */
@@ -24,7 +29,8 @@ enum {
     TA_EV_CTRL_VOLUME = 0x401,
     TA_EV_CTRL_NEXT = 0x402,
     TA_EV_CTRL_PREV = 0x403,
-    TA_EV_CTRL_SET_ACTIVE = 0x404
+    TA_EV_CTRL_SET_ACTIVE = 0x404,
+    TA_EV_CTRL_POLL = 0x405 /* poll-now tick (Scheduler cadence or ad hoc) */
 };
 
 typedef struct ta_net_stats {
@@ -43,4 +49,8 @@ int ta_net_enqueue(const ta_event_t *ev);
 int ta_net_handle(const ta_event_t *ev);
 const ta_net_stats_t *ta_net_stats(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

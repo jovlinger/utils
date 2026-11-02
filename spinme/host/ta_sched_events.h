@@ -6,6 +6,11 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_SCHED_NAME "Scheduler"
 
 enum {
@@ -42,5 +47,12 @@ int ta_sched_arm_scroll(const char *dst, ta_session_id_t session,
                         uint32_t every_ms);
 int ta_sched_arm_oneshot(const char *dst, ta_session_id_t session,
                          uint32_t delay_ms, ta_event_type_t fire_type);
+/* Generic repeating cadence: fire_type to dst every every_ms (no payload). */
+int ta_sched_arm_periodic(const char *dst, ta_session_id_t session,
+                          uint32_t every_ms, ta_event_type_t fire_type);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

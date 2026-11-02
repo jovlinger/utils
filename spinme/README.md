@@ -3,8 +3,10 @@
 **Goal:** On-device music controller (follow now-playing + knob volume + zone
 pick) for **Sonos S1** and **Volumio**, on Waveshare hardware.
 
-**UI redesign (direction):** [`PLAN.md`](PLAN.md) -- TaskActors, UILayout vs
-Shape split. Firmware still runs the older follow/uimk2 path until that lands.
+**UI redesign:** [`PLAN.md`](PLAN.md) -- TaskActors, UILayout vs Shape split.
+The Waveshare firmware boots TaskActor-only (Draw is the sole glass owner;
+MPDController -> Net -> `player_http`); the old Core-B `uimk2_host` path is
+retired and unbuilt (`firmware/waveshare-knob-touch-lcd-1.8/retired/`).
 
 **As-built host catalog (events, shapes, ISR, flows):** [`EXPOSITION.md`](EXPOSITION.md).
 
@@ -38,13 +40,14 @@ Index: [`hardware/README.md`](hardware/README.md).
 | Item | Status |
 |------|--------|
 | **Hardware choice** | **Waveshare** (S3); Elecrow sibling docs kept |
-| **UI** | [`PLAN.md`](PLAN.md) direction; old follow still in firmware |
+| **UI** | [`PLAN.md`](PLAN.md) TaskActor fabric on device; old Core A/B zlist retired |
 | **Board probes** | Both boards documented under `hardware/` |
 | **Volumio API** | `miniDSP-SHD.local` getState OK (2026-09-07) |
-| **Firmware** | Scaffolds under `firmware/`; controller impl next |
+| **Firmware** | Waveshare: TaskActor-only boot (Draw, Scheduler, MPDController, Net, Artwork); Elecrow: scaffold |
 
-**Next steps:** Execute [`PLAN.md`](PLAN.md) (UILayout vs Shape, TaskActors).
-Do not extend the old Core A/B zlist as the long-term model.
+**Next steps:** Remaining [`PLAN.md`](PLAN.md) items (Net 1:1 task split,
+screen-off policy, Sonos dialect). `uimk2/` stays a standalone host library
+and bench only.
 
 ## Shared: Volumio API
 

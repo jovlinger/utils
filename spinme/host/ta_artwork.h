@@ -7,6 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define TA_ART_DEFAULT_FP 0xDEC0ADu /* stand-in fingerprint for default art */
 
 /* Target lores edge for calm decode / downscale (square). */
@@ -38,11 +42,21 @@ uint64_t ta_artwork_rgb_sumsq(const uint8_t *a, const uint8_t *b, size_t n_px);
 /* Returns 1 if fingerprint matches suppressed default art. */
 int ta_artwork_is_default(uint32_t fingerprint);
 
+/* Cheap FNV-1a over w/h + every 16th pixel RGB (alpha ignored). */
+uint32_t ta_artwork_fingerprint_rgba(const uint8_t *rgba, size_t w, size_t h);
+
+/* 1 if Volumio path looks like stock/busy/default cover (URL heuristic). */
+int ta_artwork_path_looks_default(const char *path);
+
 /*
  * On album change: arm Scheduler oneshots for proactive poll and
  * time-remaining refresh. dst receives NET_POLL / DRAW_UPDATE.
  */
 int ta_artwork_on_album_change(const char *net_dst, const char *draw_dst,
                                ta_session_id_t session, uint32_t time_remain_ms);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
