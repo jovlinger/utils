@@ -19,13 +19,12 @@ typedef struct ta_net_mpd {
     unsigned noops;
     unsigned albumarts;
     char reply_to[TA_NAME_MAX];
-    ta_event_type_t reply_type;
     ta_session_id_t session_id;
 } ta_net_mpd_t;
 
 void ta_net_mpd_reset(ta_net_mpd_t *m);
 /* Handle Net events for MPD dialect. */
-int ta_net_mpd_handle(ta_net_mpd_t *m, const ta_event_t *ev);
+int ta_net_mpd_handle(ta_net_mpd_t *m, const ta_event_envelope_t *env);
 /* Fake host tick: complete pending poll/albumart with reply_to. */
 int ta_net_mpd_tick(ta_net_mpd_t *m);
 

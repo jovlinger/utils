@@ -13,68 +13,80 @@ ship diverge, section 9 lists the gap and the tracking todo/WorkItem.
 
 ---
 
-## 1. Event envelope (what every event looks like)
+## 1. Event envelope + typed body (normative shape)
 
-Defined in `host/ta_event.h`.
+Defined in `host/ta_event.h`. **Passed by value** in MVP (envelope + body);
+we will measure copy cost and may later split types / allocation regions.
+
+### Common header (every queue slot)
+
+`reply_to` / `reply_type` are **not** on the common header. Receipt time is.
 
 ```c
 #define TA_NAME_MAX 24
-#define TA_PAYLOAD_MAX 32
+#define TA_TEXT_MAX 96
 
 typedef uint16_t ta_event_type_t;
 typedef uint32_t ta_session_id_t;
+typedef uint32_t ta_time_ms_t; /* ms; host monotonic / device esp_timer */
 
-typedef struct ta_event {
-    ta_event_type_t type;
+typedef struct ta_event_envelope {
     char src[TA_NAME_MAX];
     ta_session_id_t session_id;
-    /* Optional completion: empty reply_to means none. */
-    char reply_to[TA_NAME_MAX];
-    ta_event_type_t reply_type;
-    uint16_t payload_len;
-    uint8_t payload[TA_PAYLOAD_MAX];
-} ta_event_t;
+    ta_time_ms_t enqueue_time_ms; /* stamped by queue owner on push */
+    ta_event_t event;             /* tagged body; see below */
+} ta_event_envelope_t;
 ```
 
 | Field | Role |
 |-------|------|
-| `type` | Discriminant; ranges owned by subsystems (see catalog below) |
-| `src` | Producer actor name (NUL-terminated, max 23 chars + NUL) |
-| `session_id` | Correlates a multi-step conversation; opaque u32 |
-| `reply_to` | **Completion destination actor name**, or empty = no reply |
-| `reply_type` | Type of the completion event to post to `reply_to` |
-| `payload_len` / `payload` | Up to 32 raw bytes; layout is per-`type` |
+| `src` | Producer actor name |
+| `session_id` | Correlates a multi-step conversation |
+| `enqueue_time_ms` | Filled by the **queue owner** on arrival; dwell = now - enqueue |
+| `event` | Discriminated body (`type` + union) |
 
-Helpers: `ta_event_clear`, `ta_event_set_src`, `ta_event_set_reply`,
-`ta_event_set_payload`, `ta_log_prefix`.
+### Typed body (`ta_event_t`)
 
-### Can an event carry a callback?
+Naming: `ta_<recipient>_<verb>_<noun>_t` (recipient namespace / actor face).
+No byte-blob / `legacy` arm -- every op has a named union member in
+`host/ta_event.h` (Net poll/set/albumart, Draw update/paint/scroll/text,
+ControlEvents, Scheduler start/tick, ISR touch/rotary, Logger line, ...).
 
-**Yes, but not a function pointer.** Completion is **actor-name + reply
-event type**:
+POLL_DONE carries `coord_inform_playerstate` (volume/playing filled today;
+artist/album/song when Net has them).
 
-- Set with `ta_event_set_reply(ev, "SomeActor", SOME_DONE_TYPE)`.
-- Handler, when finished, builds a new `ta_event_t` with
-  `type = reply_type` (or a fixed DONE type -- see per-actor notes),
-  copies `session_id`, sets `src` to itself, and
-  `ta_registry_post(reply_to, &reply)`.
-- Empty `reply_to[0] == '\0'` means **fire-and-forget** (no completion).
-- Payload of the *request* is not automatically copied into the reply
-  unless a handler chooses to; stub handlers usually send empty payloads.
+### Completions (no fn ptrs)
 
-**Special reuse -- Scheduler START:** `reply_to` / `reply_type` are the
-**fire destination** and **fire event type** when the timer elapses (not a
-"START done" ack). See Scheduler section.
+- **Typed requests** that need an answer carry `reply_to` only (e.g.
+  `net_poll_playerstate`). The **response `type` is implied** by the request
+  (POLL -> `TA_EV_NET_POLL_DONE` with `coord_inform_playerstate` body).
+- Empty `reply_to[0]` => fire-and-forget.
+- Scheduler arms use `ta_sched_start_t` (`fire_to` + `fire_type`), not the
+  common envelope.
 
-There is **no** `void (*)(void*)` callback field on the envelope.
+### Interaction sketch (names)
 
-### Foundation types (`ta_event.h`)
+As-built registry name for the face that owns player model + Net dialect
+policy is **`MPDController`** (behind the **Controller** EventRedirector).
+PLAN/chat may say **Coordinator** for that role -- same slot until renamed.
+
+```text
+Scheduler --CTRL_POLL--> Controller --> MPDController
+MPDController --net_poll_playerstate(reply_to=MPD)--> Net
+Net (HTTP getState) --coord_inform_playerstate--> MPDController
+MPDController --draw_inform_songinfo / volume / currpos--> Draw
+```
+
+Rotary path (PLAN, not fully shipped): ISR pool -> Rotary redirector ->
+MPDVolume -> Net SET + `draw_inform_volume` (target, actual=0) -> Draw.
+
+### Foundation type ids
 
 | Type | Value | Meaning |
 |------|-------|---------|
-| `TA_EV_NOP` | 0 | No-op |
-| `TA_EV_LOG` | 1 | Log line (Logger payload) |
-| `TA_EV_SET_ROUTE` | 2 | Controller Router: set active controller name |
+| `TA_EV_NOP` | 0 | No-op (empty body) |
+| `TA_EV_LOG` | 1 | `ta_log_emit_line_t` |
+| `TA_EV_SET_ROUTE` | 2 | `ta_ctrl_set_route_t` (target name) |
 
 ---
 
@@ -90,26 +102,101 @@ There is **no** `void (*)(void*)` callback field on the envelope.
 
 ### Queue (`ta_queue`)
 
-MP/SC host stand-in (pthread). Device maps to FreeRTOS queue.
+MP/SC (host pthread stand-in; device FreeRTOS). Circular buffer of
+`ta_event_envelope_t`.
 
-| API | Role |
-|-----|------|
-| `ta_queue_push` | Producer; drop if full (`drops++`), never block forever on host tests |
-| `ta_queue_peek_wait` / `try_peek` / `pop` | Consumer |
+| API (as-built) | Role |
+|----------------|------|
+| `ta_queue_push` | Producer; stamps `enqueue_time_ms`; drop if full (`drops++`) |
+| `ta_queue_peek_wait` / `try_peek` / `pop` | Consumer FIFO head |
+
+#### Ordering guarantee (normative -- one rule only)
+
+An event is **fully processed before any outgoing message it generates**
+is visible to other actors (handler runs to completion, then posts).
+
+There is **no** FIFO requirement among *unprocessed* messages on one
+actor's queue: any still-queued envelope may be taken next. Causality
+between actors comes only from the "process before emit" rule above.
+
+#### Selective take (normative; degraded / filter)
+
+When the consumer processes a slot that is **not** the front, it
+**swaps** that slot with the front, then advances head (same as a
+normal pop of the chosen message). Remaining order of other pending
+slots is otherwise unchanged.
+
+**Scan API (planned):** `ta_queue_peek_verb(...)` (name TBD) walks pending
+slots and returns the first envelope whose `event.type` / verb matches a
+filter -- e.g. only `*_inform_*` types while degraded -- without claiming
+non-matching messages. Match => selective take (swap + pop). No match =>
+block or idle until a push wakes the consumer. As-built host queue is still
+FIFO-only (`peek`/`pop` head); peek_verb + selective take are the target
+for init/degraded filters (section below).
 
 Separate `ta_shape_lock_*` for shape/pixel protocol (not the queue mutex).
 
-### Init (`ta_init`)
+### Init + TaskActor lifetime (normative)
 
-Not event-driven. Ordered list of `ta_entry_fn` start hooks
-(`ta_init_add_entry`, `ta_init_run_entries`). Actors typically
-`register` themselves inside `*_start()`.
+**Init** (system boot actor, not event-driven itself):
 
-### Config / KV (`ta_kv`)
+1. Allocates / constructs each TaskActor's struct.
+2. Forks one thread/task per actor.
+3. Each forked task calls that actor's `ta.init()` -- **never returns**
+   (run loop lives inside init after local setup).
 
-Not a TaskActor. NVM facade: string key -> length-known bytes, copy-out get.
-Well-known key: `TA_KV_KEY_CONTROLLER` (`"current_controller"`).
-Helpers: `ta_config_get_controller` / `ta_config_put_controller`.
+Inside `ta.init()` the actor:
+
+1. Completes local init (queues, backends, defaults).
+2. **Registers** its name with the registry (becomes reachable by post).
+3. Enters its event loop (may start in **degraded** mode -- below).
+
+As-built host still uses a sync entry list (`ta_init_add_entry` /
+`ta_init_run_entries` + `*_start()` register then return). Device fabric
+boot is closer to "start then pump" but not yet the forever-`init()`
+fork model. Treat the fork/`init()` shape as PLAN; track in section 9.
+
+### Degraded / filter mode (normative)
+
+Actors may run **degraded** while waiting on outside setup (e.g. config
+get replies, Net dialect ready). In degraded mode the actor **filters**
+incoming queue messages:
+
+- Accept and handle the informs / replies needed to finish setup.
+- Defer (leave queued) everything else via selective take: only the
+  accepted message is swapped out; others stay until the actor leaves
+  degraded mode and drains normally.
+
+Once required outside info is in hand, the actor leaves degraded mode
+and processes the full queue (any order among pending, still subject to
+"process before emit").
+
+### Config / KV (TaskActor; owns NVM)
+
+**Normative:** Config/KV is a TaskActor. It is the **sole owner of NVM /
+persistent key-value storage** (string key -> length-known bytes). Other
+actors talk to it only via typed events (get / put / delete / inform),
+never by touching flash or `ta_kv_*` sync helpers from another task.
+
+Well-known key (as-built helper name kept): `TA_KV_KEY_CONTROLLER`
+(`"current_controller"`). Degraded actors wait on Config **inform** /
+get-done replies (peek_verb filter) before leaving setup.
+
+**Net HTTP surface (planned):** Net owns the socket plane and exposes an
+HTTP CRUD facade onto Config values (not a second NVM owner):
+
+| HTTP | Meaning toward Config |
+|------|------------------------|
+| `GET` | read key (or collection) |
+| `POST` | create |
+| `PATCH` | update |
+| `DELETE` | remove |
+
+Net translates HTTP <-> Config events; Config alone commits to NVM.
+
+**As-built:** `ta_kv` is still a sync in-RAM facade (`ta_kv_get` /
+`ta_config_put_controller`) with no registry actor and no HTTP path --
+see section 9.
 
 ---
 
@@ -120,8 +207,9 @@ Registered names and ownership:
 | Registry name | Constant | Source | Owns type range |
 |---------------|----------|--------|-----------------|
 | `Logger` | `TA_LOGGER_NAME` | `ta_logger` | uses `TA_EV_LOG` |
+| `Config` / KV | (TBD `TA_CONFIG_NAME`) | `ta_kv` -> actor | Config events (get/put/del/inform); **owns NVM** |
 | `Draw` | `TA_DRAW_NAME` | `ta_draw_events` | `0x200..` |
-| `Net` | `TA_NET_NAME` | `ta_net_events` | `0x300..` |
+| `Net` | `TA_NET_NAME` | `ta_net_events` | `0x300..` (+ HTTP Config CRUD planned) |
 | `Controller` | `TA_CONTROLLER_NAME` | `ta_router` | `TA_EV_SET_ROUTE` + forwards ControlEvents |
 | `MPDController` | `TA_MPD_NAME` | `ta_controller` | consumes ControlEvents |
 | `SonosController` | `TA_SONOS_NAME` | `ta_controller` | stub, same surface |
@@ -146,7 +234,7 @@ Helpers that are **not** actors: artwork (`ta_artwork_*`), hit walk
 | `ta_logger_set_policy` / `policy` | Per-severity: DROP / NVM / EXTERNAL |
 | `ta_logger_drain` | Process queued logs |
 
-**`TA_EV_LOG` payload:** `[severity u8][tag u8][text...]` (rest of 32-byte cap).
+**`TA_EV_LOG` body:** `ta_log_emit_line_t` (`severity`, `tag`, `text[TA_LOG_TEXT_MAX]`).
 
 **Callback:** none required; emit is one-way unless a future policy adds ack.
 
@@ -162,18 +250,18 @@ Nothing else paints. Draw's queue is MP/SC (`ta_draw_bind_queue`); the Draw
 task alone pumps it with `ta_draw_pump(mails, n)`, which also drains the ISR
 mails first.
 
-| Type | Value | Payload | Completion |
-|------|-------|---------|------------|
-| `TA_EV_DRAW_UPDATE` | 0x200 | empty = cadence tick (clock represent-time, idle count); `[1][polled][desired][playing]` = status from MPD (0xFF unknown); `[2]` = base (artwork) dirty | paints when anything changed; `reply_to` -> `TA_EV_DRAW_UPDATE_DONE` (0x210) |
-| `TA_EV_DRAW_PAINT` | 0x201 | none | -> `TA_EV_DRAW_PAINT_DONE` (0x211) |
-| `TA_EV_DRAW_REACT_TOUCH` / `TA_EV_ISR_TOUCH` | 0x202 / 0x100 | x u16 LE, y u16 LE | hit walk -> ControlEvent to Controller; dark glass: wake only |
-| `TA_EV_DRAW_REACT_ROTATE` / `TA_EV_ISR_ROTARY` | 0x203 / 0x101 | steps i8 | `CTRL_VOLUME` to Controller |
-| `TA_EV_DRAW_SET_SHAPE_STACK` | 0x204 | none (Controller SET_ACTIVE) | installs follow chrome + first full paint |
-| `TA_EV_DRAW_LOG` | 0x205 | log divert | none |
-| `TA_EV_DRAW_SCROLL_OX` | 0x206 | `ox` i16 LE, or **empty** = step `TA_GLASS_SCROLL_STEP` px (Scheduler cadence; Draw owns the position) | repaint title viewport only |
-| `TA_EV_DRAW_SET_TEXT` | 0x207 | `[field u8][flags u8][ascii...]`, chunked (`FIRST` 0x01 / `LAST` 0x02); helper `ta_draw_post_text` | rebuilds the slot L2R on LAST, paints |
-| `TA_EV_DRAW_UPDATE_DONE` | 0x210 | reply | n/a |
-| `TA_EV_DRAW_PAINT_DONE` | 0x211 | reply | n/a |
+| Type | Value | Body | Completion |
+|------|-------|------|------------|
+| `TA_EV_DRAW_UPDATE` | 0x200 | `ta_draw_update_t` (`kind` CADENCE/STATUS/BASE_DIRTY; status fields 0xFF=keep; optional `reply_to`) | paints when changed; `reply_to` -> `UPDATE_DONE` |
+| `TA_EV_DRAW_PAINT` | 0x201 | `ta_draw_paint_t` (optional `reply_to`) | -> `PAINT_DONE` |
+| `TA_EV_DRAW_REACT_TOUCH` / `TA_EV_ISR_TOUCH` | 0x202 / 0x100 | `ta_draw_react_touch_t` / `ta_isr_touch_t` (`x`,`y`) | hit walk -> ControlEvent; dark: wake only |
+| `TA_EV_DRAW_REACT_ROTATE` / `TA_EV_ISR_ROTARY` | 0x203 / 0x101 | `ta_draw_react_rotate_t` / `ta_isr_rotary_t` | `CTRL_VOLUME` REL to Controller |
+| `TA_EV_DRAW_SET_SHAPE_STACK` | 0x204 | empty | installs follow chrome + first full paint |
+| `TA_EV_DRAW_LOG` | 0x205 | empty | none |
+| `TA_EV_DRAW_SCROLL_OX` | 0x206 | `ta_draw_scroll_ox_t` (`has_ox=0` => step; else absolute `ox`) | repaint title viewport |
+| `TA_EV_DRAW_SET_TEXT` | 0x207 | `ta_draw_set_text_t` chunks (`FIRST`/`LAST`); helper `ta_draw_post_text` | rebuild L2R on LAST, paint |
+| `TA_EV_DRAW_UPDATE_DONE` | 0x210 | empty | n/a |
+| `TA_EV_DRAW_PAINT_DONE` | 0x211 | empty | n/a |
 
 Text fields: `TA_DRAW_TEXT_ZONE/ARTIST/ALBUM/TITLE`. Volume and transport
 lines are derived from status (desired shown while it differs from polled;
@@ -206,19 +294,60 @@ EventRedirector). Device: `player_http` + `ta_net_backend` seam. Host:
 immediate stub replies on enqueue; `ta_net_mpd_*` coalesces volume and
 defers POLL/ALBUMART until tick.
 
+#### Concurrency (normative)
+
+- **Outbound client work may be sequential.** MPD poll/set/albumart, NTP,
+  and any other Net-initiated client requests share one outbound lane
+  (queue / one-in-flight). Fine to wait for getState before starting NTP.
+- **Inbound HTTP: one active client at a time.** Excess peers stay on the
+  listen backlog (or are not accepted yet). No multi-client HTTP
+  multiplexing in MVP.
+- **Inbound must not block behind outbound.** Serving the one accepted
+  HTTP client must progress even while the outbound lane has a getState
+  / NTP / albumart in flight.
+
+#### Redesign sketch (two select slots -- static)
+
+Not a free-form connection pool. Net owns a **fixed two-slot** wait set
+(plus the listen fd when idle on the server side):
+
+```text
+  listen_fd          -- Config HTTP server (always)
+  in_fd  (0 or 1)    -- at most one accepted HTTP client
+  out_fd (0 or 1)    -- at most one outbound client (Volumio / NTP / ...)
+
+  each Net turn:
+    select/poll on { listen_fd?, in_fd?, out_fd? }  -- <= 3 fds, static
+    if listen readable and in_fd empty: accept -> in_fd
+    if in_fd ready: non-blocking read/write; on complete request
+         -> Config event; on response done -> close in_fd (or keep-alive
+         later); never wait on out_fd
+    if out_fd ready: advance one outbound state machine step; on DONE
+         -> registry post; take next queued outbound op if any
+    if listen readable and in_fd busy: leave peer on backlog (do not accept)
+```
+
+All of that state is **statically allocatable** (three fd ints, two small
+I/O buffers / parsers, one outbound op enum + reply_to/session). No
+heap connection table for MVP.
+
+As-built `player_http` is outbound-only and single-phase (no listen /
+`in_fd`). Adding Config HTTP = add listen + `in_fd` beside the existing
+outbound machine; do not fold server I/O into the outbound "busy" gate.
+
 **NTP:** PLAN puts wall-clock sync under Net (`NTP * Player(...)`). As-built
 still calls `configTime` from `player_http` WiFi boot -- tracked as
 `todo:15b92eaa`, not a second Net actor.
 
-| Type | Value | Payload | Completion |
-|------|-------|---------|------------|
-| `TA_EV_NET_SET_DIALECT` | 0x300 | TBD (MPD vs Sonos) | none in stub |
-| `TA_EV_NET_POLL` | 0x301 | none | `reply_to` -> `TA_EV_NET_POLL_DONE` (0x310) |
-| `TA_EV_NET_SET` | 0x302 | volume: first byte desired level (coalesced in MPD dialect) | `TA_EV_NET_SET_DONE` (0x311) on stub Net; MPD dialect sends on tick after coalesce |
-| `TA_EV_NET_ALBUMART` | 0x303 | artwork path bytes (device: Volumio albumart URL, truncated to payload) | `TA_EV_NET_ALBUMART_DONE` (0x312) |
-| `TA_EV_NET_POLL_DONE` | 0x310 | reply: `[volume or 0xFF][playing 0/1 or 0xFF]` (`TA_NET_STATUS_*`) | n/a |
-| `TA_EV_NET_SET_DONE` | 0x311 | reply | n/a |
-| `TA_EV_NET_ALBUMART_DONE` | 0x312 | reply (bytes/fp TBD) | n/a |
+| Type | Value | Body | Completion |
+|------|-------|------|------------|
+| `TA_EV_NET_SET_DIALECT` | 0x300 | empty (MPD vs Sonos TBD) | none in stub |
+| `TA_EV_NET_POLL` | 0x301 | `ta_net_poll_playerstate_t` (`reply_to`) | -> `POLL_DONE` |
+| `TA_EV_NET_SET` | 0x302 | `ta_net_set_t` (`op` TOGGLE/VOLUME, `volume`, `reply_to`) | -> `SET_DONE` |
+| `TA_EV_NET_ALBUMART` | 0x303 | `ta_net_fetch_albumart_t` (`path[TA_PATH_MAX]`, `reply_to`) | -> `ALBUMART_DONE` |
+| `TA_EV_NET_POLL_DONE` | 0x310 | `ta_coord_inform_playerstate_t` (volume/playing today; 0xFF unknown) | n/a |
+| `TA_EV_NET_SET_DONE` | 0x311 | empty | n/a |
+| `TA_EV_NET_ALBUMART_DONE` | 0x312 | empty (bytes/fp TBD) | n/a |
 
 MPD dialect also no-ops unsupported `TA_EV_CTRL_NEXT` / `PREV` when seen on
 the Net side.
@@ -243,23 +372,23 @@ DRAW_UPDATE @ time-remaining).
 ### 3.4 Controller Router + Controllers
 
 **Router** registers as `"Controller"`. Only it handles `TA_EV_SET_ROUTE`;
-everything else is forwarded **intact** (including `reply_to` /
-`reply_type` / `session_id` / `payload`) to the current target name.
+everything else is forwarded **intact** (typed body + `session_id`) to the
+current target name.
 
-| Type | Value | Payload | Notes |
-|------|-------|---------|-------|
-| `TA_EV_SET_ROUTE` | 2 | controller registry name bytes (no need for NUL; router adds it) | sets route; not forwarded |
+| Type | Value | Body | Notes |
+|------|-------|------|-------|
+| `TA_EV_SET_ROUTE` | 2 | `ta_ctrl_set_route_t.target` | sets route; not forwarded |
 
 **ControlEvents** (posted to `"Controller"`, consumed by MPD/Sonos):
 
-| Type | Value | Payload | MPDController behaviour |
-|------|-------|---------|-------------------------|
-| `TA_EV_CTRL_TOGGLE` | 0x400 | none | posts `NET_SET [TOGGLE]` (reply_to=MPD); echoes to originator `reply_to` on `SET_DONE` |
-| `TA_EV_CTRL_VOLUME` | 0x401 | len 0: touch on chrome; len 1: `i8` steps (rotate); len 2: `[TA_CTRL_VOL_ABS, level]` | model 0..100 updated; change -> `NET_SET [VOLUME, level]`; unchanged -> echo only |
-| `TA_EV_CTRL_NEXT` | 0x402 | none | counted only |
-| `TA_EV_CTRL_PREV` | 0x403 | none | counted only |
-| `TA_EV_CTRL_SET_ACTIVE` | 0x404 | none | posts `DRAW_SET_SHAPE_STACK` + `NET_SET_DIALECT`; arms Scheduler periodic `CTRL_POLL` every `TA_MPD_POLL_MS` (2000); optional echo |
-| `TA_EV_CTRL_POLL` | 0x405 | none | posts `NET_POLL` (reply_to=MPD) unless one is in flight (counted as `polls_skipped`) |
+| Type | Value | Body | MPDController behaviour |
+|------|-------|------|-------------------------|
+| `TA_EV_CTRL_TOGGLE` | 0x400 | `ta_ctrl_toggle_t` (`reply_to` optional) | posts `NET_SET` TOGGLE; echoes originator on `SET_DONE` |
+| `TA_EV_CTRL_VOLUME` | 0x401 | `ta_ctrl_volume_t` mode NONE/REL/ABS | model 0..100; change -> `NET_SET` volume; unchanged -> echo only |
+| `TA_EV_CTRL_NEXT` | 0x402 | empty | counted only |
+| `TA_EV_CTRL_PREV` | 0x403 | empty | counted only |
+| `TA_EV_CTRL_SET_ACTIVE` | 0x404 | `ta_ctrl_set_active_t` | posts `DRAW_SET_SHAPE_STACK` + `NET_SET_DIALECT`; arms `CTRL_POLL` every `TA_MPD_POLL_MS`; optional echo |
+| `TA_EV_CTRL_POLL` | 0x405 | empty | posts `NET_POLL` unless one in flight (`polls_skipped`) |
 
 MPDController rules (`ta_controller.c`):
 
@@ -272,7 +401,7 @@ MPDController rules (`ta_controller.c`):
 - **session_id** of the ControlEvent is carried on every Net post and echo.
 - Controllers never touch `player_http`; the only Net path is the registry.
 - Volume model seeds at `TA_MPD_VOL_DEFAULT` (50) until an absolute set
-  (device path from uimk2 desired) or, later, a POLL_DONE status blob.
+  or a `POLL_DONE` with known volume (`!= 0xFF`).
 
 `SonosController` stays a counting stub (no Net traffic).
 
@@ -283,20 +412,20 @@ Names: `MPDController`, `SonosController`.
 ### 3.5 Scheduler
 
 **Start:** `ta_sched_start()`. Fake time: `ta_sched_advance_ms` /
-`TA_EV_SCHED_TICK` payload.
+`TA_EV_SCHED_TICK` body.
 
-| Type | Value | Payload | Meaning |
-|------|-------|---------|---------|
-| `TA_EV_SCHED_START` | 0x500 | `period_ms` u32 LE + `flags` u8 (`TA_SCHED_FLAG_ONESHOT=0x01`) | **`reply_to` = fire dst**, **`reply_type` = fire type** |
-| `TA_EV_SCHED_STOP` | 0x501 | none | clear all slots |
-| `TA_EV_SCHED_TICK` | 0x502 | `delta_ms` u32 LE | advance fake clock and fire due slots |
+| Type | Value | Body | Meaning |
+|------|-------|------|---------|
+| `TA_EV_SCHED_START` | 0x500 | `ta_sched_start_t` (`fire_to`, `fire_type`, `period_ms`, `flags`) | arm slot |
+| `TA_EV_SCHED_STOP` | 0x501 | empty | clear all slots |
+| `TA_EV_SCHED_TICK` | 0x502 | `ta_sched_tick_t.advance_ms` | advance fake clock and fire due slots |
 
 Convenience arms (post START):
 
 | API | Fire type | Period |
 |-----|-----------|--------|
-| `ta_sched_arm_clock_1hz(dst, session)` | `TA_EV_DRAW_UPDATE` | 1000 ms periodic |
-| `ta_sched_arm_scroll(dst, session, every_ms)` | `TA_EV_DRAW_SCROLL_OX` (+ i16 ox payload) | periodic |
+| `ta_sched_arm_clock_1hz(dst, session)` | `TA_EV_DRAW_UPDATE` (CADENCE) | 1000 ms periodic |
+| `ta_sched_arm_scroll(dst, session, every_ms)` | `TA_EV_DRAW_SCROLL_OX` (`has_ox=1`, ox++) | periodic |
 | `ta_sched_arm_oneshot(dst, session, delay, fire_type)` | caller-chosen | one-shot |
 | `ta_sched_arm_periodic(dst, session, every_ms, fire_type)` | caller-chosen (MPD uses `TA_EV_CTRL_POLL`) | periodic |
 
@@ -311,10 +440,10 @@ Not a TaskActor. Types allowed on the FromISR path only. **PLAN** wants
 rotary pooled time/delta into a **Rotary** EventRedirector (not Draw) --
 see section 9; this table is still what ships today:
 
-| Type | Value | Payload |
-|------|-------|---------|
-| `TA_EV_ISR_TOUCH` | 0x100 | `x u16 LE`, `y u16 LE` (4 bytes) |
-| `TA_EV_ISR_ROTARY` | 0x101 | `steps i8`, `velocity_q8 u8` (2 bytes) |
+| Type | Value | Body |
+|------|-------|------|
+| `TA_EV_ISR_TOUCH` | 0x100 | `ta_isr_touch_t` (`x`, `y`) |
+| `TA_EV_ISR_ROTARY` | 0x101 | `ta_isr_rotary_t` (`steps`, `vel_q8`) |
 
 Any other type is **rejected** by `ta_isr_mail_push_from_isr` (no Wi-Fi,
 paint, or Net from ISR). Capacity 8; full => drop + error log, never block.
@@ -443,10 +572,10 @@ box vs shape w/h. Roles: `TA_HIT_TRANSPORT` | `TA_HIT_VOLUME` | `NONE`.
 
 | Input | Resulting event to `"Controller"` |
 |-------|-----------------------------------|
-| Touch on transport | `TA_EV_CTRL_TOGGLE` (no payload) |
-| Touch on volume | `TA_EV_CTRL_VOLUME` (no payload in stub) |
+| Touch on transport | `TA_EV_CTRL_TOGGLE` |
+| Touch on volume | `TA_EV_CTRL_VOLUME` mode NONE |
 | Touch miss | no post (return 1) |
-| Rotate | `TA_EV_CTRL_VOLUME` with payload `[steps i8]` |
+| Rotate | `TA_EV_CTRL_VOLUME` mode REL + `delta` |
 
 Router forwards to active `MPDController` / `SonosController`.
 
@@ -490,18 +619,18 @@ sequenceDiagram
 
   Note over Sch: periodic CTRL_POLL armed by CTRL_SET_ACTIVE
   Sch->>MPD: CTRL_POLL
-  MPD->>Net: NET_POLL (reply_to=MPDController, reply_type=POLL_DONE)
+  MPD->>Net: NET_POLL (net_poll_playerstate.reply_to=MPD)
   Note over MPD: skip tick if a poll is already in flight
   Net->>Net: wire status (dialect)
-  Net->>MPD: NET_POLL_DONE (session_id echoed)
-  MPD->>Draw: DRAW_UPDATE (chrome: clock/title/progress fields)
+  Net->>MPD: NET_POLL_DONE (coord_inform_playerstate)
+  MPD->>Draw: DRAW_UPDATE status (ta_draw_update_t)
   MPD->>Draw: DRAW_PAINT (optional)
   Draw-->>MPD: UPDATE_DONE / PAINT_DONE if reply_to set
 ```
 
-Progress on glass: clock via `arm_clock_1hz` -> `DRAW_UPDATE` with
-represent-time; title scroll via `arm_scroll` -> `DRAW_SCROLL_OX` (ox in
-payload) then update/paint. Track-end anticipation:
+Progress on glass: clock via `arm_clock_1hz` -> `DRAW_UPDATE` CADENCE;
+title scroll via `arm_scroll` -> `DRAW_SCROLL_OX` then update/paint.
+Track-end anticipation:
 `ta_artwork_on_album_change` / oneshot at time-remaining -> `NET_POLL` and
 `DRAW_UPDATE`.
 
@@ -634,6 +763,10 @@ Run: `(cd spinme/host && make test)`.
   `host/SMOKE.md` (`todo:3135a46a` done).
 - Controller facade is a select-N **Router** (`ta_router`); Net is the sole
   socket / HTTP owner; Draw is the sole glass owner.
+- **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
+  `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. `reply_to`
+  lives only on per-message structs. No legacy blob arm. MVP passes
+  envelopes by value; measure copy cost later.
 
 ### PLAN ratified, not yet implemented (do not read as as-built)
 
@@ -643,6 +776,13 @@ Run: `(cd spinme/host && make test)`.
 | **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
 | **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
 | **Net-owned NTP timesource** | Volumio `getState` has no wall ToD (`seek`/`duration` only); Net must own basic SNTP; Draw clock reads `time()` | `todo:15b92eaa` (groom) |
+| **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
+  seek still unused on the wire | Follow-on when getState mapping expands |
+| **Coordinator rename** | Chat/PLAN "Coordinator" == as-built `MPDController` | Rename optional |
+| **Fork + forever `ta.init()`** | Init constructs actors, forks, each `init()` registers then loops (never returns) | Follow-on; host still sync `*_start()` |
+| **Degraded filter + selective queue take** | Process-before-emit only ordering; `peek_verb` for inform (etc.); out-of-order take = swap with front; defer non-setup msgs until setup informs land | Follow-on; queue is FIFO `pop` today |
+| **Config TaskActor + NVM ownership** | Registry actor owns NVM; typed get/put/del/inform; replace sync `ta_kv_*` call-through from other tasks | Follow-on |
+| **Net HTTP Config CRUD** | Net GET/POST/PATCH/DELETE maps to Config events; inbound serve never blocked by sequential outbound client lane | Follow-on; depends on Config actor |
 | **SonosController** | Sibling route target / dialect; stub only | Deferred; non-goal of `todo:3135a46a` |
 | **Delete retired paint tree** | `retired/uimk2_paint/` and optionally `uimk2/` still on disk | Needs explicit user OK to delete |
 

@@ -13,7 +13,7 @@ extern "C" {
 
 void ta_router_reset(void);
 void ta_router_start(void); /* register as Controller */
-int ta_router_enqueue(const ta_event_t *ev);
+int ta_router_enqueue(const ta_event_envelope_t *env);
 /* Empty string if none. */
 const char *ta_router_current_target(void);
 

@@ -20,7 +20,7 @@ typedef enum {
     TA_LOG_POLICY_EXTERNAL = 2
 } ta_log_policy_t;
 
-/* Payload layout for TA_EV_LOG: [severity u8][tag u8][text...] */
+/* TA_EV_LOG body is ta_log_emit_line_t. */
 typedef struct ta_log_stats {
     unsigned accepted;
     unsigned dropped;
@@ -30,7 +30,7 @@ typedef struct ta_log_stats {
 
 void ta_logger_reset(void);
 void ta_logger_start(void); /* register name + queue; call from Init entry */
-int ta_logger_enqueue(const ta_event_t *ev);
+int ta_logger_enqueue(const ta_event_envelope_t *env);
 void ta_logger_set_policy(uint8_t severity, ta_log_policy_t policy);
 ta_log_policy_t ta_logger_policy(uint8_t severity);
 /* Drain up to max events; returns number handled. */

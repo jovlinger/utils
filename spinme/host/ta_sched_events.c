@@ -37,18 +37,6 @@ const ta_sched_stats_t *ta_sched_stats(void) {
     return &g_stats;
 }
 
-static void put_u32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)(v & 0xff);
-    p[1] = (uint8_t)((v >> 8) & 0xff);
-    p[2] = (uint8_t)((v >> 16) & 0xff);
-    p[3] = (uint8_t)((v >> 24) & 0xff);
-}
-
-static uint32_t get_u32(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-           ((uint32_t)p[3] << 24);
-}
-
 static int alloc_slot(void) {
     size_t i;
 
@@ -61,20 +49,12 @@ static int alloc_slot(void) {
     return -1;
 }
 
-static int start_timer(const ta_event_t *ev) {
+static int start_timer(const ta_event_envelope_t *env) {
     int idx;
     ta_sched_slot_t *s;
-    uint32_t period;
-    uint8_t flags = 0;
+    const ta_sched_start_t *st = &env->event.u.sched_start;
 
-    if (ev->payload_len < 4 || ev->reply_to[0] == '\0') {
-        return -1;
-    }
-    period = get_u32(ev->payload);
-    if (ev->payload_len >= 5) {
-        flags = ev->payload[4];
-    }
-    if (period == 0) {
+    if (st->fire_to[0] == '\0' || st->period_ms == 0) {
         return -1;
     }
     idx = alloc_slot();
@@ -84,12 +64,12 @@ static int start_timer(const ta_event_t *ev) {
     s = &g_slots[idx];
     memset(s, 0, sizeof(*s));
     s->used = 1;
-    s->oneshot = (flags & TA_SCHED_FLAG_ONESHOT) != 0;
-    s->period_ms = period;
-    s->next_ms = g_now_ms + period;
-    memcpy(s->dst, ev->reply_to, TA_NAME_MAX);
-    s->fire_type = ev->reply_type != 0 ? ev->reply_type : TA_EV_NOP;
-    s->session_id = ev->session_id;
+    s->oneshot = (st->flags & TA_SCHED_FLAG_ONESHOT) != 0;
+    s->period_ms = st->period_ms;
+    s->next_ms = g_now_ms + st->period_ms;
+    memcpy(s->dst, st->fire_to, TA_NAME_MAX);
+    s->fire_type = st->fire_type != 0 ? st->fire_type : TA_EV_NOP;
+    s->session_id = env->session_id;
     g_stats.starts++;
     return 0;
 }
@@ -109,20 +89,19 @@ static int stop_all(void) {
 }
 
 static void fire_slot(ta_sched_slot_t *s) {
-    ta_event_t fire;
-    uint8_t ox[2];
+    ta_event_envelope_t fire;
 
-    ta_event_clear(&fire);
-    fire.type = s->fire_type;
+    ta_env_clear(&fire);
+    fire.event.type = s->fire_type;
     fire.session_id = s->session_id;
-    (void)ta_event_set_src(&fire, TA_SCHED_NAME);
+    (void)ta_env_set_src(&fire, TA_SCHED_NAME);
     if (s->fire_type == TA_EV_DRAW_SCROLL_OX) {
         s->scroll_ox = (int16_t)(s->scroll_ox + 1);
-        ox[0] = (uint8_t)(s->scroll_ox & 0xff);
-        ox[1] = (uint8_t)((s->scroll_ox >> 8) & 0xff);
-        (void)ta_event_set_payload(&fire, ox, 2);
+        fire.event.u.draw_scroll_ox.ox = s->scroll_ox;
+        fire.event.u.draw_scroll_ox.has_ox = 1;
         g_stats.scroll_fires++;
     } else if (s->fire_type == TA_EV_DRAW_UPDATE) {
+        fire.event.u.draw_update.kind = (uint8_t)TA_DRAW_UPD_CADENCE;
         g_stats.clock_fires++;
     }
     (void)ta_registry_post(s->dst, &fire);
@@ -158,23 +137,21 @@ void ta_sched_advance_ms(uint32_t ms) {
     }
 }
 
-int ta_sched_handle(const ta_event_t *ev) {
-    if (ev == NULL) {
+int ta_sched_handle(const ta_event_envelope_t *env) {
+    if (env == NULL) {
         return -1;
     }
-    switch (ev->type) {
+    switch (env->event.type) {
     case TA_EV_SCHED_START:
         g_stats.handled++;
-        return start_timer(ev);
+        return start_timer(env);
     case TA_EV_SCHED_STOP:
         g_stats.handled++;
         return stop_all();
     case TA_EV_SCHED_TICK:
         g_stats.ticks++;
         g_stats.handled++;
-        if (ev->payload_len >= 4) {
-            ta_sched_advance_ms(get_u32(ev->payload));
-        }
+        ta_sched_advance_ms(env->event.u.sched_tick.advance_ms);
         return 0;
     default:
         g_stats.unknown++;
@@ -182,8 +159,8 @@ int ta_sched_handle(const ta_event_t *ev) {
     }
 }
 
-int ta_sched_enqueue(const ta_event_t *ev) {
-    return ta_sched_handle(ev);
+int ta_sched_enqueue(const ta_event_envelope_t *env) {
+    return ta_sched_handle(env);
 }
 
 void ta_sched_start(void) {
@@ -192,22 +169,17 @@ void ta_sched_start(void) {
 
 static int post_start(const char *dst, ta_session_id_t session, uint32_t period,
                       uint8_t flags, ta_event_type_t fire_type) {
-    ta_event_t ev;
-    uint8_t pl[5];
+    ta_event_envelope_t env;
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_SCHED_START;
-    ev.session_id = session;
-    (void)ta_event_set_src(&ev, "Init");
-    if (ta_event_set_reply(&ev, dst, fire_type) != 0) {
+    ta_env_clear(&env);
+    env.event.type = TA_EV_SCHED_START;
+    env.session_id = session;
+    (void)ta_env_set_src(&env, "Init");
+    if (ta_event_set_sched_start(&env.event, dst, fire_type, period, flags) !=
+        0) {
         return -1;
     }
-    put_u32(pl, period);
-    pl[4] = flags;
-    if (ta_event_set_payload(&ev, pl, 5) != 0) {
-        return -1;
-    }
-    return ta_registry_post(TA_SCHED_NAME, &ev);
+    return ta_registry_post(TA_SCHED_NAME, &env);
 }
 
 int ta_sched_arm_clock_1hz(const char *dst, ta_session_id_t session) {

@@ -22,28 +22,28 @@ static int checks;
         }                                                                      \
     } while (0)
 
-static ta_event_t g_cfg_last;
+static ta_event_envelope_t g_cfg_last;
 static int g_cfg_n;
 
-static int config_sink(const ta_event_t *ev) {
-    g_cfg_last = *ev;
+static int config_sink(const ta_event_envelope_t *env) {
+    g_cfg_last = *env;
     g_cfg_n++;
     return 0;
 }
 
 static int post_set_route(const char *target) {
-    ta_event_t ev;
+    ta_event_envelope_t env;
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_SET_ROUTE;
-    CHECK(ta_event_set_src(&ev, "Config") == 0);
-    ev.session_id = 1;
-    CHECK(ta_event_set_payload(&ev, target, strlen(target)) == 0);
-    return ta_registry_post(TA_CONTROLLER_NAME, &ev);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_SET_ROUTE;
+    CHECK(ta_env_set_src(&env, "Config") == 0);
+    env.session_id = 1;
+    CHECK(ta_event_set_ctrl_set_route(&env.event, target) == 0);
+    return ta_registry_post(TA_CONTROLLER_NAME, &env);
 }
 
 int main(void) {
-    ta_event_t ev;
+    ta_event_envelope_t env;
 
     ta_registry_reset();
     ta_router_reset();
@@ -62,22 +62,23 @@ int main(void) {
 
     CHECK(post_set_route(TA_MPD_NAME) == 0);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_CTRL_SET_ACTIVE;
-    ev.session_id = 88;
-    CHECK(ta_event_set_src(&ev, "Config") == 0);
-    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_CTRL_SET_ACTIVE;
+    env.session_id = 88;
+    CHECK(ta_env_set_src(&env, "Config") == 0);
+    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &env) == 0);
     CHECK(ta_mpd_stats()->set_active == 1);
     CHECK(ta_sonos_stats()->set_active == 0);
     CHECK(ta_draw_stats()->set_stack == 1);
     CHECK(ta_net_stats()->set_dialect == 1);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_CTRL_TOGGLE;
-    ev.session_id = 88;
-    CHECK(ta_event_set_src(&ev, "Draw") == 0);
-    CHECK(ta_event_set_reply(&ev, "Config", TA_EV_CTRL_TOGGLE) == 0);
-    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_CTRL_TOGGLE;
+    env.session_id = 88;
+    CHECK(ta_env_set_src(&env, "Draw") == 0);
+    CHECK(ta_copy_name(env.event.u.ctrl_toggle.reply_to, TA_NAME_MAX,
+                       "Config") == 0);
+    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &env) == 0);
     CHECK(ta_mpd_stats()->toggle == 1);
     CHECK(ta_mpd_stats()->replies_posted == 1);
     CHECK(g_cfg_n == 1);
@@ -85,11 +86,11 @@ int main(void) {
     CHECK(strcmp(g_cfg_last.src, TA_MPD_NAME) == 0);
 
     CHECK(post_set_route(TA_SONOS_NAME) == 0);
-    ta_event_clear(&ev);
-    ev.type = TA_EV_CTRL_VOLUME;
-    ev.session_id = 9;
-    CHECK(ta_event_set_src(&ev, "Draw") == 0);
-    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_CTRL_VOLUME;
+    env.session_id = 9;
+    CHECK(ta_env_set_src(&env, "Draw") == 0);
+    CHECK(ta_registry_post(TA_CONTROLLER_NAME, &env) == 0);
     CHECK(ta_sonos_stats()->volume == 1);
     CHECK(ta_mpd_stats()->volume == 0);
 

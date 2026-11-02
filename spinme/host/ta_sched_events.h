@@ -35,8 +35,8 @@ typedef struct ta_sched_stats {
 
 void ta_sched_reset(void);
 void ta_sched_start(void);
-int ta_sched_enqueue(const ta_event_t *ev);
-int ta_sched_handle(const ta_event_t *ev);
+int ta_sched_enqueue(const ta_event_envelope_t *env);
+int ta_sched_handle(const ta_event_envelope_t *env);
 void ta_sched_advance_ms(uint32_t ms);
 uint32_t ta_sched_now_ms(void);
 const ta_sched_stats_t *ta_sched_stats(void);

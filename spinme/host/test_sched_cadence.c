@@ -25,15 +25,15 @@ static int g_scrolls;
 static int16_t g_last_ox;
 static int g_oneshot;
 
-static int draw_sink(const ta_event_t *ev) {
-    if (ev->type == TA_EV_DRAW_UPDATE) {
+static int draw_sink(const ta_event_envelope_t *env) {
+    if (env->event.type == TA_EV_DRAW_UPDATE) {
         g_updates++;
-    } else if (ev->type == TA_EV_DRAW_SCROLL_OX) {
+    } else if (env->event.type == TA_EV_DRAW_SCROLL_OX) {
         g_scrolls++;
-        if (ev->payload_len >= 2) {
-            g_last_ox = (int16_t)(ev->payload[0] | (ev->payload[1] << 8));
+        if (env->event.u.draw_scroll_ox.has_ox) {
+            g_last_ox = env->event.u.draw_scroll_ox.ox;
         }
-    } else if (ev->type == TA_EV_DRAW_PAINT) {
+    } else if (env->event.type == TA_EV_DRAW_PAINT) {
         g_oneshot++;
     }
     return 0;

@@ -19,19 +19,19 @@ static int checks;
         }                                                                      \
     } while (0)
 
-static ta_event_t storage[4];
+static ta_event_envelope_t storage[4];
 static ta_queue_t q;
 static int handled;
 
 static void *consumer(void *arg) {
-    ta_event_t ev;
+    ta_event_envelope_t env;
     int n = 0;
 
     (void)arg;
     while (n < 3) {
-        ta_queue_peek_wait(&q, &ev);
+        ta_queue_peek_wait(&q, &env);
         /* Handler runs without holding push discipline beyond peek snapshot. */
-        CHECK(ev.session_id == 7);
+        CHECK(env.session_id == 7);
         handled++;
         ta_queue_pop(&q);
         n++;
@@ -41,7 +41,7 @@ static void *consumer(void *arg) {
 
 int main(void) {
     pthread_t th;
-    ta_event_t ev;
+    ta_event_envelope_t env;
     ta_shape_lock_t shapes;
     int i;
 
@@ -54,11 +54,11 @@ int main(void) {
     CHECK(pthread_create(&th, NULL, consumer, NULL) == 0);
 
     for (i = 0; i < 3; i++) {
-        ta_event_clear(&ev);
-        ta_event_set_src(&ev, "Prod");
-        ev.session_id = 7;
-        ev.type = (ta_event_type_t)(10 + i);
-        CHECK(ta_queue_push(&q, &ev) == 0);
+        ta_env_clear(&env);
+        ta_env_set_src(&env, "Prod");
+        env.session_id = 7;
+        env.event.type = (ta_event_type_t)(10 + i);
+        CHECK(ta_queue_push(&q, &env) == 0);
     }
 
     pthread_join(th, NULL);
@@ -66,12 +66,12 @@ int main(void) {
 
     /* Fill then one drop. */
     for (i = 0; i < 4; i++) {
-        ta_event_clear(&ev);
-        ta_event_set_src(&ev, "Prod");
-        ev.session_id = 1;
-        CHECK(ta_queue_push(&q, &ev) == 0);
+        ta_env_clear(&env);
+        ta_env_set_src(&env, "Prod");
+        env.session_id = 1;
+        CHECK(ta_queue_push(&q, &env) == 0);
     }
-    CHECK(ta_queue_push(&q, &ev) == -1);
+    CHECK(ta_queue_push(&q, &env) == -1);
     CHECK(q.drops == 1);
 
     ta_shape_lock_fini(&shapes);

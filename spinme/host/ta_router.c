@@ -15,36 +15,30 @@ const char *ta_router_current_target(void) {
     return g_target;
 }
 
-static int set_route(const ta_event_t *ev) {
-    size_t n;
+static int set_route(const ta_event_envelope_t *env) {
+    const char *name = env->event.u.ctrl_set_route.target;
 
-    if (ev->payload_len == 0 || ev->payload_len >= TA_NAME_MAX) {
-        fprintf(stderr, "ERROR: SetRoute bad payload\n");
+    if (name[0] == '\0') {
+        fprintf(stderr, "ERROR: SetRoute bad target\n");
         return -1;
     }
-    n = (size_t)ev->payload_len;
-    /* Payload is actor name bytes (may lack NUL; we add one). */
-    memcpy(g_target, ev->payload, n);
-    g_target[n] = '\0';
-    if (g_target[0] == '\0') {
-        return -1;
-    }
+    memcpy(g_target, name, TA_NAME_MAX);
     return 0;
 }
 
-int ta_router_enqueue(const ta_event_t *ev) {
-    if (ev == NULL) {
+int ta_router_enqueue(const ta_event_envelope_t *env) {
+    if (env == NULL) {
         return -1;
     }
-    if (ev->type == TA_EV_SET_ROUTE) {
-        return set_route(ev);
+    if (env->event.type == TA_EV_SET_ROUTE) {
+        return set_route(env);
     }
     if (g_target[0] == '\0') {
         fprintf(stderr, "ERROR: Controller has no route\n");
         return -1;
     }
-    /* Forward envelope intact (reply_to / reply_type / session_id / payload). */
-    return ta_registry_post(g_target, ev);
+    /* Forward envelope intact (typed body + session_id). */
+    return ta_registry_post(g_target, env);
 }
 
 void ta_router_start(void) {

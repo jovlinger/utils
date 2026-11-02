@@ -1,4 +1,5 @@
 /* Host: Scheduler start/stop + fake-time fire with session_id. */
+#include "ta_draw_events.h"
 #include "ta_event.h"
 #include "ta_registry.h"
 #include "ta_sched_events.h"
@@ -22,22 +23,14 @@ static int checks;
 static int g_fires;
 static ta_session_id_t g_last_session;
 
-static int draw_sink(const ta_event_t *ev) {
+static int draw_sink(const ta_event_envelope_t *env) {
     g_fires++;
-    g_last_session = ev->session_id;
+    g_last_session = env->session_id;
     return 0;
 }
 
-static void put_u32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)(v & 0xff);
-    p[1] = (uint8_t)((v >> 8) & 0xff);
-    p[2] = (uint8_t)((v >> 16) & 0xff);
-    p[3] = (uint8_t)((v >> 24) & 0xff);
-}
-
 int main(void) {
-    ta_event_t ev;
-    uint8_t period[4];
+    ta_event_envelope_t env;
 
     ta_registry_reset();
     ta_sched_reset();
@@ -45,14 +38,13 @@ int main(void) {
     ta_sched_start();
     CHECK(ta_registry_register("Draw", draw_sink) == 0);
 
-    put_u32(period, 100);
-    ta_event_clear(&ev);
-    ev.type = TA_EV_SCHED_START;
-    ev.session_id = 55;
-    CHECK(ta_event_set_src(&ev, "Init") == 0);
-    CHECK(ta_event_set_reply(&ev, "Draw", 0x201) == 0); /* paint-ish */
-    CHECK(ta_event_set_payload(&ev, period, 4) == 0);
-    CHECK(ta_registry_post(TA_SCHED_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_SCHED_START;
+    env.session_id = 55;
+    CHECK(ta_env_set_src(&env, "Init") == 0);
+    CHECK(ta_event_set_sched_start(&env.event, "Draw", TA_EV_DRAW_PAINT, 100,
+                                   0) == 0);
+    CHECK(ta_registry_post(TA_SCHED_NAME, &env) == 0);
 
     ta_sched_advance_ms(99);
     CHECK(g_fires == 0);
@@ -63,10 +55,10 @@ int main(void) {
     ta_sched_advance_ms(200);
     CHECK(g_fires == 2);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_SCHED_STOP;
-    CHECK(ta_event_set_src(&ev, "Init") == 0);
-    CHECK(ta_registry_post(TA_SCHED_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_SCHED_STOP;
+    CHECK(ta_env_set_src(&env, "Init") == 0);
+    CHECK(ta_registry_post(TA_SCHED_NAME, &env) == 0);
     ta_sched_advance_ms(500);
     CHECK(g_fires == 2);
     CHECK(ta_sched_now_ms() == 800);

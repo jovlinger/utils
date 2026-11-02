@@ -20,15 +20,15 @@ static int checks;
         }                                                                      \
     } while (0)
 
-static ta_event_t g_reply;
+static ta_event_envelope_t g_reply;
 static int g_n;
 static int g_be_poll;
 static int g_be_toggle;
 static int g_be_vol;
 static int g_be_vol_last;
 
-static int mpd_sink(const ta_event_t *ev) {
-    g_reply = *ev;
+static int mpd_sink(const ta_event_envelope_t *env) {
+    g_reply = *env;
     g_n++;
     return 0;
 }
@@ -52,7 +52,7 @@ static int be_volume(int volume) {
 static const ta_net_backend_t g_fake_be = {be_poll, be_toggle, be_volume, NULL};
 
 int main(void) {
-    ta_event_t ev;
+    ta_event_envelope_t env;
     const ta_net_stats_t *st;
 
     ta_registry_reset();
@@ -61,36 +61,36 @@ int main(void) {
     ta_net_start();
     CHECK(ta_registry_register("MPDController", mpd_sink) == 0);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_SET_DIALECT;
-    ev.session_id = 1;
-    CHECK(ta_event_set_src(&ev, "Config") == 0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_SET_DIALECT;
+    env.session_id = 1;
+    CHECK(ta_env_set_src(&env, "Config") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_POLL;
-    ev.session_id = 42;
-    CHECK(ta_event_set_src(&ev, "MPDController") == 0);
-    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_POLL_DONE) == 0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_POLL;
+    env.session_id = 42;
+    CHECK(ta_env_set_src(&env, "MPDController") == 0);
+    CHECK(ta_event_set_net_poll_playerstate(&env.event, "MPDController") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_n == 1);
-    CHECK(g_reply.type == TA_EV_NET_POLL_DONE);
+    CHECK(g_reply.event.type == TA_EV_NET_POLL_DONE);
     CHECK(g_reply.session_id == 42);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_ALBUMART;
-    ev.session_id = 42;
-    CHECK(ta_event_set_src(&ev, "MPDController") == 0);
-    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_ALBUMART_DONE) ==
-          0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_ALBUMART;
+    env.session_id = 42;
+    CHECK(ta_env_set_src(&env, "MPDController") == 0);
+    CHECK(ta_copy_name(env.event.u.net_fetch_albumart.reply_to, TA_NAME_MAX,
+                       "MPDController") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_n == 2);
-    CHECK(g_reply.type == TA_EV_NET_ALBUMART_DONE);
+    CHECK(g_reply.event.type == TA_EV_NET_ALBUMART_DONE);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_SET;
-    CHECK(ta_event_set_src(&ev, "MPDController") == 0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_SET;
+    CHECK(ta_env_set_src(&env, "MPDController") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
 
     st = ta_net_stats();
     CHECK(st->handled == 4);
@@ -112,40 +112,32 @@ int main(void) {
     ta_net_set_backend(&g_fake_be);
     CHECK(ta_registry_register("MPDController", mpd_sink) == 0);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_POLL;
-    ev.session_id = 7;
-    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_POLL_DONE) == 0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_POLL;
+    env.session_id = 7;
+    CHECK(ta_event_set_net_poll_playerstate(&env.event, "MPDController") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_be_poll == 1);
     CHECK(g_n == 0); /* deferred until complete */
     ta_net_backend_complete(1);
     CHECK(g_n == 1);
-    CHECK(g_reply.type == TA_EV_NET_POLL_DONE);
+    CHECK(g_reply.event.type == TA_EV_NET_POLL_DONE);
     CHECK(g_reply.session_id == 7);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_SET;
-    {
-        uint8_t pl[2];
-        pl[0] = (uint8_t)TA_NET_SET_OP_TOGGLE;
-        CHECK(ta_event_set_payload(&ev, pl, 1) == 0);
-    }
-    CHECK(ta_event_set_reply(&ev, "MPDController", TA_EV_NET_SET_DONE) == 0);
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_SET;
+    CHECK(ta_event_set_net_set(&env.event, "MPDController",
+                               (uint8_t)TA_NET_SET_OP_TOGGLE, 0) == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_be_toggle == 1);
     ta_net_backend_complete(3);
-    CHECK(g_reply.type == TA_EV_NET_SET_DONE);
+    CHECK(g_reply.event.type == TA_EV_NET_SET_DONE);
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_NET_SET;
-    {
-        uint8_t pl[2];
-        pl[0] = (uint8_t)TA_NET_SET_OP_VOLUME;
-        pl[1] = 44;
-        CHECK(ta_event_set_payload(&ev, pl, 2) == 0);
-    }
-    CHECK(ta_registry_post(TA_NET_NAME, &ev) == 0);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_SET;
+    CHECK(ta_event_set_net_set(&env.event, NULL, (uint8_t)TA_NET_SET_OP_VOLUME,
+                               44) == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_be_vol == 1);
     CHECK(g_be_vol_last == 44);
 

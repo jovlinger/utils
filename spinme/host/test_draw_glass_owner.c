@@ -126,7 +126,7 @@ static void build_atlas(void) {
 
 #define PANEL 64
 static ta_pack66_t g_base[PANEL * PANEL];
-static ta_event_t g_qstore[32];
+static ta_event_envelope_t g_qstore[32];
 static ta_queue_t g_q;
 static ta_isr_mail_t g_mail;
 
@@ -136,17 +136,44 @@ static size_t pump(void) {
     return ta_draw_pump(mails, 1);
 }
 
-static int post(const char *to, ta_event_type_t type, const uint8_t *pl,
-                size_t len) {
-    ta_event_t ev;
-    ta_event_clear(&ev);
-    ev.type = type;
-    ev.session_id = 7;
-    (void)ta_event_set_src(&ev, "Test");
-    if (len > 0) {
-        (void)ta_event_set_payload(&ev, pl, len);
-    }
-    return ta_registry_post(to, &ev);
+static int post_type(const char *to, ta_event_type_t type) {
+    ta_event_envelope_t env;
+    ta_env_clear(&env);
+    env.event.type = type;
+    env.session_id = 7;
+    (void)ta_env_set_src(&env, "Test");
+    return ta_registry_post(to, &env);
+}
+
+static int post_set_route(const char *target) {
+    ta_event_envelope_t env;
+    ta_env_clear(&env);
+    env.event.type = TA_EV_SET_ROUTE;
+    env.session_id = 7;
+    (void)ta_env_set_src(&env, "Test");
+    (void)ta_event_set_ctrl_set_route(&env.event, target);
+    return ta_registry_post(TA_CONTROLLER_NAME, &env);
+}
+
+static int post_draw_update(uint8_t kind) {
+    ta_event_envelope_t env;
+    ta_env_clear(&env);
+    env.event.type = TA_EV_DRAW_UPDATE;
+    env.session_id = 7;
+    (void)ta_env_set_src(&env, "Test");
+    env.event.u.draw_update.kind = kind;
+    return ta_registry_post(TA_DRAW_NAME, &env);
+}
+
+static int post_scroll_ox(int16_t ox, int has_ox) {
+    ta_event_envelope_t env;
+    ta_env_clear(&env);
+    env.event.type = TA_EV_DRAW_SCROLL_OX;
+    env.session_id = 7;
+    (void)ta_env_set_src(&env, "Test");
+    env.event.u.draw_scroll_ox.ox = ox;
+    env.event.u.draw_scroll_ox.has_ox = (uint8_t)(has_ox ? 1 : 0);
+    return ta_registry_post(TA_DRAW_NAME, &env);
 }
 
 int main(void) {
@@ -194,13 +221,8 @@ int main(void) {
     ta_glass_set_cfg(&cfg);
 
     /* 1. Activate MPD: SET_SHAPE_STACK waits in Draw's queue until pumped. */
-    {
-        uint8_t name[TA_NAME_MAX];
-        memcpy(name, TA_MPD_NAME, strlen(TA_MPD_NAME));
-        CHECK(post(TA_CONTROLLER_NAME, TA_EV_SET_ROUTE, name,
-                   strlen(TA_MPD_NAME)) == 0);
-    }
-    CHECK(post(TA_CONTROLLER_NAME, TA_EV_CTRL_SET_ACTIVE, NULL, 0) == 0);
+    CHECK(post_set_route(TA_MPD_NAME) == 0);
+    CHECK(post_type(TA_CONTROLLER_NAME, TA_EV_CTRL_SET_ACTIVE) == 0);
     CHECK(!ta_glass_installed());
     CHECK(pump() >= 1);
     CHECK(ta_glass_installed());
@@ -218,7 +240,7 @@ int main(void) {
 
     /* 2. Clean glass: PAINT pushes nothing. */
     before = g_nrec;
-    CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_PAINT, NULL, 0) == 0);
+    CHECK(post_type(TA_DRAW_NAME, TA_EV_DRAW_PAINT) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before);
 
@@ -278,16 +300,13 @@ int main(void) {
     CHECK(g_nrec == before + 1);
     CHECK(g_recs[before].w == 30); /* viewport window, not content width */
     before = g_nrec;
-    {
-        uint8_t ox[2] = {5, 0};
-        CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_SCROLL_OX, ox, 2) == 0);
-    }
+    CHECK(post_scroll_ox(5, 1) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before + 1);
     CHECK(ta_glass_stats()->scrolls == 1);
-    /* Payload-less cadence tick: Draw steps ox itself and repaints. */
+    /* Cadence tick without ox: Draw steps ox itself and repaints. */
     before = g_nrec;
-    CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_SCROLL_OX, NULL, 0) == 0);
+    CHECK(post_scroll_ox(0, 0) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before + 1);
     CHECK(ta_glass_stats()->scrolls == 2);
@@ -299,27 +318,24 @@ int main(void) {
 
     /* 7. Cadence update: clock represent-time dirties only the clock. */
     before = g_nrec;
-    CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_UPDATE, NULL, 0) == 0);
+    CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before + 1);
     CHECK(g_recs[before].y == ta_uilo_y(chrome->uilo[TA_FOLLOW_CLOCK]));
     before = g_nrec;
-    CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_UPDATE, NULL, 0) == 0);
+    CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before); /* same second: nothing */
 
     /* 8. Idle -> backlight off; dark glass keeps dirty; dark tap only wakes. */
     for (i = 0; i < TA_GLASS_SCREEN_OFF_S; i++) {
-        CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_UPDATE, NULL, 0) == 0);
+        CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     }
     CHECK(pump() == (size_t)TA_GLASS_SCREEN_OFF_S);
     CHECK(g_backlight == 0);
     CHECK(ta_glass_backlight() == 0);
     before = g_nrec;
-    {
-        uint8_t pl[1] = {TA_DRAW_UPD_BASE_DIRTY};
-        CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_UPDATE, pl, 1) == 0);
-    }
+    CHECK(post_draw_update(TA_DRAW_UPD_BASE_DIRTY) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before); /* dark: nothing pushed */
     {
@@ -335,10 +351,7 @@ int main(void) {
 
     /* 9. Base dirty while lit: everything above repaints after the base. */
     before = g_nrec;
-    {
-        uint8_t pl[1] = {TA_DRAW_UPD_BASE_DIRTY};
-        CHECK(post(TA_DRAW_NAME, TA_EV_DRAW_UPDATE, pl, 1) == 0);
-    }
+    CHECK(post_draw_update(TA_DRAW_UPD_BASE_DIRTY) == 0);
     CHECK(pump() == 1);
     CHECK(g_nrec == before + TA_FOLLOW_N);
 

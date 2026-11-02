@@ -78,34 +78,58 @@ int ta_mpd_poll_inflight(void) {
     return g_mpd.poll_inflight;
 }
 
-static void origin_from(ta_origin_t *o, const ta_event_t *ev) {
-    memcpy(o->reply_to, ev->reply_to, TA_NAME_MAX);
-    o->reply_type = ev->reply_type;
-    o->session_id = ev->session_id;
-}
-
 static void origin_reply(ta_controller_stats_t *st, const ta_origin_t *o,
                          ta_event_type_t fallback_type, const char *src) {
-    ta_event_t reply;
+    ta_event_envelope_t reply;
 
     if (o->reply_to[0] == '\0') {
         return;
     }
-    ta_event_clear(&reply);
-    reply.type = o->reply_type != 0 ? o->reply_type : fallback_type;
+    ta_env_clear(&reply);
+    reply.event.type = o->reply_type != 0 ? o->reply_type : fallback_type;
     reply.session_id = o->session_id;
-    (void)ta_event_set_src(&reply, src);
+    (void)ta_env_set_src(&reply, src);
     if (ta_registry_post(o->reply_to, &reply) == 0) {
         st->replies_posted++;
     }
 }
 
-static void maybe_reply(ta_controller_stats_t *st, const ta_event_t *ev,
-                        ta_event_type_t done_type, const char *src) {
+static void origin_from_reply(ta_origin_t *o, const char *reply_to,
+                              ta_event_type_t reply_type,
+                              ta_session_id_t session) {
+    memset(o, 0, sizeof(*o));
+    if (reply_to != NULL && reply_to[0] != '\0') {
+        memcpy(o->reply_to, reply_to, TA_NAME_MAX);
+    }
+    o->reply_type = reply_type;
+    o->session_id = session;
+}
+
+static void maybe_reply_toggle(ta_controller_stats_t *st,
+                               const ta_event_envelope_t *env, const char *src) {
     ta_origin_t o;
 
-    origin_from(&o, ev);
-    origin_reply(st, &o, done_type, src);
+    origin_from_reply(&o, env->event.u.ctrl_toggle.reply_to, TA_EV_CTRL_TOGGLE,
+                      env->session_id);
+    origin_reply(st, &o, TA_EV_CTRL_TOGGLE, src);
+}
+
+static void maybe_reply_active(ta_controller_stats_t *st,
+                               const ta_event_envelope_t *env, const char *src) {
+    ta_origin_t o;
+
+    origin_from_reply(&o, env->event.u.ctrl_set_active.reply_to,
+                      TA_EV_CTRL_SET_ACTIVE, env->session_id);
+    origin_reply(st, &o, TA_EV_CTRL_SET_ACTIVE, src);
+}
+
+static void maybe_reply_volume(ta_controller_stats_t *st,
+                               const ta_event_envelope_t *env, const char *src) {
+    ta_origin_t o;
+
+    origin_from_reply(&o, env->event.u.ctrl_volume.reply_to, TA_EV_CTRL_VOLUME,
+                      env->session_id);
+    origin_reply(st, &o, TA_EV_CTRL_VOLUME, src);
 }
 
 /* ---- MPDController ---------------------------------------------------- */
@@ -123,16 +147,15 @@ static int clamp_vol(int v) {
 /* Post NET_SET with reply_to=MPDController; mark in flight. Note that Net
  * may complete synchronously (host stub), so in-flight is set BEFORE post
  * and the DONE handler clears it. */
-static int mpd_post_set(const uint8_t *pl, size_t len,
+static int mpd_post_set(uint8_t op, ta_volume_t volume,
                         const ta_origin_t *origin) {
-    ta_event_t out;
+    ta_event_envelope_t out;
 
-    ta_event_clear(&out);
-    out.type = TA_EV_NET_SET;
+    ta_env_clear(&out);
+    out.event.type = TA_EV_NET_SET;
     out.session_id = g_mpd.session;
-    (void)ta_event_set_src(&out, TA_MPD_NAME);
-    (void)ta_event_set_reply(&out, TA_MPD_NAME, TA_EV_NET_SET_DONE);
-    (void)ta_event_set_payload(&out, pl, len);
+    (void)ta_env_set_src(&out, TA_MPD_NAME);
+    (void)ta_event_set_net_set(&out.event, TA_MPD_NAME, op, volume);
     g_mpd.set_inflight = 1;
     g_mpd.inflight_origin = *origin;
     if (ta_registry_post(TA_NET_NAME, &out) != 0) {
@@ -145,28 +168,22 @@ static int mpd_post_set(const uint8_t *pl, size_t len,
 }
 
 static int mpd_post_toggle(const ta_origin_t *origin) {
-    uint8_t pl[1];
-
-    pl[0] = (uint8_t)TA_NET_SET_OP_TOGGLE;
-    return mpd_post_set(pl, 1, origin);
+    return mpd_post_set((uint8_t)TA_NET_SET_OP_TOGGLE, 0, origin);
 }
 
 static int mpd_post_volume(const ta_origin_t *origin) {
-    uint8_t pl[2];
-
-    pl[0] = (uint8_t)TA_NET_SET_OP_VOLUME;
-    pl[1] = (uint8_t)g_mpd.volume;
-    return mpd_post_set(pl, 2, origin);
+    return mpd_post_set((uint8_t)TA_NET_SET_OP_VOLUME, (ta_volume_t)g_mpd.volume,
+                        origin);
 }
 
 static int mpd_post_poll(void) {
-    ta_event_t out;
+    ta_event_envelope_t out;
 
-    ta_event_clear(&out);
-    out.type = TA_EV_NET_POLL;
+    ta_env_clear(&out);
+    out.event.type = TA_EV_NET_POLL;
     out.session_id = g_mpd.session;
-    (void)ta_event_set_src(&out, TA_MPD_NAME);
-    (void)ta_event_set_reply(&out, TA_MPD_NAME, TA_EV_NET_POLL_DONE);
+    (void)ta_env_set_src(&out, TA_MPD_NAME);
+    (void)ta_event_set_net_poll_playerstate(&out.event, TA_MPD_NAME);
     g_mpd.poll_inflight = 1;
     if (ta_registry_post(TA_NET_NAME, &out) != 0) {
         g_mpd.poll_inflight = 0;
@@ -196,43 +213,41 @@ static void mpd_flush_or_poll(void) {
     }
 }
 
-static int mpd_handle(const ta_event_t *ev) {
+static int mpd_handle(const ta_event_envelope_t *env) {
     ta_controller_stats_t *st = &g_mpd.st;
-    ta_event_t out;
+    ta_event_envelope_t out;
     ta_origin_t origin;
 
-    if (ev == NULL) {
+    if (env == NULL) {
         return -1;
     }
-    switch (ev->type) {
+    switch (env->event.type) {
     case TA_EV_CTRL_SET_ACTIVE:
         st->set_active++;
         st->handled++;
-        g_mpd.session = ev->session_id;
-        ta_event_clear(&out);
-        out.type = TA_EV_DRAW_SET_SHAPE_STACK;
-        out.session_id = ev->session_id;
-        (void)ta_event_set_src(&out, TA_MPD_NAME);
+        g_mpd.session = env->session_id;
+        ta_env_clear(&out);
+        out.event.type = TA_EV_DRAW_SET_SHAPE_STACK;
+        out.session_id = env->session_id;
+        (void)ta_env_set_src(&out, TA_MPD_NAME);
         (void)ta_registry_post(TA_DRAW_NAME, &out);
-        ta_event_clear(&out);
-        out.type = TA_EV_NET_SET_DIALECT;
-        out.session_id = ev->session_id;
-        (void)ta_event_set_src(&out, TA_MPD_NAME);
+        ta_env_clear(&out);
+        out.event.type = TA_EV_NET_SET_DIALECT;
+        out.session_id = env->session_id;
+        (void)ta_env_set_src(&out, TA_MPD_NAME);
         (void)ta_registry_post(TA_NET_NAME, &out);
         /* Poll cadence: Scheduler -> CTRL_POLL -> NET_POLL. Missing
          * Scheduler (unit tests) is not an error here. */
-        (void)ta_sched_arm_periodic(TA_MPD_NAME, ev->session_id,
+        (void)ta_sched_arm_periodic(TA_MPD_NAME, env->session_id,
                                     TA_MPD_POLL_MS, TA_EV_CTRL_POLL);
-        maybe_reply(st, ev, TA_EV_CTRL_SET_ACTIVE, TA_MPD_NAME);
+        maybe_reply_active(st, env, TA_MPD_NAME);
         return 0;
     case TA_EV_CTRL_TOGGLE:
         st->toggle++;
         st->handled++;
-        g_mpd.session = ev->session_id;
-        origin_from(&origin, ev);
-        if (origin.reply_type == 0) {
-            origin.reply_type = TA_EV_CTRL_TOGGLE;
-        }
+        g_mpd.session = env->session_id;
+        origin_from_reply(&origin, env->event.u.ctrl_toggle.reply_to,
+                          TA_EV_CTRL_TOGGLE, env->session_id);
         /* Optimistic flip so the transport glyph answers the tap; the
          * settled POLL corrects it. */
         if (g_mpd.playing != TA_NET_STATUS_UNKNOWN) {
@@ -248,20 +263,18 @@ static int mpd_handle(const ta_event_t *ev) {
         return mpd_post_toggle(&origin);
     case TA_EV_CTRL_VOLUME: {
         int before = g_mpd.volume;
+        const ta_ctrl_volume_t *vol = &env->event.u.ctrl_volume;
 
         st->volume++;
         st->handled++;
-        g_mpd.session = ev->session_id;
-        if (ev->payload_len == 1) {
-            g_mpd.volume = clamp_vol(before + (int)(int8_t)ev->payload[0]);
-        } else if (ev->payload_len >= 2 &&
-                   ev->payload[0] == TA_CTRL_VOL_ABS) {
-            g_mpd.volume = clamp_vol((int)ev->payload[1]);
+        g_mpd.session = env->session_id;
+        if (vol->mode == TA_CTRL_VOL_REL) {
+            g_mpd.volume = clamp_vol(before + (int)vol->delta);
+        } else if (vol->mode == TA_CTRL_VOL_ABS) {
+            g_mpd.volume = clamp_vol((int)vol->absolute);
         }
-        origin_from(&origin, ev);
-        if (origin.reply_type == 0) {
-            origin.reply_type = TA_EV_CTRL_VOLUME;
-        }
+        origin_from_reply(&origin, vol->reply_to, TA_EV_CTRL_VOLUME,
+                          env->session_id);
         if (g_mpd.volume == before) {
             /* Touch on chrome or no-op step: nothing for Net. */
             origin_reply(st, &origin, TA_EV_CTRL_VOLUME, TA_MPD_NAME);
@@ -294,27 +307,26 @@ static int mpd_handle(const ta_event_t *ev) {
         mpd_flush_or_poll();
         return 0;
     }
-    case TA_EV_NET_POLL_DONE:
+    case TA_EV_NET_POLL_DONE: {
+        const ta_coord_inform_playerstate_t *stt =
+            &env->event.u.coord_inform_playerstate;
+
         st->poll_done++;
         st->handled++;
         g_mpd.poll_inflight = 0;
-        if (ev->payload_len >= TA_NET_STATUS_LEN) {
-            uint8_t vol = ev->payload[TA_NET_STATUS_VOLUME];
-            uint8_t playing = ev->payload[TA_NET_STATUS_PLAYING];
-
-            if (vol != TA_NET_STATUS_UNKNOWN) {
-                g_mpd.polled = vol > 100 ? 100 : vol;
-                /* Nothing pending from the knob: follow the player. */
-                if (!g_mpd.set_inflight && !g_mpd.vol_dirty) {
-                    g_mpd.volume = (int)g_mpd.polled;
-                }
+        if (stt->volume != TA_NET_STATUS_UNKNOWN) {
+            g_mpd.polled = stt->volume > 100 ? 100 : stt->volume;
+            /* Nothing pending from the knob: follow the player. */
+            if (!g_mpd.set_inflight && !g_mpd.vol_dirty) {
+                g_mpd.volume = (int)g_mpd.polled;
             }
-            if (playing != TA_NET_STATUS_UNKNOWN) {
-                g_mpd.playing = playing ? 1 : 0;
-            }
+        }
+        if (stt->playing != TA_NET_STATUS_UNKNOWN) {
+            g_mpd.playing = stt->playing ? 1 : 0;
         }
         mpd_post_status();
         return 0;
+    }
     case TA_EV_CTRL_NEXT:
         st->next++;
         st->handled++;
@@ -331,27 +343,27 @@ static int mpd_handle(const ta_event_t *ev) {
 
 /* ---- SonosController (stub: counts + echo) ----------------------------- */
 
-static int sonos_handle(const ta_event_t *ev) {
+static int sonos_handle(const ta_event_envelope_t *env) {
     ta_controller_stats_t *st = &g_sonos;
 
-    if (ev == NULL) {
+    if (env == NULL) {
         return -1;
     }
-    switch (ev->type) {
+    switch (env->event.type) {
     case TA_EV_CTRL_SET_ACTIVE:
         st->set_active++;
         st->handled++;
-        maybe_reply(st, ev, TA_EV_CTRL_SET_ACTIVE, TA_SONOS_NAME);
+        maybe_reply_active(st, env, TA_SONOS_NAME);
         return 0;
     case TA_EV_CTRL_TOGGLE:
         st->toggle++;
         st->handled++;
-        maybe_reply(st, ev, TA_EV_CTRL_TOGGLE, TA_SONOS_NAME);
+        maybe_reply_toggle(st, env, TA_SONOS_NAME);
         return 0;
     case TA_EV_CTRL_VOLUME:
         st->volume++;
         st->handled++;
-        maybe_reply(st, ev, TA_EV_CTRL_VOLUME, TA_SONOS_NAME);
+        maybe_reply_volume(st, env, TA_SONOS_NAME);
         return 0;
     case TA_EV_CTRL_NEXT:
         st->next++;
@@ -367,12 +379,12 @@ static int sonos_handle(const ta_event_t *ev) {
     }
 }
 
-int ta_mpd_enqueue(const ta_event_t *ev) {
-    return mpd_handle(ev);
+int ta_mpd_enqueue(const ta_event_envelope_t *env) {
+    return mpd_handle(env);
 }
 
-int ta_sonos_enqueue(const ta_event_t *ev) {
-    return sonos_handle(ev);
+int ta_sonos_enqueue(const ta_event_envelope_t *env) {
+    return sonos_handle(env);
 }
 
 void ta_mpd_start(void) {

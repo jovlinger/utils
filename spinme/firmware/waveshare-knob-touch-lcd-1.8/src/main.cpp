@@ -74,14 +74,13 @@ struct DecodeJob {
 };
 
 static void post_base_dirty(void) {
-  ta_event_t ev;
-  uint8_t pl[1] = {TA_DRAW_UPD_BASE_DIRTY};
-  ta_event_clear(&ev);
-  ev.type = TA_EV_DRAW_UPDATE;
-  ev.session_id = 1;
-  (void)ta_event_set_src(&ev, "albumart");
-  (void)ta_event_set_payload(&ev, pl, 1);
-  (void)ta_registry_post(TA_DRAW_NAME, &ev); /* MP/SC queue push */
+  ta_event_envelope_t env;
+  ta_env_clear(&env);
+  env.event.type = TA_EV_DRAW_UPDATE;
+  env.session_id = 1;
+  (void)ta_env_set_src(&env, "albumart");
+  env.event.u.draw_update.kind = (uint8_t)TA_DRAW_UPD_BASE_DIRTY;
+  (void)ta_registry_post(TA_DRAW_NAME, &env); /* MP/SC queue push */
   notify_draw();
 }
 

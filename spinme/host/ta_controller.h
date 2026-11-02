@@ -23,14 +23,13 @@ extern "C" {
 #endif
 
 /*
- * CTRL_VOLUME payload:
- *   len 0 : touch on volume chrome; no Net traffic (model unchanged).
- *   len 1 : i8 relative steps (rotary); model += steps, clamped 0..100.
- *   len 2 : [TA_CTRL_VOL_ABS, level] absolute 0..100.
- * Any change posts NET_SET [VOLUME, level]; while a SET is in flight the
- * latest level is coalesced and sent on SET_DONE.
+ * CTRL_VOLUME (ta_ctrl_volume_t):
+ *   mode NONE : touch on volume chrome; no Net traffic.
+ *   mode REL  : model += delta, clamped 0..100.
+ *   mode ABS  : model = absolute 0..100.
+ * Any change posts NET_SET volume; while a SET is in flight the latest
+ * level is coalesced and sent on SET_DONE.
  */
-#define TA_CTRL_VOL_ABS 0x01u
 
 typedef struct ta_controller_stats {
     unsigned handled;
@@ -53,7 +52,7 @@ typedef struct ta_controller_stats {
 
 void ta_mpd_reset(void);
 void ta_mpd_start(void);
-int ta_mpd_enqueue(const ta_event_t *ev);
+int ta_mpd_enqueue(const ta_event_envelope_t *env);
 const ta_controller_stats_t *ta_mpd_stats(void);
 /* Current volume model (0..100). */
 int ta_mpd_volume(void);
@@ -66,7 +65,7 @@ int ta_mpd_poll_inflight(void);
 
 void ta_sonos_reset(void);
 void ta_sonos_start(void);
-int ta_sonos_enqueue(const ta_event_t *ev);
+int ta_sonos_enqueue(const ta_event_envelope_t *env);
 const ta_controller_stats_t *ta_sonos_stats(void);
 
 

@@ -104,12 +104,12 @@ ta_enqueue_fn ta_registry_lookup(const char *name) {
     return fn;
 }
 
-int ta_registry_post(const char *name, const ta_event_t *ev) {
+int ta_registry_post(const char *name, const ta_event_envelope_t *env) {
     ta_enqueue_fn fn;
 
     fn = ta_registry_lookup(name);
-    if (fn == NULL || ev == NULL) {
+    if (fn == NULL || env == NULL) {
         return -1;
     }
-    return fn(ev);
+    return fn(env);
 }

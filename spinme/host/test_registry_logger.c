@@ -22,8 +22,8 @@ static int checks;
 
 static int g_other_started;
 
-static int other_enqueue(const ta_event_t *ev) {
-    (void)ev;
+static int other_enqueue(const ta_event_envelope_t *env) {
+    (void)env;
     return 0;
 }
 

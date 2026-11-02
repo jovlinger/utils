@@ -48,37 +48,37 @@ int ta_react_touch(const ta_follow_chrome_t *chrome, uint16_t x, uint16_t y,
                    ta_session_id_t session, const uint16_t *shape_w,
                    const uint16_t *shape_h) {
     ta_hit_role_t role;
-    ta_event_t ev;
+    ta_event_envelope_t env;
 
     role = ta_hit_walk(chrome, (int)x, (int)y, shape_w, shape_h);
     if (role == TA_HIT_NONE) {
         return 1;
     }
-    ta_event_clear(&ev);
-    ev.session_id = session;
-    (void)ta_event_set_src(&ev, TA_DRAW_NAME);
+    ta_env_clear(&env);
+    env.session_id = session;
+    (void)ta_env_set_src(&env, TA_DRAW_NAME);
     if (role == TA_HIT_TRANSPORT) {
-        ev.type = TA_EV_CTRL_TOGGLE;
+        env.event.type = TA_EV_CTRL_TOGGLE;
     } else {
-        ev.type = TA_EV_CTRL_VOLUME;
+        env.event.type = TA_EV_CTRL_VOLUME;
+        env.event.u.ctrl_volume.mode = (uint8_t)TA_CTRL_VOL_NONE;
     }
-    if (ta_registry_post(TA_CONTROLLER_NAME, &ev) != 0) {
+    if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
         return -1;
     }
     return 0;
 }
 
 int ta_react_rotate(int8_t steps, ta_session_id_t session) {
-    ta_event_t ev;
-    uint8_t pl[1];
+    ta_event_envelope_t env;
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_CTRL_VOLUME;
-    ev.session_id = session;
-    (void)ta_event_set_src(&ev, TA_DRAW_NAME);
-    pl[0] = (uint8_t)steps;
-    (void)ta_event_set_payload(&ev, pl, 1);
-    if (ta_registry_post(TA_CONTROLLER_NAME, &ev) != 0) {
+    ta_env_clear(&env);
+    env.event.type = TA_EV_CTRL_VOLUME;
+    env.session_id = session;
+    (void)ta_env_set_src(&env, TA_DRAW_NAME);
+    env.event.u.ctrl_volume.mode = (uint8_t)TA_CTRL_VOL_REL;
+    env.event.u.ctrl_volume.delta = steps;
+    if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
         return -1;
     }
     return 0;

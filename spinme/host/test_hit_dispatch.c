@@ -27,7 +27,7 @@ int main(void) {
     uint16_t sw[TA_FOLLOW_N];
     uint16_t sh[TA_FOLLOW_N];
     size_t i;
-    ta_event_t route;
+    ta_event_envelope_t route;
 
     for (i = 0; i < TA_FOLLOW_N; i++) {
         sw[i] = 40;
@@ -42,10 +42,10 @@ int main(void) {
     ta_mpd_start();
     ta_net_start(); /* MPD now posts NET_SET; stub Net replies at once */
 
-    ta_event_clear(&route);
-    route.type = TA_EV_SET_ROUTE;
-    (void)ta_event_set_src(&route, "Config");
-    (void)ta_event_set_payload(&route, TA_MPD_NAME, strlen(TA_MPD_NAME));
+    ta_env_clear(&route);
+    route.event.type = TA_EV_SET_ROUTE;
+    (void)ta_env_set_src(&route, "Config");
+    (void)ta_event_set_ctrl_set_route(&route.event, TA_MPD_NAME);
     CHECK(ta_registry_post(TA_CONTROLLER_NAME, &route) == 0);
 
     CHECK(ta_follow_chrome_build(&chrome, shapes) == 0);

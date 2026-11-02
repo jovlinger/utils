@@ -9,7 +9,7 @@
 #define TA_LOGGER_QCAP 16
 #define TA_LOG_SEV_MAX 8
 
-static ta_event_t g_slots[TA_LOGGER_QCAP];
+static ta_event_envelope_t g_slots[TA_LOGGER_QCAP];
 static ta_queue_t g_q;
 static int g_q_ok;
 static ta_log_policy_t g_policy[TA_LOG_SEV_MAX];
@@ -41,43 +41,35 @@ ta_log_policy_t ta_logger_policy(uint8_t severity) {
     return g_policy[severity];
 }
 
-int ta_logger_enqueue(const ta_event_t *ev) {
-    if (!g_q_ok || ev == NULL) {
+int ta_logger_enqueue(const ta_event_envelope_t *env) {
+    if (!g_q_ok || env == NULL) {
         return -1;
     }
-    return ta_queue_push(&g_q, ev);
+    return ta_queue_push(&g_q, env);
 }
 
-static void apply_policy(const ta_event_t *ev) {
+static void apply_policy(const ta_event_envelope_t *env) {
     uint8_t sev;
     char prefix[48];
     const char *text;
-    size_t text_len;
+    const ta_log_emit_line_t *line;
 
     g_stats.accepted++;
-    sev = 0;
-    text = "";
-    text_len = 0;
-    if (ev->payload_len >= 1) {
-        sev = ev->payload[0];
-    }
-    if (ev->payload_len >= 3) {
-        text = (const char *)&ev->payload[2];
-        text_len = (size_t)(ev->payload_len - 2);
-    }
+    line = &env->event.u.log_emit_line;
+    sev = line->severity;
+    text = line->text;
 
-    ta_log_prefix(prefix, sizeof(prefix), 0, ev->session_id, ev->src);
+    ta_log_prefix(prefix, sizeof(prefix), env->enqueue_time_ms, env->session_id,
+                  env->src);
 
     switch (ta_logger_policy(sev)) {
     case TA_LOG_POLICY_NVM:
-        /* Stub: count only until KV exists. */
         g_stats.nvm++;
         (void)text;
-        (void)text_len;
         break;
     case TA_LOG_POLICY_EXTERNAL:
         g_stats.external++;
-        fprintf(stderr, "%s %.*s\n", prefix, (int)text_len, text);
+        fprintf(stderr, "%s %s\n", prefix, text);
         break;
     case TA_LOG_POLICY_DROP:
     default:
@@ -88,16 +80,16 @@ static void apply_policy(const ta_event_t *ev) {
 
 size_t ta_logger_drain(size_t max) {
     size_t n = 0;
-    ta_event_t ev;
+    ta_event_envelope_t env;
 
     if (!g_q_ok) {
         return 0;
     }
     while (n < max) {
-        if (ta_queue_try_peek(&g_q, &ev) != 0) {
+        if (ta_queue_try_peek(&g_q, &env) != 0) {
             break;
         }
-        apply_policy(&ev);
+        apply_policy(&env);
         ta_queue_pop(&g_q);
         n++;
     }
@@ -120,33 +112,25 @@ void ta_logger_start(void) {
 
 int ta_logger_emit(ta_session_id_t session, const char *src, uint8_t severity,
                    uint8_t tag, const char *text) {
-    ta_event_t ev;
-    uint8_t buf[TA_PAYLOAD_MAX];
+    ta_event_envelope_t env;
     size_t tlen;
-    size_t need;
 
-    ta_event_clear(&ev);
-    ev.type = TA_EV_LOG;
-    ev.session_id = session;
-    if (ta_event_set_src(&ev, src != NULL ? src : "?") != 0) {
+    ta_env_clear(&env);
+    env.session_id = session;
+    env.event.type = TA_EV_LOG;
+    if (ta_env_set_src(&env, src != NULL ? src : "?") != 0) {
         return -1;
     }
     if (text == NULL) {
         text = "";
     }
     tlen = strlen(text);
-    need = 2 + tlen;
-    if (need > TA_PAYLOAD_MAX) {
-        tlen = TA_PAYLOAD_MAX - 2;
-        need = TA_PAYLOAD_MAX;
+    if (tlen > TA_LOG_TEXT_MAX) {
+        tlen = TA_LOG_TEXT_MAX;
     }
-    buf[0] = severity;
-    buf[1] = tag;
-    if (tlen > 0) {
-        memcpy(buf + 2, text, tlen);
-    }
-    if (ta_event_set_payload(&ev, buf, need) != 0) {
-        return -1;
-    }
-    return ta_registry_post(TA_LOGGER_NAME, &ev);
+    env.event.u.log_emit_line.severity = severity;
+    env.event.u.log_emit_line.tag = tag;
+    memcpy(env.event.u.log_emit_line.text, text, tlen);
+    env.event.u.log_emit_line.text[tlen] = '\0';
+    return ta_registry_post(TA_LOGGER_NAME, &env);
 }

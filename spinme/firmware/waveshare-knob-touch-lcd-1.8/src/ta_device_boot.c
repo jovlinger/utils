@@ -27,7 +27,7 @@ static TaskHandle_t g_fabric_task;
  * activation posts below so DRAW_SET_SHAPE_STACK waits for the glass glue. */
 #define TA_DRAW_QUEUE_CAP 32
 #define TA_DEVICE_SCROLL_MS 40
-static ta_event_t g_draw_slots[TA_DRAW_QUEUE_CAP];
+static ta_event_envelope_t g_draw_slots[TA_DRAW_QUEUE_CAP];
 static ta_queue_t g_draw_q;
 
 ta_queue_t *ta_device_draw_queue(void) {
@@ -98,21 +98,21 @@ void ta_device_boot(void) {
      * advances via ta_device_tick_ms from the Draw task, so the first
      * poll fires after Net is bound to player_http. */
     {
-        ta_event_t ev;
+        ta_event_envelope_t env;
 
-        ta_event_clear(&ev);
-        ev.type = TA_EV_SET_ROUTE;
-        ev.session_id = 1;
-        (void)ta_event_set_src(&ev, "Init");
-        (void)ta_event_set_payload(&ev, TA_MPD_NAME, strlen(TA_MPD_NAME));
-        if (ta_registry_post(TA_CONTROLLER_NAME, &ev) != 0) {
+        ta_env_clear(&env);
+        env.event.type = TA_EV_SET_ROUTE;
+        env.session_id = 1;
+        (void)ta_env_set_src(&env, "Init");
+        (void)ta_event_set_ctrl_set_route(&env.event, TA_MPD_NAME);
+        if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
             ESP_LOGE(TAG, "set route fail");
         }
-        ta_event_clear(&ev);
-        ev.type = TA_EV_CTRL_SET_ACTIVE;
-        ev.session_id = 1;
-        (void)ta_event_set_src(&ev, "Init");
-        if (ta_registry_post(TA_CONTROLLER_NAME, &ev) != 0) {
+        ta_env_clear(&env);
+        env.event.type = TA_EV_CTRL_SET_ACTIVE;
+        env.session_id = 1;
+        (void)ta_env_set_src(&env, "Init");
+        if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
             ESP_LOGE(TAG, "set active fail");
         }
         /* Draw cadences: 1 Hz clock/idle tick, title scroll step. */

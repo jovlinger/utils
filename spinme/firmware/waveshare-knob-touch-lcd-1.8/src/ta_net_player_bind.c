@@ -91,18 +91,19 @@ static void on_getstate_ok(void) {
             if (ta_artwork_path_looks_default(snap->albumart)) {
                 printf("albumart skip default path\n");
             } else {
-                ta_event_t ev;
+                ta_event_envelope_t env;
                 size_t n = strlen(snap->albumart);
 
-                if (n > TA_PAYLOAD_MAX) {
-                    n = TA_PAYLOAD_MAX;
+                if (n >= TA_PATH_MAX) {
+                    n = TA_PATH_MAX - 1u;
                 }
-                ta_event_clear(&ev);
-                ev.type = TA_EV_NET_ALBUMART;
-                ev.session_id = 1;
-                (void)ta_event_set_src(&ev, TA_NET_NAME);
-                (void)ta_event_set_payload(&ev, snap->albumart, n);
-                (void)ta_registry_post(TA_NET_NAME, &ev);
+                ta_env_clear(&env);
+                env.event.type = TA_EV_NET_ALBUMART;
+                env.session_id = 1;
+                (void)ta_env_set_src(&env, TA_NET_NAME);
+                memcpy(env.event.u.net_fetch_albumart.path, snap->albumart, n);
+                env.event.u.net_fetch_albumart.path[n] = '\0';
+                (void)ta_registry_post(TA_NET_NAME, &env);
             }
         }
     }

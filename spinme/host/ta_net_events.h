@@ -45,8 +45,8 @@ typedef struct ta_net_stats {
 
 void ta_net_reset(void);
 void ta_net_start(void);
-int ta_net_enqueue(const ta_event_t *ev);
-int ta_net_handle(const ta_event_t *ev);
+int ta_net_enqueue(const ta_event_envelope_t *env);
+int ta_net_handle(const ta_event_envelope_t *env);
 const ta_net_stats_t *ta_net_stats(void);
 
 

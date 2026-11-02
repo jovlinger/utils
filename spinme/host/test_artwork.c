@@ -25,15 +25,15 @@ static int checks;
 static int g_poll;
 static int g_upd;
 
-static int net_sink(const ta_event_t *ev) {
-    if (ev->type == TA_EV_NET_POLL) {
+static int net_sink(const ta_event_envelope_t *env) {
+    if (env->event.type == TA_EV_NET_POLL) {
         g_poll++;
     }
     return 0;
 }
 
-static int draw_sink(const ta_event_t *ev) {
-    if (ev->type == TA_EV_DRAW_UPDATE) {
+static int draw_sink(const ta_event_envelope_t *env) {
+    if (env->event.type == TA_EV_DRAW_UPDATE) {
         g_upd++;
     }
     return 0;

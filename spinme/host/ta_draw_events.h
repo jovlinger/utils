@@ -30,21 +30,12 @@ enum {
     TA_EV_DRAW_PAINT_DONE = 0x211
 };
 
-/*
- * DRAW_UPDATE payload[0] selects a definition update; empty payload is the
- * clock/idle cadence tick.
- *   TA_DRAW_UPD_STATUS: [1][polled u8][desired u8][playing u8]; 0xFF = keep.
- *   TA_DRAW_UPD_BASE_DIRTY: [2] base pixels changed (albumart decoded).
- */
-enum {
-    TA_DRAW_UPD_STATUS = 1,
-    TA_DRAW_UPD_BASE_DIRTY = 2
-};
+/* DRAW_UPDATE kinds live in ta_event.h (TA_DRAW_UPD_*). */
 
 /* DRAW_SET_TEXT flags. A string arrives as FIRST .. LAST chunks. */
 #define TA_DRAW_TEXT_FIRST 0x01u
 #define TA_DRAW_TEXT_LAST 0x02u
-#define TA_DRAW_TEXT_CHUNK (TA_PAYLOAD_MAX - 2u)
+#define TA_DRAW_TEXT_CHUNK TA_DRAW_TEXT_CHUNK_MAX
 
 typedef struct ta_draw_stats {
     unsigned handled;
@@ -65,9 +56,9 @@ typedef struct ta_draw_stats {
 void ta_draw_reset(void);
 void ta_draw_start(void);
 /* Registry enqueue: queue push when bound, else synchronous dispatch. */
-int ta_draw_enqueue(const ta_event_t *ev);
+int ta_draw_enqueue(const ta_event_envelope_t *env);
 /* Dispatch one event on the Draw task (also used by enqueue when unbound). */
-int ta_draw_handle(const ta_event_t *ev);
+int ta_draw_handle(const ta_event_envelope_t *env);
 const ta_draw_stats_t *ta_draw_stats(void);
 
 /* Bind Draw's MP/SC queue (device: the Draw task consumes it). NULL unbinds. */
