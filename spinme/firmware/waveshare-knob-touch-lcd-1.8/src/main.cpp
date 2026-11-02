@@ -17,12 +17,14 @@
 #include "panel_io.h"
 #include "player_http.h"
 #include "rom_jpeg.h"
+#include "ta_controller.h"
 #include "ta_device_boot.h"
 #include "ta_event.h"
 #include "ta_net_backend.h"
 #include "ta_net_events.h"
 #include "ta_net_player_bind.h"
 #include "ta_registry.h"
+#include "ta_router.h"
 
 extern "C" {
 #include "uimk2_blit.h"
@@ -190,38 +192,29 @@ static void albumart_decode_task(void *arg) {
   vTaskDelete(nullptr);
 }
 
-static int net_post_poll(void) {
+/* Transitional: uimk2 ring events become ControlEvents to the Controller
+ * Router; MPDController owns Net traffic and the poll cadence (Scheduler).
+ * Until Draw owns input this worker stands in as the ControlEvent producer. */
+static int ctrl_post_toggle(void) {
   ta_event_t ev;
   ta_event_clear(&ev);
-  ev.type = TA_EV_NET_POLL;
+  ev.type = TA_EV_CTRL_TOGGLE;
   ev.session_id = 1;
   (void)ta_event_set_src(&ev, "ta_worker");
-  return ta_registry_post(TA_NET_NAME, &ev);
+  return ta_registry_post(TA_CONTROLLER_NAME, &ev);
 }
 
-static int net_post_toggle(void) {
-  ta_event_t ev;
-  uint8_t pl[1];
-  ta_event_clear(&ev);
-  ev.type = TA_EV_NET_SET;
-  ev.session_id = 1;
-  (void)ta_event_set_src(&ev, "ta_worker");
-  pl[0] = (uint8_t)TA_NET_SET_OP_TOGGLE;
-  (void)ta_event_set_payload(&ev, pl, 1);
-  return ta_registry_post(TA_NET_NAME, &ev);
-}
-
-static int net_post_volume(int volume) {
+static int ctrl_post_volume_abs(int volume) {
   ta_event_t ev;
   uint8_t pl[2];
   ta_event_clear(&ev);
-  ev.type = TA_EV_NET_SET;
+  ev.type = TA_EV_CTRL_VOLUME;
   ev.session_id = 1;
   (void)ta_event_set_src(&ev, "ta_worker");
-  pl[0] = (uint8_t)TA_NET_SET_OP_VOLUME;
+  pl[0] = (uint8_t)TA_CTRL_VOL_ABS;
   pl[1] = (uint8_t)volume;
   (void)ta_event_set_payload(&ev, pl, 2);
-  return ta_registry_post(TA_NET_NAME, &ev);
+  return ta_registry_post(TA_CONTROLLER_NAME, &ev);
 }
 
 static int net_post_albumart(const char *path) {
@@ -398,7 +391,6 @@ static void core_b_task(void *arg) {
       uint8_t sel = (uint8_t)UIMK2_EV_NONE;
       int desired_before = 0;
       int desired_after = 0;
-      bool more_volume = false;
       xSemaphoreTake(gMu, portMAX_DELAY);
       have = uimk2_ring_peek(&gRing) != nullptr;
       xSemaphoreGive(gMu);
@@ -416,42 +408,36 @@ static void core_b_task(void *arg) {
         stepped = uimk2_host_step(&gHost, now);
         desired_after = gHost.desired;
         gBacklight = gHost.backlight;
-        if (sel == (uint8_t)UIMK2_EV_VOLUME) {
-          const uimk2_event *next = uimk2_ring_peek(&gRing);
-          more_volume =
-              next != nullptr && next->selector == (uint8_t)UIMK2_EV_VOLUME;
-        }
       }
       xSemaphoreGive(gMu);
       if (!stepped) {
         break;
       }
-      /* Queue only -- never block on sockets here. */
-      if (sel == (uint8_t)UIMK2_EV_PLAYER_POLL) {
-        if (net_post_poll() != 0) {
-          Serial.println("player poll skipped: net/WIFI");
-        }
-      } else if (sel == (uint8_t)UIMK2_EV_TOGGLE) {
+      /* Queue only -- never block on sockets here. UIMK2_EV_PLAYER_POLL is
+       * no longer forwarded: the Scheduler cadence through MPDController
+       * drives NET_POLL. */
+      if (sel == (uint8_t)UIMK2_EV_TOGGLE) {
         paint_follow();
-        if (net_post_toggle() != 0) {
-          Serial.println("player toggle skipped: net/WIFI");
+        if (ctrl_post_toggle() != 0) {
+          Serial.println("player toggle skipped: controller");
         } else {
-          Serial.println("player toggle via Net");
+          Serial.println("player toggle via Controller");
         }
       } else if (sel == (uint8_t)UIMK2_EV_VOLUME) {
         if (desired_after != desired_before) {
           gVolumeSent = true;
-          if (!more_volume) {
-            if (net_post_volume(desired_after) != 0) {
-              Serial.printf("player volume skipped: net/WIFI (%d)\n",
-                            desired_after);
-            } else {
-              Serial.printf("player volume via Net %d\n", desired_after);
-            }
+          /* MPDController coalesces while a SET is in flight. */
+          if (ctrl_post_volume_abs(desired_after) != 0) {
+            Serial.printf("player volume skipped: controller (%d)\n",
+                          desired_after);
+          } else {
+            Serial.printf("player volume via Controller %d\n", desired_after);
           }
         }
       }
     }
+    /* Scheduler real time: this task is the only fabric runner. */
+    ta_device_tick_ms(millis());
     pump_player_http();
     if (player_http_busy()) {
       /* Keep waking while a socket op is in flight. */

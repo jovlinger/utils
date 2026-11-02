@@ -220,13 +220,29 @@ everything else is forwarded **intact** (including `reply_to` /
 
 **ControlEvents** (posted to `"Controller"`, consumed by MPD/Sonos):
 
-| Type | Value | Payload | Completion |
-|------|-------|---------|------------|
-| `TA_EV_CTRL_TOGGLE` | 0x400 | none | optional: reply with same type to `reply_to` (stub) |
-| `TA_EV_CTRL_VOLUME` | 0x401 | optional: `i8` steps in byte 0 (from rotate) | optional echo |
-| `TA_EV_CTRL_NEXT` | 0x402 | none | none in stub |
-| `TA_EV_CTRL_PREV` | 0x403 | none | none in stub |
-| `TA_EV_CTRL_SET_ACTIVE` | 0x404 | none | posts `DRAW_SET_SHAPE_STACK` + `NET_SET_DIALECT`; optional echo |
+| Type | Value | Payload | MPDController behaviour |
+|------|-------|---------|-------------------------|
+| `TA_EV_CTRL_TOGGLE` | 0x400 | none | posts `NET_SET [TOGGLE]` (reply_to=MPD); echoes to originator `reply_to` on `SET_DONE` |
+| `TA_EV_CTRL_VOLUME` | 0x401 | len 0: touch on chrome; len 1: `i8` steps (rotate); len 2: `[TA_CTRL_VOL_ABS, level]` | model 0..100 updated; change -> `NET_SET [VOLUME, level]`; unchanged -> echo only |
+| `TA_EV_CTRL_NEXT` | 0x402 | none | counted only |
+| `TA_EV_CTRL_PREV` | 0x403 | none | counted only |
+| `TA_EV_CTRL_SET_ACTIVE` | 0x404 | none | posts `DRAW_SET_SHAPE_STACK` + `NET_SET_DIALECT`; arms Scheduler periodic `CTRL_POLL` every `TA_MPD_POLL_MS` (2000); optional echo |
+| `TA_EV_CTRL_POLL` | 0x405 | none | posts `NET_POLL` (reply_to=MPD) unless one is in flight (counted as `polls_skipped`) |
+
+MPDController rules (`ta_controller.c`):
+
+- **One SET in flight.** A second TOGGLE / VOLUME while a `NET_SET` awaits
+  `SET_DONE` is coalesced: the volume model keeps moving, and on `SET_DONE`
+  the pending toggle (first) or the latest level (second) is sent as one
+  `NET_SET`. The latest originator's `reply_to` gets the echo.
+- **Settled -> refresh.** When `SET_DONE` arrives with nothing queued, MPD
+  posts one `NET_POLL` so chrome follows the player.
+- **session_id** of the ControlEvent is carried on every Net post and echo.
+- Controllers never touch `player_http`; the only Net path is the registry.
+- Volume model seeds at `TA_MPD_VOL_DEFAULT` (50) until an absolute set
+  (device path from uimk2 desired) or, later, a POLL_DONE status blob.
+
+`SonosController` stays a counting stub (no Net traffic).
 
 Names: `MPDController`, `SonosController`.
 
@@ -250,6 +266,7 @@ Convenience arms (post START):
 | `ta_sched_arm_clock_1hz(dst, session)` | `TA_EV_DRAW_UPDATE` | 1000 ms periodic |
 | `ta_sched_arm_scroll(dst, session, every_ms)` | `TA_EV_DRAW_SCROLL_OX` (+ i16 ox payload) | periodic |
 | `ta_sched_arm_oneshot(dst, session, delay, fire_type)` | caller-chosen | one-shot |
+| `ta_sched_arm_periodic(dst, session, every_ms, fire_type)` | caller-chosen (MPD uses `TA_EV_CTRL_POLL`) | periodic |
 
 Overdue policy: one fire, then `next = now + period` (no catch-up burst).
 16 slots; oneshots preferred front of table.
@@ -437,8 +454,10 @@ sequenceDiagram
   participant Net as Net
   participant Draw as Draw
 
-  Note over Sch: periodic or oneshot poll cadence
-  Sch->>Net: NET_POLL (reply_to=MPDController, reply_type=POLL_DONE)
+  Note over Sch: periodic CTRL_POLL armed by CTRL_SET_ACTIVE
+  Sch->>MPD: CTRL_POLL
+  MPD->>Net: NET_POLL (reply_to=MPDController, reply_type=POLL_DONE)
+  Note over MPD: skip tick if a poll is already in flight
   Net->>Net: wire status (dialect)
   Net->>MPD: NET_POLL_DONE (session_id echoed)
   MPD->>Draw: DRAW_UPDATE (chrome: clock/title/progress fields)
@@ -491,8 +510,10 @@ sequenceDiagram
   Draw->>Draw: hit_walk -> TRANSPORT
   Draw->>R: CTRL_TOGGLE
   R->>MPD: CTRL_TOGGLE
-  MPD->>Net: NET_SET (transport/playpause dialect bytes TBD)
-  Net-->>MPD: SET_DONE (if reply set)
+  MPD->>Net: NET_SET payload[0]=TOGGLE (reply_to=MPD)
+  Net-->>MPD: SET_DONE
+  MPD-->>Draw: CTRL_TOGGLE echo (if originator set reply_to)
+  MPD->>Net: NET_POLL (settled -> refresh)
   MPD->>Draw: DRAW_UPDATE (transport glyph) + PAINT
 ```
 
@@ -517,8 +538,10 @@ sequenceDiagram
     Draw->>R: CTRL_VOLUME
   end
   R->>MPD: CTRL_VOLUME
-  MPD->>Net: NET_SET (volume byte; MPD dialect coalesces)
+  MPD->>MPD: model += steps (or absolute), clamp 0..100
+  MPD->>Net: NET_SET [VOLUME, level] (one in flight; later moves coalesce)
   Net-->>MPD: SET_DONE
+  MPD->>Net: NET_SET [VOLUME, latest] if model moved meanwhile
   MPD->>Draw: DRAW_UPDATE (volume chrome)
 ```
 
@@ -538,6 +561,7 @@ sequenceDiagram
   R->>MPD: CTRL_SET_ACTIVE
   MPD->>Draw: DRAW_SET_SHAPE_STACK
   MPD->>Net: NET_SET_DIALECT
+  MPD->>Scheduler: SCHED_START periodic CTRL_POLL (TA_MPD_POLL_MS)
 ```
 
 ---

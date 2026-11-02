@@ -18,7 +18,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 .PHONY: test clean
 
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
-	$(BUILD)/test_input_isr
+	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -80,7 +80,7 @@ $(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
 
 HIT_SRCS := test_hit_dispatch.c ta_hit_dispatch.c ta_follow_chrome.c \
 	ta_controller.c ta_router.c ta_draw_events.c ta_net_events.c \
-	ta_registry.c ta_event.c ta_uilayout.c
+	ta_sched_events.c ta_registry.c ta_event.c ta_uilayout.c
 $(BUILD)/test_hit_dispatch: $(HIT_SRCS) ta_hit_dispatch.h ta_follow_chrome.h \
 		ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(HIT_SRCS) -lpthread
@@ -99,10 +99,17 @@ $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(ART_SRCS) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c ta_draw_events.c \
-	ta_net_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
-		ta_draw_events.h ta_net_events.h ta_registry.h ta_event.h | $(BUILD)
+		ta_draw_events.h ta_net_events.h ta_sched_events.h ta_registry.h \
+		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(CTRL_SRCS) -lpthread
+
+MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c ta_draw_events.c \
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+$(BUILD)/test_mpd_net: $(MPDNET_SRCS) ta_controller.h ta_router.h \
+		ta_net_events.h ta_net_backend.h ta_sched_events.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(MPDNET_SRCS) -lpthread
 
 GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \
 	ta_draw_phase2.c ta_under_image.c ta_shape_l2r.c ta_uilayout.c

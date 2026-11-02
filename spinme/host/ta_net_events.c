@@ -61,22 +61,32 @@ static void maybe_reply_immediate(const ta_event_t *ev, ta_event_type_t done) {
     post_done(ev->reply_to, ev->session_id, done);
 }
 
+/* Take the pending slot, clear it, then post: the DONE handler may issue a
+ * new request of the same class synchronously (MPD coalesced volume), and
+ * that new reply_to must survive this completion. */
+static void complete_slot(char *reply, ta_session_id_t *session,
+                          ta_event_type_t done_type) {
+    char to[TA_NAME_MAX];
+    ta_session_id_t sess = *session;
+
+    memcpy(to, reply, TA_NAME_MAX);
+    reply[0] = '\0';
+    post_done(to, sess, done_type);
+}
+
 void ta_net_backend_complete(int kind) {
     switch (kind) {
     case 1: /* poll ok */
     case 2: /* poll fail -- still DONE so Controllers unblock */
-        post_done(g_poll_reply, g_poll_session, TA_EV_NET_POLL_DONE);
-        g_poll_reply[0] = '\0';
+        complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE);
         break;
     case 3:
     case 4:
-        post_done(g_set_reply, g_set_session, TA_EV_NET_SET_DONE);
-        g_set_reply[0] = '\0';
+        complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE);
         break;
     case 5:
     case 6:
-        post_done(g_art_reply, g_art_session, TA_EV_NET_ALBUMART_DONE);
-        g_art_reply[0] = '\0';
+        complete_slot(g_art_reply, &g_art_session, TA_EV_NET_ALBUMART_DONE);
         break;
     default:
         break;
@@ -101,8 +111,7 @@ int ta_net_handle(const ta_event_t *ev) {
         }
         remember(g_poll_reply, &g_poll_session, ev);
         if (g_backend->request_poll() != 0) {
-            post_done(g_poll_reply, g_poll_session, TA_EV_NET_POLL_DONE);
-            g_poll_reply[0] = '\0';
+            complete_slot(g_poll_reply, &g_poll_session, TA_EV_NET_POLL_DONE);
         }
         return 0;
     case TA_EV_NET_SET:
@@ -132,8 +141,7 @@ int ta_net_handle(const ta_event_t *ev) {
                 rc = g_backend->request_volume((int)ev->payload[0]);
             }
             if (rc != 0) {
-                post_done(g_set_reply, g_set_session, TA_EV_NET_SET_DONE);
-                g_set_reply[0] = '\0';
+                complete_slot(g_set_reply, &g_set_session, TA_EV_NET_SET_DONE);
             }
         }
         return 0;
@@ -154,8 +162,8 @@ int ta_net_handle(const ta_event_t *ev) {
             memcpy(path, ev->payload, n);
             path[n] = '\0';
             if (g_backend->request_albumart(path, 512u * 1024u) != 0) {
-                post_done(g_art_reply, g_art_session, TA_EV_NET_ALBUMART_DONE);
-                g_art_reply[0] = '\0';
+                complete_slot(g_art_reply, &g_art_session,
+                              TA_EV_NET_ALBUMART_DONE);
             }
         }
         return 0;

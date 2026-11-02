@@ -29,7 +29,8 @@ enum {
     TA_EV_CTRL_VOLUME = 0x401,
     TA_EV_CTRL_NEXT = 0x402,
     TA_EV_CTRL_PREV = 0x403,
-    TA_EV_CTRL_SET_ACTIVE = 0x404
+    TA_EV_CTRL_SET_ACTIVE = 0x404,
+    TA_EV_CTRL_POLL = 0x405 /* poll-now tick (Scheduler cadence or ad hoc) */
 };
 
 typedef struct ta_net_stats {

@@ -37,8 +37,10 @@ int main(void) {
     ta_registry_reset();
     ta_router_reset();
     ta_mpd_reset();
+    ta_net_reset();
     ta_router_start();
     ta_mpd_start();
+    ta_net_start(); /* MPD now posts NET_SET; stub Net replies at once */
 
     ta_event_clear(&route);
     route.type = TA_EV_SET_ROUTE;
@@ -63,6 +65,8 @@ int main(void) {
 
     CHECK(ta_react_rotate(3, 9) == 0);
     CHECK(ta_mpd_stats()->volume == 1);
+    CHECK(ta_mpd_volume() == TA_MPD_VOL_DEFAULT + 3);
+    CHECK(ta_net_stats()->set == 2); /* toggle + volume reached Net */
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
