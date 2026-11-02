@@ -42,6 +42,12 @@ uint64_t ta_artwork_rgb_sumsq(const uint8_t *a, const uint8_t *b, size_t n_px);
 /* Returns 1 if fingerprint matches suppressed default art. */
 int ta_artwork_is_default(uint32_t fingerprint);
 
+/* Cheap FNV-1a over w/h + every 16th pixel RGB (alpha ignored). */
+uint32_t ta_artwork_fingerprint_rgba(const uint8_t *rgba, size_t w, size_t h);
+
+/* 1 if Volumio path looks like stock/busy/default cover (URL heuristic). */
+int ta_artwork_path_looks_default(const char *path);
+
 /*
  * On album change: arm Scheduler oneshots for proactive poll and
  * time-remaining refresh. dst receives NET_POLL / DRAW_UPDATE.

@@ -85,21 +85,25 @@ static void on_getstate_ok(void) {
         if (snap->albumart[0] != '\0' &&
             strncmp(snap->albumart, g_last_albumart,
                     sizeof g_last_albumart) != 0) {
-            ta_event_t ev;
-            size_t n = strlen(snap->albumart);
-
-            if (n > TA_PAYLOAD_MAX) {
-                n = TA_PAYLOAD_MAX;
-            }
             strncpy(g_last_albumart, snap->albumart,
                     sizeof g_last_albumart - 1u);
             g_last_albumart[sizeof g_last_albumart - 1u] = '\0';
-            ta_event_clear(&ev);
-            ev.type = TA_EV_NET_ALBUMART;
-            ev.session_id = 1;
-            (void)ta_event_set_src(&ev, TA_NET_NAME);
-            (void)ta_event_set_payload(&ev, snap->albumart, n);
-            (void)ta_registry_post(TA_NET_NAME, &ev);
+            if (ta_artwork_path_looks_default(snap->albumart)) {
+                printf("albumart skip default path\n");
+            } else {
+                ta_event_t ev;
+                size_t n = strlen(snap->albumart);
+
+                if (n > TA_PAYLOAD_MAX) {
+                    n = TA_PAYLOAD_MAX;
+                }
+                ta_event_clear(&ev);
+                ev.type = TA_EV_NET_ALBUMART;
+                ev.session_id = 1;
+                (void)ta_event_set_src(&ev, TA_NET_NAME);
+                (void)ta_event_set_payload(&ev, snap->albumart, n);
+                (void)ta_registry_post(TA_NET_NAME, &ev);
+            }
         }
     }
     ta_net_backend_complete_ex(1, status, sizeof status);

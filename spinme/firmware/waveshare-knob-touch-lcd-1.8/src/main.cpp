@@ -28,6 +28,7 @@
 #include "panel_io.h"
 #include "player_http.h"
 #include "rom_jpeg.h"
+#include "ta_artwork.h"
 #include "ta_controller.h"
 #include "ta_device_boot.h"
 #include "ta_draw_events.h"
@@ -63,7 +64,7 @@ static void notify_draw(void) {
   }
 }
 
-/* ---- albumart decode glue (000b moves this behind Net/Draw artwork) ---- */
+/* ---- albumart: JPEG -> calm Q8 RGBA -> pack66 base Shape ---- */
 
 static volatile bool gDecodeBusy = false;
 
@@ -88,6 +89,8 @@ static void albumart_decode_task(void *arg) {
   DecodeJob *job = static_cast<DecodeJob *>(arg);
   uint8_t *rgba = ta_glass_device_rgba_scratch();
   RomJpegInfo ji;
+  uint32_t fp;
+  uint32_t calm_ms;
   if (job == nullptr) {
     gDecodeBusy = false;
     vTaskDelete(nullptr);
@@ -101,14 +104,25 @@ static void albumart_decode_task(void *arg) {
     Serial.printf("albumart romjpeg fail prep=%d decomp=%d ms=%u\n",
                   ji.jd_prepare, ji.jd_decomp, (unsigned)ji.decode_ms);
   } else {
-    ta_glass_device_base_from_rgba(rgba);
-    post_base_dirty();
-    Serial.printf(
-        "albumart romjpeg ok src=%ux%u via=%ux%u scale=1/%u "
-        "dst=%ux%u decode_ms=%u\n",
-        (unsigned)ji.src_w, (unsigned)ji.src_h, (unsigned)ji.out_w,
-        (unsigned)ji.out_h, 1u << ji.scale, (unsigned)ji.dst_w,
-        (unsigned)ji.dst_h, (unsigned)ji.decode_ms);
+    fp = ta_artwork_fingerprint_rgba(rgba, (size_t)LCD_WIDTH,
+                                     (size_t)LCD_HEIGHT);
+    if (ta_artwork_is_default(fp)) {
+      Serial.printf("albumart suppress default fp=0x%08x\n",
+                    (unsigned)fp);
+    } else {
+      calm_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+      ta_artwork_calm_rgba(rgba, (size_t)LCD_WIDTH, (size_t)LCD_HEIGHT);
+      calm_ms = (uint32_t)(esp_timer_get_time() / 1000ULL) - calm_ms;
+      ta_glass_device_base_from_rgba(rgba);
+      post_base_dirty();
+      Serial.printf(
+          "albumart calm ok src=%ux%u via=%ux%u scale=1/%u "
+          "dst=%ux%u decode_ms=%u calm_ms=%u fp=0x%08x\n",
+          (unsigned)ji.src_w, (unsigned)ji.src_h, (unsigned)ji.out_w,
+          (unsigned)ji.out_h, 1u << ji.scale, (unsigned)ji.dst_w,
+          (unsigned)ji.dst_h, (unsigned)ji.decode_ms, (unsigned)calm_ms,
+          (unsigned)fp);
+    }
   }
   free(job->jpeg);
   free(job);
