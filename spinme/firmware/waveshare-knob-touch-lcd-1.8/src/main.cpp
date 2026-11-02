@@ -41,6 +41,7 @@
 #include "ta_net_player_bind.h"
 #include "ta_registry.h"
 #include "ta_router.h"
+#include "ta_sched_events.h"
 
 /* ISR -> Draw only. Two single-producer mails: the encoder ISR and the
  * touch sampler (Core A task context) never share a tail. */
@@ -332,13 +333,15 @@ static void service_query(void) {
       const ta_glass_stats_t *gs = ta_glass_stats();
       const ta_draw_stats_t *ds = ta_draw_stats();
       const ta_controller_stats_t *ms = ta_mpd_stats();
+      const ta_sched_stats_t *ss = ta_sched_stats();
       Serial.printf("query backlight=%d playing=%d desired=%d polled=%d "
                     "polls=%u installed=%d pushes=%u hits=%u isr=%u drops=%u "
-                    "toggles=%u title=\"%s\"\n",
+                    "toggles=%u clock=%u scroll=%u oneshot=%u title=\"%s\"\n",
                     ta_glass_backlight(), ta_glass_playing(),
                     ta_glass_desired(), ta_glass_polled(), ms->poll_done,
                     ta_glass_installed(), gs->pushes, gs->hits,
                     ds->isr_drained, ds->isr_drops, ms->toggle,
+                    ss->clock_fires, ss->scroll_fires, ss->oneshots_fired,
                     ta_glass_text(TA_DRAW_TEXT_TITLE));
     }
   }

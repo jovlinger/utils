@@ -37,7 +37,7 @@ ta_queue_t *ta_device_draw_queue(void) {
 static void fabric_task(void *arg) {
     (void)arg;
     for (;;) {
-        /* Drain Logger; advance Scheduler fake/real tick later. */
+        /* Logger only. Scheduler advances via ta_device_tick_ms from Draw. */
         (void)ta_logger_drain(8);
         vTaskDelay(pdMS_TO_TICKS(50));
     }

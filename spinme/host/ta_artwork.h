@@ -7,6 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define TA_ART_DEFAULT_FP 0xDEC0ADu /* stand-in fingerprint for default art */
 
 /* Target lores edge for calm decode / downscale (square). */
@@ -44,5 +48,9 @@ int ta_artwork_is_default(uint32_t fingerprint);
  */
 int ta_artwork_on_album_change(const char *net_dst, const char *draw_dst,
                                ta_session_id_t session, uint32_t time_remain_ms);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
