@@ -4,6 +4,11 @@
 
 #include "ta_event.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef int (*ta_enqueue_fn)(const ta_event_t *ev);
 
 void ta_registry_reset(void);
@@ -12,4 +17,8 @@ ta_enqueue_fn ta_registry_lookup(const char *name);
 /* Lookup + call; returns -1 if missing or enqueue fails. */
 int ta_registry_post(const char *name, const ta_event_t *ev);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

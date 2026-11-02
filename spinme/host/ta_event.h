@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_NAME_MAX 24
 #define TA_PAYLOAD_MAX 32
 
@@ -38,4 +43,8 @@ int ta_event_set_payload(ta_event_t *ev, const void *bytes, size_t len);
 size_t ta_log_prefix(char *buf, size_t cap, uint32_t time_ms,
                      ta_session_id_t session, const char *actor);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

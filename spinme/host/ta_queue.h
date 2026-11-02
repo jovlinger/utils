@@ -7,6 +7,11 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct ta_queue {
     ta_event_t *slots;
     size_t capacity;
@@ -43,4 +48,8 @@ void ta_shape_lock_fini(ta_shape_lock_t *L);
 void ta_shape_lock_acquire(ta_shape_lock_t *L);
 void ta_shape_lock_release(ta_shape_lock_t *L);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

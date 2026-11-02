@@ -5,6 +5,11 @@
 #include "ta_event.h"
 #include "ta_net_events.h" /* ControlEvents + Net types */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_MPD_NAME "MPDController"
 #define TA_SONOS_NAME "SonosController"
 
@@ -29,4 +34,8 @@ void ta_sonos_start(void);
 int ta_sonos_enqueue(const ta_event_t *ev);
 const ta_controller_stats_t *ta_sonos_stats(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

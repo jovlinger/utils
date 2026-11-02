@@ -6,6 +6,11 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_SCHED_NAME "Scheduler"
 
 enum {
@@ -43,4 +48,8 @@ int ta_sched_arm_scroll(const char *dst, ta_session_id_t session,
 int ta_sched_arm_oneshot(const char *dst, ta_session_id_t session,
                          uint32_t delay_ms, ta_event_type_t fire_type);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

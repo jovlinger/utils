@@ -2,6 +2,11 @@
 #ifndef SPINME_TA_SYNC_H
 #define SPINME_TA_SYNC_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #ifdef SPINME_TA_DEVICE
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -100,4 +105,8 @@ static inline void ta_cond_wait(ta_cond_t *c, ta_mutex_t *m) {
 
 #endif /* SPINME_TA_DEVICE */
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

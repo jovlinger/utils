@@ -4,6 +4,11 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef void (*ta_entry_fn)(void);
 
 void ta_init_reset(void);
@@ -13,4 +18,8 @@ int ta_init_add_entry(const char *name, ta_entry_fn start);
 void ta_init_run_entries(void);
 size_t ta_init_entry_count(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -7,6 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_LOGGER_NAME "Logger"
 
 typedef enum {
@@ -36,4 +41,8 @@ const ta_log_stats_t *ta_logger_stats(void);
 int ta_logger_emit(ta_session_id_t session, const char *src, uint8_t severity,
                    uint8_t tag, const char *text);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

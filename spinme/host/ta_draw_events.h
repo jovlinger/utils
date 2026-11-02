@@ -4,6 +4,11 @@
 
 #include "ta_event.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_DRAW_NAME "Draw"
 
 /* Draw-owned type range 0x200.. -- freeze for this interface item. */
@@ -39,4 +44,8 @@ int ta_draw_enqueue(const ta_event_t *ev);
 int ta_draw_handle(const ta_event_t *ev);
 const ta_draw_stats_t *ta_draw_stats(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

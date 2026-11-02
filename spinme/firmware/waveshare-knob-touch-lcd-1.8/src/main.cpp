@@ -18,6 +18,11 @@
 #include "player_http.h"
 #include "rom_jpeg.h"
 #include "ta_device_boot.h"
+#include "ta_event.h"
+#include "ta_net_backend.h"
+#include "ta_net_events.h"
+#include "ta_net_player_bind.h"
+#include "ta_registry.h"
 
 extern "C" {
 #include "uimk2_blit.h"
@@ -185,6 +190,58 @@ static void albumart_decode_task(void *arg) {
   vTaskDelete(nullptr);
 }
 
+static int net_post_poll(void) {
+  ta_event_t ev;
+  ta_event_clear(&ev);
+  ev.type = TA_EV_NET_POLL;
+  ev.session_id = 1;
+  (void)ta_event_set_src(&ev, "ta_worker");
+  return ta_registry_post(TA_NET_NAME, &ev);
+}
+
+static int net_post_toggle(void) {
+  ta_event_t ev;
+  uint8_t pl[1];
+  ta_event_clear(&ev);
+  ev.type = TA_EV_NET_SET;
+  ev.session_id = 1;
+  (void)ta_event_set_src(&ev, "ta_worker");
+  pl[0] = (uint8_t)TA_NET_SET_OP_TOGGLE;
+  (void)ta_event_set_payload(&ev, pl, 1);
+  return ta_registry_post(TA_NET_NAME, &ev);
+}
+
+static int net_post_volume(int volume) {
+  ta_event_t ev;
+  uint8_t pl[2];
+  ta_event_clear(&ev);
+  ev.type = TA_EV_NET_SET;
+  ev.session_id = 1;
+  (void)ta_event_set_src(&ev, "ta_worker");
+  pl[0] = (uint8_t)TA_NET_SET_OP_VOLUME;
+  pl[1] = (uint8_t)volume;
+  (void)ta_event_set_payload(&ev, pl, 2);
+  return ta_registry_post(TA_NET_NAME, &ev);
+}
+
+static int net_post_albumart(const char *path) {
+  ta_event_t ev;
+  size_t n;
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  n = strlen(path);
+  if (n > TA_PAYLOAD_MAX) {
+    n = TA_PAYLOAD_MAX;
+  }
+  ta_event_clear(&ev);
+  ev.type = TA_EV_NET_ALBUMART;
+  ev.session_id = 1;
+  (void)ta_event_set_src(&ev, "ta_worker");
+  (void)ta_event_set_payload(&ev, path, n);
+  return ta_registry_post(TA_NET_NAME, &ev);
+}
+
 static void on_getstate_ok(void) {
   const PlayerSnapshot *snap = player_http_snapshot();
   int shown;
@@ -210,7 +267,7 @@ static void on_getstate_ok(void) {
                 snap->status[0] != '\0' ? snap->status : "?", shown);
   if (snap->albumart[0] != '\0' &&
       strncmp(snap->albumart, gLastAlbumart, sizeof gLastAlbumart) != 0) {
-    (void)player_http_request_albumart(snap->albumart, 512u * 1024u);
+    (void)net_post_albumart(snap->albumart);
   }
 }
 
@@ -251,6 +308,9 @@ static void on_albumart_ok(void) {
 
 static void pump_player_http(void) {
   PlayerHttpEvent ev = player_http_tick();
+  if (ev != PLAYER_HTTP_EV_NONE) {
+    ta_net_on_player_http_event((int)ev);
+  }
   if (ev == PLAYER_HTTP_EV_GETSTATE_OK) {
     on_getstate_ok();
   } else if (ev == PLAYER_HTTP_EV_GETSTATE_FAIL) {
@@ -261,6 +321,8 @@ static void pump_player_http(void) {
     Serial.println("albumart fetch fail");
   } else if (ev == PLAYER_HTTP_EV_CMD_FAIL) {
     Serial.println("player cmd fail");
+  } else if (ev == PLAYER_HTTP_EV_CMD_OK) {
+    Serial.println("player cmd ok (net)");
   }
 }
 
@@ -323,6 +385,7 @@ static void core_b_task(void *arg) {
   (void)arg;
   Serial.println("core B up");
   player_http_boot();
+  ta_net_bind_player_http();
   for (;;) {
     uint32_t now = millis();
     uint32_t wait;
@@ -365,25 +428,25 @@ static void core_b_task(void *arg) {
       }
       /* Queue only -- never block on sockets here. */
       if (sel == (uint8_t)UIMK2_EV_PLAYER_POLL) {
-        if (!player_http_request_getstate()) {
-          Serial.println("player poll skipped: WIFI_SSID empty");
+        if (net_post_poll() != 0) {
+          Serial.println("player poll skipped: net/WIFI");
         }
       } else if (sel == (uint8_t)UIMK2_EV_TOGGLE) {
         paint_follow();
-        if (!player_http_request_toggle()) {
-          Serial.println("player toggle skipped: WIFI_SSID empty");
+        if (net_post_toggle() != 0) {
+          Serial.println("player toggle skipped: net/WIFI");
         } else {
-          Serial.println("player toggle queued");
+          Serial.println("player toggle via Net");
         }
       } else if (sel == (uint8_t)UIMK2_EV_VOLUME) {
         if (desired_after != desired_before) {
           gVolumeSent = true;
           if (!more_volume) {
-            if (!player_http_request_volume(desired_after)) {
-              Serial.printf("player volume skipped: WIFI_SSID empty (%d)\n",
+            if (net_post_volume(desired_after) != 0) {
+              Serial.printf("player volume skipped: net/WIFI (%d)\n",
                             desired_after);
             } else {
-              Serial.printf("player volume queued %d\n", desired_after);
+              Serial.printf("player volume via Net %d\n", desired_after);
             }
           }
         }

@@ -4,6 +4,11 @@
 
 #include "ta_event.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define TA_NET_NAME "Net"
 
 /* Net-owned type range 0x300.. */
@@ -43,4 +48,8 @@ int ta_net_enqueue(const ta_event_t *ev);
 int ta_net_handle(const ta_event_t *ev);
 const ta_net_stats_t *ta_net_stats(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif
