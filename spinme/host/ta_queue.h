@@ -1,10 +1,10 @@
-/* Multi-producer single-consumer event queue (host pthread stand-in). */
+/* Multi-producer single-consumer event queue (pthread host / FreeRTOS device). */
 #ifndef SPINME_TA_QUEUE_H
 #define SPINME_TA_QUEUE_H
 
 #include "ta_event.h"
+#include "ta_sync.h"
 
-#include <pthread.h>
 #include <stddef.h>
 
 typedef struct ta_queue {
@@ -13,14 +13,14 @@ typedef struct ta_queue {
     size_t head;
     size_t tail;
     size_t count;
-    pthread_mutex_t mu;
-    pthread_cond_t not_empty;
+    ta_mutex_t mu;
+    ta_cond_t not_empty;
     unsigned drops;
 } ta_queue_t;
 
 /* Separate lock type for shape/pixel protocol (not the queue mutex). */
 typedef struct ta_shape_lock {
-    pthread_mutex_t mu;
+    ta_mutex_t mu;
 } ta_shape_lock_t;
 
 int ta_queue_init(ta_queue_t *q, ta_event_t *storage, size_t capacity);

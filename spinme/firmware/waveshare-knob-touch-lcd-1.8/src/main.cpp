@@ -17,6 +17,7 @@
 #include "panel_io.h"
 #include "player_http.h"
 #include "rom_jpeg.h"
+#include "ta_device_boot.h"
 
 extern "C" {
 #include "uimk2_blit.h"
@@ -593,7 +594,9 @@ static bool alloc_frames(void) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.printf("uimk2 follow: %s (%s)\n", BOARD_NAME, BOARD_SKU);
+  Serial.printf("spinme fabric: %s (%s)\n", BOARD_NAME, BOARD_SKU);
+  ta_device_boot();
+  Serial.printf("ta fabric_up=%d\n", ta_device_fabric_up());
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, HIGH);
   gBacklight = true;
@@ -637,9 +640,12 @@ void setup() {
 
   touch_init();
   encoder_begin();
+  /* Repeat after USB CDC settles (early boot prints are often dropped). */
+  Serial.printf("ta fabric_up=%d (post-init)\n", ta_device_fabric_up());
   gUiTask = xTaskGetCurrentTaskHandle();
-  /* HTTPClient on Core B needs more than the paint path. */
-  xTaskCreatePinnedToCore(core_b_task, "uimk2", 32768, nullptr, 1, &gWorker, 0);
+  /* Transitional worker: player_http + follow paint until Net/Draw own them. */
+  xTaskCreatePinnedToCore(core_b_task, "ta_worker", 32768, nullptr, 1, &gWorker,
+                          0);
 }
 
 void loop() {
