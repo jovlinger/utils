@@ -28,4 +28,15 @@ cd spinme/firmware/waveshare-knob-touch-lcd-1.8
 - [x] no panel-sized glass shadow in new host Draw path (per-shape local
   pixmaps + coverage list)
 
-NONGOAL: emulator CI.
+## END smoke (todo:3135a46a objid:000d) -- 2026-11-02
+
+Volumio `http://192.168.88.163:3000/api/v1/getState` vs serial inject:
+
+| Step | Serial | getState |
+|------|--------|----------|
+| baseline | (idle polls) | `pause` vol `51` |
+| `rot 2` | `rot inject 2` then `player cmd ok (net)` | vol `53` (still pause) |
+| `tap 180 26` | `tap inject` then `player cmd ok (net)` | `play` vol `53` |
+| `query` | `desired=53 polled=53 hits=5 isr=5 drops=0 toggles=3` | matches |
+
+Host `make test` green at the same tip. NONGOAL: Sonos. NONGOAL: emulator CI.
