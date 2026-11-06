@@ -43,6 +43,17 @@ Net's OTA intake is `ta_net_kv_http_set`: `PUT /kv/<key>` with
 `Content-Length` calls `ta_kv_put` (blobs up to 1024 bytes). After that,
 `ta_boot_exit_all` and `ta_boot_from_kv` pick up the new roster.
 
+## Log (`todo:15b92eaa`)
+
+`ta_all_broadcast_perform_init` posts `TA_EV_ALL_PERFORM_INIT` to every
+registered actor. Async replies use `TA_EV_ALL_INFORM_RESULT`.
+
+Log collects `ta_log_accept` lines (`emit_time` + message) in a buffer of 8.
+A full buffer, or an empty tick more than 4:30 after the last dump, calls the
+Net send callback with `log_receiver_url` and then clears the buffer even if
+the send fails. On init, Log KV-gets `log_receiver_url` and stores the URL
+from the inform before the next dump. The empty cadence is 5 minutes.
+
 ---
 
 ## 1. Event envelope + typed body (normative shape)

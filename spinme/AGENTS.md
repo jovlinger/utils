@@ -18,7 +18,8 @@ Open tickets are SoT; keep [`EXPOSITION.md`](EXPOSITION.md) aligned with them:
 - `todo:afc1dc50` (done) -- KV layout/allocator, boot roster/load/`init`/`exit`, USB-only
   base bin loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map is still a stub.
 - `todo:15b92eaa` -- Log actor, `ta_all_*`, Net NTP (consumes KV; does not own
-  a second store).
+  a second store). Host Log accept/drain and the init URL fetch are in
+  `spinme/host/ta_log_accept.*`.
 
 Base bin loader updates are **USB-wired only** (board-marked). Do not invent
 OTA for that loader.
