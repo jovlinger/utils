@@ -1,6 +1,13 @@
 # Agent Notes -- esp32 / Volumio remote
 
 Investigation plan and board notes: [`README.md`](README.md).
+
+## KV boot (`todo:afc1dc50`)
+
+The base bin loader is updated only over the marked USB wire. Actor images
+and the start roster live in the writable KV image (`spinme/host/ta_kv.*`).
+`ta_boot_from_kv` loads that roster and calls `init`; `exit` unregisters.
+Do not add a second NVS or SPIFFS store for the same keys.
 Python venv conventions for utils: root [`AGENTS.md`](../AGENTS.md).
 
 ## Python setup (volctrl)

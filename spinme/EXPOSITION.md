@@ -11,6 +11,22 @@ every event type and payload, how completion/"callback" works, every Shape
 tag Draw knows, and the **as-built** ISR touch/rotary path. Where PLAN and
 ship diverge, section 9 lists the gap and the tracking todo/WorkItem.
 
+## KV image and boot (`todo:afc1dc50`)
+
+One writable KV image, prepopulated by `ta_kv_install_factory`. Records are a
+packed little-endian linked list. `next` is a byte offset from the image base.
+0 means empty or end, because a 4-byte head occupies offset 0. New records use
+first-fit holes; there is no compacting GC.
+
+`actors_to_start` is newline-separated actor names. Each name is also a key
+whose blob is that actor's image. The base bin loader stays USB-only. The
+image init loader is `ta_boot_from_kv`: roster, blob, stub load (non-empty
+blob; ELF map not yet), `ta_actor_init`. `ta_actor_exit` is the inverse
+(stop the loop, unregister). `ta_boot_exit_all` then boot again is the reload.
+
+Net's OTA intake is an HTTP REST set of a KV key (including a large actor
+blob) that calls `ta_kv_put`. That handler is the next slice on this ticket.
+
 ---
 
 ## 1. Event envelope + typed body (normative shape)
@@ -763,6 +779,9 @@ Run: `(cd spinme/host && make test)`.
   `host/SMOKE.md` (`todo:3135a46a` done).
 - Controller facade is a select-N **Router** (`ta_router`); Net is the sole
   socket / HTTP owner; Draw is the sole glass owner.
+- Dead-simple KV image (`ta_kv`), factory roster, first-fit holes, and
+  host boot (`ta_boot_from_kv` / `ta_actor_init` / `ta_actor_exit`) on
+  `todo:afc1dc50`. ELF load and Net REST KV set are still open on that ticket.
 - **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
   `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. `reply_to`
   lives only on per-message structs. No legacy blob arm. MVP passes
@@ -779,7 +798,7 @@ Run: `(cd spinme/host && make test)`.
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
   seek still unused on the wire | Follow-on when getState mapping expands |
 | **Coordinator rename** | Chat/PLAN "Coordinator" == as-built `MPDController` | Rename optional |
-| **Fork + forever `ta.init()`** | Init constructs actors, forks, each `init()` registers then loops (never returns) | Follow-on; host still sync `*_start()` |
+| **Fork + forever `ta.init()`** | Host `ta_actor_init` registers and loops on a thread until `ta_actor_exit`; device boot still sync `*_start()` | `todo:afc1dc50` host path shipped; device fork still open |
 | **Degraded filter + selective queue take** | Process-before-emit only ordering; `peek_verb` for inform (etc.); out-of-order take = swap with front; defer non-setup msgs until setup informs land | Follow-on; queue is FIFO `pop` today |
 | **Config TaskActor + NVM ownership** | Registry actor owns NVM; typed get/put/del/inform; replace sync `ta_kv_*` call-through from other tasks | Follow-on |
 | **Net HTTP Config CRUD** | Net GET/POST/PATCH/DELETE maps to Config events; inbound serve never blocked by sequential outbound client lane | Follow-on; depends on Config actor |
