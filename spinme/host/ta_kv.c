@@ -131,6 +131,66 @@ const uint8_t *ta_kv_image(size_t *out_len) {
     return g_img;
 }
 
+static int image_chain_ok(size_t len) {
+    uint32_t cur;
+    unsigned guard;
+
+    if (len < TA_KV_IMAGE_HEAD_SIZE || len > TA_KV_IMAGE_CAP) {
+        return 0;
+    }
+    cur = rd32(0);
+    guard = 0;
+    while (cur != 0) {
+        uint16_t klen;
+        uint32_t blen;
+        size_t need;
+
+        if (guard++ > TA_KV_SLOTS) {
+            return 0;
+        }
+        if ((size_t)cur < TA_KV_IMAGE_HEAD_SIZE ||
+            (size_t)cur + TA_KV_REC_HDR_SIZE > len) {
+            return 0;
+        }
+        klen = rd16((size_t)cur + 4);
+        blen = rd32((size_t)cur + 6);
+        need = rec_size(klen, blen);
+        if ((size_t)cur + need > len) {
+            return 0;
+        }
+        cur = rd32((size_t)cur);
+    }
+    return 1;
+}
+
+ta_kv_status_t ta_kv_load_image(const uint8_t *src, size_t len) {
+    if (src == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (len < TA_KV_IMAGE_HEAD_SIZE || len > TA_KV_IMAGE_CAP) {
+        return TA_KV_BAD_ARG;
+    }
+    memset(g_img, 0, sizeof(g_img));
+    memcpy(g_img, src, len);
+    g_hw = len;
+    if (!image_chain_ok(len)) {
+        ta_kv_reset();
+        return TA_KV_BAD_ARG;
+    }
+    return TA_KV_OK;
+}
+
+void ta_kv_install_factory(void) {
+    static const char roster[] = "Draw\nNet\n";
+    static const char draw_blob[] = "draw-v1";
+    static const char net_blob[] = "net-v1";
+
+    ta_kv_reset();
+    (void)ta_kv_put(TA_KV_KEY_ACTORS, roster, sizeof(roster) - 1);
+    (void)ta_kv_put("Draw", draw_blob, sizeof(draw_blob) - 1);
+    (void)ta_kv_put("Net", net_blob, sizeof(net_blob) - 1);
+}
+
 int ta_kv_has(const char *key) {
     size_t off;
     size_t prev;

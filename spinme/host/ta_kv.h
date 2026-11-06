@@ -27,6 +27,8 @@
 #define TA_KV_REC_HDR_SIZE 10u /* next u32 + key_len u16 + blob_len u32 */
 
 #define TA_KV_KEY_CONTROLLER "current_controller"
+/* Start roster blob is a list of actor names; encoding is locked later. */
+#define TA_KV_KEY_ACTORS "actors_to_start"
 
 typedef enum {
     TA_KV_OK = 0,
@@ -48,6 +50,10 @@ ta_kv_status_t ta_kv_delete(const char *key);
 
 /* Live image bytes (header + records up to the high-water mark). */
 const uint8_t *ta_kv_image(size_t *out_len);
+/* Replace the live image. len is the high-water mark (includes holes). */
+ta_kv_status_t ta_kv_load_image(const uint8_t *src, size_t len);
+/* Static-build defaults: roster plus one blob per named actor. Writable after. */
+void ta_kv_install_factory(void);
 
 /* Config facade helpers. */
 ta_kv_status_t ta_config_get_controller(char *dst, size_t dst_cap,

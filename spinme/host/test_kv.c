@@ -115,6 +115,31 @@ int main(void) {
         CHECK(live == 1);
     }
 
+    /* Factory image is writable: overwrite, then reload the snapshot. */
+    {
+        uint8_t snap[4096];
+        size_t slen;
+        const uint8_t *img;
+        char got[32];
+
+        ta_kv_install_factory();
+        CHECK(ta_kv_get(TA_KV_KEY_ACTORS, got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(len == 9);
+        CHECK(memcmp(got, "Draw\nNet\n", 9) == 0);
+        img = ta_kv_image(&slen);
+        CHECK(slen <= sizeof(snap));
+        memcpy(snap, img, slen);
+        CHECK(ta_kv_put(TA_KV_KEY_ACTORS, "Draw\n", 5) == TA_KV_OK);
+        CHECK(ta_kv_get(TA_KV_KEY_ACTORS, got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(len == 5);
+        CHECK(ta_kv_load_image(snap, slen) == TA_KV_OK);
+        CHECK(ta_kv_get(TA_KV_KEY_ACTORS, got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(memcmp(got, "Draw\nNet\n", 9) == 0);
+        CHECK(ta_kv_get("Draw", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(memcmp(got, "draw-v1", 7) == 0);
+        CHECK(ta_kv_load_image(snap, 2) == TA_KV_BAD_ARG);
+    }
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;
