@@ -193,6 +193,30 @@ int main(void) {
         CHECK(len == 1);
     }
 
+    {
+        static const char *const names[] = {"Draw", "Net"};
+        char name[32];
+        char blob[32];
+
+        ta_kv_reset();
+        CHECK(ta_kv_set_roster(names, 2) == TA_KV_OK);
+        CHECK(ta_kv_roster_count() == 2);
+        CHECK(ta_kv_roster_at(0, name, sizeof(name), &len) == TA_KV_OK);
+        CHECK(len == 4);
+        CHECK(memcmp(name, "Draw", 4) == 0);
+        CHECK(ta_kv_roster_at(1, name, sizeof(name), &len) == TA_KV_OK);
+        CHECK(memcmp(name, "Net", 3) == 0);
+        CHECK(ta_kv_put("Draw", "draw-v1", 7) == TA_KV_OK);
+        CHECK(ta_kv_put("Net", "net-v1", 6) == TA_KV_OK);
+        CHECK(ta_kv_roster_at(0, name, sizeof(name), &len) == TA_KV_OK);
+        name[len] = '\0';
+        CHECK(ta_kv_get(name, blob, sizeof(blob), &len) == TA_KV_OK);
+        CHECK(memcmp(blob, "draw-v1", 7) == 0);
+        CHECK(ta_kv_roster_at(2, name, sizeof(name), &len) == TA_KV_MISSING);
+        ta_kv_install_factory();
+        CHECK(ta_kv_roster_count() == 2);
+    }
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;

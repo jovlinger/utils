@@ -248,14 +248,108 @@ ta_kv_status_t ta_kv_load_image(const uint8_t *src, size_t len) {
 }
 
 void ta_kv_install_factory(void) {
-    static const char roster[] = "Draw\nNet\n";
+    static const char *const names[] = {"Draw", "Net"};
     static const char draw_blob[] = "draw-v1";
     static const char net_blob[] = "net-v1";
 
     ta_kv_reset();
-    (void)ta_kv_put(TA_KV_KEY_ACTORS, roster, sizeof(roster) - 1);
+    (void)ta_kv_set_roster(names, 2);
     (void)ta_kv_put("Draw", draw_blob, sizeof(draw_blob) - 1);
     (void)ta_kv_put("Net", net_blob, sizeof(net_blob) - 1);
+}
+
+ta_kv_status_t ta_kv_set_roster(const char *const *names, size_t n) {
+    char buf[TA_KV_VAL_MAX];
+    size_t used;
+    size_t i;
+
+    if (names == NULL && n > 0) {
+        return TA_KV_BAD_ARG;
+    }
+    used = 0;
+    for (i = 0; i < n; i++) {
+        size_t klen;
+
+        if (names[i] == NULL || names[i][0] == '\0') {
+            return TA_KV_BAD_ARG;
+        }
+        klen = strlen(names[i]);
+        if (used + klen + 1 > TA_KV_VAL_MAX) {
+            return TA_KV_BAD_ARG;
+        }
+        memcpy(buf + used, names[i], klen);
+        used += klen;
+        buf[used++] = '\n';
+    }
+    return ta_kv_put(TA_KV_KEY_ACTORS, buf, used);
+}
+
+size_t ta_kv_roster_count(void) {
+    char buf[TA_KV_VAL_MAX];
+    size_t len;
+    size_t i;
+    size_t n;
+
+    if (ta_kv_get(TA_KV_KEY_ACTORS, buf, sizeof(buf), &len) != TA_KV_OK) {
+        return 0;
+    }
+    n = 0;
+    i = 0;
+    while (i < len) {
+        if (buf[i] == '\n') {
+            i++;
+            continue;
+        }
+        n++;
+        while (i < len && buf[i] != '\n') {
+            i++;
+        }
+    }
+    return n;
+}
+
+ta_kv_status_t ta_kv_roster_at(size_t index, char *dst, size_t dst_cap,
+                              size_t *out_len) {
+    char buf[TA_KV_VAL_MAX];
+    size_t len;
+    size_t i;
+    size_t n;
+    size_t start;
+
+    if (out_len == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (ta_kv_get(TA_KV_KEY_ACTORS, buf, sizeof(buf), &len) != TA_KV_OK) {
+        return TA_KV_MISSING;
+    }
+    n = 0;
+    i = 0;
+    start = 0;
+    while (i < len) {
+        if (buf[i] == '\n') {
+            i++;
+            continue;
+        }
+        start = i;
+        while (i < len && buf[i] != '\n') {
+            i++;
+        }
+        if (n == index) {
+            *out_len = i - start;
+            if (dst_cap < *out_len) {
+                return TA_KV_TOO_SMALL;
+            }
+            if (*out_len > 0) {
+                if (dst == NULL) {
+                    return TA_KV_BAD_ARG;
+                }
+                memcpy(dst, buf + start, *out_len);
+            }
+            return TA_KV_OK;
+        }
+        n++;
+    }
+    return TA_KV_MISSING;
 }
 
 int ta_kv_has(const char *key) {

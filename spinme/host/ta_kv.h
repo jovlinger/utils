@@ -55,6 +55,12 @@ ta_kv_status_t ta_kv_load_image(const uint8_t *src, size_t len);
 /* Static-build defaults: roster plus one blob per named actor. Writable after. */
 void ta_kv_install_factory(void);
 
+/* actors_to_start blob: names separated by '\\n'. Per-name blobs are separate keys. */
+ta_kv_status_t ta_kv_set_roster(const char *const *names, size_t n);
+size_t ta_kv_roster_count(void);
+ta_kv_status_t ta_kv_roster_at(size_t index, char *dst, size_t dst_cap,
+                              size_t *out_len);
+
 /* Config facade helpers. */
 ta_kv_status_t ta_config_get_controller(char *dst, size_t dst_cap,
                                         size_t *out_len);
