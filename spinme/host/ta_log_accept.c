@@ -1,5 +1,8 @@
 #include "ta_log_accept.h"
 
+#include "ta_event.h"
+#include "ta_kv_actor.h"
+
 #include <string.h>
 
 static ta_log_accept_event_t g_buf[TA_LOG_ACCEPT_CAP];
@@ -62,6 +65,32 @@ int ta_log_on_empty_tick(uint32_t now_ms) {
 
 uint32_t ta_log_last_empty_ms(void) {
     return g_last_empty_ms;
+}
+
+int ta_log_handle_envelope(const ta_event_envelope_t *env) {
+    const ta_all_inform_result_t *info;
+    char url[TA_ALL_INFORM_MAX + 1];
+
+    if (env == NULL) {
+        return -1;
+    }
+    if (env->event.type == TA_EV_ALL_PERFORM_INIT) {
+        return ta_kv_actor_get("Log", TA_KV_KEY_LOG_URL);
+    }
+    if (env->event.type != TA_EV_ALL_INFORM_RESULT) {
+        return 0;
+    }
+    info = &env->event.u.all_inform_result;
+    if (strcmp(info->key, TA_KV_KEY_LOG_URL) != 0) {
+        return 0;
+    }
+    if (info->status != 0 || info->n == 0 || info->n > TA_ALL_INFORM_MAX) {
+        return 0;
+    }
+    memcpy(url, info->bytes, info->n);
+    url[info->n] = '\0';
+    ta_log_set_url(url);
+    return 0;
 }
 
 int ta_log_accept(uint32_t emit_time_ms, const char *message) {

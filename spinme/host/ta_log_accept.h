@@ -2,6 +2,8 @@
 #ifndef SPINME_TA_LOG_ACCEPT_H
 #define SPINME_TA_LOG_ACCEPT_H
 
+#include "ta_event.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,7 +22,8 @@ size_t ta_log_accept_count(void);
 const ta_log_accept_event_t *ta_log_accept_at(size_t index);
 unsigned ta_log_accept_rejected(void);
 
-/* 4 minutes 30 seconds. Scheduler asks every 5 minutes; dump only if due. */
+/* Scheduler fires every 5 minutes. Dump only if the last dump is older than 4:30. */
+#define TA_LOG_EMPTY_PERIOD_MS 300000u
 #define TA_LOG_EMPTY_DUE_MS 270000u
 
 typedef int (*ta_log_send_fn)(const char *url, const ta_log_accept_event_t *rows,
@@ -35,5 +38,11 @@ int ta_log_dump(uint32_t now_ms);
 /* If never dumped, or now is more than 4:30 after the last dump, dump. */
 int ta_log_on_empty_tick(uint32_t now_ms);
 uint32_t ta_log_last_empty_ms(void);
+
+/* On TA_EV_ALL_PERFORM_INIT: ask KV for log_receiver_url.
+ * On TA_EV_ALL_INFORM_RESULT for that key: store the URL used by dump.
+ * Returns 0 if handled.
+ */
+int ta_log_handle_envelope(const ta_event_envelope_t *env);
 
 #endif
