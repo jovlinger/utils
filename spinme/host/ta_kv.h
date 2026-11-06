@@ -27,6 +27,7 @@
 #define TA_KV_REC_HDR_SIZE 10u /* next u32 + key_len u16 + blob_len u32 */
 
 #define TA_KV_KEY_CONTROLLER "current_controller"
+#define TA_KV_KEY_LOG_URL "log_receiver_url"
 /* Start roster blob is a list of actor names; encoding is locked later. */
 #define TA_KV_KEY_ACTORS "actors_to_start"
 
