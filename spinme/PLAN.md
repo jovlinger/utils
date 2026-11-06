@@ -610,7 +610,8 @@ Sole MVP receiver behind **Rotary**. On pooled delta:
 ### Net
 
 **Owns the TCP/IP / socket loop** (always). Also hosts NTP and player dialect
-I/O as a **composed product** `NTP * Player(MPD + Sonos)` -- internal modules
+I/O as a **composed product** `NTP * Player(MPD + Sonos)` -- internal modules.
+Volumio `getState` has seek and duration only, not wall time (`todo:15b92eaa`).
 for MVP; separate message compositors only if they still feed this one owner.
 Configured by the active Controller backend; maps ControlEvents to wire ops;
 noops where a dialect cannot honor an op. Salvage `player_http`: non-blocking

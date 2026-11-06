@@ -40,3 +40,7 @@ Volumio `http://192.168.88.163:3000/api/v1/getState` vs serial inject:
 | `query` | `desired=53 polled=53 hits=5 isr=5 drops=0 toggles=3` | matches |
 
 Host `make test` green at the same tip. NONGOAL: Sonos. NONGOAL: emulator CI.
+
+That getState sample has `seek` and `duration` only. No epoch, timezone, or
+wall-clock field, so track time cannot set the Draw clock
+(`todo:15b92eaa`).
