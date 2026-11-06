@@ -140,6 +140,59 @@ int main(void) {
         CHECK(ta_kv_load_image(snap, 2) == TA_KV_BAD_ARG);
     }
 
+    /* First-fit reuses a deleted hole, a shrink leftover, and the tail. */
+    {
+        const uint8_t *img;
+        size_t ilen;
+        size_t hw_after_two;
+        uint32_t head;
+        uint32_t at_c;
+        char got[32];
+
+        ta_kv_reset();
+        CHECK(ta_kv_put("a", "AAAAAAAA", 8) == TA_KV_OK);
+        CHECK(ta_kv_put("b", "BBBBBBBB", 8) == TA_KV_OK);
+        img = ta_kv_image(&ilen);
+        hw_after_two = ilen;
+        CHECK(ta_kv_delete("a") == TA_KV_OK);
+        CHECK(ta_kv_put("c", "CCCCCCCC", 8) == TA_KV_OK);
+        img = ta_kv_image(&ilen);
+        CHECK(ilen == hw_after_two);
+        head = (uint32_t)img[0] | ((uint32_t)img[1] << 8) |
+               ((uint32_t)img[2] << 16) | ((uint32_t)img[3] << 24);
+        at_c = 0;
+        while (head != 0) {
+            uint16_t kl;
+
+            kl = (uint16_t)(img[head + 4] | (img[head + 5] << 8));
+            if (kl == 1 && img[head + TA_KV_REC_HDR_SIZE] == 'c') {
+                at_c = head;
+            }
+            head = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
+                   ((uint32_t)img[head + 2] << 16) |
+                   ((uint32_t)img[head + 3] << 24);
+        }
+        CHECK(at_c == TA_KV_IMAGE_HEAD_SIZE);
+        CHECK(ta_kv_put("a", "AAAAAAAA", 8) == TA_KV_OK);
+        img = ta_kv_image(&ilen);
+        CHECK(ilen > hw_after_two);
+        CHECK(ta_kv_get("a", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("b", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("c", got, sizeof(got), &len) == TA_KV_OK);
+
+        ta_kv_reset();
+        CHECK(ta_kv_put("a", "0123456789abcdef", 16) == TA_KV_OK);
+        CHECK(ta_kv_put("b", "bbbb", 4) == TA_KV_OK);
+        img = ta_kv_image(&ilen);
+        hw_after_two = ilen;
+        CHECK(ta_kv_put("a", "tiny", 4) == TA_KV_OK);
+        CHECK(ta_kv_put("z", "Z", 1) == TA_KV_OK);
+        img = ta_kv_image(&ilen);
+        CHECK(ilen == hw_after_two);
+        CHECK(ta_kv_get("z", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(len == 1);
+    }
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;

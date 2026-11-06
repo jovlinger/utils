@@ -89,6 +89,72 @@ static void unlink_at(size_t off, size_t prev_next_off) {
     wr32(prev_next_off, nxt);
 }
 
+/* First hole whose free bytes cover need, else the high-water tail.
+ * skip_off is a live record to treat as already free (0 skips nothing).
+ */
+static int first_fit(size_t skip_off, size_t need, size_t *off_out) {
+    size_t offs[TA_KV_SLOTS];
+    size_t ends[TA_KV_SLOTS];
+    size_t n;
+    size_t i;
+    size_t j;
+    size_t cursor;
+    uint32_t cur;
+
+    n = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        uint16_t klen;
+        uint32_t blen;
+
+        if (n >= TA_KV_SLOTS) {
+            return 0;
+        }
+        if ((size_t)cur != skip_off) {
+            klen = rd16((size_t)cur + 4);
+            blen = rd32((size_t)cur + 6);
+            offs[n] = (size_t)cur;
+            ends[n] = (size_t)cur + rec_size(klen, blen);
+            n++;
+        }
+        cur = rd32((size_t)cur);
+    }
+    for (i = 1; i < n; i++) {
+        size_t o;
+        size_t e;
+
+        o = offs[i];
+        e = ends[i];
+        j = i;
+        while (j > 0 && offs[j - 1] > o) {
+            offs[j] = offs[j - 1];
+            ends[j] = ends[j - 1];
+            j--;
+        }
+        offs[j] = o;
+        ends[j] = e;
+    }
+    cursor = TA_KV_IMAGE_HEAD_SIZE;
+    for (i = 0; i < n; i++) {
+        if (offs[i] > cursor && offs[i] - cursor >= need) {
+            *off_out = cursor;
+            return 1;
+        }
+        if (ends[i] > cursor) {
+            cursor = ends[i];
+        }
+    }
+    if (cursor < g_hw && g_hw - cursor >= need) {
+        *off_out = cursor;
+        return 1;
+    }
+    if (g_hw + need <= TA_KV_IMAGE_CAP) {
+        *off_out = g_hw;
+        return 1;
+    }
+    return 0;
+}
+
 static ta_kv_status_t append_rec(const char *key, size_t klen, const void *src,
                                  size_t len) {
     size_t need;
@@ -97,10 +163,9 @@ static ta_kv_status_t append_rec(const char *key, size_t klen, const void *src,
     uint32_t cur;
 
     need = rec_size((uint16_t)klen, (uint32_t)len);
-    if (g_hw + need > TA_KV_IMAGE_CAP) {
+    if (!first_fit(0, need, &off)) {
         return TA_KV_FULL;
     }
-    off = g_hw;
     wr32(off, 0);
     wr16(off + 4, (uint16_t)klen);
     wr32(off + 6, (uint32_t)len);
@@ -115,7 +180,9 @@ static ta_kv_status_t append_rec(const char *key, size_t klen, const void *src,
         cur = rd32((size_t)cur);
     }
     wr32(prev, (uint32_t)off);
-    g_hw = off + need;
+    if (off + need > g_hw) {
+        g_hw = off + need;
+    }
     return TA_KV_OK;
 }
 
@@ -269,8 +336,13 @@ ta_kv_status_t ta_kv_put(const char *key, const void *src, size_t len) {
             }
             return TA_KV_OK;
         }
-        if (g_hw + rec_size((uint16_t)klen, (uint32_t)len) > TA_KV_IMAGE_CAP) {
-            return TA_KV_FULL;
+        {
+            size_t slot;
+
+            if (!first_fit(off, rec_size((uint16_t)klen, (uint32_t)len),
+                           &slot)) {
+                return TA_KV_FULL;
+            }
         }
         unlink_at(off, prev);
     }

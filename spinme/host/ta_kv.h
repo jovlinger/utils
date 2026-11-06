@@ -9,9 +9,9 @@
  *     uint8  key[key_len];
  *     uint8  blob[blob_len];
  *   No key order. No padding between fields.
- *   v1 put appends at the high-water mark. Replacing a value that does not
- *   fit in the old record unlinks it and appends; the old span is a hole
- *   until a later first-fit allocator reuses it.
+ *   Placement is first-fit: a new record occupies the first hole that fits,
+ *   otherwise the high-water tail. A same-or-smaller put rewrites in place
+ *   (the leftover bytes become a hole). A larger put unlinks the old span.
  */
 #ifndef SPINME_TA_KV_H
 #define SPINME_TA_KV_H
