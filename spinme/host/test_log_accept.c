@@ -38,10 +38,11 @@ int main(void) {
     for (i = ta_log_accept_count(); i < TA_LOG_ACCEPT_CAP; i++) {
         CHECK(ta_log_accept((uint32_t)i, "more") == 0);
     }
-    CHECK(ta_log_accept_count() == TA_LOG_ACCEPT_CAP);
-    CHECK(ta_log_accept(99, "overflow") == -1);
+    /* Filling the buffer dumps immediately, so the next line is kept. */
+    CHECK(ta_log_accept_count() == 0);
+    CHECK(ta_log_accept(99, "after-dump") == 0);
+    CHECK(ta_log_accept_count() == 1);
     CHECK(ta_log_accept_rejected() >= 1);
-    CHECK(ta_log_accept_count() == TA_LOG_ACCEPT_CAP);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

@@ -15,7 +15,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
 	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
-	$(BUILD)/test_log_accept
+	$(BUILD)/test_log_accept $(BUILD)/test_log_drain
 
 .PHONY: test clean
 
@@ -200,6 +200,10 @@ $(BUILD)/test_kv_actor: test_kv_actor.c ta_kv_actor.c ta_kv_actor.h ta_kv.c \
 $(BUILD)/test_log_accept: test_log_accept.c ta_log_accept.c ta_log_accept.h \
 		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_log_accept.c ta_log_accept.c
+
+$(BUILD)/test_log_drain: test_log_drain.c ta_log_accept.c ta_log_accept.h \
+		| $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_log_drain.c ta_log_accept.c
 
 $(BUILD):
 	mkdir -p $(BUILD)

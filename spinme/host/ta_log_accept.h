@@ -20,4 +20,20 @@ size_t ta_log_accept_count(void);
 const ta_log_accept_event_t *ta_log_accept_at(size_t index);
 unsigned ta_log_accept_rejected(void);
 
+/* 4 minutes 30 seconds. Scheduler asks every 5 minutes; dump only if due. */
+#define TA_LOG_EMPTY_DUE_MS 270000u
+
+typedef int (*ta_log_send_fn)(const char *url, const ta_log_accept_event_t *rows,
+                             size_t n, void *ud);
+
+void ta_log_set_sender(ta_log_send_fn fn, void *ud);
+void ta_log_set_url(const char *url);
+/* Send whatever is buffered, then always clear and stamp last-emptied.
+ * A send error (404/502) does not keep the lines. Returns 0.
+ */
+int ta_log_dump(uint32_t now_ms);
+/* If never dumped, or now is more than 4:30 after the last dump, dump. */
+int ta_log_on_empty_tick(uint32_t now_ms);
+uint32_t ta_log_last_empty_ms(void);
+
 #endif
