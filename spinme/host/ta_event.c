@@ -75,6 +75,29 @@ int ta_event_set_ctrl_set_route(ta_event_t *ev, const char *target) {
     return ta_copy_name(ev->u.ctrl_set_route.target, TA_NAME_MAX, target);
 }
 
+int ta_event_set_all_inform_result(ta_event_t *ev, uint8_t status,
+                                   const char *key, const void *bytes,
+                                   size_t n) {
+    if (ev == NULL || key == NULL || key[0] == '\0') {
+        return -1;
+    }
+    if (n > TA_ALL_INFORM_MAX || (n > 0 && bytes == NULL)) {
+        return -1;
+    }
+    if (strlen(key) >= TA_ALL_KEY_MAX) {
+        return -1;
+    }
+    memset(&ev->u, 0, sizeof(ev->u));
+    ev->type = TA_EV_ALL_INFORM_RESULT;
+    ev->u.all_inform_result.status = status;
+    memcpy(ev->u.all_inform_result.key, key, strlen(key) + 1);
+    ev->u.all_inform_result.n = (uint16_t)n;
+    if (n > 0) {
+        memcpy(ev->u.all_inform_result.bytes, bytes, n);
+    }
+    return 0;
+}
+
 int ta_event_set_sched_start(ta_event_t *ev, const char *fire_to,
                              ta_event_type_t fire_type, uint32_t period_ms,
                              uint8_t flags) {

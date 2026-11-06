@@ -32,8 +32,24 @@ typedef uint8_t ta_volume_t; /* 0..100; 0xFF = unknown where noted */
 enum {
     TA_EV_NOP = 0,
     TA_EV_LOG = 1,
-    TA_EV_SET_ROUTE = 2
+    TA_EV_SET_ROUTE = 2,
+    TA_EV_ALL_PERFORM_INIT = 3,  /* startup broadcast to every registered actor */
+    TA_EV_ALL_INFORM_RESULT = 4  /* universal async reply */
 };
+
+#define TA_ALL_KEY_MAX 32
+#define TA_ALL_INFORM_MAX 64
+
+typedef struct {
+    uint8_t unused;
+} ta_all_perform_init_t;
+
+typedef struct {
+    uint8_t status;
+    char key[TA_ALL_KEY_MAX];
+    uint16_t n;
+    uint8_t bytes[TA_ALL_INFORM_MAX];
+} ta_all_inform_result_t;
 
 /* ---- per-message bodies: ta_<recipient>_<verb>_<noun>_t ---- */
 
@@ -197,6 +213,8 @@ typedef struct ta_event {
         ta_ctrl_volume_t ctrl_volume;
         ta_sched_start_t sched_start;
         ta_sched_tick_t sched_tick;
+        ta_all_perform_init_t all_perform_init;
+        ta_all_inform_result_t all_inform_result;
     } u;
 } ta_event_t;
 
@@ -218,6 +236,10 @@ int ta_event_set_net_poll_playerstate(ta_event_t *ev, const char *reply_to);
 int ta_event_set_net_set(ta_event_t *ev, const char *reply_to, uint8_t op,
                          ta_volume_t volume);
 int ta_event_set_ctrl_set_route(ta_event_t *ev, const char *target);
+int ta_event_set_all_inform_result(ta_event_t *ev, uint8_t status,
+                                   const char *key, const void *bytes,
+                                   size_t n);
+
 int ta_event_set_sched_start(ta_event_t *ev, const char *fire_to,
                              ta_event_type_t fire_type, uint32_t period_ms,
                              uint8_t flags);

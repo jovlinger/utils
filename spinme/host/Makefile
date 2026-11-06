@@ -14,7 +14,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome \
 	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
 	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
-	$(BUILD)/test_net_kv_http
+	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init
 
 .PHONY: test clean
 
@@ -185,6 +185,11 @@ $(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
 		ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_kv_http.c ta_net_kv_http.c \
 		ta_boot.c ta_actor.c ta_kv.c ta_registry.c ta_event.c -lpthread
+
+$(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
+		ta_event.c ta_registry.h ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_all_init.c ta_all.c ta_registry.c \
+		ta_event.c -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)

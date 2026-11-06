@@ -129,6 +129,30 @@ ta_enqueue_fn ta_registry_lookup(const char *name) {
     return fn;
 }
 
+size_t ta_registry_copy_names(char *dst, size_t stride, size_t max) {
+    size_t i;
+    size_t n;
+
+    if (dst == NULL || stride < TA_NAME_MAX || max == 0) {
+        return 0;
+    }
+    ensure_mutex();
+    if (!g_mu_ok) {
+        return 0;
+    }
+    ta_mutex_lock(&g_mu);
+    ensure_init();
+    n = g_n;
+    if (n > max) {
+        n = max;
+    }
+    for (i = 0; i < n; i++) {
+        memcpy(dst + i * stride, g_slots[i].name, TA_NAME_MAX);
+    }
+    ta_mutex_unlock(&g_mu);
+    return n;
+}
+
 int ta_registry_post(const char *name, const ta_event_envelope_t *env) {
     ta_enqueue_fn fn;
 
