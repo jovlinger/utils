@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 #define TA_KV_KEY_MAX 32
-#define TA_KV_VAL_MAX 256
+#define TA_KV_VAL_MAX 1024
 #define TA_KV_SLOTS 32
 
 #define TA_KV_IMAGE_HEAD_SIZE 4u

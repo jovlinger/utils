@@ -13,7 +13,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
 	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome \
 	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
-	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot
+	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
+	$(BUILD)/test_net_kv_http
 
 .PHONY: test clean
 
@@ -178,6 +179,12 @@ $(BUILD)/test_boot: test_boot.c ta_boot.c ta_boot.h ta_actor.c ta_kv.c \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_boot.c ta_boot.c ta_actor.c ta_kv.c \
 		ta_registry.c ta_event.c -lpthread
+
+$(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
+		ta_net_kv_http.h ta_boot.c ta_actor.c ta_kv.c ta_registry.c \
+		ta_event.c | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_kv_http.c ta_net_kv_http.c \
+		ta_boot.c ta_actor.c ta_kv.c ta_registry.c ta_event.c -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)

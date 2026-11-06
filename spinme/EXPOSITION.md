@@ -24,8 +24,9 @@ image init loader is `ta_boot_from_kv`: roster, blob, stub load (non-empty
 blob; ELF map not yet), `ta_actor_init`. `ta_actor_exit` is the inverse
 (stop the loop, unregister). `ta_boot_exit_all` then boot again is the reload.
 
-Net's OTA intake is an HTTP REST set of a KV key (including a large actor
-blob) that calls `ta_kv_put`. That handler is the next slice on this ticket.
+Net's OTA intake is `ta_net_kv_http_set`: `PUT /kv/<key>` with
+`Content-Length` calls `ta_kv_put` (blobs up to 1024 bytes). After that,
+`ta_boot_exit_all` and `ta_boot_from_kv` pick up the new roster.
 
 ---
 
@@ -781,7 +782,7 @@ Run: `(cd spinme/host && make test)`.
   socket / HTTP owner; Draw is the sole glass owner.
 - Dead-simple KV image (`ta_kv`), factory roster, first-fit holes, and
   host boot (`ta_boot_from_kv` / `ta_actor_init` / `ta_actor_exit`) on
-  `todo:afc1dc50`. ELF load and Net REST KV set are still open on that ticket.
+  `todo:afc1dc50`. ELF load is still a stub; `PUT /kv/<key>` is `ta_net_kv_http_set`.
 - **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
   `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. `reply_to`
   lives only on per-message structs. No legacy blob arm. MVP passes
