@@ -7108,7 +7108,8 @@ class SearchCommand(CorpusQueryCommand):
         "contribute to that embedder's rank. -s/-t/-tc/-tu/-g add "
         "State/create-time/update-time/Tags columns (leftmost, in flag order, summary "
         "last, columns right-padded to their longest value under 30 chars -- the same "
-        "output selectors as ls); results stay in relevance-rank order."
+        "output selectors as ls); results stay in relevance-rank order. To sort by "
+        "update date: todo search -s -tu querytext | sort -k  2b,2"
     )
 
     @classmethod

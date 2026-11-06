@@ -3,6 +3,18 @@
 Investigation plan and board notes: [`README.md`](README.md).
 Python venv conventions for utils: root [`AGENTS.md`](../AGENTS.md).
 
+## Design authority (TaskActor fabric)
+
+Open tickets are SoT; keep [`EXPOSITION.md`](EXPOSITION.md) aligned with them:
+
+- `todo:afc1dc50` -- KV layout/allocator, boot roster/load/`init`/`exit`, USB-only
+  base bin loader, Net HTTP REST KV set / OTA payloads.
+- `todo:15b92eaa` -- Log actor, `ta_all_*`, Net NTP (consumes KV; does not own
+  a second store).
+
+Base bin loader updates are **USB-wired only** (board-marked). Do not invent
+OTA for that loader.
+
 ## Python setup (volctrl)
 
 Use a project-local `.venv` (not legacy `env/`):

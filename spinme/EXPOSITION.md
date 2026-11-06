@@ -1,15 +1,30 @@
-# spinme TaskActor exposition (as-built)
+# spinme TaskActor exposition
 
-Status: **as-built** for `spinme/host` C99 tests **and** the Waveshare
-firmware TaskActor boot (`todo:3135a46a`, tip merged to master). Directional
-plan (including not-yet-shipped EventRedirector / Rotary / Net-NTP):
-[`PLAN.md`](PLAN.md). Host how-to: [`host/README.md`](host/README.md).
-Board checklist: [`host/SMOKE.md`](host/SMOKE.md).
+## Authority
 
-This document is the event and shape catalog: every registered TaskActor,
-every event type and payload, how completion/"callback" works, every Shape
-tag Draw knows, and the **as-built** ISR touch/rotary path. Where PLAN and
-ship diverge, section 9 lists the gap and the tracking todo/WorkItem.
+While fabric tickets are in play, those **todos are the design source of
+truth** for both this document and the code. Update EXPOSITION and
+implementation to match the todo (Body / Notes / WorkItems), not the reverse.
+
+| Ticket | Owns (design) |
+|--------|----------------|
+| `todo:afc1dc50` (groom) | Dead-simple KV layout + allocator, boot roster/load/`init`/`exit`, USB-only base loader, Net HTTP REST KV set / OTA payloads |
+| `todo:15b92eaa` (groom) | Log TaskActor (sample/buffer/off-device drain), universal `ta_all_*` messages, Net NTP; **consumes** KV (does not redefine storage) |
+
+Later, if code drifts from a closed ticket, **sync EXPOSITION to the code**
+(as-built fidelity). Do not treat a stale EXPOSITION as design authority
+over an open ticket.
+
+Shipped baseline: host C99 suite + Waveshare TaskActor boot
+(`todo:3135a46a`, merged). Directional PLAN (Rotary / MPDVolume /
+ownership): [`PLAN.md`](PLAN.md). Host how-to:
+[`host/README.md`](host/README.md). Board checklist:
+[`host/SMOKE.md`](host/SMOKE.md).
+
+This document is the event and shape catalog: registered TaskActors, event
+types and bodies, completions, Draw shapes, ISR path, plus boot/KV/OTA
+contracts ratified on the tickets above. Section 9 separates shipped code
+from todo-ratified gaps still in flight.
 
 ---
 
@@ -20,7 +35,8 @@ we will measure copy cost and may later split types / allocation regions.
 
 ### Common header (every queue slot)
 
-`reply_to` / `reply_type` are **not** on the common header. Receipt time is.
+`reply_to` is **not** on the common header (and is the exception, not the
+default -- see Completions). Receipt time is.
 
 ```c
 #define TA_NAME_MAX 24
@@ -55,14 +71,31 @@ ControlEvents, Scheduler start/tick, ISR touch/rotary, Logger line, ...).
 POLL_DONE carries `coord_inform_playerstate` (volume/playing filled today;
 artist/album/song when Net has them).
 
-### Completions (no fn ptrs)
+### Events only (no fn ptrs)
 
-- **Typed requests** that need an answer carry `reply_to` only (e.g.
-  `net_poll_playerstate`). The **response `type` is implied** by the request
-  (POLL -> `TA_EV_NET_POLL_DONE` with `coord_inform_playerstate` body).
-- Empty `reply_to[0]` => fire-and-forget.
-- Scheduler arms use `ta_sched_start_t` (`fire_to` + `fire_type`), not the
-  common envelope.
+All TaskActor communication is **events** -- requests, responses, and
+informs. UI (touch / rotate) and Scheduler produce events; actors post
+events to look up Config/KV, drive Net, and update Draw. There are no
+function-pointer callbacks on the wire.
+
+**Who gets a response?** The **event contract** decides:
+
+- **Default:** if the contract says there is a response, it goes to
+  envelope **`src`** (the sender). Response `type` / body are implied by
+  the request (e.g. POLL -> `TA_EV_NET_POLL_DONE` with
+  `coord_inform_playerstate`).
+- **No response:** many contracts fire-and-forget (or only produce
+  side-effect events to other actors). Example: a rotary turn may post
+  one event to Net (update player volume) and another to Draw (target
+  volume chrome) and send **nothing** back to the originator.
+- **Response and side-effects:** allowed -- one DONE/inform to `src`
+  plus other posts (Draw update, Log, ...).
+- **`reply_to` is the exception:** only when the completion must land
+  somewhere other than `src` (true proxy). Prefer omitting it; as-built
+  code still carries `reply_to` on some request bodies until migrated.
+
+Scheduler arms use `ta_sched_start_t` (`fire_to` + `fire_type`) -- that is
+the timer's **fire destination**, not a completion `reply_to`.
 
 ### Interaction sketch (names)
 
@@ -72,13 +105,14 @@ PLAN/chat may say **Coordinator** for that role -- same slot until renamed.
 
 ```text
 Scheduler --CTRL_POLL--> Controller --> MPDController
-MPDController --net_poll_playerstate(reply_to=MPD)--> Net
-Net (HTTP getState) --coord_inform_playerstate--> MPDController
+MPDController --net_poll_playerstate (src=MPD)--> Net
+Net --POLL_DONE / coord_inform_playerstate (to src)--> MPDController
 MPDController --draw_inform_songinfo / volume / currpos--> Draw
 ```
 
-Rotary path (PLAN, not fully shipped): ISR pool -> Rotary redirector ->
-MPDVolume -> Net SET + `draw_inform_volume` (target, actual=0) -> Draw.
+Rotary path (PLAN): ISR -> Rotary redirector -> MPDVolume posts **side
+effects** (Net SET + Draw inform target volume) and typically **no**
+response to the ISR/Draw originator.
 
 ### Foundation type ids
 
@@ -136,25 +170,32 @@ for init/degraded filters (section below).
 
 Separate `ta_shape_lock_*` for shape/pixel protocol (not the queue mutex).
 
-### Init + TaskActor lifetime (normative)
+### Init + TaskActor lifetime (normative; `todo:afc1dc50`)
 
-**Init** (system boot actor, not event-driven itself):
+**Base bin loader** (USB-wired physical update only; not OTA'd): brings up
+enough of the image to run the **small init loader**.
 
-1. Allocates / constructs each TaskActor's struct.
-2. Forks one thread/task per actor.
-3. Each forked task calls that actor's `ta.init()` -- **never returns**
-   (run loop lives inside init after local setup).
+**Image init loader** boot procedure:
 
-Inside `ta.init()` the actor:
+1. Locate the **KV** region (prepopulated by the static build; writable).
+2. Get the **start-roster** key -> list of TaskActor **names**.
+3. For each name: get that name's KV blob -> **load** (ESP flash map/cache
+   where it already helps) -> call the actor's **`init()`** entry point.
 
-1. Completes local init (queues, backends, defaults).
-2. **Registers** its name with the registry (becomes reachable by post).
-3. Enters its event loop (may start in **degraded** mode -- below).
+**Exactly two loadable entry points (v1):**
+
+| Entry | Role |
+|-------|------|
+| `init()` | Local setup; **register** name in the registry; start forever event loop (never returns until exit). |
+| `exit()` | Inverse: leave the loop; **unregister** / remove from registry; release what init acquired. |
+
+Reload / OTA after KV mutation: **`exit()` all** running actors, then run the
+boot procedure again on the (possibly new) roster -- or reboot into the same
+init loader.
 
 As-built host still uses a sync entry list (`ta_init_add_entry` /
-`ta_init_run_entries` + `*_start()` register then return). Device fabric
-boot is closer to "start then pump" but not yet the forever-`init()`
-fork model. Treat the fork/`init()` shape as PLAN; track in section 9.
+`ta_init_run_entries` + `*_start()` register then return). Treat
+roster/load/`init`/`exit` as ticket-normative until implemented.
 
 ### Degraded / filter mode (normative)
 
@@ -171,32 +212,39 @@ Once required outside info is in hand, the actor leaves degraded mode
 and processes the full queue (any order among pending, still subject to
 "process before emit").
 
-### Config / KV (TaskActor; owns NVM)
+### Config / KV (ours; `todo:afc1dc50`)
 
-**Normative:** Config/KV is a TaskActor. It is the **sole owner of NVM /
-persistent key-value storage** (string key -> length-known bytes). Other
-actors talk to it only via typed events (get / put / delete / inform),
-never by touching flash or `ta_kv_*` sync helpers from another task.
+**One store** -- not a parallel NVS + SPIFFS + custom trio for the same job.
 
-Well-known key (as-built helper name kept): `TA_KV_KEY_CONTROLLER`
-(`"current_controller"`). Degraded actors wait on Config **inform** /
-get-done replies (peek_verb filter) before leaving setup.
+**Layout v1:** singly linked list of packed records, no key order, O(n) get:
 
-**Net HTTP surface (planned):** Net owns the socket plane and exposes an
-HTTP CRUD facade onto Config values (not a second NVM owner):
+```
+record { next_ptr; key_len; key[key_len]; blob_len; blob[blob_len]; }
+```
 
-| HTTP | Meaning toward Config |
-|------|------------------------|
-| `GET` | read key (or collection) |
-| `POST` | create |
-| `PATCH` | update |
-| `DELETE` | remove |
+**Prepopulated but writable:** the static build emits a factory KV image
+(default roster + per-name actor blobs). Runtime mutates the same region.
 
-Net translates HTTP <-> Config events; Config alone commits to NVM.
+**Allocator:** KV owns placement for (possibly large) blobs; replace/delete
+leaves **holes**; v1 is **first-fit**. Compacting GC deferred until first-fit
+hurts.
+
+**Well-known keys (boot):**
+
+| Key role | Meaning |
+|----------|---------|
+| Start roster | Blob = list of TaskActor names to boot |
+| Per-name actor | Key = actor name; blob = loadable image |
+| (others) | e.g. `log_receiver_url`, `current_controller` -- same store |
+
+**Net HTTP:** Net exposes REST **KV set** (new values / large actor blobs) that
+calls KV put. That is the on-device intake for OTA-ish payload updates. Base
+bin loader stays USB-only.
 
 **As-built:** `ta_kv` is still a sync in-RAM facade (`ta_kv_get` /
-`ta_config_put_controller`) with no registry actor and no HTTP path --
-see section 9.
+`ta_config_put_controller`) with no linked-list image, no first-fit, no HTTP
+set -- see section 9. Actor-facing get/inform events (`todo:15b92eaa`) sit on
+top of this store once it exists; they must not invent a second KV.
 
 ---
 
@@ -206,10 +254,10 @@ Registered names and ownership:
 
 | Registry name | Constant | Source | Owns type range |
 |---------------|----------|--------|-----------------|
-| `Logger` | `TA_LOGGER_NAME` | `ta_logger` | uses `TA_EV_LOG` |
-| `Config` / KV | (TBD `TA_CONFIG_NAME`) | `ta_kv` -> actor | Config events (get/put/del/inform); **owns NVM** |
+| `Logger` | `TA_LOGGER_NAME` | `ta_logger` | uses `TA_EV_LOG` / accept+drain (`todo:15b92eaa`) |
+| `Config` / KV | (TBD `TA_CONFIG_NAME`) | dead-simple KV store + actor face | owns packed LL KV + first-fit (`todo:afc1dc50`); get/inform for peers |
 | `Draw` | `TA_DRAW_NAME` | `ta_draw_events` | `0x200..` |
-| `Net` | `TA_NET_NAME` | `ta_net_events` | `0x300..` (+ HTTP Config CRUD planned) |
+| `Net` | `TA_NET_NAME` | `ta_net_events` | `0x300..` (+ HTTP REST KV set; NTP) |
 | `Controller` | `TA_CONTROLLER_NAME` | `ta_router` | `TA_EV_SET_ROUTE` + forwards ControlEvents |
 | `MPDController` | `TA_MPD_NAME` | `ta_controller` | consumes ControlEvents |
 | `SonosController` | `TA_SONOS_NAME` | `ta_controller` | stub, same surface |
@@ -764,9 +812,9 @@ Run: `(cd spinme/host && make test)`.
 - Controller facade is a select-N **Router** (`ta_router`); Net is the sole
   socket / HTTP owner; Draw is the sole glass owner.
 - **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
-  `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. `reply_to`
-  lives only on per-message structs. No legacy blob arm. MVP passes
-  envelopes by value; measure copy cost later.
+  `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. Completions
+  default to `src`; `reply_to` is exceptional. No legacy blob arm. MVP
+  passes envelopes by value; measure copy cost later.
 
 ### PLAN ratified, not yet implemented (do not read as as-built)
 
@@ -776,18 +824,20 @@ Run: `(cd spinme/host && make test)`.
 | **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
 | **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
 | **Net-owned NTP timesource** | Volumio `getState` has no wall ToD (`seek`/`duration` only); Net must own basic SNTP; Draw clock reads `time()` | `todo:15b92eaa` (groom) |
+| **Log TaskActor drain** | Accept/sample/buffer; Scheduler empty; Net send to `log_receiver_url`; always-clear; `ta_all_*` | `todo:15b92eaa` (groom) |
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
   seek still unused on the wire | Follow-on when getState mapping expands |
 | **Coordinator rename** | Chat/PLAN "Coordinator" == as-built `MPDController` | Rename optional |
-| **Fork + forever `ta.init()`** | Init constructs actors, forks, each `init()` registers then loops (never returns) | Follow-on; host still sync `*_start()` |
+| **Boot roster + `init`/`exit`** | Init loader: roster -> per-name load -> `init()`; `exit()` inverse; USB base loader only | `todo:afc1dc50` (groom); host still sync `*_start()` |
+| **Dead-simple KV + first-fit** | Packed LL records; build-prepopulated writable store; holes/first-fit; no compacting GC yet | `todo:afc1dc50` (groom) |
+| **Net HTTP REST KV set** | REST set large actor blobs / roster into KV put; then exit-all + init-all | `todo:afc1dc50` (groom) |
 | **Degraded filter + selective queue take** | Process-before-emit only ordering; `peek_verb` for inform (etc.); out-of-order take = swap with front; defer non-setup msgs until setup informs land | Follow-on; queue is FIFO `pop` today |
-| **Config TaskActor + NVM ownership** | Registry actor owns NVM; typed get/put/del/inform; replace sync `ta_kv_*` call-through from other tasks | Follow-on |
-| **Net HTTP Config CRUD** | Net GET/POST/PATCH/DELETE maps to Config events; inbound serve never blocked by sequential outbound client lane | Follow-on; depends on Config actor |
 | **SonosController** | Sibling route target / dialect; stub only | Deferred; non-goal of `todo:3135a46a` |
 | **Delete retired paint tree** | `retired/uimk2_paint/` and optionally `uimk2/` still on disk | Needs explicit user OK to delete |
 
 ### Permanent non-goals
 
-- Function-pointer callbacks on events: **not supported**; use `reply_to`.
+- Function-pointer callbacks on events: **not supported**; responses are
+  events (usually to `src`; `reply_to` only for proxy).
 - LVGL: out (`PLAN.md`).
 - Gaussian calm path: removed; Q8 quadratic only.
