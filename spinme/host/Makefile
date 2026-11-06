@@ -13,7 +13,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_draw_phase1 $(BUILD)/test_draw_phase2 \
 	$(BUILD)/test_sched_cadence $(BUILD)/test_follow_chrome \
 	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
-	$(BUILD)/test_artwork
+	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
+	$(BUILD)/test_net_kv_http
 
 .PHONY: test clean
 
@@ -167,6 +168,23 @@ P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c
 $(BUILD)/test_draw_phase2: $(P2_SRCS) ta_draw_phase2.h ta_draw_update.h \
 		ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(P2_SRCS)
+
+$(BUILD)/test_actor: test_actor.c ta_actor.c ta_actor.h ta_registry.c \
+		ta_registry.h ta_event.c ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_actor.c ta_actor.c ta_registry.c \
+		ta_event.c -lpthread
+
+$(BUILD)/test_boot: test_boot.c ta_boot.c ta_boot.h ta_actor.c ta_kv.c \
+		ta_registry.c ta_event.c ta_actor.h ta_kv.h ta_registry.h \
+		ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_boot.c ta_boot.c ta_actor.c ta_kv.c \
+		ta_registry.c ta_event.c -lpthread
+
+$(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
+		ta_net_kv_http.h ta_boot.c ta_actor.c ta_kv.c ta_registry.c \
+		ta_event.c | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_kv_http.c ta_net_kv_http.c \
+		ta_boot.c ta_actor.c ta_kv.c ta_registry.c ta_event.c -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)

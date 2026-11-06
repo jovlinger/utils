@@ -81,6 +81,31 @@ int ta_registry_register(const char *name, ta_enqueue_fn fn) {
     return 0;
 }
 
+int ta_registry_unregister(const char *name) {
+    size_t i;
+
+    if (name == NULL || name[0] == '\0') {
+        return -1;
+    }
+    ensure_mutex();
+    if (!g_mu_ok) {
+        return -1;
+    }
+    ta_mutex_lock(&g_mu);
+    ensure_init();
+    for (i = 0; i < g_n; i++) {
+        if (strcmp(g_slots[i].name, name) == 0) {
+            g_slots[i] = g_slots[g_n - 1];
+            memset(&g_slots[g_n - 1], 0, sizeof(g_slots[0]));
+            g_n--;
+            ta_mutex_unlock(&g_mu);
+            return 0;
+        }
+    }
+    ta_mutex_unlock(&g_mu);
+    return -1;
+}
+
 ta_enqueue_fn ta_registry_lookup(const char *name) {
     size_t i;
     ta_enqueue_fn fn = NULL;

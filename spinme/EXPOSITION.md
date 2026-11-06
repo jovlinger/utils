@@ -8,7 +8,7 @@ implementation to match the todo (Body / Notes / WorkItems), not the reverse.
 
 | Ticket | Owns (design) |
 |--------|----------------|
-| `todo:afc1dc50` (groom) | Dead-simple KV layout + allocator, boot roster/load/`init`/`exit`, USB-only base loader, Net HTTP REST KV set / OTA payloads |
+| `todo:afc1dc50` (done) | Dead-simple KV layout + allocator, boot roster/load/`init`/`exit`, USB-only base loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map still a stub |
 | `todo:15b92eaa` (groom) | Log TaskActor (sample/buffer/off-device drain), universal `ta_all_*` messages, Net NTP; **consumes** KV (does not redefine storage) |
 
 Later, if code drifts from a closed ticket, **sync EXPOSITION to the code**
@@ -25,6 +25,23 @@ This document is the event and shape catalog: registered TaskActors, event
 types and bodies, completions, Draw shapes, ISR path, plus boot/KV/OTA
 contracts ratified on the tickets above. Section 9 separates shipped code
 from todo-ratified gaps still in flight.
+
+## KV image and boot (`todo:afc1dc50`)
+
+One writable KV image, prepopulated by `ta_kv_install_factory`. Records are a
+packed little-endian linked list. `next` is a byte offset from the image base.
+0 means empty or end, because a 4-byte head occupies offset 0. New records use
+first-fit holes; there is no compacting GC.
+
+`actors_to_start` is newline-separated actor names. Each name is also a key
+whose blob is that actor's image. The base bin loader stays USB-only. The
+image init loader is `ta_boot_from_kv`: roster, blob, stub load (non-empty
+blob; ELF map not yet), `ta_actor_init`. `ta_actor_exit` is the inverse
+(stop the loop, unregister). `ta_boot_exit_all` then boot again is the reload.
+
+Net's OTA intake is `ta_net_kv_http_set`: `PUT /kv/<key>` with
+`Content-Length` calls `ta_kv_put` (blobs up to 1024 bytes). After that,
+`ta_boot_exit_all` and `ta_boot_from_kv` pick up the new roster.
 
 ---
 
@@ -811,6 +828,9 @@ Run: `(cd spinme/host && make test)`.
   `host/SMOKE.md` (`todo:3135a46a` done).
 - Controller facade is a select-N **Router** (`ta_router`); Net is the sole
   socket / HTTP owner; Draw is the sole glass owner.
+- Dead-simple KV image (`ta_kv`), factory roster, first-fit holes, and
+  host boot (`ta_boot_from_kv` / `ta_actor_init` / `ta_actor_exit`) on
+  `todo:afc1dc50`. ELF load is still a stub; `PUT /kv/<key>` is `ta_net_kv_http_set`.
 - **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
   `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. Completions
   default to `src`; `reply_to` is exceptional. No legacy blob arm. MVP
@@ -828,9 +848,7 @@ Run: `(cd spinme/host && make test)`.
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
   seek still unused on the wire | Follow-on when getState mapping expands |
 | **Coordinator rename** | Chat/PLAN "Coordinator" == as-built `MPDController` | Rename optional |
-| **Boot roster + `init`/`exit`** | Init loader: roster -> per-name load -> `init()`; `exit()` inverse; USB base loader only | `todo:afc1dc50` (groom); host still sync `*_start()` |
-| **Dead-simple KV + first-fit** | Packed LL records; build-prepopulated writable store; holes/first-fit; no compacting GC yet | `todo:afc1dc50` (groom) |
-| **Net HTTP REST KV set** | REST set large actor blobs / roster into KV put; then exit-all + init-all | `todo:afc1dc50` (groom) |
+| **Fork + forever `ta.init()`** | Host `ta_actor_init` registers and loops on a thread until `ta_actor_exit`; device boot still sync `*_start()` | `todo:afc1dc50` host path shipped; device fork still open |
 | **Degraded filter + selective queue take** | Process-before-emit only ordering; `peek_verb` for inform (etc.); out-of-order take = swap with front; defer non-setup msgs until setup informs land | Follow-on; queue is FIFO `pop` today |
 | **SonosController** | Sibling route target / dialect; stub only | Deferred; non-goal of `todo:3135a46a` |
 | **Delete retired paint tree** | `retired/uimk2_paint/` and optionally `uimk2/` still on disk | Needs explicit user OK to delete |

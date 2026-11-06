@@ -2,18 +2,15 @@
 
 #include <string.h>
 
-typedef struct {
-    int used;
-    char key[TA_KV_KEY_MAX];
-    size_t len;
-    uint8_t val[TA_KV_VAL_MAX];
-} ta_kv_slot_t;
+/* One max-sized record per historical slot, plus the 4-byte head.
+ * Unlinked holes are not reused yet, so the cap matches the old slot count.
+ */
+#define TA_KV_IMAGE_CAP                                                        \
+    (TA_KV_IMAGE_HEAD_SIZE +                                                   \
+     (TA_KV_SLOTS * (TA_KV_REC_HDR_SIZE + (TA_KV_KEY_MAX - 1) + TA_KV_VAL_MAX)))
 
-static ta_kv_slot_t g_slots[TA_KV_SLOTS];
-
-void ta_kv_reset(void) {
-    memset(g_slots, 0, sizeof(g_slots));
-}
+static uint8_t g_img[TA_KV_IMAGE_CAP];
+static size_t g_hw;
 
 static int key_ok(const char *key) {
     size_t n;
@@ -25,76 +22,397 @@ static int key_ok(const char *key) {
     return n > 0 && n < TA_KV_KEY_MAX;
 }
 
-static ta_kv_slot_t *find(const char *key) {
-    size_t i;
-
-    for (i = 0; i < TA_KV_SLOTS; i++) {
-        if (g_slots[i].used && strcmp(g_slots[i].key, key) == 0) {
-            return &g_slots[i];
-        }
-    }
-    return NULL;
+static uint32_t rd32(size_t off) {
+    return (uint32_t)g_img[off] | ((uint32_t)g_img[off + 1] << 8) |
+           ((uint32_t)g_img[off + 2] << 16) | ((uint32_t)g_img[off + 3] << 24);
 }
 
-static ta_kv_slot_t *find_free(void) {
-    size_t i;
+static void wr32(size_t off, uint32_t v) {
+    g_img[off] = (uint8_t)(v & 0xffu);
+    g_img[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+    g_img[off + 2] = (uint8_t)((v >> 16) & 0xffu);
+    g_img[off + 3] = (uint8_t)((v >> 24) & 0xffu);
+}
 
-    for (i = 0; i < TA_KV_SLOTS; i++) {
-        if (!g_slots[i].used) {
-            return &g_slots[i];
+static uint16_t rd16(size_t off) {
+    return (uint16_t)((uint16_t)g_img[off] | ((uint16_t)g_img[off + 1] << 8));
+}
+
+static void wr16(size_t off, uint16_t v) {
+    g_img[off] = (uint8_t)(v & 0xffu);
+    g_img[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+}
+
+static size_t rec_size(uint16_t key_len, uint32_t blob_len) {
+    return (size_t)TA_KV_REC_HDR_SIZE + (size_t)key_len + (size_t)blob_len;
+}
+
+static int rec_key_eq(size_t off, const char *key, size_t klen) {
+    uint16_t rk;
+
+    rk = rd16(off + 4);
+    if ((size_t)rk != klen) {
+        return 0;
+    }
+    return memcmp(g_img + off + TA_KV_REC_HDR_SIZE, key, klen) == 0;
+}
+
+/* Walk live list. *prev_next_off is the address of the uint32 that points at
+ * *off (the head, or the previous record's next field).
+ */
+static int find_live(const char *key, size_t klen, size_t *off,
+                     size_t *prev_next_off) {
+    size_t prev;
+    uint32_t cur;
+
+    prev = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        if ((size_t)cur + TA_KV_REC_HDR_SIZE > g_hw) {
+            return 0;
+        }
+        if (rec_key_eq((size_t)cur, key, klen)) {
+            *off = (size_t)cur;
+            *prev_next_off = prev;
+            return 1;
+        }
+        prev = (size_t)cur;
+        cur = rd32((size_t)cur);
+    }
+    return 0;
+}
+
+static void unlink_at(size_t off, size_t prev_next_off) {
+    uint32_t nxt;
+
+    nxt = rd32(off);
+    wr32(prev_next_off, nxt);
+}
+
+/* First hole whose free bytes cover need, else the high-water tail.
+ * skip_off is a live record to treat as already free (0 skips nothing).
+ */
+static int first_fit(size_t skip_off, size_t need, size_t *off_out) {
+    size_t offs[TA_KV_SLOTS];
+    size_t ends[TA_KV_SLOTS];
+    size_t n;
+    size_t i;
+    size_t j;
+    size_t cursor;
+    uint32_t cur;
+
+    n = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        uint16_t klen;
+        uint32_t blen;
+
+        if (n >= TA_KV_SLOTS) {
+            return 0;
+        }
+        if ((size_t)cur != skip_off) {
+            klen = rd16((size_t)cur + 4);
+            blen = rd32((size_t)cur + 6);
+            offs[n] = (size_t)cur;
+            ends[n] = (size_t)cur + rec_size(klen, blen);
+            n++;
+        }
+        cur = rd32((size_t)cur);
+    }
+    for (i = 1; i < n; i++) {
+        size_t o;
+        size_t e;
+
+        o = offs[i];
+        e = ends[i];
+        j = i;
+        while (j > 0 && offs[j - 1] > o) {
+            offs[j] = offs[j - 1];
+            ends[j] = ends[j - 1];
+            j--;
+        }
+        offs[j] = o;
+        ends[j] = e;
+    }
+    cursor = TA_KV_IMAGE_HEAD_SIZE;
+    for (i = 0; i < n; i++) {
+        if (offs[i] > cursor && offs[i] - cursor >= need) {
+            *off_out = cursor;
+            return 1;
+        }
+        if (ends[i] > cursor) {
+            cursor = ends[i];
         }
     }
-    return NULL;
+    if (cursor < g_hw && g_hw - cursor >= need) {
+        *off_out = cursor;
+        return 1;
+    }
+    if (g_hw + need <= TA_KV_IMAGE_CAP) {
+        *off_out = g_hw;
+        return 1;
+    }
+    return 0;
+}
+
+static ta_kv_status_t append_rec(const char *key, size_t klen, const void *src,
+                                 size_t len) {
+    size_t need;
+    size_t off;
+    size_t prev;
+    uint32_t cur;
+
+    need = rec_size((uint16_t)klen, (uint32_t)len);
+    if (!first_fit(0, need, &off)) {
+        return TA_KV_FULL;
+    }
+    wr32(off, 0);
+    wr16(off + 4, (uint16_t)klen);
+    wr32(off + 6, (uint32_t)len);
+    memcpy(g_img + off + TA_KV_REC_HDR_SIZE, key, klen);
+    if (len > 0) {
+        memcpy(g_img + off + TA_KV_REC_HDR_SIZE + klen, src, len);
+    }
+    prev = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        prev = (size_t)cur;
+        cur = rd32((size_t)cur);
+    }
+    wr32(prev, (uint32_t)off);
+    if (off + need > g_hw) {
+        g_hw = off + need;
+    }
+    return TA_KV_OK;
+}
+
+void ta_kv_reset(void) {
+    memset(g_img, 0, sizeof(g_img));
+    g_hw = TA_KV_IMAGE_HEAD_SIZE;
+}
+
+const uint8_t *ta_kv_image(size_t *out_len) {
+    if (out_len != NULL) {
+        *out_len = g_hw;
+    }
+    return g_img;
+}
+
+static int image_chain_ok(size_t len) {
+    uint32_t cur;
+    unsigned guard;
+
+    if (len < TA_KV_IMAGE_HEAD_SIZE || len > TA_KV_IMAGE_CAP) {
+        return 0;
+    }
+    cur = rd32(0);
+    guard = 0;
+    while (cur != 0) {
+        uint16_t klen;
+        uint32_t blen;
+        size_t need;
+
+        if (guard++ > TA_KV_SLOTS) {
+            return 0;
+        }
+        if ((size_t)cur < TA_KV_IMAGE_HEAD_SIZE ||
+            (size_t)cur + TA_KV_REC_HDR_SIZE > len) {
+            return 0;
+        }
+        klen = rd16((size_t)cur + 4);
+        blen = rd32((size_t)cur + 6);
+        need = rec_size(klen, blen);
+        if ((size_t)cur + need > len) {
+            return 0;
+        }
+        cur = rd32((size_t)cur);
+    }
+    return 1;
+}
+
+ta_kv_status_t ta_kv_load_image(const uint8_t *src, size_t len) {
+    if (src == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (len < TA_KV_IMAGE_HEAD_SIZE || len > TA_KV_IMAGE_CAP) {
+        return TA_KV_BAD_ARG;
+    }
+    memset(g_img, 0, sizeof(g_img));
+    memcpy(g_img, src, len);
+    g_hw = len;
+    if (!image_chain_ok(len)) {
+        ta_kv_reset();
+        return TA_KV_BAD_ARG;
+    }
+    return TA_KV_OK;
+}
+
+void ta_kv_install_factory(void) {
+    static const char *const names[] = {"Draw", "Net"};
+    static const char draw_blob[] = "draw-v1";
+    static const char net_blob[] = "net-v1";
+
+    ta_kv_reset();
+    (void)ta_kv_set_roster(names, 2);
+    (void)ta_kv_put("Draw", draw_blob, sizeof(draw_blob) - 1);
+    (void)ta_kv_put("Net", net_blob, sizeof(net_blob) - 1);
+}
+
+ta_kv_status_t ta_kv_set_roster(const char *const *names, size_t n) {
+    char buf[TA_KV_VAL_MAX];
+    size_t used;
+    size_t i;
+
+    if (names == NULL && n > 0) {
+        return TA_KV_BAD_ARG;
+    }
+    used = 0;
+    for (i = 0; i < n; i++) {
+        size_t klen;
+
+        if (names[i] == NULL || names[i][0] == '\0') {
+            return TA_KV_BAD_ARG;
+        }
+        klen = strlen(names[i]);
+        if (used + klen + 1 > TA_KV_VAL_MAX) {
+            return TA_KV_BAD_ARG;
+        }
+        memcpy(buf + used, names[i], klen);
+        used += klen;
+        buf[used++] = '\n';
+    }
+    return ta_kv_put(TA_KV_KEY_ACTORS, buf, used);
+}
+
+size_t ta_kv_roster_count(void) {
+    char buf[TA_KV_VAL_MAX];
+    size_t len;
+    size_t i;
+    size_t n;
+
+    if (ta_kv_get(TA_KV_KEY_ACTORS, buf, sizeof(buf), &len) != TA_KV_OK) {
+        return 0;
+    }
+    n = 0;
+    i = 0;
+    while (i < len) {
+        if (buf[i] == '\n') {
+            i++;
+            continue;
+        }
+        n++;
+        while (i < len && buf[i] != '\n') {
+            i++;
+        }
+    }
+    return n;
+}
+
+ta_kv_status_t ta_kv_roster_at(size_t index, char *dst, size_t dst_cap,
+                              size_t *out_len) {
+    char buf[TA_KV_VAL_MAX];
+    size_t len;
+    size_t i;
+    size_t n;
+    size_t start;
+
+    if (out_len == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (ta_kv_get(TA_KV_KEY_ACTORS, buf, sizeof(buf), &len) != TA_KV_OK) {
+        return TA_KV_MISSING;
+    }
+    n = 0;
+    i = 0;
+    start = 0;
+    while (i < len) {
+        if (buf[i] == '\n') {
+            i++;
+            continue;
+        }
+        start = i;
+        while (i < len && buf[i] != '\n') {
+            i++;
+        }
+        if (n == index) {
+            *out_len = i - start;
+            if (dst_cap < *out_len) {
+                return TA_KV_TOO_SMALL;
+            }
+            if (*out_len > 0) {
+                if (dst == NULL) {
+                    return TA_KV_BAD_ARG;
+                }
+                memcpy(dst, buf + start, *out_len);
+            }
+            return TA_KV_OK;
+        }
+        n++;
+    }
+    return TA_KV_MISSING;
 }
 
 int ta_kv_has(const char *key) {
+    size_t off;
+    size_t prev;
+    size_t klen;
+
     if (!key_ok(key)) {
         return 0;
     }
-    return find(key) != NULL ? 1 : 0;
+    klen = strlen(key);
+    return find_live(key, klen, &off, &prev) ? 1 : 0;
 }
 
 ta_kv_status_t ta_kv_get_len(const char *key, size_t *out_len) {
-    ta_kv_slot_t *s;
+    size_t off;
+    size_t prev;
+    size_t klen;
 
     if (!key_ok(key) || out_len == NULL) {
         return TA_KV_BAD_ARG;
     }
-    s = find(key);
-    if (s == NULL) {
+    klen = strlen(key);
+    if (!find_live(key, klen, &off, &prev)) {
         return TA_KV_MISSING;
     }
-    *out_len = s->len;
+    *out_len = (size_t)rd32(off + 6);
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_get(const char *key, void *dst, size_t dst_cap,
                          size_t *out_len) {
-    ta_kv_slot_t *s;
+    size_t off;
+    size_t prev;
+    size_t klen;
+    uint32_t blen;
 
     if (!key_ok(key) || out_len == NULL) {
         return TA_KV_BAD_ARG;
     }
-    s = find(key);
-    if (s == NULL) {
+    klen = strlen(key);
+    if (!find_live(key, klen, &off, &prev)) {
         return TA_KV_MISSING;
     }
-    *out_len = s->len;
-    if (dst_cap < s->len) {
+    blen = rd32(off + 6);
+    *out_len = (size_t)blen;
+    if (dst_cap < (size_t)blen) {
         return TA_KV_TOO_SMALL;
     }
-    if (s->len > 0) {
+    if (blen > 0) {
         if (dst == NULL) {
             return TA_KV_BAD_ARG;
         }
-        memcpy(dst, s->val, s->len);
+        memcpy(dst, g_img + off + TA_KV_REC_HDR_SIZE + klen, (size_t)blen);
     }
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_put(const char *key, const void *src, size_t len) {
-    ta_kv_slot_t *s;
+    size_t off;
+    size_t prev;
     size_t klen;
+    uint32_t old_len;
 
     if (!key_ok(key) || len > TA_KV_VAL_MAX) {
         return TA_KV_BAD_ARG;
@@ -102,34 +420,42 @@ ta_kv_status_t ta_kv_put(const char *key, const void *src, size_t len) {
     if (len > 0 && src == NULL) {
         return TA_KV_BAD_ARG;
     }
-    s = find(key);
-    if (s == NULL) {
-        s = find_free();
-        if (s == NULL) {
-            return TA_KV_FULL;
+    klen = strlen(key);
+    if (find_live(key, klen, &off, &prev)) {
+        old_len = rd32(off + 6);
+        if (len <= (size_t)old_len) {
+            wr32(off + 6, (uint32_t)len);
+            if (len > 0) {
+                memcpy(g_img + off + TA_KV_REC_HDR_SIZE + klen, src, len);
+            }
+            return TA_KV_OK;
         }
-        klen = strlen(key);
-        memcpy(s->key, key, klen + 1);
-        s->used = 1;
+        {
+            size_t slot;
+
+            if (!first_fit(off, rec_size((uint16_t)klen, (uint32_t)len),
+                           &slot)) {
+                return TA_KV_FULL;
+            }
+        }
+        unlink_at(off, prev);
     }
-    if (len > 0) {
-        memcpy(s->val, src, len);
-    }
-    s->len = len;
-    return TA_KV_OK;
+    return append_rec(key, klen, src, len);
 }
 
 ta_kv_status_t ta_kv_delete(const char *key) {
-    ta_kv_slot_t *s;
+    size_t off;
+    size_t prev;
+    size_t klen;
 
     if (!key_ok(key)) {
         return TA_KV_BAD_ARG;
     }
-    s = find(key);
-    if (s == NULL) {
+    klen = strlen(key);
+    if (!find_live(key, klen, &off, &prev)) {
         return TA_KV_MISSING;
     }
-    memset(s, 0, sizeof(*s));
+    unlink_at(off, prev);
     return TA_KV_OK;
 }
 
