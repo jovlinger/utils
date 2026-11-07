@@ -35,7 +35,8 @@ enum {
     TA_GLASS_IDX_TITLE_L2R = 905, /* not a UILayout; viewport child */
     TA_GLASS_IDX_VOLUME = 906,
     TA_GLASS_IDX_TRANSPORT = 907,
-    TA_GLASS_IDX_CLOCK = 908
+    TA_GLASS_IDX_CLOCK = 908,
+    TA_GLASS_IDX_SWAP = 909 /* SwapShape root; child 0 = follow page */
 };
 
 #define TA_GLASS_TEXT_MAX 96
@@ -136,6 +137,11 @@ int ta_glass_polled(void);
 int ta_glass_desired(void);
 int ta_glass_playing(void);
 const ta_follow_chrome_t *ta_glass_chrome(void);
+/* SwapShape page: 0 = follow chrome; later pages are full-panel children. */
+unsigned ta_glass_page(void);
+int ta_glass_set_page(unsigned page);
+/* Append a same-size panel child (KV editor, etc.). Returns new page or -1. */
+int ta_glass_add_page(unsigned shape_idx);
 /* Hit boxes used by the walk (transport padded). */
 void ta_glass_hit_boxes(uint16_t w[TA_FOLLOW_N], uint16_t h[TA_FOLLOW_N]);
 

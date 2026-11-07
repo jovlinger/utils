@@ -226,6 +226,9 @@ int main(void) {
     CHECK(!ta_glass_installed());
     CHECK(pump() >= 1);
     CHECK(ta_glass_installed());
+    CHECK(ta_glass_page() == 0);
+    CHECK(ta_glass_set_page(0) == 0);
+    CHECK(ta_glass_set_page(1) == -1); /* n=1 until add_page */
     CHECK(ta_draw_stats()->set_stack == 1);
     /* First paint: every slot pushed, base first (farthest-first order). */
     CHECK(g_nrec == TA_FOLLOW_N);
@@ -364,6 +367,30 @@ int main(void) {
             ta_unpack66(vp->pixels[0], &r, &gg, &b, &a);
             CHECK(a == 3); /* never transparent on the glass */
         }
+    }
+
+    /* 10. SwapShape page: add a second full-panel child and switch to it. */
+    {
+        static ta_pack66_t page1_px[PANEL * PANEL];
+        static ta_shape_bitmap_t page1;
+        memset(page1_px, 0, sizeof(page1_px));
+        page1_px[0] = ta_pack66_rgba(4, 5, 6, 3);
+        memset(&page1, 0, sizeof(page1));
+        page1.tag = TA_SHAPE_TAG_BITMAP;
+        page1.w = PANEL;
+        page1.h = PANEL;
+        page1.pixels = page1_px;
+        CHECK(ta_shape_table_set(920, &page1) == 0);
+        CHECK(ta_glass_add_page(920) == 1);
+        before = g_nrec;
+        CHECK(ta_glass_set_page(1) == 0);
+        CHECK(ta_glass_page() == 1);
+        CHECK(post_type(TA_DRAW_NAME, TA_EV_DRAW_PAINT) == 0);
+        CHECK(pump() == 1);
+        CHECK(g_nrec == before + 1);
+        CHECK(g_recs[before].px == page1_px);
+        CHECK(ta_glass_set_page(0) == 0);
+        CHECK(ta_glass_page() == 0);
     }
 
     CHECK(ta_draw_stats()->unknown == 0);

@@ -4,6 +4,7 @@
 #include "ta_draw_update.h"
 #include "ta_hit_dispatch.h"
 #include "ta_shape_l2r.h"
+#include "ta_shape_swap.h"
 #include "ta_viewport.h"
 
 #include <stdio.h>
@@ -51,6 +52,7 @@ typedef struct glass_state {
     unsigned uptime_s;
     ta_shape_bitmap_t base;
     ta_shape_viewport_t title_vp;
+    ta_shape_swap_t swap;
     text_slot_t ts[TS_N];
     ta_follow_chrome_t chrome;
     ta_draw_scene_t scene;
@@ -350,6 +352,22 @@ int ta_glass_install_stack(void) {
     if (ta_shape_table_set(TA_GLASS_IDX_BASE, &g.base) != 0) {
         return -1;
     }
+    /* SwapShape root: child 0 is the follow page (base stand-in size; the
+     * multi-layer chrome still paints when page==0). Later pages are
+     * full-panel children added via ta_glass_add_page. */
+    memset(&g.swap, 0, sizeof(g.swap));
+    g.swap.tag = TA_SHAPE_TAG_SWAP;
+    g.swap.dirty = 1;
+    g.swap.n = 1;
+    g.swap.active = 0;
+    g.swap.child_idx[0] = TA_GLASS_IDX_BASE;
+    if (ta_shape_swap_bind(&g.swap) != 0) {
+        return -1;
+    }
+    if (ta_shape_table_set(TA_GLASS_IDX_SWAP,
+                           (ta_shape_bitmap_t *)(void *)&g.swap) != 0) {
+        return -1;
+    }
     for (i = 0; i < TS_N; i++) {
         uint16_t cap_w = i == TS_TITLE ? (uint16_t)TA_GLASS_LINE_W_MAX
                                        : g.cfg.view_w;
@@ -503,6 +521,45 @@ int ta_glass_update(void) {
     return 0;
 }
 
+unsigned ta_glass_page(void) {
+    return g.swap.active;
+}
+
+int ta_glass_set_page(unsigned page) {
+    if (!g.installed) {
+        return -1;
+    }
+    if (page == g.swap.active) {
+        return 0;
+    }
+    if (ta_shape_swap_set_active(&g.swap, page) != 0) {
+        return -1;
+    }
+    mark_all_dirty();
+    return 0;
+}
+
+int ta_glass_add_page(unsigned shape_idx) {
+    ta_shape_bitmap_t *ch;
+
+    if (!g.installed || g.swap.n >= TA_SWAP_MAX) {
+        return -1;
+    }
+    ch = ta_shape_table_get(shape_idx);
+    if (ch == NULL || ch->pixels == NULL || ch->w != g.base.w ||
+        ch->h != g.base.h) {
+        return -1;
+    }
+    g.swap.child_idx[g.swap.n] = shape_idx;
+    g.swap.n++;
+    g.swap.dirty = 1;
+    if (ta_shape_swap_bind(&g.swap) != 0) {
+        g.swap.n--;
+        return -1;
+    }
+    return (int)(g.swap.n - 1);
+}
+
 int ta_glass_paint(void) {
     ta_phase1_opts_t opts;
     ta_phase2_push_t pushes[TA_FOLLOW_N * 2];
@@ -514,6 +571,26 @@ int ta_glass_paint(void) {
     }
     if (!g.lit) {
         return 0; /* dark glass: keep dirty for the wake paint */
+    }
+    /* Non-zero SwapShape page: one full-panel child, not follow chrome. */
+    if (g.swap.active != 0) {
+        const ta_shape_bitmap_t *hdr;
+
+        if (ta_shape_swap_bind(&g.swap) != 0 || g.swap.pixels == NULL) {
+            g.st.errors++;
+            return -1;
+        }
+        hdr = ta_shape_table_get(ta_shape_swap_active_idx(&g.swap));
+        if (hdr == NULL || hdr->pixels == NULL) {
+            g.st.errors++;
+            return -1;
+        }
+        g.be->push_rect(0, 0, (int)g.swap.w, (int)g.swap.h, hdr->pixels,
+                        (int)hdr->w);
+        g.swap.dirty = 0;
+        g.st.pushes++;
+        g.st.paints++;
+        return 1;
     }
     memset(&opts, 0, sizeof(opts));
     opts.base_shape_idx = TA_GLASS_IDX_BASE;
