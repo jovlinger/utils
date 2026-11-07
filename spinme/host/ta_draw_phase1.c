@@ -1,6 +1,7 @@
 #include "ta_draw_phase1.h"
 
 #include "ta_shape_l2r.h"
+#include "ta_shape_swap.h"
 #include "ta_viewport.h"
 
 #include <string.h>
@@ -207,6 +208,13 @@ int ta_draw_phase1(ta_draw_scene_t *scene, const ta_phase1_opts_t *opts) {
         if (hdr->tag == TA_SHAPE_TAG_VIEWPORT) {
             if (bake_viewport((ta_shape_viewport_t *)(void *)hdr, ta_uilo_x(w),
                               ta_uilo_y(w), base, base_x, base_y) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (hdr->tag == TA_SHAPE_TAG_SWAP) {
+            /* Alias pixels to the active same-size child. */
+            if (ta_shape_swap_bind((ta_shape_swap_t *)(void *)hdr) != 0) {
                 return -1;
             }
         }

@@ -16,7 +16,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
 	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
-	$(BUILD)/test_net_sntp
+	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap
 
 .PHONY: test clean
 
@@ -26,10 +26,12 @@ TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
 	ta_draw_phase1.c ta_draw_phase2.c ta_follow_chrome.c ta_hit_dispatch.c \
-	ta_text.c ta_shape_l2r.c ta_uilayout.c ta_isr_mail.c ta_queue.c
+	ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_uilayout.c ta_isr_mail.c \
+	ta_queue.c
 DRAW_HDRS := ta_draw_events.h ta_draw_glass.h ta_draw_update.h \
 	ta_draw_phase1.h ta_draw_phase2.h ta_follow_chrome.h ta_hit_dispatch.h \
-	ta_text.h ta_shape_l2r.h ta_uilayout.h ta_isr_mail.h ta_queue.h
+	ta_text.h ta_shape_l2r.h ta_shape_swap.h ta_uilayout.h ta_isr_mail.h \
+	ta_queue.h
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -129,9 +131,11 @@ $(BUILD)/test_draw_glass_owner: $(OWNER_SRCS) ta_controller.h ta_router.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(OWNER_SRCS) -lpthread
 
 GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \
-	ta_draw_phase2.c ta_under_image.c ta_shape_l2r.c ta_uilayout.c
+	ta_draw_phase2.c ta_under_image.c ta_shape_l2r.c ta_shape_swap.c \
+	ta_uilayout.c
 $(BUILD)/test_draw_glass_contract: $(GLASS_SRCS) ta_draw_update.h \
-		ta_draw_phase1.h ta_draw_phase2.h ta_under_image.h | $(BUILD)
+		ta_draw_phase1.h ta_draw_phase2.h ta_under_image.h \
+		ta_shape_swap.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(GLASS_SRCS)
 
 $(BUILD)/test_under_image: test_under_image.c ta_under_image.c ta_uilayout.c \
@@ -161,9 +165,10 @@ $(BUILD)/test_draw_update: $(UPD_SRCS) ta_draw_update.h ta_shape_l2r.h \
 		ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(UPD_SRCS)
 
-P1_SRCS := test_draw_phase1.c ta_draw_phase1.c ta_shape_l2r.c ta_uilayout.c
+P1_SRCS := test_draw_phase1.c ta_draw_phase1.c ta_shape_l2r.c ta_shape_swap.c \
+	ta_uilayout.c
 $(BUILD)/test_draw_phase1: $(P1_SRCS) ta_draw_phase1.h ta_draw_update.h \
-		ta_shape_l2r.h ta_uilayout.h ta_viewport.h | $(BUILD)
+		ta_shape_l2r.h ta_shape_swap.h ta_uilayout.h ta_viewport.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(P1_SRCS)
 
 P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c
@@ -213,6 +218,13 @@ $(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_kv_actor.c ta_kv.c \
 
 $(BUILD)/test_net_sntp: test_net_sntp.c ta_net_sntp.c ta_net_sntp.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_sntp.c ta_net_sntp.c
+
+$(BUILD)/test_shape_swap: test_shape_swap.c ta_shape_swap.c ta_draw_phase1.c \
+		ta_draw_phase2.c ta_shape_l2r.c ta_uilayout.c ta_viewport.c \
+		ta_shape_swap.h ta_draw_phase1.h ta_draw_phase2.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_shape_swap.c ta_shape_swap.c \
+		ta_draw_phase1.c ta_draw_phase2.c ta_shape_l2r.c ta_uilayout.c \
+		ta_viewport.c
 
 $(BUILD):
 	mkdir -p $(BUILD)
