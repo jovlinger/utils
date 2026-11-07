@@ -17,7 +17,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
 	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
 	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap \
-	$(BUILD)/test_kv_editor
+	$(BUILD)/test_kv_editor $(BUILD)/test_screenshots
 
 .PHONY: test clean
 
@@ -231,6 +231,15 @@ $(BUILD)/test_kv_editor: test_kv_editor.c ta_kv_editor.c ta_kv.c ta_shape_swap.c
 		ta_uilayout.c ta_kv_editor.h ta_kv.h ta_shape_swap.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_kv_editor.c ta_kv_editor.c ta_kv.c \
 		ta_shape_swap.c ta_uilayout.c
+
+SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_kv_editor.c ta_kv.c \
+	ta_draw_glass.c ta_draw_update.c ta_draw_phase1.c ta_draw_phase2.c \
+	ta_follow_chrome.c ta_hit_dispatch.c ta_text.c ta_shape_l2r.c \
+	ta_shape_swap.c ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
+	ta_registry.c ta_event.c
+$(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_kv_editor.h \
+		ta_draw_glass.h ta_follow_chrome.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(SHOT_SRCS) -lz -lpthread
 
 $(BUILD):
 	mkdir -p $(BUILD)

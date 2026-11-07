@@ -600,6 +600,56 @@ Max `TA_UILAYOUT_MAX` 64.
 
 Built by `ta_follow_chrome_build`.
 
+### UI guidelines (2026-11-07)
+
+Round 360 glass. Affordance placements:
+
+| Control | Placement | Glyph |
+|---------|-----------|-------|
+| **Up / back** and **Down / select** | Always at **12 o'clock** (old play/stop slot: top-center `button_y`). Same hit box; meaning follows mode. | **Up**: bold solid up-arrow. **Down**: bold solid down-arrow. The arrow pair lives **above** the SwapShape (not inside it). |
+| **Play / stop** | **Center of screen** (panel midpoint) | Outlines only, **30px**: play = large triangle; stop/pause = two parallel vertical bars |
+
+#### SwapShape modes (all Shape-expressed)
+
+SwapShape has two modals:
+
+| Mode | Meaning |
+|------|---------|
+| **Selected** | Showing the committed child (e.g. MPD follow chrome). No chooser overlay. |
+| **Selecting** | Chooser open: dial rotates among same-size children; UI previews the candidate. |
+
+The swapper does **not** own the 12 o'clock press. **Down / select** is an
+**external event** (hit on the arrow above the swapper) that means *commit /
+select the currently shown alternative*.
+
+**Wiring** (how events reach behavior): shapes do **not** hold function
+pointers. Each interactive component carries a small **function ENUM**. A
+small set of **handler functions** (touch, rotary, ...) `switch` on that
+enum and `case` into the right action (e.g. swapper-select, page-up,
+toggle-transport). That switch is the wiring -- rewrite a case to rebind
+without chasing per-shape callbacks. Up / dial / overlay use the same
+pattern.
+
+Direct swap without overlay remains allowed (API / future gesture); the
+overlay path is the primary human flow.
+
+#### Usage flow (MPD is the only page today)
+
+1. User is in **selected** mode on the MPD (follow) child.
+2. Press **up/back** at 12 o'clock (solid up-arrow) -- external; enters selecting.
+3. Show chooser overlay (e.g. circular arrow, **100x100**); 12 o'clock glyph
+   becomes **down-arrow**.
+4. Dial rotation steps the swapper among alternatives under that overlay.
+5. Press **down/select** at 12 o'clock -- external event -> swapper selects the
+   currently shown alternative; overlay clears; arrow returns to **up**;
+   **selected** mode.
+
+Hit boxes follow placements. Tracked on `todo:15b92eaa`.
+
+**Screen PNGs:** `spinme/host/test_screenshots` regenerates stills under
+`spinme/screenshots/` (360x360): `main_mpd.png`, `selecting_overlay.png`,
+`kv_view.png`, `kv_edit.png`. Visual AC for layout WIs.
+
 ---
 
 ## 6. Interrupts: touch and rotary -> events -> ControlEvents
