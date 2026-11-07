@@ -459,6 +459,84 @@ ta_kv_status_t ta_kv_delete(const char *key) {
     return TA_KV_OK;
 }
 
+size_t ta_kv_count(void) {
+    size_t n;
+    uint32_t cur;
+
+    n = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        n++;
+        cur = rd32((size_t)cur);
+    }
+    return n;
+}
+
+static int live_at(size_t index, size_t *off_out) {
+    size_t n;
+    uint32_t cur;
+
+    n = 0;
+    cur = rd32(0);
+    while (cur != 0) {
+        if (n == index) {
+            *off_out = (size_t)cur;
+            return 1;
+        }
+        n++;
+        cur = rd32((size_t)cur);
+    }
+    return 0;
+}
+
+ta_kv_status_t ta_kv_key_at(size_t index, char *dst, size_t dst_cap,
+                            size_t *out_len) {
+    size_t off;
+    uint16_t klen;
+
+    if (dst == NULL || out_len == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (!live_at(index, &off)) {
+        return TA_KV_MISSING;
+    }
+    klen = rd16(off + 4);
+    *out_len = (size_t)klen;
+    if (dst_cap < (size_t)klen + 1u) {
+        return TA_KV_TOO_SMALL;
+    }
+    memcpy(dst, g_img + off + TA_KV_REC_HDR_SIZE, klen);
+    dst[klen] = '\0';
+    return TA_KV_OK;
+}
+
+ta_kv_status_t ta_kv_val_at(size_t index, void *dst, size_t dst_cap,
+                            size_t *out_len) {
+    size_t off;
+    uint16_t klen;
+    uint32_t blen;
+
+    if (out_len == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (!live_at(index, &off)) {
+        return TA_KV_MISSING;
+    }
+    klen = rd16(off + 4);
+    blen = rd32(off + 6);
+    *out_len = (size_t)blen;
+    if (dst == NULL) {
+        return TA_KV_BAD_ARG;
+    }
+    if (dst_cap < (size_t)blen) {
+        return TA_KV_TOO_SMALL;
+    }
+    if (blen > 0) {
+        memcpy(dst, g_img + off + TA_KV_REC_HDR_SIZE + klen, blen);
+    }
+    return TA_KV_OK;
+}
+
 ta_kv_status_t ta_config_get_controller(char *dst, size_t dst_cap,
                                         size_t *out_len) {
     return ta_kv_get(TA_KV_KEY_CONTROLLER, dst, dst_cap, out_len);

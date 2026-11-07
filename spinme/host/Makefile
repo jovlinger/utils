@@ -16,7 +16,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
 	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
-	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap
+	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap \
+	$(BUILD)/test_kv_editor
 
 .PHONY: test clean
 
@@ -225,6 +226,11 @@ $(BUILD)/test_shape_swap: test_shape_swap.c ta_shape_swap.c ta_draw_phase1.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_shape_swap.c ta_shape_swap.c \
 		ta_draw_phase1.c ta_draw_phase2.c ta_shape_l2r.c ta_uilayout.c \
 		ta_viewport.c
+
+$(BUILD)/test_kv_editor: test_kv_editor.c ta_kv_editor.c ta_kv.c ta_shape_swap.c \
+		ta_uilayout.c ta_kv_editor.h ta_kv.h ta_shape_swap.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_kv_editor.c ta_kv_editor.c ta_kv.c \
+		ta_shape_swap.c ta_uilayout.c
 
 $(BUILD):
 	mkdir -p $(BUILD)

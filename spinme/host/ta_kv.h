@@ -62,6 +62,15 @@ size_t ta_kv_roster_count(void);
 ta_kv_status_t ta_kv_roster_at(size_t index, char *dst, size_t dst_cap,
                               size_t *out_len);
 
+/* Walk the live list in link order (not key-sorted). */
+size_t ta_kv_count(void);
+/* Copy key at index; MISSING if out of range. */
+ta_kv_status_t ta_kv_key_at(size_t index, char *dst, size_t dst_cap,
+                            size_t *out_len);
+/* Copy blob at index; MISSING if out of range. */
+ta_kv_status_t ta_kv_val_at(size_t index, void *dst, size_t dst_cap,
+                            size_t *out_len);
+
 /* Config facade helpers. */
 ta_kv_status_t ta_config_get_controller(char *dst, size_t dst_cap,
                                         size_t *out_len);
