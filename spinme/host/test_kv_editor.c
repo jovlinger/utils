@@ -76,6 +76,28 @@ int main(void) {
     CHECK(ta_shape_swap_set_active(&swap, 1) == 0);
     CHECK(swap.pixels == ed_px);
 
+    /* Edit: enter, rotary char, fwd caret, commit via put. */
+    CHECK(ta_kv_editor_enter(&ed) == 0);
+    CHECK(ta_kv_editor_editing(&ed));
+    CHECK(ta_kv_editor_field(&ed) == TA_KV_EDITOR_FIELD_VAL);
+    CHECK(ta_kv_editor_rotate(&ed, 1) == 0); /* advance charset from 't' */
+    {
+        char got[32];
+        size_t n;
+
+        CHECK(ta_kv_editor_commit(&ed) == 0);
+        CHECK(!ta_kv_editor_editing(&ed));
+        CHECK(ta_kv_get("beta", got, sizeof(got), &n) == TA_KV_OK);
+        CHECK(n >= 1);
+        CHECK(got[0] != 't' || strcmp(got, "two") != 0);
+    }
+    CHECK(ta_kv_editor_enter(&ed) == 0);
+    CHECK(ta_kv_editor_fwd(&ed) == 1);
+    CHECK(ta_kv_editor_char_pos(&ed) == 1);
+    CHECK(ta_kv_editor_back(&ed) == 0);
+    CHECK(ta_kv_editor_enter(&ed) == 0); /* toggle to KEY */
+    CHECK(ta_kv_editor_field(&ed) == TA_KV_EDITOR_FIELD_KEY);
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;
