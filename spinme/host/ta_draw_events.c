@@ -68,7 +68,8 @@ static int handle_update(const ta_event_envelope_t *env) {
     if (u->kind == TA_DRAW_UPD_CADENCE) {
         (void)ta_glass_update();
     } else if (u->kind == TA_DRAW_UPD_STATUS) {
-        ta_glass_set_status(u->polled, u->desired, u->playing);
+        ta_glass_set_status(u->polled, u->desired, u->playing,
+                            u->playing_polled);
     } else if (u->kind == TA_DRAW_UPD_BASE_DIRTY) {
         ta_glass_base_dirty();
     }
@@ -266,7 +267,8 @@ int ta_draw_post_text(uint8_t field, const char *ascii, ta_session_id_t session,
 }
 
 int ta_draw_post_status(uint8_t polled, uint8_t desired, uint8_t playing,
-                        ta_session_id_t session, const char *src) {
+                        uint8_t playing_polled, ta_session_id_t session,
+                        const char *src) {
     ta_event_envelope_t env;
 
     ta_env_clear(&env);
@@ -277,5 +279,6 @@ int ta_draw_post_status(uint8_t polled, uint8_t desired, uint8_t playing,
     env.event.u.draw_update.polled = polled;
     env.event.u.draw_update.desired = desired;
     env.event.u.draw_update.playing = playing;
+    env.event.u.draw_update.playing_polled = playing_polled;
     return ta_registry_post(TA_DRAW_NAME, &env);
 }

@@ -107,7 +107,7 @@ int main(void) {
     (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "");
     (void)ta_glass_set_text(TA_DRAW_TEXT_ALBUM, "");
     (void)ta_glass_set_text(TA_DRAW_TEXT_TITLE, "");
-    ta_glass_set_status(TA_GLASS_UNKNOWN, TA_GLASS_UNKNOWN, 0);
+    ta_glass_set_status(TA_GLASS_UNKNOWN, TA_GLASS_UNKNOWN, 0, 0);
 
     fb_clear_from_base();
     CHECK(ta_glass_paint() >= 1);
@@ -119,7 +119,7 @@ int main(void) {
     (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "Artist Name");
     (void)ta_glass_set_text(TA_DRAW_TEXT_ALBUM, "Album Title");
     (void)ta_glass_set_text(TA_DRAW_TEXT_TITLE, "Track Title Goes Here");
-    ta_glass_set_status(42, 42, 1);
+    ta_glass_set_status(42, 42, 1, 1);
     fb_clear_from_base();
     CHECK(ta_glass_paint() >= 1);
     CHECK(write_png("main_playing.png") == 0);

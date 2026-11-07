@@ -58,8 +58,8 @@ typedef struct glass_state {
     ta_pack66_t transport_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
     ta_pack66_t nav_px[TA_CHROME_NAV_PX * TA_CHROME_NAV_PX];
     int nav_down; /* 0 = up arrow, 1 = down arrow (selecting) */
-    int transport_playing_drawn; /* -1 unknown; skip redraw if playing unchanged */
-    int selecting_overlay;       /* 1 draw 100x100 chooser ring */
+    int transport_drawn_key; /* packs playing + ink; -1 unknown */
+    int selecting_overlay;   /* 1 draw 100x100 chooser ring */
     ta_wire_ctx_t wire;
     text_slot_t ts[TS_N];
     ta_follow_chrome_t chrome;
@@ -67,7 +67,8 @@ typedef struct glass_state {
     ta_draw_node_t nodes[TA_FOLLOW_N];
     uint8_t polled;
     uint8_t desired;
-    uint8_t playing;
+    uint8_t playing;        /* desired transport glyph */
+    uint8_t playing_polled; /* player-confirmed; low a2 until it matches */
     ta_glass_stats_t st;
 } glass_state_t;
 
@@ -92,7 +93,8 @@ void ta_glass_reset(void) {
     g.polled = TA_GLASS_UNKNOWN;
     g.desired = TA_GLASS_UNKNOWN;
     g.playing = TA_GLASS_UNKNOWN;
-    g.transport_playing_drawn = -1;
+    g.playing_polled = TA_GLASS_UNKNOWN;
+    g.transport_drawn_key = -1;
     ta_wire_reset(&g.wire);
     ta_hit_set_wire(NULL);
 }
@@ -307,16 +309,38 @@ int ta_glass_set_text(uint8_t field, const char *ascii) {
     return rc;
 }
 
+static uint8_t transport_ink_a2(void) {
+    /* Same idea as volume desired-vs-polled: faint until the player agrees. */
+    if (g.playing == TA_GLASS_UNKNOWN || g.playing_polled == TA_GLASS_UNKNOWN) {
+        return TA_CHROME_A2_SETTLED;
+    }
+    if (g.playing != g.playing_polled) {
+        return TA_CHROME_A2_PENDING;
+    }
+    return TA_CHROME_A2_SETTLED;
+}
+
+static int transport_draw_key(void) {
+    return ((int)g.playing & 0xff) | ((int)transport_ink_a2() << 8);
+}
+
 static void represent_transport_icon(int force) {
-    if (!force && g.transport_playing_drawn == (int)g.playing && g.installed) {
+    uint8_t ink;
+    int key = transport_draw_key();
+
+    if (!force && g.transport_drawn_key == key && g.installed) {
         return;
     }
-    g.transport_playing_drawn = (int)g.playing;
+    g.transport_drawn_key = key;
+    ink = transport_ink_a2();
     if (g.playing == 1) {
-        ta_chrome_icon_pause_outline(g.transport_px, TA_CHROME_ICON_PX);
+        ta_chrome_icon_pause_outline(g.transport_px, TA_CHROME_ICON_PX, ink);
     } else {
-        ta_chrome_icon_play_outline(g.transport_px, TA_CHROME_ICON_PX);
+        ta_chrome_icon_play_outline(g.transport_px, TA_CHROME_ICON_PX, ink);
     }
+    /* Invalidate the entire transport shape (full w x h), not a sub-rect. */
+    g.transport_icon.w = TA_CHROME_ICON_PX;
+    g.transport_icon.h = TA_CHROME_ICON_PX;
     g.transport_icon.dirty = 1;
     if (g.installed) {
         mark_follow_dirty(TA_FOLLOW_TRANSPORT);
@@ -329,6 +353,8 @@ static void represent_nav_icon(void) {
     } else {
         ta_chrome_icon_up_solid(g.nav_px, TA_CHROME_NAV_PX);
     }
+    g.nav_icon.w = TA_CHROME_NAV_PX;
+    g.nav_icon.h = TA_CHROME_NAV_PX;
     g.nav_icon.dirty = 1;
     mark_follow_dirty(TA_FOLLOW_NAV);
 }
@@ -349,7 +375,8 @@ static void represent_status(void) {
     represent_transport_icon(0);
 }
 
-void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing) {
+void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing,
+                         uint8_t playing_polled) {
     if (polled != TA_GLASS_UNKNOWN) {
         g.polled = polled > 100 ? 100 : polled;
     }
@@ -358,6 +385,9 @@ void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing) {
     }
     if (playing != TA_GLASS_UNKNOWN) {
         g.playing = playing ? 1 : 0;
+    }
+    if (playing_polled != TA_GLASS_UNKNOWN) {
+        g.playing_polled = playing_polled ? 1 : 0;
     }
     g.st.status_sets++;
     represent_status();
@@ -704,13 +734,32 @@ int ta_glass_paint(void) {
      * partially overlapping lower never overpaints a nearer rect. */
     for (i = n - 1; i >= 0; i--) {
         const ta_shape_bitmap_t *hdr = ta_shape_table_get(pushes[i].shape_idx);
+        int ex;
+        int ey;
+        int ew;
+        int eh;
 
         if (hdr == NULL || hdr->pixels == NULL) {
             continue;
         }
-        g.be->push_rect(pushes[i].exterior.x, pushes[i].exterior.y,
-                        pushes[i].exterior.w, pushes[i].exterior.h, hdr->pixels,
-                        (int)hdr->w);
+        ex = pushes[i].exterior.x;
+        ey = pushes[i].exterior.y;
+        ew = pushes[i].exterior.w;
+        eh = pushes[i].exterior.h;
+        /* Transparent chrome icons: restore the WHOLE exterior from base
+         * before the glyph so play<->pause (or up<->down) cannot leave
+         * ghost strokes in the pack66 underbuffer / LCD. */
+        if ((pushes[i].shape_idx == TA_GLASS_IDX_TRANSPORT ||
+             pushes[i].shape_idx == TA_GLASS_IDX_NAV) &&
+            g.base.pixels != NULL && ew > 0 && eh > 0 && ex >= 0 && ey >= 0 &&
+            ex + ew <= (int)g.base.w && ey + eh <= (int)g.base.h) {
+            const ta_pack66_t *crop =
+                g.base.pixels + (size_t)ey * (size_t)g.base.w + (size_t)ex;
+
+            g.be->push_rect(ex, ey, ew, eh, crop, (int)g.base.w);
+            g.st.pushes++;
+        }
+        g.be->push_rect(ex, ey, ew, eh, hdr->pixels, (int)hdr->w);
         g.st.pushes++;
     }
     if (g.selecting_overlay && g.cfg.panel_w >= 100 && g.cfg.panel_h >= 100) {

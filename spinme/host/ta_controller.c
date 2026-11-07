@@ -24,8 +24,9 @@ typedef struct {
     ta_session_id_t session; /* last ControlEvent session (for Net posts) */
     ta_origin_t inflight_origin;
     ta_origin_t queued_origin;
-    uint8_t polled;  /* player volume from POLL_DONE; 0xFF unknown */
-    uint8_t playing; /* 0/1 from POLL_DONE (toggle flips optimistically) */
+    uint8_t polled;         /* player volume from POLL_DONE; 0xFF unknown */
+    uint8_t playing;        /* desired play/pause (toggle flips optimistically) */
+    uint8_t playing_polled; /* player play/pause from POLL_DONE; 0xFF unknown */
 } ta_mpd_state_t;
 
 static ta_mpd_state_t g_mpd;
@@ -36,6 +37,7 @@ void ta_mpd_reset(void) {
     g_mpd.volume = TA_MPD_VOL_DEFAULT;
     g_mpd.polled = TA_NET_STATUS_UNKNOWN;
     g_mpd.playing = TA_NET_STATUS_UNKNOWN;
+    g_mpd.playing_polled = TA_NET_STATUS_UNKNOWN;
 }
 
 int ta_mpd_polled(void) {
@@ -49,7 +51,8 @@ int ta_mpd_playing(void) {
 /* Chrome follows the model: DRAW_UPDATE status (Draw absent = unit test). */
 static void mpd_post_status(void) {
     if (ta_draw_post_status(g_mpd.polled, (uint8_t)g_mpd.volume, g_mpd.playing,
-                            g_mpd.session, TA_MPD_NAME) == 0) {
+                            g_mpd.playing_polled, g_mpd.session,
+                            TA_MPD_NAME) == 0) {
         g_mpd.st.draw_status_posted++;
     }
 }
@@ -322,7 +325,11 @@ static int mpd_handle(const ta_event_envelope_t *env) {
             }
         }
         if (stt->playing != TA_NET_STATUS_UNKNOWN) {
-            g_mpd.playing = stt->playing ? 1 : 0;
+            g_mpd.playing_polled = stt->playing ? 1u : 0u;
+            /* Nothing pending from a tap: follow the player (like volume). */
+            if (!g_mpd.set_inflight && !g_mpd.toggle_pending) {
+                g_mpd.playing = g_mpd.playing_polled;
+            }
         }
         mpd_post_status();
         return 0;

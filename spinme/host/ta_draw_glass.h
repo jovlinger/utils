@@ -110,8 +110,10 @@ int ta_glass_installed(void);
 
 /* Text / status mutate definitions and dirty; they do not paint. */
 int ta_glass_set_text(uint8_t field, const char *ascii);
-/* 0xFF = leave unchanged. playing: 0/1. */
-void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing);
+/* 0xFF = leave unchanged. playing / playing_polled: 0/1.
+ * Desired transport glyph leads; low a2 until playing_polled agrees. */
+void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing,
+                         uint8_t playing_polled);
 void ta_glass_base_dirty(void);
 int ta_glass_scroll_ox(int16_t ox);
 /* Scheduler tick without payload: advance the title by TA_GLASS_SCROLL_STEP

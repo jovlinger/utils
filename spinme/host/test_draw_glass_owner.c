@@ -233,8 +233,8 @@ int main(void) {
     CHECK(ta_glass_set_page(0) == 0);
     CHECK(ta_glass_set_page(1) == -1); /* n=1 until add_page */
     CHECK(ta_draw_stats()->set_stack == 1);
-    /* First paint: every slot pushed, base first (farthest-first order). */
-    CHECK(g_nrec == TA_FOLLOW_N);
+    /* First paint: every slot + base-crop under for transport and nav. */
+    CHECK(g_nrec == TA_FOLLOW_N + 2);
     CHECK(g_recs[0].w == PANEL && g_recs[0].h == PANEL);
     CHECK(g_recs[0].px == g_base);
     CHECK(strcmp(ta_glass_text(TA_DRAW_TEXT_ZONE), "spinme") == 0);
@@ -359,14 +359,14 @@ int main(void) {
     CHECK(pump() >= 1);
     CHECK(g_backlight == 1);
     CHECK(ta_mpd_stats()->toggle == 1); /* dark tap did not hit-test */
-    CHECK(g_nrec == before + TA_FOLLOW_N); /* base dirtied all: full repaint */
+    CHECK(g_nrec == before + TA_FOLLOW_N + 2); /* full repaint + chrome unders */
     CHECK(g_recs[before].px == g_base);
 
     /* 9. Base dirty while lit: everything above repaints after the base. */
     before = g_nrec;
     CHECK(post_draw_update(TA_DRAW_UPD_BASE_DIRTY) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before + TA_FOLLOW_N);
+    CHECK(g_nrec == before + TA_FOLLOW_N + 2);
 
     /* Text pixels: the title window carries base under the glyph paper. */
     {

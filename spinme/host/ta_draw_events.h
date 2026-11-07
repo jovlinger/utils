@@ -74,7 +74,8 @@ int ta_draw_post_text(uint8_t field, const char *ascii, ta_session_id_t session,
                       const char *src);
 /* Producer helper: post DRAW_UPDATE status (0xFF = keep). */
 int ta_draw_post_status(uint8_t polled, uint8_t desired, uint8_t playing,
-                        ta_session_id_t session, const char *src);
+                        uint8_t playing_polled, ta_session_id_t session,
+                        const char *src);
 
 
 #ifdef __cplusplus

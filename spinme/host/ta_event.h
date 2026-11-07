@@ -125,9 +125,10 @@ enum {
 typedef struct {
     char reply_to[TA_NAME_MAX];
     uint8_t kind;
-    uint8_t polled;  /* 0xFF = keep */
-    uint8_t desired; /* 0xFF = keep */
-    uint8_t playing; /* 0xFF = keep */
+    uint8_t polled;         /* volume from player; 0xFF = keep */
+    uint8_t desired;        /* volume target; 0xFF = keep */
+    uint8_t playing;        /* desired play/pause 0/1; 0xFF = keep */
+    uint8_t playing_polled; /* player play/pause 0/1; 0xFF = keep */
 } ta_draw_update_t;
 
 typedef struct {

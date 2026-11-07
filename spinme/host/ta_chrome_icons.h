@@ -14,11 +14,15 @@ extern "C" {
 #define TA_CHROME_ICON_PX 90
 /* Up/down at 12 oclock: 2/3 of play (play was 150% of this required size). */
 #define TA_CHROME_NAV_PX 60
+/* Transport ink: low a2 while desired disagrees with poll; full when settled. */
+#define TA_CHROME_A2_PENDING 1
+#define TA_CHROME_A2_SETTLED 3
 
-/* Clear to transparent, then stroke/fill. All operate on w*w buffers. */
+/* Clear to transparent, then stroke/fill. All operate on w*w buffers.
+ * body_a2 is the pack66 a2 for solid coverage (fringe stays softer). */
 void ta_chrome_icon_clear(ta_pack66_t *px, uint16_t w);
-void ta_chrome_icon_play_outline(ta_pack66_t *px, uint16_t w);
-void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w);
+void ta_chrome_icon_play_outline(ta_pack66_t *px, uint16_t w, uint8_t body_a2);
+void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w, uint8_t body_a2);
 void ta_chrome_icon_up_solid(ta_pack66_t *px, uint16_t w);
 void ta_chrome_icon_down_solid(ta_pack66_t *px, uint16_t w);
 

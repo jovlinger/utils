@@ -605,7 +605,7 @@ Round 360 glass. Affordance placements:
 | Control | Placement | Glyph |
 |---------|-----------|-------|
 | **Up / back** and **Down / select** | Always at **12 o'clock** (old play/stop slot: top-center `button_y`). Same hit box; meaning follows mode. | **Up/Down**: bold solid arrows, **60px** (2/3 of play), translucent a2. Above the SwapShape. |
-| **Play / stop** | **Center of screen** (panel midpoint) | Outlines only, **90px**: bold stroke, translucent a2 (blit blends); play = triangle; stop/pause = two bars |
+| **Play / stop** | **Center of screen** (panel midpoint) | Outlines only, **90px**: desired glyph leads; **a2=1** while playing_polled disagrees, **a2=3** when poll agrees (same desired/polled idea as volume) |
 
 #### SwapShape modes (all Shape-expressed)
 

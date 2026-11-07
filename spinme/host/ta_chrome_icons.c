@@ -3,9 +3,11 @@
 #include <string.h>
 
 /*
- * Soft white ink. Core uses a2=2 (see-through); fringe uses 1 for AA.
- * Blit must blend a2 into the under-image or these look fully opaque.
+ * Soft white ink. Body a2 is caller-chosen (pending=1, settled=3); fringe
+ * is softer when body > 1. Blit/panel must blend a2 into the under-image.
  */
+static uint8_t g_body_a2 = TA_CHROME_A2_SETTLED;
+
 static ta_pack66_t ink_a(uint8_t a2) {
     return ta_pack66_rgba(0x3f, 0x3f, 0x3f, (uint8_t)(a2 & 3u));
 }
@@ -27,15 +29,25 @@ static void put_max(ta_pack66_t *px, uint16_t w, int x, int y, uint8_t a2) {
     }
 }
 
-/* Map coverage (0..256) to a2: fringe=1, body=2 (never opaque 3). */
+static void set_body_a2(uint8_t body_a2) {
+    if (body_a2 < 1u) {
+        g_body_a2 = 1u;
+    } else if (body_a2 > 3u) {
+        g_body_a2 = 3u;
+    } else {
+        g_body_a2 = body_a2;
+    }
+}
+
+/* Map coverage (0..256) to a2 using g_body_a2 for solid fill. */
 static uint8_t a2_cov(int cov256) {
     if (cov256 <= 0) {
         return 0;
     }
     if (cov256 < 128) {
-        return 1;
+        return g_body_a2 <= 1u ? g_body_a2 : 1u;
     }
-    return 2;
+    return g_body_a2;
 }
 
 /*
@@ -324,25 +336,27 @@ void ta_chrome_icon_clear(ta_pack66_t *px, uint16_t w) {
     }
 }
 
-void ta_chrome_icon_play_outline(ta_pack66_t *px, uint16_t w) {
+void ta_chrome_icon_play_outline(ta_pack66_t *px, uint16_t w, uint8_t body_a2) {
     int m = (int)w / 2;
     int left = (int)w / 6;
     int right = (int)w - left - 1;
     int top = (int)w / 6;
     int bot = (int)w - top - 1;
-    /* Bold stroke ~1/10 of icon (was 1px @30). */
     int half = (int)w / 10;
+    uint8_t save = g_body_a2;
 
     if (half < 3) {
         half = 3;
     }
+    set_body_a2(body_a2);
     ta_chrome_icon_clear(px, w);
     stroke_seg(px, w, left, top, left, bot, half);
     stroke_seg(px, w, left, top, right, m, half);
     stroke_seg(px, w, left, bot, right, m, half);
+    g_body_a2 = save;
 }
 
-void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w) {
+void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w, uint8_t body_a2) {
     int bar_w = (int)w / 7;
     int gap = (int)w / 6;
     int left = (int)w / 2 - gap / 2 - bar_w;
@@ -351,17 +365,18 @@ void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w) {
     int bot = (int)w - top - 1;
     int half = bar_w / 2;
     int y;
+    uint8_t save = g_body_a2;
 
     if (half < 2) {
         half = 2;
     }
+    set_body_a2(body_a2);
     ta_chrome_icon_clear(px, w);
-    /* Two hollow bars via vertical thick segments on left/right edges. */
     for (y = top; y <= bot; y++) {
-        put_max(px, w, left, y, 2);
-        put_max(px, w, left + bar_w - 1, y, 2);
-        put_max(px, w, right, y, 2);
-        put_max(px, w, right + bar_w - 1, y, 2);
+        put_max(px, w, left, y, g_body_a2);
+        put_max(px, w, left + bar_w - 1, y, g_body_a2);
+        put_max(px, w, right, y, g_body_a2);
+        put_max(px, w, right + bar_w - 1, y, g_body_a2);
     }
     stroke_seg(px, w, left, top, left + bar_w - 1, top, half);
     stroke_seg(px, w, left, bot, left + bar_w - 1, bot, half);
@@ -371,6 +386,7 @@ void ta_chrome_icon_pause_outline(ta_pack66_t *px, uint16_t w) {
     stroke_seg(px, w, left + bar_w - 1, top, left + bar_w - 1, bot, half);
     stroke_seg(px, w, right, top, right, bot, half);
     stroke_seg(px, w, right + bar_w - 1, top, right + bar_w - 1, bot, half);
+    g_body_a2 = save;
 }
 
 void ta_chrome_icon_up_solid(ta_pack66_t *px, uint16_t w) {
@@ -380,15 +396,16 @@ void ta_chrome_icon_up_solid(ta_pack66_t *px, uint16_t w) {
     int bot = (int)w - (int)w / 8;
     int stem_half = (int)w / 9;
     int head_w = (int)w / 2 - 2;
+    uint8_t save = g_body_a2;
 
     if (stem_half < 3) {
         stem_half = 3;
     }
+    set_body_a2(TA_CHROME_A2_SETTLED);
     ta_chrome_icon_clear(px, w);
-    /* Bold filled chevron head. */
     fill_tri_aa(px, w, m, top, m - head_w, mid, m + head_w, mid);
-    /* Bold stem with AA. */
     stroke_seg(px, w, m, mid - 2, m, bot, stem_half);
+    g_body_a2 = save;
 }
 
 void ta_chrome_icon_down_solid(ta_pack66_t *px, uint16_t w) {
@@ -398,11 +415,14 @@ void ta_chrome_icon_down_solid(ta_pack66_t *px, uint16_t w) {
     int bot = (int)w - (int)w / 8;
     int stem_half = (int)w / 9;
     int head_w = (int)w / 2 - 2;
+    uint8_t save = g_body_a2;
 
     if (stem_half < 3) {
         stem_half = 3;
     }
+    set_body_a2(TA_CHROME_A2_SETTLED);
     ta_chrome_icon_clear(px, w);
     fill_tri_aa(px, w, m, bot, m - head_w, mid, m + head_w, mid);
     stroke_seg(px, w, m, top, m, mid + 2, stem_half);
+    g_body_a2 = save;
 }
