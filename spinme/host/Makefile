@@ -15,7 +15,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_hit_dispatch $(BUILD)/test_net_mpd $(BUILD)/test_viewport \
 	$(BUILD)/test_artwork $(BUILD)/test_actor $(BUILD)/test_boot \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
-	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init
+	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
+	$(BUILD)/test_net_sntp
 
 .PHONY: test clean
 
@@ -209,6 +210,9 @@ $(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_kv_actor.c ta_kv.c \
 		ta_all.c ta_registry.c ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_log_init.c ta_log_accept.c ta_kv_actor.c \
 		ta_kv.c ta_all.c ta_registry.c ta_event.c -lpthread
+
+$(BUILD)/test_net_sntp: test_net_sntp.c ta_net_sntp.c ta_net_sntp.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_sntp.c ta_net_sntp.c
 
 $(BUILD):
 	mkdir -p $(BUILD)

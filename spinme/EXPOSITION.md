@@ -411,9 +411,10 @@ As-built `player_http` is outbound-only and single-phase (no listen /
 `in_fd`). Adding Config HTTP = add listen + `in_fd` beside the existing
 outbound machine; do not fold server I/O into the outbound "busy" gate.
 
-**NTP:** PLAN puts wall-clock sync under Net (`NTP * Player(...)`). As-built
-still calls `configTime` from `player_http` WiFi boot -- tracked as
-`todo:15b92eaa`, not a second Net actor.
+**NTP:** Net owns SNTP. After WiFi is up, `player_http` calls
+`ta_net_sntp_after_wifi()` (device sets TZ + `configTime` to pool.ntp.org).
+Draw still reads `time()`. Device smoke that the clock matches host ToD is
+still open on `todo:15b92eaa`.
 
 | Type | Value | Body | Completion |
 |------|-------|------|------------|
@@ -854,7 +855,7 @@ Run: `(cd spinme/host && make test)`.
 | **Rotary EventRedirector** | ISR decode stays under actors; pooled time/delta always -> **Rotary** redirector, not Draw | Follow-on (not yet minted as its own todo); notes on `todo:3135a46a` |
 | **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
 | **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
-| **Net-owned NTP timesource** | Volumio `getState` has no wall ToD (`seek`/`duration` only); Net must own basic SNTP; Draw clock reads `time()` | `todo:15b92eaa` (groom) |
+| **Net-owned NTP timesource** | Volumio `getState` has no wall ToD; Net owns SNTP via `ta_net_sntp_after_wifi` (player_http only calls that after WiFi) | `todo:15b92eaa`; device clock smoke still open |
 | **Log TaskActor drain** | Accept/sample/buffer; Scheduler empty; Net send to `log_receiver_url`; always-clear; `ta_all_*` | `todo:15b92eaa` (groom) |
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
   seek still unused on the wire | Follow-on when getState mapping expands |

@@ -12,6 +12,7 @@
 #include <esp_heap_caps.h>
 #include <lwip/sockets.h>
 
+#include "ta_net_sntp.h"
 #include "wifi_local.h"
 
 #ifndef WIFI_SSID
@@ -155,9 +156,8 @@ static bool ensure_wifi_boot(uint32_t timeout_ms) {
   }
   gVolumioResolved = false;
   Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
-  setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0/2", 1);
-  tzset();
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  /* Wall clock: Net owns SNTP (todo:15b92eaa). */
+  ta_net_sntp_after_wifi();
   return true;
 }
 
