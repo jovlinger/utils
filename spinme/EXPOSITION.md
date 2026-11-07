@@ -188,13 +188,10 @@ When the consumer processes a slot that is **not** the front, it
 normal pop of the chosen message). Remaining order of other pending
 slots is otherwise unchanged.
 
-**Scan API (planned):** `ta_queue_peek_verb(...)` (name TBD) walks pending
-slots and returns the first envelope whose `event.type` / verb matches a
-filter -- e.g. only `*_inform_*` types while degraded -- without claiming
-non-matching messages. Match => selective take (swap + pop). No match =>
-block or idle until a push wakes the consumer. As-built host queue is still
-FIFO-only (`peek`/`pop` head); peek_verb + selective take are the target
-for init/degraded filters (section below).
+**Scan API:** `ta_queue_try_peek_verb` / `ta_queue_try_take_verb` walk
+pending slots oldest-first with a match callback (e.g. only informs while
+degraded). Take swaps the match with the front, then pops. No match =>
+caller idles until a push. FIFO `peek`/`pop` head remain for normal drain.
 
 Separate `ta_shape_lock_*` for shape/pixel protocol (not the queue mutex).
 

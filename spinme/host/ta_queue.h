@@ -45,6 +45,26 @@ int ta_queue_try_peek(ta_queue_t *q, ta_event_envelope_t *out);
 /* Consumer: drop head after handle. */
 void ta_queue_pop(ta_queue_t *q);
 
+/*
+ * Verb filter: return non-zero to match. Used while degraded to accept
+ * informs/setup only. Walk is oldest-first among pending slots.
+ */
+typedef int (*ta_queue_verb_match_fn)(const ta_event_envelope_t *env, void *ctx);
+
+/* Copy first matching pending envelope; do not pop. -1 if none. */
+int ta_queue_try_peek_verb(ta_queue_t *q, ta_event_envelope_t *out,
+                           ta_queue_verb_match_fn match, void *ctx);
+
+/*
+ * Selective take: swap pending slot `rel` (0=head) with head, copy it out,
+ * then pop. Returns 0 or -1 if rel out of range.
+ */
+int ta_queue_take_at(ta_queue_t *q, size_t rel, ta_event_envelope_t *out);
+
+/* peek_verb + take_at of the match. -1 if no match. */
+int ta_queue_try_take_verb(ta_queue_t *q, ta_event_envelope_t *out,
+                           ta_queue_verb_match_fn match, void *ctx);
+
 int ta_shape_lock_init(ta_shape_lock_t *L);
 void ta_shape_lock_fini(ta_shape_lock_t *L);
 void ta_shape_lock_acquire(ta_shape_lock_t *L);

@@ -23,6 +23,12 @@ static ta_event_envelope_t storage[4];
 static ta_queue_t q;
 static int handled;
 
+static int match_type(const ta_event_envelope_t *env, void *ctx) {
+    ta_event_type_t want = *(const ta_event_type_t *)ctx;
+
+    return env != NULL && env->event.type == want;
+}
+
 static void *consumer(void *arg) {
     ta_event_envelope_t env;
     int n = 0;
@@ -73,6 +79,41 @@ int main(void) {
     }
     CHECK(ta_queue_push(&q, &env) == -1);
     CHECK(q.drops == 1);
+    while (ta_queue_try_peek(&q, &env) == 0) {
+        ta_queue_pop(&q);
+    }
+
+    /* Selective take: match a non-front verb, swap-with-front, leave others. */
+    {
+        ta_event_envelope_t got;
+        ta_event_type_t want = (ta_event_type_t)99;
+
+        for (i = 0; i < 3; i++) {
+            ta_env_clear(&env);
+            ta_env_set_src(&env, "Prod");
+            env.session_id = (ta_session_id_t)(10 + i);
+            env.event.type = (ta_event_type_t)(20 + i);
+            CHECK(ta_queue_push(&q, &env) == 0);
+        }
+        /* Inject matching verb in the middle. */
+        ta_env_clear(&env);
+        env.session_id = 42;
+        env.event.type = want;
+        CHECK(ta_queue_push(&q, &env) == 0);
+        /* Capacity 4: queue is [20,21,22,99]. Take 99. */
+        CHECK(ta_queue_try_take_verb(&q, &got, match_type, &want) == 0);
+        CHECK(got.event.type == want);
+        CHECK(got.session_id == 42);
+        /* Remaining three still pending; head was swapped. */
+        CHECK(ta_queue_try_peek(&q, &got) == 0);
+        CHECK(got.event.type == (ta_event_type_t)20 ||
+              got.event.type == (ta_event_type_t)21 ||
+              got.event.type == (ta_event_type_t)22);
+        CHECK(ta_queue_try_take_verb(&q, &got, match_type, &want) == -1);
+        while (ta_queue_try_peek(&q, &got) == 0) {
+            ta_queue_pop(&q);
+        }
+    }
 
     ta_shape_lock_fini(&shapes);
     ta_queue_fini(&q);

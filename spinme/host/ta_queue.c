@@ -84,6 +84,83 @@ void ta_queue_pop(ta_queue_t *q) {
     ta_mutex_unlock(&q->mu);
 }
 
+int ta_queue_try_peek_verb(ta_queue_t *q, ta_event_envelope_t *out,
+                           ta_queue_verb_match_fn match, void *ctx) {
+    size_t i;
+    int rc = -1;
+
+    if (q == NULL || out == NULL || match == NULL) {
+        return -1;
+    }
+    ta_mutex_lock(&q->mu);
+    for (i = 0; i < q->count; i++) {
+        size_t idx = (q->head + i) % q->capacity;
+
+        if (match(&q->slots[idx], ctx)) {
+            *out = q->slots[idx];
+            rc = 0;
+            break;
+        }
+    }
+    ta_mutex_unlock(&q->mu);
+    return rc;
+}
+
+int ta_queue_take_at(ta_queue_t *q, size_t rel, ta_event_envelope_t *out) {
+    size_t idx;
+    ta_event_envelope_t tmp;
+
+    if (q == NULL || out == NULL) {
+        return -1;
+    }
+    ta_mutex_lock(&q->mu);
+    if (rel >= q->count) {
+        ta_mutex_unlock(&q->mu);
+        return -1;
+    }
+    idx = (q->head + rel) % q->capacity;
+    if (rel != 0) {
+        tmp = q->slots[q->head];
+        q->slots[q->head] = q->slots[idx];
+        q->slots[idx] = tmp;
+    }
+    *out = q->slots[q->head];
+    q->head = (q->head + 1) % q->capacity;
+    q->count--;
+    ta_mutex_unlock(&q->mu);
+    return 0;
+}
+
+int ta_queue_try_take_verb(ta_queue_t *q, ta_event_envelope_t *out,
+                           ta_queue_verb_match_fn match, void *ctx) {
+    size_t i;
+    int rc = -1;
+
+    if (q == NULL || out == NULL || match == NULL) {
+        return -1;
+    }
+    ta_mutex_lock(&q->mu);
+    for (i = 0; i < q->count; i++) {
+        size_t idx = (q->head + i) % q->capacity;
+
+        if (match(&q->slots[idx], ctx)) {
+            if (i != 0) {
+                ta_event_envelope_t tmp = q->slots[q->head];
+
+                q->slots[q->head] = q->slots[idx];
+                q->slots[idx] = tmp;
+            }
+            *out = q->slots[q->head];
+            q->head = (q->head + 1) % q->capacity;
+            q->count--;
+            rc = 0;
+            break;
+        }
+    }
+    ta_mutex_unlock(&q->mu);
+    return rc;
+}
+
 int ta_shape_lock_init(ta_shape_lock_t *L) {
     if (L == NULL) {
         return -1;
