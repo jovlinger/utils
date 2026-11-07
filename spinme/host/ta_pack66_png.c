@@ -115,6 +115,47 @@ static int write_chunk(FILE *fp, const char *type, const uint8_t *data,
     return 0;
 }
 
+int ta_pack66_write_png_scaled(const char *path, uint16_t w, uint16_t h,
+                               const ta_pack66_t *px, unsigned scale) {
+    ta_pack66_t *big = NULL;
+    uint16_t bw;
+    uint16_t bh;
+    unsigned y;
+    unsigned x;
+    int rc;
+
+    if (px == NULL || w == 0 || h == 0 || scale == 0) {
+        return -1;
+    }
+    if (scale == 1) {
+        return ta_pack66_write_png(path, w, h, px);
+    }
+    bw = (uint16_t)(w * scale);
+    bh = (uint16_t)(h * scale);
+    big = (ta_pack66_t *)malloc((size_t)bw * (size_t)bh * sizeof(ta_pack66_t));
+    if (big == NULL) {
+        return -1;
+    }
+    for (y = 0; y < h; y++) {
+        unsigned sy;
+
+        for (sy = 0; sy < scale; sy++) {
+            for (x = 0; x < w; x++) {
+                unsigned sx;
+                ta_pack66_t p = px[(size_t)y * w + x];
+
+                for (sx = 0; sx < scale; sx++) {
+                    big[((size_t)y * scale + sy) * bw + (size_t)x * scale + sx] =
+                        p;
+                }
+            }
+        }
+    }
+    rc = ta_pack66_write_png(path, bw, bh, big);
+    free(big);
+    return rc;
+}
+
 int ta_pack66_write_png(const char *path, uint16_t w, uint16_t h,
                         const ta_pack66_t *px) {
     FILE *fp;

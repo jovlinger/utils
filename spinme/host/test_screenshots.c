@@ -1,8 +1,10 @@
 /*
- * Regen glass screen PNGs under ../screenshots/ (cwd = spinme/host).
- * Screens: main (MPD selected), selecting stub overlay, kv_view, kv_edit.
+ * Regen glass screen PNGs under ../screenshots/ using the same glyphs.bin
+ * and disintegration base as the device (360 panel, 3x stills).
  */
 #include "ta_draw_glass.h"
+#include "ta_draw_phase1.h"
+#include "ta_glyph_bin.h"
 #include "ta_kv.h"
 #include "ta_kv_editor.h"
 #include "ta_pack66_png.h"
@@ -28,17 +30,25 @@ static int checks;
     } while (0)
 
 #define PANEL 360
-#define GW 3
-#define GH 5
 #define OUT_DIR "../screenshots"
+#define PNG_SCALE 3
+#define FW "../firmware/waveshare-knob-touch-lcd-1.8"
+#define GLYPHS_PATH FW "/glyphs.bin"
+#define BASE_PATH FW "/disintegration_360.rgba"
 
-static ta_pack66_t g_ink[GW * GH];
-static ta_pack66_t g_clear[GW * GH];
-static ta_shape_bitmap_t g_glyphs[95];
-static ta_glyph_map_t g_map;
+/* Match ta_glass_device.cpp placements. */
+static const int kTextX = 24;
+static const int kTextY = 96;
+static const int kGap = 4;
+static const int kButtonY = 8;
+static const uint16_t kViewW = 312;
+static const uint16_t kHitPadX = 12;
+static const uint16_t kHitPadY = 6;
+
 static ta_pack66_t g_base[PANEL * PANEL];
 static ta_pack66_t g_fb[PANEL * PANEL];
 static ta_pack66_t g_kv_px[PANEL * PANEL];
+static ta_glyph_bin_t g_gb;
 
 static ta_pack66_t *fake_alloc(size_t count) {
     return (ta_pack66_t *)calloc(count, sizeof(ta_pack66_t));
@@ -51,87 +61,70 @@ static void fake_push(int x, int y, int w, int h, const ta_pack66_t *px,
 
 static const ta_glass_backend_t k_be = {fake_alloc, fake_push, NULL, NULL};
 
-static void build_atlas(void) {
-    int i;
-
-    for (i = 0; i < GW * GH; i++) {
-        g_ink[i] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, 3);
-        g_clear[i] = ta_pack66_rgba(0, 0, 0, 0);
-    }
-    ta_glyph_map_clear(&g_map);
-    for (i = 0; i < 95; i++) {
-        char ch = (char)(32 + i);
-
-        memset(&g_glyphs[i], 0, sizeof(g_glyphs[i]));
-        g_glyphs[i].tag = TA_SHAPE_TAG_BITMAP;
-        g_glyphs[i].w = GW;
-        g_glyphs[i].h = GH;
-        g_glyphs[i].pixels = ch == ' ' ? g_clear : g_ink;
-        CHECK(ta_shape_table_set((unsigned)(1 + i), &g_glyphs[i]) == 0);
-        CHECK(ta_glyph_map_set(&g_map, ch, (unsigned)(1 + i)) == 0);
-    }
-}
-
-static void fb_clear(ta_pack66_t fill) {
-    size_t i;
-
-    for (i = 0; i < (size_t)PANEL * (size_t)PANEL; i++) {
-        g_fb[i] = fill;
-    }
+static void fb_clear_from_base(void) {
+    memcpy(g_fb, g_base, sizeof(g_fb));
 }
 
 static int write_png(const char *name) {
-    char path[256];
+    char path[512];
 
     snprintf(path, sizeof(path), "%s/%s", OUT_DIR, name);
-    return ta_pack66_write_png(path, PANEL, PANEL, g_fb);
+    return ta_pack66_write_png_scaled(path, PANEL, PANEL, g_fb, PNG_SCALE);
 }
 
 int main(void) {
     ta_glass_cfg_t cfg;
     ta_kv_editor_t ed;
-    ta_pack66_t dark = ta_pack66_rgba(4, 4, 8, 3);
-    int i;
 
     (void)mkdir(OUT_DIR, 0755);
 
     ta_shape_table_reset();
     ta_glass_reset();
-    build_atlas();
-    for (i = 0; i < PANEL * PANEL; i++) {
-        g_base[i] = dark;
-    }
+    CHECK(ta_glyph_bin_load(&g_gb, GLYPHS_PATH) == 0);
+    CHECK(g_gb.text_h >= 20);
+    CHECK(ta_base_from_rgba_file(g_base, PANEL, PANEL, BASE_PATH) == 0);
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.panel_w = PANEL;
     cfg.panel_h = PANEL;
     cfg.base_pixels = g_base;
-    cfg.glyphs = &g_map;
-    cfg.text_h = GH;
-    cfg.view_w = 200;
-    cfg.hit_pad_x = 8;
-    cfg.hit_pad_y = 4;
-    cfg.text_x = 48;
-    cfg.text_y = 80;
-    cfg.gap = 4;
-    cfg.button_y = 12;
+    cfg.glyphs = &g_gb.map;
+    cfg.kern_table = g_gb.kern;
+    cfg.text_h = g_gb.text_h;
+    cfg.view_w = kViewW;
+    cfg.hit_pad_x = kHitPadX;
+    cfg.hit_pad_y = kHitPadY;
+    cfg.text_x = kTextX;
+    cfg.text_y = kTextY;
+    cfg.gap = kGap;
+    cfg.button_y = kButtonY;
     ta_glass_set_backend(&k_be);
     ta_glass_set_cfg(&cfg);
     CHECK(ta_glass_install_stack() == 0);
 
+    /* Defaults like a quiet boot: zone + clock already set; status unknown. */
     (void)ta_glass_set_text(TA_DRAW_TEXT_ZONE, "spinme");
-    (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "Artist");
-    (void)ta_glass_set_text(TA_DRAW_TEXT_ALBUM, "Album");
-    (void)ta_glass_set_text(TA_DRAW_TEXT_TITLE, "Main MPD screen");
-    ta_glass_set_status(40, 40, 1);
+    (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "");
+    (void)ta_glass_set_text(TA_DRAW_TEXT_ALBUM, "");
+    (void)ta_glass_set_text(TA_DRAW_TEXT_TITLE, "");
+    ta_glass_set_status(TA_GLASS_UNKNOWN, TA_GLASS_UNKNOWN, 0);
 
-    /* ---- main (MPD selected) ---- */
-    fb_clear(dark);
+    fb_clear_from_base();
     CHECK(ta_glass_paint() >= 1);
     CHECK(write_png("main_mpd.png") == 0);
-    printf("wrote %s/main_mpd.png\n", OUT_DIR);
+    printf("wrote %s/main_mpd.png (%dx%d @%ux)\n", OUT_DIR, PANEL, PANEL,
+           PNG_SCALE);
 
-    /* ---- KV page registered, then selecting via NAV wiring ---- */
+    /* With sample track text (still the main screen). */
+    (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "Artist Name");
+    (void)ta_glass_set_text(TA_DRAW_TEXT_ALBUM, "Album Title");
+    (void)ta_glass_set_text(TA_DRAW_TEXT_TITLE, "Track Title Goes Here");
+    ta_glass_set_status(42, 42, 1);
+    fb_clear_from_base();
+    CHECK(ta_glass_paint() >= 1);
+    CHECK(write_png("main_playing.png") == 0);
+    printf("wrote %s/main_playing.png\n", OUT_DIR);
+
     ta_kv_reset();
     CHECK(ta_kv_put("log_receiver_url", "http://gmk.local/logs", 21) ==
           TA_KV_OK);
@@ -145,55 +138,73 @@ int main(void) {
     {
         const ta_follow_chrome_t *chrome = ta_glass_chrome();
         uint16_t nx =
-            (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_NAV]) + 5);
+            (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_NAV]) + 8);
         uint16_t ny =
-            (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) + 5);
+            (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) + 8);
 
         CHECK(ta_glass_touch(nx, ny, 1) == 0);
         CHECK(ta_glass_selecting());
-        CHECK(ta_glass_nav_down() == 1);
-        fb_clear(dark);
+        fb_clear_from_base();
         CHECK(ta_glass_paint() >= 1);
         CHECK(write_png("selecting_overlay.png") == 0);
         printf("wrote %s/selecting_overlay.png\n", OUT_DIR);
-        /* Commit selection (down). */
         CHECK(ta_glass_touch(nx, ny, 1) == 0);
         CHECK(!ta_glass_selecting());
     }
 
     CHECK(ta_glass_set_page(1) == 0);
-    fb_clear(dark);
+    fb_clear_from_base();
     CHECK(ta_glass_paint() == 1);
-    /* Stamp key/val as bright rows so the PNG is readable without glyphs. */
+    /* Overlay real glyph lines on the KV page still (editor paint is stub). */
     {
-        size_t n;
-        const char *k = ta_kv_editor_key(&ed);
-        const char *v = ta_kv_editor_val(&ed);
+        static const char *lines[2] = {"current_controller = MPD",
+                                      "log_receiver_url = http://gmk.local/logs"};
+        int li;
 
-        for (n = 0; k[n] != '\0' && n < PANEL; n++) {
-            g_fb[40 * PANEL + 40 + n] = ta_pack66_rgba(60, 60, 60, 3);
+        for (li = 0; li < 2; li++) {
+            ta_shape_l2r_t line;
+            uint32_t pack[48];
+            int8_t kern[64];
+            ta_pack66_t *line_px;
+            ta_draw_scene_t scene;
+            ta_uilayout_t uilo;
+            ta_phase1_opts_t opts;
+            int y = kTextY + li * ((int)g_gb.text_h + kGap);
+
+            memset(&line, 0, sizeof(line));
+            CHECK(ta_text_build(&line, lines[li], &g_gb.map, g_gb.kern, pack, 48,
+                                kern, 64) == 0);
+            CHECK(ta_shape_l2r_compute_size(&line) == 0);
+            /* phase1 may recompute size; keep a full-line budget. */
+            line_px = fake_alloc((size_t)PANEL * (size_t)g_gb.text_h * 2u);
+            CHECK(line_px != NULL);
+            line.pixels = line_px;
+            line.dirty = 1;
+            CHECK(ta_shape_table_set((unsigned)(930 + li),
+                                     (ta_shape_bitmap_t *)(void *)&line) == 0);
+            uilo = ta_uilo_make(1, kTextX, y, (unsigned)(930 + li));
+            memset(&scene, 0, sizeof(scene));
+            scene.uilo = &uilo;
+            scene.n_uilo = 1;
+            memset(&opts, 0, sizeof(opts));
+            opts.base_shape_idx = TA_GLASS_IDX_BASE;
+            CHECK(ta_draw_phase1(&scene, &opts) == 0);
+            ta_pack66_blit_fb(g_fb, PANEL, PANEL, kTextX, y, (int)line.w,
+                              (int)line.h, line.pixels, (int)line.w);
+            free(line_px);
         }
-        for (n = 0; v[n] != '\0' && n < PANEL; n++) {
-            g_fb[80 * PANEL + 40 + n] = ta_pack66_rgba(40, 55, 40, 3);
-        }
-        (void)k;
-        (void)v;
     }
     CHECK(write_png("kv_view.png") == 0);
     printf("wrote %s/kv_view.png\n", OUT_DIR);
 
-    /* ---- KV edit ---- */
     CHECK(ta_kv_editor_enter(&ed) == 0);
-    CHECK(ta_kv_editor_editing(&ed));
-    (void)ta_kv_editor_refresh(&ed);
-    ed.panel.dirty = 1;
-    fb_clear(dark);
+    fb_clear_from_base();
     CHECK(ta_glass_paint() == 1);
-    g_fb[40 * PANEL + PANEL / 2] = ta_pack66_rgba(50, 40, 8, 3);
     CHECK(write_png("kv_edit.png") == 0);
     printf("wrote %s/kv_edit.png\n", OUT_DIR);
 
     CHECK(ta_glass_set_page(0) == 0);
+    ta_glyph_bin_fini(&g_gb);
 
     if (failures != 0) {
         fprintf(stderr, "test_screenshots: %d/%d checks failed\n", failures,

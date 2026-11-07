@@ -237,13 +237,13 @@ $(BUILD)/test_wire: test_wire.c ta_wire.c ta_shape_swap.c ta_uilayout.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_wire.c ta_wire.c ta_shape_swap.c \
 		ta_uilayout.c ta_registry.c ta_event.c -lpthread
 
-SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_kv_editor.c ta_kv.c \
-	ta_draw_glass.c ta_draw_update.c ta_draw_phase1.c ta_draw_phase2.c \
+SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_glyph_bin.c ta_kv_editor.c \
+	ta_kv.c ta_draw_glass.c ta_draw_update.c ta_draw_phase1.c ta_draw_phase2.c \
 	ta_follow_chrome.c ta_hit_dispatch.c ta_text.c ta_shape_l2r.c \
 	ta_shape_swap.c ta_chrome_icons.c ta_wire.c ta_uilayout.c ta_isr_mail.c \
 	ta_queue.c ta_viewport.c ta_registry.c ta_event.c
-$(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_kv_editor.h \
-		ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
+$(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_glyph_bin.h \
+		ta_kv_editor.h ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(SHOT_SRCS) -lz -lpthread
 
 $(BUILD):

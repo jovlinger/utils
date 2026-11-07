@@ -644,9 +644,10 @@ overlay path is the primary human flow.
 
 Hit boxes follow placements. Tracked on `todo:15b92eaa`.
 
-**Screen PNGs:** `spinme/host/test_screenshots` regenerates stills under
-`spinme/screenshots/` (360x360): `main_mpd.png`, `selecting_overlay.png`,
-`kv_view.png`, `kv_edit.png`. Visual AC for layout WIs.
+**Screen PNGs:** `spinme/host/test_screenshots` loads device `glyphs.bin` +
+`disintegration_360.rgba`, paints the 360 glass, writes 3x stills under
+`spinme/screenshots/` (`main_mpd`, `main_playing`, `selecting_overlay`,
+`kv_view`, `kv_edit`).
 
 ---
 
