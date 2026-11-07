@@ -124,7 +124,8 @@ static void build_atlas(void) {
 
 /* ---- helpers ----------------------------------------------------------- */
 
-#define PANEL 64
+/* 128 keeps nav (12 oclock) from overlapping centered play/stop hit boxes. */
+#define PANEL 128
 static ta_pack66_t g_base[PANEL * PANEL];
 static ta_event_envelope_t g_qstore[32];
 static ta_queue_t g_q;
@@ -239,7 +240,12 @@ int main(void) {
     CHECK(ta_uilo_x(chrome->uilo[TA_FOLLOW_ZONE]) == 2);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_ZONE]) == 10);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_ARTIST]) == 10 + GH + 1);
-    CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) == 1);
+    /* Nav at 12 oclock; play/stop centered. */
+    CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) == 1);
+    CHECK(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
+          (PANEL - 30) / 2);
+    CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
+          (PANEL - 30) / 2);
 
     /* 2. Clean glass: PAINT pushes nothing. */
     before = g_nrec;
@@ -247,10 +253,12 @@ int main(void) {
     CHECK(pump() == 1);
     CHECK(g_nrec == before);
 
-    /* 3. ISR touch on transport -> CTRL_TOGGLE -> MPD -> Net toggle. */
+    /* 3. ISR touch on centered play/stop -> CTRL_TOGGLE -> MPD -> Net. */
     {
-        uint16_t tx = (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
-        uint16_t ty = (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
+        uint16_t tx =
+            (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
+        uint16_t ty =
+            (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
         CHECK(ta_isr_post_touch(&g_mail, tx, ty) == 0);
     }
     CHECK(pump() >= 1);

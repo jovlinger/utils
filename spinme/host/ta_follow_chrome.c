@@ -2,16 +2,17 @@
 
 #include <string.h>
 
-/* Rough follow placements on 360x360 (product salvage; not final art). */
+/* Rough follow placements on 360x360 (overwritten by place()). */
 static const int k_xy[TA_FOLLOW_N][2] = {
-    {0, 0},     /* base full-bleed */
+    {0, 0},     /* base */
     {20, 40},   /* zone */
     {20, 70},   /* artist */
     {20, 100},  /* album */
-    {20, 140},  /* title (scroll) */
+    {20, 140},  /* title */
     {20, 280},  /* volume */
-    {140, 300}, /* transport */
-    {120, 20},  /* clock */
+    {165, 165}, /* transport center */
+    {20, 310},  /* clock */
+    {165, 12},  /* nav 12 oclock */
 };
 
 int ta_follow_chrome_build(ta_follow_chrome_t *out,
@@ -29,10 +30,10 @@ int ta_follow_chrome_build(ta_follow_chrome_t *out,
         out->paint_once[i] = ta_follow_is_high_z_dynamic((unsigned)i) ? 0 : 1;
         out->accept_hit[i] = 0;
     }
-    /* Hit targets: transport + volume. */
+    /* Hit targets: transport + volume + nav. */
     out->accept_hit[TA_FOLLOW_TRANSPORT] = 1;
     out->accept_hit[TA_FOLLOW_VOLUME] = 1;
-    /* Clock and title nearest (already last in array). */
+    out->accept_hit[TA_FOLLOW_NAV] = 1;
     return 0;
 }
 
@@ -58,15 +59,33 @@ int ta_follow_chrome_place(ta_follow_chrome_t *chrome,
         chrome->uilo[lines[i]] = move_to(chrome->uilo[lines[i]], m->text_x, y);
         y += m->text_h + m->gap;
     }
+    /* Clock stays in the text column after volume. */
+    chrome->uilo[TA_FOLLOW_CLOCK] = move_to(chrome->uilo[TA_FOLLOW_CLOCK],
+                                            m->text_x, y + m->gap);
+    /* Nav at 12 oclock (top center). */
+    tx = (m->panel_w - m->nav_w) / 2;
+    if (tx < 0) {
+        tx = 0;
+    }
+    chrome->uilo[TA_FOLLOW_NAV] =
+        move_to(chrome->uilo[TA_FOLLOW_NAV], tx, m->button_y);
+    /* Play/stop at panel center. */
     tx = (m->panel_w - m->transport_w) / 2;
     if (tx < 0) {
         tx = 0;
     }
-    chrome->uilo[TA_FOLLOW_TRANSPORT] =
-        move_to(chrome->uilo[TA_FOLLOW_TRANSPORT], tx, m->button_y);
-    chrome->uilo[TA_FOLLOW_CLOCK] =
-        move_to(chrome->uilo[TA_FOLLOW_CLOCK], m->text_x,
-                m->button_y + m->transport_h + m->gap);
+    {
+        int ty = 0;
+
+        if (m->panel_h > 0) {
+            ty = (m->panel_h - m->transport_h) / 2;
+            if (ty < 0) {
+                ty = 0;
+            }
+        }
+        chrome->uilo[TA_FOLLOW_TRANSPORT] =
+            move_to(chrome->uilo[TA_FOLLOW_TRANSPORT], tx, ty);
+    }
     chrome->uilo[TA_FOLLOW_BASE] = move_to(chrome->uilo[TA_FOLLOW_BASE], 0, 0);
     return 0;
 }

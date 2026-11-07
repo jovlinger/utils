@@ -23,7 +23,7 @@ static int checks;
 
 int main(void) {
     ta_follow_chrome_t chrome;
-    unsigned shapes[TA_FOLLOW_N] = {1, 2, 3, 4, 5, 6, 7, 8};
+    unsigned shapes[TA_FOLLOW_N] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     uint16_t sw[TA_FOLLOW_N];
     uint16_t sh[TA_FOLLOW_N];
     size_t i;

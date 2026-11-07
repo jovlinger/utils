@@ -34,9 +34,10 @@ enum {
     TA_GLASS_IDX_TITLE_VP = 904,  /* Viewport over TITLE_L2R */
     TA_GLASS_IDX_TITLE_L2R = 905, /* not a UILayout; viewport child */
     TA_GLASS_IDX_VOLUME = 906,
-    TA_GLASS_IDX_TRANSPORT = 907,
+    TA_GLASS_IDX_TRANSPORT = 907, /* centered play/pause outline icon */
     TA_GLASS_IDX_CLOCK = 908,
-    TA_GLASS_IDX_SWAP = 909 /* SwapShape root; child 0 = follow page */
+    TA_GLASS_IDX_SWAP = 909, /* SwapShape root; child 0 = follow page */
+    TA_GLASS_IDX_NAV = 910   /* 12 oclock up/down solid arrow */
 };
 
 #define TA_GLASS_TEXT_MAX 96
@@ -142,6 +143,9 @@ unsigned ta_glass_page(void);
 int ta_glass_set_page(unsigned page);
 /* Append a same-size panel child (KV editor, etc.). Returns new page or -1. */
 int ta_glass_add_page(unsigned shape_idx);
+/* 12 oclock arrow: 0 = up/back, 1 = down/select (selecting mode). */
+void ta_glass_set_nav_down(int down);
+int ta_glass_nav_down(void);
 /* Hit boxes used by the walk (transport padded). */
 void ta_glass_hit_boxes(uint16_t w[TA_FOLLOW_N], uint16_t h[TA_FOLLOW_N]);
 

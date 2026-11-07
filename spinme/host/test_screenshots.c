@@ -156,15 +156,19 @@ int main(void) {
     CHECK(write_png("main_mpd.png") == 0);
     printf("wrote %s/main_mpd.png\n", OUT_DIR);
 
-    /* ---- selecting stub: main + 100x100 circular overlay at center ---- */
+    /* ---- selecting stub: down arrow + 100x100 circular overlay ---- */
     {
         ta_pack66_t main_copy[PANEL * PANEL];
 
+        ta_glass_set_nav_down(1);
+        fb_clear(dark);
+        CHECK(ta_glass_paint() >= 1);
         memcpy(main_copy, g_fb, sizeof(main_copy));
+        draw_ring(main_copy, PANEL / 2, PANEL / 2, 50, 42, accent);
         memcpy(g_fb, main_copy, sizeof(main_copy));
-        draw_ring(g_fb, PANEL / 2, PANEL / 2, 50, 42, accent);
         CHECK(write_png("selecting_overlay.png") == 0);
         printf("wrote %s/selecting_overlay.png\n", OUT_DIR);
+        ta_glass_set_nav_down(0);
     }
 
     /* ---- KV view as SwapShape page ---- */

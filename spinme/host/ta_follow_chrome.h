@@ -18,9 +18,10 @@ enum {
     TA_FOLLOW_ALBUM = 3,
     TA_FOLLOW_TITLE = 4,
     TA_FOLLOW_VOLUME = 5,
-    TA_FOLLOW_TRANSPORT = 6,
+    TA_FOLLOW_TRANSPORT = 6, /* play/stop at panel center */
     TA_FOLLOW_CLOCK = 7,
-    TA_FOLLOW_N = 8
+    TA_FOLLOW_NAV = 8, /* 12 oclock up/down (above SwapShape) */
+    TA_FOLLOW_N = 9
 };
 
 typedef struct ta_follow_chrome {
@@ -30,17 +31,16 @@ typedef struct ta_follow_chrome {
     size_t n;
 } ta_follow_chrome_t;
 
-/* Shape idxs: base, zone, artist, album, title, volume, transport, clock. */
+/* Shape idxs: base..clock, then nav. */
 int ta_follow_chrome_build(ta_follow_chrome_t *out, const unsigned shape_idx[TA_FOLLOW_N]);
 
 /*
- * Product salvage placements (follow_glass): text column at text_x starting
- * at text_y (first bezel row that still holds x=24 on the round 360 glass),
- * one line per slot zone/artist/album/title/volume with text_h + gap;
- * transport centered at the top (button_y); clock under it, same column.
+ * Text column at text_x/text_y; nav at 12 oclock (button_y, centered);
+ * transport (play/stop) at panel center; clock in the text column under volume.
  */
 typedef struct ta_follow_metrics {
     int panel_w;
+    int panel_h;
     int text_x;
     int text_y;
     int text_h;
@@ -48,6 +48,8 @@ typedef struct ta_follow_metrics {
     int button_y;
     int transport_w;
     int transport_h;
+    int nav_w;
+    int nav_h;
 } ta_follow_metrics_t;
 
 /* Rewrite x/y of an already built chrome; keeps shape idx, dirty, flags. */

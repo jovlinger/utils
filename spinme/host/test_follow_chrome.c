@@ -2,6 +2,7 @@
 #include "ta_follow_chrome.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static int failures;
 static int checks;
@@ -18,17 +19,33 @@ static int checks;
 
 int main(void) {
     ta_follow_chrome_t chrome;
-    unsigned shapes[TA_FOLLOW_N] = {1, 2, 3, 4, 5, 6, 7, 8};
+    unsigned shapes[TA_FOLLOW_N] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    ta_follow_metrics_t m;
     size_t i;
 
     CHECK(ta_follow_chrome_build(&chrome, shapes) == 0);
     CHECK(chrome.n == TA_FOLLOW_N);
 
-    /* Farthest = base; nearest = clock. */
     CHECK(ta_uilo_shape(chrome.uilo[TA_FOLLOW_BASE]) == 1);
     CHECK(ta_uilo_shape(chrome.uilo[TA_FOLLOW_CLOCK]) == 8);
-    CHECK(ta_uilo_y(chrome.uilo[TA_FOLLOW_CLOCK]) <
-          ta_uilo_y(chrome.uilo[TA_FOLLOW_TITLE]));
+    CHECK(ta_uilo_shape(chrome.uilo[TA_FOLLOW_NAV]) == 9);
+
+    memset(&m, 0, sizeof(m));
+    m.panel_w = 360;
+    m.panel_h = 360;
+    m.text_x = 20;
+    m.text_y = 40;
+    m.text_h = 10;
+    m.gap = 4;
+    m.button_y = 12;
+    m.transport_w = 30;
+    m.transport_h = 30;
+    m.nav_w = 30;
+    m.nav_h = 30;
+    CHECK(ta_follow_chrome_place(&chrome, &m) == 0);
+    CHECK(ta_uilo_y(chrome.uilo[TA_FOLLOW_NAV]) == 12);
+    CHECK(ta_uilo_x(chrome.uilo[TA_FOLLOW_TRANSPORT]) == (360 - 30) / 2);
+    CHECK(ta_uilo_y(chrome.uilo[TA_FOLLOW_TRANSPORT]) == (360 - 30) / 2);
 
     for (i = 0; i < chrome.n; i++) {
         if (ta_follow_is_high_z_dynamic((unsigned)i)) {
@@ -38,6 +55,7 @@ int main(void) {
         }
     }
     CHECK(chrome.accept_hit[TA_FOLLOW_TRANSPORT] == 1);
+    CHECK(chrome.accept_hit[TA_FOLLOW_NAV] == 1);
     CHECK(chrome.accept_hit[TA_FOLLOW_BASE] == 0);
     CHECK(ta_follow_is_high_z_dynamic(TA_FOLLOW_CLOCK) == 1);
     CHECK(ta_follow_is_high_z_dynamic(TA_FOLLOW_TITLE) == 1);

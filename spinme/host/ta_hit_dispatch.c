@@ -37,6 +37,8 @@ ta_hit_role_t ta_hit_walk(const ta_follow_chrome_t *chrome, int x, int y,
             return TA_HIT_TRANSPORT;
         case TA_FOLLOW_VOLUME:
             return TA_HIT_VOLUME;
+        case TA_FOLLOW_NAV:
+            return TA_HIT_NAV;
         default:
             return TA_HIT_NONE;
         }
@@ -59,6 +61,9 @@ int ta_react_touch(const ta_follow_chrome_t *chrome, uint16_t x, uint16_t y,
     (void)ta_env_set_src(&env, TA_DRAW_NAME);
     if (role == TA_HIT_TRANSPORT) {
         env.event.type = TA_EV_CTRL_TOGGLE;
+    } else if (role == TA_HIT_NAV) {
+        /* External wiring: ENUM switch (later WI) routes nav; count as hit. */
+        return 0;
     } else {
         env.event.type = TA_EV_CTRL_VOLUME;
         env.event.u.ctrl_volume.mode = (uint8_t)TA_CTRL_VOL_NONE;

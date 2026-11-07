@@ -1,5 +1,6 @@
 #include "ta_draw_glass.h"
 
+#include "ta_chrome_icons.h"
 #include "ta_draw_phase1.h"
 #include "ta_draw_update.h"
 #include "ta_hit_dispatch.h"
@@ -10,27 +11,25 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Text slots (every chrome slot except base + the title viewport). */
+/* Text slots (icons cover transport + nav). */
 enum {
     TS_ZONE = 0,
     TS_ARTIST = 1,
     TS_ALBUM = 2,
     TS_TITLE = 3, /* viewport child */
     TS_VOLUME = 4,
-    TS_TRANSPORT = 5,
-    TS_CLOCK = 6,
-    TS_N = 7
+    TS_CLOCK = 5,
+    TS_N = 6
 };
 
 static const unsigned k_ts_idx[TS_N] = {
-    TA_GLASS_IDX_ZONE,   TA_GLASS_IDX_ARTIST,    TA_GLASS_IDX_ALBUM,
-    TA_GLASS_IDX_TITLE_L2R, TA_GLASS_IDX_VOLUME, TA_GLASS_IDX_TRANSPORT,
-    TA_GLASS_IDX_CLOCK};
+    TA_GLASS_IDX_ZONE,      TA_GLASS_IDX_ARTIST, TA_GLASS_IDX_ALBUM,
+    TA_GLASS_IDX_TITLE_L2R, TA_GLASS_IDX_VOLUME, TA_GLASS_IDX_CLOCK};
 
 /* Follow slot that shows each text slot (title shows through the viewport). */
 static const unsigned k_ts_follow[TS_N] = {
-    TA_FOLLOW_ZONE,   TA_FOLLOW_ARTIST,    TA_FOLLOW_ALBUM, TA_FOLLOW_TITLE,
-    TA_FOLLOW_VOLUME, TA_FOLLOW_TRANSPORT, TA_FOLLOW_CLOCK};
+    TA_FOLLOW_ZONE,   TA_FOLLOW_ARTIST, TA_FOLLOW_ALBUM,
+    TA_FOLLOW_TITLE,  TA_FOLLOW_VOLUME, TA_FOLLOW_CLOCK};
 
 typedef struct text_slot {
     ta_shape_l2r_t l2r;
@@ -53,6 +52,12 @@ typedef struct glass_state {
     ta_shape_bitmap_t base;
     ta_shape_viewport_t title_vp;
     ta_shape_swap_t swap;
+    ta_shape_bitmap_t transport_icon;
+    ta_shape_bitmap_t nav_icon;
+    ta_pack66_t transport_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
+    ta_pack66_t nav_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
+    int nav_down; /* 0 = up arrow, 1 = down arrow (selecting) */
+    int transport_playing_drawn; /* -1 unknown; tracks icon cache */
     text_slot_t ts[TS_N];
     ta_follow_chrome_t chrome;
     ta_draw_scene_t scene;
@@ -71,6 +76,7 @@ void ta_glass_reset(void) {
     g.polled = TA_GLASS_UNKNOWN;
     g.desired = TA_GLASS_UNKNOWN;
     g.playing = TA_GLASS_UNKNOWN;
+    g.transport_playing_drawn = -1;
 }
 
 void ta_glass_set_backend(const ta_glass_backend_t *b) {
@@ -283,9 +289,34 @@ int ta_glass_set_text(uint8_t field, const char *ascii) {
     return rc;
 }
 
+static void represent_transport_icon(int force) {
+    if (!force && g.transport_playing_drawn == (int)g.playing && g.installed) {
+        return;
+    }
+    g.transport_playing_drawn = (int)g.playing;
+    if (g.playing == 1) {
+        ta_chrome_icon_pause_outline(g.transport_px, TA_CHROME_ICON_PX);
+    } else {
+        ta_chrome_icon_play_outline(g.transport_px, TA_CHROME_ICON_PX);
+    }
+    g.transport_icon.dirty = 1;
+    if (g.installed) {
+        mark_follow_dirty(TA_FOLLOW_TRANSPORT);
+    }
+}
+
+static void represent_nav_icon(void) {
+    if (g.nav_down) {
+        ta_chrome_icon_down_solid(g.nav_px, TA_CHROME_ICON_PX);
+    } else {
+        ta_chrome_icon_up_solid(g.nav_px, TA_CHROME_ICON_PX);
+    }
+    g.nav_icon.dirty = 1;
+    mark_follow_dirty(TA_FOLLOW_NAV);
+}
+
 static void represent_status(void) {
     char vol[8];
-    const char *transport;
     uint8_t shown = g.polled;
 
     if (g.desired != TA_GLASS_UNKNOWN && g.desired != g.polled) {
@@ -296,9 +327,8 @@ static void represent_status(void) {
     } else {
         snprintf(vol, sizeof(vol), "%u", (unsigned)shown);
     }
-    transport = g.playing == 1 ? "stop" : "play";
     (void)slot_set_text(TS_VOLUME, vol);
-    (void)slot_set_text(TS_TRANSPORT, transport);
+    represent_transport_icon(0);
 }
 
 void ta_glass_set_status(uint8_t polled, uint8_t desired, uint8_t playing) {
@@ -397,6 +427,23 @@ int ta_glass_install_stack(void) {
         return -1;
     }
 
+    memset(&g.transport_icon, 0, sizeof(g.transport_icon));
+    g.transport_icon.tag = TA_SHAPE_TAG_BITMAP;
+    g.transport_icon.w = TA_CHROME_ICON_PX;
+    g.transport_icon.h = TA_CHROME_ICON_PX;
+    g.transport_icon.pixels = g.transport_px;
+    g.transport_icon.dirty = 1;
+    memset(&g.nav_icon, 0, sizeof(g.nav_icon));
+    g.nav_icon.tag = TA_SHAPE_TAG_BITMAP;
+    g.nav_icon.w = TA_CHROME_ICON_PX;
+    g.nav_icon.h = TA_CHROME_ICON_PX;
+    g.nav_icon.pixels = g.nav_px;
+    g.nav_icon.dirty = 1;
+    if (ta_shape_table_set(TA_GLASS_IDX_TRANSPORT, &g.transport_icon) != 0 ||
+        ta_shape_table_set(TA_GLASS_IDX_NAV, &g.nav_icon) != 0) {
+        return -1;
+    }
+
     g.installed = 1;
     /* Definitions from current state (texts survive a re-install). */
     for (i = 0; i < TS_N; i++) {
@@ -412,6 +459,8 @@ int ta_glass_install_stack(void) {
         (void)slot_set_text(TS_CLOCK, "00:00:00");
     }
     represent_status();
+    represent_transport_icon(1);
+    represent_nav_icon();
 
     /* UILayouts: follow placements from the real text metrics. */
     shape_idx[TA_FOLLOW_BASE] = TA_GLASS_IDX_BASE;
@@ -422,18 +471,22 @@ int ta_glass_install_stack(void) {
     shape_idx[TA_FOLLOW_VOLUME] = TA_GLASS_IDX_VOLUME;
     shape_idx[TA_FOLLOW_TRANSPORT] = TA_GLASS_IDX_TRANSPORT;
     shape_idx[TA_FOLLOW_CLOCK] = TA_GLASS_IDX_CLOCK;
+    shape_idx[TA_FOLLOW_NAV] = TA_GLASS_IDX_NAV;
     if (ta_follow_chrome_build(&g.chrome, shape_idx) != 0) {
         return -1;
     }
     memset(&m, 0, sizeof(m));
     m.panel_w = g.cfg.panel_w;
+    m.panel_h = g.cfg.panel_h;
     m.text_x = g.cfg.text_x;
     m.text_y = g.cfg.text_y;
     m.text_h = g.cfg.text_h;
     m.gap = g.cfg.gap;
     m.button_y = g.cfg.button_y;
-    m.transport_w = (int)g.ts[TS_TRANSPORT].l2r.w;
-    m.transport_h = (int)g.ts[TS_TRANSPORT].l2r.h;
+    m.transport_w = TA_CHROME_ICON_PX;
+    m.transport_h = TA_CHROME_ICON_PX;
+    m.nav_w = TA_CHROME_ICON_PX;
+    m.nav_h = TA_CHROME_ICON_PX;
     if (ta_follow_chrome_place(&g.chrome, &m) != 0) {
         return -1;
     }
@@ -537,6 +590,20 @@ int ta_glass_set_page(unsigned page) {
     }
     mark_all_dirty();
     return 0;
+}
+
+void ta_glass_set_nav_down(int down) {
+    int want = down ? 1 : 0;
+
+    if (!g.installed || g.nav_down == want) {
+        return;
+    }
+    g.nav_down = want;
+    represent_nav_icon();
+}
+
+int ta_glass_nav_down(void) {
+    return g.nav_down;
 }
 
 int ta_glass_add_page(unsigned shape_idx) {
@@ -664,7 +731,7 @@ void ta_glass_hit_boxes(uint16_t w[TA_FOLLOW_N], uint16_t h[TA_FOLLOW_N]) {
         }
         w[i] = hdr != NULL ? hdr->w : 0;
         h[i] = hdr != NULL ? hdr->h : 0;
-        if (i == TA_FOLLOW_TRANSPORT) {
+        if (i == TA_FOLLOW_TRANSPORT || i == TA_FOLLOW_NAV) {
             w[i] = (uint16_t)(w[i] + 2u * g.cfg.hit_pad_x);
             h[i] = (uint16_t)(h[i] + 2u * g.cfg.hit_pad_y);
         }

@@ -13,7 +13,8 @@ extern "C" {
 typedef enum {
     TA_HIT_NONE = 0,
     TA_HIT_TRANSPORT = 1,
-    TA_HIT_VOLUME = 2
+    TA_HIT_VOLUME = 2,
+    TA_HIT_NAV = 3 /* 12 oclock up/down; wiring decides select vs page-up */
 } ta_hit_role_t;
 
 /* Nearest-first accept_hit box test. Returns role or TA_HIT_NONE. */

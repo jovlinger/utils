@@ -595,8 +595,9 @@ Max `TA_UILAYOUT_MAX` 64.
 | album | 3 | no | no |
 | title | 4 | no | yes (scroll) |
 | volume | 5 | **yes** | no |
-| transport | 6 | **yes** | no |
+| transport (play/stop, center) | 6 | **yes** | no |
 | clock | 7 | no | yes |
+| nav (12 oclock up/down) | 8 | **yes** | no |
 
 Built by `ta_follow_chrome_build`.
 
