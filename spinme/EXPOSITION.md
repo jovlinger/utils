@@ -624,12 +624,12 @@ The swapper does **not** own the 12 o'clock press. **Down / select** is an
 select the currently shown alternative*.
 
 **Wiring** (how events reach behavior): shapes do **not** hold function
-pointers. Each interactive component carries a small **function ENUM**. A
-small set of **handler functions** (touch, rotary, ...) `switch` on that
-enum and `case` into the right action (e.g. swapper-select, page-up,
-toggle-transport). That switch is the wiring -- rewrite a case to rebind
-without chasing per-shape callbacks. Up / dial / overlay use the same
-pattern.
+pointers. Each interactive slot carries a `fn_enum` (`ta_fn_enum_t` on
+`ta_follow_chrome`). Handlers `ta_wire_touch` / `ta_wire_rotary` `switch` on
+that enum (`TA_FN_TRANSPORT_TOGGLE`, `TA_FN_NAV`, `TA_FN_SWAP_STEP`, ...).
+Rewrite a case to rebind. NAV up enters selecting (overlay + down glyph);
+NAV down commits the swapper's shown alternative; rotary while selecting
+is `TA_FN_SWAP_STEP`.
 
 Direct swap without overlay remains allowed (API / future gesture); the
 overlay path is the primary human flow.

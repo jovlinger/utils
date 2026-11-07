@@ -1,5 +1,7 @@
 #include "ta_follow_chrome.h"
 
+#include "ta_wire.h"
+
 #include <string.h>
 
 /* Rough follow placements on 360x360 (overwritten by place()). */
@@ -29,11 +31,15 @@ int ta_follow_chrome_build(ta_follow_chrome_t *out,
             ta_uilo_make(1, k_xy[i][0], k_xy[i][1], shape_idx[i]);
         out->paint_once[i] = ta_follow_is_high_z_dynamic((unsigned)i) ? 0 : 1;
         out->accept_hit[i] = 0;
+        out->fn_enum[i] = (uint8_t)TA_FN_NONE;
     }
-    /* Hit targets: transport + volume + nav. */
+    /* Hit targets + wiring enums. */
     out->accept_hit[TA_FOLLOW_TRANSPORT] = 1;
+    out->fn_enum[TA_FOLLOW_TRANSPORT] = (uint8_t)TA_FN_TRANSPORT_TOGGLE;
     out->accept_hit[TA_FOLLOW_VOLUME] = 1;
+    out->fn_enum[TA_FOLLOW_VOLUME] = (uint8_t)TA_FN_VOLUME;
     out->accept_hit[TA_FOLLOW_NAV] = 1;
+    out->fn_enum[TA_FOLLOW_NAV] = (uint8_t)TA_FN_NAV;
     return 0;
 }
 

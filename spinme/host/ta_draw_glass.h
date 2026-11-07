@@ -146,6 +146,7 @@ int ta_glass_add_page(unsigned shape_idx);
 /* 12 oclock arrow: 0 = up/back, 1 = down/select (selecting mode). */
 void ta_glass_set_nav_down(int down);
 int ta_glass_nav_down(void);
+int ta_glass_selecting(void);
 /* Hit boxes used by the walk (transport padded). */
 void ta_glass_hit_boxes(uint16_t w[TA_FOLLOW_N], uint16_t h[TA_FOLLOW_N]);
 

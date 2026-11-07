@@ -7,6 +7,7 @@
 #include "ta_shape_l2r.h"
 #include "ta_shape_swap.h"
 #include "ta_viewport.h"
+#include "ta_wire.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,6 +59,8 @@ typedef struct glass_state {
     ta_pack66_t nav_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
     int nav_down; /* 0 = up arrow, 1 = down arrow (selecting) */
     int transport_playing_drawn; /* -1 unknown; tracks icon cache */
+    int selecting_overlay;       /* 1 draw 100x100 chooser ring */
+    ta_wire_ctx_t wire;
     text_slot_t ts[TS_N];
     ta_follow_chrome_t chrome;
     ta_draw_scene_t scene;
@@ -70,6 +73,19 @@ typedef struct glass_state {
 
 static glass_state_t g;
 
+static void mark_all_dirty(void);
+
+static void wire_nav_glyph(int down) {
+    ta_glass_set_nav_down(down);
+}
+
+static void wire_selecting(int on) {
+    g.selecting_overlay = on ? 1 : 0;
+    if (g.installed) {
+        mark_all_dirty();
+    }
+}
+
 void ta_glass_reset(void) {
     memset(&g, 0, sizeof(g));
     g.lit = 1;
@@ -77,6 +93,8 @@ void ta_glass_reset(void) {
     g.desired = TA_GLASS_UNKNOWN;
     g.playing = TA_GLASS_UNKNOWN;
     g.transport_playing_drawn = -1;
+    ta_wire_reset(&g.wire);
+    ta_hit_set_wire(NULL);
 }
 
 void ta_glass_set_backend(const ta_glass_backend_t *b) {
@@ -511,6 +529,12 @@ int ta_glass_install_stack(void) {
     memcpy(g.scene.clock_hhmmss, g.ts[TS_CLOCK].text, 9);
     g.scene.clock_hhmmss[8] = '\0';
 
+    g.wire.swap = &g.swap;
+    g.wire.on_nav_glyph = wire_nav_glyph;
+    g.wire.on_selecting = wire_selecting;
+    ta_wire_reset(&g.wire);
+    ta_hit_set_wire(&g.wire);
+
     mark_all_dirty();
     g.st.installs++;
     return 0;
@@ -606,6 +630,10 @@ int ta_glass_nav_down(void) {
     return g.nav_down;
 }
 
+int ta_glass_selecting(void) {
+    return g.wire.selecting;
+}
+
 int ta_glass_add_page(unsigned shape_idx) {
     ta_shape_bitmap_t *ch;
 
@@ -684,6 +712,31 @@ int ta_glass_paint(void) {
                         pushes[i].exterior.w, pushes[i].exterior.h, hdr->pixels,
                         (int)hdr->w);
         g.st.pushes++;
+    }
+    if (g.selecting_overlay && g.cfg.panel_w >= 100 && g.cfg.panel_h >= 100) {
+        static ta_pack66_t ring[100 * 100];
+        int cx = 50;
+        int cy = 50;
+        int x;
+        int y;
+        ta_pack66_t accent = ta_pack66_rgba(50, 40, 8, 3);
+
+        ta_chrome_icon_clear(ring, 100);
+        for (y = 0; y < 100; y++) {
+            for (x = 0; x < 100; x++) {
+                int dx = x - cx;
+                int dy = y - cy;
+                int d2 = dx * dx + dy * dy;
+
+                if (d2 <= 50 * 50 && d2 >= 42 * 42) {
+                    ring[(size_t)y * 100u + (size_t)x] = accent;
+                }
+            }
+        }
+        g.be->push_rect((int)g.cfg.panel_w / 2 - 50, (int)g.cfg.panel_h / 2 - 50,
+                        100, 100, ring, 100);
+        g.st.pushes++;
+        n++;
     }
     g.st.paints++;
     return n;

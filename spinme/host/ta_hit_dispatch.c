@@ -1,11 +1,15 @@
 #include "ta_hit_dispatch.h"
 
-#include "ta_draw_events.h"
-#include "ta_net_events.h"
-#include "ta_registry.h"
-#include "ta_router.h"
+#include "ta_wire.h"
 
 #include <stddef.h>
+
+/* Optional process-wide wire context; glass installs before paint/input. */
+static ta_wire_ctx_t *g_wire;
+
+void ta_hit_set_wire(ta_wire_ctx_t *wire) {
+    g_wire = wire;
+}
 
 ta_hit_role_t ta_hit_walk(const ta_follow_chrome_t *chrome, int x, int y,
                           const uint16_t *shape_w, const uint16_t *shape_h) {
@@ -46,45 +50,58 @@ ta_hit_role_t ta_hit_walk(const ta_follow_chrome_t *chrome, int x, int y,
     return TA_HIT_NONE;
 }
 
+static ta_fn_enum_t fn_for_role(const ta_follow_chrome_t *chrome,
+                                ta_hit_role_t role) {
+    size_t idx;
+
+    switch (role) {
+    case TA_HIT_TRANSPORT:
+        idx = TA_FOLLOW_TRANSPORT;
+        break;
+    case TA_HIT_VOLUME:
+        idx = TA_FOLLOW_VOLUME;
+        break;
+    case TA_HIT_NAV:
+        idx = TA_FOLLOW_NAV;
+        break;
+    default:
+        return TA_FN_NONE;
+    }
+    if (chrome == NULL || idx >= chrome->n) {
+        return TA_FN_NONE;
+    }
+    return (ta_fn_enum_t)chrome->fn_enum[idx];
+}
+
 int ta_react_touch(const ta_follow_chrome_t *chrome, uint16_t x, uint16_t y,
                    ta_session_id_t session, const uint16_t *shape_w,
                    const uint16_t *shape_h) {
     ta_hit_role_t role;
-    ta_event_envelope_t env;
+    ta_fn_enum_t fn;
+    ta_wire_ctx_t local;
 
     role = ta_hit_walk(chrome, (int)x, (int)y, shape_w, shape_h);
     if (role == TA_HIT_NONE) {
         return 1;
     }
-    ta_env_clear(&env);
-    env.session_id = session;
-    (void)ta_env_set_src(&env, TA_DRAW_NAME);
-    if (role == TA_HIT_TRANSPORT) {
-        env.event.type = TA_EV_CTRL_TOGGLE;
-    } else if (role == TA_HIT_NAV) {
-        /* External wiring: ENUM switch (later WI) routes nav; count as hit. */
-        return 0;
-    } else {
-        env.event.type = TA_EV_CTRL_VOLUME;
-        env.event.u.ctrl_volume.mode = (uint8_t)TA_CTRL_VOL_NONE;
+    fn = fn_for_role(chrome, role);
+    if (g_wire != NULL) {
+        return ta_wire_touch(g_wire, fn, session);
     }
-    if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
-        return -1;
-    }
-    return 0;
+    ta_wire_reset(&local);
+    return ta_wire_touch(&local, fn, session);
 }
 
 int ta_react_rotate(int8_t steps, ta_session_id_t session) {
-    ta_event_envelope_t env;
+    ta_wire_ctx_t local;
+    ta_fn_enum_t fn = TA_FN_VOLUME;
 
-    ta_env_clear(&env);
-    env.event.type = TA_EV_CTRL_VOLUME;
-    env.session_id = session;
-    (void)ta_env_set_src(&env, TA_DRAW_NAME);
-    env.event.u.ctrl_volume.mode = (uint8_t)TA_CTRL_VOL_REL;
-    env.event.u.ctrl_volume.delta = steps;
-    if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
-        return -1;
+    if (g_wire != NULL) {
+        if (g_wire->selecting) {
+            fn = TA_FN_SWAP_STEP;
+        }
+        return ta_wire_rotary(g_wire, fn, steps, session);
     }
-    return 0;
+    ta_wire_reset(&local);
+    return ta_wire_rotary(&local, fn, steps, session);
 }

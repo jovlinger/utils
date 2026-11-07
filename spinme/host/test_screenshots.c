@@ -80,30 +80,6 @@ static void fb_clear(ta_pack66_t fill) {
     }
 }
 
-static void draw_ring(ta_pack66_t *fb, int cx, int cy, int r_outer, int r_inner,
-                      ta_pack66_t ink) {
-    int y;
-    int x;
-
-    for (y = -r_outer; y <= r_outer; y++) {
-        for (x = -r_outer; x <= r_outer; x++) {
-            int d2 = x * x + y * y;
-            int dx;
-            int dy;
-
-            if (d2 > r_outer * r_outer || d2 < r_inner * r_inner) {
-                continue;
-            }
-            dx = cx + x;
-            dy = cy + y;
-            if (dx < 0 || dy < 0 || dx >= PANEL || dy >= PANEL) {
-                continue;
-            }
-            fb[(size_t)dy * PANEL + (size_t)dx] = ink;
-        }
-    }
-}
-
 static int write_png(const char *name) {
     char path[256];
 
@@ -115,7 +91,6 @@ int main(void) {
     ta_glass_cfg_t cfg;
     ta_kv_editor_t ed;
     ta_pack66_t dark = ta_pack66_rgba(4, 4, 8, 3);
-    ta_pack66_t accent = ta_pack66_rgba(50, 40, 8, 3);
     int i;
 
     (void)mkdir(OUT_DIR, 0755);
@@ -156,22 +131,7 @@ int main(void) {
     CHECK(write_png("main_mpd.png") == 0);
     printf("wrote %s/main_mpd.png\n", OUT_DIR);
 
-    /* ---- selecting stub: down arrow + 100x100 circular overlay ---- */
-    {
-        ta_pack66_t main_copy[PANEL * PANEL];
-
-        ta_glass_set_nav_down(1);
-        fb_clear(dark);
-        CHECK(ta_glass_paint() >= 1);
-        memcpy(main_copy, g_fb, sizeof(main_copy));
-        draw_ring(main_copy, PANEL / 2, PANEL / 2, 50, 42, accent);
-        memcpy(g_fb, main_copy, sizeof(main_copy));
-        CHECK(write_png("selecting_overlay.png") == 0);
-        printf("wrote %s/selecting_overlay.png\n", OUT_DIR);
-        ta_glass_set_nav_down(0);
-    }
-
-    /* ---- KV view as SwapShape page ---- */
+    /* ---- KV page registered, then selecting via NAV wiring ---- */
     ta_kv_reset();
     CHECK(ta_kv_put("log_receiver_url", "http://gmk.local/logs", 21) ==
           TA_KV_OK);
@@ -181,6 +141,26 @@ int main(void) {
     CHECK(ta_kv_editor_refresh(&ed) == 0);
     CHECK(ta_kv_editor_install_shape(&ed) == 0);
     CHECK(ta_glass_add_page(TA_KV_EDITOR_IDX) == 1);
+
+    {
+        const ta_follow_chrome_t *chrome = ta_glass_chrome();
+        uint16_t nx =
+            (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_NAV]) + 5);
+        uint16_t ny =
+            (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) + 5);
+
+        CHECK(ta_glass_touch(nx, ny, 1) == 0);
+        CHECK(ta_glass_selecting());
+        CHECK(ta_glass_nav_down() == 1);
+        fb_clear(dark);
+        CHECK(ta_glass_paint() >= 1);
+        CHECK(write_png("selecting_overlay.png") == 0);
+        printf("wrote %s/selecting_overlay.png\n", OUT_DIR);
+        /* Commit selection (down). */
+        CHECK(ta_glass_touch(nx, ny, 1) == 0);
+        CHECK(!ta_glass_selecting());
+    }
+
     CHECK(ta_glass_set_page(1) == 0);
     fb_clear(dark);
     CHECK(ta_glass_paint() == 1);
@@ -209,7 +189,7 @@ int main(void) {
     ed.panel.dirty = 1;
     fb_clear(dark);
     CHECK(ta_glass_paint() == 1);
-    draw_ring(g_fb, PANEL / 2, 40, 8, 0, accent); /* caret hint at top */
+    g_fb[40 * PANEL + PANEL / 2] = ta_pack66_rgba(50, 40, 8, 3);
     CHECK(write_png("kv_edit.png") == 0);
     printf("wrote %s/kv_edit.png\n", OUT_DIR);
 

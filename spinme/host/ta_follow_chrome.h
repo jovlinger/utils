@@ -28,6 +28,7 @@ typedef struct ta_follow_chrome {
     ta_uilayout_t uilo[TA_FOLLOW_N];
     uint8_t accept_hit[TA_FOLLOW_N]; /* parallel flags (choice from 0006) */
     uint8_t paint_once[TA_FOLLOW_N]; /* 1 = static chrome; leave after first push */
+    uint8_t fn_enum[TA_FOLLOW_N];    /* ta_fn_enum_t wiring (no fn ptrs) */
     size_t n;
 } ta_follow_chrome_t;
 
