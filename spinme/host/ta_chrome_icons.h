@@ -10,7 +10,10 @@
 extern "C" {
 #endif
 
-#define TA_CHROME_ICON_PX 30
+/* Play/pause at panel center (3x prior 30px). Nav is smaller (see NAV_PX). */
+#define TA_CHROME_ICON_PX 90
+/* Up/down at 12 oclock: 2/3 of play (play was 150% of this required size). */
+#define TA_CHROME_NAV_PX 60
 
 /* Clear to transparent, then stroke/fill. All operate on w*w buffers. */
 void ta_chrome_icon_clear(ta_pack66_t *px, uint16_t w);

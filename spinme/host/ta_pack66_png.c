@@ -9,6 +9,28 @@ static uint8_t expand6(uint8_t v6) {
     return (uint8_t)((v6 * 255u) / 63u);
 }
 
+/* a2 src-over into an already-populated pack66 fb (resolved a=3). */
+static ta_pack66_t blend_a2_pack(ta_pack66_t dst, ta_pack66_t src) {
+    uint8_t sr, sg, sb, sa;
+    uint8_t dr, dg, db, da;
+    unsigned inv;
+
+    ta_unpack66(src, &sr, &sg, &sb, &sa);
+    if (sa == 0) {
+        return dst;
+    }
+    if (sa >= 3) {
+        return src;
+    }
+    ta_unpack66(dst, &dr, &dg, &db, &da);
+    (void)da;
+    inv = 3u - (unsigned)sa;
+    return ta_pack66_rgba(
+        (uint8_t)(((unsigned)sr * sa + (unsigned)dr * inv) / 3u),
+        (uint8_t)(((unsigned)sg * sa + (unsigned)dg * inv) / 3u),
+        (uint8_t)(((unsigned)sb * sa + (unsigned)db * inv) / 3u), 3);
+}
+
 void ta_pack66_blit_fb(ta_pack66_t *fb, uint16_t panel_w, uint16_t panel_h,
                        int x, int y, int w, int h, const ta_pack66_t *src,
                        int stride_px) {
@@ -27,6 +49,7 @@ void ta_pack66_blit_fb(ta_pack66_t *fb, uint16_t panel_w, uint16_t panel_h,
         }
         for (col = 0; col < w; col++) {
             int dx = x + col;
+            size_t di;
             uint8_t r, g, b, a;
             ta_pack66_t p;
 
@@ -38,7 +61,12 @@ void ta_pack66_blit_fb(ta_pack66_t *fb, uint16_t panel_w, uint16_t panel_h,
             if (a == 0) {
                 continue;
             }
-            fb[(size_t)dy * (size_t)panel_w + (size_t)dx] = p;
+            di = (size_t)dy * (size_t)panel_w + (size_t)dx;
+            if (a >= 3) {
+                fb[di] = p;
+            } else {
+                fb[di] = blend_a2_pack(fb[di], p);
+            }
         }
     }
 }

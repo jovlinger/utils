@@ -37,7 +37,7 @@ typedef struct ta_phase1_opts {
  */
 int ta_draw_phase1(ta_draw_scene_t *scene, const ta_phase1_opts_t *opts);
 
-/* Shared pack66 src-over-ish blit (A2==0 skip, else copy). */
+/* Shared pack66 src-over blit: A2==0 skip; A2==1..2 blend RGB; A2==3 copy. */
 void ta_draw_blit_bitmap(ta_pack66_t *dst, uint16_t dst_w, uint16_t dst_h,
                          int ox, int oy, const ta_shape_bitmap_t *src);
 

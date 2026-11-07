@@ -56,9 +56,9 @@ typedef struct glass_state {
     ta_shape_bitmap_t transport_icon;
     ta_shape_bitmap_t nav_icon;
     ta_pack66_t transport_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
-    ta_pack66_t nav_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
+    ta_pack66_t nav_px[TA_CHROME_NAV_PX * TA_CHROME_NAV_PX];
     int nav_down; /* 0 = up arrow, 1 = down arrow (selecting) */
-    int transport_playing_drawn; /* -1 unknown; tracks icon cache */
+    int transport_playing_drawn; /* -1 unknown; skip redraw if playing unchanged */
     int selecting_overlay;       /* 1 draw 100x100 chooser ring */
     ta_wire_ctx_t wire;
     text_slot_t ts[TS_N];
@@ -325,9 +325,9 @@ static void represent_transport_icon(int force) {
 
 static void represent_nav_icon(void) {
     if (g.nav_down) {
-        ta_chrome_icon_down_solid(g.nav_px, TA_CHROME_ICON_PX);
+        ta_chrome_icon_down_solid(g.nav_px, TA_CHROME_NAV_PX);
     } else {
-        ta_chrome_icon_up_solid(g.nav_px, TA_CHROME_ICON_PX);
+        ta_chrome_icon_up_solid(g.nav_px, TA_CHROME_NAV_PX);
     }
     g.nav_icon.dirty = 1;
     mark_follow_dirty(TA_FOLLOW_NAV);
@@ -453,8 +453,8 @@ int ta_glass_install_stack(void) {
     g.transport_icon.dirty = 1;
     memset(&g.nav_icon, 0, sizeof(g.nav_icon));
     g.nav_icon.tag = TA_SHAPE_TAG_BITMAP;
-    g.nav_icon.w = TA_CHROME_ICON_PX;
-    g.nav_icon.h = TA_CHROME_ICON_PX;
+    g.nav_icon.w = TA_CHROME_NAV_PX;
+    g.nav_icon.h = TA_CHROME_NAV_PX;
     g.nav_icon.pixels = g.nav_px;
     g.nav_icon.dirty = 1;
     if (ta_shape_table_set(TA_GLASS_IDX_TRANSPORT, &g.transport_icon) != 0 ||
@@ -503,8 +503,8 @@ int ta_glass_install_stack(void) {
     m.button_y = g.cfg.button_y;
     m.transport_w = TA_CHROME_ICON_PX;
     m.transport_h = TA_CHROME_ICON_PX;
-    m.nav_w = TA_CHROME_ICON_PX;
-    m.nav_h = TA_CHROME_ICON_PX;
+    m.nav_w = TA_CHROME_NAV_PX;
+    m.nav_h = TA_CHROME_NAV_PX;
     if (ta_follow_chrome_place(&g.chrome, &m) != 0) {
         return -1;
     }

@@ -5,6 +5,7 @@
  * Fake glass backend records exterior pushes and backlight; fake Net backend
  * defers completions so POLL_DONE can carry a status payload.
  */
+#include "ta_chrome_icons.h"
 #include "ta_controller.h"
 #include "ta_draw_events.h"
 #include "ta_draw_glass.h"
@@ -125,7 +126,8 @@ static void build_atlas(void) {
 /* ---- helpers ----------------------------------------------------------- */
 
 /* 128 keeps nav (12 oclock) from overlapping centered play/stop hit boxes. */
-#define PANEL 128
+/* Real panel is 360; 90px chrome icons must not overlap nav vs transport. */
+#define PANEL 360
 static ta_pack66_t g_base[PANEL * PANEL];
 static ta_event_envelope_t g_qstore[32];
 static ta_queue_t g_q;
@@ -243,9 +245,9 @@ int main(void) {
     /* Nav at 12 oclock; play/stop centered. */
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) == 1);
     CHECK(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
-          (PANEL - 30) / 2);
+          (PANEL - TA_CHROME_ICON_PX) / 2);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
-          (PANEL - 30) / 2);
+          (PANEL - TA_CHROME_ICON_PX) / 2);
 
     /* 2. Clean glass: PAINT pushes nothing. */
     before = g_nrec;
