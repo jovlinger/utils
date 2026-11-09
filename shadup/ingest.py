@@ -2,9 +2,22 @@
 """Ingest files/dirs into /mnt/sdb2/music/flac via shadup.py.
 
 ``ingest`` (``ingest.sh`` on PATH) is the ONE command that enters an album into
-the playable library. Hash copy lives here; rename-from-embedded-tags and
-musicology/postingest are later stages of that same entry path (see
-``ingest.sh`` header), not alternate ways to add music.
+the playable library. This module is the hash-copy stage only.
+
+Stages of the entry path (see also ``ingest.sh`` and ``shadup/README.md``):
+
+1. Hash copy into ``data/`` + ``files/<basename>/`` (this file; wrapped by
+   ``ingest.sh`` which remounts the store rw via sudo).
+2. Optional rename from embedded-tag consensus to ``Artist - Album``
+   (``ingest_rename``).
+3. Tag ingest and browse symlinks are a separate follow-up, not invoked here:
+   - ``postingest`` -- musicscan, ``.meta.combined.json``, importtags into the
+     shadup DB, then ``shadup refresh-extracted-tags`` (remounts itself).
+   - ``refresh-extracted-tags`` -- rebuild ``files/_meta`` and ``files/_tags``
+     from tags already in the DB only (``refresh-extracted-tags.sh``; remounts).
+
+``postingest`` / ``musicscan`` / ``shadup mv`` alone do not add an album to the
+playable library.
 
 Observable contract (matches deprecated/shasrv_old/ingest.sh):
 - payloads under <store-root>/data/XX/<sha256> (``--shadir`` is the store root, not ``data/``)

@@ -14,9 +14,13 @@
 #   2. If embedded FLAC/cue tags mostly agree (>= 2/3), shadup mv to
 #      ``Artist - Album`` (ingest_rename.py). Year is NOT in the folder name.
 #      Never VA / Various Artists as artist. No consensus -> leave basename.
-#   3. musicology / postingest still a follow-up (not auto-run here yet).
+#   3. Tag ingest + browse symlinks are NOT run here. After albums sit under
+#      files/, run (each remounts via sudo unless already rw):
+#        postingest                 # musicscan -> combined -> importtags -> refresh
+#        refresh-extracted-tags     # rebuild files/_meta and files/_tags only
+#      See shadup/README.md ("Tag ingest and browse symlinks").
 #
-# Do not run ingest.py directly on /mnt/sdb2 — fstab mounts that filesystem ro;
+# Do not run ingest.py directly on /mnt/sdb2 -- fstab mounts that filesystem ro;
 # this script wraps with-ro-remounted-rw so payloads can be written under data/.
 # Remounting uses sudo mount only when you are not root; ingest Python runs as
 # your user and preflights files/ + data/ writability before touching sources.

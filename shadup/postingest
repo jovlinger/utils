@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-ingest stage: musicscan → .meta.combined.json → importtags → tag mirrors.
+"""Post-ingest stage: musicscan -> .meta.combined.json -> importtags -> tag mirrors.
 
 Not a library entry point -- ``ingest`` is the ONE command that adds albums to
 the playable collection. Run this after the album is already under ``files/``,
@@ -7,10 +7,20 @@ ideally after dirname rename from embedded-tag consensus to ``Artist - Album``
 (year stays out of the folder name). Provider lookups parse the basename; junk
 dirnames yield thin or wrong sidecars.
 
+Pipeline (writes need the store remounted rw; this program re-execs under
+``with-ro-remounted-rw`` unless ``--dry-run``, ``SHASRV_RW=1``, or
+``POSTINGEST_NO_REMOUNT=1``):
+
+1. musicscan for missing provider sidecars (or ``--force_provider``).
+2. Rebuild ``.meta.combined.json`` when stale (or ``--force_retag``).
+3. ``importtags`` into the shadup DB (unless ``--skip-import``).
+4. ``shadup refresh-extracted-tags`` to rebuild ``files/_meta`` and
+   ``files/_tags`` (unless ``--skip-refresh``). For mirrors only, use the
+   ``refresh-extracted-tags`` wrapper instead of this full path.
+
 Discovers every directory that contains audio (including nested), plus parents
-of those dirs (multi-CD boxes get a set-union combined). Rebuilds
-``.meta.combined.json`` when inputs are newer (or ``--force_retag``). Provider APIs
-are queried only for missing sidecars, or when ``--force_provider`` is set.
+of those dirs (multi-CD boxes get a set-union combined). See
+``shadup/README.md`` ("Tag ingest and browse symlinks").
 """
 
 from __future__ import annotations
