@@ -56,6 +56,14 @@ def test_format_strips_the_and_rejects_va() -> None:
         rename.format_album_dirname("Various Artists", "Hits")
 
 
+def test_format_strips_redundant_artist_from_album_title() -> None:
+    rename = _load("ingest_rename_mod", RENAME_PY)
+    assert rename.format_album_dirname(
+        "Compay Segundo", "5 Leyendas - Compay Segundo"
+    ) == "Compay Segundo - 5 Leyendas"
+    assert rename.format_album_dirname("Peter Gabriel", "So") == "Peter Gabriel - So"
+
+
 def test_read_flac_and_cue_propose_dirname(tmp_path: Path) -> None:
     rename = _load("ingest_rename_mod", RENAME_PY)
     album = tmp_path / "05 - 1986 - So (1986 UK PGCD 5)"

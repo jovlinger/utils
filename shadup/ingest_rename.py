@@ -82,10 +82,34 @@ def is_various_artist(artist: str) -> bool:
     return artist.strip().lower() in _VA_ARTISTS
 
 
+def strip_redundant_album_artist(artist: str, album: str) -> str:
+    """Drop a trailing `` - Artist`` from album when the tag already embeds it.
+
+    Example: artist ``Artist Name``, album ``Series Title - Artist Name``
+    -> ``Series Title`` (avoids ``Artist Name - Series Title - Artist Name``).
+    """
+    a = artist.strip()
+    b = album.strip()
+    if not a or not b:
+        return b
+    candidates = [a, strip_dirname_artist_the(a)]
+    for cand in candidates:
+        cand = cand.strip()
+        if not cand:
+            continue
+        suffix = f" - {cand}"
+        if b.casefold().endswith(suffix.casefold()):
+            return b[: -len(suffix)].strip()
+    return b
+
+
 def format_album_dirname(artist: str, album: str) -> str:
     """Build ``Artist - Album`` with The-strip and path sanitize."""
     artist_part = sanitize_path_segment(strip_dirname_artist_the(artist))
-    album_part = sanitize_path_segment(album)
+    album_clean = strip_redundant_album_artist(artist, album)
+    # Also strip against The-stripped artist form used in the dirname.
+    album_clean = strip_redundant_album_artist(artist_part, album_clean)
+    album_part = sanitize_path_segment(album_clean)
     if is_various_artist(artist_part):
         raise ValueError(f"refusing VA folder artist: {artist!r}")
     if not artist_part or not album_part or artist_part == "empty" or album_part == "empty":
@@ -317,6 +341,7 @@ def shadup_mv(
     old_rel: str,
     new_rel: str,
     python: str | None = None,
+    dry_run: bool = False,
 ) -> None:
     cmd = [
         python or sys.executable,
@@ -329,6 +354,8 @@ def shadup_mv(
         old_rel,
         new_rel,
     ]
+    if dry_run:
+        cmd.append("--dry-run")
     subprocess.run(cmd, check=True)
 
 

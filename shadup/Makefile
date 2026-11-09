@@ -13,6 +13,7 @@ binlinks:
 	ln -sf ../shadup/postingest $(BINLINKS)/postingest
 	ln -sf ../shadup/shadup $(BINLINKS)/shadup
 	ln -sf ../shadup/importtags $(BINLINKS)/importtags
+	ln -sf ../shadup/ingest-rename.sh $(BINLINKS)/ingest-rename
 	ln -sf ../shadup/ingest-rename-dryrun.py $(BINLINKS)/ingest-rename-dryrun
 
 test: $(VENV_PYTHON)
