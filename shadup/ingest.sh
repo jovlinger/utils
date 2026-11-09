@@ -9,18 +9,12 @@
 # Do not treat musicscan, postingest, metatool, or shadup mv alone as a way to
 # "add" music -- those are stages or repair tools under / after this path.
 #
-# Intended per-album stages (store-side, after hash copy; audio files only for
-# tag consensus -- ignore artwork and other non-audio media):
-#   1. Content-address into data/ + files/<basename>/ (this script / ingest.py)
-#   2. If embedded tags on tracks mostly agree -> shadup mv to
-#      ``Artist - Album`` (+ extras like CD1 / DUP). Year is NOT in the folder
-#      name (year -> sidecar / year tag). Never VA / Various Artists as artist.
-#   3. Then musicology / postingest (provider sidecars -> .meta.combined.json
-#      -> importtags -> refresh-extracted-tags). Lookups need a parseable
-#      ``Artist - Album`` basename; do not run providers before step 2 when the
-#      dirname is junk. Musicology does not write FLAC tags and does not rename.
-# If embedded tags do not mostly agree, leave the folder name and still finish
-# ingest; fix later with correct-flac-names / shadup mv, then postingest.
+# Per-album stages (store-side; audio only for tag consensus -- ignore artwork):
+#   1. Content-address into data/ + files/<basename>/ (ingest.py)
+#   2. If embedded FLAC/cue tags mostly agree (>= 2/3), shadup mv to
+#      ``Artist - Album`` (ingest_rename.py). Year is NOT in the folder name.
+#      Never VA / Various Artists as artist. No consensus -> leave basename.
+#   3. musicology / postingest still a follow-up (not auto-run here yet).
 #
 # Do not run ingest.py directly on /mnt/sdb2 — fstab mounts that filesystem ro;
 # this script wraps with-ro-remounted-rw so payloads can be written under data/.
