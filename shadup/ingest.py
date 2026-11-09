@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Ingest files/dirs into /mnt/sdb2/music/flac via shadup.py.
 
+``ingest`` (``ingest.sh`` on PATH) is the ONE command that enters an album into
+the playable library. Hash copy lives here; rename-from-embedded-tags and
+musicology/postingest are later stages of that same entry path (see
+``ingest.sh`` header), not alternate ways to add music.
+
 Observable contract (matches deprecated/shasrv_old/ingest.sh):
 - payloads under <store-root>/data/XX/<sha256> (``--shadir`` is the store root, not ``data/``)
 - browse tree under files/<dest_prefix>/<rel>

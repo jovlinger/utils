@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Post-ingest: musicscan → .meta.combined.json → importtags → tag mirror refresh.
+"""Post-ingest stage: musicscan → .meta.combined.json → importtags → tag mirrors.
+
+Not a library entry point -- ``ingest`` is the ONE command that adds albums to
+the playable collection. Run this after the album is already under ``files/``,
+ideally after dirname rename from embedded-tag consensus to ``Artist - Album``
+(year stays out of the folder name). Provider lookups parse the basename; junk
+dirnames yield thin or wrong sidecars.
 
 Discovers every directory that contains audio (including nested), plus parents
 of those dirs (multi-CD boxes get a set-union combined). Rebuilds
@@ -215,12 +221,14 @@ def maybe_reexec_under_remount(argv: Sequence[str], *, dry_run: bool) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "For album dirs under the store: run musicology (working providers), "
-            "write .meta.combined.json (synonym-normalized type;value tags), "
-            "importtags from that file, and refresh files/_tags. Parents of "
-            "multi-CD / nested albums get a set-union combined. Skips work when "
-            "combined is newer than inputs unless --force_retag. Does not re-query "
-            "musicology providers unless sidecars are missing or --force_provider."
+            "Post-ingest only (ingest is the library entry point). For album dirs "
+            "already under the store: run musicology (working providers), write "
+            ".meta.combined.json (synonym-normalized type;value tags), importtags "
+            "from that file, and refresh files/_tags. Prefer running after the "
+            "folder is ``Artist - Album``. Parents of multi-CD / nested albums get "
+            "a set-union combined. Skips work when combined is newer than inputs "
+            "unless --force_retag. Does not re-query musicology providers unless "
+            "sidecars are missing or --force_provider."
         )
     )
     parser.add_argument(

@@ -360,15 +360,29 @@ Examples: `Giacomo Puccini - Puccini - Greatest Hits`,
 - Classical label/`Disc N` in brackets is allowed only when it is the **disc
   identity** for a box (and consistent across the set) — not remaster marketing
   text.
+## Library entry vs this skill
+
+`ingest` is the **one** command that enters an album into the playable library
+(`utils/shadup/ingest.sh`). Intended stages on that path (see its header):
+
+1. Hash into `files/<basename>/`
+2. Embedded-tag consensus on audio -> `shadup mv` to `Artist - Album` (no
+   `(year)` in the folder name; year -> tag)
+3. Then musicology / `postingest`
+
+This skill is for **repair** of albums already in the store (or when step 2
+could not agree). It is not a second way to add music. Prefer embedded tags /
+cue over musicology sidecars when the dirname was junk at scan time.
+
 ## Workflow
 
 Copy and track:
 
 ```
-Correct FLAC names:
+Correct FLAC names (repair; library entry is ingest):
 - [ ] Scope albums (illegal chars + `_` in folders + leftover `VA -` + year-prefix / scene-junk)
 - [ ] Notice musicology-mishandled shapes (year-as-artist, unparsable scene names)
-- [ ] Gather candidates (cue / SPECS / .meta.* / export-json)
+- [ ] Prefer embedded audio tags / cue; then .meta.* / export-json
 - [ ] Compilations: movie / DJ / series as artist — never `VA -`
 - [ ] Denoise title (drop encoding/year/edition brackets; year → tag)
 - [ ] Harmonize multi-disc album strings within each set
@@ -376,7 +390,7 @@ Correct FLAC names:
 - [ ] Dirname is `Artist - Album extras` (spaces); **no `_`** in album folders
 - [ ] Resolve target collisions with DUP / DUP DUP / …
 - [ ] Emit rename plan (dir + files); dry-run with `shadup mv --dry-run` first
-- [ ] Propose plan to user (apply only when asked); **`shadup mv` only**; refresh _tags
+- [ ] Propose plan to user (apply only when asked); **`shadup mv` only**; then postingest / refresh _tags
 ```
 
 ### 1. Find offenders

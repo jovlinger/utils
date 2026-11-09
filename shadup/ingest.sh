@@ -5,6 +5,23 @@
 #   ingest public/albumdir1 public/albumdir2 ...
 #   ingest public/albumdir*               # shell glob; one arg per album
 #
+# ingest is the ONE command that enters an album into the playable library.
+# Do not treat musicscan, postingest, metatool, or shadup mv alone as a way to
+# "add" music -- those are stages or repair tools under / after this path.
+#
+# Intended per-album stages (store-side, after hash copy; audio files only for
+# tag consensus -- ignore artwork and other non-audio media):
+#   1. Content-address into data/ + files/<basename>/ (this script / ingest.py)
+#   2. If embedded tags on tracks mostly agree -> shadup mv to
+#      ``Artist - Album`` (+ extras like CD1 / DUP). Year is NOT in the folder
+#      name (year -> sidecar / year tag). Never VA / Various Artists as artist.
+#   3. Then musicology / postingest (provider sidecars -> .meta.combined.json
+#      -> importtags -> refresh-extracted-tags). Lookups need a parseable
+#      ``Artist - Album`` basename; do not run providers before step 2 when the
+#      dirname is junk. Musicology does not write FLAC tags and does not rename.
+# If embedded tags do not mostly agree, leave the folder name and still finish
+# ingest; fix later with correct-flac-names / shadup mv, then postingest.
+#
 # Do not run ingest.py directly on /mnt/sdb2 — fstab mounts that filesystem ro;
 # this script wraps with-ro-remounted-rw so payloads can be written under data/.
 # Remounting uses sudo mount only when you are not root; ingest Python runs as
