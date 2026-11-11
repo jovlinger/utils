@@ -54,6 +54,30 @@ int main(void) {
     CHECK(g_sends == 2);
     CHECK(ta_log_accept_count() == 0);
 
+    /* Cadence KV / short cadence. */
+    ta_log_accept_reset();
+    ta_log_set_url("tcp://gmk.local:9000");
+    ta_log_set_sender(send_log, NULL);
+    ta_log_set_cadence_s(60);
+    g_sends = 0;
+    CHECK(ta_log_accept(1, "fast") == 0);
+    CHECK(ta_log_dump(0) == 0);
+    CHECK(ta_log_accept(2, "again") == 0);
+    CHECK(ta_log_on_empty_tick(10 * 1000) == 0);
+    CHECK(g_sends == 1);
+    CHECK(ta_log_on_empty_tick(60 * 1000) == 0);
+    CHECK(g_sends == 2);
+
+    {
+        char line[128];
+        size_t n;
+
+        n = ta_log_format_syslog(line, sizeof(line), 42, "hello");
+        CHECK(n > 0);
+        CHECK(strstr(line, "hello") != NULL);
+        CHECK(strstr(line, "<14>") == line);
+    }
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;

@@ -44,6 +44,10 @@ int main(void) {
     CHECK(ta_log_accept_count() == 1);
     CHECK(ta_log_accept_rejected() >= 1);
 
+    ta_log_set_buffer_kb(128);
+    CHECK(ta_log_buffer_cap() >= 1000);
+    CHECK(ta_log_buffer_cap() <= TA_LOG_ACCEPT_MAX_EVENTS);
+
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
         return 1;

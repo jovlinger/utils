@@ -63,11 +63,13 @@ KV updates will ride this event path next.
 `ta_all_broadcast_perform_init` posts `TA_EV_ALL_PERFORM_INIT` to every
 registered actor. Async replies use `TA_EV_ALL_INFORM_RESULT`.
 
-Log collects `ta_log_accept` lines (`emit_time` + message) in a buffer of 8.
-A full buffer, or an empty tick more than 4:30 after the last dump, calls the
-Net send callback with `log_receiver_url` and then clears the buffer even if
-the send fails. On init, Log KV-gets `log_receiver_url` and stores the URL
-from the inform before the next dump. The empty cadence is 5 minutes.
+Log collects `ta_log_accept` lines (`emit_time` + message) in a large buffer
+(default small on host; up to ~128 KiB via KV `log_buffer_kb` smallint). A full
+buffer, or an empty tick near the end of `log_cadence_s` (smallint, default
+300), calls the Net send callback with `logtarget` (string; falls back to
+`log_receiver_url`) and clears even if send fails. Target is QuLog/syslog
+compatible (`ta_log_format_syslog`). On init, Log applies those KV settings and
+refreshes the URL via inform.
 
 ---
 

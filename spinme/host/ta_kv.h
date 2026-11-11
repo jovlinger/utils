@@ -31,6 +31,9 @@
 
 #define TA_KV_KEY_CONTROLLER "current_controller"
 #define TA_KV_KEY_LOG_URL "log_receiver_url"
+#define TA_KV_KEY_LOGTARGET "logtarget"
+#define TA_KV_KEY_LOG_BUFFER_KB "log_buffer_kb"
+#define TA_KV_KEY_LOG_CADENCE_S "log_cadence_s"
 #define TA_KV_KEY_ACTORS "actors_to_start"
 
 /* High 3 bits of valueinfo. */
