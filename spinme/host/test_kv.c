@@ -48,9 +48,7 @@ int main(void) {
     CHECK(memcmp(buf, blob, len) == 0);
     CHECK(ta_kv_has(TA_KV_KEY_CONTROLLER) == 1);
 
-    /* Packed image: head at 0, records linked by little-endian next offsets.
-     * 0 means empty/end. Two keys, then a grow-overwrite unlinks the old span.
-     */
+    /* Sorted packed image: entrylen, next@+4, keylen@+8, key, valueinfo, value. */
     {
         const uint8_t *img;
         size_t ilen;
@@ -58,31 +56,44 @@ int main(void) {
         uint32_t n0;
         uint32_t n1;
         uint16_t k0;
-        uint32_t b0;
+        uint32_t vi0;
+        uint32_t elen0;
         int live;
+        char kbuf[8];
 
         ta_kv_reset();
-        CHECK(ta_kv_put("aa", "hi", 2) == TA_KV_OK);
         CHECK(ta_kv_put("bbb", "xyz", 3) == TA_KV_OK);
+        CHECK(ta_kv_put("aa", "hi", 2) == TA_KV_OK);
+        /* Insert order was bbb then aa; live chain must be sorted aa -> bbb. */
+        CHECK(ta_kv_key_at(0, kbuf, sizeof(kbuf), &len) == TA_KV_OK);
+        CHECK(len == 2 && memcmp(kbuf, "aa", 2) == 0);
+        CHECK(ta_kv_key_at(1, kbuf, sizeof(kbuf), &len) == TA_KV_OK);
+        CHECK(len == 3 && memcmp(kbuf, "bbb", 3) == 0);
+
         img = ta_kv_image(&ilen);
         CHECK(img != NULL);
         CHECK(ilen > TA_KV_IMAGE_HEAD_SIZE);
         head = (uint32_t)img[0] | ((uint32_t)img[1] << 8) |
                ((uint32_t)img[2] << 16) | ((uint32_t)img[3] << 24);
-        CHECK(head == TA_KV_IMAGE_HEAD_SIZE);
-        k0 = (uint16_t)(img[head + 4] | (img[head + 5] << 8));
-        b0 = (uint32_t)img[head + 6] | ((uint32_t)img[head + 7] << 8) |
-             ((uint32_t)img[head + 8] << 16) | ((uint32_t)img[head + 9] << 24);
+        CHECK(head != 0);
+        elen0 = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
+                ((uint32_t)img[head + 2] << 16) | ((uint32_t)img[head + 3] << 24);
+        k0 = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
         CHECK(k0 == 2);
-        CHECK(b0 == 2);
-        CHECK(memcmp(img + head + TA_KV_REC_HDR_SIZE, "aa", 2) == 0);
-        CHECK(memcmp(img + head + TA_KV_REC_HDR_SIZE + 2, "hi", 2) == 0);
-        n0 = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
-             ((uint32_t)img[head + 2] << 16) | ((uint32_t)img[head + 3] << 24);
+        CHECK(memcmp(img + head + TA_KV_REC_PREFIX_SIZE, "aa", 2) == 0);
+        vi0 = (uint32_t)img[head + 10 + 2] | ((uint32_t)img[head + 11 + 2] << 8) |
+              ((uint32_t)img[head + 12 + 2] << 16) |
+              ((uint32_t)img[head + 13 + 2] << 24);
+        CHECK(TA_KV_VINFO_TYPE(vi0) == TA_KV_VTYPE_BLOB);
+        CHECK(TA_KV_VINFO_PAYLOAD(vi0) == 2);
+        CHECK(memcmp(img + head + 10 + 2 + 4, "hi", 2) == 0);
+        CHECK(elen0 == TA_KV_REC_PREFIX_SIZE + 2 + TA_KV_VALUEINFO_SIZE + 2);
+        n0 = (uint32_t)img[head + 4] | ((uint32_t)img[head + 5] << 8) |
+             ((uint32_t)img[head + 6] << 16) | ((uint32_t)img[head + 7] << 24);
         CHECK(n0 != 0);
-        CHECK(memcmp(img + n0 + TA_KV_REC_HDR_SIZE, "bbb", 3) == 0);
-        n1 = (uint32_t)img[n0] | ((uint32_t)img[n0 + 1] << 8) |
-             ((uint32_t)img[n0 + 2] << 16) | ((uint32_t)img[n0 + 3] << 24);
+        CHECK(memcmp(img + n0 + TA_KV_REC_PREFIX_SIZE, "bbb", 3) == 0);
+        n1 = (uint32_t)img[n0 + 4] | ((uint32_t)img[n0 + 5] << 8) |
+             ((uint32_t)img[n0 + 6] << 16) | ((uint32_t)img[n0 + 7] << 24);
         CHECK(n1 == 0);
 
         CHECK(ta_kv_put("aa", "HELLO", 5) == TA_KV_OK);
@@ -95,24 +106,47 @@ int main(void) {
         live = 0;
         while (head != 0) {
             uint16_t kl;
-            uint32_t bl;
+            uint32_t vi;
             uint32_t nxt;
+            size_t voff;
 
-            kl = (uint16_t)(img[head + 4] | (img[head + 5] << 8));
-            bl = (uint32_t)img[head + 6] | ((uint32_t)img[head + 7] << 8) |
-                 ((uint32_t)img[head + 8] << 16) |
-                 ((uint32_t)img[head + 9] << 24);
-            if (kl == 2 && memcmp(img + head + TA_KV_REC_HDR_SIZE, "aa", 2) == 0) {
+            kl = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
+            voff = (size_t)head + TA_KV_REC_PREFIX_SIZE + (size_t)kl;
+            vi = (uint32_t)img[voff] | ((uint32_t)img[voff + 1] << 8) |
+                 ((uint32_t)img[voff + 2] << 16) | ((uint32_t)img[voff + 3] << 24);
+            if (kl == 2 &&
+                memcmp(img + head + TA_KV_REC_PREFIX_SIZE, "aa", 2) == 0) {
                 live++;
-                CHECK(bl == 5);
-                CHECK(memcmp(img + head + TA_KV_REC_HDR_SIZE + 2, "HELLO", 5) == 0);
+                CHECK(TA_KV_VINFO_PAYLOAD(vi) == 5);
+                CHECK(memcmp(img + voff + 4, "HELLO", 5) == 0);
             }
-            nxt = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
-                  ((uint32_t)img[head + 2] << 16) |
-                  ((uint32_t)img[head + 3] << 24);
+            nxt = (uint32_t)img[head + 4] | ((uint32_t)img[head + 5] << 8) |
+                  ((uint32_t)img[head + 6] << 16) | ((uint32_t)img[head + 7] << 24);
             head = nxt;
         }
         CHECK(live == 1);
+    }
+
+    /* Typed valueinfo helpers. */
+    {
+        int b;
+        int32_t si;
+        int32_t i32;
+        uint32_t ty;
+
+        ta_kv_reset();
+        CHECK(ta_kv_put_bool("flag", 1) == TA_KV_OK);
+        CHECK(ta_kv_get_bool("flag", &b) == TA_KV_OK);
+        CHECK(b == 1);
+        CHECK(ta_kv_get_type("flag", &ty) == TA_KV_OK);
+        CHECK(ty == TA_KV_VTYPE_BOOL);
+        CHECK(ta_kv_put_smallint("cadence", -3) == TA_KV_OK);
+        CHECK(ta_kv_get_smallint("cadence", &si) == TA_KV_OK);
+        CHECK(si == -3);
+        CHECK(ta_kv_put_i32("pos", 0x12345678) == TA_KV_OK);
+        CHECK(ta_kv_get_i32("pos", &i32) == TA_KV_OK);
+        CHECK(i32 == 0x12345678);
+        CHECK(ta_kv_get_bool("pos", &b) == TA_KV_BAD_TYPE);
     }
 
     /* Factory image is writable: overwrite, then reload the snapshot. */
@@ -164,13 +198,13 @@ int main(void) {
         while (head != 0) {
             uint16_t kl;
 
-            kl = (uint16_t)(img[head + 4] | (img[head + 5] << 8));
-            if (kl == 1 && img[head + TA_KV_REC_HDR_SIZE] == 'c') {
+            kl = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
+            if (kl == 1 && img[head + TA_KV_REC_PREFIX_SIZE] == 'c') {
                 at_c = head;
             }
-            head = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
-                   ((uint32_t)img[head + 2] << 16) |
-                   ((uint32_t)img[head + 3] << 24);
+            head = (uint32_t)img[head + 4] | ((uint32_t)img[head + 5] << 8) |
+                   ((uint32_t)img[head + 6] << 16) |
+                   ((uint32_t)img[head + 7] << 24);
         }
         CHECK(at_c == TA_KV_IMAGE_HEAD_SIZE);
         CHECK(ta_kv_put("a", "AAAAAAAA", 8) == TA_KV_OK);
@@ -181,7 +215,8 @@ int main(void) {
         CHECK(ta_kv_get("c", got, sizeof(got), &len) == TA_KV_OK);
 
         ta_kv_reset();
-        CHECK(ta_kv_put("a", "0123456789abcdef", 16) == TA_KV_OK);
+        /* Large enough that shrink leftover fits a new small entry (+valueinfo). */
+        CHECK(ta_kv_put("a", "0123456789abcdef0123456789abcdef", 32) == TA_KV_OK);
         CHECK(ta_kv_put("b", "bbbb", 4) == TA_KV_OK);
         img = ta_kv_image(&ilen);
         hw_after_two = ilen;

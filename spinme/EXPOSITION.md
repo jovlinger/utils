@@ -26,12 +26,19 @@ types and bodies, completions, Draw shapes, ISR path, plus boot/KV/OTA
 contracts ratified on the tickets above. Section 9 separates shipped code
 from todo-ratified gaps still in flight.
 
-## KV image and boot (`todo:afc1dc50`)
+## KV image and boot (`todo:afc1dc50` + sorted typed entries)
 
-One writable KV image, prepopulated by `ta_kv_install_factory`. Records are a
-packed little-endian linked list. `next` is a byte offset from the image base.
-0 means empty or end, because a 4-byte head occupies offset 0. New records use
-first-fit holes; there is no compacting GC.
+One writable KV image, prepopulated by `ta_kv_install_factory`. Entries are a
+packed little-endian linked list kept **sorted by key**. `next` is a byte
+offset from the image base (need not be adjacent). 0 means empty or end; a
+4-byte head at offset 0 holds the first pointer. New entries use first-fit
+holes; there is no compacting GC.
+
+Each entry: `entrylen`, `next`, `keylen`, `key[]`, `valueinfo` (type in high
+3 bits), `value[]`. Types: smallint `000`, int32 `001`, string `011`, blob
+`100`, bool `111` (see `ta_kv.h` / `TA_KV_VTYPE_*`). Untyped `ta_kv_put` stores
+a blob. Typed helpers: `ta_kv_put_bool` / `smallint` / `i32` / `string` /
+`blob`.
 
 `actors_to_start` is newline-separated actor names. Each name is also a key
 whose blob is that actor's image. The base bin loader stays USB-only. The
@@ -255,11 +262,15 @@ and processes the full queue (any order among pending, still subject to
 
 **One store** -- not a parallel NVS + SPIFFS + custom trio for the same job.
 
-**Layout v1:** singly linked list of packed records, no key order, O(n) get:
+**Layout (sorted typed):** singly linked list of packed entries, keys ascending,
+O(n) get:
 
 ```
-record { next_ptr; key_len; key[key_len]; blob_len; blob[blob_len]; }
+entry { entrylen; next; keylen; key[keylen]; valueinfo; value[...] }
 ```
+
+`valueinfo` high 3 bits = type (bool/smallint/int32/string/blob); see
+`host/ta_kv.h`.
 
 **Prepopulated but writable:** the static build emits a factory KV image
 (default roster + per-name actor blobs). Runtime mutates the same region.
