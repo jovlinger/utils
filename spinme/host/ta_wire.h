@@ -16,7 +16,8 @@ typedef enum {
     TA_FN_TRANSPORT_TOGGLE = 1,
     TA_FN_VOLUME = 2,
     TA_FN_NAV = 3,       /* 12 oclock: enter selecting or commit */
-    TA_FN_SWAP_STEP = 4  /* rotary while selecting */
+    TA_FN_SWAP_STEP = 4, /* rotary while selecting */
+    TA_FN_DEBUG = 5      /* 6 oclock: capture + Log dump */
 } ta_fn_enum_t;
 
 typedef struct ta_wire_ctx {

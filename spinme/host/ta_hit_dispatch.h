@@ -15,7 +15,8 @@ typedef enum {
     TA_HIT_NONE = 0,
     TA_HIT_TRANSPORT = 1,
     TA_HIT_VOLUME = 2,
-    TA_HIT_NAV = 3 /* 12 oclock up/down; wiring decides select vs page-up */
+    TA_HIT_NAV = 3,   /* 12 oclock up/down; wiring decides select vs page-up */
+    TA_HIT_DEBUG = 4  /* 6 oclock debug capture */
 } ta_hit_role_t;
 
 /* Glass installs its wire ctx so touch/rotary hit the ENUM switch. */

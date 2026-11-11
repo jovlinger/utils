@@ -15,6 +15,7 @@ static const int k_xy[TA_FOLLOW_N][2] = {
     {165, 165}, /* transport center */
     {20, 310},  /* clock */
     {165, 12},  /* nav 12 oclock */
+    {165, 300}, /* debug 6 oclock */
 };
 
 int ta_follow_chrome_build(ta_follow_chrome_t *out,
@@ -40,6 +41,8 @@ int ta_follow_chrome_build(ta_follow_chrome_t *out,
     out->fn_enum[TA_FOLLOW_VOLUME] = (uint8_t)TA_FN_VOLUME;
     out->accept_hit[TA_FOLLOW_NAV] = 1;
     out->fn_enum[TA_FOLLOW_NAV] = (uint8_t)TA_FN_NAV;
+    out->accept_hit[TA_FOLLOW_DEBUG] = 1;
+    out->fn_enum[TA_FOLLOW_DEBUG] = (uint8_t)TA_FN_DEBUG;
     return 0;
 }
 
@@ -91,6 +94,24 @@ int ta_follow_chrome_place(ta_follow_chrome_t *chrome,
         }
         chrome->uilo[TA_FOLLOW_TRANSPORT] =
             move_to(chrome->uilo[TA_FOLLOW_TRANSPORT], tx, ty);
+    }
+    /* Debug at 6 oclock (bottom center). */
+    {
+        int dw = m->debug_w > 0 ? m->debug_w : m->nav_w;
+        int dh = m->debug_h > 0 ? m->debug_h : m->nav_h;
+        int dx;
+        int dy;
+
+        dx = (m->panel_w - dw) / 2;
+        if (dx < 0) {
+            dx = 0;
+        }
+        dy = m->panel_h - dh - 8;
+        if (dy < 0) {
+            dy = 0;
+        }
+        chrome->uilo[TA_FOLLOW_DEBUG] =
+            move_to(chrome->uilo[TA_FOLLOW_DEBUG], dx, dy);
     }
     chrome->uilo[TA_FOLLOW_BASE] = move_to(chrome->uilo[TA_FOLLOW_BASE], 0, 0);
     return 0;

@@ -316,7 +316,7 @@ Registered names and ownership:
 |---------------|----------|--------|-----------------|
 | `Logger` | `TA_LOGGER_NAME` | `ta_logger` | uses `TA_EV_LOG` / accept+drain (`todo:15b92eaa`) |
 | `Config` / KV | (TBD `TA_CONFIG_NAME`) | dead-simple KV store + actor face | owns packed LL KV + first-fit (`todo:afc1dc50`); get/inform for peers |
-| `Draw` | `TA_DRAW_NAME` | `ta_draw_events` | `0x200..` |
+| `Draw` | `TA_DRAW_NAME` | `ta_draw_events` | `0x200..` (6 oclock debug -> Log) |
 | `Net` | `TA_NET_NAME` | `ta_net_events` | `0x300..` (+ HTTP REST KV set; NTP) |
 | `Controller` | `TA_CONTROLLER_NAME` | `ta_router` | `TA_EV_SET_ROUTE` + forwards ControlEvents |
 | `MPDController` | `TA_MPD_NAME` | `ta_controller` | consumes ControlEvents |

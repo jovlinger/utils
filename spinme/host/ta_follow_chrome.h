@@ -21,7 +21,8 @@ enum {
     TA_FOLLOW_TRANSPORT = 6, /* play/stop at panel center */
     TA_FOLLOW_CLOCK = 7,
     TA_FOLLOW_NAV = 8, /* 12 oclock up/down (above SwapShape) */
-    TA_FOLLOW_N = 9
+    TA_FOLLOW_DEBUG = 9, /* 6 oclock debug capture */
+    TA_FOLLOW_N = 10
 };
 
 typedef struct ta_follow_chrome {
@@ -51,6 +52,8 @@ typedef struct ta_follow_metrics {
     int transport_h;
     int nav_w;
     int nav_h;
+    int debug_w;
+    int debug_h;
 } ta_follow_metrics_t;
 
 /* Rewrite x/y of an already built chrome; keeps shape idx, dirty, flags. */

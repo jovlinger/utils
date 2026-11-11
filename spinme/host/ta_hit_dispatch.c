@@ -43,6 +43,8 @@ ta_hit_role_t ta_hit_walk(const ta_follow_chrome_t *chrome, int x, int y,
             return TA_HIT_VOLUME;
         case TA_FOLLOW_NAV:
             return TA_HIT_NAV;
+        case TA_FOLLOW_DEBUG:
+            return TA_HIT_DEBUG;
         default:
             return TA_HIT_NONE;
         }
@@ -63,6 +65,9 @@ static ta_fn_enum_t fn_for_role(const ta_follow_chrome_t *chrome,
         break;
     case TA_HIT_NAV:
         idx = TA_FOLLOW_NAV;
+        break;
+    case TA_HIT_DEBUG:
+        idx = TA_FOLLOW_DEBUG;
         break;
     default:
         return TA_FN_NONE;

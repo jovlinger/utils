@@ -37,7 +37,8 @@ enum {
     TA_GLASS_IDX_TRANSPORT = 907, /* centered play/pause outline icon */
     TA_GLASS_IDX_CLOCK = 908,
     TA_GLASS_IDX_SWAP = 909, /* SwapShape root; child 0 = follow page */
-    TA_GLASS_IDX_NAV = 910   /* 12 oclock up/down solid arrow */
+    TA_GLASS_IDX_NAV = 910,  /* 12 oclock up/down solid arrow */
+    TA_GLASS_IDX_DEBUG = 911 /* 6 oclock debug control */
 };
 
 #define TA_GLASS_TEXT_MAX 96

@@ -55,8 +55,10 @@ typedef struct glass_state {
     ta_shape_swap_t swap;
     ta_shape_bitmap_t transport_icon;
     ta_shape_bitmap_t nav_icon;
+    ta_shape_bitmap_t debug_icon;
     ta_pack66_t transport_px[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
     ta_pack66_t nav_px[TA_CHROME_NAV_PX * TA_CHROME_NAV_PX];
+    ta_pack66_t debug_px[TA_CHROME_NAV_PX * TA_CHROME_NAV_PX];
     int nav_down; /* 0 = up arrow, 1 = down arrow (selecting) */
     int transport_drawn_key; /* packs playing + ink; -1 unknown */
     int selecting_overlay;   /* 1 draw 100x100 chooser ring */
@@ -487,8 +489,17 @@ int ta_glass_install_stack(void) {
     g.nav_icon.h = TA_CHROME_NAV_PX;
     g.nav_icon.pixels = g.nav_px;
     g.nav_icon.dirty = 1;
+    memset(&g.debug_icon, 0, sizeof(g.debug_icon));
+    g.debug_icon.tag = TA_SHAPE_TAG_BITMAP;
+    g.debug_icon.w = TA_CHROME_NAV_PX;
+    g.debug_icon.h = TA_CHROME_NAV_PX;
+    g.debug_icon.pixels = g.debug_px;
+    g.debug_icon.dirty = 1;
+    ta_chrome_icon_clear(g.debug_px, TA_CHROME_NAV_PX);
+    ta_chrome_icon_down_solid(g.debug_px, TA_CHROME_NAV_PX);
     if (ta_shape_table_set(TA_GLASS_IDX_TRANSPORT, &g.transport_icon) != 0 ||
-        ta_shape_table_set(TA_GLASS_IDX_NAV, &g.nav_icon) != 0) {
+        ta_shape_table_set(TA_GLASS_IDX_NAV, &g.nav_icon) != 0 ||
+        ta_shape_table_set(TA_GLASS_IDX_DEBUG, &g.debug_icon) != 0) {
         return -1;
     }
 
@@ -520,6 +531,7 @@ int ta_glass_install_stack(void) {
     shape_idx[TA_FOLLOW_TRANSPORT] = TA_GLASS_IDX_TRANSPORT;
     shape_idx[TA_FOLLOW_CLOCK] = TA_GLASS_IDX_CLOCK;
     shape_idx[TA_FOLLOW_NAV] = TA_GLASS_IDX_NAV;
+    shape_idx[TA_FOLLOW_DEBUG] = TA_GLASS_IDX_DEBUG;
     if (ta_follow_chrome_build(&g.chrome, shape_idx) != 0) {
         return -1;
     }
@@ -535,6 +547,8 @@ int ta_glass_install_stack(void) {
     m.transport_h = TA_CHROME_ICON_PX;
     m.nav_w = TA_CHROME_NAV_PX;
     m.nav_h = TA_CHROME_NAV_PX;
+    m.debug_w = TA_CHROME_NAV_PX;
+    m.debug_h = TA_CHROME_NAV_PX;
     if (ta_follow_chrome_place(&g.chrome, &m) != 0) {
         return -1;
     }
@@ -833,7 +847,8 @@ void ta_glass_hit_boxes(uint16_t w[TA_FOLLOW_N], uint16_t h[TA_FOLLOW_N]) {
         }
         w[i] = hdr != NULL ? hdr->w : 0;
         h[i] = hdr != NULL ? hdr->h : 0;
-        if (i == TA_FOLLOW_TRANSPORT || i == TA_FOLLOW_NAV) {
+        if (i == TA_FOLLOW_TRANSPORT || i == TA_FOLLOW_NAV ||
+            i == TA_FOLLOW_DEBUG) {
             w[i] = (uint16_t)(w[i] + 2u * g.cfg.hit_pad_x);
             h[i] = (uint16_t)(h[i] + 2u * g.cfg.hit_pad_y);
         }

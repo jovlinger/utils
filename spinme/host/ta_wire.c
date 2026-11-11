@@ -1,5 +1,8 @@
 #include "ta_wire.h"
 
+#ifndef SPINME_NO_DEBUG_CHROME
+#include "ta_debug.h"
+#endif
 #include "ta_draw_events.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"
@@ -78,6 +81,13 @@ int ta_wire_touch(ta_wire_ctx_t *ctx, ta_fn_enum_t fn, ta_session_id_t session) 
         return 0;
     case TA_FN_SWAP_STEP:
         return 1;
+    case TA_FN_DEBUG:
+#ifdef SPINME_NO_DEBUG_CHROME
+        (void)session;
+        return 0;
+#else
+        return ta_debug_capture_and_log(ta_now_ms());
+#endif
     default:
         return -1;
     }
