@@ -193,6 +193,15 @@ typedef struct {
     uint32_t advance_ms;
 } ta_sched_tick_t;
 
+#define TA_NET_HTTP_REPLY_MAX 64
+
+/* Reply to HTTP POST /event/<actor>/<event> (Net waits on session_id). */
+typedef struct {
+    uint16_t http_status;
+    uint16_t n;
+    uint8_t bytes[TA_NET_HTTP_REPLY_MAX];
+} ta_net_http_reply_t;
+
 typedef struct ta_event {
     ta_event_type_t type;
     union {
@@ -220,6 +229,7 @@ typedef struct ta_event {
         ta_sched_tick_t sched_tick;
         ta_all_perform_init_t all_perform_init;
         ta_all_inform_result_t all_inform_result;
+        ta_net_http_reply_t net_http_reply;
     } u;
 } ta_event_t;
 

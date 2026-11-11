@@ -17,7 +17,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_net_kv_http $(BUILD)/test_all_init $(BUILD)/test_kv_actor \
 	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
 	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap \
-	$(BUILD)/test_kv_editor $(BUILD)/test_screenshots $(BUILD)/test_wire
+	$(BUILD)/test_kv_editor $(BUILD)/test_screenshots $(BUILD)/test_wire \
+	$(BUILD)/test_net_http_event
 
 .PHONY: test clean
 
@@ -193,6 +194,12 @@ $(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
 		ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_kv_http.c ta_net_kv_http.c \
 		ta_boot.c ta_actor.c ta_kv.c ta_registry.c ta_event.c -lpthread
+
+$(BUILD)/test_net_http_event: test_net_http_event.c ta_net_http_event.c \
+		ta_net_http_event.h ta_registry.c ta_event.c ta_net_events.h \
+		ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_net_http_event.c ta_net_http_event.c \
+		ta_registry.c ta_event.c -lpthread
 
 $(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
 		ta_event.c ta_registry.h ta_event.h | $(BUILD)

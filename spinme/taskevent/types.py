@@ -178,6 +178,30 @@ class NetFetchAlbumart(TaskEvent):
 
 
 @dataclass
+class NetHttpReply(TaskEvent):
+    http_status: int
+    n: int
+    payload: bytes
+
+    type_id: ClassVar[int] = C.TA_EV_NET_HTTP_REPLY
+    type_name: ClassVar[str] = "NetHttpReply"
+    c_type_name: ClassVar[str] = "ta_net_http_reply_t"
+    c_union_arm: ClassVar[str] = "net_http_reply"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _u16("http_status"),
+        _u16("n"),
+        FieldSpec(
+            name="payload",
+            kind="bytes",
+            size=C.TA_NET_HTTP_REPLY_MAX,
+            length_field="n",
+            flat=False,
+            c_name="bytes",
+        ),
+    )
+
+
+@dataclass
 class CoordInformPlayerstate(TaskEvent):
     artist: str
     album: str
@@ -475,6 +499,7 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     NetPollPlayerstate,
     NetSet,
     NetFetchAlbumart,
+    NetHttpReply,
     CoordInformPlayerstate,
     DrawInformSonginfo,
     DrawInformVolume,

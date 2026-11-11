@@ -50,6 +50,14 @@ Net's OTA intake is `ta_net_kv_http_set`: `PUT /kv/<key>` with
 `Content-Length` calls `ta_kv_put` (blobs up to 1024 bytes). After that,
 `ta_boot_exit_all` and `ta_boot_from_kv` pick up the new roster.
 
+Net also serves HTTP-only on port 80: `POST /event/<taskactor>/<eventname>`
+(`ta_net_http_event`). Query and/or form body are parsed as
+`x-www-form-urlencoded` (body keys override query). Net enqueues the event
+with a fresh `session_id`, blocks up to 5s for `TA_EV_NET_HTTP_REPLY`
+(`ta_net_http_reply_t`), and returns that status/body; unknown actor -> 404;
+timeout -> 201. mDNS advertise is Scheduler-timed (`ta_net_mdns_advertise`).
+KV updates will ride this event path next.
+
 ## Log (`todo:15b92eaa`)
 
 `ta_all_broadcast_perform_init` posts `TA_EV_ALL_PERFORM_INIT` to every

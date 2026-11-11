@@ -20,7 +20,9 @@ enum {
     /* Completions (post to reply_to). */
     TA_EV_NET_POLL_DONE = 0x310,
     TA_EV_NET_SET_DONE = 0x311,
-    TA_EV_NET_ALBUMART_DONE = 0x312
+    TA_EV_NET_ALBUMART_DONE = 0x312,
+    /* HTTP POST /event/... sync reply (session_id correlates). */
+    TA_EV_NET_HTTP_REPLY = 0x320
 };
 
 /* ControlEvents (toward Controller via Router) -- shared surface doc. */
