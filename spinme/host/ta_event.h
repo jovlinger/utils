@@ -1,4 +1,8 @@
-/* Async TaskActor events: envelope header + typed body (spinme PLAN). */
+/* Async TaskActor events: envelope header + typed body.
+ * Normative field layouts / codecs: spinme/taskevent (Python SoT).
+ * Binary on-wire body is packed little-endian in that module's field order;
+ * in-memory structs here may include ABI padding.
+ */
 #ifndef SPINME_TA_EVENT_H
 #define SPINME_TA_EVENT_H
 

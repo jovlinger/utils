@@ -27,7 +27,11 @@ enum {
     TA_EV_DRAW_SET_TEXT = 0x207,     /* [field u8][flags u8][ascii...] chunked */
     /* Completion replies (sent to reply_to when set). */
     TA_EV_DRAW_UPDATE_DONE = 0x210,
-    TA_EV_DRAW_PAINT_DONE = 0x211
+    TA_EV_DRAW_PAINT_DONE = 0x211,
+    /* Inform bodies (Python SoT type ids; producers may adopt gradually). */
+    TA_EV_DRAW_INFORM_SONGINFO = 0x220,
+    TA_EV_DRAW_INFORM_VOLUME = 0x221,
+    TA_EV_DRAW_INFORM_CURRPOS = 0x222
 };
 
 /* DRAW_UPDATE kinds live in ta_event.h (TA_DRAW_UPD_*). */

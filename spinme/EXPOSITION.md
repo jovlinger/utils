@@ -58,8 +58,20 @@ from the inform before the next dump. The empty cadence is 5 minutes.
 
 ## 1. Event envelope + typed body (normative shape)
 
-Defined in `host/ta_event.h`. **Passed by value** in MVP (envelope + body);
-we will measure copy cost and may later split types / allocation regions.
+**Source of truth:** `spinme/taskevent/` (Python). Every event is a
+`TaskEvent` subclass with:
+
+| Codec | API | Notes |
+|-------|-----|-------|
+| Packed LE binary body | `write_binary` / `read_binary`; classmethod `to_c_struct(**fields)` | Portable wire / ESP32-friendly; field order matches C members |
+| Text | `write_text` / `read_text` | `event=` / `type_id=` / `field=` lines |
+| C literal | `to_c_literal()` | Compound-literal text for the body value |
+| Form | `to_form` / `from_form` | `application/x-www-form-urlencoded`; flat events only (may raise); lists = repeated keys |
+
+`EventEnvelope` wraps `src` + `session_id` + `enqueue_time_ms` + body.
+Host C structs in `host/ta_event.h` mirror those fields (**passed by value**
+in MVP); ABI padding may differ from the packed LE wire body. Update Python
+first, then C / this doc.
 
 ### Common header (every queue slot)
 
@@ -91,10 +103,12 @@ typedef struct ta_event_envelope {
 
 ### Typed body (`ta_event_t`)
 
-Naming: `ta_<recipient>_<verb>_<noun>_t` (recipient namespace / actor face).
-No byte-blob / `legacy` arm -- every op has a named union member in
-`host/ta_event.h` (Net poll/set/albumart, Draw update/paint/scroll/text,
-ControlEvents, Scheduler start/tick, ISR touch/rotary, Logger line, ...).
+Naming: `ta_<recipient>_<verb>_<noun>_t` (recipient namespace / actor face),
+matching `taskevent.types` class names (`LogEmitLine` <->
+`ta_log_emit_line_t`). No byte-blob / `legacy` arm -- every op has a named
+union member in `host/ta_event.h` (Net poll/set/albumart, Draw
+update/paint/scroll/text/informs, ControlEvents, Scheduler start/tick, ISR
+touch/rotary, Logger line, ...).
 
 POLL_DONE carries `coord_inform_playerstate` (volume/playing filled today;
 artist/album/song when Net has them).
