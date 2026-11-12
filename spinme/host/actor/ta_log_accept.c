@@ -5,10 +5,12 @@
 #include "ta_kv_actor.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-static ta_log_accept_event_t g_buf[TA_LOG_ACCEPT_MAX_EVENTS];
-static size_t g_cap = TA_LOG_ACCEPT_DEFAULT_CAP;
+/* Heap buffer: max 128 KiB must not sit in ESP32 DRAM BSS. */
+static ta_log_accept_event_t *g_buf;
+static size_t g_cap;
 static size_t g_n;
 static unsigned g_rejected;
 static ta_log_send_fn g_send;
@@ -18,9 +20,34 @@ static uint32_t g_last_empty_ms;
 static int g_have_last;
 static uint32_t g_cadence_s = TA_LOG_CADENCE_S_DEFAULT;
 
+static int ensure_buf(size_t slots) {
+    ta_log_accept_event_t *nbuf;
+
+    if (slots < 1u) {
+        slots = 1u;
+    }
+    if (g_buf != NULL && g_cap == slots) {
+        return 0;
+    }
+    nbuf = (ta_log_accept_event_t *)realloc(g_buf, slots * sizeof(*nbuf));
+    if (nbuf == NULL) {
+        return -1;
+    }
+    if (slots > g_cap) {
+        memset(nbuf + g_cap, 0, (slots - g_cap) * sizeof(*nbuf));
+    }
+    g_buf = nbuf;
+    g_cap = slots;
+    if (g_n > g_cap) {
+        g_n = g_cap;
+    }
+    return 0;
+}
+
 void ta_log_accept_reset(void) {
-    memset(g_buf, 0, sizeof(g_buf));
-    g_cap = TA_LOG_ACCEPT_DEFAULT_CAP;
+    free(g_buf);
+    g_buf = NULL;
+    g_cap = 0;
     g_n = 0;
     g_rejected = 0;
     g_send = NULL;
@@ -29,6 +56,7 @@ void ta_log_accept_reset(void) {
     g_last_empty_ms = 0;
     g_have_last = 0;
     g_cadence_s = TA_LOG_CADENCE_S_DEFAULT;
+    (void)ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP);
 }
 
 void ta_log_set_buffer_kb(uint16_t kb) {
@@ -52,10 +80,7 @@ void ta_log_set_buffer_kb(uint16_t kb) {
     if (slots > TA_LOG_ACCEPT_MAX_EVENTS) {
         slots = TA_LOG_ACCEPT_MAX_EVENTS;
     }
-    g_cap = slots;
-    if (g_n > g_cap) {
-        g_n = g_cap;
-    }
+    (void)ensure_buf(slots);
 }
 
 size_t ta_log_buffer_cap(void) {
@@ -98,6 +123,9 @@ const char *ta_log_url(void) {
 }
 
 int ta_log_dump(uint32_t now_ms) {
+    if (g_buf == NULL && ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP) != 0) {
+        return -1;
+    }
     if (g_n > 0 && g_send != NULL && g_url[0] != '\0') {
         (void)g_send(g_url, g_buf, g_n, g_send_ud);
     }
@@ -197,6 +225,10 @@ int ta_log_accept(uint32_t emit_time_ms, const char *message) {
     }
     n = strlen(message);
     if (n >= TA_LOG_MSG_MAX) {
+        g_rejected++;
+        return -1;
+    }
+    if (g_buf == NULL && ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP) != 0) {
         g_rejected++;
         return -1;
     }

@@ -5,7 +5,7 @@ Investigation plan and board notes: [`README.md`](README.md).
 ## KV boot (`todo:afc1dc50`)
 
 The base bin loader is updated only over the marked USB wire. Actor images
-and the start roster live in the writable KV image (`spinme/host/ta_kv.*`).
+and the start roster live in the writable KV image (`spinme/host/base/ta_kv.*`).
 `ta_boot_from_kv` loads that roster and calls `init`; `exit` unregisters.
 Do not add a second NVS or SPIFFS store for the same keys.
 
@@ -19,7 +19,7 @@ Open tickets are SoT; keep [`EXPOSITION.md`](EXPOSITION.md) aligned with them:
   base bin loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map is still a stub.
 - `todo:15b92eaa` -- Log actor, `ta_all_*`, Net NTP (consumes KV; does not own
   a second store). Host Log accept/drain and the init URL fetch are in
-  `spinme/host/ta_log_accept.*`.
+  `spinme/host/actor/ta_log_accept.*`.
 
 Base bin loader updates are **USB-wired only** (board-marked). Do not invent
 OTA for that loader.
@@ -35,6 +35,19 @@ cd esp32/volctrl
 . .venv/bin/activate
 python -m volctrl discover
 ```
+
+## Host layout
+
+Library: `spinme/host/{event,shape,actor,base}/`. Tests under
+`spinme/host/tests/`:
+
+| Dir | Role |
+|-----|------|
+| `tests/local/` | PC unit + goldens (`make test`; e.g. `test_xy_timed_redraw`) |
+| `tests/ondevice/` | Post-flash/OTA via `POST /event/Test/TestRun` |
+
+Test actor accepts `TA_EV_TEST_RUN`; on PC forks `build/test_*`, on device
+built-in probes (`smoke`). `tests/ondevice/` drives the board HTTP gateway.
 
 ## Cursor / agent flash loop
 

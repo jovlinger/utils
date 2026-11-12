@@ -1,1 +1,1 @@
-../../../../host/ta_chrome_icons.c
+../../../../host/shape/ta_chrome_icons.c

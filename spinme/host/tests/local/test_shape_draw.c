@@ -17,6 +17,24 @@ static int checks;
         }                                                                      \
     } while (0)
 
+static int g_push_n;
+static int g_push_h[16];
+static int g_push_y[16];
+
+static void rec_push(int x, int y, int w, int h, const ta_pack66_t *px,
+                     int stride_px, void *ctx) {
+    (void)x;
+    (void)w;
+    (void)px;
+    (void)stride_px;
+    (void)ctx;
+    if (g_push_n < 16) {
+        g_push_h[g_push_n] = h;
+        g_push_y[g_push_n] = y;
+    }
+    g_push_n++;
+}
+
 int main(void) {
     unsigned a, b, c;
     ta_pack66_t add;
@@ -85,6 +103,49 @@ int main(void) {
     len[4] = 2;
     n = ta_sd_rlc_merge_to_n(off, len, 5, 4);
     CHECK(n == 4);
+
+    /* Result: full-dirty XY blends onto glass (only XY reaches glass). */
+    {
+        ta_pack66_t glass[4];
+        unsigned order[1];
+
+        memset(glass, 0, sizeof(glass));
+        CHECK(ta_sd_alloc_bitmap(201, TA_SD_TAG_BITMAP, 2, 2) == 0);
+        ta_sd_get(201)->pixels[0] = ta_sd_word(0x10, 0, 0, 3);
+        ta_sd_get(201)->pixels[1] = 0;
+        ta_sd_get(201)->pixels[2] = 0;
+        ta_sd_get(201)->pixels[3] = ta_sd_word(0, 0x10, 0, 3);
+        CHECK(ta_sd_alloc_bitmap(202, TA_SD_TAG_XY, 2, 2) == 0);
+        ta_sd_get(202)->u.xy.child = 201;
+        ta_sd_get(202)->u.xy.x = 0;
+        ta_sd_get(202)->u.xy.y = 0;
+        CHECK(ta_sd_xy_rebuild_from_child(202) == 0);
+        ta_sd_xy_mark_full_dirty(ta_sd_get(202));
+        order[0] = 202;
+        ta_sd_glass_paint_xys(glass, 2, 2, order, 1);
+        CHECK(glass[0] == ta_sd_word(0x10, 0, 0, 3));
+        CHECK(glass[3] == ta_sd_word(0, 0x10, 0, 3));
+        CHECK(glass[1] == 0 && glass[2] == 0);
+    }
+
+    /* Mechanism: each dirty RLC range is one h=1 push (per raster). */
+    {
+        int spans;
+        int i;
+
+        g_push_n = 0;
+        CHECK(ta_sd_alloc_bitmap(203, TA_SD_TAG_XY, 4, 3) == 0);
+        ta_sd_get(203)->u.xy.x = 1;
+        ta_sd_get(203)->u.xy.y = 2;
+        ta_sd_xy_mark_full_dirty(ta_sd_get(203));
+        spans = ta_sd_xy_push_dirty(203, rec_push, NULL);
+        CHECK(spans == 3);
+        CHECK(g_push_n == 3);
+        for (i = 0; i < 3; i++) {
+            CHECK(g_push_h[i] == 1);
+            CHECK(g_push_y[i] == 2 + i);
+        }
+    }
 
     /* GC: locked glyph slot survives; unmarked high slot freed. */
     CHECK(ta_sd_alloc_bitmap(5, TA_SD_TAG_BITMAP, 1, 1) == 0);

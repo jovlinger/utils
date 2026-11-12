@@ -3,6 +3,7 @@
 #include "ta_net_events.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
+#include "ta_test_actor.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -101,6 +102,21 @@ int main(void) {
     CHECK(ta_net_mdns_advertise() == 0);
     CHECK(ta_net_mdns_advertise() == 0);
     CHECK(ta_net_mdns_advertise_count() == 2);
+
+    /* POST /event/Test/TestRun (and run_test alias) -> HTTP 200 body. */
+    ta_test_start();
+    n = build_post(req, sizeof(req), "Test/TestRun",
+                   "mode=one&selector=smoke");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 200);
+    CHECK(strstr(resp.body, "status=0") != NULL);
+    CHECK(strstr(resp.body, "selector=smoke") != NULL);
+
+    n = build_post(req, sizeof(req), "Test/run_test", "mode=0&name=smoke");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 200);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

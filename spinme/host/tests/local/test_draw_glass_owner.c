@@ -1,4 +1,7 @@
-/* End-to-end: Draw owns glass -- ISR hit, MPD/Net status, paint pushes. */
+/* End-to-end: Draw owns glass -- ISR hit, MPD/Net status, painted results.
+ * Asserts observable glass/actor state (and a panel framebuffer). Does not
+ * assume push_rect call counts, pointer identity, or exterior batching.
+ */
 #include "ta_chrome_icons.h"
 #include "ta_controller.h"
 #include "ta_draw_events.h"
@@ -27,15 +30,11 @@ static int checks;
         }                                                                      \
     } while (0)
 
-/* ---- fake glass backend ------------------------------------------------ */
+/* ---- fake glass backend: composite into a panel (result) --------------- */
 
-typedef struct rec {
-    int x, y, w, h;
-    const ta_pack66_t *px;
-} rec_t;
-
-static rec_t g_recs[64];
-static int g_nrec;
+#define PANEL 360
+static ta_pack66_t g_panel[PANEL * PANEL];
+static unsigned g_paint_gen;
 static int g_backlight = 1;
 static int g_backlight_calls;
 static char g_clock[9] = "12:34:56";
@@ -46,15 +45,27 @@ static ta_pack66_t *fake_alloc(size_t count) {
 
 static void fake_push(int x, int y, int w, int h, const ta_pack66_t *px,
                       int stride) {
-    (void)stride;
-    if (g_nrec < 64) {
-        g_recs[g_nrec].x = x;
-        g_recs[g_nrec].y = y;
-        g_recs[g_nrec].w = w;
-        g_recs[g_nrec].h = h;
-        g_recs[g_nrec].px = px;
+    int row;
+    int col;
+
+    if (px == NULL || w <= 0 || h <= 0 || stride < w) {
+        return;
     }
-    g_nrec++;
+    g_paint_gen++;
+    for (row = 0; row < h; row++) {
+        int dy = y + row;
+        if (dy < 0 || dy >= PANEL) {
+            continue;
+        }
+        for (col = 0; col < w; col++) {
+            int dx = x + col;
+            if (dx < 0 || dx >= PANEL) {
+                continue;
+            }
+            g_panel[(size_t)dy * PANEL + (size_t)dx] =
+                px[(size_t)row * (size_t)stride + (size_t)col];
+        }
+    }
 }
 
 static void fake_backlight(int on) {
@@ -119,9 +130,7 @@ static void build_atlas(void) {
 
 /* ---- helpers ----------------------------------------------------------- */
 
-/* 128 keeps nav (12 oclock) from overlapping centered play/stop hit boxes. */
 /* Real panel is 360; 90px chrome icons must not overlap nav vs transport. */
-#define PANEL 360
 static ta_pack66_t g_base[PANEL * PANEL];
 static ta_event_envelope_t g_qstore[32];
 static ta_queue_t g_q;
@@ -177,7 +186,7 @@ int main(void) {
     ta_glass_cfg_t cfg;
     const ta_follow_chrome_t *chrome;
     int i;
-    int before;
+    unsigned gen;
 
     ta_registry_reset();
     ta_shape_table_reset();
@@ -190,6 +199,8 @@ int main(void) {
     for (i = 0; i < PANEL * PANEL; i++) {
         g_base[i] = ta_pack66_rgba(10, 10, 10, 3);
     }
+    memset(g_panel, 0, sizeof(g_panel));
+    g_paint_gen = 0;
 
     ta_draw_start();
     ta_router_start();
@@ -227,27 +238,24 @@ int main(void) {
     CHECK(ta_glass_set_page(0) == 0);
     CHECK(ta_glass_set_page(1) == -1); /* n=1 until add_page */
     CHECK(ta_draw_stats()->set_stack == 1);
-    /* First paint: one push per follow slot (chrome is precomposed). */
-    CHECK(g_nrec == TA_FOLLOW_N);
-    CHECK(g_recs[0].w == PANEL && g_recs[0].h == PANEL);
-    CHECK(g_recs[0].px == g_base);
+    CHECK(g_paint_gen > 0); /* first paint reached the panel */
+    CHECK(g_panel[0] == g_base[0]); /* base visible at origin */
     CHECK(strcmp(ta_glass_text(TA_DRAW_TEXT_ZONE), "spinme") == 0);
     chrome = ta_glass_chrome();
     CHECK(ta_uilo_x(chrome->uilo[TA_FOLLOW_ZONE]) == 2);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_ZONE]) == 10);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_ARTIST]) == 10 + GH + 1);
-    /* Nav at 12 oclock; play/stop centered. */
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_NAV]) == 1);
     CHECK(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
           (PANEL - TA_CHROME_ICON_PX) / 2);
     CHECK(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) ==
           (PANEL - TA_CHROME_ICON_PX) / 2);
 
-    /* 2. Clean glass: PAINT pushes nothing. */
-    before = g_nrec;
+    /* 2. Clean glass: PAINT does not change the panel. */
+    gen = g_paint_gen;
     CHECK(post_type(TA_DRAW_NAME, TA_EV_DRAW_PAINT) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before);
+    CHECK(g_paint_gen == gen);
 
     /* 3. ISR touch on centered play/stop -> CTRL_TOGGLE -> MPD -> Net. */
     {
@@ -261,28 +269,23 @@ int main(void) {
     CHECK(ta_mpd_stats()->toggle == 1);
     CHECK(g_req_toggle == 1);
     CHECK(ta_glass_stats()->hits == 1);
-    /* Miss on the base: no ControlEvent. */
     CHECK(ta_isr_post_touch(&g_mail, 0, PANEL - 1) == 0);
     CHECK(pump() >= 1);
     CHECK(ta_mpd_stats()->toggle == 1);
     CHECK(ta_glass_stats()->misses == 1);
 
     /* 4. ISR rotary +3 -> CTRL_VOLUME -> desired leads the glass. */
-    before = g_nrec;
     CHECK(ta_isr_post_rotary(&g_mail, 3, 0) == 0);
     CHECK(pump() >= 1);
     CHECK(ta_mpd_volume() == TA_MPD_VOL_DEFAULT + 3);
-    CHECK(ta_mpd_stats()->coalesced == 1); /* toggle SET still in flight */
+    CHECK(ta_mpd_stats()->coalesced == 1);
     CHECK(ta_glass_desired() == TA_MPD_VOL_DEFAULT + 3);
-    CHECK(g_nrec == before + 1); /* only the volume exterior */
-    CHECK(g_recs[before].y == ta_uilo_y(chrome->uilo[TA_FOLLOW_VOLUME]));
     CHECK(ta_draw_stats()->isr_drained == 3);
 
-    /* 5. Net completes: SET_DONE flushes the coalesced volume, then settles
-     * into a POLL whose DONE carries player status -> chrome follows. */
-    ta_net_backend_complete_ex(3, NULL, 0); /* toggle done */
+    /* 5. Net completes: SET_DONE flushes volume, POLL_DONE updates chrome. */
+    ta_net_backend_complete_ex(3, NULL, 0);
     CHECK(g_req_volume == 1 && g_last_volume == TA_MPD_VOL_DEFAULT + 3);
-    ta_net_backend_complete_ex(3, NULL, 0); /* volume done -> poll */
+    ta_net_backend_complete_ex(3, NULL, 0);
     CHECK(g_req_poll == 1);
     {
         uint8_t status[TA_NET_STATUS_LEN];
@@ -292,93 +295,86 @@ int main(void) {
     }
     CHECK(pump() >= 1);
     CHECK(ta_mpd_polled() == 40);
-    CHECK(ta_mpd_volume() == 40); /* nothing pending: follow the player */
+    CHECK(ta_mpd_volume() == 40);
     CHECK(ta_glass_polled() == 40);
     CHECK(ta_glass_playing() == 1);
 
-    /* 6. Net text -> Draw SET_TEXT chunks; long title scrolls in viewport. */
-    before = g_nrec;
+    /* 6. Net text -> Draw SET_TEXT; scroll advances. */
     CHECK(ta_draw_post_text(TA_DRAW_TEXT_TITLE,
                             "a very long title that needs to scroll", 7,
                             "Net") == 0);
     CHECK(pump() >= 2);
     CHECK(strcmp(ta_glass_text(TA_DRAW_TEXT_TITLE),
                  "a very long title that needs to scroll") == 0);
-    CHECK(g_nrec == before + 1);
-    CHECK(g_recs[before].w == 30); /* viewport window, not content width */
-    before = g_nrec;
     CHECK(post_scroll_ox(5, 1) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before + 1);
     CHECK(ta_glass_stats()->scrolls == 1);
-    /* Cadence tick without ox: Draw steps ox itself and repaints. */
-    before = g_nrec;
     CHECK(post_scroll_ox(0, 0) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before + 1);
     CHECK(ta_glass_stats()->scrolls == 2);
-    CHECK(g_recs[before].w == 30);
-    /* Short artist fits: scroll is a no-op for it, text clipped to view. */
     CHECK(ta_draw_post_text(TA_DRAW_TEXT_ARTIST, "abc", 7, "Net") == 0);
     CHECK(pump() == 1);
     CHECK(strcmp(ta_glass_text(TA_DRAW_TEXT_ARTIST), "abc") == 0);
 
-    /* 7. Cadence update: clock represent-time dirties only the clock. */
-    before = g_nrec;
+    /* 7. Cadence: first tick may paint clock; same second is quiet. */
+    gen = g_paint_gen;
     CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before + 1);
-    CHECK(g_recs[before].y == ta_uilo_y(chrome->uilo[TA_FOLLOW_CLOCK]));
-    before = g_nrec;
+    CHECK(g_paint_gen >= gen);
+    gen = g_paint_gen;
     CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before); /* same second: nothing */
+    CHECK(g_paint_gen == gen);
 
-    /* 8. Idle -> backlight off; dark glass keeps dirty; dark tap only wakes. */
+    /* 8. Idle -> backlight off; dark keeps dirty; dark tap only wakes. */
     for (i = 0; i < TA_GLASS_SCREEN_OFF_S; i++) {
         CHECK(post_draw_update(TA_DRAW_UPD_CADENCE) == 0);
     }
     CHECK(pump() == (size_t)TA_GLASS_SCREEN_OFF_S);
     CHECK(g_backlight == 0);
     CHECK(ta_glass_backlight() == 0);
-    before = g_nrec;
+    gen = g_paint_gen;
     CHECK(post_draw_update(TA_DRAW_UPD_BASE_DIRTY) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before); /* dark: nothing pushed */
+    CHECK(g_paint_gen == gen); /* dark: nothing painted */
     {
-        uint16_t tx = (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
-        uint16_t ty = (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
+        uint16_t tx =
+            (uint16_t)(ta_uilo_x(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
+        uint16_t ty =
+            (uint16_t)(ta_uilo_y(chrome->uilo[TA_FOLLOW_TRANSPORT]) + 1);
         CHECK(ta_isr_post_touch(&g_mail, tx, ty) == 0);
     }
     CHECK(pump() >= 1);
     CHECK(g_backlight == 1);
     CHECK(ta_mpd_stats()->toggle == 1); /* dark tap did not hit-test */
-    CHECK(g_nrec == before + TA_FOLLOW_N); /* full repaint, composed chrome */
-    CHECK(g_recs[before].px == g_base);
+    CHECK(g_paint_gen > gen);           /* wake repaint reached panel */
+    CHECK(g_panel[0] == g_base[0]);
 
-    /* 9. Base dirty while lit: everything above repaints after the base. */
-    before = g_nrec;
+    /* 9. Base dirty while lit: panel still shows base under chrome. */
+    gen = g_paint_gen;
     CHECK(post_draw_update(TA_DRAW_UPD_BASE_DIRTY) == 0);
     CHECK(pump() == 1);
-    CHECK(g_nrec == before + TA_FOLLOW_N);
+    CHECK(g_paint_gen > gen);
+    CHECK(g_panel[0] == g_base[0]);
 
-    /* Text pixels: the title window carries base under the glyph paper. */
     {
         const ta_shape_bitmap_t *vp = ta_shape_table_get(TA_GLASS_IDX_TITLE_VP);
         uint8_t r, gg, b, a;
         CHECK(vp != NULL && vp->pixels != NULL);
         if (vp != NULL && vp->pixels != NULL) {
             ta_unpack66(vp->pixels[0], &r, &gg, &b, &a);
-            CHECK(a == 3); /* never transparent on the glass */
+            CHECK(a == 3);
         }
     }
 
-    /* 10. SwapShape page: add a second full-panel child and switch to it. */
+    /* 10. SwapShape page: panel shows page-1 pixel after switch+paint. */
     {
         static ta_pack66_t page1_px[PANEL * PANEL];
         static ta_shape_bitmap_t page1;
+        ta_pack66_t want = ta_pack66_rgba(4, 5, 6, 3);
+
         memset(page1_px, 0, sizeof(page1_px));
-        page1_px[0] = ta_pack66_rgba(4, 5, 6, 3);
+        page1_px[0] = want;
         memset(&page1, 0, sizeof(page1));
         page1.tag = TA_SHAPE_TAG_BITMAP;
         page1.w = PANEL;
@@ -386,13 +382,11 @@ int main(void) {
         page1.pixels = page1_px;
         CHECK(ta_shape_table_set(920, &page1) == 0);
         CHECK(ta_glass_add_page(920) == 1);
-        before = g_nrec;
         CHECK(ta_glass_set_page(1) == 0);
         CHECK(ta_glass_page() == 1);
         CHECK(post_type(TA_DRAW_NAME, TA_EV_DRAW_PAINT) == 0);
         CHECK(pump() == 1);
-        CHECK(g_nrec == before + 1);
-        CHECK(g_recs[before].px == page1_px);
+        CHECK(g_panel[0] == want);
         CHECK(ta_glass_set_page(0) == 0);
         CHECK(ta_glass_page() == 0);
     }

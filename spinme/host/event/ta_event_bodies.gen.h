@@ -168,4 +168,20 @@ typedef struct {
     uint32_t advance_ms;
 } ta_sched_tick_t;
 
+/* TestRun type_id=0x600 */
+typedef struct {
+    uint8_t mode;
+    char selector[48];
+    char reply_to[24];
+} ta_test_run_t;
+
+/* TestDone type_id=0x610 */
+typedef struct {
+    uint8_t status;
+    uint16_t n_ran;
+    uint16_t n_fail;
+    uint32_t elapsed_ms;
+    char selector[48];
+} ta_test_done_t;
+
 #endif /* SPINME_TA_EVENT_BODIES_GEN_H */

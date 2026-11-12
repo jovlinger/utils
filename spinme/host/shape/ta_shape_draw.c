@@ -3,11 +3,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-static ta_sd_shape_t g_tab[TA_SD_SLOTS];
+/* Heap table: 1024 slots is too large for ESP32 DRAM BSS. */
+static ta_sd_shape_t *g_tab;
+
+static int ensure_tab(void) {
+    if (g_tab != NULL) {
+        return 0;
+    }
+    g_tab = (ta_sd_shape_t *)calloc(TA_SD_SLOTS, sizeof(ta_sd_shape_t));
+    return g_tab == NULL ? -1 : 0;
+}
 
 void ta_sd_reset(void) {
     unsigned i;
 
+    if (g_tab == NULL) {
+        (void)ensure_tab();
+        return;
+    }
     for (i = 0; i < TA_SD_SLOTS; i++) {
         free(g_tab[i].pixels);
         memset(&g_tab[i], 0, sizeof(g_tab[i]));
@@ -16,7 +29,7 @@ void ta_sd_reset(void) {
 }
 
 ta_sd_shape_t *ta_sd_get(unsigned idx) {
-    if (idx >= TA_SD_SLOTS) {
+    if (ensure_tab() != 0 || idx >= TA_SD_SLOTS) {
         return NULL;
     }
     return &g_tab[idx];
@@ -52,7 +65,8 @@ int ta_sd_alloc_bitmap(unsigned idx, uint8_t tag, uint16_t w, uint16_t h) {
     size_t n;
     ta_pack66_t *px;
 
-    if (idx == TA_SD_NONE || idx >= TA_SD_SLOTS || w == 0 || h == 0) {
+    if (ensure_tab() != 0 || idx == TA_SD_NONE || idx >= TA_SD_SLOTS ||
+        w == 0 || h == 0) {
         return -1;
     }
     if (tag != TA_SD_TAG_BITMAP && tag != TA_SD_TAG_XY &&
@@ -78,7 +92,7 @@ int ta_sd_alloc_bitmap(unsigned idx, uint8_t tag, uint16_t w, uint16_t h) {
 void ta_sd_free(unsigned idx) {
     ta_sd_shape_t *s;
 
-    if (idx == TA_SD_NONE || idx >= TA_SD_SLOTS) {
+    if (g_tab == NULL || idx == TA_SD_NONE || idx >= TA_SD_SLOTS) {
         return;
     }
     s = &g_tab[idx];
@@ -249,6 +263,179 @@ void ta_sd_blit(ta_pack66_t *dst, uint16_t dw, uint16_t dh, int ox, int oy,
     }
 }
 
+static void decode_rlc_row(const ta_sd_rlc_word_t *row_words, uint8_t *off_u,
+                           uint8_t *len_u, int *n_out) {
+    uint8_t bytes[8];
+    int i;
+    int n = 0;
+
+    memcpy(bytes, row_words, 4);
+    memcpy(bytes + 4, row_words + 1, 4);
+    for (i = 0; i < 4; i++) {
+        uint8_t ou = bytes[(size_t)i * 2u];
+        uint8_t lu = bytes[(size_t)i * 2u + 1u];
+        if (lu == 0) {
+            continue;
+        }
+        off_u[n] = ou;
+        len_u[n] = lu;
+        n++;
+    }
+    *n_out = n;
+}
+
+void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy) {
+    ta_sd_rlc_word_t *rlc;
+    uint16_t y;
+    uint8_t off[1];
+    uint8_t len[1];
+    unsigned lu;
+
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY) {
+        return;
+    }
+    rlc = ta_sd_xy_rlc(xy);
+    if (rlc == NULL) {
+        return;
+    }
+    off[0] = 0;
+    lu = ((unsigned)xy->w + 1u) / 2u;
+    if (lu > 255u) {
+        lu = 255u;
+    }
+    if (lu == 0u) {
+        lu = 1u;
+    }
+    len[0] = (uint8_t)lu;
+    for (y = 0; y < xy->h; y++) {
+        ta_sd_rlc_set_ranges(rlc + (size_t)y * TA_SD_RLC_N, off, len, 1);
+    }
+}
+
+int ta_sd_xy_rebuild_from_child(unsigned xy_idx) {
+    ta_sd_shape_t *xy;
+    ta_sd_shape_t *ch;
+    size_t n;
+
+    xy = ta_sd_get(xy_idx);
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY || xy->pixels == NULL) {
+        return -1;
+    }
+    ch = ta_sd_get(xy->u.xy.child);
+    if (ch == NULL || ch->tag != TA_SD_TAG_BITMAP || ch->pixels == NULL) {
+        return -1;
+    }
+    n = (size_t)xy->w * (size_t)xy->h;
+    memset(xy->pixels, 0, n * sizeof(ta_pack66_t));
+    ta_sd_blit(xy->pixels, xy->w, xy->h, 0, 0, ch->pixels, ch->w, ch->h);
+    xy->dirty = 1;
+    return 0;
+}
+
+void ta_sd_xy_blit_glass(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
+                         unsigned xy_idx) {
+    ta_sd_shape_t *xy;
+    ta_sd_rlc_word_t *rlc;
+    uint16_t y;
+
+    xy = ta_sd_get(xy_idx);
+    if (glass == NULL || xy == NULL || xy->tag != TA_SD_TAG_XY ||
+        xy->pixels == NULL) {
+        return;
+    }
+    rlc = ta_sd_xy_rlc(xy);
+    if (rlc == NULL) {
+        return;
+    }
+    for (y = 0; y < xy->h; y++) {
+        uint8_t off_u[4];
+        uint8_t len_u[4];
+        int nr = 0;
+        int i;
+
+        decode_rlc_row(rlc + (size_t)y * TA_SD_RLC_N, off_u, len_u, &nr);
+        for (i = 0; i < nr; i++) {
+            unsigned px0 = (unsigned)off_u[i] * 2u;
+            unsigned pxn = px0 + (unsigned)len_u[i] * 2u;
+            unsigned x;
+
+            if (pxn > xy->w) {
+                pxn = xy->w;
+            }
+            for (x = px0; x < pxn; x++) {
+                int dx = (int)xy->u.xy.x + (int)x;
+                int dy = (int)xy->u.xy.y + (int)y;
+                size_t di;
+                ta_pack66_t src;
+
+                if (dx < 0 || dy < 0 || dx >= (int)gw || dy >= (int)gh) {
+                    continue;
+                }
+                di = (size_t)dy * gw + (size_t)dx;
+                src = xy->pixels[(size_t)y * xy->w + x];
+                glass[di] = ta_sd_blend(glass[di], src);
+            }
+        }
+    }
+}
+
+void ta_sd_glass_paint_xys(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
+                           const unsigned *xy_idxs, size_t n) {
+    size_t i;
+
+    if (glass == NULL || xy_idxs == NULL) {
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        ta_sd_xy_blit_glass(glass, gw, gh, xy_idxs[i]);
+    }
+}
+
+int ta_sd_xy_push_dirty(unsigned xy_idx, ta_sd_push_rect_fn push, void *ctx) {
+    ta_sd_shape_t *xy;
+    ta_sd_rlc_word_t *rlc;
+    uint16_t y;
+    int spans = 0;
+
+    if (push == NULL) {
+        return -1;
+    }
+    xy = ta_sd_get(xy_idx);
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY || xy->pixels == NULL) {
+        return -1;
+    }
+    rlc = ta_sd_xy_rlc(xy);
+    if (rlc == NULL) {
+        return -1;
+    }
+    /* One push per RLC range per raster (no coalesce). */
+    for (y = 0; y < xy->h; y++) {
+        uint8_t off_u[4];
+        uint8_t len_u[4];
+        int nr = 0;
+        int i;
+
+        decode_rlc_row(rlc + (size_t)y * TA_SD_RLC_N, off_u, len_u, &nr);
+        for (i = 0; i < nr; i++) {
+            unsigned px0 = (unsigned)off_u[i] * 2u;
+            unsigned pxn = px0 + (unsigned)len_u[i] * 2u;
+            int w;
+
+            if (pxn > xy->w) {
+                pxn = xy->w;
+            }
+            w = (int)pxn - (int)px0;
+            if (w <= 0) {
+                continue;
+            }
+            push((int)xy->u.xy.x + (int)px0, (int)xy->u.xy.y + (int)y, w, 1,
+                 xy->pixels + (size_t)y * xy->w + px0, (int)xy->w, ctx);
+            spans++;
+        }
+    }
+    return spans;
+}
+
 void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                          const ta_pack66_t *new_px) {
     ta_sd_rlc_word_t *rlc;
@@ -333,6 +520,9 @@ int ta_sd_gc(unsigned root) {
     unsigned dst;
     unsigned new_root;
 
+    if (ensure_tab() != 0) {
+        return -1;
+    }
     memset(mark, 0, sizeof(mark));
     for (i = 0; i < TA_SD_SLOTS; i++) {
         remap[i] = i;

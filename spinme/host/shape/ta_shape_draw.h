@@ -87,6 +87,32 @@ void ta_sd_blit(ta_pack66_t *dst, uint16_t dw, uint16_t dh, int ox, int oy,
 void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                          const ta_pack66_t *new_px);
 
+/* Mark every row fully dirty (full width in /2 units, clamped). */
+void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy);
+
+/* Clear XY pixmap and blit child BITMAP into it (0,0). 0 ok. */
+int ta_sd_xy_rebuild_from_child(unsigned xy_idx);
+
+/*
+ * Glass write: only XYShape reaches the glass. Blend RLC dirty spans of xy
+ * onto glass at (xy.x, xy.y). Empty RLC => no-op.
+ */
+void ta_sd_xy_blit_glass(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
+                         unsigned xy_idx);
+
+/* Farthest -> nearest: blit each XY's dirty spans. */
+void ta_sd_glass_paint_xys(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
+                           const unsigned *xy_idxs, size_t n);
+
+/*
+ * Device/host push seam: for each dirty RLC span call push(x,y,w,h,px,stride).
+ * Pixels are the XY bitmap (precomposed); no further blend.
+ */
+typedef void (*ta_sd_push_rect_fn)(int x, int y, int w, int h,
+                                   const ta_pack66_t *px, int stride_px,
+                                   void *ctx);
+int ta_sd_xy_push_dirty(unsigned xy_idx, ta_sd_push_rect_fn push, void *ctx);
+
 /* Stop-the-world tracing compacting GC. root kept; never into 1..LOCKED_MAX. */
 int ta_sd_gc(unsigned root);
 

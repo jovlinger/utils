@@ -1,15 +1,19 @@
 /*
- * Timed XY redraw with overlap:
+ * local/: timed XY redraw via XYShape-only glass path (bit-identical goldens).
  * - Under veil (static): digit '4' and letter 'k', partially overlapping, fixed.
  * - Under veil (timed): digit 0..9.
  * - Veil z=3: 0x08080801 as R,G,B,A -> pack66.
  * - Over veil (timed): letter a..j, XY chosen to overlap the timed digit.
+ * Glass: only ta_sd_xy_blit_glass (RLC spans + ta_sd_blend). No direct blits.
+ * Goldens: screenshots/xy_timed/t00.png .. t09.png (full-file bit-identical;
+ * REGEN if zlib/PNG bytes drift while RGB stays equal).
  *
  * Push-back: pack66 a2 is 0/1/2/3; a2=1 ~= 33% (nearest below a2=2 to "50%").
  */
 #include "ta_draw_phase1.h"
 #include "ta_glyph_bin.h"
 #include "ta_pack66_png.h"
+#include "ta_shape_draw.h"
 #include "ta_shape_l2r.h"
 #include "ta_text.h"
 #include "ta_uilayout.h"
@@ -23,27 +27,32 @@ enum {
     GLASS_W = 160,
     GLASS_H = 80,
     TIMES = 10,
-    /* Static under-veil pair (do not change with t); partial overlap. */
     STATIC_DIGIT_X = 8,
     STATIC_DIGIT_Y = 10,
-    STATIC_LETTER_X = 14, /* ~half glyph overlap with digit */
+    STATIC_LETTER_X = 14,
     STATIC_LETTER_Y = 16,
     STATIC_DIGIT_CH = '4',
     STATIC_LETTER_CH = 'k',
-    /* Timed digit under veil; timed letter over veil overlaps it. */
     MOVE_DIGIT_X = 48,
     MOVE_DIGIT_Y = 18,
-    MOVE_LETTER_DX = 5, /* partial overlap with timed digit */
+    MOVE_LETTER_DX = 5,
     MOVE_LETTER_DY = 6,
     VEIL_X = 0,
     VEIL_Y = 0,
     VEIL_W = 130,
     VEIL_H = 60,
     PNG_SCALE = 4,
-    IDX_STATIC_DIGIT = 900,
-    IDX_STATIC_LETTER = 901,
-    IDX_MOVE_DIGIT = 902,
-    IDX_MOVE_LETTER = 903
+    /* sd table: bitmaps then XY wrappers (above locked). */
+    IDX_BM_STATIC_DIGIT = 200,
+    IDX_BM_STATIC_LETTER = 201,
+    IDX_BM_MOVE_DIGIT = 202,
+    IDX_BM_MOVE_LETTER = 203,
+    IDX_BM_VEIL = 204,
+    IDX_XY_STATIC_DIGIT = 210,
+    IDX_XY_STATIC_LETTER = 211,
+    IDX_XY_MOVE_DIGIT = 212,
+    IDX_XY_VEIL = 213,
+    IDX_XY_MOVE_LETTER = 214
 };
 
 #define FW "../firmware/waveshare-knob-touch-lcd-1.8"
@@ -67,62 +76,21 @@ static int checks;
 
 static ta_glyph_bin_t g_gb;
 
-typedef struct {
-    ta_pack66_t *px;
-    size_t cap;
-    uint16_t w;
-    uint16_t h;
-} baked_glyph_t;
-
-static baked_glyph_t g_static_digit;
-static baked_glyph_t g_static_letter;
-static baked_glyph_t g_move_digit;
-static baked_glyph_t g_move_letter;
-
 static void glass_clear(ta_pack66_t *g) {
     memset(g, 0, (size_t)GLASS_W * (size_t)GLASS_H * sizeof(*g));
 }
 
-static void blit_solid_rect(ta_pack66_t *dst, int ox, int oy, int w, int h,
-                            ta_pack66_t px) {
-    ta_shape_bitmap_t bmp;
-    ta_pack66_t *row;
-    int i;
-
-    row = (ta_pack66_t *)malloc((size_t)w * (size_t)h * sizeof(*row));
-    CHECK(row != NULL);
-    if (row == NULL) {
-        return;
-    }
-    for (i = 0; i < w * h; i++) {
-        row[i] = px;
-    }
-    memset(&bmp, 0, sizeof(bmp));
-    bmp.tag = TA_SHAPE_TAG_BITMAP;
-    bmp.w = (uint16_t)w;
-    bmp.h = (uint16_t)h;
-    bmp.pixels = row;
-    ta_draw_blit_bitmap(dst, GLASS_W, GLASS_H, ox, oy, &bmp);
-    free(row);
-}
-
-static void blit_baked(ta_pack66_t *dst, int ox, int oy, const baked_glyph_t *g) {
-    ta_shape_bitmap_t bmp;
-
-    memset(&bmp, 0, sizeof(bmp));
-    bmp.tag = TA_SHAPE_TAG_BITMAP;
-    bmp.w = g->w;
-    bmp.h = g->h;
-    bmp.pixels = g->px;
-    ta_draw_blit_bitmap(dst, GLASS_W, GLASS_H, ox, oy, &bmp);
-}
-
-static int bake_char(baked_glyph_t *slot, unsigned table_idx, char ch) {
+static int bake_char_into_sd(unsigned bm_idx, char ch, uint16_t *out_w,
+                             uint16_t *out_h) {
     ta_shape_l2r_t line;
     char ascii[2];
     uint32_t pack[8];
     int8_t kern[8];
-    size_t need;
+    ta_uilayout_t uilo;
+    ta_draw_scene_t scene;
+    ta_phase1_opts_t opts;
+    ta_shape_bitmap_t *hdr;
+    ta_sd_shape_t *bm;
 
     ascii[0] = ch;
     ascii[1] = '\0';
@@ -134,41 +102,63 @@ static int bake_char(baked_glyph_t *slot, unsigned table_idx, char ch) {
     if (ta_shape_l2r_compute_size(&line) != 0) {
         return -1;
     }
-    need = (size_t)line.w * (size_t)line.h;
-    if (need == 0) {
+    line.pixels = (ta_pack66_t *)calloc((size_t)line.w * (size_t)line.h,
+                                        sizeof(ta_pack66_t));
+    if (line.pixels == NULL) {
         return -1;
     }
-    if (slot->px == NULL || slot->cap < need) {
-        ta_pack66_t *npx =
-            (ta_pack66_t *)realloc(slot->px, need * sizeof(ta_pack66_t));
-        if (npx == NULL) {
-            return -1;
-        }
-        slot->px = npx;
-        slot->cap = need;
-    }
-    memset(slot->px, 0, need * sizeof(ta_pack66_t));
-    line.pixels = slot->px;
     line.dirty = 1;
-    if (ta_shape_table_set(table_idx, (ta_shape_bitmap_t *)(void *)&line) !=
-        0) {
+    if (ta_shape_table_set(bm_idx, (ta_shape_bitmap_t *)(void *)&line) != 0) {
+        free(line.pixels);
         return -1;
     }
-    {
-        ta_uilayout_t uilo = ta_uilo_make(1, 0, 0, table_idx);
-        ta_draw_scene_t scene;
-        ta_phase1_opts_t opts;
-
-        memset(&scene, 0, sizeof(scene));
-        scene.uilo = &uilo;
-        scene.n_uilo = 1;
-        memset(&opts, 0, sizeof(opts));
-        if (ta_draw_phase1(&scene, &opts) != 0) {
-            return -1;
-        }
+    uilo = ta_uilo_make(1, 0, 0, bm_idx);
+    memset(&scene, 0, sizeof(scene));
+    scene.uilo = &uilo;
+    scene.n_uilo = 1;
+    memset(&opts, 0, sizeof(opts));
+    if (ta_draw_phase1(&scene, &opts) != 0) {
+        free(line.pixels);
+        return -1;
     }
-    slot->w = line.w;
-    slot->h = line.h;
+    hdr = ta_shape_table_get(bm_idx);
+    if (hdr == NULL || hdr->pixels == NULL) {
+        free(line.pixels);
+        return -1;
+    }
+    if (ta_sd_alloc_bitmap(bm_idx, TA_SD_TAG_BITMAP, hdr->w, hdr->h) != 0) {
+        free(line.pixels);
+        return -1;
+    }
+    bm = ta_sd_get(bm_idx);
+    memcpy(bm->pixels, hdr->pixels,
+           (size_t)hdr->w * (size_t)hdr->h * sizeof(ta_pack66_t));
+    if (out_w) {
+        *out_w = hdr->w;
+    }
+    if (out_h) {
+        *out_h = hdr->h;
+    }
+    (void)ta_shape_table_set(bm_idx, NULL);
+    free(line.pixels);
+    return 0;
+}
+
+static int make_xy(unsigned xy_idx, unsigned child_idx, int16_t x, int16_t y,
+                   uint16_t w, uint16_t h) {
+    ta_sd_shape_t *xy;
+
+    if (ta_sd_alloc_bitmap(xy_idx, TA_SD_TAG_XY, w, h) != 0) {
+        return -1;
+    }
+    xy = ta_sd_get(xy_idx);
+    xy->u.xy.child = (uint16_t)child_idx;
+    xy->u.xy.x = x;
+    xy->u.xy.y = y;
+    if (ta_sd_xy_rebuild_from_child(xy_idx) != 0) {
+        return -1;
+    }
+    ta_sd_xy_mark_full_dirty(xy);
     return 0;
 }
 
@@ -178,29 +168,42 @@ static void move_letter_xy(int t, int *x, int *y) {
     *y = MOVE_DIGIT_Y + MOVE_LETTER_DY;
 }
 
+static int refresh_xy(unsigned xy_idx, unsigned bm_idx, int16_t x, int16_t y) {
+    ta_sd_shape_t *ch = ta_sd_get(bm_idx);
+
+    if (ch == NULL) {
+        return -1;
+    }
+    return make_xy(xy_idx, bm_idx, x, y, ch->w, ch->h);
+}
+
 static void xy_redraw(ta_pack66_t *glass, int t) {
     int ox;
     int oy;
     char digit = (char)('0' + t);
     char letter = (char)('a' + t);
+    uint16_t dw = 0;
+    uint16_t dh = 0;
+    const unsigned order[] = {IDX_XY_STATIC_DIGIT, IDX_XY_STATIC_LETTER,
+                              IDX_XY_MOVE_DIGIT, IDX_XY_VEIL,
+                              IDX_XY_MOVE_LETTER};
 
     glass_clear(glass);
 
-    /* z~5 under: static digit+letter (partial overlap), never change. */
-    blit_baked(glass, STATIC_DIGIT_X, STATIC_DIGIT_Y, &g_static_digit);
-    blit_baked(glass, STATIC_LETTER_X, STATIC_LETTER_Y, &g_static_letter);
-
-    /* z~5 under: timed digit 0..9. */
-    CHECK(bake_char(&g_move_digit, IDX_MOVE_DIGIT, digit) == 0);
-    blit_baked(glass, MOVE_DIGIT_X, MOVE_DIGIT_Y, &g_move_digit);
-
-    /* z=3 veil. */
-    blit_solid_rect(glass, VEIL_X, VEIL_Y, VEIL_W, VEIL_H, VEIL_PX);
-
-    /* z=1 over: timed letter a..j overlapping the timed digit. */
+    CHECK(bake_char_into_sd(IDX_BM_MOVE_DIGIT, digit, &dw, &dh) == 0);
+    CHECK(bake_char_into_sd(IDX_BM_MOVE_LETTER, letter, &dw, &dh) == 0);
     move_letter_xy(t, &ox, &oy);
-    CHECK(bake_char(&g_move_letter, IDX_MOVE_LETTER, letter) == 0);
-    blit_baked(glass, ox, oy, &g_move_letter);
+
+    CHECK(refresh_xy(IDX_XY_MOVE_DIGIT, IDX_BM_MOVE_DIGIT,
+                     (int16_t)MOVE_DIGIT_X, (int16_t)MOVE_DIGIT_Y) == 0);
+    CHECK(refresh_xy(IDX_XY_MOVE_LETTER, IDX_BM_MOVE_LETTER, (int16_t)ox,
+                     (int16_t)oy) == 0);
+    ta_sd_xy_mark_full_dirty(ta_sd_get(IDX_XY_STATIC_DIGIT));
+    ta_sd_xy_mark_full_dirty(ta_sd_get(IDX_XY_STATIC_LETTER));
+    ta_sd_xy_mark_full_dirty(ta_sd_get(IDX_XY_VEIL));
+
+    ta_sd_glass_paint_xys(glass, GLASS_W, GLASS_H, order,
+                          sizeof(order) / sizeof(order[0]));
 }
 
 static int count_nonzero(const ta_pack66_t *g, int x, int y, int w, int h) {
@@ -264,18 +267,18 @@ static int files_bit_identical(const char *a, const char *b) {
 }
 
 static int copy_file(const char *src, const char *dst) {
-    FILE *in;
-    FILE *out;
-    uint8_t buf[4096];
+    FILE *in = fopen(src, "rb");
+    FILE *out = fopen(dst, "wb");
+    char buf[4096];
     size_t n;
 
-    in = fopen(src, "rb");
-    if (in == NULL) {
-        return -1;
-    }
-    out = fopen(dst, "wb");
-    if (out == NULL) {
-        fclose(in);
+    if (in == NULL || out == NULL) {
+        if (in) {
+            fclose(in);
+        }
+        if (out) {
+            fclose(out);
+        }
         return -1;
     }
     while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
@@ -293,8 +296,11 @@ static int copy_file(const char *src, const char *dst) {
 int main(void) {
     ta_pack66_t *glass;
     int t;
+    uint16_t sw = 0;
+    uint16_t sh = 0;
     int ox0;
     int oy0;
+    size_t i;
 
     glass = (ta_pack66_t *)calloc((size_t)GLASS_W * (size_t)GLASS_H,
                                   sizeof(*glass));
@@ -302,22 +308,49 @@ int main(void) {
     CHECK(VEIL_PX == 0x01080808u);
 
     ta_shape_table_reset();
+    ta_sd_reset();
     ta_glyph_bin_reset(&g_gb);
     CHECK(ta_glyph_bin_load(&g_gb, GLYPHS_PATH) == 0);
 
-    CHECK(bake_char(&g_static_digit, IDX_STATIC_DIGIT, STATIC_DIGIT_CH) == 0);
-    CHECK(bake_char(&g_static_letter, IDX_STATIC_LETTER, STATIC_LETTER_CH) ==
+    CHECK(bake_char_into_sd(IDX_BM_STATIC_DIGIT, STATIC_DIGIT_CH, &sw, &sh) ==
           0);
-    CHECK(rects_overlap(STATIC_DIGIT_X, STATIC_DIGIT_Y, (int)g_static_digit.w,
-                        (int)g_static_digit.h, STATIC_LETTER_X, STATIC_LETTER_Y,
-                        (int)g_static_letter.w, (int)g_static_letter.h));
+    CHECK(make_xy(IDX_XY_STATIC_DIGIT, IDX_BM_STATIC_DIGIT,
+                  (int16_t)STATIC_DIGIT_X, (int16_t)STATIC_DIGIT_Y, sw, sh) ==
+          0);
+    CHECK(bake_char_into_sd(IDX_BM_STATIC_LETTER, STATIC_LETTER_CH, &sw, &sh) ==
+          0);
+    CHECK(make_xy(IDX_XY_STATIC_LETTER, IDX_BM_STATIC_LETTER,
+                  (int16_t)STATIC_LETTER_X, (int16_t)STATIC_LETTER_Y, sw,
+                  sh) == 0);
 
+    CHECK(rects_overlap(STATIC_DIGIT_X, STATIC_DIGIT_Y,
+                        (int)ta_sd_get(IDX_BM_STATIC_DIGIT)->w,
+                        (int)ta_sd_get(IDX_BM_STATIC_DIGIT)->h, STATIC_LETTER_X,
+                        STATIC_LETTER_Y,
+                        (int)ta_sd_get(IDX_BM_STATIC_LETTER)->w,
+                        (int)ta_sd_get(IDX_BM_STATIC_LETTER)->h));
+
+    CHECK(bake_char_into_sd(IDX_BM_MOVE_DIGIT, '0', &sw, &sh) == 0);
+    CHECK(make_xy(IDX_XY_MOVE_DIGIT, IDX_BM_MOVE_DIGIT, (int16_t)MOVE_DIGIT_X,
+                  (int16_t)MOVE_DIGIT_Y, sw, sh) == 0);
     move_letter_xy(0, &ox0, &oy0);
-    CHECK(bake_char(&g_move_digit, IDX_MOVE_DIGIT, '0') == 0);
-    CHECK(bake_char(&g_move_letter, IDX_MOVE_LETTER, 'a') == 0);
-    CHECK(rects_overlap(MOVE_DIGIT_X, MOVE_DIGIT_Y, (int)g_move_digit.w,
-                        (int)g_move_digit.h, ox0, oy0, (int)g_move_letter.w,
-                        (int)g_move_letter.h));
+    CHECK(bake_char_into_sd(IDX_BM_MOVE_LETTER, 'a', &sw, &sh) == 0);
+    CHECK(make_xy(IDX_XY_MOVE_LETTER, IDX_BM_MOVE_LETTER, (int16_t)ox0,
+                  (int16_t)oy0, sw, sh) == 0);
+    CHECK(rects_overlap(MOVE_DIGIT_X, MOVE_DIGIT_Y,
+                        (int)ta_sd_get(IDX_BM_MOVE_DIGIT)->w,
+                        (int)ta_sd_get(IDX_BM_MOVE_DIGIT)->h, ox0, oy0,
+                        (int)ta_sd_get(IDX_BM_MOVE_LETTER)->w,
+                        (int)ta_sd_get(IDX_BM_MOVE_LETTER)->h));
+
+    /* Veil bitmap + XY. */
+    CHECK(ta_sd_alloc_bitmap(IDX_BM_VEIL, TA_SD_TAG_BITMAP, VEIL_W, VEIL_H) ==
+          0);
+    for (i = 0; i < (size_t)VEIL_W * (size_t)VEIL_H; i++) {
+        ta_sd_get(IDX_BM_VEIL)->pixels[i] = VEIL_PX;
+    }
+    CHECK(make_xy(IDX_XY_VEIL, IDX_BM_VEIL, (int16_t)VEIL_X, (int16_t)VEIL_Y,
+                  VEIL_W, VEIL_H) == 0);
 
     (void)mkdir("build", 0755);
     (void)mkdir(ACTUAL_DIR, 0755);
@@ -359,7 +392,6 @@ int main(void) {
         }
     }
 
-    /* Static under-veil region identical at t=0 and t=9; move region differs. */
     {
         ta_pack66_t *a =
             (ta_pack66_t *)calloc((size_t)GLASS_W * GLASS_H, sizeof(*a));
@@ -375,16 +407,16 @@ int main(void) {
         xy_redraw(b, 9);
         for (y = STATIC_DIGIT_Y; y < STATIC_DIGIT_Y + 28; y++) {
             for (x = STATIC_DIGIT_X; x < STATIC_DIGIT_X + 28; x++) {
-                size_t i = (size_t)y * GLASS_W + (size_t)x;
-                if (a[i] != b[i]) {
+                size_t ii = (size_t)y * GLASS_W + (size_t)x;
+                if (a[ii] != b[ii]) {
                     static_same = 0;
                 }
             }
         }
         for (y = MOVE_DIGIT_Y; y < MOVE_DIGIT_Y + 28; y++) {
             for (x = MOVE_DIGIT_X; x < MOVE_DIGIT_X + 28; x++) {
-                size_t i = (size_t)y * GLASS_W + (size_t)x;
-                if (a[i] != b[i]) {
+                size_t ii = (size_t)y * GLASS_W + (size_t)x;
+                if (a[ii] != b[ii]) {
                     move_diff = 1;
                 }
             }
@@ -396,10 +428,7 @@ int main(void) {
     }
 
     ta_glyph_bin_fini(&g_gb);
-    free(g_static_digit.px);
-    free(g_static_letter.px);
-    free(g_move_digit.px);
-    free(g_move_letter.px);
+    ta_sd_reset();
     free(glass);
 
     if (failures) {

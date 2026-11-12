@@ -1,6 +1,6 @@
-/* Pixel-perfect glass UI vs PNG goldens in ../screenshots/.
- * Renders build/ui_actual/<name>.png (device glyphs+base, 360@3x) and
- * compares RGB. Refresh: SPINME_UI_UPDATE_GOLDEN=1 ./build/test_screenshots
+/* local/: pixel-perfect glass UI vs PNG goldens in ../../screenshots/
+ * (paths assume cwd spinme/host). Compares RGB via ta_pack66_png_pixel_equal.
+ * Refresh: SPINME_UI_UPDATE_GOLDEN=1 ./build/test_screenshots
  */
 #include "ta_draw_glass.h"
 #include "ta_draw_phase1.h"
@@ -34,6 +34,7 @@ static int checks;
 #define ACTUAL_DIR "build/ui_actual"
 #define PNG_SCALE 3
 #define FW "../firmware/waveshare-knob-touch-lcd-1.8"
+/* GOLDEN/FW paths are relative to make cwd (spinme/host), not this file. */
 #define GLYPHS_PATH FW "/glyphs.bin"
 #define BASE_PATH FW "/disintegration_360.rgba"
 

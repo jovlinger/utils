@@ -61,6 +61,14 @@ TA_EV_SCHED_START: int = 0x500
 TA_EV_SCHED_STOP: int = 0x501
 TA_EV_SCHED_TICK: int = 0x502
 
+# Test (host / dev-only actor)
+TA_EV_TEST_RUN: int = 0x600
+TA_EV_TEST_DONE: int = 0x610
+TA_TEST_SEL_MAX: int = 48
+TA_TEST_MODE_ONE: int = 0
+TA_TEST_MODE_SUITE: int = 1
+TA_TEST_MODE_TIMING: int = 2
+
 TA_PLAYING_STOP: int = 0
 TA_PLAYING_PLAY: int = 1
 TA_PLAYING_PAUSE: int = 2

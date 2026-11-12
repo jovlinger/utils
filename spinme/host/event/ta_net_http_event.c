@@ -213,6 +213,38 @@ static int build_event_from_form(const char *event_name,
         ev->type = TA_EV_NOP;
         return 0;
     }
+    /* Also accept run_test as an alias for TestRun (scripts path). */
+    if (strcmp(event_name, "TestRun") == 0 ||
+        strcmp(event_name, "run_test") == 0) {
+        ev->type = TA_EV_TEST_RUN;
+        v = form_get(flat, nflat, "mode");
+        if (v != NULL && strcmp(v, "suite") == 0) {
+            ev->u.test_run.mode = TA_TEST_MODE_SUITE;
+        } else if (v != NULL && strcmp(v, "timing") == 0) {
+            ev->u.test_run.mode = TA_TEST_MODE_TIMING;
+        } else if (v != NULL && (v[0] >= '0' && v[0] <= '9')) {
+            ev->u.test_run.mode = (uint8_t)atoi(v);
+        } else {
+            ev->u.test_run.mode = TA_TEST_MODE_ONE;
+        }
+        v = form_get(flat, nflat, "selector");
+        if (v == NULL) {
+            v = form_get(flat, nflat, "name");
+        }
+        if (v == NULL) {
+            v = "smoke";
+        }
+        snprintf(ev->u.test_run.selector, sizeof(ev->u.test_run.selector), "%s",
+                 v);
+        v = form_get(flat, nflat, "reply_to");
+        if (v != NULL) {
+            snprintf(ev->u.test_run.reply_to, sizeof(ev->u.test_run.reply_to),
+                     "%s", v);
+        } else {
+            ev->u.test_run.reply_to[0] = '\0';
+        }
+        return 0;
+    }
     return -1;
 }
 

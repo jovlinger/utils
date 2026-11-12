@@ -44,6 +44,18 @@ enum {
 #define TA_ALL_KEY_MAX 32
 #define TA_ALL_INFORM_MAX 64
 #define TA_NET_HTTP_REPLY_MAX 64
+#define TA_TEST_SEL_MAX 48
+
+/* Test actor (dev / post-flash). Modes for ta_test_run_t.mode. */
+enum {
+    TA_EV_TEST_RUN = 0x600,
+    TA_EV_TEST_DONE = 0x610
+};
+enum {
+    TA_TEST_MODE_ONE = 0,
+    TA_TEST_MODE_SUITE = 1,
+    TA_TEST_MODE_TIMING = 2
+};
 
 /* DRAW_UPDATE: kind selects cadence / status / base-dirty. */
 enum {
@@ -89,6 +101,8 @@ typedef struct ta_event {
         ta_all_perform_init_t all_perform_init;
         ta_all_inform_result_t all_inform_result;
         ta_net_http_reply_t net_http_reply;
+        ta_test_run_t test_run;
+        ta_test_done_t test_done;
     } u;
 } ta_event_t;
 
