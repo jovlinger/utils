@@ -1,32 +1,11 @@
 #include "ta_draw_phase1.h"
 
+#include "ta_shape_draw.h"
 #include "ta_shape_l2r.h"
 #include "ta_shape_swap.h"
 #include "ta_viewport.h"
 
 #include <string.h>
-
-/* Src-over on pack66 a2: out RGB = (s*a + d*(3-a))/3, resolved a=3. */
-static ta_pack66_t blend_a2(ta_pack66_t dst, ta_pack66_t src) {
-    uint8_t sr, sg, sb, sa;
-    uint8_t dr, dg, db, da;
-    unsigned inv;
-
-    ta_unpack66(src, &sr, &sg, &sb, &sa);
-    if (sa == 0) {
-        return dst;
-    }
-    if (sa >= 3) {
-        return src;
-    }
-    ta_unpack66(dst, &dr, &dg, &db, &da);
-    (void)da;
-    inv = 3u - (unsigned)sa;
-    return ta_pack66_rgba((uint8_t)(((unsigned)sr * sa + (unsigned)dr * inv) / 3u),
-                          (uint8_t)(((unsigned)sg * sa + (unsigned)dg * inv) / 3u),
-                          (uint8_t)(((unsigned)sb * sa + (unsigned)db * inv) / 3u),
-                          3);
-}
 
 void ta_draw_blit_bitmap(ta_pack66_t *dst, uint16_t dst_w, uint16_t dst_h,
                          int ox, int oy, const ta_shape_bitmap_t *src) {
@@ -51,16 +30,11 @@ void ta_draw_blit_bitmap(ta_pack66_t *dst, uint16_t dst_w, uint16_t dst_h,
                 continue;
             }
             px = src->pixels[(size_t)y * src->w + x];
-            a = (uint8_t)((px >> TA_PACK66_A2_SHIFT) & 3u);
-            if (a == 0) {
-                continue;
-            }
             di = (size_t)dy * dst_w + (size_t)dx;
-            if (a >= 3) {
-                dst[di] = px;
-            } else {
-                dst[di] = blend_a2(dst[di], px);
-            }
+            /* 0x00000000 skip; a2==0 nonzero = additive; else src-over. */
+            a = (uint8_t)((px >> TA_PACK66_A2_SHIFT) & 3u);
+            (void)a;
+            dst[di] = ta_sd_blend(dst[di], px);
         }
     }
 }
