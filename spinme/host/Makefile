@@ -32,7 +32,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
 	$(BUILD)/test_xy_timed_redraw $(BUILD)/test_shape_draw \
-	$(BUILD)/test_test_actor
+	$(BUILD)/test_test_actor $(BUILD)/test_log_rings
 
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
@@ -228,6 +228,9 @@ $(BUILD)/test_log_accept: test_log_accept.c $(LOG_SRCS) | $(BUILD)
 
 $(BUILD)/test_log_drain: test_log_drain.c $(LOG_SRCS) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
+
+$(BUILD)/test_log_rings: test_log_rings.c ta_log_rings.c ta_log_rings.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 $(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_kv_actor.c ta_kv.c \
 		ta_runtime_cfg.c ta_all.c ta_registry.c ta_event.c | $(BUILD)

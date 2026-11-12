@@ -43,6 +43,7 @@ for f in ta_registry.c ta_registry.h ta_controller.c ta_controller.h \
          ta_net_sntp.c ta_net_sntp.h ta_input_isr.c ta_input_isr.h \
          ta_actor.c ta_actor.h ta_boot.c ta_boot.h \
          ta_kv_actor.c ta_kv_actor.h ta_log_accept.c ta_log_accept.h \
+         ta_log_rings.c ta_log_rings.h \
          ta_all.c ta_all.h ta_net_mpd.c ta_net_mpd.h \
          ta_net_kv_http.c ta_net_kv_http.h ta_debug.c ta_debug.h \
          ta_test_actor.c ta_test_actor.h ta_net_backend.h; do
