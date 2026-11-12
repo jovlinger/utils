@@ -23,7 +23,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 .PHONY: test clean
 
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
-	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner
+	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
+	$(BUILD)/test_xy_timed_redraw
 
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
@@ -260,6 +261,10 @@ SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_glyph_bin.c ta_kv_editor.c \
 $(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_glyph_bin.h \
 		ta_kv_editor.h ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(SHOT_SRCS) -lz -lpthread
+
+$(BUILD)/test_xy_timed_redraw: test_xy_timed_redraw.c ta_uilayout.c \
+		ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_xy_timed_redraw.c ta_uilayout.c
 
 $(BUILD):
 	mkdir -p $(BUILD)
