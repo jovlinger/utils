@@ -262,9 +262,12 @@ $(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_glyph_bin.h \
 		ta_kv_editor.h ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(SHOT_SRCS) -lz -lpthread
 
-$(BUILD)/test_xy_timed_redraw: test_xy_timed_redraw.c ta_uilayout.c \
-		ta_uilayout.h | $(BUILD)
-	$(CC) $(WARN) $(CFLAGS) -o $@ test_xy_timed_redraw.c ta_uilayout.c
+XYT_SRCS := test_xy_timed_redraw.c ta_uilayout.c ta_pack66_png.c \
+	ta_glyph_bin.c ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_draw_phase1.c \
+	ta_viewport.c
+$(BUILD)/test_xy_timed_redraw: $(XYT_SRCS) ta_uilayout.h ta_pack66_png.h \
+		ta_glyph_bin.h ta_text.h ta_shape_l2r.h ta_draw_phase1.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(XYT_SRCS) -lz
 
 $(BUILD):
 	mkdir -p $(BUILD)

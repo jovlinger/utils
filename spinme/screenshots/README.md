@@ -14,3 +14,18 @@ constants as `ta_glass_device.cpp`. Panel is 360x360; PNGs are written at
 | `selecting_overlay.png` | Selecting mode (down arrow + 100x100 ring) |
 | `kv_view.png` | KV page still |
 | `kv_edit.png` | KV edit still |
+
+## Timed XY veil stills (`xy_timed/`)
+
+Produced by `spinme/host/test_xy_timed_redraw` (bit-identical goldens):
+
+```bash
+cd spinme/host
+make build/test_xy_timed_redraw && ./build/test_xy_timed_redraw
+# refresh goldens:
+REGEN_XY_TIMED=1 ./build/test_xy_timed_redraw
+```
+
+Static under-veil overlapping `4`+`k`; timed under-veil digit `0..9` with
+over-veil letter `a..j` overlapping that digit; z=3 veil pack66 from
+RGBA `0x08080801` (`a2=1`).
