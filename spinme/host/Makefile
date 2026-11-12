@@ -24,7 +24,7 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
-	$(BUILD)/test_xy_timed_redraw
+	$(BUILD)/test_xy_timed_redraw $(BUILD)/test_shape_draw
 
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
@@ -268,6 +268,11 @@ XYT_SRCS := test_xy_timed_redraw.c ta_uilayout.c ta_pack66_png.c \
 $(BUILD)/test_xy_timed_redraw: $(XYT_SRCS) ta_uilayout.h ta_pack66_png.h \
 		ta_glyph_bin.h ta_text.h ta_shape_l2r.h ta_draw_phase1.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(XYT_SRCS) -lz
+
+$(BUILD)/test_shape_draw: test_shape_draw.c ta_shape_draw.c ta_uilayout.c \
+		ta_shape_draw.h ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ test_shape_draw.c ta_shape_draw.c \
+		ta_uilayout.c
 
 $(BUILD):
 	mkdir -p $(BUILD)
