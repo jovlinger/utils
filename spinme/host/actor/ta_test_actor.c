@@ -1,11 +1,13 @@
 /* PC: fork/exec build/test_*. Device: built-in probes (smoke). HTTP offers reply. */
 #include "ta_test_actor.h"
 
+#include "ta_debug.h"
 #include "ta_net_events.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -265,8 +267,17 @@ int ta_test_handle(const ta_event_envelope_t *env) {
     }
     g_stats.handled++;
     if (env->event.type == TA_EV_TEST_GET_DEBUG) {
-        /* WI stub: route + reply shape. Full bitmap/logs land in later item. */
-        offer_http_body(env->session_id, 200u, "w=0&h=0&logs=0");
+        uint8_t *blob;
+        size_t blob_len;
+
+        blob = NULL;
+        blob_len = 0;
+        if (ta_debug_build_get_debug(&blob, &blob_len) != 0 || blob == NULL) {
+            offer_http_body(env->session_id, 500u, "get_debug failed");
+            return -1;
+        }
+        ta_net_http_offer_blob(env->session_id, 200u, blob, blob_len);
+        free(blob);
         return 0;
     }
     if (env->event.type != TA_EV_TEST_RUN) {

@@ -21,15 +21,30 @@ static ta_session_id_t g_sid_gen = 1;
 static ta_session_id_t g_want_sid;
 static ta_event_envelope_t g_offered;
 static int g_have_offer;
+static uint8_t *g_blob;
+static size_t g_blob_len;
+static unsigned g_blob_status;
+static ta_session_id_t g_blob_sid;
+static int g_have_blob;
 
 static char g_mdns_name[TA_NAME_MAX];
 static unsigned g_mdns_count;
+
+static void clear_blob(void) {
+    free(g_blob);
+    g_blob = NULL;
+    g_blob_len = 0;
+    g_blob_status = 0;
+    g_blob_sid = 0;
+    g_have_blob = 0;
+}
 
 void ta_net_http_reset(void) {
     g_wait = NULL;
     g_want_sid = 0;
     g_have_offer = 0;
     memset(&g_offered, 0, sizeof(g_offered));
+    clear_blob();
 }
 
 void ta_net_http_set_wait(ta_net_http_wait_fn fn) {
@@ -46,13 +61,48 @@ void ta_net_http_offer_reply(const ta_event_envelope_t *env) {
     if (g_want_sid != 0 && env->session_id != g_want_sid) {
         return;
     }
+    clear_blob();
     g_offered = *env;
     g_have_offer = 1;
+}
+
+void ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
+                            const void *bytes, size_t n) {
+    uint8_t *copy;
+
+    if (g_want_sid != 0 && session_id != g_want_sid) {
+        return;
+    }
+    if (bytes == NULL || n == 0 || n > TA_NET_HTTP_BLOB_MAX) {
+        return;
+    }
+    copy = (uint8_t *)malloc(n);
+    if (copy == NULL) {
+        return;
+    }
+    memcpy(copy, bytes, n);
+    clear_blob();
+    g_have_offer = 0;
+    g_blob = copy;
+    g_blob_len = n;
+    g_blob_status = http_status;
+    g_blob_sid = session_id;
+    g_have_blob = 1;
 }
 
 static int default_wait(ta_session_id_t session_id, ta_event_envelope_t *out,
                         uint32_t timeout_ms) {
     (void)timeout_ms;
+    if (g_have_blob && g_blob_sid == session_id) {
+        if (out != NULL) {
+            ta_env_clear(out);
+            out->session_id = session_id;
+            out->event.type = TA_EV_NET_HTTP_REPLY;
+            out->event.u.net_http_reply.http_status = (uint16_t)g_blob_status;
+            out->event.u.net_http_reply.n = 0;
+        }
+        return 0;
+    }
     if (!g_have_offer || g_offered.session_id != session_id) {
         return -1;
     }
@@ -271,6 +321,9 @@ static void fill_response(ta_net_http_response_t *out, int status,
     out->http_status = status;
     out->body_len = 0;
     out->body[0] = '\0';
+    free(out->blob);
+    out->blob = NULL;
+    out->blob_len = 0;
     if (body != NULL && body_len > 0) {
         if (body_len >= sizeof(out->body)) {
             body_len = sizeof(out->body) - 1;
@@ -279,6 +332,25 @@ static void fill_response(ta_net_http_response_t *out, int status,
         out->body[body_len] = '\0';
         out->body_len = body_len;
     }
+}
+
+static void fill_response_blob(ta_net_http_response_t *out, int status,
+                               uint8_t *blob, size_t blob_len) {
+    size_t prefix;
+
+    out->http_status = status;
+    free(out->blob);
+    out->blob = blob;
+    out->blob_len = blob_len;
+    prefix = blob_len;
+    if (prefix >= sizeof(out->body)) {
+        prefix = sizeof(out->body) - 1;
+    }
+    if (blob != NULL && prefix > 0) {
+        memcpy(out->body, blob, prefix);
+    }
+    out->body[prefix] = '\0';
+    out->body_len = prefix;
 }
 
 int ta_net_http_handle_request(const uint8_t *req, size_t len,
@@ -456,6 +528,13 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     waitfn = g_wait != NULL ? g_wait : default_wait;
     rc = waitfn(sid, &reply, TA_NET_HTTP_TIMEOUT_MS);
     g_want_sid = 0;
+    if (g_have_blob && g_blob_sid == sid) {
+        fill_response_blob(out, (int)g_blob_status, g_blob, g_blob_len);
+        g_blob = NULL;
+        g_blob_len = 0;
+        g_have_blob = 0;
+        return 0;
+    }
     if (rc != 0) {
         fill_response(out, 201, "accepted", 8);
         return 0;

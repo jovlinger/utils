@@ -1,12 +1,36 @@
 /* Host: Net POST /event ingress + mDNS advertise stub. */
 #include "ta_event.h"
+#include "ta_follow_chrome.h"
 #include "ta_net_events.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
 #include "ta_test_actor.h"
+#include "ta_uilayout.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+/* Lightweight glass stubs so get_debug builds without DRAW_CORE. */
+int ta_glass_installed(void) { return 0; }
+const ta_follow_chrome_t *ta_glass_chrome(void) { return NULL; }
+const ta_pack66_t *ta_glass_base_pixels(void) { return NULL; }
+void ta_glass_panel_size(uint16_t *out_w, uint16_t *out_h) {
+    if (out_w != NULL) {
+        *out_w = 0;
+    }
+    if (out_h != NULL) {
+        *out_h = 0;
+    }
+}
+const char *ta_glass_text(uint8_t field) {
+    (void)field;
+    return "";
+}
+int ta_glass_polled(void) { return 0; }
+int ta_glass_desired(void) { return 0; }
+int ta_glass_playing(void) { return 0; }
+unsigned ta_glass_page(void) { return 0; }
 
 static int failures;
 static int checks;
@@ -122,8 +146,12 @@ int main(void) {
     CHECK(n > 0);
     CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
     CHECK(resp.http_status == 200);
-    CHECK(strstr(resp.body, "w=0") != NULL);
-    CHECK(strstr(resp.body, "h=0") != NULL);
+    CHECK(strstr(resp.body, "w=") != NULL);
+    CHECK(strstr(resp.body, "h=") != NULL);
+    CHECK(strstr(resp.body, "fmt=pack66") != NULL);
+    CHECK(strstr(resp.body, "logs=") != NULL);
+    free(resp.blob);
+    resp.blob = NULL;
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

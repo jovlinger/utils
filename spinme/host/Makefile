@@ -209,8 +209,10 @@ $(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_net_http_event: test_net_http_event.c ta_net_http_event.c \
-		ta_test_actor.c ta_net_http_event.h ta_test_actor.h ta_registry.c \
-		ta_event.c ta_net_events.h ta_event.h | $(BUILD)
+		ta_test_actor.c ta_debug.c ta_log_accept.c ta_log_rings.c \
+		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_net_http_event.h \
+		ta_test_actor.h ta_registry.c ta_event.c ta_net_events.h ta_event.h \
+		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
@@ -285,8 +287,9 @@ $(BUILD)/test_shape_draw: test_shape_draw.c ta_shape_draw.c ta_uilayout.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 $(BUILD)/test_test_actor: test_test_actor.c ta_test_actor.c ta_net_http_event.c \
-		ta_registry.c ta_event.c ta_test_actor.h ta_registry.h ta_event.h \
-		| $(BUILD)
+		ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
+		ta_runtime_cfg.c ta_registry.c ta_event.c ta_test_actor.h \
+		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 

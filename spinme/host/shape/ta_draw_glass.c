@@ -134,6 +134,22 @@ int ta_glass_installed(void) {
     return g.installed;
 }
 
+const ta_pack66_t *ta_glass_base_pixels(void) {
+    if (!g.have_cfg) {
+        return NULL;
+    }
+    return g.cfg.base_pixels;
+}
+
+void ta_glass_panel_size(uint16_t *out_w, uint16_t *out_h) {
+    if (out_w != NULL) {
+        *out_w = g.have_cfg ? g.cfg.panel_w : 0;
+    }
+    if (out_h != NULL) {
+        *out_h = g.have_cfg ? g.cfg.panel_h : 0;
+    }
+}
+
 int ta_glass_backlight(void) {
     return g.lit;
 }
