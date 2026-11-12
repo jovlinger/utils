@@ -14,6 +14,7 @@ Refresh goldens after an intentional UI change:
 
 ```text
 SPINME_UI_UPDATE_GOLDEN=1 ./build/test_screenshots
+# (cwd: spinme/host; sources in tests/)
 ```
 
 | File | Screen |
@@ -26,7 +27,7 @@ SPINME_UI_UPDATE_GOLDEN=1 ./build/test_screenshots
 
 ## Timed XY veil stills (`xy_timed/`)
 
-Produced by `spinme/host/test_xy_timed_redraw` (bit-identical goldens):
+Produced by `spinme/host/tests/local/test_xy_timed_redraw.c` (bit-identical goldens):
 
 ```bash
 cd spinme/host

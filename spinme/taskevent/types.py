@@ -488,6 +488,53 @@ class SchedStop(TaskEvent):
     field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
 
 
+@dataclass
+class TestRun(TaskEvent):
+    mode: int
+    selector: str
+    reply_to: str
+
+    type_id: ClassVar[int] = C.TA_EV_TEST_RUN
+    type_name: ClassVar[str] = "TestRun"
+    c_type_name: ClassVar[str] = "ta_test_run_t"
+    c_union_arm: ClassVar[str] = "test_run"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _u8("mode"),
+        _char("selector", C.TA_TEST_SEL_MAX),
+        _char("reply_to", C.TA_NAME_MAX),
+    )
+
+
+@dataclass
+class TestGetDebug(TaskEvent):
+    type_id: ClassVar[int] = C.TA_EV_TEST_GET_DEBUG
+    type_name: ClassVar[str] = "TestGetDebug"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
+class TestDone(TaskEvent):
+    status: int
+    n_ran: int
+    n_fail: int
+    elapsed_ms: int
+    selector: str
+
+    type_id: ClassVar[int] = C.TA_EV_TEST_DONE
+    type_name: ClassVar[str] = "TestDone"
+    c_type_name: ClassVar[str] = "ta_test_done_t"
+    c_union_arm: ClassVar[str] = "test_done"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _u8("status"),
+        _u16("n_ran"),
+        _u16("n_fail"),
+        _u32("elapsed_ms"),
+        _char("selector", C.TA_TEST_SEL_MAX),
+    )
+
+
 EVENT_CLASSES: List[Type[TaskEvent]] = [
     Nop,
     LogEmitLine,
@@ -522,6 +569,9 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     CtrlPrev,
     CtrlPoll,
     SchedStop,
+    TestRun,
+    TestGetDebug,
+    TestDone,
 ]
 
 EVENT_BY_TYPE_ID: Dict[int, Type[TaskEvent]] = {

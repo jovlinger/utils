@@ -41,7 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         "-o",
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "host" / "ta_event_bodies.gen.h",
+        default=Path(__file__).resolve().parents[1]
+        / "host"
+        / "event"
+        / "ta_event_bodies.gen.h",
     )
     ap.add_argument(
         "--check",

@@ -1,1 +1,1 @@
-../../../../host/ta_net_sntp.c
+../../../../host/actor/ta_net_sntp.c

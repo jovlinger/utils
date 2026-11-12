@@ -88,10 +88,11 @@ refreshes the URL via inform.
 | Form | `to_form` / `from_form` | `application/x-www-form-urlencoded`; flat events only (may raise); lists = repeated keys |
 
 `EventEnvelope` wraps `src` + `session_id` + `enqueue_time_ms` + body.
-Host body typedefs are generated into `host/ta_event_bodies.gen.h` by
-`taskevent/gen_c_header.py` and included from `host/ta_event.h` (**passed by
-value** in MVP). ABI padding may differ from the packed LE wire body. Update
-Python first, regenerate the `.gen.h`, then this doc.
+Host body typedefs are generated into `host/event/ta_event_bodies.gen.h` by
+`taskevent/gen_c_header.py` and included from `host/event/ta_event.h`
+(**passed by value** in MVP). ABI padding may differ from the packed LE wire
+body. Update Python first, regenerate the `.gen.h`, then this doc. Host C
+sources are split under `host/{event,shape,actor,base}/`.
 
 ### Common header (every queue slot)
 
@@ -126,7 +127,7 @@ typedef struct ta_event_envelope {
 Naming: `ta_<recipient>_<verb>_<noun>_t` (recipient namespace / actor face),
 matching `taskevent.types` class names (`LogEmitLine` <->
 `ta_log_emit_line_t`). No byte-blob / `legacy` arm -- every op has a named
-union member in `host/ta_event.h` (Net poll/set/albumart, Draw
+union member in `host/event/ta_event.h` (Net poll/set/albumart, Draw
 update/paint/scroll/text/informs, ControlEvents, Scheduler start/tick, ISR
 touch/rotary, Logger line, ...).
 
@@ -283,7 +284,7 @@ entry { entrylen; next; keylen; key[keylen]; valueinfo; value[...] }
 ```
 
 `valueinfo` high 3 bits = type (bool/smallint/int32/string/blob); see
-`host/ta_kv.h`.
+`host/base/ta_kv.h`.
 
 **Prepopulated but writable:** the static build emits a factory KV image
 (default roster + per-name actor blobs). Runtime mutates the same region.
@@ -862,12 +863,20 @@ Built by `ta_follow_chrome_build` / `ta_follow_chrome_place`.
 Shapes do not hold function pointers. Interactive slots carry `fn_enum`;
 `ta_wire_touch` / `ta_wire_rotary` switch on it.
 
+### XYShape-only glass write (`ta_shape_draw`)
+
+Only `TA_SD_TAG_XY` reaches the glass. Each XY owns a pixmap plus per-row RLC
+dirty (`n=2` words, `/2` units). Rebuild from child -> mark-full or derive RLC
+-> `ta_sd_xy_blit_glass` / `ta_sd_xy_push_dirty`. Host `test_xy_timed_redraw`
+paints 0-9 / a-j solely through that path. Product `ta_glass_paint` bakes via
+phase1/phase2, then loads each exterior into a scratch XY and pushes RLC spans.
+
 ### Pseudo: whole UI paint (follow page)
 
 ```
 glass_paint():
   if swap.active != 0:
-    push full-panel pixels of active swap child; return
+    glass_push_xy(full panel of active swap child); return
 
   phase1(scene):                     # bake dirty L2R / Viewport / Swap bind
   pushes = phase2(scene)             # nearest-first dirty exteriors
@@ -878,9 +887,9 @@ glass_paint():
         base_crop(exterior),
         blit each follow slot 1 .. top_slot-1,   # zone..volume under transport
         blit hdr icon at (0,0) with a2)
-      push_rect(exterior, composed)
+      glass_push_xy(exterior, composed)   # scratch XY + RLC spans
     else:
-      push_rect(exterior, hdr.pixels)
+      glass_push_xy(exterior, hdr.pixels)
 
 stack_compose(dst, ex, ey, ...):
   blit base into dst
@@ -899,7 +908,7 @@ stack_compose(dst, ex, ey, ...):
 
 ### Host unit tests (docstrings)
 
-All live under `spinme/host/test_*.c`. Run via `make test` (or one binary
+Live under `spinme/host/tests/local/test_*.c`. Run via `make test` (or one binary
 under `build/`). Each file's leading comment is the contract a fresh agent
 should read first:
 
@@ -1161,17 +1170,26 @@ sequenceDiagram
 
 ## 8. File map (`spinme/host`)
 
-| Area | Files |
-|------|-------|
-| Envelope / registry / queue / init | `ta_event.*`, `ta_registry.*`, `ta_queue.*`, `ta_init.*` |
-| Logger / KV | `ta_logger.*`, `ta_kv.*` |
-| Draw events + glass | `ta_draw_events.*`, `ta_draw_update.*`, `ta_draw_phase1.*`, `ta_draw_phase2.*`, `ta_under_image.*` |
-| Shapes / layout / text | `ta_uilayout.*`, `ta_shape_l2r.*`, `ta_text.*`, `ta_viewport.*` |
-| Follow / hit | `ta_follow_chrome.*`, `ta_hit_dispatch.*` |
-| ISR | `ta_isr_mail.*`, `ta_input_isr.*` |
-| Net / MPD / Controller | `ta_net_events.*`, `ta_net_mpd.*`, `ta_router.*`, `ta_controller.*` |
-| Scheduler | `ta_sched_events.*` |
-| Artwork | `ta_artwork.*` |
+Library sources live under four subdirs. Tests:
+
+| Path | Role |
+|------|------|
+| `tests/local/` | PC unit + goldens (`test_xy_timed_redraw`: digits 0-9 / letters a-j, **bit-identical** PNG vs `screenshots/xy_timed/`; `test_screenshots`: pixel RGB) |
+| `tests/ondevice/` | Post-flash/OTA: `POST /event/Test/TestRun` (alias `run_test`) |
+
+Firmware `src/ta_host/` keeps flat symlink names into the library trees.
+
+| Subdir | Area | Examples |
+|--------|------|----------|
+| `event/` | Envelope + domain event types | `ta_event.*`, `ta_draw_events.*`, `ta_net_events.*`, `ta_sched_events.*`, `ta_net_http_event.*` |
+| `shape/` | Glass / layout / draw / PNG | `ta_draw_glass.*`, `ta_shape_*`, `ta_text.*`, `ta_uilayout.*`, `ta_pack66_png.*`, `ta_stack_compose.*` |
+| `actor/` | Actors + net backends | `ta_registry.*`, `ta_controller.*`, `ta_router.*`, `ta_boot.*`, `ta_net_*`, `ta_log_accept.*`, `ta_test_actor.*` |
+| `base/` | Shared fabric | `ta_init.*`, `ta_queue.*`, `ta_kv.*`, `ta_runtime_cfg.*`, `ta_isr_mail.*`, `ta_sync.h` |
+
+**Test actor:** `TA_EV_TEST_RUN` / `TA_EV_TEST_DONE` (`0x600` / `0x610`).
+PC forks `./build/test_<selector>`; device runs built-in probes (`smoke`).
+HTTP form: `mode`, `selector`/`name`. Offers `TA_EV_NET_HTTP_REPLY` for the
+Net gateway wait.
 
 Run: `(cd spinme/host && make test)`.
 

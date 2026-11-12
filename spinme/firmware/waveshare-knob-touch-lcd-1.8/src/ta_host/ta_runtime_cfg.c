@@ -1,1 +1,1 @@
-../../../../host/ta_runtime_cfg.c
+../../../../host/base/ta_runtime_cfg.c
