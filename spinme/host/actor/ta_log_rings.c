@@ -597,3 +597,31 @@ void ta_log_rings_iter_end(ta_log_rings_iter_t *it) {
     it->n = 0;
     it->i = 0;
 }
+
+uint32_t ta_log_rings_ack_through(uint32_t through_seq) {
+    uint32_t dropped;
+    unsigned r;
+
+    if (!g_ready || g_arena == NULL) {
+        return 0;
+    }
+    dropped = 0;
+    for (r = 0; r < (unsigned)TA_LOG_RING_COUNT; r++) {
+        ta_log_ring_t *ring;
+
+        ring = &g_rings[r];
+        while (ring->count > 0u && ring->head != TA_LOG_OFF_NULL) {
+            ta_log_node_t *node;
+
+            node = node_at(ring->head);
+            if (node->seq > through_seq) {
+                break;
+            }
+            if (!drop_head(ring)) {
+                break;
+            }
+            dropped++;
+        }
+    }
+    return dropped;
+}

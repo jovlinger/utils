@@ -189,6 +189,22 @@ int ta_net_handle(const ta_event_envelope_t *env) {
                           NULL);
         }
         return 0;
+    case TA_EV_NET_LOG_DRAIN: {
+        ta_event_envelope_t ack;
+        const ta_net_log_drain_t *drain;
+
+        /* Host: treat drain as delivered (TCP QuLog backend lands later). */
+        g_stats.handled++;
+        drain = &env->event.u.net_log_drain;
+        ta_env_clear(&ack);
+        (void)ta_env_set_src(&ack, TA_NET_NAME);
+        ack.session_id = env->session_id;
+        ack.event.type = TA_EV_NET_LOG_DRAIN_ACK;
+        ack.event.u.net_log_drain_ack.status = 0;
+        ack.event.u.net_log_drain_ack.max_seq = drain->max_seq;
+        (void)ta_registry_post("Log", &ack);
+        return 0;
+    }
     default:
         g_stats.unknown++;
         return -1;

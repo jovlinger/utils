@@ -4,6 +4,7 @@
 #include "ta_kv.h"
 #include "ta_kv_actor.h"
 #include "ta_log_rings.h"
+#include "ta_net_events.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -171,18 +172,80 @@ const char *ta_log_url(void) {
 }
 
 int ta_log_dump(uint32_t now_ms) {
+    ta_log_rings_iter_t it;
+    ta_log_rings_entry_t ent;
+    uint32_t max_seq;
+    int send_rc;
+    char batch[TA_NET_LOG_DRAIN_MAX];
+    size_t batch_n;
+
     if (rebuild_snap() != 0) {
         return -1;
     }
-    if (g_snap_n > 0 && g_send != NULL && g_url[0] != '\0') {
-        (void)g_send(g_url, g_snap, g_snap_n, g_send_ud);
+    max_seq = 0;
+    batch_n = 0;
+    memset(&it, 0, sizeof(it));
+    if (ta_log_rings_iter_begin(&it) == 0) {
+        while (ta_log_rings_iter_next(&it, &ent) != 0) {
+            char line[160];
+            size_t ln;
+            int pri;
+
+            if (ent.seq > max_seq) {
+                max_seq = ent.seq;
+            }
+            pri = 14; /* user.info */
+            if (ent.level == TA_LOG_LEVEL_ERROR) {
+                pri = 11; /* user.err */
+            } else if (ent.level == TA_LOG_LEVEL_WARN) {
+                pri = 12; /* user.warning */
+            }
+            ln = (size_t)snprintf(
+                line, sizeof(line), "<%d>1 %llu spinme spinme - - %s", pri,
+                (unsigned long long)ent.time_ms,
+                ent.text != NULL ? ent.text : "");
+            if (ln >= sizeof(line)) {
+                ln = sizeof(line) - 1;
+            }
+            if (ent.repeat > 1u) {
+                char rep[48];
+                int rn;
+
+                rn = snprintf(rep, sizeof(rep), " (repeated %u times)",
+                              (unsigned)ent.repeat);
+                if (rn > 0 && (size_t)rn < sizeof(rep) &&
+                    ln + (size_t)rn < sizeof(line)) {
+                    memcpy(line + ln, rep, (size_t)rn);
+                    ln += (size_t)rn;
+                    line[ln] = '\0';
+                }
+            }
+            if (batch_n + ln + 1u > sizeof(batch)) {
+                break;
+            }
+            memcpy(batch + batch_n, line, ln);
+            batch_n += ln;
+            batch[batch_n++] = '\n';
+        }
+        ta_log_rings_iter_end(&it);
     }
-    /* Transitional: clear after dump. ACK-advanced heads land in a later WI. */
-    (void)ta_log_rings_reset();
-    ta_log_set_buffer_kb(g_buffer_kb);
-    g_snap_n = 0;
-    g_last_empty_ms = now_ms;
-    g_have_last = 1;
+
+    send_rc = 0;
+    if (g_snap_n > 0 && g_send != NULL && g_url[0] != '\0') {
+        send_rc = g_send(g_url, g_snap, g_snap_n, g_send_ud);
+    } else if (batch_n > 0 && g_url[0] == '\0') {
+        /* No URL: treat as local-only; do not advance heads. */
+        send_rc = -1;
+    }
+
+    if (send_rc == 0 && g_snap_n > 0) {
+        (void)ta_log_rings_ack_through(max_seq);
+        g_snap_n = 0;
+        g_last_empty_ms = now_ms;
+        g_have_last = 1;
+    }
+    /* Failed or unreachable QuLog: leave rings; retry on next dump/tick. */
+    (void)batch;
     return 0;
 }
 
@@ -247,6 +310,16 @@ int ta_log_handle_envelope(const ta_event_envelope_t *env) {
             return ta_kv_actor_get("Log", TA_KV_KEY_LOGTARGET);
         }
         return ta_kv_actor_get("Log", TA_KV_KEY_LOG_URL);
+    }
+    if (env->event.type == TA_EV_NET_LOG_DRAIN_ACK) {
+        if (env->event.u.net_log_drain_ack.status == 0) {
+            (void)ta_log_rings_ack_through(
+                env->event.u.net_log_drain_ack.max_seq);
+            g_snap_n = 0;
+            g_last_empty_ms = ta_now_ms();
+            g_have_last = 1;
+        }
+        return 0;
     }
     if (env->event.type != TA_EV_ALL_INFORM_RESULT) {
         return 0;

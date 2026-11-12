@@ -102,6 +102,8 @@ typedef struct ta_event {
         ta_all_perform_init_t all_perform_init;
         ta_all_inform_result_t all_inform_result;
         ta_net_http_reply_t net_http_reply;
+        ta_net_log_drain_t net_log_drain;
+        ta_net_log_drain_ack_t net_log_drain_ack;
         ta_test_run_t test_run;
         ta_test_done_t test_done;
     } u;

@@ -94,4 +94,8 @@ int ta_log_rings_iter_begin(ta_log_rings_iter_t *it);
 int ta_log_rings_iter_next(ta_log_rings_iter_t *it, ta_log_rings_entry_t *out);
 void ta_log_rings_iter_end(ta_log_rings_iter_t *it);
 
+/* Drop every node with seq <= through_seq from all rings (ACK cursor).
+ * Returns the number of nodes dropped. */
+uint32_t ta_log_rings_ack_through(uint32_t through_seq);
+
 #endif

@@ -18,6 +18,15 @@ static int checks;
         }                                                                      \
     } while (0)
 
+static int ok_send(const char *url, const ta_log_accept_event_t *rows, size_t n,
+                   void *ud) {
+    (void)url;
+    (void)rows;
+    (void)n;
+    (void)ud;
+    return 0;
+}
+
 int main(void) {
     const ta_log_accept_event_t *ev;
     char big[TA_LOG_MSG_MAX + 8];
@@ -47,8 +56,12 @@ int main(void) {
     CHECK(ta_log_rings_count(TA_LOG_RING_ERROR) >= 1);
     CHECK(ta_log_rings_count(TA_LOG_RING_WARN) >= 1);
 
-    /* Dump clears the rings (transitional until ACK drain). */
+    /* Dump without URL leaves lines; with sender ACK advances heads. */
     CHECK(ta_log_dump(100) == 0);
+    CHECK(ta_log_accept_count() > 0);
+    ta_log_set_url("tcp://qnap.local:514");
+    ta_log_set_sender(ok_send, NULL);
+    CHECK(ta_log_dump(101) == 0);
     CHECK(ta_log_accept_count() == 0);
     CHECK(ta_log_accept(99, "after-dump") == 0);
     CHECK(ta_log_accept_count() == 1);

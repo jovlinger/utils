@@ -489,6 +489,45 @@ class SchedStop(TaskEvent):
 
 
 @dataclass
+class NetLogDrain(TaskEvent):
+    max_seq: int
+    n: int
+    payload: bytes
+
+    type_id: ClassVar[int] = C.TA_EV_NET_LOG_DRAIN
+    type_name: ClassVar[str] = "NetLogDrain"
+    c_type_name: ClassVar[str] = "ta_net_log_drain_t"
+    c_union_arm: ClassVar[str] = "net_log_drain"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _u32("max_seq"),
+        _u16("n"),
+        FieldSpec(
+            name="payload",
+            kind="bytes",
+            size=C.TA_NET_LOG_DRAIN_MAX,
+            length_field="n",
+            flat=False,
+            c_name="bytes",
+        ),
+    )
+
+
+@dataclass
+class NetLogDrainAck(TaskEvent):
+    status: int
+    max_seq: int
+
+    type_id: ClassVar[int] = C.TA_EV_NET_LOG_DRAIN_ACK
+    type_name: ClassVar[str] = "NetLogDrainAck"
+    c_type_name: ClassVar[str] = "ta_net_log_drain_ack_t"
+    c_union_arm: ClassVar[str] = "net_log_drain_ack"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _u8("status"),
+        _u32("max_seq"),
+    )
+
+
+@dataclass
 class TestRun(TaskEvent):
     mode: int
     selector: str
@@ -569,6 +608,8 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     CtrlPrev,
     CtrlPoll,
     SchedStop,
+    NetLogDrain,
+    NetLogDrainAck,
     TestRun,
     TestGetDebug,
     TestDone,
