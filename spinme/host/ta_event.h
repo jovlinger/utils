@@ -43,81 +43,7 @@ enum {
 
 #define TA_ALL_KEY_MAX 32
 #define TA_ALL_INFORM_MAX 64
-
-typedef struct {
-    uint8_t unused;
-} ta_all_perform_init_t;
-
-typedef struct {
-    uint8_t status;
-    char key[TA_ALL_KEY_MAX];
-    uint16_t n;
-    uint8_t bytes[TA_ALL_INFORM_MAX];
-} ta_all_inform_result_t;
-
-/* ---- per-message bodies: ta_<recipient>_<verb>_<noun>_t ---- */
-
-typedef struct {
-    char target[TA_NAME_MAX];
-} ta_ctrl_set_route_t;
-
-typedef struct {
-    uint8_t severity;
-    uint8_t tag;
-    char text[TA_LOG_TEXT_MAX + 1];
-} ta_log_emit_line_t;
-
-typedef struct {
-    uint16_t x;
-    uint16_t y;
-} ta_isr_touch_t;
-
-typedef struct {
-    int8_t steps;
-    uint8_t vel_q8;
-} ta_isr_rotary_t;
-
-/* Net poll: response type implied (TA_EV_NET_POLL_DONE / coord inform). */
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-} ta_net_poll_playerstate_t;
-
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-    uint8_t op; /* TA_NET_SET_OP_* */
-    ta_volume_t volume;
-} ta_net_set_t;
-
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-    char path[TA_PATH_MAX];
-} ta_net_fetch_albumart_t;
-
-/* Coordinator (MPDController) inform from Net poll completion. */
-typedef struct {
-    char artist[TA_TEXT_MAX];
-    char album[TA_TEXT_MAX];
-    char song[TA_TEXT_MAX];
-    ta_playing_state_t playing;
-    ta_volume_t volume;
-    int track_total_length_secs;
-    int track_current_pos_secs;
-} ta_coord_inform_playerstate_t;
-
-typedef struct {
-    char artist[TA_TEXT_MAX];
-    char album[TA_TEXT_MAX];
-    char song[TA_TEXT_MAX];
-} ta_draw_inform_songinfo_t;
-
-typedef struct {
-    ta_volume_t volume;
-    int actual; /* 0 = desired/target; 1 = settled from player */
-} ta_draw_inform_volume_t;
-
-typedef struct {
-    int track_current_pos_secs;
-} ta_draw_inform_currpos_t;
+#define TA_NET_HTTP_REPLY_MAX 64
 
 /* DRAW_UPDATE: kind selects cadence / status / base-dirty. */
 enum {
@@ -126,81 +52,14 @@ enum {
     TA_DRAW_UPD_BASE_DIRTY = 2
 };
 
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-    uint8_t kind;
-    uint8_t polled;         /* volume from player; 0xFF = keep */
-    uint8_t desired;        /* volume target; 0xFF = keep */
-    uint8_t playing;        /* desired play/pause 0/1; 0xFF = keep */
-    uint8_t playing_polled; /* player play/pause 0/1; 0xFF = keep */
-} ta_draw_update_t;
-
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-} ta_draw_paint_t;
-
-typedef struct {
-    uint16_t x;
-    uint16_t y;
-} ta_draw_react_touch_t;
-
-typedef struct {
-    int8_t steps;
-} ta_draw_react_rotate_t;
-
-typedef struct {
-    int16_t ox;
-    uint8_t has_ox; /* 0 = cadence step; 1 = absolute ox */
-} ta_draw_scroll_ox_t;
-
-typedef struct {
-    uint8_t field;
-    uint8_t flags;
-    uint8_t n;
-    char ascii[TA_DRAW_TEXT_CHUNK_MAX];
-} ta_draw_set_text_t;
-
-/* ControlEvents: reply_to empty => fire-and-forget; echo type implied. */
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-} ta_ctrl_toggle_t;
-
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-} ta_ctrl_set_active_t;
-
 enum {
     TA_CTRL_VOL_NONE = 0, /* touch / no change */
     TA_CTRL_VOL_REL = 1,
     TA_CTRL_VOL_ABS = 2
 };
 
-typedef struct {
-    char reply_to[TA_NAME_MAX];
-    uint8_t mode; /* TA_CTRL_VOL_* */
-    int8_t delta;
-    ta_volume_t absolute;
-} ta_ctrl_volume_t;
-
-typedef struct {
-    char fire_to[TA_NAME_MAX];
-    ta_event_type_t fire_type;
-    uint32_t period_ms;
-    uint8_t flags;
-} ta_sched_start_t;
-
-typedef struct {
-    uint32_t advance_ms;
-} ta_sched_tick_t;
-
-#define TA_NET_HTTP_REPLY_MAX 64
-
-/* Reply to HTTP POST /event/<actor>/<event> (Net waits on session_id). */
-typedef struct {
-    uint16_t http_status;
-    uint16_t n;
-    uint8_t bytes[TA_NET_HTTP_REPLY_MAX];
-} ta_net_http_reply_t;
+/* Body typedefs: generated from spinme/taskevent (Python SoT). */
+#include "ta_event_bodies.gen.h"
 
 typedef struct ta_event {
     ta_event_type_t type;

@@ -23,7 +23,22 @@ class TaskEventCodecTests(unittest.TestCase):
         raw = ev.write_binary()
         got = LogEmitLine.read_binary(raw)
         self.assertEqual(got, ev)
-        self.assertEqual(LogEmitLine.to_c_struct(severity=3, tag=1, text="boot"), raw)
+
+    def test_to_c_struct_is_typedef_not_bytes(self) -> None:
+        decl = LogEmitLine.to_c_struct()
+        self.assertIsInstance(decl, str)
+        self.assertIn("typedef struct", decl)
+        self.assertIn("uint8_t severity;", decl)
+        self.assertIn("char text[", decl)
+        self.assertIn("} ta_log_emit_line_t;", decl)
+        # Must not be the old write_binary alias.
+        self.assertNotIsInstance(decl, bytes)
+
+    def test_c_literal_is_instance_method(self) -> None:
+        lit = LogEmitLine(severity=1, tag=2, text="x").to_c_literal()
+        self.assertIn("ta_log_emit_line_t", lit)
+        self.assertIn(".severity = 1", lit)
+        self.assertIn('.text = "x"', lit)
 
     def test_log_text_roundtrip(self) -> None:
         ev = LogEmitLine(severity=2, tag=0, text="hi")
@@ -36,12 +51,6 @@ class TaskEventCodecTests(unittest.TestCase):
         form = ev.to_form()
         self.assertIn("event=LogEmitLine", form)
         self.assertEqual(LogEmitLine.from_form(form), ev)
-
-    def test_c_literal_contains_fields(self) -> None:
-        lit = LogEmitLine(severity=1, tag=2, text="x").to_c_literal()
-        self.assertIn("ta_log_emit_line_t", lit)
-        self.assertIn(".severity = 1", lit)
-        self.assertIn('.text = "x"', lit)
 
     def test_all_inform_form_fails(self) -> None:
         ev = AllInformResult(status=0, key="url", n=3, payload=b"abc")

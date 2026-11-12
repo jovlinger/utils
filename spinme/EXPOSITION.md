@@ -80,15 +80,17 @@ refreshes the URL via inform.
 
 | Codec | API | Notes |
 |-------|-----|-------|
-| Packed LE binary body | `write_binary` / `read_binary`; classmethod `to_c_struct(**fields)` | Portable wire / ESP32-friendly; field order matches C members |
+| Packed LE binary body | `write_binary` / `read_binary` | Portable wire / ESP32-friendly; field order matches C members |
+| C struct typedef | classmethod `to_c_struct()` | Emits `typedef struct { ... } ta_*_t;` for the type |
+| C literal | instance `to_c_literal()` | Compound-literal text for one object's value |
 | Text | `write_text` / `read_text` | `event=` / `type_id=` / `field=` lines |
-| C literal | `to_c_literal()` | Compound-literal text for the body value |
 | Form | `to_form` / `from_form` | `application/x-www-form-urlencoded`; flat events only (may raise); lists = repeated keys |
 
 `EventEnvelope` wraps `src` + `session_id` + `enqueue_time_ms` + body.
-Host C structs in `host/ta_event.h` mirror those fields (**passed by value**
-in MVP); ABI padding may differ from the packed LE wire body. Update Python
-first, then C / this doc.
+Host body typedefs are generated into `host/ta_event_bodies.gen.h` by
+`taskevent/gen_c_header.py` and included from `host/ta_event.h` (**passed by
+value** in MVP). ABI padding may differ from the packed LE wire body. Update
+Python first, regenerate the `.gen.h`, then this doc.
 
 ### Common header (every queue slot)
 

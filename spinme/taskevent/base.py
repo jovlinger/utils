@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Any, Dict, List, Mapping, Tuple, Type, TypeVar
+from typing import Any, ClassVar, Dict, List, Mapping, Tuple, Type, TypeVar
 from urllib.parse import parse_qsl, urlencode
 
 from . import constants as C
 
 T = TypeVar("T", bound="TaskEvent")
+
+_C_KIND: Dict[str, str] = {
+    "u8": "uint8_t",
+    "u16": "uint16_t",
+    "u32": "uint32_t",
+    "i8": "int8_t",
+    "i16": "int16_t",
+    "i32": "int32_t",
+}
 
 
 class TaskEventError(ValueError):
@@ -65,6 +74,19 @@ class FieldSpec:
     @property
     def c_member(self) -> str:
         return self.c_name or self.name
+
+    def c_decl_line(self) -> str:
+        """One C struct member line (no indent, with trailing semicolon)."""
+        mem = self.c_member
+        if self.kind == "char":
+            return f"char {mem}[{self.size}];"
+        if self.kind == "bytes":
+            return f"uint8_t {mem}[{self.size}];"
+        ctype = _C_KIND.get(self.kind)
+        if ctype is None:
+            raise TaskEventError(f"unknown field kind {self.kind}")
+        return f"{ctype} {mem};"
+
     def pack(self, value: Any, values: Mapping[str, Any]) -> bytes:
         if self.kind == "u8":
             return struct.pack("<B", int(value) & 0xFF)
@@ -191,9 +213,19 @@ class TaskEvent:
         return cls(**acc)
 
     @classmethod
-    def to_c_struct(cls: Type[T], **kwargs: Any) -> bytes:
-        """Classmethod: pack kwargs into the packed LE C body representation."""
-        return cls(**kwargs).write_binary()
+    def to_c_struct(cls: Type[T]) -> str:
+        """Classmethod: C typedef/struct text for this event body type (ESP32)."""
+        name = cls.c_type_name
+        if not cls.field_specs:
+            # Marker-only / unused bodies: keep a one-byte placeholder like host.
+            if name == "uint8_t":
+                return "/* Nop: no dedicated body struct */\n"
+            return f"typedef struct {{\n    uint8_t unused;\n}} {name};\n"
+        lines = ["typedef struct {"]
+        for spec in cls.field_specs:
+            lines.append(f"    {spec.c_decl_line()}")
+        lines.append(f"}} {name};")
+        return "\n".join(lines) + "\n"
 
     def write_text(self) -> str:
         lines = [
