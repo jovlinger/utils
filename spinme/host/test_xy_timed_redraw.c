@@ -348,9 +348,14 @@ int main(void) {
         if (regen) {
             CHECK(copy_file(actual, golden) == 0);
             printf("regen %s\n", golden);
-        } else {
-            CHECK(files_bit_identical(actual, golden) == 0);
+        } else if (files_bit_identical(actual, golden) == 0) {
+            checks++;
             printf("bit-identical %s\n", golden);
+        } else {
+            checks++;
+            failures++;
+            fprintf(stderr, "%s:%d: PNG not bit-identical: %s vs %s\n",
+                    __FILE__, __LINE__, actual, golden);
         }
     }
 
