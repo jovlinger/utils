@@ -68,19 +68,6 @@ typedef struct {
     uint8_t bytes[64];
 } ta_net_http_reply_t;
 
-/* NetLogDrain type_id=0x321 -- short TCP/RFC-5424 batch. */
-typedef struct {
-    uint32_t max_seq;
-    uint16_t n;
-    uint8_t bytes[512];
-} ta_net_log_drain_t;
-
-/* NetLogDrainAck type_id=0x322 */
-typedef struct {
-    uint8_t status;
-    uint32_t max_seq;
-} ta_net_log_drain_ack_t;
-
 /* CoordInformPlayerstate type_id=0x310 */
 typedef struct {
     char artist[96];
@@ -180,6 +167,24 @@ typedef struct {
 typedef struct {
     uint32_t advance_ms;
 } ta_sched_tick_t;
+
+/* NetLogDrain type_id=0x321 */
+typedef struct {
+    uint32_t max_seq;
+    uint16_t n;
+    uint8_t bytes[512];
+} ta_net_log_drain_t;
+
+/* NetLogDrainAck type_id=0x322 */
+typedef struct {
+    uint8_t status;
+    uint32_t max_seq;
+} ta_net_log_drain_ack_t;
+
+/* DebugStatus type_id=0x407 */
+typedef struct {
+    char text[96];
+} ta_debug_status_t;
 
 /* TestRun type_id=0x600 */
 typedef struct {

@@ -158,6 +158,9 @@ int ta_draw_handle(const ta_event_envelope_t *env) {
         return 0;
     case TA_EV_DRAW_SET_TEXT:
         return handle_set_text(env);
+    case TA_EV_DEBUG_STATUS:
+        g_stats.handled++;
+        return ta_debug_status_reply(env, TA_DRAW_NAME, "ok");
     default:
         g_stats.unknown++;
         return -1;
@@ -165,6 +168,10 @@ int ta_draw_handle(const ta_event_envelope_t *env) {
 }
 
 int ta_draw_enqueue(const ta_event_envelope_t *env) {
+    /* DebugStatus must reply synchronously for Controller TIMEOUT_SHORT. */
+    if (env != NULL && env->event.type == TA_EV_DEBUG_STATUS) {
+        return ta_draw_handle(env);
+    }
     if (g_q != NULL) {
         return ta_queue_push(g_q, env);
     }

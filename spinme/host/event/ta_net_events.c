@@ -1,8 +1,11 @@
 #include "ta_net_events.h"
 
 #include "ta_net_backend.h"
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
+#include "ta_sched_events.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static ta_net_stats_t g_stats;
@@ -204,6 +207,24 @@ int ta_net_handle(const ta_event_envelope_t *env) {
         ack.event.u.net_log_drain_ack.max_seq = drain->max_seq;
         (void)ta_registry_post("Log", &ack);
         return 0;
+    }
+    case TA_EV_ALL_PERFORM_INIT:
+        g_stats.handled++;
+        ta_net_mdns_set_name(TA_NET_MDNS_HOSTNAME);
+        (void)ta_net_mdns_advertise();
+        (void)ta_sched_arm_periodic(TA_NET_NAME, env->session_id,
+                                    TA_NET_MDNS_PERIOD_MS,
+                                    TA_EV_NET_MDNS_ADVERTISE);
+        return 0;
+    case TA_EV_NET_MDNS_ADVERTISE:
+        g_stats.handled++;
+        return ta_net_mdns_advertise();
+    case TA_EV_DEBUG_STATUS: {
+        char line[64];
+
+        g_stats.handled++;
+        snprintf(line, sizeof(line), "mdns=%u", ta_net_mdns_advertise_count());
+        return ta_debug_status_reply(env, TA_NET_NAME, line);
     }
     default:
         g_stats.unknown++;

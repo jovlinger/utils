@@ -313,6 +313,22 @@ static int build_event_from_form(const char *event_name,
         ev->type = TA_EV_TEST_GET_DEBUG;
         return 0;
     }
+    if (strcmp(event_name, "debugall") == 0 ||
+        strcmp(event_name, "debug_all") == 0) {
+        ev->type = TA_EV_DEBUG_ALL;
+        return 0;
+    }
+    if (strcmp(event_name, "debugstatus") == 0 ||
+        strcmp(event_name, "debug_status") == 0) {
+        ev->type = TA_EV_DEBUG_STATUS;
+        v = form_get(flat, nflat, "text");
+        if (v == NULL) {
+            v = "";
+        }
+        snprintf(ev->u.debug_status.text, sizeof(ev->u.debug_status.text),
+                 "%s", v);
+        return 0;
+    }
     return -1;
 }
 
@@ -561,9 +577,22 @@ void ta_net_mdns_set_name(const char *name) {
     snprintf(g_mdns_name, sizeof(g_mdns_name), "%s", name);
 }
 
+#ifdef SPINME_TA_DEVICE
+/* Provided by firmware C++ shim (ESPmDNS). */
+extern int ta_net_mdns_advertise_device(const char *hostname);
+#endif
+
 int ta_net_mdns_advertise(void) {
-    /* Host stub: count broadcasts. Device will emit real mDNS. */
-    (void)g_mdns_name;
+    const char *name;
+
+    name = g_mdns_name[0] != '\0' ? g_mdns_name : TA_NET_MDNS_HOSTNAME;
+#ifdef SPINME_TA_DEVICE
+    if (ta_net_mdns_advertise_device(name) != 0) {
+        return -1;
+    }
+#else
+    (void)name; /* Host stub: count only (no multicast). */
+#endif
     g_mdns_count++;
     return 0;
 }

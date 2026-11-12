@@ -53,6 +53,8 @@ uint32_t ta_log_last_empty_ms(void);
 
 void ta_log_apply_kv_settings(void);
 int ta_log_handle_envelope(const ta_event_envelope_t *env);
+/* Register canonical lowercase actor name "log". */
+void ta_log_start(void);
 
 size_t ta_log_format_syslog(char *dst, size_t cap, uint32_t emit_time_ms,
                             const char *message);

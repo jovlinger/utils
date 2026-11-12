@@ -25,7 +25,8 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_log_accept $(BUILD)/test_log_drain $(BUILD)/test_log_init \
 	$(BUILD)/test_net_sntp $(BUILD)/test_shape_swap \
 	$(BUILD)/test_kv_editor $(BUILD)/test_screenshots $(BUILD)/test_wire \
-	$(BUILD)/test_net_http_event $(BUILD)/test_debug $(BUILD)/test_runtime_cfg
+	$(BUILD)/test_net_http_event $(BUILD)/test_debug $(BUILD)/test_runtime_cfg \
+	$(BUILD)/test_debug_all
 
 .PHONY: test clean
 
@@ -67,9 +68,14 @@ $(BUILD)/test_registry_logger: $(REG_SRCS) ta_registry.h ta_init.h ta_logger.h \
 		ta_queue.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-ROUTER_SRCS := test_router.c ta_router.c ta_registry.c ta_event.c
-$(BUILD)/test_router: $(ROUTER_SRCS) ta_router.h ta_registry.h ta_event.h \
-		| $(BUILD)
+ROUTER_SRCS := test_router.c ta_router.c ta_net_http_event.c ta_registry.c \
+	ta_event.c
+$(BUILD)/test_router: $(ROUTER_SRCS) ta_router.h ta_net_http_event.h \
+		ta_registry.h ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
+
+$(BUILD)/test_debug_all: test_debug_all.c ta_router.c ta_net_http_event.c \
+		ta_registry.c ta_event.c ta_router.h ta_net_http_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 ISR_SRCS := test_isr_mail.c ta_isr_mail.c ta_queue.c ta_event.c
@@ -90,9 +96,10 @@ $(BUILD)/test_draw_events: $(DRAW_SRCS) $(DRAW_HDRS) ta_registry.h \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-NET_SRCS := test_net_events.c ta_net_events.c ta_registry.c ta_event.c
-$(BUILD)/test_net_events: $(NET_SRCS) ta_net_events.h ta_registry.h ta_event.h \
-		| $(BUILD)
+NET_SRCS := test_net_events.c ta_net_events.c ta_net_http_event.c \
+	ta_sched_events.c ta_registry.c ta_event.c
+$(BUILD)/test_net_events: $(NET_SRCS) ta_net_events.h ta_net_http_event.h \
+		ta_sched_events.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 SCHED_SRCS := test_sched_events.c ta_sched_events.c ta_registry.c ta_event.c
@@ -110,7 +117,8 @@ $(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 HIT_SRCS := test_hit_dispatch.c $(DRAW_CORE) ta_controller.c ta_router.c \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
+	ta_event.c
 $(BUILD)/test_hit_dispatch: $(HIT_SRCS) $(DRAW_HDRS) ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
@@ -128,24 +136,27 @@ $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
+	ta_event.c
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
-		$(DRAW_HDRS) ta_net_events.h ta_sched_events.h ta_registry.h \
-		ta_event.h | $(BUILD)
+		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_sched_events.h \
+		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
+	ta_event.c
 $(BUILD)/test_mpd_net: $(MPDNET_SRCS) ta_controller.h ta_router.h \
-		$(DRAW_HDRS) ta_net_events.h ta_net_backend.h ta_sched_events.h \
-		| $(BUILD)
+		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_net_backend.h \
+		ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 OWNER_SRCS := test_draw_glass_owner.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_input_isr.c ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_input_isr.c ta_net_events.c ta_net_http_event.c ta_sched_events.c \
+	ta_registry.c ta_event.c
 $(BUILD)/test_draw_glass_owner: $(OWNER_SRCS) ta_controller.h ta_router.h \
-		$(DRAW_HDRS) ta_input_isr.h ta_net_events.h ta_net_backend.h \
-		ta_sched_events.h | $(BUILD)
+		$(DRAW_HDRS) ta_input_isr.h ta_net_events.h ta_net_http_event.h \
+		ta_net_backend.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 GLASS_SRCS := test_draw_glass_contract.c ta_draw_update.c ta_draw_phase1.c \

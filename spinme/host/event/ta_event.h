@@ -47,6 +47,12 @@ enum {
 #define TA_TEST_SEL_MAX 48
 
 /* Test actor (dev / post-flash). Modes for ta_test_run_t.mode. */
+/* Controller debug fan-out (HTTP: complete -> 200, TIMEOUT_SHORT miss -> 201). */
+enum {
+    TA_EV_DEBUG_ALL = 0x406,
+    TA_EV_DEBUG_STATUS = 0x407
+};
+
 enum {
     TA_EV_TEST_RUN = 0x600,
     TA_EV_TEST_GET_DEBUG = 0x601,
@@ -104,6 +110,7 @@ typedef struct ta_event {
         ta_net_http_reply_t net_http_reply;
         ta_net_log_drain_t net_log_drain;
         ta_net_log_drain_ack_t net_log_drain_ack;
+        ta_debug_status_t debug_status;
         ta_test_run_t test_run;
         ta_test_done_t test_done;
     } u;

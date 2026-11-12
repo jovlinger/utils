@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""spinmecli --hostname HOST event ACTOR EVENT [field=value ...]
+
+Resolve HOST (default spinme.local) and POST /event/<actor>/<event> with a
+taskevent form body (application/x-www-form-urlencoded).
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import socket
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Type
+from urllib.parse import urlencode
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from taskevent.types import EVENT_BY_NAME, TaskEvent  # noqa: E402
+
+
+def _parse_kv(pairs: List[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for p in pairs:
+        if "=" not in p:
+            raise SystemExit(f"expected field=value, got {p!r}")
+        k, v = p.split("=", 1)
+        out[k] = v
+    return out
+
+
+def _lookup_event(event_name: str) -> Type[TaskEvent]:
+    cls: Optional[Type[TaskEvent]] = EVENT_BY_NAME.get(event_name)
+    if cls is not None:
+        return cls
+    lowered = event_name.lower().replace("_", "")
+    for name, cand in EVENT_BY_NAME.items():
+        if name.lower().replace("_", "") == lowered:
+            return cand
+    raise SystemExit(
+        f"unknown event {event_name!r}; known: {sorted(EVENT_BY_NAME)}"
+    )
+
+
+def _build_event(event_name: str, fields: Dict[str, str]) -> TaskEvent:
+    cls = _lookup_event(event_name)
+    if not cls.field_specs:
+        return cls()  # type: ignore[call-arg]
+    kwargs: Dict[str, object] = {}
+    for spec in cls.field_specs:
+        if spec.name not in fields:
+            if spec.kind == "char":
+                kwargs[spec.name] = ""
+            elif spec.kind in ("u8", "u16", "u32", "i8", "i16", "i32"):
+                kwargs[spec.name] = 0
+            else:
+                raise SystemExit(
+                    f"missing field {spec.name} for {cls.type_name}"
+                )
+        else:
+            raw = fields[spec.name]
+            if spec.kind in ("u8", "u16", "u32", "i8", "i16", "i32"):
+                kwargs[spec.name] = int(raw, 0)
+            else:
+                kwargs[spec.name] = raw
+    return cls(**kwargs)  # type: ignore[arg-type]
+
+
+def _post(hostname: str, actor: str, event_name: str, body: str) -> int:
+    host = hostname
+    port = 80
+    if hostname.count(":") == 1 and not hostname.endswith(".local"):
+        h, _, p = hostname.rpartition(":")
+        if h and p.isdigit():
+            host, port = h, int(p)
+    path = f"/event/{actor.lower()}/{event_name.lower()}"
+    conn = http.client.HTTPConnection(host, port, timeout=5.0)
+    try:
+        payload = body.encode("ascii")
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": str(len(payload)),
+        }
+        conn.request("POST", path, body=payload, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        sys.stdout.write(f"HTTP {resp.status}\n")
+        sys.stdout.write(data.decode("utf-8", errors="replace"))
+        if not data.endswith(b"\n"):
+            sys.stdout.write("\n")
+        return 0 if resp.status in (200, 201) else 1
+    except (OSError, socket.gaierror) as exc:
+        sys.stderr.write(f"spinmecli: {exc}\n")
+        return 2
+    finally:
+        conn.close()
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    ap = argparse.ArgumentParser(prog="spinmecli")
+    ap.add_argument(
+        "--hostname",
+        default="spinme.local",
+        help="board hostname (default spinme.local)",
+    )
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    ev = sub.add_parser("event", help="POST /event/<actor>/<event>")
+    ev.add_argument("actor", help="TaskActor name (e.g. controller, test)")
+    ev.add_argument("event", help="event type name (e.g. DebugAll, get_debug)")
+    ev.add_argument(
+        "fields",
+        nargs="*",
+        help="optional field=value pairs for the event body",
+    )
+
+    args = ap.parse_args(argv)
+    if args.cmd != "event":
+        ap.error(f"unsupported subcommand {args.cmd}")
+    fields = _parse_kv(list(args.fields))
+    te = _build_event(args.event, fields)
+    body = te.to_form()
+    return _post(args.hostname, args.actor, te.type_name, body)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

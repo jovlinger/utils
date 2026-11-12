@@ -42,7 +42,13 @@ ta_log_policy_t ta_logger_policy(uint8_t severity) {
 }
 
 int ta_logger_enqueue(const ta_event_envelope_t *env) {
-    if (!g_q_ok || env == NULL) {
+    if (env == NULL) {
+        return -1;
+    }
+    if (env->event.type == TA_EV_DEBUG_STATUS) {
+        return ta_debug_status_reply(env, TA_LOGGER_NAME, "ok");
+    }
+    if (!g_q_ok) {
         return -1;
     }
     return ta_queue_push(&g_q, env);

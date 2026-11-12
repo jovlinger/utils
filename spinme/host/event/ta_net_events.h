@@ -26,8 +26,13 @@ enum {
     /* Log -> Net: short RFC-5424 batch (TCP QuLog). */
     TA_EV_NET_LOG_DRAIN = 0x321,
     /* Net -> Log: ACK cursor; Log advances ring heads through max_seq. */
-    TA_EV_NET_LOG_DRAIN_ACK = 0x322
+    TA_EV_NET_LOG_DRAIN_ACK = 0x322,
+    /* Scheduler -> Net: re-advertise mDNS (spinme.local). */
+    TA_EV_NET_MDNS_ADVERTISE = 0x323
 };
+
+#define TA_NET_MDNS_HOSTNAME "spinme"
+#define TA_NET_MDNS_PERIOD_MS 30000u
 
 #define TA_NET_LOG_DRAIN_MAX 512
 
@@ -40,6 +45,7 @@ enum {
     TA_EV_CTRL_SET_ACTIVE = 0x404,
     TA_EV_CTRL_POLL = 0x405 /* poll-now tick (Scheduler cadence or ad hoc) */
 };
+/* DebugAll / DebugStatus: TA_EV_DEBUG_* in ta_event.h (0x406 / 0x407). */
 
 typedef struct ta_net_stats {
     unsigned handled;

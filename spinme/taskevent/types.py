@@ -528,6 +528,41 @@ class NetLogDrainAck(TaskEvent):
 
 
 @dataclass
+class NetMdnsAdvertise(TaskEvent):
+    type_id: ClassVar[int] = C.TA_EV_NET_MDNS_ADVERTISE
+    type_name: ClassVar[str] = "NetMdnsAdvertise"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
+class DebugAll(TaskEvent):
+    """POST /event/controller/debugall -- Controller fans out DebugStatus."""
+
+    type_id: ClassVar[int] = C.TA_EV_DEBUG_ALL
+    type_name: ClassVar[str] = "DebugAll"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
+class DebugStatus(TaskEvent):
+    """Controller -> actor request (empty text) or actor -> Controller reply."""
+
+    text: str = ""
+
+    type_id: ClassVar[int] = C.TA_EV_DEBUG_STATUS
+    type_name: ClassVar[str] = "DebugStatus"
+    c_type_name: ClassVar[str] = "ta_debug_status_t"
+    c_union_arm: ClassVar[str] = "debug_status"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _char("text", C.TA_TEXT_MAX),
+    )
+
+
+@dataclass
 class TestRun(TaskEvent):
     mode: int
     selector: str
@@ -610,6 +645,9 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     SchedStop,
     NetLogDrain,
     NetLogDrainAck,
+    NetMdnsAdvertise,
+    DebugAll,
+    DebugStatus,
     TestRun,
     TestGetDebug,
     TestDone,

@@ -5,6 +5,7 @@
 #include "ta_kv_actor.h"
 #include "ta_log_rings.h"
 #include "ta_net_events.h"
+#include "ta_registry.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -304,6 +305,13 @@ int ta_log_handle_envelope(const ta_event_envelope_t *env) {
     if (env == NULL) {
         return -1;
     }
+    if (env->event.type == TA_EV_DEBUG_STATUS) {
+        char line[48];
+
+        snprintf(line, sizeof(line), "rings=%lu",
+                 (unsigned long)ta_log_accept_count());
+        return ta_debug_status_reply(env, "Log", line);
+    }
     if (env->event.type == TA_EV_ALL_PERFORM_INIT) {
         ta_log_apply_kv_settings();
         if (ta_kv_has(TA_KV_KEY_LOGTARGET)) {
@@ -399,4 +407,8 @@ size_t ta_log_format_syslog(char *dst, size_t cap, uint32_t emit_time_ms,
         return cap - 1;
     }
     return (size_t)n;
+}
+
+void ta_log_start(void) {
+    (void)ta_registry_register("Log", ta_log_handle_envelope);
 }

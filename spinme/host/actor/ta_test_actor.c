@@ -280,6 +280,9 @@ int ta_test_handle(const ta_event_envelope_t *env) {
         free(blob);
         return 0;
     }
+    if (env->event.type == TA_EV_DEBUG_STATUS) {
+        return ta_debug_status_reply(env, TA_TEST_NAME, "ok");
+    }
     if (env->event.type != TA_EV_TEST_RUN) {
         g_stats.unknown++;
         return -1;

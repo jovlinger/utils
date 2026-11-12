@@ -49,7 +49,9 @@ TA_EV_NET_ALBUMART_DONE: int = 0x312
 TA_EV_NET_HTTP_REPLY: int = 0x320
 TA_EV_NET_LOG_DRAIN: int = 0x321
 TA_EV_NET_LOG_DRAIN_ACK: int = 0x322
+TA_EV_NET_MDNS_ADVERTISE: int = 0x323
 TA_NET_LOG_DRAIN_MAX: int = 512
+TA_TIMEOUT_SHORT_MS: int = 2000
 
 # Control
 TA_EV_CTRL_TOGGLE: int = 0x400
@@ -58,6 +60,9 @@ TA_EV_CTRL_NEXT: int = 0x402
 TA_EV_CTRL_PREV: int = 0x403
 TA_EV_CTRL_SET_ACTIVE: int = 0x404
 TA_EV_CTRL_POLL: int = 0x405
+# Controller debug fan-out (HTTP async -> sync; incomplete -> 201).
+TA_EV_DEBUG_ALL: int = 0x406
+TA_EV_DEBUG_STATUS: int = 0x407
 
 # Scheduler
 TA_EV_SCHED_START: int = 0x500

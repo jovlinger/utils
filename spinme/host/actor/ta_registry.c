@@ -2,6 +2,7 @@
 
 #include "ta_sync.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* Canonical actor names are ASCII-lowercase; strcmp stays case-sensitive. */
@@ -191,4 +192,25 @@ int ta_registry_post(const char *name, const ta_event_envelope_t *env) {
         return -1;
     }
     return fn(env);
+}
+
+int ta_debug_status_reply(const ta_event_envelope_t *req, const char *actor_name,
+                          const char *text) {
+    ta_event_envelope_t reply;
+
+    if (req == NULL || actor_name == NULL || actor_name[0] == '\0') {
+        return -1;
+    }
+    ta_env_clear(&reply);
+    if (ta_env_set_src(&reply, actor_name) != 0) {
+        return -1;
+    }
+    reply.session_id = req->session_id;
+    reply.event.type = TA_EV_DEBUG_STATUS;
+    if (text == NULL) {
+        text = "";
+    }
+    snprintf(reply.event.u.debug_status.text,
+             sizeof(reply.event.u.debug_status.text), "%s", text);
+    return ta_registry_post("controller", &reply);
 }

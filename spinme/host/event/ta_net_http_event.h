@@ -11,7 +11,9 @@
 extern "C" {
 #endif
 
-#define TA_NET_HTTP_TIMEOUT_MS 5000u
+/* Async event -> sync HTTP: incomplete / no reply within this -> HTTP 201. */
+#define TA_TIMEOUT_SHORT_MS 2000u
+#define TA_NET_HTTP_TIMEOUT_MS TA_TIMEOUT_SHORT_MS
 #define TA_NET_HTTP_RESP_BODY_MAX 256
 #define TA_NET_HTTP_BLOB_MAX (256u * 1024u)
 

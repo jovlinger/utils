@@ -2,7 +2,9 @@
 #include "ta_event.h"
 #include "ta_net_backend.h"
 #include "ta_net_events.h"
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
+#include "ta_sched_events.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,6 +60,7 @@ int main(void) {
     ta_registry_reset();
     ta_net_reset();
     g_n = 0;
+    ta_sched_start();
     ta_net_start();
     CHECK(ta_registry_register("MPDController", mpd_sink) == 0);
 
@@ -106,6 +109,7 @@ int main(void) {
 
     /* Fake backend: queue ops, complete later via ta_net_backend_complete. */
     ta_net_reset();
+    ta_sched_start();
     ta_net_start();
     g_n = 0;
     g_be_poll = g_be_toggle = g_be_vol = 0;
@@ -140,6 +144,21 @@ int main(void) {
     CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
     CHECK(g_be_vol == 1);
     CHECK(g_be_vol_last == 44);
+
+    /* mDNS: ALL_PERFORM_INIT advertises spinme and arms periodic refresh. */
+    ta_net_mdns_reset();
+    ta_env_clear(&env);
+    env.event.type = TA_EV_ALL_PERFORM_INIT;
+    env.session_id = 9;
+    CHECK(ta_env_set_src(&env, "Boot") == 0);
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
+    CHECK(ta_net_mdns_advertise_count() == 1);
+    ta_env_clear(&env);
+    env.event.type = TA_EV_NET_MDNS_ADVERTISE;
+    CHECK(ta_registry_post(TA_NET_NAME, &env) == 0);
+    CHECK(ta_net_mdns_advertise_count() == 2);
+    CHECK(TA_EV_NET_MDNS_ADVERTISE == 0x323);
+    CHECK(strcmp(TA_NET_MDNS_HOSTNAME, "spinme") == 0);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);
