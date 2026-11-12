@@ -1,4 +1,4 @@
-/* Host: KV set then get replies to the caller with ta_all_inform_result. */
+/* KV actor set then get replies with ta_all_inform_result to caller. */
 #include "ta_kv.h"
 #include "ta_kv_actor.h"
 #include "ta_registry.h"

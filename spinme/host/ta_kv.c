@@ -1,5 +1,7 @@
 #include "ta_kv.h"
 
+#include "ta_runtime_cfg.h"
+
 #include <string.h>
 
 #define TA_KV_IMAGE_CAP                                                        \
@@ -384,6 +386,7 @@ void ta_kv_install_factory(void) {
     (void)ta_kv_set_roster(names, 2);
     (void)ta_kv_put_blob("Draw", draw_blob, sizeof(draw_blob) - 1);
     (void)ta_kv_put_blob("Net", net_blob, sizeof(net_blob) - 1);
+    ta_runtime_cfg_put_factory();
 }
 
 ta_kv_status_t ta_kv_set_roster(const char *const *names, size_t n) {

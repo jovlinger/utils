@@ -1,4 +1,4 @@
-/* Host: FromISR path without task mutex; drain into Draw queue. */
+/* ISR mail ring accepts FromISR posts and drains into the Draw queue. */
 #include "ta_event.h"
 #include "ta_isr_mail.h"
 #include "ta_queue.h"

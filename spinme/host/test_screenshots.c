@@ -1,6 +1,6 @@
-/*
- * Regen glass screen PNGs under ../screenshots/ using the same glyphs.bin
- * and disintegration base as the device (360 panel, 3x stills).
+/* Pixel-perfect glass UI vs PNG goldens in ../screenshots/.
+ * Renders build/ui_actual/<name>.png (device glyphs+base, 360@3x) and
+ * compares RGB. Refresh: SPINME_UI_UPDATE_GOLDEN=1 ./build/test_screenshots
  */
 #include "ta_draw_glass.h"
 #include "ta_draw_phase1.h"
@@ -30,7 +30,8 @@ static int checks;
     } while (0)
 
 #define PANEL 360
-#define OUT_DIR "../screenshots"
+#define GOLDEN_DIR "../screenshots"
+#define ACTUAL_DIR "build/ui_actual"
 #define PNG_SCALE 3
 #define FW "../firmware/waveshare-knob-touch-lcd-1.8"
 #define GLYPHS_PATH FW "/glyphs.bin"
@@ -65,18 +66,75 @@ static void fb_clear_from_base(void) {
     memcpy(g_fb, g_base, sizeof(g_fb));
 }
 
-static int write_png(const char *name) {
-    char path[512];
+static int copy_file(const char *src, const char *dst) {
+    FILE *in;
+    FILE *out;
+    char buf[4096];
+    size_t n;
 
-    snprintf(path, sizeof(path), "%s/%s", OUT_DIR, name);
-    return ta_pack66_write_png_scaled(path, PANEL, PANEL, g_fb, PNG_SCALE);
+    in = fopen(src, "rb");
+    if (in == NULL) {
+        return -1;
+    }
+    out = fopen(dst, "wb");
+    if (out == NULL) {
+        fclose(in);
+        return -1;
+    }
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            fclose(in);
+            fclose(out);
+            return -1;
+        }
+    }
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+
+/* Write actual PNG; compare to golden (or refresh golden if env set). */
+static int check_png(const char *name) {
+    char actual[512];
+    char golden[512];
+    int eq;
+    const char *upd = getenv("SPINME_UI_UPDATE_GOLDEN");
+
+    snprintf(actual, sizeof(actual), "%s/%s", ACTUAL_DIR, name);
+    snprintf(golden, sizeof(golden), "%s/%s", GOLDEN_DIR, name);
+    if (ta_pack66_write_png_scaled(actual, PANEL, PANEL, g_fb, PNG_SCALE) !=
+        0) {
+        fprintf(stderr, "write failed: %s\n", actual);
+        return -1;
+    }
+    if (upd != NULL && upd[0] != '\0' && upd[0] != '0') {
+        if (copy_file(actual, golden) != 0) {
+            fprintf(stderr, "golden update failed: %s\n", golden);
+            return -1;
+        }
+        printf("updated golden %s\n", golden);
+        return 0;
+    }
+    eq = ta_pack66_png_pixel_equal(actual, golden);
+    if (eq < 0) {
+        fprintf(stderr, "png compare IO error: %s vs %s\n", actual, golden);
+        return -1;
+    }
+    if (eq != 0) {
+        fprintf(stderr, "PIXEL DIFF: %s != golden %s\n", actual, golden);
+        return -1;
+    }
+    printf("ok %s\n", name);
+    return 0;
 }
 
 int main(void) {
     ta_glass_cfg_t cfg;
     ta_kv_editor_t ed;
 
-    (void)mkdir(OUT_DIR, 0755);
+    (void)mkdir("build", 0755);
+    (void)mkdir(ACTUAL_DIR, 0755);
+    (void)mkdir(GOLDEN_DIR, 0755);
 
     ta_shape_table_reset();
     ta_glass_reset();
@@ -111,9 +169,7 @@ int main(void) {
 
     fb_clear_from_base();
     CHECK(ta_glass_paint() >= 1);
-    CHECK(write_png("main_mpd.png") == 0);
-    printf("wrote %s/main_mpd.png (%dx%d @%ux)\n", OUT_DIR, PANEL, PANEL,
-           PNG_SCALE);
+    CHECK(check_png("main_mpd.png") == 0);
 
     /* With sample track text (still the main screen). */
     (void)ta_glass_set_text(TA_DRAW_TEXT_ARTIST, "Artist Name");
@@ -122,8 +178,7 @@ int main(void) {
     ta_glass_set_status(42, 42, 1, 1);
     fb_clear_from_base();
     CHECK(ta_glass_paint() >= 1);
-    CHECK(write_png("main_playing.png") == 0);
-    printf("wrote %s/main_playing.png\n", OUT_DIR);
+    CHECK(check_png("main_playing.png") == 0);
 
     ta_kv_reset();
     CHECK(ta_kv_put("log_receiver_url", "http://gmk.local/logs", 21) ==
@@ -146,8 +201,7 @@ int main(void) {
         CHECK(ta_glass_selecting());
         fb_clear_from_base();
         CHECK(ta_glass_paint() >= 1);
-        CHECK(write_png("selecting_overlay.png") == 0);
-        printf("wrote %s/selecting_overlay.png\n", OUT_DIR);
+        CHECK(check_png("selecting_overlay.png") == 0);
         CHECK(ta_glass_touch(nx, ny, 1) == 0);
         CHECK(!ta_glass_selecting());
     }
@@ -194,14 +248,12 @@ int main(void) {
             free(line_px);
         }
     }
-    CHECK(write_png("kv_view.png") == 0);
-    printf("wrote %s/kv_view.png\n", OUT_DIR);
+    CHECK(check_png("kv_view.png") == 0);
 
     CHECK(ta_kv_editor_enter(&ed) == 0);
     fb_clear_from_base();
     CHECK(ta_glass_paint() == 1);
-    CHECK(write_png("kv_edit.png") == 0);
-    printf("wrote %s/kv_edit.png\n", OUT_DIR);
+    CHECK(check_png("kv_edit.png") == 0);
 
     CHECK(ta_glass_set_page(0) == 0);
     ta_glyph_bin_fini(&g_gb);

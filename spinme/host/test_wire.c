@@ -1,4 +1,4 @@
-/* Host: function-ENUM wiring for nav select / swap step. */
+/* fn_enum wire: nav select and swap step without function pointers on shapes. */
 #include "ta_shape_swap.h"
 #include "ta_uilayout.h"
 #include "ta_wire.h"

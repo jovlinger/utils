@@ -1,4 +1,4 @@
-/* Host: Draw event enum switch + async reply_to completion. */
+/* Draw event switch handles ops and async reply_to completions. */
 #include "ta_draw_events.h"
 #include "ta_event.h"
 #include "ta_registry.h"

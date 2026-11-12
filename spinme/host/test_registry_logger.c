@@ -1,4 +1,4 @@
-/* Host: Init entry list starts Logger; registry post; log policies. */
+/* Registry posts; Init list starts Logger; log sample/reject policies. */
 #include "ta_event.h"
 #include "ta_init.h"
 #include "ta_logger.h"

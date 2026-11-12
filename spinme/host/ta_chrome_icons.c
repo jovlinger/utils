@@ -401,7 +401,7 @@ void ta_chrome_icon_up_solid(ta_pack66_t *px, uint16_t w) {
     if (stem_half < 3) {
         stem_half = 3;
     }
-    set_body_a2(TA_CHROME_A2_SETTLED);
+    set_body_a2(TA_CHROME_A2_OPAQUE);
     ta_chrome_icon_clear(px, w);
     fill_tri_aa(px, w, m, top, m - head_w, mid, m + head_w, mid);
     stroke_seg(px, w, m, mid - 2, m, bot, stem_half);
@@ -420,7 +420,7 @@ void ta_chrome_icon_down_solid(ta_pack66_t *px, uint16_t w) {
     if (stem_half < 3) {
         stem_half = 3;
     }
-    set_body_a2(TA_CHROME_A2_SETTLED);
+    set_body_a2(TA_CHROME_A2_OPAQUE);
     ta_chrome_icon_clear(px, w);
     fill_tri_aa(px, w, m, bot, m - head_w, mid, m + head_w, mid);
     stroke_seg(px, w, m, top, m, mid + 2, stem_half);

@@ -1,4 +1,4 @@
-/* Host: perform_init fetches log_receiver_url and the inform sets the drain URL. */
+/* Log init KV-gets log_receiver_url; inform installs the drain URL. */
 #include "ta_all.h"
 #include "ta_kv.h"
 #include "ta_kv_actor.h"

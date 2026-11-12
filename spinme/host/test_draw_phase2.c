@@ -1,4 +1,4 @@
-/* Host: phase2 whole exteriors + coverage cull; clears dirty. */
+/* phase2 emits whole dirty exteriors, culls covered ones, clears dirty. */
 #include "ta_draw_phase2.h"
 #include "ta_uilayout.h"
 

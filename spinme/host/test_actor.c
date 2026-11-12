@@ -1,4 +1,4 @@
-/* Host: init registers and enters the loop; exit unregisters. */
+/* Registers an actor on init and removes it on exit. */
 #include "ta_actor.h"
 #include "ta_registry.h"
 

@@ -1,4 +1,4 @@
-/* Host: gray-code + velocity; touch/rotary FromISR into Draw mail. */
+/* Encoder gray/velocity decode; touch/rotary post into Draw ISR mail. */
 #include "ta_input_isr.h"
 #include "ta_isr_mail.h"
 #include "ta_queue.h"

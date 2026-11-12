@@ -6,10 +6,13 @@
 #include "ta_hit_dispatch.h"
 #include "ta_shape_l2r.h"
 #include "ta_shape_swap.h"
+#include "ta_runtime_cfg.h"
+#include "ta_stack_compose.h"
 #include "ta_viewport.h"
 #include "ta_wire.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Text slots (icons cover transport + nav). */
@@ -50,6 +53,8 @@ typedef struct glass_state {
     int lit;
     unsigned idle_s;
     unsigned uptime_s;
+    unsigned screen_blank_s; /* from KV screen_blank_s */
+    unsigned scroll_step;    /* from KV title_scroll_step */
     ta_shape_bitmap_t base;
     ta_shape_viewport_t title_vp;
     ta_shape_swap_t swap;
@@ -92,6 +97,8 @@ static void wire_selecting(int on) {
 void ta_glass_reset(void) {
     memset(&g, 0, sizeof(g));
     g.lit = 1;
+    g.screen_blank_s = (unsigned)atoi(TA_KV_DEF_SCREEN_BLANK_S);
+    g.scroll_step = (unsigned)atoi(TA_KV_DEF_SCROLL_STEP);
     g.polled = TA_GLASS_UNKNOWN;
     g.desired = TA_GLASS_UNKNOWN;
     g.playing = TA_GLASS_UNKNOWN;
@@ -422,6 +429,13 @@ int ta_glass_install_stack(void) {
         g.st.errors++;
         return -1;
     }
+    {
+        ta_runtime_cfg_t rc;
+
+        (void)ta_runtime_cfg_load(&rc);
+        g.screen_blank_s = rc.screen_blank_s;
+        g.scroll_step = rc.scroll_step;
+    }
     /* Shapes into the table (glyph bitmaps are the glue's entries). */
     memset(&g.base, 0, sizeof(g.base));
     g.base.tag = TA_SHAPE_TAG_BITMAP;
@@ -620,7 +634,7 @@ int ta_glass_update(void) {
     g.uptime_s++;
     if (g.lit) {
         g.idle_s++;
-        if (g.idle_s >= TA_GLASS_SCREEN_OFF_S) {
+        if (g.idle_s >= g.screen_blank_s) {
             backlight(0);
         }
     }
@@ -760,18 +774,33 @@ int ta_glass_paint(void) {
         ey = pushes[i].exterior.y;
         ew = pushes[i].exterior.w;
         eh = pushes[i].exterior.h;
-        /* Transparent chrome icons: restore the WHOLE exterior from base
-         * before the glyph so play<->pause (or up<->down) cannot leave
-         * ghost strokes in the pack66 underbuffer / LCD. */
+        /* Transparent chrome: base + every farther follow layer (text) +
+         * glyph, pack66 a2, then one resolved push. Base-only wipe left
+         * hollow pixels as album art and erased track listing. */
         if ((pushes[i].shape_idx == TA_GLASS_IDX_TRANSPORT ||
              pushes[i].shape_idx == TA_GLASS_IDX_NAV) &&
-            g.base.pixels != NULL && ew > 0 && eh > 0 && ex >= 0 && ey >= 0 &&
-            ex + ew <= (int)g.base.w && ey + eh <= (int)g.base.h) {
-            const ta_pack66_t *crop =
-                g.base.pixels + (size_t)ey * (size_t)g.base.w + (size_t)ex;
+            ew > 0 && eh > 0 &&
+            (size_t)ew * (size_t)eh <=
+                (size_t)TA_CHROME_ICON_PX * (size_t)TA_CHROME_ICON_PX) {
+            static ta_pack66_t composed[TA_CHROME_ICON_PX * TA_CHROME_ICON_PX];
+            size_t top_slot = TA_FOLLOW_TRANSPORT;
+            size_t slot;
 
-            g.be->push_rect(ex, ey, ew, eh, crop, (int)g.base.w);
-            g.st.pushes++;
+            for (slot = 0; slot < g.chrome.n; slot++) {
+                if (ta_uilo_shape(g.chrome.uilo[slot]) == pushes[i].shape_idx) {
+                    top_slot = slot;
+                    break;
+                }
+            }
+            if (ta_stack_compose_exterior(
+                    composed, (uint16_t)ew, (uint16_t)eh, ex, ey, &g.base,
+                    ta_uilo_x(g.chrome.uilo[TA_FOLLOW_BASE]),
+                    ta_uilo_y(g.chrome.uilo[TA_FOLLOW_BASE]), g.chrome.uilo,
+                    g.chrome.n, top_slot, hdr) == 0) {
+                g.be->push_rect(ex, ey, ew, eh, composed, ew);
+                g.st.pushes++;
+                continue;
+            }
         }
         g.be->push_rect(ex, ey, ew, eh, hdr->pixels, (int)hdr->w);
         g.st.pushes++;
@@ -827,7 +856,7 @@ int ta_glass_scroll_step(void) {
         return 0;
     }
     period = (int)g.ts[TS_TITLE].l2r.w + TA_PHASE1_SCROLL_GAP;
-    ox = (int)g.title_vp.ox + TA_GLASS_SCROLL_STEP;
+    ox = (int)g.title_vp.ox + (int)g.scroll_step;
     if (ox >= period) {
         ox -= period;
     }

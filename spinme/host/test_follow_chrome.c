@@ -1,4 +1,4 @@
-/* Host: follow chrome UILayouts; paint-once static; high-z clock/title. */
+/* Follow chrome: nine UILayout slots, paint-once vs high-z title/clock. */
 #include "ta_chrome_icons.h"
 #include "ta_follow_chrome.h"
 

@@ -1,4 +1,4 @@
-/* Host: REST KV set, then exit-all and boot, sees the new actor. */
+/* PUT /kv/<key> then exit-all+boot picks up the new actor blob. */
 #include "ta_boot.h"
 #include "ta_kv.h"
 #include "ta_net_kv_http.h"
@@ -47,13 +47,13 @@ int main(void) {
     memset(big, 'L', sizeof(big));
     n = build_put(req, sizeof(req), "Log", big, sizeof(big));
     CHECK(n > 0);
-    CHECK(ta_net_kv_http_set((const uint8_t *)req, n) == TA_KV_OK);
+    CHECK(ta_net_kv_http_put((const uint8_t *)req, n) == TA_KV_OK);
     CHECK(ta_kv_get("Log", got, sizeof(got), &len) == TA_KV_OK);
     CHECK(len == sizeof(big));
     CHECK(got[0] == 'L' && got[399] == 'L');
 
     n = build_put(req, sizeof(req), TA_KV_KEY_ACTORS, "Draw\nNet\nLog\n", 13);
-    CHECK(ta_net_kv_http_set((const uint8_t *)req, n) == TA_KV_OK);
+    CHECK(ta_net_kv_http_put((const uint8_t *)req, n) == TA_KV_OK);
 
     ta_boot_exit_all();
     CHECK(ta_boot_from_kv() == 3);
@@ -62,7 +62,7 @@ int main(void) {
     CHECK(len == sizeof(big));
     ta_boot_exit_all();
 
-    CHECK(ta_net_kv_http_set((const uint8_t *)"GET /kv/Log HTTP/1.0\r\n\r\n",
+    CHECK(ta_net_kv_http_put((const uint8_t *)"GET /kv/Log HTTP/1.0\r\n\r\n",
                              24) == TA_KV_BAD_ARG);
 
     if (failures != 0) {

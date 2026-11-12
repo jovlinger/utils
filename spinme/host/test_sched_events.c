@@ -1,4 +1,4 @@
-/* Host: Scheduler start/stop + fake-time fire with session_id. */
+/* Scheduler start/stop fires ticks with session_id under fake time. */
 #include "ta_draw_events.h"
 #include "ta_event.h"
 #include "ta_registry.h"

@@ -1,7 +1,4 @@
-/*
- * Glass contract end-test (PLAN). Green when update/phase1/phase2/under-image
- * rules hold together.
- */
+/* Glass pipeline contract: update + phase1 + phase2 + under-image together. */
 #include "ta_draw_phase1.h"
 #include "ta_draw_phase2.h"
 #include "ta_draw_update.h"

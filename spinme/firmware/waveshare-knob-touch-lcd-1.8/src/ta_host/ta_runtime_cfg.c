@@ -1,0 +1,1 @@
+../../../../host/ta_runtime_cfg.c

@@ -7,7 +7,7 @@ static int is_key_char(unsigned char c) {
            (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
 
-ta_kv_status_t ta_net_kv_http_set(const uint8_t *req, size_t len) {
+ta_kv_status_t ta_net_kv_http_put(const uint8_t *req, size_t len) {
     const char *text;
     const char *line_end;
     const char *key;

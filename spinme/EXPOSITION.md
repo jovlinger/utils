@@ -46,9 +46,10 @@ image init loader is `ta_boot_from_kv`: roster, blob, stub load (non-empty
 blob; ELF map not yet), `ta_actor_init`. `ta_actor_exit` is the inverse
 (stop the loop, unregister). `ta_boot_exit_all` then boot again is the reload.
 
-Net's OTA intake is `ta_net_kv_http_set`: `PUT /kv/<key>` with
-`Content-Length` calls `ta_kv_put` (blobs up to 1024 bytes). After that,
-`ta_boot_exit_all` and `ta_boot_from_kv` pick up the new roster.
+Net's OTA intake is `ta_net_kv_http_put` (`PUT /kv/<key>`): upload a
+TaskActor **code** blob (or a config string) with `Content-Length` into
+`ta_kv_put`. After a code put, `ta_boot_exit_all` and `ta_boot_from_kv`
+reload the roster so the new image runs.
 
 Net also serves HTTP-only on port 80: `POST /event/<taskactor>/<eventname>`
 (`ta_net_http_event`). Query and/or form body are parsed as
@@ -289,22 +290,84 @@ entry { entrylen; next; keylen; key[keylen]; valueinfo; value[...] }
 leaves **holes**; v1 is **first-fit**. Compacting GC deferred until first-fit
 hurts.
 
-**Well-known keys (boot):**
+**Well-known keys (boot + runtime):**
 
-| Key role | Meaning |
-|----------|---------|
-| Start roster | Blob = list of TaskActor names to boot |
-| Per-name actor | Key = actor name; blob = loadable image |
-| (others) | e.g. `log_receiver_url`, `current_controller` -- same store |
+| Key | Default (factory image) | Consumer at startup |
+|-----|-------------------------|---------------------|
+| `actors_to_start` | `Draw\nNet\n` | `ta_boot_from_kv` |
+| Per-name actor blob | e.g. `Draw`=`draw-v1` | boot stub load |
+| `current_controller` | `MPD` | Router / Config |
+| `log_receiver_url` | `http://gmk.local/logs` | Log init |
+| `mpd_host` | `miniDSP-SHD.local` | player_http DNS |
+| `ntp_host` | `pool.ntp.org` | Net SNTP (`configTime`) |
+| `timezone` | `EST5EDT,M3.2.0/2,M11.1.0/2` | Net SNTP (`TZ` / `tzset`) |
+| `screen_blank_s` | `30` | Draw idle backlight-off |
+| `title_scroll_step` | `2` | Draw title ox step (px) |
+| `title_scroll_ms` | `40` | Scheduler scroll arm period |
 
-**Net HTTP:** Net exposes REST **KV set** (new values / large actor blobs) that
-calls KV put. That is the on-device intake for OTA-ish payload updates. Base
-bin loader stays USB-only.
+Seeded by `ta_kv_install_factory` -> `ta_runtime_cfg_put_factory`.
+`ta_runtime_cfg_load` copies into a process cache (missing key => default).
 
-**As-built:** `ta_kv` is still a sync in-RAM facade (`ta_kv_get` /
-`ta_config_put_controller`) with no linked-list image, no first-fit, no HTTP
-set -- see section 9. Actor-facing get/inform events (`todo:15b92eaa`) sit on
-top of this store once it exists; they must not invent a second KV.
+`timezone` is a POSIX TZ string (not a bare UTC offset) so DST rules stay with
+the zone. A future `timezone_offset_min` key is optional if a UI only edits
+minutes.
+
+**Net HTTP KV set:** Net owns the on-device REST intake for both **TaskActor
+code** and runtime config strings (`ta_net_kv_http_put`):
+
+```text
+PUT /kv/<key>
+Content-Length: <n>
+
+<n bytes of body>
+```
+
+Base **bin** loader (whole firmware) stays USB-only; it is not replaced by
+this path.
+
+### Piecemeal **code** upgrade (TaskActor images via `PUT /kv/<key>`)
+
+Each roster name is also a KV key whose blob is that actor's **loadable
+code image** (ELF or platform image once mapping works; stub bytes on host
+today). Upgrading one TaskActor means replacing that one blob over HTTP,
+then reloading actors -- not reflashing the whole device.
+
+```text
+# Example: replace Draw's code only
+PUT /kv/Draw
+Content-Length: <sizeof draw image>
+<draw image bytes>
+
+# Then on device (or via a follow-up control):
+ta_boot_exit_all()
+ta_boot_from_kv()    # re-reads actors_to_start; loads each name's blob; init
+```
+
+**Rules:**
+
+1. **One actor at a time.** `PUT /kv/Draw` does not touch `Net`,
+   `Scheduler`, or config keys. After exit-all + boot, only the new Draw
+   image is what changed in the running set (other blobs reload unchanged).
+2. **Key == registry / roster name.** The body is opaque code for that
+   actor. Config keys (`mpd_host`, `timezone`, ...) use the same REST face
+   but carry short strings, not executables.
+3. **Roster edits** (`PUT /kv/actors_to_start`) add/remove which names boot;
+   each name still needs its own code key if it is to load.
+4. **Reload barrier.** A successful code PUT stores the blob; it does not
+   hot-patch a running task. `exit` all, then `boot_from_kv`, is the
+   activation step (can be automatic after PUT later).
+5. **Factory reset** rewrites roster + default config (+ tiny stub actor
+   blobs). It is the recovery path if a bad image bricks one actor.
+
+**Config vs code on the same API:** same `PUT /kv/<key>`, different key
+classes. Code keys are actor names on the roster; config keys are the
+well-known settings table above. Config can apply on
+`ta_runtime_cfg_load` / `perform_init` without exit-all; **code** always
+needs the boot barrier.
+
+**As-built gaps (section 9):** blob size cap is still small for real ELF;
+loader map/relocate is stubbed on device. The REST + KV + exit/boot loop is
+the intended piecemeal code-upgrade shape.
 
 ---
 
@@ -574,115 +637,314 @@ paint, or Net from ISR). Capacity 8; full => drop + error log, never block.
 
 ## 5. Shapes Draw supports
 
-Shape table: `TA_SHAPE_MAX` 1024 (`idx10`). UILayout points at an idx; only
-UILayouts are painted to glass.
+Shape table: `TA_SHAPE_MAX` 1024. UILayout points at a shape idx; only
+UILayouts (plus chrome stack-compose) paint to glass.
 
 ### Tags (as-built)
 
 | Tag | Value | Struct | Role |
 |-----|-------|--------|------|
 | `TA_SHAPE_TAG_BITMAP` | 1 | `ta_shape_bitmap_t` | Fixed pack66 pixmap (`w`,`h`,`*pixels`) |
-| `TA_SHAPE_TAG_L2R` | 2 | `ta_shape_l2r_t` | Left-to-right composite: shapepack idxs + kernings -> bake |
-| `TA_SHAPE_TAG_VIEWPORT` | 3 | `ta_shape_viewport_t` | Window over a child; `ox`/`oy` scroll; bake intersection |
+| `TA_SHAPE_TAG_L2R` | 2 | `ta_shape_l2r_t` | Left-to-right composite of child bitmaps via shapepack |
+| `TA_SHAPE_TAG_VIEWPORT` | 3 | `ta_shape_viewport_t` | Window over a child; `ox`/`oy` scroll |
+| `TA_SHAPE_TAG_SWAP` | 4 | `ta_shape_swap_t` | N same-size children; show exactly one `active` |
 
-No other tags exist in host code today. Under-image is a **BitMap** used as
-under-Cache (policy in `ta_under_image`), not a separate tag.
+Under-image / album art is a **BitMap** used as the panel base, not a fifth
+tag.
 
-### Shared header fields (conceptual)
+### pack66 pixel word
 
-`tag`, `dirty`, `w`, `h`, optional `*pixels` (pack66:
-`R6 | G6<<8 | B6<<16 | A2<<24`; `A2==0` skip).
+```text
+bits  0..5   R6
+bits  8..13  G6
+bits 16..21  B6
+bits 24..25  A2   (0 = skip / transparent, 1..2 blend, 3 opaque)
+```
 
-### ShapeL2R extras
+Pseudo:
 
-- `pack`: zero-terminated shapepack words.
-- Packing tags in top 2 bits of each word: `3x10` / `4x7` / `5x6` / `6x5`
-  idxs (`TA_PACK_TAG_*`).
-- `kernings`: signed per item; `TA_SHAPEPACK_END` (0) terminates stream.
-- APIs: `ta_shapepack_encode` / `decode_word`, `ta_shape_l2r_compute_size`.
+```
+pack66(r,g,b,a) = (r&63) | (g&63)<<8 | (b&63)<<16 | (a&3)<<24
+over(dst, src):
+  if src.a == 0: return dst
+  if src.a >= 3: return src
+  return pack66( (src.rgb*src.a + dst.rgb*(3-src.a))/3 , a=3 )
+```
 
-### Text is not a Shape
+### UILayout word (display list entry, not a Shape)
 
-`ta_text_build` is a **constructor**: ASCII + glyph map (+ optional kern
-table) -> fills a `ta_shape_l2r_t` (+ pack/kern buffers).
+One `uint32_t`:
 
-### Viewport
+```text
+bit 0        dirty
+bit 1        pad
+bits 2..11   x   (int10, 0..1023)
+bits 12..21  y   (int10)
+bits 22..31  shape idx (idx10, 0..1023)
+```
 
-`ta_viewport_bake`: copy visible child intersection into viewport
-`pixels` at `ox`/`oy`. Does not touch under-image shapes.
+`accept_hit[]` is a parallel `uint8_t` array (not packed into the word).
 
-### UILayout (display list, not a Shape)
+### Shapepack index packing (ShapeL2R `pack[]`)
 
-One 32-bit word: `dirty`, pad, `x`/`y` int10, `shape` idx10.
-Parallel `accept_hit[]` (not packed into the word -- WorkItem 0006 choice).
-Max `TA_UILAYOUT_MAX` 64.
+Each pack word is a `uint32_t`. The **top 2 bits are the density tag**; the
+**remaining 30 bits** hold tightly packed child shape idxs (low bits first).
+Idx `0` is the stream terminator (`TA_SHAPEPACK_END`).
 
-### Follow chrome slots (product salvage layout)
+| Tag enum | Top2 | Name | Idx width | Max idxs / word | Idx bits used |
+|----------|------|------|-----------|-----------------|---------------|
+| `TA_PACK_TAG_6x5` | `00` | six x 5-bit | 5 | 6 | 30 (bits 0..29) |
+| `TA_PACK_TAG_5x6` | `01` | five x 6-bit | 6 | 5 | 30 |
+| `TA_PACK_TAG_4x7` | `10` | four x 7-bit | 7 | 4 | 28 (bits 0..27) |
+| `TA_PACK_TAG_3x10` | `11` | three x 10-bit | 10 | 3 | 30 |
 
-| Slot | Index | Hit? | Dynamic high-z? |
-|------|-------|------|-----------------|
-| base | 0 | no | no (paint-once) |
-| zone | 1 | no | no |
-| artist | 2 | no | no |
-| album | 3 | no | no |
-| title | 4 | no | yes (scroll) |
-| volume | 5 | **yes** | no |
-| transport (play/stop, center) | 6 | **yes** | no |
-| clock | 7 | no | yes |
-| nav (12 oclock up/down) | 8 | **yes** | no |
+**6x5 explicit layout** (densest; glyph runs often use this when idxs < 32):
 
-Built by `ta_follow_chrome_build`.
+```text
+uint32_t word:
+  bits 31..30  tag = 00  (TA_PACK_TAG_6x5)
+  bits 29..25  idx5   (6th child, slot 5)
+  bits 24..20  idx4
+  bits 19..15  idx3
+  bits 14..10  idx2
+  bits  9..5   idx1
+  bits  4..0   idx0   (1st child, slot 0)
+```
 
-### UI guidelines (2026-11-07)
+Encode pseudo:
 
-Round 360 glass. Affordance placements:
+```
+encode(idxs[0..n), tag):
+  bpi = {6x5:5, 5x6:6, 4x7:7, 3x10:10}[tag]
+  ipw = {6x5:6, 5x6:5, 4x7:4, 3x10:3}[tag]
+  while idxs remain:
+    word = (tag & 3) << 30
+    for slot in 0 .. ipw-1 while idxs remain:
+      word |= (idx & ((1<<bpi)-1)) << (slot * bpi)
+    emit word
+  emit terminator: (tag & 3) << 30   # all idx fields zero
+```
 
-| Control | Placement | Glyph |
-|---------|-----------|-------|
-| **Up / back** and **Down / select** | Always at **12 o'clock** (old play/stop slot: top-center `button_y`). Same hit box; meaning follows mode. | **Up/Down**: bold solid arrows, **60px** (2/3 of play), translucent a2. Above the SwapShape. |
-| **Play / stop** | **Center of screen** (panel midpoint) | Outlines only, **90px**: desired glyph leads; **a2=1** while playing_polled disagrees, **a2=3** when poll agrees (same desired/polled idea as volume) |
+Decode one word: read tag from bits 31..30, peel `ipw` fields; if every
+idx is 0, the word is end-of-stream.
 
-#### SwapShape modes (all Shape-expressed)
+### Pseudo: each shape kind
 
-SwapShape has two modals:
+**BitMap**
+
+```
+bake(bitmap):  # already has pixels; phase1 no-op
+paint(dst, ox, oy, bitmap):
+  for each pixel p in bitmap:
+    if p.a != 0: dst[ox+x,oy+y] = over(dst[...], p)
+```
+
+**ShapeL2R**
+
+```
+bake(l2r):
+  clear l2r.pixels
+  x = 0
+  for idx in unpack(l2r.pack):           # stop at idx 0
+    child = shape_table[idx]             # BitMap glyph etc.
+    blit child at (x, 0) into l2r.pixels
+    x += child.w + kerning_for_item
+  l2r.w, l2r.h = computed size
+```
+
+**Viewport**
+
+```
+bake(vp):
+  clear vp.pixels
+  blit_base_crop into vp.pixels at window (ex,ey)   # optional under
+  child = shape_table[vp.child_idx]
+  blit child at (-vp.ox, -vp.oy) into vp.pixels
+  if child.w > vp.w: also blit wrapped copy at period - ox
+```
+
+**SwapShape**
+
+```
+bind(swap):
+  require all children same w/h and non-null pixels
+  swap.pixels = alias of children[swap.active].pixels
+set_active(i):
+  swap.active = i; dirty; bind again
+paint: same as BitMap using aliased pixels
+```
+
+### Chrome icon bitmaps (play / pause / arrows)
+
+These are ordinary **BitMap** shapes filled by `ta_chrome_icons_*`, then
+shown through follow slots TRANSPORT and NAV.
+
+| Glyph | API | Size | Geometry | a2 |
+|-------|-----|------|----------|-----|
+| Play | `ta_chrome_icon_play_outline` | 90x90 | Three thick strokes: left vertical + two diagonals to a tip (hollow triangle outline) | body_a2 from caller |
+| Pause (stop bars) | `ta_chrome_icon_pause_outline` | 90x90 | Two vertical rounded bars (outline strokes) | body_a2 from caller |
+| Up arrow | `ta_chrome_icon_up_solid` | 60x60 | Filled triangle head + stem | always opaque a2=3 |
+| Down arrow | `ta_chrome_icon_down_solid` | 60x60 | Filled triangle head + stem | always opaque a2=3 |
+
+**Play / pause (center transport)**
+
+- Placement: panel center (`(panel - 90)/2`).
+- Meaning: tap toggles play/pause (`TA_FN_TRANSPORT_TOGGLE`).
+- Desired glyph leads; ink a2 tracks poll agreement:
+  - `a2=1` (`TA_CHROME_A2_PENDING`) while `playing != playing_polled`
+  - `a2=2` (`TA_CHROME_A2_SETTLED`) when they agree (still translucent so
+    track text shows through the strokes)
+- Paint path: `ta_stack_compose_exterior` = base crop + follow text layers
+  under TRANSPORT + icon, then one resolved push (never base-only wipe).
+
+Play outline pseudo:
+
+```
+play_outline(px, w, body_a2):
+  clear px to a=0
+  left, right, top, bot, mid = margins of w
+  stroke_seg(left,top -> left,bot, thickness w/10)
+  stroke_seg(left,top -> right,mid, ...)
+  stroke_seg(left,bot -> right,mid, ...)
+```
+
+Pause outline pseudo:
+
+```
+pause_outline(px, w, body_a2):
+  clear px
+  place two bar rects left/right of center
+  stroke each bar's four edges (capsule look)
+```
+
+**Up / down (12 o'clock nav)**
+
+- Placement: top center (`button_y`), **above** the SwapShape page content.
+- Same hit box; glyph flips with mode:
+  - **Selected**: solid **up** = enter choosing / back-out affordance
+  - **Selecting**: solid **down** = commit the previewed Swap child
+- Wired as `TA_FN_NAV` (not owned by SwapShape itself).
+
+Up solid pseudo:
+
+```
+up_solid(px, w):
+  clear; a2 = opaque
+  fill_tri_aa(apex at top, base at mid)
+  stroke_seg stem mid -> bottom
+```
+
+### Follow chrome slots
+
+| Slot | Index | Hit? | Dynamic high-z? | Shape role |
+|------|-------|------|-----------------|------------|
+| BASE | 0 | no | no (paint-once) | BitMap album / disintegration |
+| ZONE | 1 | no | no | L2R text |
+| ARTIST | 2 | no | no | L2R text |
+| ALBUM | 3 | no | no | L2R text |
+| TITLE | 4 | no | yes (scroll) | Viewport over TITLE L2R; y centered on transport |
+| VOLUME | 5 | yes | no | L2R text |
+| TRANSPORT | 6 | yes | no | BitMap play/pause 90px |
+| CLOCK | 7 | no | yes | L2R text |
+| NAV | 8 | yes | no | BitMap up/down 60px |
+
+Built by `ta_follow_chrome_build` / `ta_follow_chrome_place`.
+
+### SwapShape modes
 
 | Mode | Meaning |
 |------|---------|
-| **Selected** | Showing the committed child (e.g. MPD follow chrome). No chooser overlay. |
-| **Selecting** | Chooser open: dial rotates among same-size children; UI previews the candidate. |
+| Selected | Committed child (e.g. MPD follow page). No chooser ring. |
+| Selecting | Overlay on; rotary steps `active`; down-arrow commits. |
 
-The swapper does **not** own the 12 o'clock press. **Down / select** is an
-**external event** (hit on the arrow above the swapper) that means *commit /
-select the currently shown alternative*.
+Shapes do not hold function pointers. Interactive slots carry `fn_enum`;
+`ta_wire_touch` / `ta_wire_rotary` switch on it.
 
-**Wiring** (how events reach behavior): shapes do **not** hold function
-pointers. Each interactive slot carries a `fn_enum` (`ta_fn_enum_t` on
-`ta_follow_chrome`). Handlers `ta_wire_touch` / `ta_wire_rotary` `switch` on
-that enum (`TA_FN_TRANSPORT_TOGGLE`, `TA_FN_NAV`, `TA_FN_SWAP_STEP`, ...).
-Rewrite a case to rebind. NAV up enters selecting (overlay + down glyph);
-NAV down commits the swapper's shown alternative; rotary while selecting
-is `TA_FN_SWAP_STEP`.
+### Pseudo: whole UI paint (follow page)
 
-Direct swap without overlay remains allowed (API / future gesture); the
-overlay path is the primary human flow.
+```
+glass_paint():
+  if swap.active != 0:
+    push full-panel pixels of active swap child; return
 
-#### Usage flow (MPD is the only page today)
+  phase1(scene):                     # bake dirty L2R / Viewport / Swap bind
+  pushes = phase2(scene)             # nearest-first dirty exteriors
+  for push in reverse(pushes):       # farthest first on glass
+    hdr = shape_table[push.shape]
+    if hdr is TRANSPORT or NAV:
+      composed = stack_compose(
+        base_crop(exterior),
+        blit each follow slot 1 .. top_slot-1,   # zone..volume under transport
+        blit hdr icon at (0,0) with a2)
+      push_rect(exterior, composed)
+    else:
+      push_rect(exterior, hdr.pixels)
 
-1. User is in **selected** mode on the MPD (follow) child.
-2. Press **up/back** at 12 o'clock (solid up-arrow) -- external; enters selecting.
-3. Show chooser overlay (e.g. circular arrow, **100x100**); 12 o'clock glyph
-   becomes **down-arrow**.
-4. Dial rotation steps the swapper among alternatives under that overlay.
-5. Press **down/select** at 12 o'clock -- external event -> swapper selects the
-   currently shown alternative; overlay clears; arrow returns to **up**;
-   **selected** mode.
+stack_compose(dst, ex, ey, ...):
+  blit base into dst
+  for slot in ZONE .. (top_slot-1):
+    blit shape_table[uilo[slot]] at (uilo.x-ex, uilo.y-ey)
+  blit top icon with pack66 over
+```
 
-Hit boxes follow placements. Tracked on `todo:15b92eaa`.
+### Pixel-perfect PNG UI tests
 
-**Screen PNGs:** `spinme/host/test_screenshots` loads device `glyphs.bin` +
-`disintegration_360.rgba`, paints the 360 glass, writes 3x stills under
+`spinme/host/test_screenshots` loads device `glyphs.bin` +
+`disintegration_360.rgba`, paints the 360 glass into
+`build/ui_actual/`, and compares decoded RGB to goldens under
 `spinme/screenshots/` (`main_mpd`, `main_playing`, `selecting_overlay`,
-`kv_view`, `kv_edit`).
+`kv_view`, `kv_edit`). Refresh: `SPINME_UI_UPDATE_GOLDEN=1`.
+
+### Host unit tests (docstrings)
+
+All live under `spinme/host/test_*.c`. Run via `make test` (or one binary
+under `build/`). Each file's leading comment is the contract a fresh agent
+should read first:
+
+| File | Docstring |
+|------|-----------|
+| `test_actor.c` | Registers an actor on init and removes it on exit. |
+| `test_all_init.c` | Broadcast perform_init delivers once to every registered actor. |
+| `test_artwork.c` | Artwork pipeline: calm Q8 upscale to pack66, skip default art, oneshot album change. |
+| `test_boot.c` | Boot walks KV roster, stub-loads each actor blob, calls init. |
+| `test_controller.c` | Controller routes SetActive/ControlEvents to MPD or Sonos stubs. |
+| `test_draw_events.c` | Draw event switch handles ops and async reply_to completions. |
+| `test_draw_glass_contract.c` | Glass pipeline contract: update + phase1 + phase2 + under-image together. |
+| `test_draw_glass_owner.c` | End-to-end: Draw owns glass -- ISR hit, MPD/Net status, paint pushes. |
+| `test_draw_phase1.c` | phase1 bakes dirty L2R/viewport farthest-to-nearest (no LCD push). |
+| `test_draw_phase2.c` | phase2 emits whole dirty exteriors, culls covered ones, clears dirty. |
+| `test_draw_update.c` | update marks defs/dirty and shadow-propagates without rewriting pixels. |
+| `test_event_envelope.c` | Envelope fields + typed event union round-trip (no sync RPC). |
+| `test_follow_chrome.c` | Follow chrome: nine UILayout slots, paint-once vs high-z title/clock. |
+| `test_hit_dispatch.c` | Hit walk on accept_hit slots posts ControlEvents through Router. |
+| `test_input_isr.c` | Encoder gray/velocity decode; touch/rotary post into Draw ISR mail. |
+| `test_isr_mail.c` | ISR mail ring accepts FromISR posts and drains into the Draw queue. |
+| `test_kv.c` | NVM KV put/get copy-out and current_controller config key. |
+| `test_kv_actor.c` | KV actor set then get replies with ta_all_inform_result to caller. |
+| `test_kv_editor.c` | KV editor page lists records; fwd/back moves the selection. |
+| `test_log_accept.c` | Log accept fills a fixed buffer then rejects further lines. |
+| `test_log_drain.c` | Log drain sends, clears even on 502, skips empty ticks inside 4:30. |
+| `test_log_init.c` | Log init KV-gets log_receiver_url; inform installs the drain URL. |
+| `test_mpd_net.c` | Integration: Router->MPD->Net poll cadence with reply_to/session_id. |
+| `test_net_events.c` | Net dialect/poll/albumart with reply_to and fake backend seam. |
+| `test_net_kv_http.c` | PUT /kv/KEY then exit-all+boot picks up the new actor blob. |
+| `test_net_mpd.c` | MPD Net dialect: poll/set coalesce and albumart reply_to. |
+| `test_net_sntp.c` | Net SNTP after_wifi seam is recorded for the timesource handoff. |
+| `test_queue.c` | Multi-producer/single-consumer queue: peek/handle/pop, full-drop, shape lock. |
+| `test_registry_logger.c` | Registry posts; Init list starts Logger; log sample/reject policies. |
+| `test_router.c` | SetRoute(MPD) delivers events to MPD stub; Sonos stub stays quiet. |
+| `test_sched_cadence.c` | Scheduler: 1Hz clock, title scroll ox, one-shots under fake time. |
+| `test_sched_events.c` | Scheduler start/stop fires ticks with session_id under fake time. |
+| `test_screenshots.c` | Pixel-perfect glass UI vs PNG goldens in ../screenshots/ (see file for golden refresh). |
+| `test_shape_l2r.c` | Shapepack tag densities (6x5..3x10) and L2R width/height from children. |
+| `test_shape_swap.c` | SwapShape binds n equal-size children and shows exactly one active. |
+| `test_smoke.c` | Harness smoke: proves make test can run a host binary off-device. |
+| `test_text.c` | ta_text_build turns ASCII+glyph map into a ShapeL2R pack+kern stream. |
+| `test_uilayout.c` | UILayout 32-bit dirty/x/y/shape word; pack66 BitMap in the shape table. |
+| `test_under_image.c` | Under-image policy: dirty base invalidates covering exteriors that must redraw. |
+| `test_viewport.c` | Viewport ox scroll bakes child window; under-image buffer stays intact. |
+| `test_wire.c` | fn_enum wire: nav select and swap step without function pointers on shapes. |
+| `test_runtime_cfg.c` | Runtime KV settings: factory defaults load; override then reload. |
 
 ---
 
@@ -926,7 +1188,7 @@ Run: `(cd spinme/host && make test)`.
   socket / HTTP owner; Draw is the sole glass owner.
 - Dead-simple KV image (`ta_kv`), factory roster, first-fit holes, and
   host boot (`ta_boot_from_kv` / `ta_actor_init` / `ta_actor_exit`) on
-  `todo:afc1dc50`. ELF load is still a stub; `PUT /kv/<key>` is `ta_net_kv_http_set`.
+  `todo:afc1dc50`. ELF load is still a stub; `PUT /kv/<key>` is `ta_net_kv_http_put`.
 - **Event envelope** (`ta_event_envelope_t`): `src` / `session_id` /
   `enqueue_time_ms` (queue-stamped) + typed `ta_event_t` body. Completions
   default to `src`; `reply_to` is exceptional. No legacy blob arm. MVP

@@ -1,4 +1,4 @@
-/* Host: clock 1Hz, scroll ox, one-offs; fake-time. */
+/* Scheduler: 1Hz clock, title scroll ox, one-shots under fake time. */
 #include "ta_draw_events.h"
 #include "ta_event.h"
 #include "ta_registry.h"

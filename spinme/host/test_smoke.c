@@ -1,4 +1,4 @@
-/* Trivial host harness smoke -- proves make test runs off-device. */
+/* Harness smoke: proves make test can run a host binary off-device. */
 #include <stdio.h>
 
 int main(void) {

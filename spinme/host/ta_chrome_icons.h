@@ -14,9 +14,11 @@ extern "C" {
 #define TA_CHROME_ICON_PX 90
 /* Up/down at 12 oclock: 2/3 of play (play was 150% of this required size). */
 #define TA_CHROME_NAV_PX 60
-/* Transport ink: low a2 while desired disagrees with poll; full when settled. */
+/* Transport ink: low a2 while desired disagrees with poll; settled stays
+ * translucent (a2=2) so track text shows through the glyph. Nav solids use 3. */
 #define TA_CHROME_A2_PENDING 1
-#define TA_CHROME_A2_SETTLED 3
+#define TA_CHROME_A2_SETTLED 2
+#define TA_CHROME_A2_OPAQUE 3
 
 /* Clear to transparent, then stroke/fill. All operate on w*w buffers.
  * body_a2 is the pack66 a2 for solid coverage (fringe stays softer). */

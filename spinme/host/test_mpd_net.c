@@ -1,5 +1,4 @@
-/* Host integration: Router -> MPDController -> Net (fake deferred backend),
- * Scheduler-driven poll cadence, reply_to / session_id round trips. */
+/* Integration: Router->MPD->Net poll cadence with reply_to/session_id. */
 #include "ta_controller.h"
 #include "ta_draw_events.h"
 #include "ta_event.h"

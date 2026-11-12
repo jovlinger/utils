@@ -1,4 +1,4 @@
-/* Host: ascii Text constructor -> L2R via glyphs. */
+/* ta_text_build turns ASCII+glyph map into a ShapeL2R pack+kern stream. */
 #include "ta_text.h"
 #include "ta_uilayout.h"
 

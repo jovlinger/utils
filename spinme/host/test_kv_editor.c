@@ -1,4 +1,4 @@
-/* Host: KV editor view + fwd/back over live records. */
+/* KV editor page lists records; fwd/back moves the selection. */
 #include "ta_kv.h"
 #include "ta_kv_editor.h"
 #include "ta_shape_swap.h"

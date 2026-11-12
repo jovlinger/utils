@@ -1,4 +1,4 @@
-/* Host: shapepack tags + L2R size formula. */
+/* Shapepack tag densities (6x5..3x10) and L2R width/height from children. */
 #include "ta_shape_l2r.h"
 #include "ta_uilayout.h"
 

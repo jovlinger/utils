@@ -1,4 +1,4 @@
-/* Host: SwapShape selects one of n same-size children. */
+/* SwapShape binds n equal-size children and shows exactly one active. */
 #include "ta_draw_phase1.h"
 #include "ta_draw_phase2.h"
 #include "ta_shape_swap.h"

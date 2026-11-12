@@ -1,4 +1,4 @@
-/* Host: SetRoute(MPD) then event reaches stub MPD; Sonos not hit. */
+/* SetRoute(MPD) delivers events to MPD stub; Sonos stub stays quiet. */
 #include "ta_event.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"

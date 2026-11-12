@@ -1,4 +1,4 @@
-/* Host: NVM KV copy-out protocol + Config current_controller. */
+/* NVM KV put/get copy-out and current_controller config key. */
 #include "ta_kv.h"
 
 #include <stdio.h>
@@ -171,6 +171,13 @@ int main(void) {
         CHECK(memcmp(got, "Draw\nNet\n", 9) == 0);
         CHECK(ta_kv_get("Draw", got, sizeof(got), &len) == TA_KV_OK);
         CHECK(memcmp(got, "draw-v1", 7) == 0);
+        CHECK(ta_kv_get("mpd_host", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("ntp_host", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("timezone", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("screen_blank_s", got, sizeof(got), &len) == TA_KV_OK);
+        CHECK(ta_kv_get("title_scroll_step", got, sizeof(got), &len) ==
+              TA_KV_OK);
+        CHECK(ta_kv_get("title_scroll_ms", got, sizeof(got), &len) == TA_KV_OK);
         CHECK(ta_kv_load_image(snap, 2) == TA_KV_BAD_ARG);
     }
 

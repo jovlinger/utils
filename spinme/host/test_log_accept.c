@@ -1,4 +1,4 @@
-/* Host: Log collects until the buffer is full, then rejects. */
+/* Log accept fills a fixed buffer then rejects further lines. */
 #include "ta_log_accept.h"
 
 #include <stdio.h>

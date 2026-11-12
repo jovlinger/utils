@@ -1,4 +1,4 @@
-/* Host: viewport ox scroll; under-image buffer untouched. */
+/* Viewport ox scroll bakes child window; under-image buffer stays intact. */
 #include "ta_uilayout.h"
 #include "ta_under_image.h"
 #include "ta_viewport.h"

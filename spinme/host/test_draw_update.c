@@ -1,4 +1,4 @@
-/* Host: Draw.update defs+dirty; pixmap bytes unchanged; shadow propagate. */
+/* update marks defs/dirty and shadow-propagates without rewriting pixels. */
 #include "ta_draw_update.h"
 #include "ta_shape_l2r.h"
 #include "ta_uilayout.h"

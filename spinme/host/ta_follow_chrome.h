@@ -37,8 +37,9 @@ typedef struct ta_follow_chrome {
 int ta_follow_chrome_build(ta_follow_chrome_t *out, const unsigned shape_idx[TA_FOLLOW_N]);
 
 /*
- * Text column at text_x/text_y; nav at 12 oclock (button_y, centered);
- * transport (play/stop) at panel center; clock in the text column under volume.
+ * Text column at text_x/text_y (zone/artist/album/volume); TITLE centered on
+ * the transport band so play/pause a2 shows the scrolling track through;
+ * nav at 12 oclock; transport at panel center; clock under volume.
  */
 typedef struct ta_follow_metrics {
     int panel_w;

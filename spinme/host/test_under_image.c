@@ -1,4 +1,4 @@
-/* Host: under-image invalidate rules. */
+/* Under-image policy: dirty base invalidates covering exteriors that must redraw. */
 #include "ta_under_image.h"
 #include "ta_uilayout.h"
 

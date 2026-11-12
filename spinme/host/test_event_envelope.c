@@ -1,4 +1,4 @@
-/* Host tests: envelope + typed event body (no sync RPC). */
+/* Envelope fields + typed event union round-trip (no sync RPC). */
 #include "ta_event.h"
 #include "ta_net_events.h"
 

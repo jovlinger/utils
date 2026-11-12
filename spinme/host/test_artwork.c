@@ -1,4 +1,4 @@
-/* Host: calm Q8 uprez, default-art suppress, album-change oneshots. */
+/* Artwork pipeline: calm Q8 upscale to pack66, skip default art, oneshot album change. */
 #include "ta_artwork.h"
 #include "ta_draw_events.h"
 #include "ta_net_events.h"

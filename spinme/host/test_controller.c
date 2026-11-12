@@ -1,4 +1,4 @@
-/* Host: Router -> MPD/Sonos stubs; SetActive/ControlEvents; session_id. */
+/* Controller routes SetActive/ControlEvents to MPD or Sonos stubs. */
 #include "ta_controller.h"
 #include "ta_draw_events.h"
 #include "ta_event.h"

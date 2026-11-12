@@ -1,4 +1,4 @@
-/* Host: drain sends, clears on 502, and skips ticks inside 4:30. */
+/* Log drain sends, clears even on 502, skips empty ticks inside 4:30. */
 #include "ta_log_accept.h"
 
 #include <stdio.h>

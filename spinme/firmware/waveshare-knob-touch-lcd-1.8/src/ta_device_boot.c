@@ -3,11 +3,13 @@
 #include "ta_controller.h"
 #include "ta_draw_events.h"
 #include "ta_init.h"
+#include "ta_kv.h"
 #include "ta_logger.h"
 #include "ta_queue.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"
 #include "ta_router.h"
+#include "ta_runtime_cfg.h"
 #include "ta_sched_events.h"
 
 #include <stdio.h>
@@ -26,7 +28,6 @@ static TaskHandle_t g_fabric_task;
  * albumart decoder) push; only the Draw task pumps. Bound before the
  * activation posts below so DRAW_SET_SHAPE_STACK waits for the glass glue. */
 #define TA_DRAW_QUEUE_CAP 32
-#define TA_DEVICE_SCROLL_MS 40
 static ta_event_envelope_t g_draw_slots[TA_DRAW_QUEUE_CAP];
 static ta_queue_t g_draw_q;
 
@@ -44,6 +45,8 @@ static void fabric_task(void *arg) {
 }
 
 void ta_device_boot(void) {
+    ta_runtime_cfg_t rc;
+
     ta_registry_reset();
     ta_init_reset();
     ta_logger_reset();
@@ -53,6 +56,10 @@ void ta_device_boot(void) {
     ta_mpd_reset();
     ta_sonos_reset();
     ta_router_reset();
+
+    /* Factory KV seeds roster + runtime settings; later PUT /kv overwrites. */
+    ta_kv_install_factory();
+    (void)ta_runtime_cfg_load(&rc);
 
     (void)ta_init_add_entry(TA_LOGGER_NAME, ta_logger_start);
     (void)ta_init_add_entry(TA_DRAW_NAME, ta_draw_start);
@@ -115,14 +122,14 @@ void ta_device_boot(void) {
         if (ta_registry_post(TA_CONTROLLER_NAME, &env) != 0) {
             ESP_LOGE(TAG, "set active fail");
         }
-        /* Draw cadences: 1 Hz clock/idle tick, title scroll step. */
+        /* Draw cadences: 1 Hz clock/idle tick, title scroll from KV. */
         if (ta_sched_arm_clock_1hz(TA_DRAW_NAME, 1) != 0 ||
-            ta_sched_arm_scroll(TA_DRAW_NAME, 1, TA_DEVICE_SCROLL_MS) != 0) {
+            ta_sched_arm_scroll(TA_DRAW_NAME, 1, (int)rc.scroll_ms) != 0) {
             ESP_LOGE(TAG, "draw cadence arm fail");
         }
-        printf("ta route=%s poll_ms=%u scroll_ms=%u\n",
+        printf("ta route=%s poll_ms=%u scroll_ms=%u blank_s=%u mpd=%s\n",
                ta_router_current_target(), (unsigned)TA_MPD_POLL_MS,
-               (unsigned)TA_DEVICE_SCROLL_MS);
+               rc.scroll_ms, rc.screen_blank_s, rc.mpd_host);
     }
 }
 

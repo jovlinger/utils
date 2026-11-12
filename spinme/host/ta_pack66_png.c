@@ -272,3 +272,158 @@ done:
     free(raw);
     return rc;
 }
+
+static uint32_t rd_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+int ta_pack66_read_png_rgb(const char *path, uint16_t *out_w, uint16_t *out_h,
+                           uint8_t **out_rgb) {
+    FILE *fp;
+    uint8_t sig[8];
+    uint8_t expect[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    uint32_t w = 0;
+    uint32_t h = 0;
+    uint8_t *idat = NULL;
+    size_t idat_n = 0;
+    uint8_t *raw = NULL;
+    uint8_t *rgb = NULL;
+    uLongf raw_n = 0;
+    size_t y;
+    int got_ihdr = 0;
+    int got_iend = 0;
+
+    if (path == NULL || out_w == NULL || out_h == NULL || out_rgb == NULL) {
+        return -1;
+    }
+    *out_rgb = NULL;
+    fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return -1;
+    }
+    if (fread(sig, 1, 8, fp) != 8 || memcmp(sig, expect, 8) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    while (!got_iend) {
+        uint8_t lenb[4];
+        uint8_t type[4];
+        uint32_t len;
+        uint8_t *data = NULL;
+
+        if (fread(lenb, 1, 4, fp) != 4 || fread(type, 1, 4, fp) != 4) {
+            goto fail;
+        }
+        len = rd_be32(lenb);
+        if (len > 0) {
+            data = (uint8_t *)malloc(len);
+            if (data == NULL || fread(data, 1, len, fp) != len) {
+                free(data);
+                goto fail;
+            }
+        }
+        if (fseek(fp, 4, SEEK_CUR) != 0) { /* skip CRC */
+            free(data);
+            goto fail;
+        }
+        if (memcmp(type, "IHDR", 4) == 0) {
+            if (len != 13 || data == NULL || data[8] != 8 || data[9] != 2 ||
+                data[10] != 0 || data[11] != 0 || data[12] != 0) {
+                free(data);
+                goto fail;
+            }
+            w = rd_be32(data);
+            h = rd_be32(data + 4);
+            got_ihdr = 1;
+            free(data);
+        } else if (memcmp(type, "IDAT", 4) == 0) {
+            uint8_t *nbuf;
+            if (!got_ihdr) {
+                free(data);
+                goto fail;
+            }
+            nbuf = (uint8_t *)realloc(idat, idat_n + len);
+            if (nbuf == NULL) {
+                free(data);
+                goto fail;
+            }
+            idat = nbuf;
+            if (len > 0 && data != NULL) {
+                memcpy(idat + idat_n, data, len);
+            }
+            idat_n += len;
+            free(data);
+        } else if (memcmp(type, "IEND", 4) == 0) {
+            free(data);
+            got_iend = 1;
+        } else {
+            free(data);
+        }
+    }
+    fclose(fp);
+    fp = NULL;
+    if (!got_ihdr || w == 0 || h == 0 || w > 4096 || h > 4096 || idat == NULL) {
+        goto fail;
+    }
+    raw_n = (uLongf)h * ((uLongf)w * 3u + 1u);
+    raw = (uint8_t *)malloc(raw_n);
+    if (raw == NULL) {
+        goto fail;
+    }
+    if (uncompress(raw, &raw_n, idat, (uLong)idat_n) != Z_OK) {
+        goto fail;
+    }
+    free(idat);
+    idat = NULL;
+    rgb = (uint8_t *)malloc((size_t)w * (size_t)h * 3u);
+    if (rgb == NULL) {
+        goto fail;
+    }
+    for (y = 0; y < h; y++) {
+        size_t row = y * ((size_t)w * 3u + 1u);
+        if (raw[row] != 0) {
+            goto fail; /* only filter None */
+        }
+        memcpy(rgb + y * (size_t)w * 3u, raw + row + 1u, (size_t)w * 3u);
+    }
+    free(raw);
+    *out_w = (uint16_t)w;
+    *out_h = (uint16_t)h;
+    *out_rgb = rgb;
+    return 0;
+fail:
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    free(idat);
+    free(raw);
+    free(rgb);
+    return -1;
+}
+
+int ta_pack66_png_pixel_equal(const char *path_a, const char *path_b) {
+    uint16_t wa, ha, wb, hb;
+    uint8_t *ra = NULL;
+    uint8_t *rb = NULL;
+    size_t n;
+    int rc;
+
+    if (ta_pack66_read_png_rgb(path_a, &wa, &ha, &ra) != 0) {
+        return -1;
+    }
+    if (ta_pack66_read_png_rgb(path_b, &wb, &hb, &rb) != 0) {
+        free(ra);
+        return -1;
+    }
+    if (wa != wb || ha != hb) {
+        free(ra);
+        free(rb);
+        return 1;
+    }
+    n = (size_t)wa * (size_t)ha * 3u;
+    rc = memcmp(ra, rb, n) == 0 ? 0 : 1;
+    free(ra);
+    free(rb);
+    return rc;
+}

@@ -1,4 +1,4 @@
-/* Host: Net dialect/poll/albumart; reply_to; fake backend seam. */
+/* Net dialect/poll/albumart with reply_to and fake backend seam. */
 #include "ta_event.h"
 #include "ta_net_backend.h"
 #include "ta_net_events.h"

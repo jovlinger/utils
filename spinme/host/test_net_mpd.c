@@ -1,4 +1,4 @@
-/* Host: MPD dialect poll/set coalesce + albumart reply_to. */
+/* MPD Net dialect: poll/set coalesce and albumart reply_to. */
 #include "ta_event.h"
 #include "ta_net_backend.h"
 #include "ta_net_mpd.h"

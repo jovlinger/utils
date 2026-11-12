@@ -1,4 +1,4 @@
-/* Host: Net SNTP seam records after_wifi. */
+/* Net SNTP after_wifi seam is recorded for the timesource handoff. */
 #include "ta_net_sntp.h"
 
 #include <stdio.h>

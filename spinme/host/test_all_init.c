@@ -1,4 +1,4 @@
-/* Host: perform_init reaches every registered actor once. */
+/* Broadcast perform_init delivers once to every registered actor. */
 #include "ta_all.h"
 #include "ta_event.h"
 #include "ta_registry.h"

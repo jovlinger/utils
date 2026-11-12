@@ -1,4 +1,4 @@
-/* Host: accept_hit walk -> ControlEvents via Router. */
+/* Hit walk on accept_hit slots posts ControlEvents through Router. */
 #include "ta_controller.h"
 #include "ta_follow_chrome.h"
 #include "ta_hit_dispatch.h"

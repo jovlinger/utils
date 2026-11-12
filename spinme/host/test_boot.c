@@ -1,4 +1,4 @@
-/* Host: boot walks the roster, stub-loads each blob, calls init. */
+/* Boot walks KV roster, stub-loads each actor blob, calls init. */
 #include "ta_boot.h"
 #include "ta_kv.h"
 #include "ta_registry.h"

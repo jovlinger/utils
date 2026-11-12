@@ -1,4 +1,4 @@
-/* Host: 32-bit UILayout + ShapeBitMap pack66 + shared idx. */
+/* UILayout 32-bit dirty/x/y/shape word; pack66 BitMap in the shape table. */
 #include "ta_uilayout.h"
 
 #include <stdio.h>

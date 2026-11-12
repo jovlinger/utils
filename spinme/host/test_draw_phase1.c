@@ -1,4 +1,4 @@
-/* Host: phase1 farthest->nearest; under+text composite; no panel FB. */
+/* phase1 bakes dirty L2R/viewport farthest-to-nearest (no LCD push). */
 #include "ta_draw_phase1.h"
 #include "ta_shape_l2r.h"
 #include "ta_uilayout.h"

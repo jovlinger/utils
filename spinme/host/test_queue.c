@@ -1,4 +1,4 @@
-/* Host test: MP/SC queue peek/handle/pop; full drop; shape lock is distinct. */
+/* Multi-producer/single-consumer queue: peek/handle/pop, full-drop, shape lock. */
 #include "ta_event.h"
 #include "ta_queue.h"
 
