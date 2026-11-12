@@ -1,5 +1,6 @@
-/* Log accept fills a fixed buffer then rejects further lines. */
+/* Log accept routes into the three-ring store. */
 #include "ta_log_accept.h"
+#include "ta_log_rings.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,8 +18,16 @@ static int checks;
         }                                                                      \
     } while (0)
 
+static int ok_send(const char *url, const ta_log_accept_event_t *rows, size_t n,
+                   void *ud) {
+    (void)url;
+    (void)rows;
+    (void)n;
+    (void)ud;
+    return 0;
+}
+
 int main(void) {
-    size_t i;
     const ta_log_accept_event_t *ev;
     char big[TA_LOG_MSG_MAX + 8];
 
@@ -34,15 +43,28 @@ int main(void) {
     memset(big, 'x', sizeof(big) - 1);
     big[sizeof(big) - 1] = '\0';
     CHECK(ta_log_accept(1, big) == -1);
+    CHECK(ta_log_accept_rejected() >= 1);
 
-    for (i = ta_log_accept_count(); i < TA_LOG_ACCEPT_CAP; i++) {
-        CHECK(ta_log_accept((uint32_t)i, "more") == 0);
-    }
-    /* Filling the buffer dumps immediately, so the next line is kept. */
+    /* Repeat compress on the INFO ring. */
+    CHECK(ta_log_accept(30, "same") == 0);
+    CHECK(ta_log_accept(31, "same") == 0);
+    CHECK(ta_log_accept_count() == 3);
+
+    /* Level routing. */
+    CHECK(ta_log_accept_level(TA_LOG_LEVEL_ERROR, 40, "boom") == 0);
+    CHECK(ta_log_accept_level(TA_LOG_LEVEL_WARN, 41, "careful") == 0);
+    CHECK(ta_log_rings_count(TA_LOG_RING_ERROR) >= 1);
+    CHECK(ta_log_rings_count(TA_LOG_RING_WARN) >= 1);
+
+    /* Dump without URL leaves lines; with sender ACK advances heads. */
+    CHECK(ta_log_dump(100) == 0);
+    CHECK(ta_log_accept_count() > 0);
+    ta_log_set_url("tcp://qnap.local:514");
+    ta_log_set_sender(ok_send, NULL);
+    CHECK(ta_log_dump(101) == 0);
     CHECK(ta_log_accept_count() == 0);
     CHECK(ta_log_accept(99, "after-dump") == 0);
     CHECK(ta_log_accept_count() == 1);
-    CHECK(ta_log_accept_rejected() >= 1);
 
     ta_log_set_buffer_kb(128);
     CHECK(ta_log_buffer_cap() >= 1000);

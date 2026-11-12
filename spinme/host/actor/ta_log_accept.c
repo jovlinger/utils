@@ -3,15 +3,16 @@
 #include "ta_event.h"
 #include "ta_kv.h"
 #include "ta_kv_actor.h"
+#include "ta_log_rings.h"
+#include "ta_net_events.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Heap buffer: max 128 KiB must not sit in ESP32 DRAM BSS. */
-static ta_log_accept_event_t *g_buf;
-static size_t g_cap;
-static size_t g_n;
+static ta_log_accept_event_t *g_snap;
+static size_t g_snap_n;
+static size_t g_snap_cap;
 static unsigned g_rejected;
 static ta_log_send_fn g_send;
 static void *g_send_ud;
@@ -19,36 +20,66 @@ static char g_url[128];
 static uint32_t g_last_empty_ms;
 static int g_have_last;
 static uint32_t g_cadence_s = TA_LOG_CADENCE_S_DEFAULT;
+static uint16_t g_buffer_kb = TA_LOG_BUFFER_KB_DEFAULT;
 
-static int ensure_buf(size_t slots) {
-    ta_log_accept_event_t *nbuf;
+static size_t ring_total_count(void) {
+    return (size_t)ta_log_rings_count(TA_LOG_RING_ERROR) +
+           (size_t)ta_log_rings_count(TA_LOG_RING_WARN) +
+           (size_t)ta_log_rings_count(TA_LOG_RING_INFO);
+}
 
-    if (slots < 1u) {
-        slots = 1u;
+static int rebuild_snap(void) {
+    ta_log_rings_iter_t it;
+    ta_log_rings_entry_t ent;
+    size_t need;
+    size_t n;
+
+    need = ring_total_count();
+    if (need > g_snap_cap) {
+        ta_log_accept_event_t *ns;
+        size_t cap;
+
+        cap = need < 8u ? 8u : need;
+        ns = (ta_log_accept_event_t *)realloc(g_snap, cap * sizeof(*ns));
+        if (ns == NULL) {
+            return -1;
+        }
+        g_snap = ns;
+        g_snap_cap = cap;
     }
-    if (g_buf != NULL && g_cap == slots) {
-        return 0;
-    }
-    nbuf = (ta_log_accept_event_t *)realloc(g_buf, slots * sizeof(*nbuf));
-    if (nbuf == NULL) {
+    memset(&it, 0, sizeof(it));
+    if (ta_log_rings_iter_begin(&it) != 0) {
+        g_snap_n = 0;
         return -1;
     }
-    if (slots > g_cap) {
-        memset(nbuf + g_cap, 0, (slots - g_cap) * sizeof(*nbuf));
+    n = 0;
+    while (ta_log_rings_iter_next(&it, &ent) != 0) {
+        size_t len;
+
+        if (n >= g_snap_cap) {
+            break;
+        }
+        g_snap[n].emit_time_ms = (uint32_t)ent.time_ms;
+        len = ent.text != NULL ? strlen(ent.text) : 0;
+        if (len >= TA_LOG_MSG_MAX) {
+            len = TA_LOG_MSG_MAX - 1;
+        }
+        if (len > 0) {
+            memcpy(g_snap[n].message, ent.text, len);
+        }
+        g_snap[n].message[len] = '\0';
+        n++;
     }
-    g_buf = nbuf;
-    g_cap = slots;
-    if (g_n > g_cap) {
-        g_n = g_cap;
-    }
+    ta_log_rings_iter_end(&it);
+    g_snap_n = n;
     return 0;
 }
 
 void ta_log_accept_reset(void) {
-    free(g_buf);
-    g_buf = NULL;
-    g_cap = 0;
-    g_n = 0;
+    free(g_snap);
+    g_snap = NULL;
+    g_snap_n = 0;
+    g_snap_cap = 0;
     g_rejected = 0;
     g_send = NULL;
     g_send_ud = NULL;
@@ -56,12 +87,17 @@ void ta_log_accept_reset(void) {
     g_last_empty_ms = 0;
     g_have_last = 0;
     g_cadence_s = TA_LOG_CADENCE_S_DEFAULT;
-    (void)ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP);
+    g_buffer_kb = TA_LOG_BUFFER_KB_DEFAULT;
+    (void)ta_log_rings_reset();
+    /* Host default: small arena so unit tests stay light. */
+    ta_log_set_buffer_kb(g_buffer_kb);
 }
 
 void ta_log_set_buffer_kb(uint16_t kb) {
-    size_t bytes;
-    size_t slots;
+    uint32_t total;
+    uint32_t err_b;
+    uint32_t warn_b;
+    uint32_t info_b;
 
     if (kb < 1u) {
         kb = 1u;
@@ -69,22 +105,35 @@ void ta_log_set_buffer_kb(uint16_t kb) {
     if (kb > TA_LOG_BUFFER_KB_MAX) {
         kb = (uint16_t)TA_LOG_BUFFER_KB_MAX;
     }
-    bytes = (size_t)kb * 1024u;
-    if (bytes > TA_LOG_ACCEPT_BYTES_MAX) {
-        bytes = TA_LOG_ACCEPT_BYTES_MAX;
+    g_buffer_kb = kb;
+    total = (uint32_t)kb * 1024u;
+    /* 1:1:2 split matching the 128/128/256 design. */
+    err_b = total / 4u;
+    warn_b = total / 4u;
+    info_b = total - err_b - warn_b;
+    if (err_b < 64u) {
+        err_b = 64u;
     }
-    slots = bytes / sizeof(ta_log_accept_event_t);
-    if (slots < 1u) {
-        slots = 1u;
+    if (warn_b < 64u) {
+        warn_b = 64u;
     }
-    if (slots > TA_LOG_ACCEPT_MAX_EVENTS) {
-        slots = TA_LOG_ACCEPT_MAX_EVENTS;
+    if (info_b < 64u) {
+        info_b = 64u;
     }
-    (void)ensure_buf(slots);
+    (void)ta_log_rings_set_caps(err_b, warn_b, info_b);
+    g_snap_n = 0;
 }
 
 size_t ta_log_buffer_cap(void) {
-    return g_cap;
+    uint32_t bytes;
+
+    bytes = ta_log_rings_cap(TA_LOG_RING_ERROR) +
+            ta_log_rings_cap(TA_LOG_RING_WARN) +
+            ta_log_rings_cap(TA_LOG_RING_INFO);
+    if (bytes < sizeof(ta_log_accept_event_t)) {
+        return 1u;
+    }
+    return (size_t)(bytes / sizeof(ta_log_accept_event_t));
 }
 
 void ta_log_set_cadence_s(uint32_t seconds) {
@@ -123,23 +172,86 @@ const char *ta_log_url(void) {
 }
 
 int ta_log_dump(uint32_t now_ms) {
-    if (g_buf == NULL && ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP) != 0) {
+    ta_log_rings_iter_t it;
+    ta_log_rings_entry_t ent;
+    uint32_t max_seq;
+    int send_rc;
+    char batch[TA_NET_LOG_DRAIN_MAX];
+    size_t batch_n;
+
+    if (rebuild_snap() != 0) {
         return -1;
     }
-    if (g_n > 0 && g_send != NULL && g_url[0] != '\0') {
-        (void)g_send(g_url, g_buf, g_n, g_send_ud);
+    max_seq = 0;
+    batch_n = 0;
+    memset(&it, 0, sizeof(it));
+    if (ta_log_rings_iter_begin(&it) == 0) {
+        while (ta_log_rings_iter_next(&it, &ent) != 0) {
+            char line[160];
+            size_t ln;
+            int pri;
+
+            if (ent.seq > max_seq) {
+                max_seq = ent.seq;
+            }
+            pri = 14; /* user.info */
+            if (ent.level == TA_LOG_LEVEL_ERROR) {
+                pri = 11; /* user.err */
+            } else if (ent.level == TA_LOG_LEVEL_WARN) {
+                pri = 12; /* user.warning */
+            }
+            ln = (size_t)snprintf(
+                line, sizeof(line), "<%d>1 %llu spinme spinme - - %s", pri,
+                (unsigned long long)ent.time_ms,
+                ent.text != NULL ? ent.text : "");
+            if (ln >= sizeof(line)) {
+                ln = sizeof(line) - 1;
+            }
+            if (ent.repeat > 1u) {
+                char rep[48];
+                int rn;
+
+                rn = snprintf(rep, sizeof(rep), " (repeated %u times)",
+                              (unsigned)ent.repeat);
+                if (rn > 0 && (size_t)rn < sizeof(rep) &&
+                    ln + (size_t)rn < sizeof(line)) {
+                    memcpy(line + ln, rep, (size_t)rn);
+                    ln += (size_t)rn;
+                    line[ln] = '\0';
+                }
+            }
+            if (batch_n + ln + 1u > sizeof(batch)) {
+                break;
+            }
+            memcpy(batch + batch_n, line, ln);
+            batch_n += ln;
+            batch[batch_n++] = '\n';
+        }
+        ta_log_rings_iter_end(&it);
     }
-    g_n = 0;
-    memset(g_buf, 0, sizeof(g_buf[0]) * g_cap);
-    g_last_empty_ms = now_ms;
-    g_have_last = 1;
+
+    send_rc = 0;
+    if (g_snap_n > 0 && g_send != NULL && g_url[0] != '\0') {
+        send_rc = g_send(g_url, g_snap, g_snap_n, g_send_ud);
+    } else if (batch_n > 0 && g_url[0] == '\0') {
+        /* No URL: treat as local-only; do not advance heads. */
+        send_rc = -1;
+    }
+
+    if (send_rc == 0 && g_snap_n > 0) {
+        (void)ta_log_rings_ack_through(max_seq);
+        g_snap_n = 0;
+        g_last_empty_ms = now_ms;
+        g_have_last = 1;
+    }
+    /* Failed or unreachable QuLog: leave rings; retry on next dump/tick. */
+    (void)batch;
     return 0;
 }
 
 int ta_log_on_empty_tick(uint32_t now_ms) {
     uint32_t due_ms;
 
-    /* Dump when cadence window nearly elapsed (cadence - 30s, min 1s). */
     due_ms = g_cadence_s * 1000u;
     if (due_ms > 30000u) {
         due_ms -= 30000u;
@@ -199,6 +311,16 @@ int ta_log_handle_envelope(const ta_event_envelope_t *env) {
         }
         return ta_kv_actor_get("Log", TA_KV_KEY_LOG_URL);
     }
+    if (env->event.type == TA_EV_NET_LOG_DRAIN_ACK) {
+        if (env->event.u.net_log_drain_ack.status == 0) {
+            (void)ta_log_rings_ack_through(
+                env->event.u.net_log_drain_ack.max_seq);
+            g_snap_n = 0;
+            g_last_empty_ms = ta_now_ms();
+            g_have_last = 1;
+        }
+        return 0;
+    }
     if (env->event.type != TA_EV_ALL_INFORM_RESULT) {
         return 0;
     }
@@ -216,7 +338,8 @@ int ta_log_handle_envelope(const ta_event_envelope_t *env) {
     return 0;
 }
 
-int ta_log_accept(uint32_t emit_time_ms, const char *message) {
+int ta_log_accept_level(uint8_t level, uint32_t emit_time_ms,
+                        const char *message) {
     size_t n;
 
     if (message == NULL || message[0] == '\0') {
@@ -228,32 +351,30 @@ int ta_log_accept(uint32_t emit_time_ms, const char *message) {
         g_rejected++;
         return -1;
     }
-    if (g_buf == NULL && ensure_buf(TA_LOG_ACCEPT_DEFAULT_CAP) != 0) {
+    if (ta_log_rings_insert(level, (uint64_t)emit_time_ms, message) != 0) {
         g_rejected++;
         return -1;
     }
-    if (g_n >= g_cap) {
-        g_rejected++;
-        return -1;
-    }
-    g_buf[g_n].emit_time_ms = emit_time_ms;
-    memcpy(g_buf[g_n].message, message, n + 1);
-    g_n++;
-    if (g_n >= g_cap) {
-        (void)ta_log_dump(emit_time_ms);
-    }
+    (void)rebuild_snap();
     return 0;
 }
 
+int ta_log_accept(uint32_t emit_time_ms, const char *message) {
+    return ta_log_accept_level(TA_LOG_LEVEL_INFO, emit_time_ms, message);
+}
+
 size_t ta_log_accept_count(void) {
-    return g_n;
+    return ring_total_count();
 }
 
 const ta_log_accept_event_t *ta_log_accept_at(size_t index) {
-    if (index >= g_n) {
+    if (rebuild_snap() != 0) {
         return NULL;
     }
-    return &g_buf[index];
+    if (index >= g_snap_n) {
+        return NULL;
+    }
+    return &g_snap[index];
 }
 
 unsigned ta_log_accept_rejected(void) {

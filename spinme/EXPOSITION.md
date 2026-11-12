@@ -9,7 +9,8 @@ implementation to match the todo (Body / Notes / WorkItems), not the reverse.
 | Ticket | Owns (design) |
 |--------|----------------|
 | `todo:afc1dc50` (done) | Dead-simple KV layout + allocator, boot roster/load/`init`/`exit`, USB-only base loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map still a stub |
-| `todo:15b92eaa` (groom) | Log TaskActor (sample/buffer/off-device drain), universal `ta_all_*` messages, Net NTP; **consumes** KV (does not redefine storage) |
+| `todo:15b92eaa` (done) | Log TaskActor baseline (sample/buffer/off-device drain), universal `ta_all_*`, Net NTP; **consumes** KV |
+| `todo:cff5c240` | Test `get_debug`, QuLog PSRAM three-ring store, RFC-5424 TCP drain with ACK-advanced heads; HTTP path lowercasing |
 
 Later, if code drifts from a closed ticket, **sync EXPOSITION to the code**
 (as-built fidelity). Do not treat a stale EXPOSITION as design authority
@@ -52,25 +53,32 @@ TaskActor **code** blob (or a config string) with `Content-Length` into
 reload the roster so the new image runs.
 
 Net also serves HTTP-only on port 80: `POST /event/<taskactor>/<eventname>`
-(`ta_net_http_event`). Query and/or form body are parsed as
-`x-www-form-urlencoded` (body keys override query). Net enqueues the event
-with a fresh `session_id`, blocks up to 5s for `TA_EV_NET_HTTP_REPLY`
-(`ta_net_http_reply_t`), and returns that status/body; unknown actor -> 404;
-timeout -> 201. mDNS advertise is Scheduler-timed (`ta_net_mdns_advertise`).
-KV updates will ride this event path next.
+(`ta_net_http_event`). Path segments are ASCII-lowercased before registry
+lookup; canonical registered names are lowercase (`test`, `log`, `net`, ...).
+Query and/or form body are parsed as `x-www-form-urlencoded` (body keys
+override query). Net enqueues the event with a fresh `session_id`, blocks up
+to 5s for `TA_EV_NET_HTTP_REPLY` or a large blob offer, and returns that
+status/body; unknown actor -> 404; timeout -> 201. mDNS advertise is
+Scheduler-timed (`ta_net_mdns_advertise`).
 
-## Log (`todo:15b92eaa`)
+Test (`test`) also owns debug duty: `POST /event/test/get_debug` returns a
+blob with `w`/`h`/`fmt=pack66`/`px_n`/`logs` header, optional pack66 pixels,
+and time-merged ring log lines (`todo:cff5c240`).
+
+## Log (`todo:15b92eaa` + `todo:cff5c240`)
 
 `ta_all_broadcast_perform_init` posts `TA_EV_ALL_PERFORM_INIT` to every
 registered actor. Async replies use `TA_EV_ALL_INFORM_RESULT`.
 
-Log collects `ta_log_accept` lines (`emit_time` + message) in a large buffer
-(default small on host; up to ~128 KiB via KV `log_buffer_kb` smallint). A full
-buffer, or an empty tick near the end of `log_cadence_s` (smallint, default
-300), calls the Net send callback with `logtarget` (string; falls back to
-`log_receiver_url`) and clears even if send fails. Target is QuLog/syslog
-compatible (`ta_log_format_syslog`). On init, Log applies those KV settings and
-refreshes the URL via inform.
+Log accepts lines into a three-ring store (`ta_log_rings`: ERROR 128 KiB, WARN
+128 KiB, INFO-and-below 256 KiB by default; host injects smaller caps). Rings
+are doubly-linked circular arenas (PSRAM on device later). Same-text tails
+compress to a repeat count. Overrun emits WARN `log overrun` and drops the
+oldest head. Drain merges by timestamp into short RFC-5424 frames toward KV
+`logtarget` (fallback `log_receiver_url`; factory QuLog on `qnap.local`).
+Heads advance only on successful send / `TA_EV_NET_LOG_DRAIN_ACK`
+(`ta_log_rings_ack_through`); failed QuLog leaves the rings for retry. Cadence
+empty ticks still use `log_cadence_s`.
 
 ---
 
@@ -300,7 +308,8 @@ hurts.
 | `actors_to_start` | `Draw\nNet\n` | `ta_boot_from_kv` |
 | Per-name actor blob | e.g. `Draw`=`draw-v1` | boot stub load |
 | `current_controller` | `MPD` | Router / Config |
-| `log_receiver_url` | `http://gmk.local/logs` | Log init |
+| `logtarget` | `tcp://qnap.local:514` | Log QuLog drain (preferred) |
+| `log_receiver_url` | `tcp://qnap.local:514` | Log init fallback |
 | `mpd_host` | `miniDSP-SHD.local` | player_http DNS |
 | `ntp_host` | `pool.ntp.org` | Net SNTP (`configTime`) |
 | `timezone` | `EST5EDT,M3.2.0/2,M11.1.0/2` | Net SNTP (`TZ` / `tzset`) |
@@ -1175,7 +1184,7 @@ Library sources live under four subdirs. Tests:
 | Path | Role |
 |------|------|
 | `tests/local/` | PC unit + goldens (`test_xy_timed_redraw`: digits 0-9 / letters a-j, **bit-identical** PNG vs `screenshots/xy_timed/`; `test_screenshots`: pixel RGB) |
-| `tests/ondevice/` | Post-flash/OTA: `POST /event/Test/TestRun` (alias `run_test`) |
+| `tests/ondevice/` | Post-flash/OTA: `POST /event/test/testrun` (alias `run_test`); `get_debug` |
 
 Firmware `src/ta_host/` keeps flat symlink names into the library trees.
 
@@ -1186,7 +1195,8 @@ Firmware `src/ta_host/` keeps flat symlink names into the library trees.
 | `actor/` | Actors + net backends | `ta_registry.*`, `ta_controller.*`, `ta_router.*`, `ta_boot.*`, `ta_net_*`, `ta_log_accept.*`, `ta_test_actor.*` |
 | `base/` | Shared fabric | `ta_init.*`, `ta_queue.*`, `ta_kv.*`, `ta_runtime_cfg.*`, `ta_isr_mail.*`, `ta_sync.h` |
 
-**Test actor:** `TA_EV_TEST_RUN` / `TA_EV_TEST_DONE` (`0x600` / `0x610`).
+**Test actor:** `TA_EV_TEST_RUN` / `TA_EV_TEST_GET_DEBUG` / `TA_EV_TEST_DONE`
+(`0x600` / `0x601` / `0x610`). Canonical name `test`.
 PC forks `./build/test_<selector>`; device runs built-in probes (`smoke`).
 HTTP form: `mode`, `selector`/`name`. Offers `TA_EV_NET_HTTP_REPLY` for the
 Net gateway wait.
@@ -1222,7 +1232,7 @@ Run: `(cd spinme/host && make test)`.
 | **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
 | **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
 | **Net-owned NTP timesource** | Volumio `getState` has no wall ToD; Net owns SNTP via `ta_net_sntp_after_wifi` (player_http only calls that after WiFi) | `todo:15b92eaa`; device clock smoke still open |
-| **Log TaskActor drain** | Accept/sample/buffer; Scheduler empty; Net send to `log_receiver_url`; always-clear; `ta_all_*` | `todo:15b92eaa` (groom) |
+| **Log QuLog rings + Test get_debug** | Three-ring PSRAM store; RFC-5424 TCP ACK drain; `/event/test/get_debug` | `todo:cff5c240` |
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /
   seek still unused on the wire | Follow-on when getState mapping expands |
 | **Coordinator rename** | Chat/PLAN "Coordinator" == as-built `MPDController` | Rename optional |

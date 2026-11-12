@@ -141,6 +141,9 @@ int ta_glass_polled(void);
 int ta_glass_desired(void);
 int ta_glass_playing(void);
 const ta_follow_chrome_t *ta_glass_chrome(void);
+/* Panel base pack66 framebuffer (glue-owned); NULL if unset. */
+const ta_pack66_t *ta_glass_base_pixels(void);
+void ta_glass_panel_size(uint16_t *out_w, uint16_t *out_h);
 /* SwapShape page: 0 = follow chrome; later pages are full-panel children. */
 unsigned ta_glass_page(void);
 int ta_glass_set_page(unsigned page);

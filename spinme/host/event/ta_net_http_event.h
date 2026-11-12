@@ -13,11 +13,16 @@ extern "C" {
 
 #define TA_NET_HTTP_TIMEOUT_MS 5000u
 #define TA_NET_HTTP_RESP_BODY_MAX 256
+#define TA_NET_HTTP_BLOB_MAX (256u * 1024u)
 
 typedef struct {
     int http_status;
     char body[TA_NET_HTTP_RESP_BODY_MAX];
     size_t body_len;
+    /* Optional large payload (e.g. get_debug). Owned by caller of handle;
+     * module frees any prior blob on the next offer/reset/fill. */
+    uint8_t *blob;
+    size_t blob_len;
 } ta_net_http_response_t;
 
 /* Wait for TA_EV_NET_HTTP_REPLY with matching session_id. 0=got, -1=timeout. */
@@ -29,6 +34,9 @@ void ta_net_http_reset(void);
 void ta_net_http_set_wait(ta_net_http_wait_fn fn);
 /* Actor handlers call this to satisfy an in-flight HTTP wait (host/sync). */
 void ta_net_http_offer_reply(const ta_event_envelope_t *env);
+/* Large body (copies bytes). Prefer over NetHttpReply when > 64 B. */
+void ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
+                            const void *bytes, size_t n);
 
 /*
  * Handle one HTTP/1.x request buffer. Fills *out.

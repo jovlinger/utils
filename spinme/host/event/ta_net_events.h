@@ -22,8 +22,14 @@ enum {
     TA_EV_NET_SET_DONE = 0x311,
     TA_EV_NET_ALBUMART_DONE = 0x312,
     /* HTTP POST /event/... sync reply (session_id correlates). */
-    TA_EV_NET_HTTP_REPLY = 0x320
+    TA_EV_NET_HTTP_REPLY = 0x320,
+    /* Log -> Net: short RFC-5424 batch (TCP QuLog). */
+    TA_EV_NET_LOG_DRAIN = 0x321,
+    /* Net -> Log: ACK cursor; Log advances ring heads through max_seq. */
+    TA_EV_NET_LOG_DRAIN_ACK = 0x322
 };
+
+#define TA_NET_LOG_DRAIN_MAX 512
 
 /* ControlEvents (toward Controller via Router) -- shared surface doc. */
 enum {

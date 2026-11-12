@@ -10,12 +10,16 @@ POST /event/<actor>/<eventname>
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Test actor path (either event name works):
+HTTP path segments are ASCII-lowercased before registry lookup. Canonical
+actor name is `test`. Either event name works:
 
 ```text
-POST /event/Test/TestRun
-POST /event/Test/run_test
+POST /event/test/testrun
+POST /event/test/run_test
+POST /event/test/get_debug
 ```
+
+Mixed-case URLs (e.g. `/event/Test/TestRun`) still work after lowercasing.
 
 Form fields:
 

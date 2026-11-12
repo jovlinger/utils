@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define TA_TEST_NAME "Test"
+#define TA_TEST_NAME "test"
 
 typedef struct ta_test_stats {
     unsigned handled;

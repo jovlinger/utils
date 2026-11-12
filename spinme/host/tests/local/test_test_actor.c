@@ -1,10 +1,32 @@
 /* Dev Test actor: RUN one / suite / timing -> DONE with counts + elapsed. */
 #include "ta_event.h"
+#include "ta_follow_chrome.h"
 #include "ta_registry.h"
 #include "ta_test_actor.h"
+#include "ta_uilayout.h"
 
 #include <stdio.h>
 #include <string.h>
+
+int ta_glass_installed(void) { return 0; }
+const ta_follow_chrome_t *ta_glass_chrome(void) { return NULL; }
+const ta_pack66_t *ta_glass_base_pixels(void) { return NULL; }
+void ta_glass_panel_size(uint16_t *out_w, uint16_t *out_h) {
+    if (out_w != NULL) {
+        *out_w = 0;
+    }
+    if (out_h != NULL) {
+        *out_h = 0;
+    }
+}
+const char *ta_glass_text(uint8_t field) {
+    (void)field;
+    return "";
+}
+int ta_glass_polled(void) { return 0; }
+int ta_glass_desired(void) { return 0; }
+int ta_glass_playing(void) { return 0; }
+unsigned ta_glass_page(void) { return 0; }
 
 static int failures;
 static int checks;

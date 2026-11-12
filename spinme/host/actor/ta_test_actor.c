@@ -1,11 +1,13 @@
 /* PC: fork/exec build/test_*. Device: built-in probes (smoke). HTTP offers reply. */
 #include "ta_test_actor.h"
 
+#include "ta_debug.h"
 #include "ta_net_events.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -116,34 +118,41 @@ static uint32_t mono_ms(void) {
     return (uint32_t)(ts.tv_sec * 1000u + (uint32_t)(ts.tv_nsec / 1000000u));
 }
 
-static void offer_http_reply(ta_session_id_t session, uint8_t status,
-                             uint16_t n_ran, uint16_t n_fail,
-                             uint32_t elapsed_ms, const char *selector) {
+static void offer_http_body(ta_session_id_t session, unsigned http_status,
+                            const char *body) {
     ta_event_envelope_t reply;
-    char body[TA_NET_HTTP_RESP_BODY_MAX];
-    int n;
+    size_t n;
 
     ta_env_clear(&reply);
     (void)ta_env_set_src(&reply, TA_TEST_NAME);
     reply.session_id = session;
     reply.event.type = TA_EV_NET_HTTP_REPLY;
-    reply.event.u.net_http_reply.http_status = (status == 0) ? 200u : 500u;
+    reply.event.u.net_http_reply.http_status = (uint16_t)http_status;
+    n = body != NULL ? strlen(body) : 0;
+    if (n > TA_NET_HTTP_REPLY_MAX) {
+        n = TA_NET_HTTP_REPLY_MAX;
+    }
+    reply.event.u.net_http_reply.n = (uint16_t)n;
+    if (n > 0) {
+        memcpy(reply.event.u.net_http_reply.bytes, body, n);
+    }
+    ta_net_http_offer_reply(&reply);
+}
+
+static void offer_http_reply(ta_session_id_t session, uint8_t status,
+                             uint16_t n_ran, uint16_t n_fail,
+                             uint32_t elapsed_ms, const char *selector) {
+    char body[TA_NET_HTTP_RESP_BODY_MAX];
+    int n;
+
     n = snprintf(body, sizeof(body),
                  "status=%u&n_ran=%u&n_fail=%u&elapsed_ms=%u&selector=%s",
                  (unsigned)status, (unsigned)n_ran, (unsigned)n_fail,
                  (unsigned)elapsed_ms, selector != NULL ? selector : "");
     if (n < 0) {
-        n = 0;
+        body[0] = '\0';
     }
-    if ((size_t)n >= sizeof(body)) {
-        n = (int)sizeof(body) - 1;
-    }
-    if ((size_t)n > TA_NET_HTTP_REPLY_MAX) {
-        n = (int)TA_NET_HTTP_REPLY_MAX;
-    }
-    reply.event.u.net_http_reply.n = (uint16_t)n;
-    memcpy(reply.event.u.net_http_reply.bytes, body, (size_t)n);
-    ta_net_http_offer_reply(&reply);
+    offer_http_body(session, (status == 0) ? 200u : 500u, body);
 }
 
 static void post_done(const char *reply_to, ta_session_id_t session,
@@ -257,6 +266,20 @@ int ta_test_handle(const ta_event_envelope_t *env) {
         return -1;
     }
     g_stats.handled++;
+    if (env->event.type == TA_EV_TEST_GET_DEBUG) {
+        uint8_t *blob;
+        size_t blob_len;
+
+        blob = NULL;
+        blob_len = 0;
+        if (ta_debug_build_get_debug(&blob, &blob_len) != 0 || blob == NULL) {
+            offer_http_body(env->session_id, 500u, "get_debug failed");
+            return -1;
+        }
+        ta_net_http_offer_blob(env->session_id, 200u, blob, blob_len);
+        free(blob);
+        return 0;
+    }
     if (env->event.type != TA_EV_TEST_RUN) {
         g_stats.unknown++;
         return -1;

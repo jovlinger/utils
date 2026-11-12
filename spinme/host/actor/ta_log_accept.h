@@ -33,6 +33,9 @@ void ta_log_set_cadence_s(uint32_t seconds);
 uint32_t ta_log_cadence_s(void);
 
 int ta_log_accept(uint32_t emit_time_ms, const char *message);
+/* Same as ta_log_accept but routes by ESP-IDF-style severity into rings. */
+int ta_log_accept_level(uint8_t level, uint32_t emit_time_ms,
+                        const char *message);
 size_t ta_log_accept_count(void);
 const ta_log_accept_event_t *ta_log_accept_at(size_t index);
 unsigned ta_log_accept_rejected(void);

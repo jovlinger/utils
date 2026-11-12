@@ -68,6 +68,19 @@ typedef struct {
     uint8_t bytes[64];
 } ta_net_http_reply_t;
 
+/* NetLogDrain type_id=0x321 -- short TCP/RFC-5424 batch. */
+typedef struct {
+    uint32_t max_seq;
+    uint16_t n;
+    uint8_t bytes[512];
+} ta_net_log_drain_t;
+
+/* NetLogDrainAck type_id=0x322 */
+typedef struct {
+    uint8_t status;
+    uint32_t max_seq;
+} ta_net_log_drain_ack_t;
+
 /* CoordInformPlayerstate type_id=0x310 */
 typedef struct {
     char artist[96];

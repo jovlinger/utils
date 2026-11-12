@@ -21,15 +21,30 @@ static ta_session_id_t g_sid_gen = 1;
 static ta_session_id_t g_want_sid;
 static ta_event_envelope_t g_offered;
 static int g_have_offer;
+static uint8_t *g_blob;
+static size_t g_blob_len;
+static unsigned g_blob_status;
+static ta_session_id_t g_blob_sid;
+static int g_have_blob;
 
 static char g_mdns_name[TA_NAME_MAX];
 static unsigned g_mdns_count;
+
+static void clear_blob(void) {
+    free(g_blob);
+    g_blob = NULL;
+    g_blob_len = 0;
+    g_blob_status = 0;
+    g_blob_sid = 0;
+    g_have_blob = 0;
+}
 
 void ta_net_http_reset(void) {
     g_wait = NULL;
     g_want_sid = 0;
     g_have_offer = 0;
     memset(&g_offered, 0, sizeof(g_offered));
+    clear_blob();
 }
 
 void ta_net_http_set_wait(ta_net_http_wait_fn fn) {
@@ -46,13 +61,48 @@ void ta_net_http_offer_reply(const ta_event_envelope_t *env) {
     if (g_want_sid != 0 && env->session_id != g_want_sid) {
         return;
     }
+    clear_blob();
     g_offered = *env;
     g_have_offer = 1;
+}
+
+void ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
+                            const void *bytes, size_t n) {
+    uint8_t *copy;
+
+    if (g_want_sid != 0 && session_id != g_want_sid) {
+        return;
+    }
+    if (bytes == NULL || n == 0 || n > TA_NET_HTTP_BLOB_MAX) {
+        return;
+    }
+    copy = (uint8_t *)malloc(n);
+    if (copy == NULL) {
+        return;
+    }
+    memcpy(copy, bytes, n);
+    clear_blob();
+    g_have_offer = 0;
+    g_blob = copy;
+    g_blob_len = n;
+    g_blob_status = http_status;
+    g_blob_sid = session_id;
+    g_have_blob = 1;
 }
 
 static int default_wait(ta_session_id_t session_id, ta_event_envelope_t *out,
                         uint32_t timeout_ms) {
     (void)timeout_ms;
+    if (g_have_blob && g_blob_sid == session_id) {
+        if (out != NULL) {
+            ta_env_clear(out);
+            out->session_id = session_id;
+            out->event.type = TA_EV_NET_HTTP_REPLY;
+            out->event.u.net_http_reply.http_status = (uint16_t)g_blob_status;
+            out->event.u.net_http_reply.n = 0;
+        }
+        return 0;
+    }
     if (!g_have_offer || g_offered.session_id != session_id) {
         return -1;
     }
@@ -177,6 +227,19 @@ static int parse_form(ta_net_http_kv_t *flat, size_t *nflat, const char *s,
     return 0;
 }
 
+static void ascii_downcase(char *s) {
+    size_t i;
+
+    if (s == NULL) {
+        return;
+    }
+    for (i = 0; s[i] != '\0'; i++) {
+        if (s[i] >= 'A' && s[i] <= 'Z') {
+            s[i] = (char)(s[i] - 'A' + 'a');
+        }
+    }
+}
+
 static const char *form_get(const ta_net_http_kv_t *flat, size_t nflat,
                             const char *key) {
     size_t i;
@@ -195,7 +258,8 @@ static int build_event_from_form(const char *event_name,
     const char *v;
 
     ta_event_clear(ev);
-    if (strcmp(event_name, "LogEmitLine") == 0) {
+    /* event_name is already ASCII-lowercased by the HTTP path parser. */
+    if (strcmp(event_name, "logemitline") == 0) {
         ev->type = TA_EV_LOG;
         v = form_get(flat, nflat, "severity");
         ev->u.log_emit_line.severity = (uint8_t)(v ? atoi(v) : 0);
@@ -209,12 +273,12 @@ static int build_event_from_form(const char *event_name,
                  "%s", v);
         return 0;
     }
-    if (strcmp(event_name, "Nop") == 0) {
+    if (strcmp(event_name, "nop") == 0) {
         ev->type = TA_EV_NOP;
         return 0;
     }
-    /* Also accept run_test as an alias for TestRun (scripts path). */
-    if (strcmp(event_name, "TestRun") == 0 ||
+    /* TestRun + run_test alias (path lowercased). */
+    if (strcmp(event_name, "testrun") == 0 ||
         strcmp(event_name, "run_test") == 0) {
         ev->type = TA_EV_TEST_RUN;
         v = form_get(flat, nflat, "mode");
@@ -245,6 +309,10 @@ static int build_event_from_form(const char *event_name,
         }
         return 0;
     }
+    if (strcmp(event_name, "get_debug") == 0) {
+        ev->type = TA_EV_TEST_GET_DEBUG;
+        return 0;
+    }
     return -1;
 }
 
@@ -253,6 +321,9 @@ static void fill_response(ta_net_http_response_t *out, int status,
     out->http_status = status;
     out->body_len = 0;
     out->body[0] = '\0';
+    free(out->blob);
+    out->blob = NULL;
+    out->blob_len = 0;
     if (body != NULL && body_len > 0) {
         if (body_len >= sizeof(out->body)) {
             body_len = sizeof(out->body) - 1;
@@ -261,6 +332,25 @@ static void fill_response(ta_net_http_response_t *out, int status,
         out->body[body_len] = '\0';
         out->body_len = body_len;
     }
+}
+
+static void fill_response_blob(ta_net_http_response_t *out, int status,
+                               uint8_t *blob, size_t blob_len) {
+    size_t prefix;
+
+    out->http_status = status;
+    free(out->blob);
+    out->blob = blob;
+    out->blob_len = blob_len;
+    prefix = blob_len;
+    if (prefix >= sizeof(out->body)) {
+        prefix = sizeof(out->body) - 1;
+    }
+    if (blob != NULL && prefix > 0) {
+        memcpy(out->body, blob, prefix);
+    }
+    out->body[prefix] = '\0';
+    out->body_len = prefix;
 }
 
 int ta_net_http_handle_request(const uint8_t *req, size_t len,
@@ -331,6 +421,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
         }
         memcpy(actor, path, alen);
         actor[alen] = '\0';
+        ascii_downcase(actor);
         qmark = NULL;
         for (i = 0; slash + 1 + i < sp; i++) {
             if (slash[1 + i] == '?') {
@@ -349,6 +440,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
         }
         memcpy(event_name, slash + 1, elen);
         event_name[elen] = '\0';
+        ascii_downcase(event_name);
     }
 
     hdr_end = NULL;
@@ -436,6 +528,13 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     waitfn = g_wait != NULL ? g_wait : default_wait;
     rc = waitfn(sid, &reply, TA_NET_HTTP_TIMEOUT_MS);
     g_want_sid = 0;
+    if (g_have_blob && g_blob_sid == sid) {
+        fill_response_blob(out, (int)g_blob_status, g_blob, g_blob_len);
+        g_blob = NULL;
+        g_blob_len = 0;
+        g_have_blob = 0;
+        return 0;
+    }
     if (rc != 0) {
         fill_response(out, 201, "accepted", 8);
         return 0;

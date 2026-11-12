@@ -7,7 +7,7 @@
 | `actor/` | Registry, boot, controllers, Net/Log/KV, Test |
 | `base/` | Queue, KV store, init, runtime_cfg, ISR mail, sync |
 | `tests/local/` | PC unit + golden tests (`make test`) |
-| `tests/ondevice/` | Post-flash/OTA: `POST /event/Test/TestRun` against the board |
+| `tests/ondevice/` | Post-flash/OTA: `POST /event/test/testrun` (path is lowercased) |
 
 See `tests/README.md`.
 

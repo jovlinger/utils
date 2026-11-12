@@ -47,6 +47,9 @@ TA_EV_NET_POLL_DONE: int = 0x310
 TA_EV_NET_SET_DONE: int = 0x311
 TA_EV_NET_ALBUMART_DONE: int = 0x312
 TA_EV_NET_HTTP_REPLY: int = 0x320
+TA_EV_NET_LOG_DRAIN: int = 0x321
+TA_EV_NET_LOG_DRAIN_ACK: int = 0x322
+TA_NET_LOG_DRAIN_MAX: int = 512
 
 # Control
 TA_EV_CTRL_TOGGLE: int = 0x400
@@ -63,6 +66,7 @@ TA_EV_SCHED_TICK: int = 0x502
 
 # Test (host / dev-only actor)
 TA_EV_TEST_RUN: int = 0x600
+TA_EV_TEST_GET_DEBUG: int = 0x601
 TA_EV_TEST_DONE: int = 0x610
 TA_TEST_SEL_MAX: int = 48
 TA_TEST_MODE_ONE: int = 0

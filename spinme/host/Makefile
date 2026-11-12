@@ -32,14 +32,15 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
 	$(BUILD)/test_xy_timed_redraw $(BUILD)/test_shape_draw \
-	$(BUILD)/test_test_actor
+	$(BUILD)/test_test_actor $(BUILD)/test_log_rings
 
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
 	ta_draw_phase1.c ta_draw_phase2.c ta_follow_chrome.c ta_hit_dispatch.c \
 	ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c \
-	ta_wire.c ta_debug.c ta_log_accept.c ta_kv_actor.c ta_stack_compose.c \
-	ta_runtime_cfg.c ta_kv.c ta_uilayout.c ta_isr_mail.c ta_queue.c
+	ta_wire.c ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c \
+	ta_stack_compose.c ta_runtime_cfg.c ta_kv.c ta_uilayout.c ta_isr_mail.c \
+	ta_queue.c
 DRAW_HDRS := ta_draw_events.h ta_draw_glass.h ta_draw_update.h \
 	ta_draw_phase1.h ta_draw_phase2.h ta_follow_chrome.h ta_hit_dispatch.h \
 	ta_text.h ta_shape_l2r.h ta_shape_swap.h ta_shape_draw.h ta_chrome_icons.h \
@@ -208,8 +209,10 @@ $(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_net_http_event: test_net_http_event.c ta_net_http_event.c \
-		ta_test_actor.c ta_net_http_event.h ta_test_actor.h ta_registry.c \
-		ta_event.c ta_net_events.h ta_event.h | $(BUILD)
+		ta_test_actor.c ta_debug.c ta_log_accept.c ta_log_rings.c \
+		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_net_http_event.h \
+		ta_test_actor.h ta_registry.c ta_event.c ta_net_events.h ta_event.h \
+		| $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
@@ -220,8 +223,8 @@ $(BUILD)/test_kv_actor: test_kv_actor.c ta_kv_actor.c ta_kv_actor.h ta_kv.c \
 		ta_runtime_cfg.c ta_registry.c ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-LOG_SRCS := ta_log_accept.c ta_kv_actor.c ta_kv.c ta_runtime_cfg.c \
-	ta_registry.c ta_event.c
+LOG_SRCS := ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
+	ta_runtime_cfg.c ta_registry.c ta_event.c
 
 $(BUILD)/test_log_accept: test_log_accept.c $(LOG_SRCS) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
@@ -229,8 +232,12 @@ $(BUILD)/test_log_accept: test_log_accept.c $(LOG_SRCS) | $(BUILD)
 $(BUILD)/test_log_drain: test_log_drain.c $(LOG_SRCS) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-$(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_kv_actor.c ta_kv.c \
-		ta_runtime_cfg.c ta_all.c ta_registry.c ta_event.c | $(BUILD)
+$(BUILD)/test_log_rings: test_log_rings.c ta_log_rings.c ta_log_rings.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+$(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_log_rings.c \
+		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_all.c ta_registry.c \
+		ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_net_sntp: test_net_sntp.c ta_net_sntp.c ta_runtime_cfg.c \
@@ -260,8 +267,8 @@ SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_glyph_bin.c ta_kv_editor.c \
 	ta_kv.c ta_runtime_cfg.c ta_draw_glass.c ta_draw_update.c \
 	ta_draw_phase1.c ta_draw_phase2.c ta_follow_chrome.c ta_hit_dispatch.c \
 	ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c \
-	ta_wire.c ta_debug.c ta_log_accept.c ta_kv_actor.c ta_stack_compose.c \
-	ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
+	ta_wire.c ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c \
+	ta_stack_compose.c ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
 	ta_registry.c ta_event.c
 $(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_glyph_bin.h \
 		ta_kv_editor.h ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
@@ -280,8 +287,9 @@ $(BUILD)/test_shape_draw: test_shape_draw.c ta_shape_draw.c ta_uilayout.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 $(BUILD)/test_test_actor: test_test_actor.c ta_test_actor.c ta_net_http_event.c \
-		ta_registry.c ta_event.c ta_test_actor.h ta_registry.h ta_event.h \
-		| $(BUILD)
+		ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
+		ta_runtime_cfg.c ta_registry.c ta_event.c ta_test_actor.h \
+		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 

@@ -4,6 +4,28 @@
 
 #include <string.h>
 
+/* Canonical actor names are ASCII-lowercase; strcmp stays case-sensitive. */
+static void name_downcase(char *dst, size_t cap, const char *src) {
+    size_t i;
+
+    if (dst == NULL || cap == 0) {
+        return;
+    }
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+    for (i = 0; i + 1 < cap && src[i] != '\0'; i++) {
+        char c = src[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        dst[i] = c;
+    }
+    dst[i] = '\0';
+}
+
+
 #define TA_REG_MAX 32
 
 typedef struct {
@@ -48,14 +70,16 @@ void ta_registry_reset(void) {
 int ta_registry_register(const char *name, ta_enqueue_fn fn) {
     size_t i;
     size_t nlen;
+    char key[TA_NAME_MAX];
 
     if (name == NULL || name[0] == '\0' || fn == NULL) {
         return -1;
     }
-    nlen = strlen(name);
-    if (nlen >= TA_NAME_MAX) {
+    name_downcase(key, sizeof(key), name);
+    if (key[0] == '\0') {
         return -1;
     }
+    nlen = strlen(key);
 
     ensure_mutex();
     if (!g_mu_ok) {
@@ -64,7 +88,7 @@ int ta_registry_register(const char *name, ta_enqueue_fn fn) {
     ta_mutex_lock(&g_mu);
     ensure_init();
     for (i = 0; i < g_n; i++) {
-        if (strcmp(g_slots[i].name, name) == 0) {
+        if (strcmp(g_slots[i].name, key) == 0) {
             g_slots[i].fn = fn;
             ta_mutex_unlock(&g_mu);
             return 0;
@@ -74,7 +98,7 @@ int ta_registry_register(const char *name, ta_enqueue_fn fn) {
         ta_mutex_unlock(&g_mu);
         return -1;
     }
-    memcpy(g_slots[g_n].name, name, nlen + 1);
+    memcpy(g_slots[g_n].name, key, nlen + 1);
     g_slots[g_n].fn = fn;
     g_n++;
     ta_mutex_unlock(&g_mu);
@@ -83,10 +107,13 @@ int ta_registry_register(const char *name, ta_enqueue_fn fn) {
 
 int ta_registry_unregister(const char *name) {
     size_t i;
+    char key[TA_NAME_MAX];
 
     if (name == NULL || name[0] == '\0') {
         return -1;
     }
+    name_downcase(key, sizeof(key), name);
+    name = key;
     ensure_mutex();
     if (!g_mu_ok) {
         return -1;
@@ -109,10 +136,13 @@ int ta_registry_unregister(const char *name) {
 ta_enqueue_fn ta_registry_lookup(const char *name) {
     size_t i;
     ta_enqueue_fn fn = NULL;
+    char key[TA_NAME_MAX];
 
     if (name == NULL) {
         return NULL;
     }
+    name_downcase(key, sizeof(key), name);
+    name = key;
     ensure_mutex();
     if (!g_mu_ok) {
         return NULL;
