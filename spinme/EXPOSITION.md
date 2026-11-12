@@ -57,9 +57,19 @@ Net also serves HTTP-only on port 80: `POST /event/<taskactor>/<eventname>`
 lookup; canonical registered names are lowercase (`test`, `log`, `net`, ...).
 Query and/or form body are parsed as `x-www-form-urlencoded` (body keys
 override query). Net enqueues the event with a fresh `session_id`, blocks up
-to 5s for `TA_EV_NET_HTTP_REPLY` or a large blob offer, and returns that
-status/body; unknown actor -> 404; timeout -> 201. mDNS advertise is
-Scheduler-timed (`ta_net_mdns_advertise`).
+to `TA_TIMEOUT_SHORT_MS` (2s) for `TA_EV_NET_HTTP_REPLY` or a large blob
+offer, and returns that status/body; unknown actor -> 404; incomplete / no
+reply within TIMEOUT_SHORT -> HTTP 201 (`accepted`). Deferred answer retrieve
+(KV) is out of scope for now. mDNS advertises hostname `spinme` (`.local`) on
+`ALL_PERFORM_INIT` and on a Scheduler-timed `NetMdnsAdvertise` refresh.
+
+Host CLI: `spinmecli --hostname spinme.local event <actor> <event> [k=v ...]`
+(`host/scripts/spinmecli`) POSTs taskevent form bodies to
+`/event/<actor>/<event>`.
+
+`POST /event/controller/debugall` fans out `DebugStatus` to every registered
+actor; Controller list-aggregates replies into the HTTP body (200 if complete
+within TIMEOUT_SHORT, else 201).
 
 Test (`test`) also owns debug duty: `POST /event/test/get_debug` returns a
 blob with `w`/`h`/`fmt=pack66`/`px_n`/`logs` header, optional pack66 pixels,
