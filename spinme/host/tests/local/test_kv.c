@@ -48,16 +48,17 @@ int main(void) {
     CHECK(memcmp(buf, blob, len) == 0);
     CHECK(ta_kv_has(TA_KV_KEY_CONTROLLER) == 1);
 
-    /* Sorted packed image: entrylen, next@+4, keylen@+8, key, valueinfo, value. */
+    /* Sorted packed image: packed@0 (keylen|vallen|type), next@+4, key, value. */
     {
         const uint8_t *img;
         size_t ilen;
         uint32_t head;
         uint32_t n0;
         uint32_t n1;
-        uint16_t k0;
-        uint32_t vi0;
-        uint32_t elen0;
+        uint32_t packed0;
+        uint32_t k0;
+        uint32_t v0;
+        uint32_t t0;
         int live;
         char kbuf[8];
 
@@ -76,18 +77,17 @@ int main(void) {
         head = (uint32_t)img[0] | ((uint32_t)img[1] << 8) |
                ((uint32_t)img[2] << 16) | ((uint32_t)img[3] << 24);
         CHECK(head != 0);
-        elen0 = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
-                ((uint32_t)img[head + 2] << 16) | ((uint32_t)img[head + 3] << 24);
-        k0 = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
+        packed0 = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
+                  ((uint32_t)img[head + 2] << 16) |
+                  ((uint32_t)img[head + 3] << 24);
+        k0 = TA_KV_PACK_KEYLEN(packed0);
+        v0 = TA_KV_PACK_VALLEN(packed0);
+        t0 = TA_KV_PACK_TYPE(packed0);
         CHECK(k0 == 2);
+        CHECK(v0 == 2);
+        CHECK(t0 == TA_KV_VTYPE_BLOB);
         CHECK(memcmp(img + head + TA_KV_REC_PREFIX_SIZE, "aa", 2) == 0);
-        vi0 = (uint32_t)img[head + 10 + 2] | ((uint32_t)img[head + 11 + 2] << 8) |
-              ((uint32_t)img[head + 12 + 2] << 16) |
-              ((uint32_t)img[head + 13 + 2] << 24);
-        CHECK(TA_KV_VINFO_TYPE(vi0) == TA_KV_VTYPE_BLOB);
-        CHECK(TA_KV_VINFO_PAYLOAD(vi0) == 2);
-        CHECK(memcmp(img + head + 10 + 2 + 4, "hi", 2) == 0);
-        CHECK(elen0 == TA_KV_REC_PREFIX_SIZE + 2 + TA_KV_VALUEINFO_SIZE + 2);
+        CHECK(memcmp(img + head + TA_KV_REC_PREFIX_SIZE + 2, "hi", 2) == 0);
         n0 = (uint32_t)img[head + 4] | ((uint32_t)img[head + 5] << 8) |
              ((uint32_t)img[head + 6] << 16) | ((uint32_t)img[head + 7] << 24);
         CHECK(n0 != 0);
@@ -105,29 +105,33 @@ int main(void) {
                ((uint32_t)img[2] << 16) | ((uint32_t)img[3] << 24);
         live = 0;
         while (head != 0) {
-            uint16_t kl;
-            uint32_t vi;
+            uint32_t packed;
+            uint32_t kl;
+            uint32_t vl;
             uint32_t nxt;
             size_t voff;
 
-            kl = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
+            packed = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
+                     ((uint32_t)img[head + 2] << 16) |
+                     ((uint32_t)img[head + 3] << 24);
+            kl = TA_KV_PACK_KEYLEN(packed);
+            vl = TA_KV_PACK_VALLEN(packed);
             voff = (size_t)head + TA_KV_REC_PREFIX_SIZE + (size_t)kl;
-            vi = (uint32_t)img[voff] | ((uint32_t)img[voff + 1] << 8) |
-                 ((uint32_t)img[voff + 2] << 16) | ((uint32_t)img[voff + 3] << 24);
             if (kl == 2 &&
                 memcmp(img + head + TA_KV_REC_PREFIX_SIZE, "aa", 2) == 0) {
                 live++;
-                CHECK(TA_KV_VINFO_PAYLOAD(vi) == 5);
-                CHECK(memcmp(img + voff + 4, "HELLO", 5) == 0);
+                CHECK(vl == 5);
+                CHECK(memcmp(img + voff, "HELLO", 5) == 0);
             }
             nxt = (uint32_t)img[head + 4] | ((uint32_t)img[head + 5] << 8) |
-                  ((uint32_t)img[head + 6] << 16) | ((uint32_t)img[head + 7] << 24);
+                  ((uint32_t)img[head + 6] << 16) |
+                  ((uint32_t)img[head + 7] << 24);
             head = nxt;
         }
         CHECK(live == 1);
     }
 
-    /* Typed valueinfo helpers. */
+    /* Typed packed-header helpers. */
     {
         int b;
         int32_t si;
@@ -203,9 +207,13 @@ int main(void) {
                ((uint32_t)img[2] << 16) | ((uint32_t)img[3] << 24);
         at_c = 0;
         while (head != 0) {
-            uint16_t kl;
+            uint32_t packed;
+            uint32_t kl;
 
-            kl = (uint16_t)(img[head + 8] | (img[head + 9] << 8));
+            packed = (uint32_t)img[head] | ((uint32_t)img[head + 1] << 8) |
+                     ((uint32_t)img[head + 2] << 16) |
+                     ((uint32_t)img[head + 3] << 24);
+            kl = TA_KV_PACK_KEYLEN(packed);
             if (kl == 1 && img[head + TA_KV_REC_PREFIX_SIZE] == 'c') {
                 at_c = head;
             }
