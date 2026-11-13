@@ -91,6 +91,7 @@ int main(void) {
     ta_registry_reset();
     ta_net_http_reset();
     ta_net_mdns_reset();
+    memset(&resp, 0, sizeof(resp));
 
     CHECK(ta_registry_register("Logger", actor_enq) == 0);
 

@@ -609,6 +609,66 @@ class TestDone(TaskEvent):
     )
 
 
+@dataclass
+class KvGet(TaskEvent):
+    """KvConfig: fetch value for key (HTTP body = type byte + value)."""
+
+    key: str = ""
+
+    type_id: ClassVar[int] = C.TA_EV_KV_GET
+    type_name: ClassVar[str] = "KvGet"
+    c_type_name: ClassVar[str] = "ta_kv_get_t"
+    c_union_arm: ClassVar[str] = "kv_get"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _char("key", C.TA_KV_KEY_MAX),
+    )
+
+
+@dataclass
+class KvSet(TaskEvent):
+    """KvConfig: store typed value. type is TA_KV_VTYPE_*; value is form text."""
+
+    key: str = ""
+    type: int = 0
+    value: str = ""
+
+    type_id: ClassVar[int] = C.TA_EV_KV_SET
+    type_name: ClassVar[str] = "KvSet"
+    c_type_name: ClassVar[str] = "ta_kv_set_t"
+    c_union_arm: ClassVar[str] = "kv_set"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _char("key", C.TA_KV_KEY_MAX),
+        _u8("type"),
+        _char("value", C.TA_KV_FORM_VAL_MAX),
+    )
+
+
+@dataclass
+class KvList(TaskEvent):
+    """KvConfig: list keys as comma-separated CSV body."""
+
+    type_id: ClassVar[int] = C.TA_EV_KV_LIST
+    type_name: ClassVar[str] = "KvList"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
+class KvDelete(TaskEvent):
+    """KvConfig: delete key."""
+
+    key: str = ""
+
+    type_id: ClassVar[int] = C.TA_EV_KV_DELETE
+    type_name: ClassVar[str] = "KvDelete"
+    c_type_name: ClassVar[str] = "ta_kv_delete_t"
+    c_union_arm: ClassVar[str] = "kv_delete"
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = (
+        _char("key", C.TA_KV_KEY_MAX),
+    )
+
+
 EVENT_CLASSES: List[Type[TaskEvent]] = [
     Nop,
     LogEmitLine,
@@ -651,6 +711,10 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     TestRun,
     TestGetDebug,
     TestDone,
+    KvGet,
+    KvSet,
+    KvList,
+    KvDelete,
 ]
 
 EVENT_BY_TYPE_ID: Dict[int, Type[TaskEvent]] = {

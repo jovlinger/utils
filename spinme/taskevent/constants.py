@@ -78,6 +78,14 @@ TA_TEST_MODE_ONE: int = 0
 TA_TEST_MODE_SUITE: int = 1
 TA_TEST_MODE_TIMING: int = 2
 
+# KvConfig TaskActor (owns linked-list KV image)
+TA_EV_KV_GET: int = 0x700
+TA_EV_KV_SET: int = 0x701
+TA_EV_KV_LIST: int = 0x702
+TA_EV_KV_DELETE: int = 0x703
+TA_KV_KEY_MAX: int = 32
+TA_KV_FORM_VAL_MAX: int = 96
+
 TA_PLAYING_STOP: int = 0
 TA_PLAYING_PLAY: int = 1
 TA_PLAYING_PAUSE: int = 2

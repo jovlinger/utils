@@ -329,6 +329,44 @@ static int build_event_from_form(const char *event_name,
                  "%s", v);
         return 0;
     }
+    if (strcmp(event_name, "kvget") == 0) {
+        ev->type = TA_EV_KV_GET;
+        v = form_get(flat, nflat, "key");
+        if (v == NULL) {
+            v = "";
+        }
+        snprintf(ev->u.kv_get.key, sizeof(ev->u.kv_get.key), "%s", v);
+        return 0;
+    }
+    if (strcmp(event_name, "kvset") == 0) {
+        ev->type = TA_EV_KV_SET;
+        v = form_get(flat, nflat, "key");
+        if (v == NULL) {
+            v = "";
+        }
+        snprintf(ev->u.kv_set.key, sizeof(ev->u.kv_set.key), "%s", v);
+        v = form_get(flat, nflat, "type");
+        ev->u.kv_set.type = (uint8_t)(v ? atoi(v) : 0);
+        v = form_get(flat, nflat, "value");
+        if (v == NULL) {
+            v = "";
+        }
+        snprintf(ev->u.kv_set.value, sizeof(ev->u.kv_set.value), "%s", v);
+        return 0;
+    }
+    if (strcmp(event_name, "kvlist") == 0) {
+        ev->type = TA_EV_KV_LIST;
+        return 0;
+    }
+    if (strcmp(event_name, "kvdelete") == 0) {
+        ev->type = TA_EV_KV_DELETE;
+        v = form_get(flat, nflat, "key");
+        if (v == NULL) {
+            v = "";
+        }
+        snprintf(ev->u.kv_delete.key, sizeof(ev->u.kv_delete.key), "%s", v);
+        return 0;
+    }
     return -1;
 }
 
