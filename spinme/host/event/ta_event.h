@@ -60,6 +60,14 @@ enum {
     TA_EV_TEST_GET_DEBUG = 0x601,
     TA_EV_TEST_DONE = 0x610
 };
+
+/* KvConfig TaskActor (owns linked-list KV image). */
+enum {
+    TA_EV_KV_GET = 0x700,
+    TA_EV_KV_SET = 0x701,
+    TA_EV_KV_LIST = 0x702,
+    TA_EV_KV_DELETE = 0x703
+};
 enum {
     TA_TEST_MODE_ONE = 0,
     TA_TEST_MODE_SUITE = 1,
@@ -115,6 +123,9 @@ typedef struct ta_event {
         ta_debug_status_t debug_status;
         ta_test_run_t test_run;
         ta_test_done_t test_done;
+        ta_kv_get_t kv_get;
+        ta_kv_set_t kv_set;
+        ta_kv_delete_t kv_delete;
     } u;
 } ta_event_t;
 

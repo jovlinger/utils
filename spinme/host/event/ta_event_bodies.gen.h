@@ -202,4 +202,21 @@ typedef struct {
     char selector[48];
 } ta_test_done_t;
 
+/* KvGet type_id=0x700 */
+typedef struct {
+    char key[32];
+} ta_kv_get_t;
+
+/* KvSet type_id=0x701 */
+typedef struct {
+    char key[32];
+    uint8_t type;
+    char value[96];
+} ta_kv_set_t;
+
+/* KvDelete type_id=0x703 */
+typedef struct {
+    char key[32];
+} ta_kv_delete_t;
+
 #endif /* SPINME_TA_EVENT_BODIES_GEN_H */

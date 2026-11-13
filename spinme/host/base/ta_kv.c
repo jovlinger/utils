@@ -7,7 +7,7 @@
 #define TA_KV_IMAGE_CAP                                                        \
     (TA_KV_IMAGE_HEAD_SIZE +                                                   \
      (TA_KV_SLOTS * (TA_KV_REC_PREFIX_SIZE + (TA_KV_KEY_MAX - 1) +              \
-                     TA_KV_VALUEINFO_SIZE + TA_KV_VAL_MAX)))
+                     TA_KV_VAL_MAX)))
 
 static uint8_t g_img[TA_KV_IMAGE_CAP];
 static size_t g_hw;
@@ -34,43 +34,15 @@ static void wr32(size_t off, uint32_t v) {
     g_img[off + 3] = (uint8_t)((v >> 24) & 0xffu);
 }
 
-static uint16_t rd16(size_t off) {
-    return (uint16_t)((uint16_t)g_img[off] | ((uint16_t)g_img[off + 1] << 8));
+static size_t entry_size(uint32_t key_len, uint32_t val_len) {
+    return (size_t)TA_KV_REC_PREFIX_SIZE + (size_t)key_len + (size_t)val_len;
 }
 
-static void wr16(size_t off, uint16_t v) {
-    g_img[off] = (uint8_t)(v & 0xffu);
-    g_img[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+static size_t key_off(size_t off) {
+    return off + TA_KV_REC_PREFIX_SIZE;
 }
 
-static size_t value_nbytes(uint32_t valueinfo) {
-    uint32_t t;
-    uint32_t p;
-
-    t = TA_KV_VINFO_TYPE(valueinfo);
-    p = TA_KV_VINFO_PAYLOAD(valueinfo);
-    if (t == TA_KV_VTYPE_BOOL || t == TA_KV_VTYPE_SMALLINT) {
-        return 0;
-    }
-    if (t == TA_KV_VTYPE_INT32) {
-        return 4;
-    }
-    if (t == TA_KV_VTYPE_STRING || t == TA_KV_VTYPE_BLOB) {
-        return (size_t)p;
-    }
-    return 0;
-}
-
-static size_t entry_size(uint16_t key_len, uint32_t valueinfo) {
-    return (size_t)TA_KV_REC_PREFIX_SIZE + (size_t)key_len +
-           (size_t)TA_KV_VALUEINFO_SIZE + value_nbytes(valueinfo);
-}
-
-static size_t value_off(size_t off, uint16_t key_len) {
-    return off + TA_KV_REC_PREFIX_SIZE + (size_t)key_len + TA_KV_VALUEINFO_SIZE;
-}
-
-static size_t valueinfo_off(size_t off, uint16_t key_len) {
+static size_t value_off(size_t off, uint32_t key_len) {
     return off + TA_KV_REC_PREFIX_SIZE + (size_t)key_len;
 }
 
@@ -93,13 +65,15 @@ static int key_cmp(const uint8_t *a, size_t alen, const char *b, size_t blen) {
 }
 
 static int rec_key_eq(size_t off, const char *key, size_t klen) {
-    uint16_t rk;
+    uint32_t packed;
+    uint32_t rk;
 
-    rk = rd16(off + 8);
+    packed = rd32(off);
+    rk = TA_KV_PACK_KEYLEN(packed);
     if ((size_t)rk != klen) {
         return 0;
     }
-    return memcmp(g_img + off + TA_KV_REC_PREFIX_SIZE, key, klen) == 0;
+    return memcmp(g_img + key_off(off), key, klen) == 0;
 }
 
 static int find_live(const char *key, size_t klen, size_t *off,
@@ -143,18 +117,19 @@ static int first_fit(size_t skip_off, size_t need, size_t *off_out) {
     n = 0;
     cur = rd32(0);
     while (cur != 0) {
-        uint16_t klen;
-        uint32_t elen;
+        uint32_t packed;
+        uint32_t klen;
+        uint32_t vlen;
 
         if (n >= TA_KV_SLOTS) {
             return 0;
         }
         if ((size_t)cur != skip_off) {
-            elen = rd32((size_t)cur);
-            klen = rd16((size_t)cur + 8);
-            (void)klen;
+            packed = rd32((size_t)cur);
+            klen = TA_KV_PACK_KEYLEN(packed);
+            vlen = TA_KV_PACK_VALLEN(packed);
             offs[n] = (size_t)cur;
-            ends[n] = (size_t)cur + (size_t)elen;
+            ends[n] = (size_t)cur + entry_size(klen, vlen);
             n++;
         }
         cur = rd32((size_t)cur + 4);
@@ -203,12 +178,13 @@ static void link_sorted(size_t off, const char *key, size_t klen) {
     prev_next = 0;
     cur = rd32(0);
     while (cur != 0) {
-        uint16_t rk;
+        uint32_t packed;
+        uint32_t rk;
         int cmp;
 
-        rk = rd16((size_t)cur + 8);
-        cmp = key_cmp(g_img + (size_t)cur + TA_KV_REC_PREFIX_SIZE, (size_t)rk,
-                      key, klen);
+        packed = rd32((size_t)cur);
+        rk = TA_KV_PACK_KEYLEN(packed);
+        cmp = key_cmp(g_img + key_off((size_t)cur), (size_t)rk, key, klen);
         if (cmp > 0) {
             wr32(off + 4, cur);
             wr32(prev_next, (uint32_t)off);
@@ -221,31 +197,32 @@ static void link_sorted(size_t off, const char *key, size_t klen) {
     wr32(prev_next, (uint32_t)off);
 }
 
-static ta_kv_status_t write_entry(size_t off, const char *key, size_t klen,
-                                  uint32_t valueinfo, const void *val,
-                                  size_t vlen) {
-    size_t need;
+static int type_ok(uint32_t type) {
+    return type <= TA_KV_VTYPE_BITMAP;
+}
 
-    need = entry_size((uint16_t)klen, valueinfo);
-    if (value_nbytes(valueinfo) != vlen) {
+static ta_kv_status_t write_entry(size_t off, const char *key, size_t klen,
+                                  uint32_t type, const void *val, size_t vlen) {
+    uint32_t packed;
+
+    if (klen > 0xffu || vlen > 0xfffffu || !type_ok(type)) {
         return TA_KV_BAD_ARG;
     }
-    wr32(off, (uint32_t)need);
+    packed = TA_KV_PACK(klen, vlen, type);
+    wr32(off, packed);
     wr32(off + 4, 0);
-    wr16(off + 8, (uint16_t)klen);
-    memcpy(g_img + off + TA_KV_REC_PREFIX_SIZE, key, klen);
-    wr32(valueinfo_off(off, (uint16_t)klen), valueinfo);
+    memcpy(g_img + key_off(off), key, klen);
     if (vlen > 0) {
         if (val == NULL) {
             return TA_KV_BAD_ARG;
         }
-        memcpy(g_img + value_off(off, (uint16_t)klen), val, vlen);
+        memcpy(g_img + value_off(off, (uint32_t)klen), val, vlen);
     }
     return TA_KV_OK;
 }
 
-static ta_kv_status_t put_typed_fixed(const char *key, uint32_t valueinfo,
-                                      const void *val, size_t vlen) {
+ta_kv_status_t ta_kv_put_typed(const char *key, uint32_t type, const void *val,
+                               size_t vlen) {
     size_t off;
     size_t prev;
     size_t klen;
@@ -253,25 +230,34 @@ static ta_kv_status_t put_typed_fixed(const char *key, uint32_t valueinfo,
     uint32_t saved_next;
     ta_kv_status_t st;
 
-    if (!key_ok(key) || vlen > TA_KV_VAL_MAX) {
+    if (!key_ok(key) || vlen > TA_KV_VAL_MAX || !type_ok(type)) {
         return TA_KV_BAD_ARG;
     }
-    if (value_nbytes(valueinfo) != vlen) {
+    if (type == TA_KV_VTYPE_BOOL && vlen != 1u) {
+        return TA_KV_BAD_ARG;
+    }
+    if (type == TA_KV_VTYPE_INT && vlen != 4u) {
         return TA_KV_BAD_ARG;
     }
     if (vlen > 0 && val == NULL) {
         return TA_KV_BAD_ARG;
     }
     klen = strlen(key);
-    need = entry_size((uint16_t)klen, valueinfo);
+    if (klen > 0xffu || vlen > 0xfffffu) {
+        return TA_KV_BAD_ARG;
+    }
+    need = entry_size((uint32_t)klen, (uint32_t)vlen);
 
     if (find_live(key, klen, &off, &prev)) {
-        uint32_t old_elen;
+        uint32_t old_packed;
+        size_t old_need;
 
-        old_elen = rd32(off);
+        old_packed = rd32(off);
+        old_need = entry_size(TA_KV_PACK_KEYLEN(old_packed),
+                              TA_KV_PACK_VALLEN(old_packed));
         saved_next = rd32(off + 4);
-        if (need <= (size_t)old_elen) {
-            st = write_entry(off, key, klen, valueinfo, val, vlen);
+        if (need <= old_need) {
+            st = write_entry(off, key, klen, type, val, vlen);
             if (st != TA_KV_OK) {
                 return st;
             }
@@ -284,7 +270,7 @@ static ta_kv_status_t put_typed_fixed(const char *key, uint32_t valueinfo,
     if (!first_fit(0, need, &off)) {
         return TA_KV_FULL;
     }
-    st = write_entry(off, key, klen, valueinfo, val, vlen);
+    st = write_entry(off, key, klen, type, val, vlen);
     if (st != TA_KV_OK) {
         return st;
     }
@@ -321,9 +307,10 @@ static int image_chain_ok(size_t len) {
     prev_key = NULL;
     prev_klen = 0;
     while (cur != 0) {
-        uint16_t klen;
-        uint32_t elen;
-        uint32_t vi;
+        uint32_t packed;
+        uint32_t klen;
+        uint32_t vlen;
+        uint32_t type;
         size_t need;
 
         if (guard++ > TA_KV_SLOTS) {
@@ -333,27 +320,25 @@ static int image_chain_ok(size_t len) {
             (size_t)cur + TA_KV_REC_PREFIX_SIZE > len) {
             return 0;
         }
-        elen = rd32((size_t)cur);
-        klen = rd16((size_t)cur + 8);
-        if ((size_t)cur + TA_KV_REC_PREFIX_SIZE + (size_t)klen +
-                TA_KV_VALUEINFO_SIZE >
-            len) {
+        packed = rd32((size_t)cur);
+        klen = TA_KV_PACK_KEYLEN(packed);
+        vlen = TA_KV_PACK_VALLEN(packed);
+        type = TA_KV_PACK_TYPE(packed);
+        if (!type_ok(type)) {
             return 0;
         }
-        vi = rd32(valueinfo_off((size_t)cur, klen));
-        need = entry_size(klen, vi);
-        if (elen != (uint32_t)need || (size_t)cur + need > len) {
+        need = entry_size(klen, vlen);
+        if ((size_t)cur + need > len) {
             return 0;
         }
         if (prev_key != NULL) {
             if (key_cmp((const uint8_t *)prev_key, prev_klen,
-                        (const char *)(g_img + (size_t)cur +
-                                       TA_KV_REC_PREFIX_SIZE),
+                        (const char *)(g_img + key_off((size_t)cur)),
                         (size_t)klen) >= 0) {
                 return 0;
             }
         }
-        prev_key = (const char *)(g_img + (size_t)cur + TA_KV_REC_PREFIX_SIZE);
+        prev_key = (const char *)(g_img + key_off((size_t)cur));
         prev_klen = (size_t)klen;
         cur = rd32((size_t)cur + 4);
     }
@@ -399,17 +384,17 @@ ta_kv_status_t ta_kv_set_roster(const char *const *names, size_t n) {
     }
     used = 0;
     for (i = 0; i < n; i++) {
-        size_t klen;
+        size_t nl;
 
         if (names[i] == NULL || names[i][0] == '\0') {
             return TA_KV_BAD_ARG;
         }
-        klen = strlen(names[i]);
-        if (used + klen + 1 > TA_KV_VAL_MAX) {
+        nl = strlen(names[i]);
+        if (used + nl + 1 > TA_KV_VAL_MAX) {
             return TA_KV_BAD_ARG;
         }
-        memcpy(buf + used, names[i], klen);
-        used += klen;
+        memcpy(buf + used, names[i], nl);
+        used += nl;
         buf[used++] = '\n';
     }
     return ta_kv_put_string(TA_KV_KEY_ACTORS, buf, used);
@@ -496,11 +481,10 @@ int ta_kv_has(const char *key) {
 }
 
 static ta_kv_status_t peek_entry(const char *key, size_t *off_out,
-                                 uint16_t *klen_out, uint32_t *vi_out) {
+                                 uint32_t *packed_out) {
     size_t off;
     size_t prev;
     size_t klen;
-    uint16_t rk;
 
     if (!key_ok(key)) {
         return TA_KV_BAD_ARG;
@@ -509,50 +493,47 @@ static ta_kv_status_t peek_entry(const char *key, size_t *off_out,
     if (!find_live(key, klen, &off, &prev)) {
         return TA_KV_MISSING;
     }
-    rk = rd16(off + 8);
     if (off_out != NULL) {
         *off_out = off;
     }
-    if (klen_out != NULL) {
-        *klen_out = rk;
-    }
-    if (vi_out != NULL) {
-        *vi_out = rd32(valueinfo_off(off, rk));
+    if (packed_out != NULL) {
+        *packed_out = rd32(off);
     }
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_get_len(const char *key, size_t *out_len) {
-    uint32_t vi;
+    uint32_t packed;
     ta_kv_status_t st;
 
     if (out_len == NULL) {
         return TA_KV_BAD_ARG;
     }
-    st = peek_entry(key, NULL, NULL, &vi);
+    st = peek_entry(key, NULL, &packed);
     if (st != TA_KV_OK) {
         return st;
     }
-    *out_len = value_nbytes(vi);
+    *out_len = (size_t)TA_KV_PACK_VALLEN(packed);
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_get(const char *key, void *dst, size_t dst_cap,
                          size_t *out_len) {
     size_t off;
-    uint16_t rk;
-    uint32_t vi;
+    uint32_t packed;
+    uint32_t klen;
     size_t vlen;
     ta_kv_status_t st;
 
     if (out_len == NULL) {
         return TA_KV_BAD_ARG;
     }
-    st = peek_entry(key, &off, &rk, &vi);
+    st = peek_entry(key, &off, &packed);
     if (st != TA_KV_OK) {
         return st;
     }
-    vlen = value_nbytes(vi);
+    klen = TA_KV_PACK_KEYLEN(packed);
+    vlen = (size_t)TA_KV_PACK_VALLEN(packed);
     *out_len = vlen;
     if (dst_cap < vlen) {
         return TA_KV_TOO_SMALL;
@@ -561,23 +542,23 @@ ta_kv_status_t ta_kv_get(const char *key, void *dst, size_t dst_cap,
         if (dst == NULL) {
             return TA_KV_BAD_ARG;
         }
-        memcpy(dst, g_img + value_off(off, rk), vlen);
+        memcpy(dst, g_img + value_off(off, klen), vlen);
     }
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_get_type(const char *key, uint32_t *out_type) {
-    uint32_t vi;
+    uint32_t packed;
     ta_kv_status_t st;
 
     if (out_type == NULL) {
         return TA_KV_BAD_ARG;
     }
-    st = peek_entry(key, NULL, NULL, &vi);
+    st = peek_entry(key, NULL, &packed);
     if (st != TA_KV_OK) {
         return st;
     }
-    *out_type = TA_KV_VINFO_TYPE(vi);
+    *out_type = TA_KV_PACK_TYPE(packed);
     return TA_KV_OK;
 }
 
@@ -586,124 +567,81 @@ ta_kv_status_t ta_kv_put(const char *key, const void *src, size_t len) {
 }
 
 ta_kv_status_t ta_kv_put_blob(const char *key, const void *src, size_t len) {
-    uint32_t vi;
-
-    if (len > 0x1fffffffu) {
-        return TA_KV_BAD_ARG;
-    }
-    vi = TA_KV_VINFO_PACK(TA_KV_VTYPE_BLOB, (uint32_t)len);
-    return put_typed_fixed(key, vi, src, len);
+    return ta_kv_put_typed(key, TA_KV_VTYPE_BLOB, src, len);
 }
 
 ta_kv_status_t ta_kv_put_string(const char *key, const char *s, size_t len) {
-    uint32_t vi;
-
-    if (len > 0x1fffffffu) {
-        return TA_KV_BAD_ARG;
-    }
-    vi = TA_KV_VINFO_PACK(TA_KV_VTYPE_STRING, (uint32_t)len);
-    return put_typed_fixed(key, vi, s, len);
+    return ta_kv_put_typed(key, TA_KV_VTYPE_STR, s, len);
 }
 
 ta_kv_status_t ta_kv_put_bool(const char *key, int value) {
-    uint32_t vi;
+    uint8_t b;
 
-    vi = TA_KV_VINFO_PACK(TA_KV_VTYPE_BOOL, value ? 1u : 0u);
-    return put_typed_fixed(key, vi, NULL, 0);
+    b = value ? 1u : 0u;
+    return ta_kv_put_typed(key, TA_KV_VTYPE_BOOL, &b, 1);
 }
 
 ta_kv_status_t ta_kv_get_bool(const char *key, int *out_value) {
-    uint32_t vi;
+    size_t off;
+    uint32_t packed;
     ta_kv_status_t st;
+    const uint8_t *p;
 
     if (out_value == NULL) {
         return TA_KV_BAD_ARG;
     }
-    st = peek_entry(key, NULL, NULL, &vi);
+    st = peek_entry(key, &off, &packed);
     if (st != TA_KV_OK) {
         return st;
     }
-    if (TA_KV_VINFO_TYPE(vi) != TA_KV_VTYPE_BOOL) {
+    if (TA_KV_PACK_TYPE(packed) != TA_KV_VTYPE_BOOL ||
+        TA_KV_PACK_VALLEN(packed) != 1u) {
         return TA_KV_BAD_TYPE;
     }
-    *out_value = (TA_KV_VINFO_PAYLOAD(vi) & 1u) ? 1 : 0;
-    return TA_KV_OK;
-}
-
-ta_kv_status_t ta_kv_put_smallint(const char *key, int32_t value) {
-    uint32_t payload;
-    uint32_t vi;
-
-    /* Store as 29-bit two's complement in payload. */
-    payload = ((uint32_t)value) & 0x1fffffffu;
-    vi = TA_KV_VINFO_PACK(TA_KV_VTYPE_SMALLINT, payload);
-    return put_typed_fixed(key, vi, NULL, 0);
-}
-
-ta_kv_status_t ta_kv_get_smallint(const char *key, int32_t *out_value) {
-    size_t off;
-    size_t prev;
-    size_t klen;
-    uint16_t rk;
-    uint32_t vi;
-    uint32_t p;
-
-    if (out_value == NULL || !key_ok(key)) {
-        return TA_KV_BAD_ARG;
-    }
-    klen = strlen(key);
-    if (!find_live(key, klen, &off, &prev)) {
-        return TA_KV_MISSING;
-    }
-    rk = rd16(off + 8);
-    vi = rd32(valueinfo_off(off, rk));
-    if (TA_KV_VINFO_TYPE(vi) != TA_KV_VTYPE_SMALLINT) {
-        return TA_KV_BAD_TYPE;
-    }
-    p = TA_KV_VINFO_PAYLOAD(vi);
-    if (p & 0x10000000u) {
-        *out_value = (int32_t)(p | 0xe0000000u);
-    } else {
-        *out_value = (int32_t)p;
-    }
+    p = g_img + value_off(off, TA_KV_PACK_KEYLEN(packed));
+    *out_value = p[0] ? 1 : 0;
     return TA_KV_OK;
 }
 
 ta_kv_status_t ta_kv_put_i32(const char *key, int32_t value) {
     uint8_t buf[4];
-    uint32_t vi;
 
     buf[0] = (uint8_t)((uint32_t)value & 0xffu);
     buf[1] = (uint8_t)(((uint32_t)value >> 8) & 0xffu);
     buf[2] = (uint8_t)(((uint32_t)value >> 16) & 0xffu);
     buf[3] = (uint8_t)(((uint32_t)value >> 24) & 0xffu);
-    vi = TA_KV_VINFO_PACK(TA_KV_VTYPE_INT32, 0u);
-    return put_typed_fixed(key, vi, buf, 4);
+    return ta_kv_put_typed(key, TA_KV_VTYPE_INT, buf, 4);
 }
 
 ta_kv_status_t ta_kv_get_i32(const char *key, int32_t *out_value) {
     size_t off;
-    uint16_t rk;
-    uint32_t vi;
-    size_t vlen;
+    uint32_t packed;
     const uint8_t *p;
     ta_kv_status_t st;
 
     if (out_value == NULL) {
         return TA_KV_BAD_ARG;
     }
-    st = peek_entry(key, &off, &rk, &vi);
+    st = peek_entry(key, &off, &packed);
     if (st != TA_KV_OK) {
         return st;
     }
-    vlen = value_nbytes(vi);
-    if (TA_KV_VINFO_TYPE(vi) != TA_KV_VTYPE_INT32 || vlen != 4) {
+    if (TA_KV_PACK_TYPE(packed) != TA_KV_VTYPE_INT ||
+        TA_KV_PACK_VALLEN(packed) != 4u) {
         return TA_KV_BAD_TYPE;
     }
-    p = g_img + value_off(off, rk);
+    p = g_img + value_off(off, TA_KV_PACK_KEYLEN(packed));
     *out_value = (int32_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8) |
                            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
     return TA_KV_OK;
+}
+
+ta_kv_status_t ta_kv_put_smallint(const char *key, int32_t value) {
+    return ta_kv_put_i32(key, value);
+}
+
+ta_kv_status_t ta_kv_get_smallint(const char *key, int32_t *out_value) {
+    return ta_kv_get_i32(key, out_value);
 }
 
 ta_kv_status_t ta_kv_delete(const char *key) {
@@ -755,7 +693,8 @@ static int live_at(size_t index, size_t *off_out) {
 ta_kv_status_t ta_kv_key_at(size_t index, char *dst, size_t dst_cap,
                             size_t *out_len) {
     size_t off;
-    uint16_t klen;
+    uint32_t packed;
+    uint32_t klen;
 
     if (dst == NULL || out_len == NULL) {
         return TA_KV_BAD_ARG;
@@ -763,12 +702,13 @@ ta_kv_status_t ta_kv_key_at(size_t index, char *dst, size_t dst_cap,
     if (!live_at(index, &off)) {
         return TA_KV_MISSING;
     }
-    klen = rd16(off + 8);
+    packed = rd32(off);
+    klen = TA_KV_PACK_KEYLEN(packed);
     *out_len = (size_t)klen;
     if (dst_cap < (size_t)klen + 1u) {
         return TA_KV_TOO_SMALL;
     }
-    memcpy(dst, g_img + off + TA_KV_REC_PREFIX_SIZE, klen);
+    memcpy(dst, g_img + key_off(off), klen);
     dst[klen] = '\0';
     return TA_KV_OK;
 }
@@ -776,8 +716,8 @@ ta_kv_status_t ta_kv_key_at(size_t index, char *dst, size_t dst_cap,
 ta_kv_status_t ta_kv_val_at(size_t index, void *dst, size_t dst_cap,
                             size_t *out_len) {
     size_t off;
-    uint16_t klen;
-    uint32_t vi;
+    uint32_t packed;
+    uint32_t klen;
     size_t vlen;
 
     if (out_len == NULL) {
@@ -786,9 +726,9 @@ ta_kv_status_t ta_kv_val_at(size_t index, void *dst, size_t dst_cap,
     if (!live_at(index, &off)) {
         return TA_KV_MISSING;
     }
-    klen = rd16(off + 8);
-    vi = rd32(valueinfo_off(off, klen));
-    vlen = value_nbytes(vi);
+    packed = rd32(off);
+    klen = TA_KV_PACK_KEYLEN(packed);
+    vlen = (size_t)TA_KV_PACK_VALLEN(packed);
     *out_len = vlen;
     if (dst == NULL) {
         return TA_KV_BAD_ARG;

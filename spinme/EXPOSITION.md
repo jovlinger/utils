@@ -28,19 +28,22 @@ types and bodies, completions, Draw shapes, ISR path, plus boot/KV/OTA
 contracts ratified on the tickets above. Section 9 separates shipped code
 from todo-ratified gaps still in flight.
 
-## KV image and boot (`todo:afc1dc50` + sorted typed entries)
+## KV image and boot (`todo:afc1dc50` + `todo:720ac539` KvConfig)
 
-One writable KV image, prepopulated by `ta_kv_install_factory`. Entries are a
+One writable KV image, owned by the **KvConfig** TaskActor
+(`ta_kvconfig_start`), prepopulated by `ta_kv_install_factory`. Items are a
 packed little-endian linked list kept **sorted by key**. `next` is a byte
 offset from the image base (need not be adjacent). 0 means empty or end; a
-4-byte head at offset 0 holds the first pointer. New entries use first-fit
+4-byte head at offset 0 holds the first pointer. New items use first-fit
 holes; there is no compacting GC.
 
-Each entry: `entrylen`, `next`, `keylen`, `key[]`, `valueinfo` (type in high
-3 bits), `value[]`. Types: smallint `000`, int32 `001`, string `011`, blob
-`100`, bool `111` (see `ta_kv.h` / `TA_KV_VTYPE_*`). Untyped `ta_kv_put` stores
-a blob. Typed helpers: `ta_kv_put_bool` / `smallint` / `i32` / `string` /
-`blob`.
+Each item: `uint32 packed` (`keylen:8 | vallen:20 | type:4`, low to high),
+`uint32 next`, then `key[keylen]` and `value[vallen]`. Item size is
+`8 + keylen + vallen`. Types (`TA_KV_VTYPE_*`): bool, int, str, blob,
+executable, bitmap. Untyped `ta_kv_put` stores a blob. Typed helpers and
+`ta_kv_put_typed` set the discriminant. Actor events: `KvGet` / `KvSet`
+(form fields `key`, `type`, `value`) / `KvList` (comma-separated keys) /
+`KvDelete`.
 
 `actors_to_start` is newline-separated actor names. Each name is also a key
 whose blob is that actor's image. The base bin loader stays USB-only. The

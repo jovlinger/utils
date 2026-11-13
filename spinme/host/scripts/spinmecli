@@ -12,6 +12,8 @@ definition (fields / kinds) and does not contact the device.
 
 `task list` POSTs list_tasks, then list_events for each actor, and prints
 one line per task: `name: slug, slug, ...` (events are comma-separated).
+
+KvConfig: event kvconfig kvget|kvset|kvlist|kvdelete [key=... type=... value=...]
 """
 
 from __future__ import annotations
@@ -55,6 +57,14 @@ _ALIASES: Dict[str, str] = {
     "listevents": "ListEvents",
     "list_tasks": "ListTasks",
     "listtasks": "ListTasks",
+    "kvget": "KvGet",
+    "kv_get": "KvGet",
+    "kvset": "KvSet",
+    "kv_set": "KvSet",
+    "kvlist": "KvList",
+    "kv_list": "KvList",
+    "kvdelete": "KvDelete",
+    "kv_delete": "KvDelete",
 }
 
 

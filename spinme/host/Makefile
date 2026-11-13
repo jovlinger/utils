@@ -233,7 +233,8 @@ $(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_kv_actor: test_kv_actor.c ta_kv_actor.c ta_kv_actor.h ta_kv.c \
-		ta_runtime_cfg.c ta_registry.c ta_event.c | $(BUILD)
+		ta_runtime_cfg.c ta_registry.c ta_event.c ta_net_http_event.c \
+		ta_net_http_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 LOG_SRCS := ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \

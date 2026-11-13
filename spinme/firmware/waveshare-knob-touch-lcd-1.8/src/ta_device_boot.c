@@ -4,6 +4,7 @@
 #include "ta_draw_events.h"
 #include "ta_init.h"
 #include "ta_kv.h"
+#include "ta_kv_actor.h"
 #include "ta_log_accept.h"
 #include "ta_logger.h"
 #include "ta_queue.h"
@@ -66,6 +67,7 @@ void ta_device_boot(void) {
     (void)ta_runtime_cfg_load(&rc);
 
     (void)ta_init_add_entry(TA_LOGGER_NAME, ta_logger_start);
+    (void)ta_init_add_entry(TA_KVCONFIG_NAME, ta_kvconfig_start);
     (void)ta_init_add_entry(TA_DRAW_NAME, ta_draw_start);
     (void)ta_init_add_entry(TA_NET_NAME, ta_net_start);
     (void)ta_init_add_entry(TA_HTTP_NAME, ta_http_start);
@@ -86,6 +88,7 @@ void ta_device_boot(void) {
     ta_draw_bind_queue(&g_draw_q);
 
     if (ta_registry_lookup(TA_LOGGER_NAME) == NULL ||
+        ta_registry_lookup(TA_KVCONFIG_NAME) == NULL ||
         ta_registry_lookup(TA_DRAW_NAME) == NULL ||
         ta_registry_lookup(TA_NET_NAME) == NULL ||
         ta_registry_lookup(TA_SCHED_NAME) == NULL ||
@@ -105,7 +108,8 @@ void ta_device_boot(void) {
 
     g_fabric_up = 1;
     ESP_LOGI(TAG,
-             "fabric up: Logger Draw Net Http Scheduler Controller MPD Sonos");
+             "fabric up: Logger KvConfig Draw Net Http Scheduler Controller "
+             "MPD Sonos");
     (void)ta_logger_emit(1, "Init", 0, 1, "fabric_boot");
 
     /* Activate the MVP face: Router -> MPDController, which arms the

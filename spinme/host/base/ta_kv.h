@@ -1,18 +1,16 @@
-/* Sorted KV image: contiguous entries linked by next offsets.
+/* Linked-list KV image owned by the KvConfig TaskActor.
  *
- * Image head: uint32 first (0 = empty). Each live entry (offset >= 4):
- *   uint32 entrylen;   total bytes of this entry
- *   uint32 next;       offset of next entry, or 0
- *   uint16 keylen;
+ * Image head: uint32 first (0 = empty). Each live item (offset >= 4):
+ *   uint32 packed;  keylen:8 | vallen:20 | type:4  (low to high)
+ *   uint32 next;    byte offset of next live item, or 0
  *   uint8  key[keylen];
- *   uint32 valueinfo;  type in high 3 bits; see TA_KV_VTYPE_*
- *   uint8  value[];    length from valueinfo / type
+ *   uint8  value[vallen];
  *
- * Keys are kept in ascending lexicographic order along the live chain.
- * next need not be adjacent (holes from unlink / first-fit reuse).
- * valueinfo types (high 3 bits): smallint 000, int32 001, string 011,
- * blob 100, bool 111. Low 29 bits: smallint payload, bool in bit0,
- * string/blob length; int32 uses value[0..3] LE.
+ * Item size is 8 + keylen + vallen (no separate entrylen). Keys stay in
+ * ascending lexicographic order along the live chain. next need not be
+ * adjacent (holes from unlink / first-fit reuse).
+ *
+ * Payload types (4-bit): see TA_KV_VTYPE_*.
  */
 #ifndef SPINME_TA_KV_H
 #define SPINME_TA_KV_H
@@ -25,9 +23,8 @@
 #define TA_KV_SLOTS 32
 
 #define TA_KV_IMAGE_HEAD_SIZE 4u
-/* entrylen u32 + next u32 + keylen u16 (key and valueinfo follow). */
-#define TA_KV_REC_PREFIX_SIZE 10u
-#define TA_KV_VALUEINFO_SIZE 4u
+/* packed u32 + next u32 (key and value follow). */
+#define TA_KV_REC_PREFIX_SIZE 8u
 
 #define TA_KV_KEY_CONTROLLER "current_controller"
 #define TA_KV_KEY_LOG_URL "log_receiver_url"
@@ -36,17 +33,25 @@
 #define TA_KV_KEY_LOG_CADENCE_S "log_cadence_s"
 #define TA_KV_KEY_ACTORS "actors_to_start"
 
-/* High 3 bits of valueinfo. */
-#define TA_KV_VTYPE_SMALLINT 0u
-#define TA_KV_VTYPE_INT32 1u
-#define TA_KV_VTYPE_STRING 3u
-#define TA_KV_VTYPE_BLOB 4u
-#define TA_KV_VTYPE_BOOL 7u
+/* 4-bit type discriminant in packed word. */
+#define TA_KV_VTYPE_BOOL 0u
+#define TA_KV_VTYPE_INT 1u
+#define TA_KV_VTYPE_STR 2u
+#define TA_KV_VTYPE_BLOB 3u
+#define TA_KV_VTYPE_EXECUTABLE 4u
+#define TA_KV_VTYPE_BITMAP 5u
+/* Aliases kept for call sites that still say string/i32/smallint. */
+#define TA_KV_VTYPE_STRING TA_KV_VTYPE_STR
+#define TA_KV_VTYPE_INT32 TA_KV_VTYPE_INT
+#define TA_KV_VTYPE_SMALLINT TA_KV_VTYPE_INT
 
-#define TA_KV_VINFO_TYPE(vi) ((uint32_t)(vi) >> 29)
-#define TA_KV_VINFO_PAYLOAD(vi) ((uint32_t)(vi) & 0x1fffffffu)
-#define TA_KV_VINFO_PACK(type, payload)                                        \
-    ((((uint32_t)(type) & 7u) << 29) | ((uint32_t)(payload) & 0x1fffffffu))
+#define TA_KV_PACK_KEYLEN(p) ((uint32_t)(p) & 0xffu)
+#define TA_KV_PACK_VALLEN(p) (((uint32_t)(p) >> 8) & 0xfffffu)
+#define TA_KV_PACK_TYPE(p) (((uint32_t)(p) >> 28) & 0xfu)
+#define TA_KV_PACK(keylen, vallen, type)                                       \
+    ((((uint32_t)(keylen) & 0xffu)) |                                          \
+     ((((uint32_t)(vallen) & 0xfffffu)) << 8) |                                \
+     ((((uint32_t)(type) & 0xfu)) << 28))
 
 typedef enum {
     TA_KV_OK = 0,
@@ -67,6 +72,8 @@ ta_kv_status_t ta_kv_put(const char *key, const void *src, size_t len);
 ta_kv_status_t ta_kv_delete(const char *key);
 
 ta_kv_status_t ta_kv_get_type(const char *key, uint32_t *out_type);
+ta_kv_status_t ta_kv_put_typed(const char *key, uint32_t type, const void *src,
+                               size_t len);
 ta_kv_status_t ta_kv_put_bool(const char *key, int value);
 ta_kv_status_t ta_kv_get_bool(const char *key, int *out_value);
 ta_kv_status_t ta_kv_put_smallint(const char *key, int32_t value);
