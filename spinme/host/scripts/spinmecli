@@ -1,8 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """spinmecli --hostname HOST event ACTOR EVENT [field=value ...]
 
 Resolve HOST (default spinme.local) and POST /event/<actor>/<event> with a
 taskevent form body (application/x-www-form-urlencoded).
+
+KvConfig: event kvconfig kvget|kvset|kvlist|kvdelete [key=... type=... value=...]
 """
 
 from __future__ import annotations
@@ -32,11 +34,24 @@ def _parse_kv(pairs: List[str]) -> Dict[str, str]:
     return out
 
 
+_ALIASES: Dict[str, str] = {
+    "kvget": "KvGet",
+    "kv_get": "KvGet",
+    "kvset": "KvSet",
+    "kv_set": "KvSet",
+    "kvlist": "KvList",
+    "kv_list": "KvList",
+    "kvdelete": "KvDelete",
+    "kv_delete": "KvDelete",
+}
+
+
 def _lookup_event(event_name: str) -> Type[TaskEvent]:
-    cls: Optional[Type[TaskEvent]] = EVENT_BY_NAME.get(event_name)
+    mapped = _ALIASES.get(event_name.lower(), event_name)
+    cls: Optional[Type[TaskEvent]] = EVENT_BY_NAME.get(mapped)
     if cls is not None:
         return cls
-    lowered = event_name.lower().replace("_", "")
+    lowered = mapped.lower().replace("_", "")
     for name, cand in EVENT_BY_NAME.items():
         if name.lower().replace("_", "") == lowered:
             return cand

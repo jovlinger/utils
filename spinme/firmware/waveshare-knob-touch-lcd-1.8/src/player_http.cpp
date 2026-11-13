@@ -16,6 +16,8 @@
 #include "ta_runtime_cfg.h"
 #include "wifi_local.h"
 
+extern "C" void ta_http_listen_start_task(void);
+
 #ifndef WIFI_SSID
 #define WIFI_SSID SPINME_WIFI_SSID
 #endif
@@ -161,6 +163,8 @@ static bool ensure_wifi_boot(uint32_t timeout_ms) {
   Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
   /* Wall clock: Net owns SNTP (todo:15b92eaa). */
   ta_net_sntp_after_wifi();
+  /* Inbound POST /event on :80 (KvConfig smoke / spinmecli). */
+  ta_http_listen_start_task();
   return true;
 }
 
