@@ -1,19 +1,29 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """spinmecli --hostname HOST event ACTOR EVENT [field=value ...]
+       spinmecli --hostname HOST event ACTOR --list
+       spinmecli event ACTOR EVENT --help
+       spinmecli --hostname HOST task list
 
 Resolve HOST (default spinme.local) and POST /event/<actor>/<event> with a
 taskevent form body (application/x-www-form-urlencoded).
+
+`event ACTOR EVENT --help` is local only: it prints the Python taskevent
+definition (fields / kinds) and does not contact the device.
+
+`task list` POSTs list_tasks, then list_events for each actor, and prints
+one line per task: `name: slug, slug, ...` (events are comma-separated).
 """
 
 from __future__ import annotations
 
 import argparse
 import http.client
+import ipaddress
 import socket
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Type
-from urllib.parse import urlencode
+from typing import Dict, List, Optional, Sequence, Tuple, Type
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -32,11 +42,28 @@ def _parse_kv(pairs: List[str]) -> Dict[str, str]:
     return out
 
 
+_ALIASES: Dict[str, str] = {
+    "get_debug": "TestGetDebug",
+    "getdebug": "TestGetDebug",
+    "run_test": "TestRun",
+    "testrun": "TestRun",
+    "debugall": "DebugAll",
+    "debug_all": "DebugAll",
+    "debugstatus": "DebugStatus",
+    "debug_status": "DebugStatus",
+    "list_events": "ListEvents",
+    "listevents": "ListEvents",
+    "list_tasks": "ListTasks",
+    "listtasks": "ListTasks",
+}
+
+
 def _lookup_event(event_name: str) -> Type[TaskEvent]:
-    cls: Optional[Type[TaskEvent]] = EVENT_BY_NAME.get(event_name)
+    mapped = _ALIASES.get(event_name.lower(), event_name)
+    cls: Optional[Type[TaskEvent]] = EVENT_BY_NAME.get(mapped)
     if cls is not None:
         return cls
-    lowered = event_name.lower().replace("_", "")
+    lowered = mapped.lower().replace("_", "")
     for name, cand in EVENT_BY_NAME.items():
         if name.lower().replace("_", "") == lowered:
             return cand
@@ -69,7 +96,150 @@ def _build_event(event_name: str, fields: Dict[str, str]) -> TaskEvent:
     return cls(**kwargs)  # type: ignore[arg-type]
 
 
-def _post(hostname: str, actor: str, event_name: str, body: str) -> int:
+def _event_help_text(actor: str, event_name: str) -> str:
+    """Local SoT help from taskevent Python classes (no device I/O)."""
+    cls = _lookup_event(event_name)
+    lines: List[str] = [
+        f"actor: {actor}",
+        f"event: {cls.type_name}",
+        f"type_id: {cls.type_id}",
+        f"c_type: {cls.c_type_name or '(none)'}",
+    ]
+    doc = (cls.__doc__ or "").strip()
+    if doc:
+        lines.append(f"doc: {doc}")
+    if not cls.field_specs:
+        lines.append("fields: (none)")
+    else:
+        lines.append("fields:")
+        for spec in cls.field_specs:
+            detail = spec.kind
+            if spec.kind in ("char", "bytes") and spec.size:
+                detail = f"{spec.kind}[{spec.size}]"
+            if spec.length_field:
+                detail = f"{detail} length={spec.length_field}"
+            if not spec.flat:
+                detail = f"{detail} (not form-flat)"
+            lines.append(f"  {spec.name}  {detail}")
+    aliases = [
+        alias
+        for alias, canon in _ALIASES.items()
+        if canon == cls.type_name
+    ]
+    if aliases:
+        lines.append(f"aliases: {', '.join(sorted(aliases))}")
+    return "\n".join(lines) + "\n"
+
+
+# macOS IP_BOUND_IF: pin a TCP connect to one interface. Dual-homed
+# 192.168.88/24 (wifi + ethernet) otherwise retries the same ifscope route
+# and connect() stays EHOSTUNREACH (errno 65) while ping still works.
+_IP_BOUND_IF = 25
+
+
+def _same_subnet_ifindexes(
+    host: str, rows: Optional[Sequence[Tuple[str, str, int]]] = None
+) -> List[int]:
+    """Interface indexes whose IPv4 shares a /24 with host. rows: (name, addr, idx)."""
+    try:
+        dest = ipaddress.IPv4Address(host)
+    except ipaddress.AddressValueError:
+        return []
+    dest_net = ipaddress.IPv4Address(int(dest) & 0xFFFFFF00)
+    found: List[int] = []
+    source = rows if rows is not None else _local_ipv4_rows()
+    for _name, addr, idx in source:
+        try:
+            ip = ipaddress.IPv4Address(addr)
+        except ipaddress.AddressValueError:
+            continue
+        if ipaddress.IPv4Address(int(ip) & 0xFFFFFF00) != dest_net:
+            continue
+        if idx and idx not in found:
+            found.append(idx)
+    return found
+
+
+def _local_ipv4_rows() -> List[Tuple[str, str, int]]:
+    if sys.platform != "darwin":
+        return []
+    import ctypes
+
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    libc.if_nametoindex.argtypes = [ctypes.c_char_p]
+    libc.if_nametoindex.restype = ctypes.c_uint
+    try:
+        names = subprocess.check_output(
+            ["/sbin/ifconfig", "-l"], text=True
+        ).split()
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    rows: List[Tuple[str, str, int]] = []
+    for name in names:
+        try:
+            addr = subprocess.check_output(
+                ["/usr/sbin/ipconfig", "getifaddr", name],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        if not addr:
+            continue
+        idx = int(libc.if_nametoindex(name.encode("ascii")))
+        rows.append((name, addr, idx))
+    return rows
+
+
+def _open_tcp(
+    family: int,
+    socktype: int,
+    proto: int,
+    sockaddr: Tuple[str, int],
+    timeout: float,
+    ifindexes: Sequence[int],
+    socket_factory: Optional[Type[socket.socket]] = None,
+) -> socket.socket:
+    import errno
+
+    factory = socket_factory or socket.socket
+    plans: List[Optional[int]] = [None]
+    for idx in ifindexes:
+        if idx not in plans:
+            plans.append(idx)
+    retry_errnos = {
+        errno.EHOSTUNREACH,
+        errno.ENETUNREACH,
+        errno.ECONNRESET,
+        errno.ECONNREFUSED,
+        errno.ETIMEDOUT,
+    }
+    last_exc: Optional[BaseException] = None
+    for idx in plans:
+        sock = factory(family, socktype, proto)
+        try:
+            sock.settimeout(timeout)
+            if idx is not None and sys.platform == "darwin":
+                sock.setsockopt(socket.IPPROTO_IP, _IP_BOUND_IF, idx)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last_exc = exc
+            try:
+                sock.close()
+            except OSError:
+                pass
+            if exc.errno not in retry_errnos:
+                raise
+    if last_exc is None:
+        raise OSError("connect failed")
+    raise last_exc
+
+
+def _request(
+    hostname: str, actor: str, event_name: str, body: str
+) -> Tuple[int, bytes]:
+    """POST /event/<actor>/<event>; return (http_status, body_bytes)."""
     host = hostname
     port = 80
     if hostname.count(":") == 1 and not hostname.endswith(".local"):
@@ -77,53 +247,203 @@ def _post(hostname: str, actor: str, event_name: str, body: str) -> int:
         if h and p.isdigit():
             host, port = h, int(p)
     path = f"/event/{actor.lower()}/{event_name.lower()}"
-    conn = http.client.HTTPConnection(host, port, timeout=5.0)
+    # Prefer IPv4: some hosts return AAAA that is unreachable (errno 65).
     try:
-        payload = body.encode("ascii")
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Content-Length": str(len(payload)),
-        }
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise OSError(str(exc)) from exc
+    if not infos:
+        raise OSError(f"no IPv4 address for {host}")
+    family, socktype, proto, _canon, sockaddr = infos[0]
+    payload = body.encode("ascii")
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": str(len(payload)),
+    }
+    conn: Optional[http.client.HTTPConnection] = None
+    try:
+        ifindexes = _same_subnet_ifindexes(sockaddr[0])
+        sock = _open_tcp(family, socktype, proto, sockaddr, 10.0, ifindexes)
+        conn = http.client.HTTPConnection(host, port, timeout=10.0)
+        conn.sock = sock
         conn.request("POST", path, body=payload, headers=headers)
         resp = conn.getresponse()
         data = resp.read()
-        sys.stdout.write(f"HTTP {resp.status}\n")
-        sys.stdout.write(data.decode("utf-8", errors="replace"))
-        if not data.endswith(b"\n"):
-            sys.stdout.write("\n")
-        return 0 if resp.status in (200, 201) else 1
+        return int(resp.status), data
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _post(hostname: str, actor: str, event_name: str, body: str) -> int:
+    try:
+        status, data = _request(hostname, actor, event_name, body)
     except (OSError, socket.gaierror) as exc:
         sys.stderr.write(f"spinmecli: {exc}\n")
         return 2
-    finally:
-        conn.close()
+    sys.stdout.buffer.write(f"HTTP {status}\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    if not data.endswith(b"\n"):
+        sys.stdout.buffer.write(b"\n")
+    return 0 if status in (200, 201) else 1
+
+
+def _decode_lines(data: bytes) -> List[str]:
+    text = data.decode("ascii", errors="replace")
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+
+def _decode_csv(data: bytes) -> List[str]:
+    """Comma-separated slugs (list_events wire format); also accept newlines."""
+    text = data.decode("ascii", errors="replace").replace("\n", ",")
+    return [p.strip() for p in text.split(",") if p.strip()]
+
+
+def _cmd_event_help(actor: str, event_name: Optional[str]) -> int:
+    if event_name is None:
+        sys.stderr.write(
+            "usage: spinmecli event <actor> <event> --help\n"
+            "  (local taskevent definition; does not contact the device)\n"
+        )
+        return 2
+    sys.stdout.write(_event_help_text(actor, event_name))
+    return 0
+
+
+def _cmd_event(hostname: str, args: argparse.Namespace) -> int:
+    if getattr(args, "event_help", False):
+        return _cmd_event_help(args.actor, args.event)
+    if args.list:
+        if args.event is not None and args.event.lower() not in (
+            "list_events",
+            "listevents",
+        ):
+            raise SystemExit("use either --list or an event name, not both")
+        event_token = "list_events"
+    elif args.event is None:
+        raise SystemExit("event name required (or pass --list / --help)")
+    else:
+        event_token = args.event
+    fields = _parse_kv(list(args.fields))
+    te = _build_event(event_token, fields)
+    body = te.to_form()
+    # URL path uses the wire/alias slug (get_debug), not TaskEvent type_name
+    # (TestGetDebug). Device strcmp matches lowercase path segments.
+    if event_token.lower() in _ALIASES:
+        path_event = event_token.lower()
+    else:
+        path_event = te.type_name
+    return _post(hostname, args.actor, path_event, body)
+
+
+def _format_task_list(
+    actors_and_events: Sequence[Tuple[str, Sequence[str]]],
+) -> str:
+    lines: List[str] = []
+    for actor, events in actors_and_events:
+        if events:
+            lines.append(f"{actor}: {', '.join(events)}")
+        else:
+            lines.append(f"{actor}:")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _cmd_task_list(hostname: str) -> int:
+    te = _build_event("list_tasks", {})
+    try:
+        status, data = _request(
+            hostname, "controller", "list_tasks", te.to_form()
+        )
+    except (OSError, socket.gaierror) as exc:
+        sys.stderr.write(f"spinmecli: {exc}\n")
+        return 2
+    if status not in (200, 201):
+        sys.stderr.write(f"spinmecli: list_tasks HTTP {status}\n")
+        sys.stderr.buffer.write(data)
+        if not data.endswith(b"\n"):
+            sys.stderr.buffer.write(b"\n")
+        return 1
+    actors = _decode_lines(data)
+    rows: List[Tuple[str, List[str]]] = []
+    le = _build_event("list_events", {})
+    body = le.to_form()
+    for actor in actors:
+        try:
+            st, ev_data = _request(hostname, actor, "list_events", body)
+        except (OSError, socket.gaierror) as exc:
+            sys.stderr.write(f"spinmecli: {actor} list_events: {exc}\n")
+            return 2
+        if st not in (200, 201):
+            sys.stderr.write(
+                f"spinmecli: {actor} list_events HTTP {st}\n"
+            )
+            return 1
+        rows.append((actor, _decode_csv(ev_data)))
+    sys.stdout.write(_format_task_list(rows))
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="spinmecli")
     ap.add_argument(
         "--hostname",
+        "--host",
         default="spinme.local",
-        help="board hostname (default spinme.local)",
+        metavar="HOST",
+        help="board hostname or IPv4 (default spinme.local)",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    ev = sub.add_parser("event", help="POST /event/<actor>/<event>")
+    # add_help=False so `event ACTOR EVENT --help` is local SoT, not argparse.
+    ev = sub.add_parser(
+        "event",
+        add_help=False,
+        help="POST /event/<actor>/<event> (or --help for local SoT)",
+    )
     ev.add_argument("actor", help="TaskActor name (e.g. controller, test)")
-    ev.add_argument("event", help="event type name (e.g. DebugAll, get_debug)")
+    ev.add_argument(
+        "event",
+        nargs="?",
+        default=None,
+        help="event type name (e.g. DebugAll, get_debug); omit with --list",
+    )
     ev.add_argument(
         "fields",
         nargs="*",
         help="optional field=value pairs for the event body",
     )
+    ev.add_argument(
+        "--list",
+        action="store_true",
+        help="POST list_events (actor replies with accepted event slugs)",
+    )
+    ev.add_argument(
+        "-h",
+        "--help",
+        action="store_true",
+        dest="event_help",
+        help="print local taskevent definition (no device contact)",
+    )
+
+    task = sub.add_parser("task", help="TaskActor registry helpers")
+    task_sub = task.add_subparsers(dest="task_cmd", required=True)
+    task_sub.add_parser(
+        "list",
+        help="list tasks and each actor's events (list_tasks + list_events)",
+    )
 
     args = ap.parse_args(argv)
-    if args.cmd != "event":
-        ap.error(f"unsupported subcommand {args.cmd}")
-    fields = _parse_kv(list(args.fields))
-    te = _build_event(args.event, fields)
-    body = te.to_form()
-    return _post(args.hostname, args.actor, te.type_name, body)
+    if args.cmd == "event":
+        return _cmd_event(args.hostname, args)
+    if args.cmd == "task":
+        if args.task_cmd == "list":
+            return _cmd_task_list(args.hostname)
+        ap.error(f"unsupported task subcommand {args.task_cmd}")
+    ap.error(f"unsupported subcommand {args.cmd}")
+    return 2
 
 
 if __name__ == "__main__":

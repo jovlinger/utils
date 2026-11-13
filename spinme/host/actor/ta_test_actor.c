@@ -276,12 +276,21 @@ int ta_test_handle(const ta_event_envelope_t *env) {
             offer_http_body(env->session_id, 500u, "get_debug failed");
             return -1;
         }
-        ta_net_http_offer_blob(env->session_id, 200u, blob, blob_len);
-        free(blob);
+        /* Take ownership: avoid a second ~panel-sized copy. */
+        if (ta_net_http_offer_blob_take(env->session_id, 200u, blob,
+                                        blob_len) != 0) {
+            free(blob);
+            offer_http_body(env->session_id, 500u, "get_debug offer failed");
+            return -1;
+        }
         return 0;
     }
     if (env->event.type == TA_EV_DEBUG_STATUS) {
         return ta_debug_status_reply(env, TA_TEST_NAME, "ok");
+    }
+    if (env->event.type == TA_EV_LIST_EVENTS) {
+        return ta_list_events_offer(
+            env, "list_events,get_debug,testrun,run_test,debug_status");
     }
     if (env->event.type != TA_EV_TEST_RUN) {
         g_stats.unknown++;

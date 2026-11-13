@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef SPINME_TA_DEVICE
+#include "esp_heap_caps.h"
+#endif
+
 #define TA_NET_HTTP_FORM_MAX 16
 #define TA_NET_HTTP_KEY_MAX 32
 #define TA_NET_HTTP_VAL_MAX 96
@@ -66,28 +70,82 @@ void ta_net_http_offer_reply(const ta_event_envelope_t *env) {
     g_have_offer = 1;
 }
 
-void ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
-                            const void *bytes, size_t n) {
-    uint8_t *copy;
-
+int ta_net_http_offer_blob_take(ta_session_id_t session_id,
+                                unsigned http_status, uint8_t *bytes,
+                                size_t n) {
     if (g_want_sid != 0 && session_id != g_want_sid) {
-        return;
+        return -1;
     }
     if (bytes == NULL || n == 0 || n > TA_NET_HTTP_BLOB_MAX) {
-        return;
+        return -1;
     }
-    copy = (uint8_t *)malloc(n);
-    if (copy == NULL) {
-        return;
-    }
-    memcpy(copy, bytes, n);
     clear_blob();
     g_have_offer = 0;
-    g_blob = copy;
+    g_blob = bytes;
     g_blob_len = n;
     g_blob_status = http_status;
     g_blob_sid = session_id;
     g_have_blob = 1;
+    return 0;
+}
+
+int ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
+                           const void *bytes, size_t n) {
+    uint8_t *copy;
+
+    if (g_want_sid != 0 && session_id != g_want_sid) {
+        return -1;
+    }
+    if (bytes == NULL || n == 0 || n > TA_NET_HTTP_BLOB_MAX) {
+        return -1;
+    }
+#ifdef SPINME_TA_DEVICE
+    /* Prefer PSRAM for large get_debug payloads. */
+    copy = (uint8_t *)heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (copy == NULL) {
+        copy = (uint8_t *)malloc(n);
+    }
+#else
+    copy = (uint8_t *)malloc(n);
+#endif
+    if (copy == NULL) {
+        return -1;
+    }
+    memcpy(copy, bytes, n);
+    if (ta_net_http_offer_blob_take(session_id, http_status, copy, n) != 0) {
+        free(copy);
+        return -1;
+    }
+    return 0;
+}
+
+int ta_list_events_offer(const ta_event_envelope_t *req, const char *csv) {
+    ta_event_envelope_t reply;
+    size_t n;
+
+    if (req == NULL) {
+        return -1;
+    }
+    if (csv == NULL) {
+        csv = "list_events";
+    }
+    n = strlen(csv);
+    if (n == 0) {
+        csv = "list_events";
+        n = strlen(csv);
+    }
+    if (n > TA_NET_HTTP_REPLY_MAX) {
+        return ta_net_http_offer_blob(req->session_id, 200u, csv, n);
+    }
+    ta_env_clear(&reply);
+    (void)ta_env_set_src(&reply, req->src[0] != '\0' ? req->src : "actor");
+    reply.session_id = req->session_id;
+    reply.event.type = TA_EV_NET_HTTP_REPLY;
+    reply.event.u.net_http_reply.http_status = 200u;
+    reply.event.u.net_http_reply.n = (uint16_t)n;
+    memcpy(reply.event.u.net_http_reply.bytes, csv, n);
+    ta_net_http_offer_reply(&reply);
+    return 0;
 }
 
 static int default_wait(ta_session_id_t session_id, ta_event_envelope_t *out,
@@ -329,6 +387,16 @@ static int build_event_from_form(const char *event_name,
                  "%s", v);
         return 0;
     }
+    if (strcmp(event_name, "listevents") == 0 ||
+        strcmp(event_name, "list_events") == 0) {
+        ev->type = TA_EV_LIST_EVENTS;
+        return 0;
+    }
+    if (strcmp(event_name, "listtasks") == 0 ||
+        strcmp(event_name, "list_tasks") == 0) {
+        ev->type = TA_EV_LIST_TASKS;
+        return 0;
+    }
     return -1;
 }
 
@@ -393,6 +461,9 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     if (req == NULL || out == NULL || len < 16) {
         return -1;
     }
+    /* Caller may pass an uninitialized stack resp; do not free garbage. */
+    out->blob = NULL;
+    out->blob_len = 0;
     text = (const char *)req;
     line_end = NULL;
     for (i = 0; i + 1 < len; i++) {

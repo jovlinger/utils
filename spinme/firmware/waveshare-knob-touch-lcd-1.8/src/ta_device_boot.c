@@ -4,13 +4,16 @@
 #include "ta_draw_events.h"
 #include "ta_init.h"
 #include "ta_kv.h"
+#include "ta_log_accept.h"
 #include "ta_logger.h"
 #include "ta_queue.h"
+#include "ta_http_actor.h"
 #include "ta_net_events.h"
 #include "ta_registry.h"
 #include "ta_router.h"
 #include "ta_runtime_cfg.h"
 #include "ta_sched_events.h"
+#include "ta_test_actor.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -53,6 +56,7 @@ void ta_device_boot(void) {
     ta_sched_reset();
     ta_draw_reset();
     ta_net_reset();
+    ta_http_reset();
     ta_mpd_reset();
     ta_sonos_reset();
     ta_router_reset();
@@ -64,10 +68,13 @@ void ta_device_boot(void) {
     (void)ta_init_add_entry(TA_LOGGER_NAME, ta_logger_start);
     (void)ta_init_add_entry(TA_DRAW_NAME, ta_draw_start);
     (void)ta_init_add_entry(TA_NET_NAME, ta_net_start);
+    (void)ta_init_add_entry(TA_HTTP_NAME, ta_http_start);
     (void)ta_init_add_entry(TA_SCHED_NAME, ta_sched_start);
     (void)ta_init_add_entry(TA_CONTROLLER_NAME, ta_router_start);
     (void)ta_init_add_entry(TA_MPD_NAME, ta_mpd_start);
     (void)ta_init_add_entry(TA_SONOS_NAME, ta_sonos_start);
+    (void)ta_init_add_entry(TA_TEST_NAME, ta_test_start);
+    (void)ta_init_add_entry("Log", ta_log_start);
 
     ta_init_run_entries();
     ta_logger_set_policy(0, TA_LOG_POLICY_EXTERNAL);
@@ -97,7 +104,8 @@ void ta_device_boot(void) {
     }
 
     g_fabric_up = 1;
-    ESP_LOGI(TAG, "fabric up: Logger Draw Net Scheduler Controller MPD Sonos");
+    ESP_LOGI(TAG,
+             "fabric up: Logger Draw Net Http Scheduler Controller MPD Sonos");
     (void)ta_logger_emit(1, "Init", 0, 1, "fabric_boot");
 
     /* Activate the MVP face: Router -> MPDController, which arms the

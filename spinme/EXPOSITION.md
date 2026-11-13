@@ -11,6 +11,7 @@ implementation to match the todo (Body / Notes / WorkItems), not the reverse.
 | `todo:afc1dc50` (done) | Dead-simple KV layout + allocator, boot roster/load/`init`/`exit`, USB-only base loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map still a stub |
 | `todo:15b92eaa` (done) | Log TaskActor baseline (sample/buffer/off-device drain), universal `ta_all_*`, Net NTP; **consumes** KV |
 | `todo:cff5c240` | Test `get_debug`, QuLog PSRAM three-ring store, RFC-5424 TCP drain with ACK-advanced heads; HTTP path lowercasing |
+| `todo:b946f61f` | **Lose monolithic Net.** One TaskActor per protocol (Http, Ntp, QuLog/Rfc5424, Mpd, ...); each owns its select/state-machine fds |
 
 Later, if code drifts from a closed ticket, **sync EXPOSITION to the code**
 (as-built fidelity). Do not treat a stale EXPOSITION as design authority
@@ -47,17 +48,24 @@ image init loader is `ta_boot_from_kv`: roster, blob, stub load (non-empty
 blob; ELF map not yet), `ta_actor_init`. `ta_actor_exit` is the inverse
 (stop the loop, unregister). `ta_boot_exit_all` then boot again is the reload.
 
-Net's OTA intake is `ta_net_kv_http_put` (`PUT /kv/<key>`): upload a
-TaskActor **code** blob (or a config string) with `Content-Length` into
-`ta_kv_put`. After a code put, `ta_boot_exit_all` and `ta_boot_from_kv`
-reload the roster so the new image runs.
+**Direction (`todo:b946f61f`):** no monolithic Net socket owner. One TaskActor
+per protocol -- Http (inbound listen + one client), Ntp, QuLog/Rfc5424 drain,
+Mpd (Volumio client), and later siblings -- each with its own non-blocking
+select/state machine. Cross-protocol work is events between actors, not a
+shared Net outbound lane. As-built still registers `Net` and uses
+`player_http` + an Arduino `WiFiServer` HTTP stopgap until that ticket lands.
 
-Net also serves HTTP-only on port 80: `POST /event/<taskactor>/<eventname>`
+OTA intake today is `ta_net_kv_http_put` (`PUT /kv/<key>`): upload a TaskActor
+**code** blob (or a config string) with `Content-Length` into `ta_kv_put`.
+After a code put, `ta_boot_exit_all` and `ta_boot_from_kv` reload the roster.
+That path moves under the Http actor with `todo:b946f61f`.
+
+Inbound HTTP today (port 80 stopgap): `POST /event/<taskactor>/<eventname>`
 (`ta_net_http_event`). Path segments are ASCII-lowercased before registry
 lookup; canonical registered names are lowercase (`test`, `log`, `net`, ...).
 Query and/or form body are parsed as `x-www-form-urlencoded` (body keys
-override query). Net enqueues the event with a fresh `session_id`, blocks up
-to `TA_TIMEOUT_SHORT_MS` (2s) for `TA_EV_NET_HTTP_REPLY` or a large blob
+override query). Handler enqueues the event with a fresh `session_id`, blocks
+up to `TA_TIMEOUT_SHORT_MS` (2s) for `TA_EV_NET_HTTP_REPLY` or a large blob
 offer, and returns that status/body; unknown actor -> 404; incomplete / no
 reply within TIMEOUT_SHORT -> HTTP 201 (`accepted`). Deferred answer retrieve
 (KV) is out of scope for now. mDNS advertises hostname `spinme` (`.local`) on
@@ -65,7 +73,12 @@ reply within TIMEOUT_SHORT -> HTTP 201 (`accepted`). Deferred answer retrieve
 
 Host CLI: `spinmecli --hostname spinme.local event <actor> <event> [k=v ...]`
 (`host/scripts/spinmecli`) POSTs taskevent form bodies to
-`/event/<actor>/<event>`.
+`/event/<actor>/<event>`. `spinmecli event <actor> --list` POSTs
+`list_events` (`TA_EV_LIST_EVENTS`); every TaskActor offers a comma-separated
+slug list (HTTP 200). `spinmecli event <actor> <event> --help` is local only:
+it prints the Python `taskevent` class fields / kinds and does not contact the
+device. `spinmecli task list` POSTs `list_tasks` then `list_events` for each
+actor and prints one line per task: `name: slug, slug, ...`.
 
 `POST /event/controller/debugall` fans out `DebugStatus` to every registered
 actor; Controller list-aggregates replies into the HTTP body (200 if complete
@@ -480,53 +493,37 @@ skipped. The next touch wakes (no hit-test) and repaints everything.
 
 ---
 
-### 3.3 Net (+ MPD dialect)
+### 3.3 Protocol actors (replace Net) -- `todo:b946f61f`
 
-**Owns the TCP/IP / HTTP socket plane** (resource owner; not an
-EventRedirector). Device: `player_http` + `ta_net_backend` seam. Host:
-immediate stub replies on enqueue; `ta_net_mpd_*` coalesces volume and
-defers POLL/ALBUMART until tick.
+**Normative:** there is **no** single Net socket owner. Each wire protocol is
+its own TaskActor with a **private** non-blocking select/state machine and
+statically bounded fds (not a free-form connection pool).
 
-#### Concurrency (normative)
+| Actor (planned) | Owns | MVP concurrency |
+|-----------------|------|-----------------|
+| Http | `listen_fd` + at most one accepted `in_fd`; POST `/event/...`, PUT `/kv/...` | One active inbound client; backlog holds the rest |
+| Ntp | SNTP client fd / state | One outbound NTP conversation |
+| QuLog / Rfc5424 | Drain TCP client + ACK | One outbound drain conversation |
+| Mpd | Volumio/MPD client (poll/set/albumart) | One outbound MPD conversation (may queue ops) |
+| (optional) Mdns | Advertise refresh | No long-lived client fd required |
 
-- **Outbound client work may be sequential.** MPD poll/set/albumart, NTP,
-  and any other Net-initiated client requests share one outbound lane
-  (queue / one-in-flight). Fine to wait for getState before starting NTP.
-- **Inbound HTTP: one active client at a time.** Excess peers stay on the
-  listen backlog (or are not accepted yet). No multi-client HTTP
-  multiplexing in MVP.
-- **Inbound must not block behind outbound.** Serving the one accepted
-  HTTP client must progress even while the outbound lane has a getState
-  / NTP / albumart in flight.
-
-#### Redesign sketch (two select slots -- static)
-
-Not a free-form connection pool. Net owns a **fixed two-slot** wait set
-(plus the listen fd when idle on the server side):
+Cross-protocol ordering is **events** (registry posts), not a shared Net
+outbound lane. Http progress must not wait on Mpd/Ntp/QuLog, and vice versa.
 
 ```text
-  listen_fd          -- Config HTTP server (always)
-  in_fd  (0 or 1)    -- at most one accepted HTTP client
-  out_fd (0 or 1)    -- at most one outbound client (Volumio / NTP / ...)
-
-  each Net turn:
-    select/poll on { listen_fd?, in_fd?, out_fd? }  -- <= 3 fds, static
+  each protocol actor turn (example Http):
+    select/poll on { listen_fd?, in_fd? }
     if listen readable and in_fd empty: accept -> in_fd
-    if in_fd ready: non-blocking read/write; on complete request
-         -> Config event; on response done -> close in_fd (or keep-alive
-         later); never wait on out_fd
-    if out_fd ready: advance one outbound state machine step; on DONE
-         -> registry post; take next queued outbound op if any
-    if listen readable and in_fd busy: leave peer on backlog (do not accept)
+    if in_fd ready: non-blocking read/write; complete request -> enqueue
+         fabric event / offer HTTP reply; close or keep-alive later
+    if listen readable and in_fd busy: leave peer on backlog
 ```
 
-All of that state is **statically allocatable** (three fd ints, two small
-I/O buffers / parsers, one outbound op enum + reply_to/session). No
-heap connection table for MVP.
-
-As-built `player_http` is outbound-only and single-phase (no listen /
-`in_fd`). Adding Config HTTP = add listen + `in_fd` beside the existing
-outbound machine; do not fold server I/O into the outbound "busy" gate.
+**As-built (until `todo:b946f61f` finishes):** `Net` still owns Volumio
+outbound via `player_http` (lwIP select). Inbound `:80` is already the
+**Http** actor (`TA_HTTP_NAME`); Arduino `WiFiServer` is hidden behind
+`ta_http_wifi_up()` / `ta_http_listen.cpp` (device-only). Replace that glue
+with Http's own listen/`in_fd` state machine next.
 
 **NTP:** Net owns SNTP. After WiFi is up, `player_http` calls
 `ta_net_sntp_after_wifi()` (device sets TZ + `configTime` to pool.ntp.org).
@@ -1224,8 +1221,9 @@ Run: `(cd spinme/host && make test)`.
   calm Q8 artwork -> pack66 base).
 - Dual-stack product path demoted (`retired/uimk2_paint/`); END smoke in
   `host/SMOKE.md` (`todo:3135a46a` done).
-- Controller facade is a select-N **Router** (`ta_router`); Net is the sole
-  socket / HTTP owner; Draw is the sole glass owner.
+- Controller facade is a select-N **Router** (`ta_router`); Draw is the sole
+  glass owner. Socket ownership moves to per-protocol actors
+  (`todo:b946f61f`); as-built Net is transitional.
 - Dead-simple KV image (`ta_kv`), factory roster, first-fit holes, and
   host boot (`ta_boot_from_kv` / `ta_actor_init` / `ta_actor_exit`) on
   `todo:afc1dc50`. ELF load is still a stub; `PUT /kv/<key>` is `ta_net_kv_http_put`.
@@ -1240,7 +1238,7 @@ Run: `(cd spinme/host && make test)`.
 |-----|-------------|----------|
 | **Rotary EventRedirector** | ISR decode stays under actors; pooled time/delta always -> **Rotary** redirector, not Draw | Follow-on (not yet minted as its own todo); notes on `todo:3135a46a` |
 | **MPDVolume** | Sole MVP Rotary target; Net player-state + Draw Update Screen at **50% alpha** target volume | Same; PLAN cast section |
-| **Routing vs ownership** | EventRedirector routes events; Net always owns TCP/IP loop; Draw always owns glass; Net may compose `NTP * Player(MPD+Sonos)` internal or via delegated compositors without a second socket owner | PLAN section; EXPOSITION as-built already has one Net / one Draw |
+| **Routing vs ownership** | EventRedirector routes events; Draw owns glass; **per-protocol** socket actors (Http/Ntp/QuLog/Mpd) replace monolithic Net | `todo:b946f61f` (supersedes PLAN "Net always owns TCP/IP") |
 | **Net-owned NTP timesource** | Volumio `getState` has no wall ToD; Net owns SNTP via `ta_net_sntp_after_wifi` (player_http only calls that after WiFi) | `todo:15b92eaa`; device clock smoke still open |
 | **Log QuLog rings + Test get_debug** | Three-ring PSRAM store; RFC-5424 TCP ACK drain; `/event/test/get_debug` | `todo:cff5c240` |
 | **Richer POLL_DONE fields** | Net fills volume/playing; artist/album/song /

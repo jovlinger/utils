@@ -138,6 +138,31 @@ static int handle_debug_all(const ta_event_envelope_t *env) {
     return 0;
 }
 
+static int handle_list_tasks(const ta_event_envelope_t *env) {
+    char names[TA_DEBUG_NAME_SLOTS][TA_NAME_MAX];
+    char body[TA_DEBUG_NAME_SLOTS * TA_NAME_MAX];
+    size_t n;
+    size_t i;
+    size_t o;
+
+    n = ta_registry_copy_names(&names[0][0], TA_NAME_MAX, TA_DEBUG_NAME_SLOTS);
+    o = 0;
+    body[0] = '\0';
+    for (i = 0; i < n; i++) {
+        int wrote;
+
+        if (names[i][0] == '\0') {
+            continue;
+        }
+        wrote = snprintf(body + o, sizeof(body) - o, "%s\n", names[i]);
+        if (wrote < 0 || (size_t)wrote >= sizeof(body) - o) {
+            break;
+        }
+        o += (size_t)wrote;
+    }
+    return ta_list_events_offer(env, body[0] != '\0' ? body : "\n");
+}
+
 int ta_router_enqueue(const ta_event_envelope_t *env) {
     if (env == NULL) {
         return -1;
@@ -147,6 +172,14 @@ int ta_router_enqueue(const ta_event_envelope_t *env) {
     }
     if (env->event.type == TA_EV_DEBUG_ALL) {
         return handle_debug_all(env);
+    }
+    if (env->event.type == TA_EV_LIST_TASKS) {
+        return handle_list_tasks(env);
+    }
+    if (env->event.type == TA_EV_LIST_EVENTS) {
+        return ta_list_events_offer(
+            env,
+            "list_events,list_tasks,debugall,debug_status,ctrlsetroute");
     }
     if (env->event.type == TA_EV_DEBUG_STATUS) {
         /* Actor replies: src is not Controller (requests use src=Controller). */

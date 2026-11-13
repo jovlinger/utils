@@ -2,6 +2,7 @@
 
 #include "ta_draw_events.h"
 #include "ta_net_backend.h"
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
 #include "ta_sched_events.h"
 
@@ -342,6 +343,12 @@ static int mpd_handle(const ta_event_envelope_t *env) {
         st->prev++;
         st->handled++;
         return 0;
+    case TA_EV_LIST_EVENTS:
+        st->handled++;
+        return ta_list_events_offer(
+            env,
+            "list_events,ctrlsetactive,ctrltoggle,ctrlvolume,ctrlnext,"
+            "ctrlprev,ctrlpoll");
     default:
         st->unknown++;
         return -1;
@@ -380,6 +387,12 @@ static int sonos_handle(const ta_event_envelope_t *env) {
         st->prev++;
         st->handled++;
         return 0;
+    case TA_EV_LIST_EVENTS:
+        st->handled++;
+        return ta_list_events_offer(
+            env,
+            "list_events,ctrlsetactive,ctrltoggle,ctrlvolume,ctrlnext,"
+            "ctrlprev");
     default:
         st->unknown++;
         return -1;

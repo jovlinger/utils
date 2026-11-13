@@ -563,6 +563,28 @@ class DebugStatus(TaskEvent):
 
 
 @dataclass
+class ListEvents(TaskEvent):
+    """POST /event/<actor>/list_events -- actor offers comma-separated slugs."""
+
+    type_id: ClassVar[int] = C.TA_EV_LIST_EVENTS
+    type_name: ClassVar[str] = "ListEvents"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
+class ListTasks(TaskEvent):
+    """POST /event/controller/list_tasks -- registry TaskActor name roster."""
+
+    type_id: ClassVar[int] = C.TA_EV_LIST_TASKS
+    type_name: ClassVar[str] = "ListTasks"
+    c_type_name: ClassVar[str] = "uint8_t"
+    c_union_arm: ClassVar[str] = ""
+    field_specs: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+
+@dataclass
 class TestRun(TaskEvent):
     mode: int
     selector: str
@@ -648,6 +670,8 @@ EVENT_CLASSES: List[Type[TaskEvent]] = [
     NetMdnsAdvertise,
     DebugAll,
     DebugStatus,
+    ListEvents,
+    ListTasks,
     TestRun,
     TestGetDebug,
     TestDone,

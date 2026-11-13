@@ -1,7 +1,10 @@
+BINLINKS := ../binlinks
+
 .PHONY: binlinks test all-tests test-taskevent
 
 binlinks:
-	@:
+	mkdir -p $(BINLINKS)
+	ln -sf ../spinme/host/scripts/spinmecli $(BINLINKS)/spinmecli
 
 # Fast suite: Python TaskEvent SoT + host C tests when present.
 test: test-taskevent

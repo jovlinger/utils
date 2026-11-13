@@ -46,7 +46,8 @@ for f in ta_registry.c ta_registry.h ta_controller.c ta_controller.h \
          ta_log_rings.c ta_log_rings.h \
          ta_all.c ta_all.h ta_net_mpd.c ta_net_mpd.h \
          ta_net_kv_http.c ta_net_kv_http.h ta_debug.c ta_debug.h \
-         ta_test_actor.c ta_test_actor.h ta_net_backend.h; do
+         ta_test_actor.c ta_test_actor.h ta_http_actor.c ta_http_actor.h \
+         ta_net_backend.h; do
   link actor "$f"
 done
 

@@ -20,6 +20,8 @@ Open tickets are SoT; keep [`EXPOSITION.md`](EXPOSITION.md) aligned with them:
 - `todo:15b92eaa` -- Log actor, `ta_all_*`, Net NTP (consumes KV; does not own
   a second store). Host Log accept/drain and the init URL fetch are in
   `spinme/host/actor/ta_log_accept.*`.
+- `todo:b946f61f` -- Lose monolithic Net; one TaskActor per protocol (Http, Ntp,
+  QuLog/Rfc5424, Mpd, ...) each with its own select/state machine.
 
 Base bin loader updates are **USB-wired only** (board-marked). Do not invent
 OTA for that loader.

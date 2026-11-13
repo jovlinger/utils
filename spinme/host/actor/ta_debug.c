@@ -9,6 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef SPINME_TA_DEVICE
+#include "esp_heap_caps.h"
+#endif
+
 int ta_debug_capture_and_log(uint32_t now_ms) {
     char msg[TA_LOG_MSG_MAX];
     const ta_follow_chrome_t *chrome;
@@ -81,7 +85,14 @@ int ta_debug_build_get_debug(uint8_t **out_bytes, size_t *out_len) {
         return -1;
     }
     need = (size_t)hn + px_n + 16u + logs_n * 96u;
+#ifdef SPINME_TA_DEVICE
+    buf = (uint8_t *)heap_caps_malloc(need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf == NULL) {
+        buf = (uint8_t *)malloc(need);
+    }
+#else
     buf = (uint8_t *)malloc(need);
+#endif
     if (buf == NULL) {
         return -1;
     }

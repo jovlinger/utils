@@ -50,7 +50,9 @@ enum {
 /* Controller debug fan-out (HTTP: complete -> 200, TIMEOUT_SHORT miss -> 201). */
 enum {
     TA_EV_DEBUG_ALL = 0x406,
-    TA_EV_DEBUG_STATUS = 0x407
+    TA_EV_DEBUG_STATUS = 0x407,
+    TA_EV_LIST_EVENTS = 0x408, /* every TaskActor: offer accepted event slugs */
+    TA_EV_LIST_TASKS = 0x409   /* Controller: offer registered TaskActor names */
 };
 
 enum {

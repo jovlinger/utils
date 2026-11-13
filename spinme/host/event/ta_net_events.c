@@ -226,6 +226,11 @@ int ta_net_handle(const ta_event_envelope_t *env) {
         snprintf(line, sizeof(line), "mdns=%u", ta_net_mdns_advertise_count());
         return ta_debug_status_reply(env, TA_NET_NAME, line);
     }
+    case TA_EV_LIST_EVENTS:
+        g_stats.handled++;
+        return ta_list_events_offer(
+            env,
+            "list_events,debug_status,netmdnsadvertise,allperforminit");
     default:
         g_stats.unknown++;
         return -1;

@@ -4,6 +4,7 @@
 #include "ta_net_events.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
+#include "ta_router.h"
 #include "ta_test_actor.h"
 #include "ta_uilayout.h"
 
@@ -152,6 +153,39 @@ int main(void) {
     CHECK(strstr(resp.body, "logs=") != NULL);
     free(resp.blob);
     resp.blob = NULL;
+
+    n = build_post(req, sizeof(req), "test/list_events", "");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 200);
+    CHECK(strstr(resp.body, "list_events") != NULL);
+    CHECK(strstr(resp.body, "get_debug") != NULL);
+
+    ta_router_start();
+    n = build_post(req, sizeof(req), "controller/list_events", "");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 200);
+    CHECK(strstr(resp.body, "debugall") != NULL);
+    CHECK(strstr(resp.body, "list_tasks") != NULL);
+
+    n = build_post(req, sizeof(req), "controller/list_tasks", "");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 200);
+    CHECK(strstr(resp.body, "controller") != NULL);
+    CHECK(strstr(resp.body, "test") != NULL ||
+          strstr(resp.body, "Logger") != NULL);
+    /* Roster is newline-separated (task list CLI splits lines). */
+    CHECK(strchr(resp.body, '\n') != NULL);
+
+    /* Unmapped slug must stay HTTP 400 with this exact body (spinmecli
+     * task list surfaces it when the flashed image lacks list_tasks). */
+    n = build_post(req, sizeof(req), "controller/not_a_real_event", "");
+    CHECK(n > 0);
+    CHECK(ta_net_http_handle_request((const uint8_t *)req, n, &resp) == 0);
+    CHECK(resp.http_status == 400);
+    CHECK(strcmp(resp.body, "unknown event") == 0);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

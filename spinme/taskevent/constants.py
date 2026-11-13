@@ -63,6 +63,10 @@ TA_EV_CTRL_POLL: int = 0x405
 # Controller debug fan-out (HTTP async -> sync; incomplete -> 201).
 TA_EV_DEBUG_ALL: int = 0x406
 TA_EV_DEBUG_STATUS: int = 0x407
+# Universal: every TaskActor replies with its accepted HTTP/event slugs.
+TA_EV_LIST_EVENTS: int = 0x408
+# Controller: newline-separated registered TaskActor names.
+TA_EV_LIST_TASKS: int = 0x409
 
 # Scheduler
 TA_EV_SCHED_START: int = 0x500

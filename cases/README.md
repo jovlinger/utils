@@ -18,5 +18,7 @@ Each CASE is one incident. Read the CASE skill before writing or applying one:
 | [2026-10-27-spinme-reactivity-dies.md](2026-10-27-spinme-reactivity-dies.md) | Glass clock/scroll die: URD gated on backlight + Core B blocked in poll/albumart |
 | [2026-10-29-readynas-smart-vs-frontview.md](2026-10-29-readynas-smart-vs-frontview.md) | ReadyNAS Frontview hides SMART; smartctl reads both hdc/hde |
 | [2026-11-01-spinme-taskactor-1to1-stacks.md](2026-11-01-spinme-taskactor-1to1-stacks.md) | Watch: TaskActor 1:1 FreeRTOS stacks may exhaust SRAM; hybrid n:m later |
+| [2026-11-12-spinmecli-ehostunreach.md](2026-11-12-spinmecli-ehostunreach.md) | spinmecli errno 65 while ping works: dual-homed ifscope route |
+| [2026-11-13-spinmecli-task-list-unknown-event.md](2026-11-13-spinmecli-task-list-unknown-event.md) | task list HTTP 400 unknown event: CLI ahead of flashed list_tasks |
 
 Copy [TEMPLATE.md](TEMPLATE.md) for a new file. Name: `YYYY-MM-DD-short-slug.md`.

@@ -1,12 +1,15 @@
 #include "ta_actor.h"
 
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
 
 #include <sched.h>
 #include <string.h>
 
 static int actor_enqueue(const ta_event_envelope_t *env) {
-    (void)env;
+    if (env != NULL && env->event.type == TA_EV_LIST_EVENTS) {
+        return ta_list_events_offer(env, "list_events");
+    }
     return 0;
 }
 

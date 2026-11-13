@@ -16,6 +16,9 @@
 #include "ta_runtime_cfg.h"
 #include "wifi_local.h"
 
+extern "C" int ta_net_mdns_advertise(void);
+#include "ta_http_actor.h"
+
 #ifndef WIFI_SSID
 #define WIFI_SSID SPINME_WIFI_SSID
 #endif
@@ -161,6 +164,9 @@ static bool ensure_wifi_boot(uint32_t timeout_ms) {
   Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
   /* Wall clock: Net owns SNTP (todo:15b92eaa). */
   ta_net_sntp_after_wifi();
+  /* mDNS needs WiFi; boot ALL_PERFORM_INIT may have run too early. */
+  (void)ta_net_mdns_advertise();
+  ta_http_wifi_up();
   return true;
 }
 

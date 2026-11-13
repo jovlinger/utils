@@ -1,5 +1,6 @@
 #include "ta_logger.h"
 
+#include "ta_net_http_event.h"
 #include "ta_queue.h"
 #include "ta_registry.h"
 
@@ -47,6 +48,10 @@ int ta_logger_enqueue(const ta_event_envelope_t *env) {
     }
     if (env->event.type == TA_EV_DEBUG_STATUS) {
         return ta_debug_status_reply(env, TA_LOGGER_NAME, "ok");
+    }
+    if (env->event.type == TA_EV_LIST_EVENTS) {
+        return ta_list_events_offer(env,
+                                    "list_events,logemitline,debug_status");
     }
     if (!g_q_ok) {
         return -1;

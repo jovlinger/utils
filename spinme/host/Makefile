@@ -33,7 +33,11 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
 	$(BUILD)/test_xy_timed_redraw $(BUILD)/test_shape_draw \
-	$(BUILD)/test_test_actor $(BUILD)/test_log_rings
+	$(BUILD)/test_test_actor $(BUILD)/test_log_rings \
+	$(BUILD)/test_http_actor
+
+# ListEvents offers HTTP bodies via ta_net_http_event.
+HTTP_EVENT := ta_net_http_event.c
 
 # Draw is the glass owner: its actor pulls the whole glass model in.
 DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
@@ -41,12 +45,12 @@ DRAW_CORE := ta_draw_events.c ta_draw_glass.c ta_draw_update.c \
 	ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c \
 	ta_wire.c ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c \
 	ta_stack_compose.c ta_runtime_cfg.c ta_kv.c ta_uilayout.c ta_isr_mail.c \
-	ta_queue.c
+	ta_queue.c $(HTTP_EVENT)
 DRAW_HDRS := ta_draw_events.h ta_draw_glass.h ta_draw_update.h \
 	ta_draw_phase1.h ta_draw_phase2.h ta_follow_chrome.h ta_hit_dispatch.h \
 	ta_text.h ta_shape_l2r.h ta_shape_swap.h ta_shape_draw.h ta_chrome_icons.h \
 	ta_wire.h ta_stack_compose.h ta_runtime_cfg.h ta_kv.h ta_uilayout.h \
-	ta_isr_mail.h ta_queue.h
+	ta_isr_mail.h ta_queue.h ta_net_http_event.h
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
@@ -63,18 +67,18 @@ $(BUILD)/test_queue: test_queue.c ta_queue.c ta_queue.h ta_event.c ta_event.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 REG_SRCS := test_registry_logger.c ta_registry.c ta_init.c ta_logger.c \
-	ta_queue.c ta_event.c
+	ta_queue.c ta_event.c $(HTTP_EVENT)
 $(BUILD)/test_registry_logger: $(REG_SRCS) ta_registry.h ta_init.h ta_logger.h \
 		ta_queue.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-ROUTER_SRCS := test_router.c ta_router.c ta_net_http_event.c ta_registry.c \
+ROUTER_SRCS := test_router.c ta_router.c $(HTTP_EVENT) ta_registry.c \
 	ta_event.c
 $(BUILD)/test_router: $(ROUTER_SRCS) ta_router.h ta_net_http_event.h \
 		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-$(BUILD)/test_debug_all: test_debug_all.c ta_router.c ta_net_http_event.c \
+$(BUILD)/test_debug_all: test_debug_all.c ta_router.c $(HTTP_EVENT) \
 		ta_registry.c ta_event.c ta_router.h ta_net_http_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
@@ -96,18 +100,20 @@ $(BUILD)/test_draw_events: $(DRAW_SRCS) $(DRAW_HDRS) ta_registry.h \
 		ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-NET_SRCS := test_net_events.c ta_net_events.c ta_net_http_event.c \
+NET_SRCS := test_net_events.c ta_net_events.c $(HTTP_EVENT) \
 	ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_net_events: $(NET_SRCS) ta_net_events.h ta_net_http_event.h \
 		ta_sched_events.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-SCHED_SRCS := test_sched_events.c ta_sched_events.c ta_registry.c ta_event.c
+SCHED_SRCS := test_sched_events.c ta_sched_events.c $(HTTP_EVENT) \
+	ta_registry.c ta_event.c
 $(BUILD)/test_sched_events: $(SCHED_SRCS) ta_sched_events.h ta_draw_events.h \
 		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-CAD_SRCS := test_sched_cadence.c ta_sched_events.c ta_registry.c ta_event.c
+CAD_SRCS := test_sched_cadence.c ta_sched_events.c $(HTTP_EVENT) \
+	ta_registry.c ta_event.c
 $(BUILD)/test_sched_cadence: $(CAD_SRCS) ta_sched_events.h ta_draw_events.h \
 		ta_registry.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
@@ -117,8 +123,7 @@ $(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 HIT_SRCS := test_hit_dispatch.c $(DRAW_CORE) ta_controller.c ta_router.c \
-	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
-	ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_hit_dispatch: $(HIT_SRCS) $(DRAW_HDRS) ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
@@ -130,30 +135,27 @@ $(BUILD)/test_viewport: test_viewport.c ta_viewport.c ta_uilayout.c \
 		ta_viewport.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
-ART_SRCS := test_artwork.c ta_artwork.c ta_sched_events.c ta_registry.c \
-	ta_event.c
+ART_SRCS := test_artwork.c ta_artwork.c ta_sched_events.c $(HTTP_EVENT) \
+	ta_registry.c ta_event.c
 $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
-	ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_sched_events.h \
 		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_net_http_event.c ta_sched_events.c ta_registry.c \
-	ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_mpd_net: $(MPDNET_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_net_backend.h \
 		ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 OWNER_SRCS := test_draw_glass_owner.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_input_isr.c ta_net_events.c ta_net_http_event.c ta_sched_events.c \
-	ta_registry.c ta_event.c
+	ta_input_isr.c ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
 $(BUILD)/test_draw_glass_owner: $(OWNER_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_input_isr.h ta_net_events.h ta_net_http_event.h \
 		ta_net_backend.h ta_sched_events.h | $(BUILD)
@@ -206,24 +208,24 @@ $(BUILD)/test_draw_phase2: $(P2_SRCS) ta_draw_phase2.h ta_draw_update.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 $(BUILD)/test_actor: test_actor.c ta_actor.c ta_actor.h ta_registry.c \
-		ta_registry.h ta_event.c ta_event.h | $(BUILD)
+		$(HTTP_EVENT) ta_registry.h ta_event.c ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_boot: test_boot.c ta_boot.c ta_boot.h ta_actor.c ta_kv.c \
-		ta_runtime_cfg.c ta_registry.c ta_event.c ta_actor.h ta_kv.h \
-		ta_registry.h ta_event.h | $(BUILD)
+		ta_runtime_cfg.c ta_registry.c $(HTTP_EVENT) ta_event.c ta_actor.h \
+		ta_kv.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_net_kv_http: test_net_kv_http.c ta_net_kv_http.c \
 		ta_net_kv_http.h ta_boot.c ta_actor.c ta_kv.c ta_runtime_cfg.c \
-		ta_registry.c ta_event.c | $(BUILD)
+		ta_registry.c $(HTTP_EVENT) ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
-$(BUILD)/test_net_http_event: test_net_http_event.c ta_net_http_event.c \
+$(BUILD)/test_net_http_event: test_net_http_event.c $(HTTP_EVENT) \
 		ta_test_actor.c ta_debug.c ta_log_accept.c ta_log_rings.c \
-		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_net_http_event.h \
-		ta_test_actor.h ta_registry.c ta_event.c ta_net_events.h ta_event.h \
-		| $(BUILD)
+		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_router.c \
+		ta_net_http_event.h ta_test_actor.h ta_registry.c ta_event.c \
+		ta_net_events.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_all_init: test_all_init.c ta_all.c ta_all.h ta_registry.c \
@@ -235,7 +237,7 @@ $(BUILD)/test_kv_actor: test_kv_actor.c ta_kv_actor.c ta_kv_actor.h ta_kv.c \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 LOG_SRCS := ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
-	ta_runtime_cfg.c ta_registry.c ta_event.c
+	ta_runtime_cfg.c ta_registry.c $(HTTP_EVENT) ta_event.c
 
 $(BUILD)/test_log_accept: test_log_accept.c $(LOG_SRCS) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
@@ -248,7 +250,7 @@ $(BUILD)/test_log_rings: test_log_rings.c ta_log_rings.c ta_log_rings.h | $(BUIL
 
 $(BUILD)/test_log_init: test_log_init.c ta_log_accept.c ta_log_rings.c \
 		ta_kv_actor.c ta_kv.c ta_runtime_cfg.c ta_all.c ta_registry.c \
-		ta_event.c | $(BUILD)
+		$(HTTP_EVENT) ta_event.c | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 $(BUILD)/test_net_sntp: test_net_sntp.c ta_net_sntp.c ta_runtime_cfg.c \
@@ -280,7 +282,7 @@ SHOT_SRCS := test_screenshots.c ta_pack66_png.c ta_glyph_bin.c ta_kv_editor.c \
 	ta_text.c ta_shape_l2r.c ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c \
 	ta_wire.c ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c \
 	ta_stack_compose.c ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
-	ta_registry.c ta_event.c
+	ta_registry.c $(HTTP_EVENT) ta_event.c
 $(BUILD)/test_screenshots: $(SHOT_SRCS) ta_pack66_png.h ta_glyph_bin.h \
 		ta_kv_editor.h ta_draw_glass.h ta_follow_chrome.h ta_wire.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lz -lpthread
@@ -301,6 +303,11 @@ $(BUILD)/test_test_actor: test_test_actor.c ta_test_actor.c ta_net_http_event.c 
 		ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
 		ta_runtime_cfg.c ta_registry.c ta_event.c ta_test_actor.h \
 		ta_registry.h ta_event.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
+
+$(BUILD)/test_http_actor: test_http_actor.c ta_http_actor.c $(HTTP_EVENT) \
+		ta_registry.c ta_event.c ta_http_actor.h ta_net_http_event.h \
+		ta_registry.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 

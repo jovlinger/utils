@@ -15,7 +15,8 @@ extern "C" {
 #define TA_TIMEOUT_SHORT_MS 2000u
 #define TA_NET_HTTP_TIMEOUT_MS TA_TIMEOUT_SHORT_MS
 #define TA_NET_HTTP_RESP_BODY_MAX 256
-#define TA_NET_HTTP_BLOB_MAX (256u * 1024u)
+/* Full glass get_debug is panel_w*panel_h*4 + header/logs (360^2 -> ~520 KiB). */
+#define TA_NET_HTTP_BLOB_MAX (1024u * 1024u)
 
 typedef struct {
     int http_status;
@@ -36,9 +37,17 @@ void ta_net_http_reset(void);
 void ta_net_http_set_wait(ta_net_http_wait_fn fn);
 /* Actor handlers call this to satisfy an in-flight HTTP wait (host/sync). */
 void ta_net_http_offer_reply(const ta_event_envelope_t *env);
-/* Large body (copies bytes). Prefer over NetHttpReply when > 64 B. */
-void ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
-                            const void *bytes, size_t n);
+/* Large body (copies bytes). Prefer over NetHttpReply when > 64 B.
+ * Returns 0 on success, -1 if rejected (size/malloc/session). */
+int ta_net_http_offer_blob(ta_session_id_t session_id, unsigned http_status,
+                           const void *bytes, size_t n);
+/* Take ownership of bytes (no copy). Caller must not free on success. */
+int ta_net_http_offer_blob_take(ta_session_id_t session_id,
+                                unsigned http_status, uint8_t *bytes,
+                                size_t n);
+
+/* ListEvents helper: offer comma-separated event slugs as HTTP 200 body. */
+int ta_list_events_offer(const ta_event_envelope_t *req, const char *csv);
 
 /*
  * Handle one HTTP/1.x request buffer. Fills *out.

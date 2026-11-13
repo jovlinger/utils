@@ -1,6 +1,7 @@
 #include "ta_draw_events.h"
 
 #include "ta_draw_glass.h"
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
 
 #include <string.h>
@@ -161,6 +162,10 @@ int ta_draw_handle(const ta_event_envelope_t *env) {
     case TA_EV_DEBUG_STATUS:
         g_stats.handled++;
         return ta_debug_status_reply(env, TA_DRAW_NAME, "ok");
+    case TA_EV_LIST_EVENTS:
+        g_stats.handled++;
+        return ta_list_events_offer(
+            env, "list_events,debug_status,drawupdate,drawpaint");
     default:
         g_stats.unknown++;
         return -1;
@@ -168,8 +173,9 @@ int ta_draw_handle(const ta_event_envelope_t *env) {
 }
 
 int ta_draw_enqueue(const ta_event_envelope_t *env) {
-    /* DebugStatus must reply synchronously for Controller TIMEOUT_SHORT. */
-    if (env != NULL && env->event.type == TA_EV_DEBUG_STATUS) {
+    /* Sync replies for Controller TIMEOUT_SHORT / HTTP list_events. */
+    if (env != NULL && (env->event.type == TA_EV_DEBUG_STATUS ||
+                       env->event.type == TA_EV_LIST_EVENTS)) {
         return ta_draw_handle(env);
     }
     if (g_q != NULL) {

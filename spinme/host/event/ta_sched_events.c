@@ -1,6 +1,7 @@
 #include "ta_sched_events.h"
 
 #include "ta_draw_events.h"
+#include "ta_net_http_event.h"
 #include "ta_registry.h"
 
 #include <stddef.h>
@@ -153,6 +154,10 @@ int ta_sched_handle(const ta_event_envelope_t *env) {
         g_stats.handled++;
         ta_sched_advance_ms(env->event.u.sched_tick.advance_ms);
         return 0;
+    case TA_EV_LIST_EVENTS:
+        g_stats.handled++;
+        return ta_list_events_offer(
+            env, "list_events,schedstart,schedstop,schedtick");
     default:
         g_stats.unknown++;
         return -1;
