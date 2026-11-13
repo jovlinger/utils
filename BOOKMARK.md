@@ -75,7 +75,7 @@ available.
 | Repo | Branch | Tip | Role |
 |------|--------|-----|------|
 | https://github.com/jovlinger/MPD | `d6d78baa-dontwalk` | `sha:eb0f927` | Fork of MusicPlayerDaemon/MPD 0.23.5; Walk.cxx/hxx don't-walk |
-| https://github.com/jovlinger/utils | `d6d78baa-mpd-indexer-real-paths` | `sha:5d90ad4` | `efficient_scan.py`, `test_indexer_counts.py`, this `BOOKMARK.md` |
+| https://github.com/jovlinger/utils | `d6d78baa-mpd-indexer-real-paths` | `sha:0c1d6e1` | `efficient_scan.py`, `test_indexer_counts.py`, this `BOOKMARK.md` |
 | https://github.com/jovlinger/utils | `master` | `sha:c26116d` | SHD CASE files under `cases/` |
 
 Local nested checkout (not vendored into utils):  
