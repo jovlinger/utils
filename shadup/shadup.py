@@ -270,6 +270,14 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _nonnegative_int(value: str) -> int:
+    """Accept integers >= 0 for ``extract --strip``."""
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0: {value!r}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the AWS-style ``shadup [global] <action> [action-opts]`` parser."""
     parser = argparse.ArgumentParser(
@@ -330,7 +338,13 @@ def build_parser() -> argparse.ArgumentParser:
         "Materialization: by default, extract writes a hardlink when the target "
         "is on the same filesystem as shadir and a copy when it is on a "
         "different filesystem. With -s / --symlink, extract writes symlinks to "
-        "the stored blobs."
+        "the stored blobs.\n\n"
+        "Path rewrite: -p N / --strip N drops N leading path components from "
+        "each absolute destination (same counting as patch -p), then writes "
+        "the remainder under the current working directory. Use this when the "
+        "DB still records an old host root (e.g. /Users/.../notesxxx/files/...) "
+        "but you are extracting from a different tree. Pass --shadir for the "
+        "local store when meta.shadir still points at the old absolute path."
     )
     p_extract = sub.add_parser(
         "extract",
@@ -346,6 +360,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_extract.add_argument(
         "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_extract.add_argument(
+        "-p",
+        "--strip",
+        type=_nonnegative_int,
+        default=0,
+        metavar="N",
+        help=(
+            "Strip N leading destination path components (patch -p style) and "
+            "write under cwd (default: 0, keep absolute root from DB)"
+        ),
     )
     p_extract.add_argument(
         "-s",
@@ -1955,6 +1980,37 @@ def _normalize_extract_prefixes(prefixes: list[str]) -> tuple[list[str], list[st
     return normalized, abs_prefixes
 
 
+def strip_path_components(path: str, n: int) -> str:
+    """Return *path* with *n* leading components removed (``patch -p`` semantics).
+
+    Splits on ``os.sep``. For an absolute path, the empty segment before the
+    first separator counts as a component, so ``-p1`` drops the leading slash.
+    *n* <= 0 leaves *path* unchanged. Raises ``ValueError`` when *n* would
+    remove the entire path.
+    """
+    if n <= 0:
+        return path
+    parts: list[str] = path.split(os.sep)
+    if n >= len(parts):
+        raise ValueError(f"strip count {n} removes entire path: {path!r}")
+    return os.sep.join(parts[n:])
+
+
+def apply_extract_strip(dest_path: str, strip_count: int, cwd: str) -> str:
+    """Rewrite an extract destination with optional ``patch -p`` stripping.
+
+    With *strip_count* > 0, strip that many leading components from the
+    absolute *dest_path*, then join the remainder under *cwd* when the result
+    is relative.
+    """
+    if strip_count <= 0:
+        return dest_path
+    stripped = strip_path_components(os.path.abspath(dest_path), strip_count)
+    if os.path.isabs(stripped):
+        return stripped
+    return os.path.normpath(os.path.join(cwd, stripped))
+
+
 def _fetch_extract_rows(
     conn: sqlite3.Connection, show_deleted: bool
 ) -> list[tuple[str, str, str, str, str]]:
@@ -2054,17 +2110,23 @@ def extract_from_db(
     prefixes: list[str],
     show_deleted: bool,
     symlink: bool,
+    strip_count: int = 0,
+    cwd: str | None = None,
 ) -> int:
     """Extract files listed in db that match any path prefix."""
     normalized_prefixes, abs_prefixes = _normalize_extract_prefixes(prefixes)
     shadir_real = os.path.realpath(shadir)
+    work_cwd = os.path.abspath(cwd if cwd is not None else os.getcwd())
     extracted_bytes = 0
     seen_paths: set[str] = set()
     rows = _fetch_extract_rows(conn, show_deleted)
     for shasum, root, root_rel, dirpath, filename in rows:
         root_path = os.path.abspath(root)
         dest_dir = os.path.join(root_path, dirpath)
-        dest_path = os.path.join(dest_dir, filename)
+        dest_path = apply_extract_strip(
+            os.path.join(dest_dir, filename), strip_count, work_cwd
+        )
+        dest_dir = os.path.dirname(dest_path)
         if dest_path in seen_paths:
             continue
         target_rel = os.path.normpath(os.path.join(root_rel, dirpath, filename))
@@ -2616,10 +2678,16 @@ def handle_extract(
     shadir: str,
     show_deleted: bool,
     symlink: bool,
+    strip_count: int = 0,
 ) -> None:
     """Extract files from the db that match prefix paths."""
     extracted_bytes = extract_from_db(
-        conn, shadir, prefixes, show_deleted=show_deleted, symlink=symlink
+        conn,
+        shadir,
+        prefixes,
+        show_deleted=show_deleted,
+        symlink=symlink,
+        strip_count=strip_count,
     )
     out("extracted bytes: {extracted_bytes}", 0, extracted_bytes=extracted_bytes)
 
@@ -3697,6 +3765,7 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             shadir,
             show_deleted=args.show_deleted,
             symlink=args.symlink,
+            strip_count=args.strip,
         )
         return 0
     if action in ("ls", "lspath"):

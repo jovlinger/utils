@@ -87,9 +87,32 @@ elif [ ! -f "$ZONE_KEYS_DIR/priv.pem" ]; then
 	log "NOTE: $ZONE_KEYS_DIR/priv.pem missing - twoway will start with auth DISABLED."
 fi
 
+ensure_log_mount_source() {
+	# /var/log/thermo-onboard is often a symlink to /run/thermo-onboard-log (tmpfs).
+	# After reboot /run is empty; Docker then fails mkdir on the dangling link.
+	_log="${THERMO_LOG_DIR:-/var/log/thermo-onboard}"
+	_as_root=""
+	if [ "$(id -u)" -ne 0 ]; then
+		_as_root="sudo"
+	fi
+	if [ -L "$_log" ]; then
+		_target="$(readlink "$_log" 2>/dev/null || true)"
+		if [ -n "$_target" ]; then
+			$_as_root mkdir -p "$_target"
+			$_as_root chmod 0755 "$_target"
+			log "ensured log mount target: $_log -> $_target"
+		fi
+	elif [ ! -e "$_log" ]; then
+		$_as_root mkdir -p "$_log"
+		$_as_root chmod 0755 "$_log"
+		log "created log mount dir: $_log"
+	fi
+}
+
 CMD="${1:-up}"
 case "$CMD" in
 up | start)
+	ensure_log_mount_source
 	docker compose pull
 	docker compose up -d
 	docker compose ps

@@ -54,6 +54,49 @@ def test_extract_help_describes_copy_hardlink_and_symlink_modes() -> None:
     assert "copy when it is on a different filesystem" in help_text
     assert "With -s / --symlink, extract writes symlinks" in help_text
     assert "-s, --symlink" in help_text
+    assert "-p N / --strip N" in help_text
+    assert "-p, --strip N" in help_text
+
+
+def test_strip_path_components_matches_patch_p() -> None:
+    sample = "/u/hans/src/blurf/blurf.c"
+    assert _MOD.strip_path_components(sample, 0) == sample
+    assert _MOD.strip_path_components(sample, 1) == "u/hans/src/blurf/blurf.c"
+    assert _MOD.strip_path_components(sample, 4) == "blurf/blurf.c"
+
+
+def test_apply_extract_strip_joins_remainder_under_cwd(tmp_path: Path) -> None:
+    old = "/Users/goofus/Downloads/news/misc/notesxxx/files/nud/87050.jpg"
+    # strip '', Users, goofus, Downloads, news, misc, notesxxx -> files/nud/...
+    got = _MOD.apply_extract_strip(old, 7, str(tmp_path))
+    assert got == str(tmp_path / "files" / "nud" / "87050.jpg")
+
+
+def test_extract_strip_rewrites_old_absolute_root(tmp_path: Path) -> None:
+    import sqlite3
+
+    cwd, shadir, restored, blob, content = _setup_stored_file(tmp_path)
+    db = shadir / ".shadup.db"
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT root, root_rel, dirpath, filename FROM stored_files"
+        ).fetchone()
+        assert row is not None
+        _root, root_rel, dirpath, filename = row
+        fake_root = "/Users/goofus/Downloads/news/misc/notesxxx/" + root_rel
+        conn.execute("UPDATE stored_files SET root = ?", (fake_root,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Drop '', Users, goofus, Downloads, news, misc, notesxxx (7) so dest is
+    # <cwd>/<root_rel>/... matching the original store layout under tmp_path.
+    _run(cwd, shadir, ["extract", "-p7", root_rel])
+
+    assert restored.read_bytes() == content
+    assert not restored.is_symlink()
+    assert os.path.samefile(restored, blob)
 
 
 def test_extract_default_hardlinks_on_same_filesystem(tmp_path: Path) -> None:
