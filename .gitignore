@@ -11,4 +11,6 @@ vox2stl/tiles/tile_cache.pickle
 
 
 .DS_Store
-third_party/
+
+# Local MPD fork checkout (see third_party/README.md)
+third_party/MPD/
