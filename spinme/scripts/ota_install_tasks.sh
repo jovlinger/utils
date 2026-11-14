@@ -14,9 +14,8 @@ if [[ ! -f "$TASKS_DIR/.built" ]]; then
   exit 1
 fi
 shopt -s nullglob
-blobs=("$TASKS_DIR"/*)
 files=()
-for b in "${blobs[@]}"; do
+for b in "$TASKS_DIR"/*; do
   [[ -f "$b" ]] || continue
   base="$(basename "$b")"
   [[ "$base" == ".built" ]] && continue
