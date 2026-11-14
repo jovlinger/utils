@@ -14,9 +14,9 @@ Observability (tunable via env):
   EFF_SCAN_LOG    jsonl metrics path (default /tmp/efficient_scan.jsonl)
   EFF_SCAN_LEVEL  0=quiet summary, 1=milestones, 2=per-dir, 3=per-skip
   EFF_SCAN_EVERY  emit progress every N entries (default 500)
-  EFF_SCAN_ALIAS_SKIP  1 (default): after real album dirs, do not descend into
-                       _tags/_meta bodies. Needed on CIFS nounix where aliases
-                       are reified as distinct DIR trees (no LNK, distinct inodes).
+  EFF_SCAN_ALIAS_SKIP  0 (default). 1 is a NON-NORMATIVE CIFS experiment only;
+                       it must still record _tags/_meta as directory entries.
+                       Ticket AC forbids name-based wipe of those trees.
 
 Library-health signals (no playback required):
   - unique audio files discovered
@@ -102,7 +102,7 @@ class EfficientScan:
         log_path: str,
         level: int,
         every: int,
-        alias_skip: bool = True,
+        alias_skip: bool = False,
     ) -> None:
         self.root = os.path.abspath(root)
         self.log_path = log_path
@@ -111,6 +111,10 @@ class EfficientScan:
         self.alias_skip = alias_skip
         self.done: Set[str] = set()
         self.audio_real: Set[str] = set()
+        # Logical paths for contract tests (lsinfo stand-in / visit trace).
+        self.directory_entries: Set[str] = set()
+        self.song_logical_paths: List[str] = []
+        self.visit_order: List[str] = []
         self.m = Metrics(root=self.root)
         self._n_events = 0
         self._log_fp = open(self.log_path, "w", encoding="utf-8")
@@ -220,7 +224,16 @@ class EfficientScan:
         self._progress()
         return True
 
+    def _record_dir_entry(self, logical: str) -> None:
+        key = logical if logical.startswith("/") else ("/" + logical if logical else "")
+        if key == "":
+            key = "/"
+        self.directory_entries.add(key)
+        self.visit_order.append(key)
+
     def _enter_dir(self, abs_dir: str, via_symlink: bool, depth: int, logical: str) -> None:
+        # Always record the directory entry (lsinfo line), including alias_skip.
+        self._record_dir_entry(logical)
         if self._maybe_alias_list_only(abs_dir, logical, depth):
             # Still mark realpath done so later symlink follows skip.
             try:
@@ -231,7 +244,7 @@ class EfficientScan:
             return
         real = os.path.realpath(abs_dir)
         if real in self.done:
-            # Should not happen for real entry path; for safety
+            # Directory entry already recorded; do not descend or re-index songs.
             self._emit("skip_dir_done", {"path": abs_dir, "real": real, "logical": logical})
             return
         self.done.add(real)
@@ -256,6 +269,8 @@ class EfficientScan:
 
     def _handle_audio(self, abs_path: str, logical: str) -> None:
         self.m.audio_files += 1
+        log = logical if logical.startswith("/") else ("/" + logical)
+        self.song_logical_paths.append(log)
         try:
             real = os.path.realpath(abs_path)
         except OSError:
@@ -332,6 +347,9 @@ class EfficientScan:
 
             if target in self.done:
                 self.m.symlinks_skipped_done += 1
+                # Contract: still record directory entry; do not descend/songs.
+                if os.path.isdir(p):
+                    self._record_dir_entry(log)
                 if self.level >= 3:
                     self._emit(
                         "skip_done",
@@ -456,8 +474,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--alias-skip",
         dest="alias_skip",
         action="store_true",
-        default=os.environ.get("EFF_SCAN_ALIAS_SKIP", "1") not in ("0", "false", "no"),
-        help="list-only _tags/_meta (default on; required on CIFS nounix)",
+        default=os.environ.get("EFF_SCAN_ALIAS_SKIP", "0") not in ("0", "false", "no"),
+        help="NON-NORMATIVE: list-only descend into _tags/_meta (CIFS experiment)",
     )
     ap.add_argument(
         "--no-alias-skip",
