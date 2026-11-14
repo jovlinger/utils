@@ -186,8 +186,14 @@ int ta_glyph_bin_load(ta_glyph_bin_t *gb, const char *path) {
         }
         for (k = 0; k < (size_t)w * (size_t)h; k++) {
             uint8_t a = rgba[k * 4u + 3u];
+            uint8_t a2 = a2_of(a);
 
-            px[k] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, a2_of(a));
+            /* a2==0 must be TRANSPARENT; white+a2==0 is additive wash. */
+            if (a2 == 0u) {
+                px[k] = TA_PACK66_TRANSPARENT;
+            } else {
+                px[k] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, a2);
+            }
         }
         gi = (unsigned)(key - 32u);
         g = &gb->glyphs[gi];

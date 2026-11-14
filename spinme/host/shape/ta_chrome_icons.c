@@ -332,7 +332,7 @@ void ta_chrome_icon_clear(ta_pack66_t *px, uint16_t w) {
     }
     n = (size_t)w * (size_t)w;
     for (i = 0; i < n; i++) {
-        px[i] = ta_pack66_rgba(0, 0, 0, 0);
+        px[i] = TA_PACK66_TRANSPARENT;
     }
 }
 

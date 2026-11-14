@@ -13,7 +13,9 @@ Python venv conventions for utils: root [`AGENTS.md`](../AGENTS.md).
 
 ## Design authority (TaskActor fabric)
 
-Open tickets are SoT; keep [`EXPOSITION.md`](EXPOSITION.md) aligned with them:
+Open tickets are SoT; keep the exposition under [`docs/`](docs/README.md)
+aligned with them (stub: [`EXPOSITION.md`](EXPOSITION.md)). When told to
+**update exposition**, edit the owning file listed in `docs/README.md`:
 
 - `todo:afc1dc50` (done) -- KV layout/allocator, boot roster/load/`init`/`exit`, USB-only
   base bin loader, Net HTTP REST KV set / OTA payloads. Host path shipped; ELF map is still a stub.
@@ -53,13 +55,27 @@ built-in probes (`smoke`). `tests/ondevice/` drives the board HTTP gateway.
 
 ## Cursor / agent flash loop
 
-Work with the ESP32 tree open: edit, then flash/monitor via PlatformIO (or
-Arduino / ESP-IDF equivalent) in the integrated terminal:
+Prefer the spinme Makefile install targets (agent may only invoke `make` for
+these; do not invent raw `pio` flags):
+
+```bash
+cd spinme
+make usbinstallall       # build + full USB flash (nucleus + linked actors)
+make usbinstalltasks     # stage task blobs; OTA PUT until USB tasks partition exists
+make otainstalltasks     # stage + PUT /kv/<key> to SPINME_HOST (default spinme.local)
+```
+
+Env overrides: `UPLOAD_PORT`, `SPINME_HOST`, `SPINME_PIO`. Optional blobs live
+under `ota_tasks/` (basename = KV key). `make clean` / `make distclean` wipe
+host objects, staged tasks, and PlatformIO build (distclean also drops
+`build/` and `firmware/.../.pio`).
+
+Low-level equivalent (docs only):
 
 ```bash
 pio run -t upload
 pio device monitor
 ```
 
-There is no separate Cursor CLI for the board loop. Prefer documenting the exact
-flash command in-repo so the agent does not invent toolchain flags.
+`pio` is `spinme/.venv-tools/bin/pio`. There is no separate Cursor CLI for the
+board loop.

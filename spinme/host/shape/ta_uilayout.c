@@ -3,11 +3,11 @@
 #include <string.h>
 
 ta_pack66_t ta_pack66_rgba(uint8_t r6, uint8_t g6, uint8_t b6, uint8_t a2) {
-    /* a2==0 and rgb==0 => transparent 0x00000000. Nonzero rgb+a2==0 is
-     * clamped-additive (ta_sd_blend); callers that want a hole must pass 0s. */
+    /* a2==0 and rgb==0 => TA_PACK66_TRANSPARENT. Nonzero rgb+a2==0 is
+     * clamped-additive (ta_sd_blend); holes must use TA_PACK66_TRANSPARENT. */
     if ((a2 & 0x3) == 0 && (r6 & 0x3f) == 0 && (g6 & 0x3f) == 0 &&
         (b6 & 0x3f) == 0) {
-        return 0u;
+        return TA_PACK66_TRANSPARENT;
     }
     return ((ta_pack66_t)(r6 & 0x3f)) | ((ta_pack66_t)(g6 & 0x3f) << 8) |
            ((ta_pack66_t)(b6 & 0x3f) << 16) |

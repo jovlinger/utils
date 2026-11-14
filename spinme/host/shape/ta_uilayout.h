@@ -19,10 +19,12 @@ extern "C" {
 #define TA_SHAPE_MAX 1024
 #define TA_UILAYOUT_MAX 64
 
-/* pack66 word (match uimk2_blit): R6 | G6<<8 | B6<<16 | A2<<24; A2==0 skip. */
+/* pack66 word (match uimk2_blit): R6 | G6<<8 | B6<<16 | A2<<24. */
 typedef uint32_t ta_pack66_t;
 
 #define TA_PACK66_A2_SHIFT 24
+/* Exact skip / hole. Nonzero RGB with a2==0 is clamped-additive, not this. */
+#define TA_PACK66_TRANSPARENT ((ta_pack66_t)0u)
 
 ta_pack66_t ta_pack66_rgba(uint8_t r6, uint8_t g6, uint8_t b6, uint8_t a2);
 void ta_unpack66(ta_pack66_t px, uint8_t *r6, uint8_t *g6, uint8_t *b6,

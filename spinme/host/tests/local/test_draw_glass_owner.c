@@ -113,7 +113,7 @@ static void build_atlas(void) {
     int i;
     for (i = 0; i < GW * GH; i++) {
         g_ink[i] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, 3);
-        g_clear[i] = ta_pack66_rgba(0, 0, 0, 0);
+        g_clear[i] = TA_PACK66_TRANSPARENT;
     }
     ta_glyph_map_clear(&g_map);
     for (i = 0; i < 95; i++) {
