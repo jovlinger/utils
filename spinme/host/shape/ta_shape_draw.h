@@ -71,7 +71,7 @@ ta_sd_rlc_word_t *ta_sd_xy_rlc(ta_sd_shape_t *xy);
 
 /*
  * pack66 blend for glass write:
- * - 0x00000000 => skip (transparent)
+ * - TA_PACK66_TRANSPARENT => skip (transparent hole)
  * - a2==0 and word!=0 => clamped additive per channel (no shift)
  * - a2 1..2 => src-over; a2==3 => copy
  */

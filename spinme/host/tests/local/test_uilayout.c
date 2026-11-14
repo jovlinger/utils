@@ -48,8 +48,11 @@ int main(void) {
     CHECK(b == 0x01);
     CHECK(a == 3);
 
+    CHECK(ta_pack66_rgba(0, 0, 0, 0) == TA_PACK66_TRANSPARENT);
+    CHECK(ta_pack66_rgba(0x3f, 0x3f, 0x3f, 0) != TA_PACK66_TRANSPARENT);
+
     pix[0] = ta_pack66_rgba(1, 2, 3, 3);
-    pix[1] = ta_pack66_rgba(0, 0, 0, 0); /* skip */
+    pix[1] = TA_PACK66_TRANSPARENT; /* skip */
     bm.tag = TA_SHAPE_TAG_BITMAP;
     bm.dirty = 1;
     bm.w = 2;

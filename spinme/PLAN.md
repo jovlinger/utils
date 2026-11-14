@@ -5,8 +5,10 @@ boots this fabric only (Draw sole glass owner, MPDController -> Net,
 Scheduler, Artwork). Old Core A/B + follow zlist path is retired/unbuilt
 (`firmware/waveshare-knob-touch-lcd-1.8/retired/uimk2_paint/`); `uimk2/` is a
 standalone host library + bench, not linked into the firmware. As-built
-catalog: [`EXPOSITION.md`](EXPOSITION.md). PLAN still leads on EventRedirector
-/ Rotary / MPDVolume / Net-owned NTP where EXPOSITION marks not-yet-shipped.
+catalog: [`docs/`](docs/README.md) (stub: [`EXPOSITION.md`](EXPOSITION.md)).
+PLAN still leads on EventRedirector / Rotary / MPDVolume / Net-owned NTP
+where [`docs/host-map-and-gaps.md`](docs/host-map-and-gaps.md) marks
+not-yet-shipped.
 
 FreeRTOS is assumed. No core is special: work is owned by long-lived
 **TaskActors**. Actors are **re-active**: they only advance by processing

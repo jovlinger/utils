@@ -31,7 +31,7 @@ void ta_draw_blit_bitmap(ta_pack66_t *dst, uint16_t dst_w, uint16_t dst_h,
             }
             px = src->pixels[(size_t)y * src->w + x];
             di = (size_t)dy * dst_w + (size_t)dx;
-            /* 0x00000000 skip; a2==0 nonzero = additive; else src-over. */
+            /* TA_PACK66_TRANSPARENT skip; a2==0 nonzero = additive; else over. */
             a = (uint8_t)((px >> TA_PACK66_A2_SHIFT) & 3u);
             (void)a;
             dst[di] = ta_sd_blend(dst[di], px);

@@ -213,7 +213,7 @@ ta_pack66_t ta_sd_blend(ta_pack66_t dst, ta_pack66_t src) {
     uint8_t dr, dg, db;
     unsigned inv;
 
-    if (src == 0u) {
+    if (src == TA_PACK66_TRANSPARENT) {
         return dst;
     }
     sa = (uint8_t)((src >> TA_PACK66_A2_SHIFT) & 3u);
