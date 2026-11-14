@@ -205,6 +205,83 @@ class DontWalkContractTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_cifs_reify_plus_album_local_tags_terminates(self) -> None:
+        """CIFS reifies symlinks; album-local _tags must not explode the walk."""
+        tmp = tempfile.mkdtemp(prefix="dw-cifs-")
+        try:
+            files, _ = _build_contract_fixture(tmp)
+            album_a = os.path.join(files, "AlbumA")
+            # residual per-album mirror back into global _tags (gmk layout)
+            local_tags = os.path.join(album_a, "_tags", "album")
+            os.makedirs(local_tags)
+            os.symlink(
+                os.path.join("..", "..", "..", "_tags", "album", "AlbumA"),
+                os.path.join(local_tags, "AlbumA"),
+            )
+            # residual _meta -> _tags back-edges (genre/artist/year)
+            meta_a = os.path.join(files, "_meta", "AlbumA")
+            os.makedirs(os.path.join(meta_a, "genre"))
+            os.symlink(
+                os.path.join("..", "..", "AlbumA"),
+                os.path.join(meta_a, "album"),
+            )
+            os.symlink(
+                os.path.join("..", "..", "_tags", "album", "AlbumA"),
+                os.path.join(meta_a, "genre", "pop"),
+            )
+            # critical: real album reached via _meta/.../album still has
+            # album-local _tags; must not descend (URI still under _meta/)
+            scan = EfficientScan(
+                files, os.devnull, 0, 10**9, alias_skip=False, reify_symlinks=True
+            )
+            try:
+                m = scan.run()
+                entries = set(scan.directory_entries)
+                songs = list(scan.song_logical_paths)
+            finally:
+                scan.close()
+
+            self.assertEqual(m.audio_unique_realpaths, 2)
+            self.assertEqual(m.audio_files, 2)
+            self.assertIn("/_tags", entries)
+            self.assertIn("/_tags/album", entries)
+            self.assertIn("/_tags/album/AlbumA", entries)
+            self.assertIn("/_meta", entries)
+            self.assertIn("/_meta/AlbumA", entries)
+            self.assertIn("/_meta/AlbumA/album", entries)
+            self.assertIn("/_meta/AlbumA/genre", entries)
+            self.assertIn("/AlbumA/_tags", entries)
+            # must not index songs under residual / _meta back-edge paths
+            self.assertFalse(
+                any("/AlbumA/_tags/" in s and s.endswith(".flac") for s in songs)
+            )
+            self.assertFalse(
+                any("/_meta/" in s and s.endswith(".flac") for s in songs)
+            )
+            self.assertFalse(any("/_tags/" in s and s.endswith(".flac") for s in songs))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_prune_empty_preserves_tags_tree(self) -> None:
+        """MPD Save PruneEmpty must not wipe song-less _tags alias stubs."""
+        tmp = tempfile.mkdtemp(prefix="dw-prune-")
+        try:
+            files, _other = _build_contract_fixture(tmp)
+            scan = EfficientScan(files, os.devnull, 0, 10**9, alias_skip=False)
+            try:
+                scan.run()
+                before = set(scan.directory_entries)
+                scan.prune_empty_like_mpd()
+                after = set(scan.directory_entries)
+            finally:
+                scan.close()
+            self.assertIn("/_tags", before)
+            self.assertIn("/_tags", after)
+            self.assertIn("/_tags/album", after)
+            self.assertIn("/_tags/album/AlbumA", after)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

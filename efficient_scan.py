@@ -5,9 +5,11 @@ Policy (normative):
   - DFS
   - In each directory: real entries before symlinks
   - Sort within class: digit, letter, other (by name)
-  - done-set of real abspaths; add on directory entry
-  - Follow a symlink only if real target abspath not already in done-set
+  - done-set keyed by (st_dev, st_ino) when available, else realpath
+  - Follow a symlink only if target identity not already in done-set
   - Follow cross-device symlink targets when not done
+  - Residual album-local _tags/_meta: record directory entry, do not descend
+    (CIFS reifies those back-edges; browse mirrors are files/_tags|_meta only)
 
 Observability (tunable via env):
   EFF_SCAN_ROOT   music root (default /mnt/NAS/gmk)
@@ -94,6 +96,21 @@ class Metrics:
 
 ALIAS_DIR_NAMES = frozenset({"_tags", "_meta"})
 
+DoneKey = Tuple[int, int]  # (st_dev, st_ino); (-1, hash) fallback unused
+
+
+def _stat_done_key(path: str) -> Optional[DoneKey]:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (int(st.st_dev), int(st.st_ino))
+
+
+def parent_allows_index_tree_descend(rel_parent: str) -> bool:
+    """Descend _tags/_meta only as direct child of music root or files/."""
+    return rel_parent in ("", ".", "files")
+
 
 class EfficientScan:
     def __init__(
@@ -103,13 +120,17 @@ class EfficientScan:
         level: int,
         every: int,
         alias_skip: bool = False,
+        reify_symlinks: bool = False,
     ) -> None:
         self.root = os.path.abspath(root)
         self.log_path = log_path
         self.level = level
         self.every = max(1, every)
         self.alias_skip = alias_skip
-        self.done: Set[str] = set()
+        # Simulate CIFS: treat symlinks as ordinary directory entries.
+        self.reify_symlinks = reify_symlinks
+        self.done: Set[DoneKey] = set()
+        self.done_paths: Set[str] = set()  # realpath fallback
         self.audio_real: Set[str] = set()
         # Logical paths for contract tests (lsinfo stand-in / visit trace).
         self.directory_entries: Set[str] = set()
@@ -176,7 +197,7 @@ class EfficientScan:
                 continue
             p = os.path.join(abs_dir, name)
             try:
-                if os.path.islink(p):
+                if (not self.reify_symlinks) and os.path.islink(p):
                     sym_n.append(name)
                 else:
                     real_n.append(name)
@@ -186,6 +207,59 @@ class EfficientScan:
         real_n.sort(key=sort_key)
         sym_n.sort(key=sort_key)
         return real_n, sym_n
+
+    def _done_contains(self, abs_dir: str) -> bool:
+        key = _stat_done_key(abs_dir)
+        if key is not None and key in self.done:
+            return True
+        try:
+            real = os.path.realpath(abs_dir)
+        except OSError:
+            return False
+        return real in self.done_paths
+
+    def _done_insert(self, abs_dir: str) -> bool:
+        """Return False if already present (skip descend)."""
+        key = _stat_done_key(abs_dir)
+        if key is not None:
+            if key in self.done:
+                return False
+            self.done.add(key)
+            try:
+                self.done_paths.add(os.path.realpath(abs_dir))
+            except OSError:
+                pass
+            self.m.done_set_size = len(self.done)
+            return True
+        try:
+            real = os.path.realpath(abs_dir)
+        except OSError:
+            return True
+        if real in self.done_paths:
+            return False
+        self.done_paths.add(real)
+        self.m.done_set_size = len(self.done_paths)
+        return True
+
+    def _is_residual_index_tree(self, abs_dir: str, name: str) -> bool:
+        if name not in ALIAS_DIR_NAMES:
+            return False
+        rel_parent = os.path.relpath(abs_dir, self.root).replace("\\", "/")
+        if rel_parent == ".":
+            rel_parent = ""
+        return not parent_allows_index_tree_descend(rel_parent)
+
+    def _is_meta_tag_backedge(self, abs_parent: str, name: str) -> bool:
+        """files/_meta/<Album>/{artist,genre,year} -> do not descend."""
+        if name == "album":
+            return False
+        rel = os.path.relpath(abs_parent, self.root).replace("\\", "/")
+        if rel == ".":
+            return False
+        if not rel.startswith("files/_meta/"):
+            return False
+        rest = rel[len("files/_meta/") :]
+        return bool(rest) and "/" not in rest
 
     def _maybe_alias_list_only(self, abs_dir: str, logical: str, depth: int) -> bool:
         """List _tags buckets for health, but do not descend (CIFS reified aliases)."""
@@ -235,20 +309,36 @@ class EfficientScan:
         # Always record the directory entry (lsinfo line), including alias_skip.
         self._record_dir_entry(logical)
         if self._maybe_alias_list_only(abs_dir, logical, depth):
-            # Still mark realpath done so later symlink follows skip.
-            try:
-                self.done.add(os.path.realpath(abs_dir))
-            except OSError:
-                pass
-            self.m.done_set_size = len(self.done)
+            self._done_insert(abs_dir)
             return
-        real = os.path.realpath(abs_dir)
-        if real in self.done:
+        # Residual album-local _tags/_meta: directory: only, no descend.
+        base = os.path.basename(abs_dir.rstrip("/"))
+        parent = os.path.dirname(abs_dir.rstrip("/"))
+        if base in ALIAS_DIR_NAMES and self._is_residual_index_tree(parent, base):
+            self.m.alias_roots_skipped += 1
+            self._done_insert(abs_dir)
+            self._emit(
+                "residual_index_skip",
+                {"logical": logical, "path": abs_dir, "depth": depth},
+            )
+            return
+        if self._is_meta_tag_backedge(parent, base):
+            self.m.alias_roots_skipped += 1
+            self._done_insert(abs_dir)
+            self._emit(
+                "meta_tag_backedge_skip",
+                {"logical": logical, "path": abs_dir, "depth": depth},
+            )
+            return
+        try:
+            real = os.path.realpath(abs_dir)
+        except OSError:
+            real = abs_dir
+        if not self._done_insert(abs_dir):
             # Directory entry already recorded; do not descend or re-index songs.
+            self.m.symlinks_skipped_done += 1 if via_symlink else 0
             self._emit("skip_dir_done", {"path": abs_dir, "real": real, "logical": logical})
             return
-        self.done.add(real)
-        self.m.done_set_size = len(self.done)
         if via_symlink:
             self.m.dirs_entered_via_symlink += 1
         else:
@@ -334,7 +424,7 @@ class EfficientScan:
                         ti = segs.index("_tags")
                         if ti + 1 < len(segs):
                             bucket = segs[ti + 1]
-                            if target in self.done:
+                            if self._done_contains(target):
                                 self.m.tags_bucket_skipped_all[bucket] = (
                                     self.m.tags_bucket_skipped_all.get(bucket, 0) + 1
                                 )
@@ -345,7 +435,7 @@ class EfficientScan:
                     except ValueError:
                         pass
 
-            if target in self.done:
+            if self._done_contains(p) or self._done_contains(target):
                 self.m.symlinks_skipped_done += 1
                 # Contract: still record directory entry; do not descend/songs.
                 if os.path.isdir(p):
@@ -360,12 +450,46 @@ class EfficientScan:
 
             self.m.symlinks_followed += 1
             if os.path.isdir(p):
-                # Enter via symlink: done-set gains realpath on entry
+                # Enter via symlink: done-set gains identity on entry
                 self._enter_dir(p, via_symlink=True, depth=depth + 1, logical=log)
             elif os.path.isfile(p) and name.lower().endswith(AUDIO_EXT):
                 # rare: symlink to file
                 self._handle_audio(p, log)
             self._progress()
+
+    def prune_empty_like_mpd(self) -> None:
+        """Mirror SimpleDatabase::Save PruneEmpty, keeping _tags/_meta trees.
+
+        MPD deletes song-less directories on save. Skip-done alias stubs under
+        browse mirrors have no songs; without this preserve, lsinfo loses _tags.
+        """
+        songs = set(self.song_logical_paths)
+        entries = set(self.directory_entries)
+
+        def norm(p: str) -> str:
+            if not p.startswith("/"):
+                p = "/" + p if p else "/"
+            return p.rstrip("/") or "/"
+
+        def in_index_browse(path: str) -> bool:
+            parts = [x for x in norm(path).split("/") if x]
+            return any(p in ALIAS_DIR_NAMES for p in parts)
+
+        # Drop empty dirs bottom-up by path depth (deepest first).
+        candidates = sorted(entries, key=lambda p: p.count("/"), reverse=True)
+        for path in candidates:
+            if path in ("", "/"):
+                continue
+            if in_index_browse(path):
+                continue
+            prefix = norm(path) + "/"
+            has_song = any(norm(s) == norm(path) or norm(s).startswith(prefix) for s in songs)
+            has_child = any(
+                e != path and norm(e).startswith(prefix) for e in entries
+            )
+            if not has_song and not has_child:
+                entries.discard(path)
+        self.directory_entries = entries
 
     def run(self) -> Metrics:
         self._emit("start", {"root": self.root, "level": self.level, "every": self.every})
@@ -375,6 +499,7 @@ class EfficientScan:
             return self.m
         # Root itself is a real directory entry
         self._enter_dir(self.root, via_symlink=False, depth=0, logical="")
+        self.prune_empty_like_mpd()
         health = self.health()
         self._emit("health", health)
         return self.m
