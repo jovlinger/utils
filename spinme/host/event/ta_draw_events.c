@@ -3,7 +3,9 @@
 #include "ta_draw_glass.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
+#include "ta_shape_draw.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static ta_draw_stats_t g_stats;
@@ -159,9 +161,25 @@ int ta_draw_handle(const ta_event_envelope_t *env) {
         return 0;
     case TA_EV_DRAW_SET_TEXT:
         return handle_set_text(env);
-    case TA_EV_DEBUG_STATUS:
+    case TA_EV_DEBUG_STATUS: {
+        char line[96];
+        char report[80];
+        size_t n;
+        size_t i;
+
         g_stats.handled++;
-        return ta_debug_status_reply(env, TA_DRAW_NAME, "ok");
+        n = ta_sd_format_badness_report(report, sizeof(report));
+        if (n == 0) {
+            return ta_debug_status_reply(env, TA_DRAW_NAME, "ok badness=0");
+        }
+        for (i = 0; i < n; i++) {
+            if (report[i] == '\n') {
+                report[i] = ';';
+            }
+        }
+        (void)snprintf(line, sizeof(line), "ok %s", report);
+        return ta_debug_status_reply(env, TA_DRAW_NAME, line);
+    }
     case TA_EV_LIST_EVENTS:
         g_stats.handled++;
         return ta_list_events_offer(

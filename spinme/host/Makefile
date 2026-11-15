@@ -28,13 +28,13 @@ TESTS := $(BUILD)/test_smoke $(BUILD)/test_event_envelope $(BUILD)/test_queue \
 	$(BUILD)/test_net_http_event $(BUILD)/test_debug $(BUILD)/test_runtime_cfg \
 	$(BUILD)/test_debug_all
 
-.PHONY: test clean
+.PHONY: test clean test-badness-music
 
 TESTS := $(TESTS) $(BUILD)/test_under_image $(BUILD)/test_draw_glass_contract \
 	$(BUILD)/test_input_isr $(BUILD)/test_mpd_net $(BUILD)/test_draw_glass_owner \
 	$(BUILD)/test_xy_timed_redraw $(BUILD)/test_shape_draw \
 	$(BUILD)/test_test_actor $(BUILD)/test_log_rings \
-	$(BUILD)/test_http_actor
+	$(BUILD)/test_http_actor $(BUILD)/test_rlc_badness
 
 # ListEvents offers HTTP bodies via ta_net_http_event.
 HTTP_EVENT := ta_net_http_event.c
@@ -299,6 +299,24 @@ $(BUILD)/test_xy_timed_redraw: $(XYT_SRCS) ta_uilayout.h ta_pack66_png.h \
 $(BUILD)/test_shape_draw: test_shape_draw.c ta_shape_draw.c ta_uilayout.c \
 		ta_shape_draw.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+$(BUILD)/test_rlc_badness: test_rlc_badness.c ta_shape_draw.c ta_uilayout.c \
+		ta_shape_draw.h ta_uilayout.h | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+BADNESS_MUSIC_SRCS := test_badness_music_paint.c ta_pack66_png.c ta_glyph_bin.c \
+	ta_draw_glass.c ta_draw_update.c ta_draw_phase1.c ta_draw_phase2.c \
+	ta_follow_chrome.c ta_hit_dispatch.c ta_text.c ta_shape_l2r.c \
+	ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c ta_wire.c ta_debug.c \
+	ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_stack_compose.c ta_kv.c \
+	ta_runtime_cfg.c ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
+	ta_event.c ta_registry.c $(HTTP_EVENT)
+$(BUILD)/test_badness_music_paint: $(BADNESS_MUSIC_SRCS) | $(BUILD)
+	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lz -lpthread
+
+# Random albums from SPINME_MUSIC_ROOT (default /Volumes/flac/files).
+test-badness-music: $(BUILD)/test_badness_music_paint
+	./$(BUILD)/test_badness_music_paint
 
 $(BUILD)/test_test_actor: test_test_actor.c ta_test_actor.c ta_net_http_event.c \
 		ta_debug.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_kv.c \
