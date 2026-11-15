@@ -3,8 +3,12 @@
  */
 #include "ta_draw_glass.h"
 #include "ta_glyph_bin.h"
+#include "ta_log_accept.h"
 #include "ta_pack66_png.h"
+#include "ta_kv.h"
+#include "ta_runtime_cfg.h"
 #include "ta_shape_draw.h"
+#include "ta_syslog_host.h"
 #include "ta_uilayout.h"
 
 #include <dirent.h>
@@ -181,6 +185,16 @@ int main(void) {
         printf("badness: (none sampled -- XY scratch may be retargeted)\n");
     } else {
         printf("badness_report:\n%s", report);
+        ta_kv_install_factory();
+        ta_log_accept_reset();
+        ta_syslog_install_default_sender();
+        ta_log_apply_kv_settings();
+        ta_log_accept(1, report);
+        if (ta_log_dump(2) != 0) {
+            fprintf(stderr, "QuLog dump failed (udp://qnap.local:514)\n");
+            return 1;
+        }
+        printf("badness logged to QuLog udp://qnap.local:514\n");
     }
 
     ta_glyph_bin_fini(&g_gb);

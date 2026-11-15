@@ -64,8 +64,9 @@ void ta_runtime_cfg_put_factory(void) {
     put_str(TA_KV_KEY_SCREEN_BLANK_S, TA_KV_DEF_SCREEN_BLANK_S);
     put_str(TA_KV_KEY_SCROLL_STEP, TA_KV_DEF_SCROLL_STEP);
     put_str(TA_KV_KEY_SCROLL_MS, TA_KV_DEF_SCROLL_MS);
-    put_str(TA_KV_KEY_LOGTARGET, "tcp://qnap.local:514");
-    put_str(TA_KV_KEY_LOG_URL, "tcp://qnap.local:514");
+    /* QuLog on qnap: RFC 5424 syslog. UDP :514 is open; TCP :514 is not. */
+    put_str(TA_KV_KEY_LOGTARGET, "udp://qnap.local:514");
+    put_str(TA_KV_KEY_LOG_URL, "udp://qnap.local:514");
     put_str(TA_KV_KEY_CONTROLLER, "MPD");
 }
 

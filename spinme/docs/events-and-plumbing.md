@@ -227,8 +227,8 @@ hurts.
 | `actors_to_start` | `Draw\nNet\n` | `ta_boot_from_kv` |
 | Per-name actor blob | e.g. `Draw`=`draw-v1` | boot stub load |
 | `current_controller` | `MPD` | Router / Config |
-| `logtarget` | `tcp://qnap.local:514` | Log QuLog drain (preferred) |
-| `log_receiver_url` | `tcp://qnap.local:514` | Log init fallback |
+| `logtarget` | `udp://qnap.local:514` | Log QuLog drain (preferred) |
+| `log_receiver_url` | `udp://qnap.local:514` | Log init fallback |
 | `mpd_host` | `miniDSP-SHD.local` | player_http DNS |
 | `ntp_host` | `pool.ntp.org` | Net SNTP (`configTime`) |
 | `timezone` | `EST5EDT,M3.2.0/2,M11.1.0/2` | Net SNTP (`TZ` / `tzset`) |

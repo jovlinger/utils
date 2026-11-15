@@ -284,10 +284,10 @@ Only `TA_SD_TAG_XY` reaches the glass. Each XY owns a pixmap plus per-row RLC
 dirty (`rlc_n` words per row, default 2; `/2` units). `rlc_n` lives on the
 shape as layout metadata (not packed into `w`/`h`). Rebuild from child ->
 mark-full or derive RLC -> `ta_sd_xy_blit_glass` / `ta_sd_xy_push_dirty`.
-Those paint paths sample TeX-style **badness** on the shape: overflow =
-fully transparent pixels inside combined RLC spans; slack = unused range
-slots. Averages roll every 100 paints; `ta_sd_format_badness_report` / Draw
-`debug_status` surface them. Host `test_xy_timed_redraw` paints 0-9 / a-j
+Those paint paths sample TeX-style **badness** on the shape as **mean per
+raster line** (float): overflow = transparent pixels inside combined RLC /
+`h`; slack = unused range slots / `h`. Running mean across paints;
+`ta_sd_format_badness_report` / Draw `debug_status` surface them. Host `test_xy_timed_redraw` paints 0-9 / a-j
 solely through that path. Product `ta_glass_paint` bakes via phase1/phase2,
 then loads each exterior into a scratch XY and pushes RLC spans.
 

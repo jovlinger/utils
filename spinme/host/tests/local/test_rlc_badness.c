@@ -60,13 +60,14 @@ int main(void) {
     ta_sd_glass_paint_xys(glass, 8, 1, order, 1);
 
     CHECK(xy->badness_paints == 1);
-    /* Fully transparent pixels in the span: indices 2,3,6,7 => 4 */
-    CHECK(ta_sd_badness_overflow(xy) == 4);
-    /* max_ranges 4, used 1 => slack 3 */
-    CHECK(ta_sd_badness_slack(xy) == 3);
+    /* h=1: mean-per-line == totals. Transparent in span: 2,3,6,7 => 4 */
+    CHECK(ta_sd_badness_overflow(xy) > 3.9f &&
+          ta_sd_badness_overflow(xy) < 4.1f);
+    /* max_ranges 4, used 1 => slack 3 per line */
+    CHECK(ta_sd_badness_slack(xy) > 2.9f && ta_sd_badness_slack(xy) < 3.1f);
 
     CHECK(ta_sd_format_badness_report(report, sizeof(report)) > 0);
-    CHECK(strstr(report, "ov=4") != NULL);
+    CHECK(strstr(report, "ov/line=4") != NULL);
 
     /* Per-shape rlc_n via alloc_bitmap_rlc. */
     CHECK(ta_sd_alloc_bitmap_rlc(11, TA_SD_TAG_XY, 4, 2, 3) == 0);

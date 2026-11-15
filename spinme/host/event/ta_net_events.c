@@ -1,9 +1,13 @@
 #include "ta_net_events.h"
 
+#include "ta_kv.h"
 #include "ta_net_backend.h"
 #include "ta_net_http_event.h"
 #include "ta_registry.h"
 #include "ta_sched_events.h"
+#if !defined(SPINME_TA_DEVICE)
+#include "ta_syslog_host.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -195,15 +199,37 @@ int ta_net_handle(const ta_event_envelope_t *env) {
     case TA_EV_NET_LOG_DRAIN: {
         ta_event_envelope_t ack;
         const ta_net_log_drain_t *drain;
+        int send_rc = 0;
 
-        /* Host: treat drain as delivered (TCP QuLog backend lands later). */
         g_stats.handled++;
         drain = &env->event.u.net_log_drain;
+#if !defined(SPINME_TA_DEVICE)
+        {
+            char url[128];
+            size_t ulen = 0;
+
+            if (ta_kv_get(TA_KV_KEY_LOGTARGET, url, sizeof(url), &ulen) !=
+                    TA_KV_OK &&
+                ta_kv_get(TA_KV_KEY_LOG_URL, url, sizeof(url), &ulen) !=
+                    TA_KV_OK) {
+                snprintf(url, sizeof(url), "udp://qnap.local:514");
+                ulen = strlen(url);
+            }
+            if (ulen >= sizeof(url)) {
+                ulen = sizeof(url) - 1;
+            }
+            url[ulen] = '\0';
+            if (drain->n > 0) {
+                send_rc = ta_syslog_send_bytes(url, drain->bytes,
+                                               (size_t)drain->n);
+            }
+        }
+#endif
         ta_env_clear(&ack);
         (void)ta_env_set_src(&ack, TA_NET_NAME);
         ack.session_id = env->session_id;
         ack.event.type = TA_EV_NET_LOG_DRAIN_ACK;
-        ack.event.u.net_log_drain_ack.status = 0;
+        ack.event.u.net_log_drain_ack.status = send_rc == 0 ? 0 : 1;
         ack.event.u.net_log_drain_ack.max_seq = drain->max_seq;
         (void)ta_registry_post("Log", &ack);
         return 0;

@@ -59,7 +59,7 @@ int main(void) {
     /* Dump without URL leaves lines; with sender ACK advances heads. */
     CHECK(ta_log_dump(100) == 0);
     CHECK(ta_log_accept_count() > 0);
-    ta_log_set_url("tcp://qnap.local:514");
+    ta_log_set_url("udp://qnap.local:514");
     ta_log_set_sender(ok_send, NULL);
     CHECK(ta_log_dump(101) == 0);
     CHECK(ta_log_accept_count() == 0);

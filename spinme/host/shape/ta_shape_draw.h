@@ -44,12 +44,13 @@ typedef struct ta_sd_shape {
     uint16_t w;
     uint16_t h;
     ta_pack66_t *pixels; /* owned; NULL if none. XY: w*h words then rlc. */
-    /* TeX-style badness (XY). See ta_sd_xy_sample_badness. */
-    uint32_t badness_overflow_sum;
-    uint32_t badness_slack_sum;
+    /*
+     * TeX-style badness (XY): mean per raster line (float).
+     * 47 transparent px on one line is bad; 47 across 512 lines is ~0.09/line.
+     */
+    float badness_overflow_avg;
+    float badness_slack_avg;
     uint32_t badness_paints;
-    uint32_t badness_overflow_avg; /* last completed window average */
-    uint32_t badness_slack_avg;
     union {
         struct {
             uint32_t refs; /* 2 tag bits + 3x10 child idxs (tag=3 => 3x10) */
@@ -92,18 +93,18 @@ int ta_sd_rlc_merge_to_n(uint8_t *off_u, uint8_t *len_u, int n_in, int max_out);
 ta_sd_rlc_word_t *ta_sd_xy_rlc(ta_sd_shape_t *xy);
 
 /*
- * Sample current RLC vs pixmap into shape badness:
- * - overflow: fully transparent pixels inside combined RLC spans
- * - slack: unused range slots (max_ranges - used) summed over rows
- * Rolls a window average every TA_SD_BADNESS_WINDOW paints.
+ * Sample current RLC vs pixmap into shape badness (mean per line):
+ * - overflow: fully transparent pixels inside combined RLC / h
+ * - slack: unused range slots / h
+ * Running mean across paints (float).
  */
 void ta_sd_xy_sample_badness(ta_sd_shape_t *xy);
 
-/* Current window averages (0 if no samples yet). */
-uint32_t ta_sd_badness_overflow(const ta_sd_shape_t *s);
-uint32_t ta_sd_badness_slack(const ta_sd_shape_t *s);
+/* Mean-per-line averages (0 if no samples yet). */
+float ta_sd_badness_overflow(const ta_sd_shape_t *s);
+float ta_sd_badness_slack(const ta_sd_shape_t *s);
 
-/* One line per non-zero XY: "idx tag=3 ov=.. sl=.. paints=.. rlc_n=.." */
+/* One line per XY with samples: "idx ov=.. sl=.. paints=.. rlc_n=.." */
 size_t ta_sd_format_badness_report(char *dst, size_t cap);
 
 /*

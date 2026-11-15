@@ -28,7 +28,7 @@ static int send_log(const char *url, const ta_log_accept_event_t *rows,
     (void)ud;
     g_sends++;
     g_last_n = n;
-    CHECK(strcmp(url, "tcp://qnap.local:514") == 0);
+    CHECK(strcmp(url, "udp://qnap.local:514") == 0);
     if (g_fail) {
         return -1;
     }
@@ -37,7 +37,7 @@ static int send_log(const char *url, const ta_log_accept_event_t *rows,
 
 int main(void) {
     ta_log_accept_reset();
-    ta_log_set_url("tcp://qnap.local:514");
+    ta_log_set_url("udp://qnap.local:514");
     ta_log_set_sender(send_log, NULL);
 
     /* Failed send leaves buffered lines. */
@@ -65,7 +65,7 @@ int main(void) {
 
     /* Cadence KV / short cadence. */
     ta_log_accept_reset();
-    ta_log_set_url("tcp://qnap.local:514");
+    ta_log_set_url("udp://qnap.local:514");
     ta_log_set_sender(send_log, NULL);
     ta_log_set_cadence_s(60);
     g_sends = 0;

@@ -101,7 +101,8 @@ $(BUILD)/test_draw_events: $(DRAW_SRCS) $(DRAW_HDRS) ta_registry.h \
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 NET_SRCS := test_net_events.c ta_net_events.c $(HTTP_EVENT) \
-	ta_sched_events.c ta_registry.c ta_event.c
+	ta_sched_events.c ta_registry.c ta_event.c ta_kv.c ta_runtime_cfg.c \
+	ta_syslog_host.c ta_log_accept.c ta_log_rings.c ta_kv_actor.c
 $(BUILD)/test_net_events: $(NET_SRCS) ta_net_events.h ta_net_http_event.h \
 		ta_sched_events.h ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
@@ -122,8 +123,11 @@ $(BUILD)/test_follow_chrome: test_follow_chrome.c ta_follow_chrome.c \
 		ta_uilayout.c ta_follow_chrome.h ta_uilayout.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
+# Host QuLog UDP sender required wherever ta_net_events links NET_LOG_DRAIN.
+NET_SYSLOG := ta_syslog_host.c
+
 HIT_SRCS := test_hit_dispatch.c $(DRAW_CORE) ta_controller.c ta_router.c \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c $(NET_SYSLOG)
 $(BUILD)/test_hit_dispatch: $(HIT_SRCS) $(DRAW_HDRS) ta_controller.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
@@ -141,21 +145,22 @@ $(BUILD)/test_artwork: $(ART_SRCS) ta_artwork.h ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 CTRL_SRCS := test_controller.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c $(NET_SYSLOG)
 $(BUILD)/test_controller: $(CTRL_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_sched_events.h \
 		ta_registry.h ta_event.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 MPDNET_SRCS := test_mpd_net.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c $(NET_SYSLOG)
 $(BUILD)/test_mpd_net: $(MPDNET_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_net_events.h ta_net_http_event.h ta_net_backend.h \
 		ta_sched_events.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lpthread
 
 OWNER_SRCS := test_draw_glass_owner.c ta_controller.c ta_router.c $(DRAW_CORE) \
-	ta_input_isr.c ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c
+	ta_input_isr.c ta_net_events.c ta_sched_events.c ta_registry.c ta_event.c \
+	$(NET_SYSLOG)
 $(BUILD)/test_draw_glass_owner: $(OWNER_SRCS) ta_controller.h ta_router.h \
 		$(DRAW_HDRS) ta_input_isr.h ta_net_events.h ta_net_http_event.h \
 		ta_net_backend.h ta_sched_events.h | $(BUILD)
@@ -310,7 +315,7 @@ BADNESS_MUSIC_SRCS := test_badness_music_paint.c ta_pack66_png.c ta_glyph_bin.c 
 	ta_shape_swap.c ta_shape_draw.c ta_chrome_icons.c ta_wire.c ta_debug.c \
 	ta_log_accept.c ta_log_rings.c ta_kv_actor.c ta_stack_compose.c ta_kv.c \
 	ta_runtime_cfg.c ta_uilayout.c ta_isr_mail.c ta_queue.c ta_viewport.c \
-	ta_event.c ta_registry.c $(HTTP_EVENT)
+	ta_event.c ta_registry.c $(HTTP_EVENT) ta_syslog_host.c
 $(BUILD)/test_badness_music_paint: $(BADNESS_MUSIC_SRCS) | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^) -lz -lpthread
 

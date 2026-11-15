@@ -108,11 +108,9 @@ int ta_sd_alloc_bitmap_rlc(unsigned idx, uint8_t tag, uint16_t w, uint16_t h,
     }
     /* Keep badness across scratch XY realloc so multi-exterior paints accumulate. */
     {
-        uint32_t ov_sum = s->badness_overflow_sum;
-        uint32_t sl_sum = s->badness_slack_sum;
+        float ov_avg = s->badness_overflow_avg;
+        float sl_avg = s->badness_slack_avg;
         uint32_t paints = s->badness_paints;
-        uint32_t ov_avg = s->badness_overflow_avg;
-        uint32_t sl_avg = s->badness_slack_avg;
 
         free(s->pixels);
         memset(s, 0, sizeof(*s));
@@ -123,11 +121,9 @@ int ta_sd_alloc_bitmap_rlc(unsigned idx, uint8_t tag, uint16_t w, uint16_t h,
         s->dirty = 1;
         if (tag == TA_SD_TAG_XY) {
             s->rlc_n = (uint8_t)rlc_n;
-            s->badness_overflow_sum = ov_sum;
-            s->badness_slack_sum = sl_sum;
-            s->badness_paints = paints;
             s->badness_overflow_avg = ov_avg;
             s->badness_slack_avg = sl_avg;
+            s->badness_paints = paints;
         }
     }
     return 0;
@@ -375,8 +371,12 @@ void ta_sd_xy_sample_badness(ta_sd_shape_t *xy) {
     uint16_t y;
     uint32_t ov = 0;
     uint32_t sl = 0;
+    float ov_line;
+    float sl_line;
+    float n;
 
-    if (xy == NULL || xy->tag != TA_SD_TAG_XY || xy->pixels == NULL) {
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY || xy->pixels == NULL ||
+        xy->h == 0) {
         return;
     }
     rlc = ta_sd_xy_rlc(xy);
@@ -398,37 +398,22 @@ void ta_sd_xy_sample_badness(ta_sd_shape_t *xy) {
             sl += max_r - (unsigned)nr;
         }
     }
-    xy->badness_overflow_sum += ov;
-    xy->badness_slack_sum += sl;
+    /* Mean per raster line for this paint. */
+    ov_line = (float)ov / (float)xy->h;
+    sl_line = (float)sl / (float)xy->h;
     xy->badness_paints++;
-    if (xy->badness_paints >= TA_SD_BADNESS_WINDOW) {
-        xy->badness_overflow_avg =
-            xy->badness_overflow_sum / xy->badness_paints;
-        xy->badness_slack_avg = xy->badness_slack_sum / xy->badness_paints;
-        xy->badness_overflow_sum = 0;
-        xy->badness_slack_sum = 0;
-        xy->badness_paints = 0;
-    }
+    n = (float)xy->badness_paints;
+    /* Incremental mean across paints. */
+    xy->badness_overflow_avg += (ov_line - xy->badness_overflow_avg) / n;
+    xy->badness_slack_avg += (sl_line - xy->badness_slack_avg) / n;
 }
 
-uint32_t ta_sd_badness_overflow(const ta_sd_shape_t *s) {
-    if (s == NULL) {
-        return 0;
-    }
-    if (s->badness_paints > 0) {
-        return s->badness_overflow_sum / s->badness_paints;
-    }
-    return s->badness_overflow_avg;
+float ta_sd_badness_overflow(const ta_sd_shape_t *s) {
+    return s == NULL ? 0.f : s->badness_overflow_avg;
 }
 
-uint32_t ta_sd_badness_slack(const ta_sd_shape_t *s) {
-    if (s == NULL) {
-        return 0;
-    }
-    if (s->badness_paints > 0) {
-        return s->badness_slack_sum / s->badness_paints;
-    }
-    return s->badness_slack_avg;
+float ta_sd_badness_slack(const ta_sd_shape_t *s) {
+    return s == NULL ? 0.f : s->badness_slack_avg;
 }
 
 size_t ta_sd_format_badness_report(char *dst, size_t cap) {
@@ -447,20 +432,17 @@ size_t ta_sd_format_badness_report(char *dst, size_t cap) {
         int n;
         size_t rem;
 
-        if (s->tag != TA_SD_TAG_XY) {
-            continue;
-        }
-        if (s->badness_paints == 0 && s->badness_overflow_avg == 0 &&
-            s->badness_slack_avg == 0) {
+        if (s->tag != TA_SD_TAG_XY || s->badness_paints == 0) {
             continue;
         }
         rem = cap > used ? cap - used : 0;
         if (rem < 8) {
             break;
         }
-        n = snprintf(dst + used, rem, "%u tag=%u ov=%u sl=%u paints=%u rlc_n=%u\n",
-                     i, (unsigned)s->tag, (unsigned)ta_sd_badness_overflow(s),
-                     (unsigned)ta_sd_badness_slack(s),
+        n = snprintf(dst + used, rem,
+                     "%u ov/line=%.3f sl/line=%.3f paints=%u rlc_n=%u\n", i,
+                     (double)ta_sd_badness_overflow(s),
+                     (double)ta_sd_badness_slack(s),
                      (unsigned)s->badness_paints, ta_sd_rlc_n(s));
         if (n < 0) {
             break;
