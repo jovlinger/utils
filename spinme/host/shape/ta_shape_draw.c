@@ -1,5 +1,6 @@
 #include "ta_shape_draw.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,18 +53,40 @@ void ta_sd_unpack3(uint32_t word, unsigned *a, unsigned *b, unsigned *c) {
     }
 }
 
-static size_t px_words(uint8_t tag, uint16_t w, uint16_t h) {
-    size_t n = (size_t)w * (size_t)h;
-    if (tag == TA_SD_TAG_XY) {
-        n += (size_t)h * (size_t)TA_SD_RLC_N;
+unsigned ta_sd_rlc_n(const ta_sd_shape_t *s) {
+    unsigned n;
+
+    if (s == NULL) {
+        return TA_SD_RLC_N;
+    }
+    n = s->rlc_n ? (unsigned)s->rlc_n : (unsigned)TA_SD_RLC_N;
+    if (n > TA_SD_RLC_N_MAX) {
+        n = TA_SD_RLC_N_MAX;
+    }
+    if (n == 0) {
+        n = TA_SD_RLC_N;
     }
     return n;
 }
 
-int ta_sd_alloc_bitmap(unsigned idx, uint8_t tag, uint16_t w, uint16_t h) {
+unsigned ta_sd_rlc_max_ranges(const ta_sd_shape_t *s) {
+    return ta_sd_rlc_n(s) * TA_SD_RLC_RANGES_PER_WORD;
+}
+
+static size_t px_words(uint8_t tag, uint16_t w, uint16_t h, unsigned rlc_n) {
+    size_t n = (size_t)w * (size_t)h;
+    if (tag == TA_SD_TAG_XY) {
+        n += (size_t)h * (size_t)rlc_n;
+    }
+    return n;
+}
+
+int ta_sd_alloc_bitmap_rlc(unsigned idx, uint8_t tag, uint16_t w, uint16_t h,
+                           uint8_t rlc_n_words) {
     ta_sd_shape_t *s;
     size_t n;
     ta_pack66_t *px;
+    unsigned rlc_n;
 
     if (ensure_tab() != 0 || idx == TA_SD_NONE || idx >= TA_SD_SLOTS ||
         w == 0 || h == 0) {
@@ -73,20 +96,45 @@ int ta_sd_alloc_bitmap(unsigned idx, uint8_t tag, uint16_t w, uint16_t h) {
         tag != TA_SD_TAG_COMPOSITE) {
         return -1;
     }
+    rlc_n = rlc_n_words ? (unsigned)rlc_n_words : (unsigned)TA_SD_RLC_N;
+    if (rlc_n > TA_SD_RLC_N_MAX) {
+        return -1;
+    }
     s = &g_tab[idx];
-    n = px_words(tag, w, h);
+    n = px_words(tag, w, h, tag == TA_SD_TAG_XY ? rlc_n : 0u);
     px = (ta_pack66_t *)calloc(n, sizeof(ta_pack66_t));
     if (px == NULL) {
         return -1;
     }
-    free(s->pixels);
-    memset(s, 0, sizeof(*s));
-    s->tag = tag;
-    s->w = w;
-    s->h = h;
-    s->pixels = px;
-    s->dirty = 1;
+    /* Keep badness across scratch XY realloc so multi-exterior paints accumulate. */
+    {
+        uint32_t ov_sum = s->badness_overflow_sum;
+        uint32_t sl_sum = s->badness_slack_sum;
+        uint32_t paints = s->badness_paints;
+        uint32_t ov_avg = s->badness_overflow_avg;
+        uint32_t sl_avg = s->badness_slack_avg;
+
+        free(s->pixels);
+        memset(s, 0, sizeof(*s));
+        s->tag = tag;
+        s->w = w;
+        s->h = h;
+        s->pixels = px;
+        s->dirty = 1;
+        if (tag == TA_SD_TAG_XY) {
+            s->rlc_n = (uint8_t)rlc_n;
+            s->badness_overflow_sum = ov_sum;
+            s->badness_slack_sum = sl_sum;
+            s->badness_paints = paints;
+            s->badness_overflow_avg = ov_avg;
+            s->badness_slack_avg = sl_avg;
+        }
+    }
     return 0;
+}
+
+int ta_sd_alloc_bitmap(unsigned idx, uint8_t tag, uint16_t w, uint16_t h) {
+    return ta_sd_alloc_bitmap_rlc(idx, tag, w, h, 0);
 }
 
 void ta_sd_free(unsigned idx) {
@@ -101,13 +149,16 @@ void ta_sd_free(unsigned idx) {
     s->tag = TA_SD_TAG_NONE;
 }
 
-void ta_sd_rlc_clear_row(ta_sd_rlc_word_t *row_words) {
-    int i;
+void ta_sd_rlc_clear_row(ta_sd_rlc_word_t *row_words, unsigned n_words) {
+    unsigned i;
 
-    if (row_words == NULL) {
+    if (row_words == NULL || n_words == 0) {
         return;
     }
-    for (i = 0; i < TA_SD_RLC_N; i++) {
+    if (n_words > TA_SD_RLC_N_MAX) {
+        n_words = TA_SD_RLC_N_MAX;
+    }
+    for (i = 0; i < n_words; i++) {
         row_words[i] = 0;
     }
 }
@@ -117,20 +168,25 @@ static void encode_pair(uint8_t *bytes, uint8_t off_u, uint8_t len_u) {
     bytes[1] = len_u;
 }
 
-int ta_sd_rlc_set_ranges(ta_sd_rlc_word_t *row_words, const uint8_t *off_u,
-                         const uint8_t *len_u, int n_in) {
-    uint8_t bytes[8];
+int ta_sd_rlc_set_ranges(ta_sd_rlc_word_t *row_words, unsigned n_words,
+                         const uint8_t *off_u, const uint8_t *len_u, int n_in) {
+    uint8_t bytes[TA_SD_RLC_N_MAX * 4];
     int i;
+    unsigned max_r;
 
-    if (row_words == NULL || n_in < 0 || n_in > 4) {
+    if (row_words == NULL || n_words == 0 || n_words > TA_SD_RLC_N_MAX ||
+        off_u == NULL || len_u == NULL || n_in < 0) {
+        return -1;
+    }
+    max_r = n_words * TA_SD_RLC_RANGES_PER_WORD;
+    if ((unsigned)n_in > max_r) {
         return -1;
     }
     memset(bytes, 0, sizeof(bytes));
     for (i = 0; i < n_in; i++) {
         encode_pair(bytes + (size_t)i * 2u, off_u[i], len_u[i]);
     }
-    memcpy(row_words, bytes, 4);
-    memcpy(row_words + 1, bytes + 4, 4);
+    memcpy(row_words, bytes, (size_t)n_words * sizeof(ta_sd_rlc_word_t));
     return 0;
 }
 
@@ -263,15 +319,20 @@ void ta_sd_blit(ta_pack66_t *dst, uint16_t dw, uint16_t dh, int ox, int oy,
     }
 }
 
-static void decode_rlc_row(const ta_sd_rlc_word_t *row_words, uint8_t *off_u,
-                           uint8_t *len_u, int *n_out) {
-    uint8_t bytes[8];
-    int i;
+static void decode_rlc_row(const ta_sd_rlc_word_t *row_words, unsigned n_words,
+                           uint8_t *off_u, uint8_t *len_u, int *n_out) {
+    uint8_t bytes[TA_SD_RLC_N_MAX * 4];
+    unsigned max_r;
+    unsigned i;
     int n = 0;
 
-    memcpy(bytes, row_words, 4);
-    memcpy(bytes + 4, row_words + 1, 4);
-    for (i = 0; i < 4; i++) {
+    if (n_words == 0 || n_words > TA_SD_RLC_N_MAX) {
+        *n_out = 0;
+        return;
+    }
+    max_r = n_words * TA_SD_RLC_RANGES_PER_WORD;
+    memcpy(bytes, row_words, (size_t)n_words * sizeof(ta_sd_rlc_word_t));
+    for (i = 0; i < max_r; i++) {
         uint8_t ou = bytes[(size_t)i * 2u];
         uint8_t lu = bytes[(size_t)i * 2u + 1u];
         if (lu == 0) {
@@ -284,12 +345,142 @@ static void decode_rlc_row(const ta_sd_rlc_word_t *row_words, uint8_t *off_u,
     *n_out = n;
 }
 
+static uint32_t count_transparent_in_spans(const ta_pack66_t *row, uint16_t w,
+                                           const uint8_t *off_u,
+                                           const uint8_t *len_u, int nr) {
+    uint32_t n = 0;
+    int i;
+
+    for (i = 0; i < nr; i++) {
+        unsigned px0 = (unsigned)off_u[i] * 2u;
+        unsigned pxn = px0 + (unsigned)len_u[i] * 2u;
+        unsigned x;
+
+        if (pxn > w) {
+            pxn = w;
+        }
+        for (x = px0; x < pxn; x++) {
+            if (row[x] == TA_PACK66_TRANSPARENT) {
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+void ta_sd_xy_sample_badness(ta_sd_shape_t *xy) {
+    ta_sd_rlc_word_t *rlc;
+    unsigned rlc_n;
+    unsigned max_r;
+    uint16_t y;
+    uint32_t ov = 0;
+    uint32_t sl = 0;
+
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY || xy->pixels == NULL) {
+        return;
+    }
+    rlc = ta_sd_xy_rlc(xy);
+    if (rlc == NULL) {
+        return;
+    }
+    rlc_n = ta_sd_rlc_n(xy);
+    max_r = ta_sd_rlc_max_ranges(xy);
+    for (y = 0; y < xy->h; y++) {
+        uint8_t off_u[TA_SD_RLC_N_MAX * 2];
+        uint8_t len_u[TA_SD_RLC_N_MAX * 2];
+        int nr = 0;
+        const ta_pack66_t *row =
+            xy->pixels + (size_t)y * (size_t)xy->w;
+
+        decode_rlc_row(rlc + (size_t)y * rlc_n, rlc_n, off_u, len_u, &nr);
+        ov += count_transparent_in_spans(row, xy->w, off_u, len_u, nr);
+        if ((unsigned)nr < max_r) {
+            sl += max_r - (unsigned)nr;
+        }
+    }
+    xy->badness_overflow_sum += ov;
+    xy->badness_slack_sum += sl;
+    xy->badness_paints++;
+    if (xy->badness_paints >= TA_SD_BADNESS_WINDOW) {
+        xy->badness_overflow_avg =
+            xy->badness_overflow_sum / xy->badness_paints;
+        xy->badness_slack_avg = xy->badness_slack_sum / xy->badness_paints;
+        xy->badness_overflow_sum = 0;
+        xy->badness_slack_sum = 0;
+        xy->badness_paints = 0;
+    }
+}
+
+uint32_t ta_sd_badness_overflow(const ta_sd_shape_t *s) {
+    if (s == NULL) {
+        return 0;
+    }
+    if (s->badness_paints > 0) {
+        return s->badness_overflow_sum / s->badness_paints;
+    }
+    return s->badness_overflow_avg;
+}
+
+uint32_t ta_sd_badness_slack(const ta_sd_shape_t *s) {
+    if (s == NULL) {
+        return 0;
+    }
+    if (s->badness_paints > 0) {
+        return s->badness_slack_sum / s->badness_paints;
+    }
+    return s->badness_slack_avg;
+}
+
+size_t ta_sd_format_badness_report(char *dst, size_t cap) {
+    size_t used = 0;
+    unsigned i;
+
+    if (dst == NULL || cap == 0) {
+        return 0;
+    }
+    dst[0] = '\0';
+    if (ensure_tab() != 0) {
+        return 0;
+    }
+    for (i = 0; i < TA_SD_SLOTS; i++) {
+        ta_sd_shape_t *s = &g_tab[i];
+        int n;
+        size_t rem;
+
+        if (s->tag != TA_SD_TAG_XY) {
+            continue;
+        }
+        if (s->badness_paints == 0 && s->badness_overflow_avg == 0 &&
+            s->badness_slack_avg == 0) {
+            continue;
+        }
+        rem = cap > used ? cap - used : 0;
+        if (rem < 8) {
+            break;
+        }
+        n = snprintf(dst + used, rem, "%u tag=%u ov=%u sl=%u paints=%u rlc_n=%u\n",
+                     i, (unsigned)s->tag, (unsigned)ta_sd_badness_overflow(s),
+                     (unsigned)ta_sd_badness_slack(s),
+                     (unsigned)s->badness_paints, ta_sd_rlc_n(s));
+        if (n < 0) {
+            break;
+        }
+        if ((size_t)n >= rem) {
+            used = cap - 1;
+            break;
+        }
+        used += (size_t)n;
+    }
+    return used;
+}
+
 void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy) {
     ta_sd_rlc_word_t *rlc;
     uint16_t y;
     uint8_t off[1];
     uint8_t len[1];
     unsigned lu;
+    unsigned rlc_n;
 
     if (xy == NULL || xy->tag != TA_SD_TAG_XY) {
         return;
@@ -298,6 +489,7 @@ void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy) {
     if (rlc == NULL) {
         return;
     }
+    rlc_n = ta_sd_rlc_n(xy);
     off[0] = 0;
     lu = ((unsigned)xy->w + 1u) / 2u;
     if (lu > 255u) {
@@ -308,7 +500,7 @@ void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy) {
     }
     len[0] = (uint8_t)lu;
     for (y = 0; y < xy->h; y++) {
-        ta_sd_rlc_set_ranges(rlc + (size_t)y * TA_SD_RLC_N, off, len, 1);
+        ta_sd_rlc_set_ranges(rlc + (size_t)y * rlc_n, rlc_n, off, len, 1);
     }
 }
 
@@ -337,6 +529,7 @@ void ta_sd_xy_blit_glass(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
     ta_sd_shape_t *xy;
     ta_sd_rlc_word_t *rlc;
     uint16_t y;
+    unsigned rlc_n;
 
     xy = ta_sd_get(xy_idx);
     if (glass == NULL || xy == NULL || xy->tag != TA_SD_TAG_XY ||
@@ -347,13 +540,14 @@ void ta_sd_xy_blit_glass(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
     if (rlc == NULL) {
         return;
     }
+    rlc_n = ta_sd_rlc_n(xy);
     for (y = 0; y < xy->h; y++) {
-        uint8_t off_u[4];
-        uint8_t len_u[4];
+        uint8_t off_u[TA_SD_RLC_N_MAX * 2];
+        uint8_t len_u[TA_SD_RLC_N_MAX * 2];
         int nr = 0;
         int i;
 
-        decode_rlc_row(rlc + (size_t)y * TA_SD_RLC_N, off_u, len_u, &nr);
+        decode_rlc_row(rlc + (size_t)y * rlc_n, rlc_n, off_u, len_u, &nr);
         for (i = 0; i < nr; i++) {
             unsigned px0 = (unsigned)off_u[i] * 2u;
             unsigned pxn = px0 + (unsigned)len_u[i] * 2u;
@@ -377,6 +571,7 @@ void ta_sd_xy_blit_glass(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
             }
         }
     }
+    ta_sd_xy_sample_badness(xy);
 }
 
 void ta_sd_glass_paint_xys(ta_pack66_t *glass, uint16_t gw, uint16_t gh,
@@ -396,6 +591,7 @@ int ta_sd_xy_push_dirty(unsigned xy_idx, ta_sd_push_rect_fn push, void *ctx) {
     ta_sd_rlc_word_t *rlc;
     uint16_t y;
     int spans = 0;
+    unsigned rlc_n;
 
     if (push == NULL) {
         return -1;
@@ -408,14 +604,15 @@ int ta_sd_xy_push_dirty(unsigned xy_idx, ta_sd_push_rect_fn push, void *ctx) {
     if (rlc == NULL) {
         return -1;
     }
+    rlc_n = ta_sd_rlc_n(xy);
     /* One push per RLC range per raster (no coalesce). */
     for (y = 0; y < xy->h; y++) {
-        uint8_t off_u[4];
-        uint8_t len_u[4];
+        uint8_t off_u[TA_SD_RLC_N_MAX * 2];
+        uint8_t len_u[TA_SD_RLC_N_MAX * 2];
         int nr = 0;
         int i;
 
-        decode_rlc_row(rlc + (size_t)y * TA_SD_RLC_N, off_u, len_u, &nr);
+        decode_rlc_row(rlc + (size_t)y * rlc_n, rlc_n, off_u, len_u, &nr);
         for (i = 0; i < nr; i++) {
             unsigned px0 = (unsigned)off_u[i] * 2u;
             unsigned pxn = px0 + (unsigned)len_u[i] * 2u;
@@ -433,6 +630,7 @@ int ta_sd_xy_push_dirty(unsigned xy_idx, ta_sd_push_rect_fn push, void *ctx) {
             spans++;
         }
     }
+    ta_sd_xy_sample_badness(xy);
     return spans;
 }
 
@@ -440,6 +638,8 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                          const ta_pack66_t *new_px) {
     ta_sd_rlc_word_t *rlc;
     uint16_t y;
+    unsigned rlc_n;
+    int max_r;
 
     if (xy == NULL || xy->tag != TA_SD_TAG_XY || old_px == NULL ||
         new_px == NULL) {
@@ -449,6 +649,8 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
     if (rlc == NULL) {
         return;
     }
+    rlc_n = ta_sd_rlc_n(xy);
+    max_r = (int)ta_sd_rlc_max_ranges(xy);
     for (y = 0; y < xy->h; y++) {
         uint8_t off[64];
         uint8_t len[64];
@@ -486,11 +688,11 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                 }
             }
         }
-        n = ta_sd_rlc_merge_to_n(off, len, n, 4);
+        n = ta_sd_rlc_merge_to_n(off, len, n, max_r);
         if (n < 0) {
             n = 0;
         }
-        ta_sd_rlc_set_ranges(rlc + (size_t)y * TA_SD_RLC_N, off, len, n);
+        ta_sd_rlc_set_ranges(rlc + (size_t)y * rlc_n, rlc_n, off, len, n);
     }
 }
 
