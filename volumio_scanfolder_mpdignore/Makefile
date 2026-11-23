@@ -1,0 +1,15 @@
+# Fast tests for Volumio scanFolder .mpdignore honor (Node + patch helper).
+
+.PHONY: binlinks test all-tests
+
+binlinks:
+	@:
+
+test:
+	node test_mpdignore_exclude_tree.js
+	node test_mpdignore_ancestor_seed.js
+	node test_mpdignore_album_local_cycle.js
+	node test_mpdignore_features.js
+	python3 -m unittest test_apply_to_index.py
+
+all-tests: test
