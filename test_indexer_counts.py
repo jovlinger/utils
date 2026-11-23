@@ -152,6 +152,24 @@ class IndexerCountTest(unittest.TestCase):
         self.assertGreater(stock["peak_rss_kb"], 0)
         self.assertGreater(new["peak_rss_kb"], 0)
 
+    def test_dontwalk_no_explosion_at_scale(self) -> None:
+        """Don't-walk stays flat while stock path count grows with aliases."""
+        albums = 20
+        aliases_each = 50
+        tmp = tempfile.mkdtemp(prefix="idx-scale-")
+        try:
+            build_fixture(tmp, albums=albums, aliases_each=aliases_each)
+            root = os.path.join(tmp, "files")
+            stock = _run_child("stock", root)
+            new = _run_child("new", root)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        self.assertEqual(stock["audio_logical"], albums * (1 + aliases_each))
+        self.assertEqual(new["audio_logical"], albums)
+        self.assertGreaterEqual(new["sym_skip_done"], albums * aliases_each)
+        self.assertLess(new["dirs_logical"], stock["dirs_logical"] // 10)
+
 
 if __name__ == "__main__":
     unittest.main()

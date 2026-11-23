@@ -10,6 +10,8 @@ Policy (normative):
   - Follow cross-device symlink targets when not done
   - Residual album-local _tags/_meta: record directory entry, do not descend
     (CIFS reifies those back-edges; browse mirrors are files/_tags|_meta only)
+  - Honor .mpdignore (MPD ExcludeList-style): shell wildcards on basenames,
+    inherited by child directories; matching names are not walked
 
 Observability (tunable via env):
   EFF_SCAN_ROOT   music root (default /mnt/NAS/gmk)
@@ -29,13 +31,14 @@ Library-health signals (no playback required):
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import resource
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 AUDIO_EXT = (".flac", ".mp3", ".m4a", ".aac", ".wav", ".aiff", ".dsf", ".dff", ".ogg", ".wma")
 
@@ -85,6 +88,7 @@ class Metrics:
     path_under_tags_audio: int = 0
     alias_roots_skipped: int = 0
     alias_roots_listed: int = 0
+    mpdignore_skipped: int = 0
     last_path: str = ""
 
     def touch_rss(self) -> None:
@@ -110,6 +114,32 @@ def _stat_done_key(path: str) -> Optional[DoneKey]:
 def parent_allows_index_tree_descend(rel_parent: str) -> bool:
     """Descend _tags/_meta only as direct child of music root or files/."""
     return rel_parent in ("", ".", "files")
+
+
+def read_mpdignore_patterns(abs_dir: str) -> List[str]:
+    """Load shell-wildcard patterns from ``abs_dir/.mpdignore`` (MPD-compatible)."""
+    path = os.path.join(abs_dir, ".mpdignore")
+    if not os.path.isfile(path):
+        return []
+    patterns: List[str] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                patterns.append(line)
+    except OSError:
+        return []
+    return patterns
+
+
+def name_matches_mpdignore(name: str, patterns: Sequence[str]) -> bool:
+    """True if basename ``name`` matches any inherited/local .mpdignore pattern."""
+    for pat in patterns:
+        if fnmatch.fnmatch(name, pat):
+            return True
+    return False
 
 
 class EfficientScan:
@@ -305,7 +335,14 @@ class EfficientScan:
         self.directory_entries.add(key)
         self.visit_order.append(key)
 
-    def _enter_dir(self, abs_dir: str, via_symlink: bool, depth: int, logical: str) -> None:
+    def _enter_dir(
+        self,
+        abs_dir: str,
+        via_symlink: bool,
+        depth: int,
+        logical: str,
+        exclude: Tuple[str, ...] = (),
+    ) -> None:
         # Always record the directory entry (lsinfo line), including alias_skip.
         self._record_dir_entry(logical)
         if self._maybe_alias_list_only(abs_dir, logical, depth):
@@ -355,7 +392,7 @@ class EfficientScan:
                     "depth": depth,
                 },
             )
-        self._walk_dir(abs_dir, depth, logical)
+        self._walk_dir(abs_dir, depth, logical, exclude=exclude)
 
     def _handle_audio(self, abs_path: str, logical: str) -> None:
         self.m.audio_files += 1
@@ -373,7 +410,15 @@ class EfficientScan:
         self.m.last_path = logical
         self._progress()
 
-    def _walk_dir(self, abs_dir: str, depth: int, logical: str) -> None:
+    def _walk_dir(
+        self,
+        abs_dir: str,
+        depth: int,
+        logical: str,
+        exclude: Tuple[str, ...] = (),
+    ) -> None:
+        local_ignore = read_mpdignore_patterns(abs_dir)
+        patterns: Tuple[str, ...] = tuple(exclude) + tuple(local_ignore)
         real_n, sym_n = self._classify_dirents(abs_dir)
         # Track top-level _tags bucket children only (not per-album _tags)
         rel = os.path.relpath(abs_dir, self.root).replace("\\", "/")
@@ -383,11 +428,24 @@ class EfficientScan:
 
         # 1) real entries first
         for name in real_n:
+            if name_matches_mpdignore(name, patterns):
+                self.m.mpdignore_skipped += 1
+                self._emit(
+                    "mpdignore_skip",
+                    {"logical": logical.rstrip("/") + "/" + name, "pattern_match": name},
+                )
+                continue
             p = os.path.join(abs_dir, name)
             log = logical.rstrip("/") + "/" + name
             try:
                 if os.path.isdir(p):
-                    self._enter_dir(p, via_symlink=False, depth=depth + 1, logical=log)
+                    self._enter_dir(
+                        p,
+                        via_symlink=False,
+                        depth=depth + 1,
+                        logical=log,
+                        exclude=patterns,
+                    )
                 elif os.path.isfile(p):
                     if name.lower().endswith(AUDIO_EXT):
                         self._handle_audio(p, log)
@@ -399,6 +457,13 @@ class EfficientScan:
 
         # 2) symlinks after
         for name in sym_n:
+            if name_matches_mpdignore(name, patterns):
+                self.m.mpdignore_skipped += 1
+                self._emit(
+                    "mpdignore_skip",
+                    {"logical": logical.rstrip("/") + "/" + name, "pattern_match": name},
+                )
+                continue
             p = os.path.join(abs_dir, name)
             log = logical.rstrip("/") + "/" + name
             self.m.symlinks_seen += 1
@@ -451,7 +516,13 @@ class EfficientScan:
             self.m.symlinks_followed += 1
             if os.path.isdir(p):
                 # Enter via symlink: done-set gains identity on entry
-                self._enter_dir(p, via_symlink=True, depth=depth + 1, logical=log)
+                self._enter_dir(
+                    p,
+                    via_symlink=True,
+                    depth=depth + 1,
+                    logical=log,
+                    exclude=patterns,
+                )
             elif os.path.isfile(p) and name.lower().endswith(AUDIO_EXT):
                 # rare: symlink to file
                 self._handle_audio(p, log)

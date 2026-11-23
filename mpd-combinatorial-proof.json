@@ -1,0 +1,63 @@
+{
+  "name": "dontwalk_no_combinatorial_explosion",
+  "algorithm": "dont-walk / done-set (real dirs first; visited = realpath/inode)",
+  "fixture": "anonymized AlbumNN + _tags/album symlink fan-out",
+  "stock_model": "test_indexer_counts.stock_follow_all",
+  "dontwalk_model": "efficient_scan.EfficientScan (alias_skip=False)",
+  "rows": [
+    {
+      "albums": 5,
+      "aliases_each": 10,
+      "stock_audio_logical": 55,
+      "dontwalk_audio_logical": 5,
+      "stock_dirs_logical": 58,
+      "dontwalk_dirs_logical": 8,
+      "dontwalk_sym_skip_done": 50,
+      "expected_stock_audio_logical": 55,
+      "ratio_stock_over_dontwalk": 11.0,
+      "ok": true,
+      "errors": []
+    },
+    {
+      "albums": 10,
+      "aliases_each": 25,
+      "stock_audio_logical": 260,
+      "dontwalk_audio_logical": 10,
+      "stock_dirs_logical": 263,
+      "dontwalk_dirs_logical": 13,
+      "dontwalk_sym_skip_done": 250,
+      "expected_stock_audio_logical": 260,
+      "ratio_stock_over_dontwalk": 26.0,
+      "ok": true,
+      "errors": []
+    },
+    {
+      "albums": 20,
+      "aliases_each": 50,
+      "stock_audio_logical": 1020,
+      "dontwalk_audio_logical": 20,
+      "stock_dirs_logical": 1023,
+      "dontwalk_dirs_logical": 23,
+      "dontwalk_sym_skip_done": 1000,
+      "expected_stock_audio_logical": 1020,
+      "ratio_stock_over_dontwalk": 51.0,
+      "ok": true,
+      "errors": []
+    },
+    {
+      "albums": 40,
+      "aliases_each": 80,
+      "stock_audio_logical": 3240,
+      "dontwalk_audio_logical": 40,
+      "stock_dirs_logical": 3243,
+      "dontwalk_dirs_logical": 43,
+      "dontwalk_sym_skip_done": 3200,
+      "expected_stock_audio_logical": 3240,
+      "ratio_stock_over_dontwalk": 81.0,
+      "ok": true,
+      "errors": []
+    }
+  ],
+  "passed": true,
+  "conclusion": "dontwalk audio_logical stays == albums at every scale; stock grows as albums*(1+aliases_each)"
+}
