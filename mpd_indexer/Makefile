@@ -1,4 +1,5 @@
 # Fast MPD dont-walk / .mpdignore contract tests (stdlib unittest).
+# Root `make test` includes this dir via the */Makefile wildcard.
 
 .PHONY: binlinks test all-tests
 
