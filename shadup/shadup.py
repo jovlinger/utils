@@ -1464,6 +1464,42 @@ def _plan_mirrors_for_tag(
     return rows
 
 
+def _dir_has_tagged_ancestor(
+    dir_key: str, tags_by_dir: dict[str, frozenset[str]]
+) -> bool:
+    """True when some strict ancestor of *dir_key* has a non-empty tag set."""
+    parent = _parent_dir_key(dir_key)
+    while parent:
+        if tags_by_dir.get(parent):
+            return True
+        parent = _parent_dir_key(parent)
+    return False
+
+
+def _expand_tag_subset_with_descendants(
+    subset: set[str], all_dirs: set[str]
+) -> set[str]:
+    """Include nested dirs under a tagged ancestor even when they lack *tag*.
+
+    importtags often stamps one stored file per album; upward tag union then
+    tags the parent and one disc while sibling discs stay empty. Browse mirrors
+    still need those sibling discs under the tagged album path.
+    """
+    if not subset:
+        return subset
+    expanded = set(subset)
+    for dk in all_dirs:
+        if dk in expanded:
+            continue
+        parent = _parent_dir_key(dk)
+        while parent:
+            if parent in subset:
+                expanded.add(dk)
+                break
+            parent = _parent_dir_key(parent)
+    return expanded
+
+
 def plan_refresh_extracted_tag_mirrors(
     tags_by_dir: dict[str, frozenset[str]],
 ) -> list[tuple[str, str, str]]:
@@ -1475,22 +1511,33 @@ def plan_refresh_extracted_tag_mirrors(
       computed set contains ``t`` and walk them top-down BFS per top-level
       component. Siblings are emitted **descending by dir_key** (so ``a/b``
       appears before ``a/a``).
+    * Also include nested descendants that exist in *tags_by_dir* under a
+      directory that carries ``t``, even when those descendants lack ``t``
+      (untagged disc folders under a tagged multi-disc album).
     * Link / meta paths preserve nesting via :func:`meta_mirror_relpath`
       (``woodstock/vol 01`` → ``_meta/woodstock/vol 01``, not a flat
       ``_meta/vol 01``).
     * Directories whose computed set is empty go under
-      :data:`NOTAGS_DIR_NAME` with the same BFS order.
+      :data:`NOTAGS_DIR_NAME` with the same BFS order, except nested empties
+      that already appear under a tagged ancestor (those stay with the tag
+      tree only).
     * The root directory (``dir_key = ""``) is **never** mirrored.
     * Tags iterate in ``sorted`` order; :data:`NOTAGS_DIR_NAME` is emitted last.
     """
     rows: list[tuple[str, str, str]] = []
     all_tags: set[str] = set()
+    all_dirs = {dk for dk in tags_by_dir if dk}
     for ts in tags_by_dir.values():
         all_tags |= set(ts)
     for tag in sorted(all_tags):
         subset = {dk for dk, ts in tags_by_dir.items() if dk and tag in ts}
-        rows.extend(_plan_mirrors_for_tag(tag, subset))
-    empty_dirs = {dk for dk, ts in tags_by_dir.items() if dk and not ts}
+        expanded = _expand_tag_subset_with_descendants(subset, all_dirs)
+        rows.extend(_plan_mirrors_for_tag(tag, expanded))
+    empty_dirs = {
+        dk
+        for dk, ts in tags_by_dir.items()
+        if dk and not ts and not _dir_has_tagged_ancestor(dk, tags_by_dir)
+    }
     if empty_dirs:
         rows.extend(_plan_mirrors_for_tag(NOTAGS_DIR_NAME, empty_dirs))
     return rows

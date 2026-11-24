@@ -53,7 +53,12 @@ SHADUP = JOVLINGER_UTILS / "shadup" / "shadup"
 REMOUNT = JOVLINGER_BIN / "with-ro-remounted-rw.sh"
 SYNONYMS_DIR = JOVLINGER_UTILS / "skills" / "groom-musicology-tags" / "synonyms"
 
-KNOWN_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
+# Network providers need credentials (except musicbrainz). Local cue/txt always
+# work and seed artist/album (and fixpoint retries) when disc dirnames are not
+# ``Artist - Album``.
+NETWORK_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
+LOCAL_PROVIDERS = ("cue", "txt")
+KNOWN_PROVIDERS = NETWORK_PROVIDERS + LOCAL_PROVIDERS
 AUDIO_EXTS = {
     ".mp3",
     ".flac",
@@ -99,7 +104,7 @@ def parse_provider_csv(values: Sequence[str] | None) -> list[str]:
 
 
 def configured_default_providers() -> list[str]:
-    """Working providers: musicbrainz plus others that have credentials."""
+    """Working providers: musicbrainz, credentialed network, plus local cue/txt."""
     env_spec = os.environ.get("POSTINGEST_PROVIDERS")
     if env_spec:
         return parse_provider_csv([env_spec])
@@ -113,6 +118,7 @@ def configured_default_providers() -> list[str]:
         providers.append("discogs")
     if os.environ.get("LASTFM_API_KEY"):
         providers.append("lastfm")
+    providers.extend(LOCAL_PROVIDERS)
     return providers
 
 
@@ -129,6 +135,17 @@ def validate_providers(providers: Sequence[str]) -> list[str]:
             out.append(provider)
     if not out:
         raise SystemExit("no providers selected")
+    return out
+
+
+def ensure_local_providers(providers: Sequence[str]) -> list[str]:
+    """Append cue/txt when missing so combine never skips on-disk local sidecars."""
+    out = list(providers)
+    seen = set(out)
+    for provider in LOCAL_PROVIDERS:
+        if provider not in seen:
+            out.append(provider)
+            seen.add(provider)
     return out
 
 
@@ -260,7 +277,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--all-known-providers",
         action="store_true",
-        help="Use every known musicscan provider: musicbrainz, discogs, lastfm.",
+        help=(
+            "Use every known musicscan provider: musicbrainz, discogs, lastfm, "
+            "cue, txt."
+        ),
     )
     parser.add_argument(
         "--force_retag",
@@ -422,7 +442,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.all_known_providers
         else parse_provider_csv(args.provider) or configured_default_providers()
     )
-    providers = validate_providers(selected)
+    # Explicit --provider lists still get cue/txt so existing local sidecars
+    # are combined (Avalon) and disc-dir cues are scanned (multi-CD boxes).
+    providers = ensure_local_providers(validate_providers(selected))
 
     maybe_reexec_under_remount(sys.argv[1:] if argv is None else argv, dry_run=args.dry_run)
     ensure_commands()

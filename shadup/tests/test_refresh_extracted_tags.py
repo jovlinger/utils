@@ -228,19 +228,36 @@ def test_user_abcdf_tree_mirror_plan() -> None:
         "e": frozenset(),
     }
     rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
-    # Nested paths (no flat a(2) disambiguation).
+    # Nested paths (no flat a(2) disambiguation). Untagged nested dirs under a
+    # tagged parent are included for that tag (a/a under y, a/b under z).
     want: list[tuple[str, str, str]] = [
         ("x", "a", "a"),
         ("x", "a/b", "a/b"),
         ("x", "a/a", "a/a"),
         ("y", "a", "a"),
         ("y", "a/b", "a/b"),
+        ("y", "a/a", "a/a"),
         ("y", "d", "d"),
         ("z", "a", "a"),
+        ("z", "a/b", "a/b"),
         ("z", "a/a", "a/a"),
         (NOTAGS_DIR_NAME, "e", "e"),
     ]
     assert rows == want
+
+
+def test_untagged_nested_disc_appears_under_tagged_parent() -> None:
+    """Multi-disc: one tagged file tags parent+one disc; sibling disc still mirrors."""
+    tags_by_dir: dict[str, frozenset[str]] = {
+        "Album": frozenset({"artist;x"}),
+        "Album/disc A": frozenset(),
+        "Album/disc B": frozenset({"artist;x"}),
+    }
+    rows = plan_refresh_extracted_tag_mirrors(tags_by_dir)
+    assert ("artist;x", "Album", "Album") in rows
+    assert ("artist;x", "Album/disc A", "Album/disc A") in rows
+    assert ("artist;x", "Album/disc B", "Album/disc B") in rows
+    assert not any(tag == NOTAGS_DIR_NAME for tag, _n, _dk in rows)
 
 
 def test_nested_album_meta_path_not_flat(tmp_path: Path) -> None:
