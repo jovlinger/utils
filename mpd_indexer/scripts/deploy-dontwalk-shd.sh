@@ -96,7 +96,11 @@ expect {
 }
 EOF
 
-echo "==> getState"
-curl -sS -m5 -o /tmp/shd-getstate-deploy.json -w 'getState=%{http_code}\n' \
-  "http://${SHD_HOST}:3000/api/v1/getState" || echo getState_fail
+# getState alone is NOT proof: after MPD restart Node often still answers
+# getState while browse hangs on a stale MpdClient. verify restarts Volumio,
+# checks browse (_tags present, _meta absent), and re-proves the installed
+# binary on a local NAS/gmk/files fixture.
+chmod +x "$ROOT/scripts/verify-dontwalk-shd.sh"
+SHD_HOST="$SHD_HOST" SHD_USER="$SHD_USER" SHD_PASS="$SHD_PASS" \
+  "$ROOT/scripts/verify-dontwalk-shd.sh"
 echo "OK deploy complete. Rollback: cp /usr/bin/mpd.stock-0.23.15 /usr/bin/mpd && systemctl restart mpd"

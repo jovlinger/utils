@@ -42,7 +42,8 @@ HONOR_LOOP = """\
     }
 """
 
-NEW_LOOP = """\
+# done-set only (pre structural-skip); upgrade in place on SHD.
+DONE_LOOP = """\
     try {
       doneReals = doneReals || {};
       if (mpdignoreUtil.rememberReal(doneReals, uri)) {
@@ -54,6 +55,27 @@ NEW_LOOP = """\
       for (var i = 0; i < files.length; i++) {
         var name = files[i];
         if (mpdignoreUtil.nameMatches(name, patterns)) {
+          continue;
+        }
+        uris = uris.concat(self.scanFolder(uri + '/' + name, patterns, doneReals));
+      }
+    } catch (e) {
+      self.logger.error("Failed to stat '" + uri + "'");
+    }
+"""
+
+NEW_LOOP = """\
+    try {
+      doneReals = doneReals || {};
+      if (mpdignoreUtil.rememberReal(doneReals, uri)) {
+        return uris;
+      }
+      excludePatterns = mpdignoreUtil.seedExcludePatterns(uri, excludePatterns);
+      var files = libFsExtra.readdirSync(uri);
+      var patterns = mpdignoreUtil.patternsForDir(uri, excludePatterns);
+      for (var i = 0; i < files.length; i++) {
+        var name = files[i];
+        if (mpdignoreUtil.isStructuralSkip(name) || mpdignoreUtil.nameMatches(name, patterns)) {
           continue;
         }
         uris = uris.concat(self.scanFolder(uri + '/' + name, patterns, doneReals));
@@ -83,10 +105,18 @@ OLD_SEEDED_LOOP = """\
 
 
 def patch(text: str) -> str:
-    if "rememberReal" in text and "doneReals" in text and "mpdignoreUtil" in text:
+    if (
+        "isStructuralSkip" in text
+        and "rememberReal" in text
+        and "doneReals" in text
+        and "mpdignoreUtil" in text
+    ):
         return text  # already fully patched
     if "var fs = require('fs');" not in text:
         raise SystemExit("expected fs require in index.js")
+
+    if "mpdignoreUtil" in text and DONE_LOOP in text:
+        return text.replace(DONE_LOOP, NEW_LOOP, 1)
 
     if "mpdignoreUtil" in text and HONOR_LOOP in text:
         text = text.replace(HONOR_SIG, NEW_SIG, 1)

@@ -184,6 +184,18 @@ function rememberReal(doneReals, absPath) {
   return false;
 }
 
+/**
+ * Tag-mirror directory names. scanFolder must not descend into these even
+ * when files/.mpdignore lists only _meta (MPD still indexes _tags via its
+ * own updater). Cross-album _tags symlinks otherwise fan out across the
+ * whole library; done-set alone only stops true cycles, not that BFS.
+ * @param {string} name
+ * @return {boolean}
+ */
+function isStructuralSkip(name) {
+  return name === '_tags' || name === '_meta';
+}
+
 module.exports = {
   readPatterns: readPatterns,
   fnmatch: fnmatch,
@@ -191,5 +203,6 @@ module.exports = {
   patternsForDir: patternsForDir,
   collectAncestorPatterns: collectAncestorPatterns,
   seedExcludePatterns: seedExcludePatterns,
-  rememberReal: rememberReal
+  rememberReal: rememberReal,
+  isStructuralSkip: isStructuralSkip
 };

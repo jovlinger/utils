@@ -2,6 +2,11 @@
 # Entry for the mpd_indexer test container.
 # 1) RECREATE the SHD nested-path bug (ParentAllows only matches "files").
 # 2) Only then build newest /src and prove the fix.
+#
+# This container proves Walk.cxx only. It does NOT prove Volumio browse after an
+# MPD restart (stale MpdClient). That gate lives in scripts/verify-dontwalk-shd.sh
+# and is locked by test_deploy_verify_protocol.py so make test catches a deploy
+# that trusts getState alone.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 

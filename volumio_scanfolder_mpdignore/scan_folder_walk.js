@@ -21,13 +21,14 @@ var mpdignore = require('./mpdignore');
 
 /**
  * @param {string} rootAbs
- * @param {{honorMpdignore?: boolean, maxVisits?: number}} [opts]
+ * @param {{honorMpdignore?: boolean, doneSet?: boolean, structuralSkip?: boolean, maxVisits?: number}} [opts]
  * @return {WalkResult}
  */
 function walk(rootAbs, opts) {
   opts = opts || {};
   var honor = opts.honorMpdignore !== false;
   var useDoneSet = opts.doneSet !== false;
+  var useStructural = opts.structuralSkip !== false;
   var maxVisits = opts.maxVisits || 0;
   var visitedDirs = [];
   var visitedFiles = [];
@@ -54,6 +55,10 @@ function walk(rootAbs, opts) {
     }
     for (var i = 0; i < names.length; i++) {
       var name = names[i];
+      if (useStructural && mpdignore.isStructuralSkip(name)) {
+        mpdignoreSkipped += 1;
+        continue;
+      }
       if (honor && mpdignore.nameMatches(name, patterns)) {
         mpdignoreSkipped += 1;
         continue;

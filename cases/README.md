@@ -22,5 +22,6 @@ Each CASE is one incident. Read the CASE skill before writing or applying one:
 | [2026-11-12-volumio-shd-api-offline-mpd-update.md](2026-11-12-volumio-shd-api-offline-mpd-update.md) | SHD API timeout: Node D-state + CLOSE-WAIT during MPD _tags update |
 | [2026-11-12-spinmecli-ehostunreach.md](2026-11-12-spinmecli-ehostunreach.md) | spinmecli errno 65 while ping works: dual-homed ifscope route |
 | [2026-11-13-spinmecli-task-list-unknown-event.md](2026-11-13-spinmecli-task-list-unknown-event.md) | task list HTTP 400 unknown event: CLI ahead of flashed list_tasks |
+| [2026-11-24-shd-deploy-getstate-not-browse.md](2026-11-24-shd-deploy-getstate-not-browse.md) | dont-walk deploy: getState 200 while browse dead (stale MpdClient) |
 
 Copy [TEMPLATE.md](TEMPLATE.md) for a new file. Name: `YYYY-MM-DD-short-slug.md`.

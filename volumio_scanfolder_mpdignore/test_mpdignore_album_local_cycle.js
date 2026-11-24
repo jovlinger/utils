@@ -53,12 +53,13 @@ function main() {
     var red = walkMod.walk(album, {
       honorMpdignore: false,
       doneSet: false,
+      structuralSkip: false,
       maxVisits: VISIT_BUDGET
     });
     assert.strictEqual(
       red.hitBudget,
       true,
-      'RED: honor off and doneSet off must hit visit budget; visits=' +
+      'RED: honor/doneSet/structuralSkip off must hit visit budget; visits=' +
         red.visitedDirs.length
     );
 

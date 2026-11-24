@@ -30,7 +30,7 @@ SHD_PASS ?=
 
 .PHONY: binlinks test all-tests \
 	build-dontwalk-armhf deploy-dontwalk-shd rollback-dontwalk-shd \
-	prove-dontwalk-tags start-test-container
+	prove-dontwalk-tags start-test-container verify-dontwalk-shd
 
 binlinks:
 	@:
@@ -54,9 +54,18 @@ deploy-dontwalk-shd:
 	  echo "Set SHD_PASS (volumiooem SSH/sudo password)."; \
 	  exit 1; \
 	fi
-	chmod +x scripts/deploy-dontwalk-shd.sh
+	chmod +x scripts/deploy-dontwalk-shd.sh scripts/verify-dontwalk-shd.sh
 	MPD_BIN="$(MPD_BIN)" SHD_HOST="$(SHD_HOST)" SHD_USER="$(SHD_USER)" \
 	  SHD_PASS="$(SHD_PASS)" ./scripts/deploy-dontwalk-shd.sh
+
+verify-dontwalk-shd:
+	@if [ -z "$(SHD_PASS)" ]; then \
+	  echo "Set SHD_PASS (volumiooem SSH/sudo password)."; \
+	  exit 1; \
+	fi
+	chmod +x scripts/verify-dontwalk-shd.sh
+	SHD_HOST="$(SHD_HOST)" SHD_USER="$(SHD_USER)" SHD_PASS="$(SHD_PASS)" \
+	  ./scripts/verify-dontwalk-shd.sh
 
 rollback-dontwalk-shd:
 	@if [ -z "$(SHD_PASS)" ]; then \

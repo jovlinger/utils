@@ -67,6 +67,9 @@ function main() {
     var done = {};
     assert.strictEqual(m.rememberReal(done, album), false);
     assert.strictEqual(m.rememberReal(done, album), true);
+    assert.strictEqual(m.isStructuralSkip('_tags'), true);
+    assert.strictEqual(m.isStructuralSkip('_meta'), true);
+    assert.strictEqual(m.isStructuralSkip('AlbumA'), false);
 
     var anc = m.collectAncestorPatterns(album);
     assert.ok(anc.indexOf('_tags') >= 0);

@@ -35,11 +35,15 @@ function main() {
   try {
     var album = buildAlbum(tmp);
 
-    var red = walkMod.walk(album, { honorMpdignore: false });
+    var red = walkMod.walk(album, {
+      honorMpdignore: false,
+      structuralSkip: false
+    });
     var redRels = relFiles(album, red);
     assert.ok(
       redRels.indexOf('_tags/album/trap.flac') >= 0,
-      'RED: honor off must visit trap under _tags: ' + JSON.stringify(redRels)
+      'RED: honor off + structuralSkip off must visit trap under _tags: ' +
+        JSON.stringify(redRels)
     );
     assert.ok(redRels.indexOf('01.flac') >= 0, 'RED: album flac still seen');
     assert.strictEqual(red.mpdignoreSkipped, 0);

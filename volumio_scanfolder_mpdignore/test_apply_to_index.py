@@ -37,6 +37,7 @@ class ApplyToIndexTest(unittest.TestCase):
         self.assertIn("function (uri, excludePatterns, doneReals)", out)
         self.assertIn("seedExcludePatterns", out)
         self.assertIn("rememberReal", out)
+        self.assertIn("isStructuralSkip", out)
         self.assertIn("patternsForDir", out)
         self.assertIn("nameMatches", out)
         self.assertNotIn("for (var i in files)", out)
