@@ -30,7 +30,8 @@ SHD_PASS ?=
 
 .PHONY: binlinks test all-tests \
 	build-dontwalk-armhf deploy-dontwalk-shd rollback-dontwalk-shd \
-	prove-dontwalk-tags start-test-container verify-dontwalk-shd
+	prove-dontwalk-tags start-test-container verify-dontwalk-shd \
+	test-enqueue-prefixes-docker
 
 binlinks:
 	@:
@@ -88,6 +89,16 @@ prove-dontwalk-tags:
 	  echo "Docker down; native prove on this host."; \
 	  MPD_SRC="$(MPD_SRC)" ./scripts/prove-dontwalk-tags-native.sh; \
 	fi
+
+# Docker e2e for tag-prefix enqueue. Not part of `make test` or `all-tests`.
+#   make test-enqueue-prefixes-docker MPD_SRC=$HOME/github.com/jovlinger/MPD
+test-enqueue-prefixes-docker:
+	@if [ -z "$(MPD_SRC)" ]; then \
+	  echo "Set MPD_SRC to a dont-walk MPD checkout (meson.build + Walk.cxx)."; \
+	  exit 1; \
+	fi
+	chmod +x scripts/enqueue-prefixes-container.sh scripts/enqueue-prefixes-inside.sh
+	MPD_SRC="$(MPD_SRC)" ./scripts/enqueue-prefixes-container.sh
 
 # Start test container with newest MPD_SRC: recreate nested-_tags bug, then prove fix.
 #   make start-test-container MPD_SRC=$HOME/github.com/jovlinger/MPD
