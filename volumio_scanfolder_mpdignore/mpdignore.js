@@ -402,6 +402,26 @@ function albumRootsUnderTag(musicRel, mntRoot, seen, depth) {
 }
 
 /**
+ * Directories scanFolder should walk for a folder enqueue.
+ * Canonical paths stay as given. A _tags path becomes the canonical album
+ * directories (or one disc directory) and never the tag path itself.
+ * @param {string} musicRel
+ * @param {string} mntRoot
+ * @return {string[]}
+ */
+function tagEnqueuePrefixes(musicRel, mntRoot) {
+  var root = mntRoot || '/mnt';
+  if (!musicRel || musicRel.indexOf('/_tags/') < 0) {
+    return musicRel ? [musicRel] : [];
+  }
+  var landed = canonicalDirForAbs(path.join(root, musicRel), root);
+  if (landed) {
+    return [landed];
+  }
+  return albumRootsUnderTag(musicRel, root, {}, 0);
+}
+
+/**
  * Songs to enqueue for a music-library path.
  * Canonical directories use the indexed file prefix as-is.
  * A _tags path with no indexed files resolves to canonical album prefixes:
@@ -420,13 +440,7 @@ function enqueueSongs(musicRel, mntRoot, fileUris) {
   if (!musicRel || musicRel.indexOf('/_tags/') < 0) {
     return [];
   }
-  var prefixes = [];
-  var landed = canonicalDirForAbs(path.join(mntRoot, musicRel), mntRoot);
-  if (landed) {
-    prefixes = [landed];
-  } else {
-    prefixes = albumRootsUnderTag(musicRel, mntRoot, {}, 0);
-  }
+  var prefixes = tagEnqueuePrefixes(musicRel, mntRoot);
   var seen = {};
   var out = [];
   for (var i = 0; i < prefixes.length; i++) {
@@ -452,5 +466,6 @@ module.exports = {
   isStructuralSkip: isStructuralSkip,
   resolveTagsLeafMusicPath: resolveTagsLeafMusicPath,
   filesUnderPrefix: filesUnderPrefix,
+  tagEnqueuePrefixes: tagEnqueuePrefixes,
   enqueueSongs: enqueueSongs
 };

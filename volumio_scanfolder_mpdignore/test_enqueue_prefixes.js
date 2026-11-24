@@ -11,6 +11,7 @@ var fs = require('fs');
 var os = require('os');
 var path = require('path');
 var m = require('./mpdignore');
+var walk = require('./scan_folder_walk').walk;
 
 var FILES = 'NAS/gmk/files';
 var ALBUM = FILES + '/Depeche Mode - 101';
@@ -94,6 +95,40 @@ function main() {
 
     assert.deepStrictEqual(m.enqueueSongs(TAG_ARTIST + '/missing', mnt, index), []);
     assert.deepStrictEqual(m.enqueueSongs(FILES + '/_tags/no-such', mnt, index), []);
+
+    function walked(rel) {
+      var roots = m.tagEnqueuePrefixes(rel, mnt);
+      var files = [];
+      roots.forEach(function (root) {
+        walk(path.join(mnt, root)).visitedFiles.forEach(function (abs) {
+          if (abs.slice(-5) === '.flac') {
+            files.push(abs.slice(mnt.length + 1));
+          }
+        });
+      });
+      return sorted(files);
+    }
+    assert.deepStrictEqual(m.tagEnqueuePrefixes(ALBUM, mnt), [ALBUM]);
+    assert.deepStrictEqual(m.tagEnqueuePrefixes(DISC_A, mnt), [DISC_A]);
+    assert.deepStrictEqual(m.tagEnqueuePrefixes(TAG_DISC_B, mnt), [DISC_B]);
+    assert.deepStrictEqual(m.tagEnqueuePrefixes(TAG_ALBUM, mnt), [ALBUM]);
+    assert.deepStrictEqual(
+      m.tagEnqueuePrefixes(TAG_ARTIST, mnt).slice().sort(),
+      [ALBUM, OTHER].sort()
+    );
+    assert.deepStrictEqual(walked(TAG_DISC_B), discBSongs);
+    assert.deepStrictEqual(walked(TAG_ALBUM), albumSongs);
+    assert.deepStrictEqual(walked(ALBUM), albumSongs);
+    assert.deepStrictEqual(walked(DISC_A), discASongs);
+    var tagOnly = [];
+    walk(path.join(mnt, TAG_ALBUM)).visitedFiles.forEach(function (abs) {
+      if (abs.slice(-5) === '.flac') {
+        tagOnly.push(abs.slice(mnt.length + 1));
+      }
+    });
+    assert.strictEqual(tagOnly.length, 1);
+    assert.ok(tagOnly[0].indexOf('/_tags/') >= 0);
+    assert.ok(tagOnly[0].indexOf('/disc A/') < 0);
 
     console.log('OK test_enqueue_prefixes');
   } finally {
