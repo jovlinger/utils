@@ -27,15 +27,20 @@ var mpdignore = require('./mpdignore');
 function walk(rootAbs, opts) {
   opts = opts || {};
   var honor = opts.honorMpdignore !== false;
+  var useDoneSet = opts.doneSet !== false;
   var maxVisits = opts.maxVisits || 0;
   var visitedDirs = [];
   var visitedFiles = [];
   var mpdignoreSkipped = 0;
   var hitBudget = false;
+  var doneReals = {};
 
   function rec(absDir, exclude) {
     if (maxVisits && visitedDirs.length >= maxVisits) {
       hitBudget = true;
+      return;
+    }
+    if (useDoneSet && mpdignore.rememberReal(doneReals, absDir)) {
       return;
     }
     visitedDirs.push(absDir);

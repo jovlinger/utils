@@ -10,6 +10,7 @@ test:
 	node test_mpdignore_exclude_tree.js
 	node test_mpdignore_ancestor_seed.js
 	node test_mpdignore_album_local_cycle.js
+	node test_mpdignore_clear_safe.js
 	node test_mpdignore_features.js
 	python3 -m unittest test_apply_to_index.py
 

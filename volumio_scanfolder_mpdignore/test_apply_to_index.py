@@ -34,8 +34,9 @@ class ApplyToIndexTest(unittest.TestCase):
     def test_patch_seeds_and_matches(self) -> None:
         out = patcher.patch(STUB)
         self.assertIn("require('./mpdignore.js')", out)
-        self.assertIn("function (uri, excludePatterns)", out)
+        self.assertIn("function (uri, excludePatterns, doneReals)", out)
         self.assertIn("seedExcludePatterns", out)
+        self.assertIn("rememberReal", out)
         self.assertIn("patternsForDir", out)
         self.assertIn("nameMatches", out)
         self.assertNotIn("for (var i in files)", out)

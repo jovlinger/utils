@@ -162,11 +162,34 @@ function seedExcludePatterns(absDir, excludePatterns) {
   return collectAncestorPatterns(absDir);
 }
 
+/**
+ * Remember a directory realpath. Return true if it was already seen
+ * (caller must not descend). Used so scanFolder can drop .mpdignore
+ * without following album-local _tags cycles.
+ * @param {Object<string, boolean>} doneReals
+ * @param {string} absPath
+ * @return {boolean} true if this real path is already in the set
+ */
+function rememberReal(doneReals, absPath) {
+  var key;
+  try {
+    key = fs.realpathSync(absPath);
+  } catch (e) {
+    key = absPath;
+  }
+  if (doneReals[key]) {
+    return true;
+  }
+  doneReals[key] = true;
+  return false;
+}
+
 module.exports = {
   readPatterns: readPatterns,
   fnmatch: fnmatch,
   nameMatches: nameMatches,
   patternsForDir: patternsForDir,
   collectAncestorPatterns: collectAncestorPatterns,
-  seedExcludePatterns: seedExcludePatterns
+  seedExcludePatterns: seedExcludePatterns,
+  rememberReal: rememberReal
 };

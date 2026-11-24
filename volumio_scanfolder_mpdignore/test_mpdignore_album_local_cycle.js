@@ -52,12 +52,13 @@ function main() {
 
     var red = walkMod.walk(album, {
       honorMpdignore: false,
+      doneSet: false,
       maxVisits: VISIT_BUDGET
     });
     assert.strictEqual(
       red.hitBudget,
       true,
-      'RED: honor off must hit visit budget on album-local _tags cycle; visits=' +
+      'RED: honor off and doneSet off must hit visit budget; visits=' +
         red.visitedDirs.length
     );
 

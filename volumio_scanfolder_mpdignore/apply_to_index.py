@@ -11,7 +11,8 @@ from pathlib import Path
 REQUIRE_LINE = "var mpdignoreUtil = require('./mpdignore.js');\n"
 
 OLD_SIG = "ControllerMpd.prototype.scanFolder = function (uri) {"
-NEW_SIG = "ControllerMpd.prototype.scanFolder = function (uri, excludePatterns) {"
+HONOR_SIG = "ControllerMpd.prototype.scanFolder = function (uri, excludePatterns) {"
+NEW_SIG = "ControllerMpd.prototype.scanFolder = function (uri, excludePatterns, doneReals) {"
 
 OLD_LOOP = """\
     try {
@@ -24,7 +25,7 @@ OLD_LOOP = """\
     }
 """
 
-NEW_LOOP = """\
+HONOR_LOOP = """\
     try {
       excludePatterns = mpdignoreUtil.seedExcludePatterns(uri, excludePatterns);
       var files = libFsExtra.readdirSync(uri);
@@ -35,6 +36,27 @@ NEW_LOOP = """\
           continue;
         }
         uris = uris.concat(self.scanFolder(uri + '/' + name, patterns));
+      }
+    } catch (e) {
+      self.logger.error("Failed to stat '" + uri + "'");
+    }
+"""
+
+NEW_LOOP = """\
+    try {
+      doneReals = doneReals || {};
+      if (mpdignoreUtil.rememberReal(doneReals, uri)) {
+        return uris;
+      }
+      excludePatterns = mpdignoreUtil.seedExcludePatterns(uri, excludePatterns);
+      var files = libFsExtra.readdirSync(uri);
+      var patterns = mpdignoreUtil.patternsForDir(uri, excludePatterns);
+      for (var i = 0; i < files.length; i++) {
+        var name = files[i];
+        if (mpdignoreUtil.nameMatches(name, patterns)) {
+          continue;
+        }
+        uris = uris.concat(self.scanFolder(uri + '/' + name, patterns, doneReals));
       }
     } catch (e) {
       self.logger.error("Failed to stat '" + uri + "'");
@@ -61,12 +83,18 @@ OLD_SEEDED_LOOP = """\
 
 
 def patch(text: str) -> str:
-    if "seedExcludePatterns" in text and "mpdignoreUtil" in text:
+    if "rememberReal" in text and "doneReals" in text and "mpdignoreUtil" in text:
         return text  # already fully patched
     if "var fs = require('fs');" not in text:
         raise SystemExit("expected fs require in index.js")
 
+    if "mpdignoreUtil" in text and HONOR_LOOP in text:
+        text = text.replace(HONOR_SIG, NEW_SIG, 1)
+        return text.replace(HONOR_LOOP, NEW_LOOP, 1)
+
     if "mpdignoreUtil" in text and OLD_SEEDED_LOOP in text:
+        text = text.replace(HONOR_SIG, NEW_SIG, 1)
+        text = text.replace(OLD_SIG, NEW_SIG, 1)
         return text.replace(OLD_SEEDED_LOOP, NEW_LOOP, 1)
 
     if OLD_SIG not in text:

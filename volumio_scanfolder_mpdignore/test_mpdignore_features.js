@@ -64,6 +64,10 @@ function main() {
       'non-empty excludePatterns must be kept as-is'
     );
 
+    var done = {};
+    assert.strictEqual(m.rememberReal(done, album), false);
+    assert.strictEqual(m.rememberReal(done, album), true);
+
     var anc = m.collectAncestorPatterns(album);
     assert.ok(anc.indexOf('_tags') >= 0);
     assert.ok(anc.indexOf('_meta') >= 0);
