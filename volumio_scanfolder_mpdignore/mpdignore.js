@@ -243,6 +243,204 @@ function resolveTagsLeafMusicPath(musicRelPath, mntRoot) {
   return out;
 }
 
+/**
+ * File URIs stored under prefix (prefix itself or a child path).
+ * @param {string[]} fileUris
+ * @param {string} prefix
+ * @return {string[]}
+ */
+function filesUnderPrefix(fileUris, prefix) {
+  var out = [];
+  if (!prefix) {
+    return out;
+  }
+  for (var i = 0; i < fileUris.length; i++) {
+    var fileUri = fileUris[i];
+    if (fileUri === prefix || fileUri.indexOf(prefix + '/') === 0) {
+      out.push(fileUri);
+    }
+  }
+  return out;
+}
+
+/**
+ * Music-relative real path, or null.
+ * @param {string} abs
+ * @param {string} mntRoot
+ * @return {string|null}
+ */
+function musicRelFromReal(abs, mntRoot) {
+  var rootReal;
+  var real;
+  try {
+    rootReal = fs.realpathSync(mntRoot);
+    real = fs.realpathSync(abs);
+  } catch (e) {
+    return null;
+  }
+  var prefix = rootReal.endsWith('/') ? rootReal : rootReal + '/';
+  if (real.indexOf(prefix) !== 0) {
+    return null;
+  }
+  return real.slice(prefix.length);
+}
+
+/**
+ * Directory under files/ that owns the songs for a canonical path.
+ * @param {string} musicRel
+ * @return {string}
+ */
+function albumRootOf(musicRel) {
+  var marker = '/files/';
+  var at = musicRel.indexOf(marker);
+  if (at < 0) {
+    return musicRel;
+  }
+  var rest = musicRel.slice(at + marker.length);
+  var album = rest.split('/')[0];
+  if (!album || album === '_tags' || album === '_meta') {
+    return musicRel;
+  }
+  return musicRel.slice(0, at + marker.length) + album;
+}
+
+/**
+ * Where a tag path lands in the canonical tree, if the path itself is a link
+ * (disc symlink, or _meta album symlink). Null when the path is still a
+ * directory under _tags.
+ * @param {string} abs
+ * @param {string} mntRoot
+ * @return {string|null}
+ */
+function canonicalDirForAbs(abs, mntRoot) {
+  var rel = musicRelFromReal(abs, mntRoot);
+  if (!rel) {
+    return null;
+  }
+  if (rel.indexOf('/_tags/') < 0 && rel.indexOf('/_meta/') < 0) {
+    return rel;
+  }
+  var metaAt = rel.indexOf('/_meta/');
+  if (metaAt < 0) {
+    return null;
+  }
+  var tail = rel.slice(metaAt + '/_meta/'.length);
+  var parts = tail.split('/');
+  var albumName = parts[0];
+  if (!albumName) {
+    return null;
+  }
+  var rootReal = fs.realpathSync(mntRoot);
+  var albumLink = path.join(rootReal, rel.slice(0, metaAt), '_meta', albumName, 'album');
+  var canon;
+  try {
+    canon = fs.realpathSync(albumLink);
+  } catch (e) {
+    return null;
+  }
+  var prefix = rootReal.endsWith('/') ? rootReal : rootReal + '/';
+  if (canon.indexOf(prefix) !== 0) {
+    return null;
+  }
+  var canonRel = canon.slice(prefix.length);
+  var rest = parts.slice(1);
+  if (rest[0] === 'album') {
+    rest = rest.slice(1);
+  }
+  if (rest.length) {
+    return canonRel + '/' + rest.join('/');
+  }
+  return canonRel;
+}
+
+/**
+ * Album roots referenced by a _tags directory that is not itself a canonical link.
+ * Disc children expand to the whole album. Nested tag dirs are walked the same way.
+ * @param {string} musicRel
+ * @param {string} mntRoot
+ * @param {Object<string, boolean>} seen
+ * @param {number} depth
+ * @return {string[]}
+ */
+function albumRootsUnderTag(musicRel, mntRoot, seen, depth) {
+  if (depth > 8) {
+    return [];
+  }
+  var abs = path.join(mntRoot, musicRel);
+  var names;
+  try {
+    if (!fs.statSync(abs).isDirectory()) {
+      return [];
+    }
+    names = fs.readdirSync(abs);
+  } catch (e) {
+    return [];
+  }
+  var found = [];
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    if (!name || name.charAt(0) === '.' || name === '_tags' || name === '_meta') {
+      continue;
+    }
+    var childRel = musicRel + '/' + name;
+    var childAbs = path.join(mntRoot, childRel);
+    var landed = canonicalDirForAbs(childAbs, mntRoot);
+    if (landed) {
+      var root = albumRootOf(landed);
+      if (!seen[root]) {
+        seen[root] = true;
+        found.push(root);
+      }
+      continue;
+    }
+    var nested = albumRootsUnderTag(childRel, mntRoot, seen, depth + 1);
+    for (var j = 0; j < nested.length; j++) {
+      found.push(nested[j]);
+    }
+  }
+  return found;
+}
+
+/**
+ * Songs to enqueue for a music-library path.
+ * Canonical directories use the indexed file prefix as-is.
+ * A _tags path with no indexed files resolves to canonical album prefixes:
+ * one album plus a disc suffix when the path names them, otherwise every
+ * distinct album under that tag bucket.
+ * @param {string} musicRel
+ * @param {string} mntRoot
+ * @param {string[]} fileUris indexed file URIs (canonical paths only)
+ * @return {string[]}
+ */
+function enqueueSongs(musicRel, mntRoot, fileUris) {
+  var direct = filesUnderPrefix(fileUris, musicRel);
+  if (direct.length) {
+    return direct;
+  }
+  if (!musicRel || musicRel.indexOf('/_tags/') < 0) {
+    return [];
+  }
+  var prefixes = [];
+  var landed = canonicalDirForAbs(path.join(mntRoot, musicRel), mntRoot);
+  if (landed) {
+    prefixes = [landed];
+  } else {
+    prefixes = albumRootsUnderTag(musicRel, mntRoot, {}, 0);
+  }
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < prefixes.length; i++) {
+    var songs = filesUnderPrefix(fileUris, prefixes[i]);
+    for (var j = 0; j < songs.length; j++) {
+      if (!seen[songs[j]]) {
+        seen[songs[j]] = true;
+        out.push(songs[j]);
+      }
+    }
+  }
+  return out;
+}
+
 module.exports = {
   readPatterns: readPatterns,
   fnmatch: fnmatch,
@@ -252,5 +450,7 @@ module.exports = {
   seedExcludePatterns: seedExcludePatterns,
   rememberReal: rememberReal,
   isStructuralSkip: isStructuralSkip,
-  resolveTagsLeafMusicPath: resolveTagsLeafMusicPath
+  resolveTagsLeafMusicPath: resolveTagsLeafMusicPath,
+  filesUnderPrefix: filesUnderPrefix,
+  enqueueSongs: enqueueSongs
 };
