@@ -27,7 +27,8 @@ wrappers below do that via `with-ro-remounted-rw`.
 
 | Goal | Command |
 |------|---------|
-| Full tag path after albums are already under `files/` | `postingest` |
+| Full tag path after albums are already under `files/` | `tagflag` (or `postingest`) |
+| Force re-scan + retag all selected roots | `tagflag -f` |
 | Rebuild `_meta` / `_tags` mirrors from tags already in the DB | `refresh-extracted-tags` |
 
 ### `postingest` (import tags into the DB, then rebuild mirrors)

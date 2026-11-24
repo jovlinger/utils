@@ -14,6 +14,7 @@ make binlinks
 |---------|--------|
 | `ingest` | `shadup/ingest.sh` -- album ingest with rw/ro remount |
 | `postingest` | `shadup/postingest` -- musicscan, `.meta.combined.json`, tag import, `_tags` refresh |
+| `tagflag` | `shadup/tagflag.sh` -- operator entry for that full tag path (`-f` reprocess all); also installable to `~/.local/bin` |
 | `refresh-extracted-tags` | `shadup/refresh-extracted-tags.sh` -- remount + rebuild `files/_meta` and `files/_tags` only |
 | `shadup` | `shadup/shadup` -- content-addressed store CLI |
 | `importtags` | `shadup/importtags` -- import metatool sidecar tags into shadup DB |

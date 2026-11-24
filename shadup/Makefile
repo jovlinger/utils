@@ -16,6 +16,7 @@ binlinks:
 	ln -sf ../shadup/ingest-rename.sh $(BINLINKS)/ingest-rename
 	ln -sf ../shadup/ingest-rename-dryrun.py $(BINLINKS)/ingest-rename-dryrun
 	ln -sf ../shadup/refresh-extracted-tags.sh $(BINLINKS)/refresh-extracted-tags
+	ln -sf ../shadup/tagflag.sh $(BINLINKS)/tagflag
 
 test: $(VENV_PYTHON)
 	$(VENV_PYTHON) -m pytest
