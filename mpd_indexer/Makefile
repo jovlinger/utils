@@ -31,7 +31,7 @@ SHD_PASS ?=
 .PHONY: binlinks test all-tests \
 	build-dontwalk-armhf deploy-dontwalk-shd rollback-dontwalk-shd \
 	prove-dontwalk-tags start-test-container verify-dontwalk-shd \
-	test-enqueue-prefixes-docker
+	test-enqueue-prefixes-docker test-lounge-live-docker
 
 binlinks:
 	@:
@@ -99,6 +99,12 @@ test-enqueue-prefixes-docker:
 	fi
 	chmod +x scripts/enqueue-prefixes-container.sh scripts/enqueue-prefixes-inside.sh
 	MPD_SRC="$(MPD_SRC)" ./scripts/enqueue-prefixes-container.sh
+
+# Live gmk lounge enqueue. Not part of `make test` or `all-tests`.
+#   make test-lounge-live-docker
+test-lounge-live-docker:
+	chmod +x scripts/lounge-live-container.sh scripts/lounge-live-check.js
+	./scripts/lounge-live-container.sh
 
 # Start test container with newest MPD_SRC: recreate nested-_tags bug, then prove fix.
 #   make start-test-container MPD_SRC=$HOME/github.com/jovlinger/MPD

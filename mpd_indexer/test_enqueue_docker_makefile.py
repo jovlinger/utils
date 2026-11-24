@@ -28,9 +28,11 @@ class TestEnqueueDockerMakefile(unittest.TestCase):
         with open(os.path.join(here, "Makefile"), encoding="utf-8") as fh:
             text = fh.read()
         self.assertIn("test-enqueue-prefixes-docker:", text)
+        self.assertIn("test-lounge-live-docker:", text)
         for target in ("test", "all-tests"):
             recipe = _recipe(text, target)
             self.assertNotIn("enqueue-prefixes", recipe)
+            self.assertNotIn("lounge-live", recipe)
             self.assertNotIn("docker", recipe)
 
 
