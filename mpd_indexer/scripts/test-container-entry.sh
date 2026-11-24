@@ -7,6 +7,10 @@
 # MPD restart (stale MpdClient). That gate lives in scripts/verify-dontwalk-shd.sh
 # and is locked by test_deploy_verify_protocol.py so make test catches a deploy
 # that trusts getState alone.
+#
+# Tag leaves under _tags that symlink via ignored _meta stay empty directory
+# stubs in MPD (songs only on the real album). Filling those in the UI is a
+# Volumio lsInfo resolve (volumio_scanfolder_mpdignore), not this prove.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 

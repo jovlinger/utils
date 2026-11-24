@@ -196,6 +196,53 @@ function isStructuralSkip(name) {
   return name === '_tags' || name === '_meta';
 }
 
+/**
+ * Map a music-library-relative path under _tags to the real album path
+ * MPD indexed (songs live only on the canonical album; tag leaves are
+ * empty dont-walk stubs, often via ignored _meta/.../album).
+ *
+ * @param {string} musicRelPath e.g. NAS/gmk/files/_tags/genre/x/Album
+ * @param {string} [mntRoot='/mnt']
+ * @return {string|null} music-relative real album path, or null if none
+ */
+function resolveTagsLeafMusicPath(musicRelPath, mntRoot) {
+  if (!musicRelPath || musicRelPath.indexOf('/_tags/') < 0) {
+    return null;
+  }
+  var root = mntRoot || '/mnt';
+  var abs = path.join(root, musicRelPath);
+  var real;
+  var rootReal;
+  try {
+    real = fs.realpathSync(abs);
+    rootReal = fs.realpathSync(root);
+  } catch (e) {
+    return null;
+  }
+  if (real.indexOf('/_meta/') >= 0) {
+    var albumLink = path.join(real, 'album');
+    try {
+      if (fs.existsSync(albumLink)) {
+        real = fs.realpathSync(albumLink);
+      }
+    } catch (e2) {
+      /* keep real as _meta dir */
+    }
+  }
+  var prefix = rootReal.endsWith('/') ? rootReal : rootReal + '/';
+  if (real.indexOf(prefix) !== 0) {
+    return null;
+  }
+  var out = real.slice(prefix.length);
+  if (!out || out === musicRelPath) {
+    return null;
+  }
+  if (out.indexOf('/_tags/') >= 0 || out.indexOf('/_meta/') >= 0) {
+    return null;
+  }
+  return out;
+}
+
 module.exports = {
   readPatterns: readPatterns,
   fnmatch: fnmatch,
@@ -204,5 +251,6 @@ module.exports = {
   collectAncestorPatterns: collectAncestorPatterns,
   seedExcludePatterns: seedExcludePatterns,
   rememberReal: rememberReal,
-  isStructuralSkip: isStructuralSkip
+  isStructuralSkip: isStructuralSkip,
+  resolveTagsLeafMusicPath: resolveTagsLeafMusicPath
 };
