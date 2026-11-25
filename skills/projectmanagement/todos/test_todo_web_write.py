@@ -588,6 +588,76 @@ class EditPageServeTest(unittest.TestCase):
         self.assertNotIn("write", page_data(page))
 
 
+class FramingHeaderTest(unittest.TestCase):
+    """Every response forbids being framed, so a hostile page cannot overlay the editor."""
+
+    def _base(self, *, write: bool) -> str:
+        def resolver(selector: str) -> Tuple[Path, Dict[str, Any]]:
+            if selector != PAGE_TID[:8]:
+                raise todo_web.TodoWebError("no such todo")
+            return Path("."), json.loads(json.dumps(PAGE_TODO))
+
+        printed = io.StringIO()
+
+        def run() -> None:
+            with contextlib.redirect_stdout(printed):
+                todo_web.serve(
+                    Path("."),
+                    host="127.0.0.1",
+                    port=0,
+                    resolver=resolver,
+                    searcher=lambda _q: [],
+                    write=write,
+                    updater=FakeUpdater() if write else None,
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+        deadline = time.monotonic() + 10
+        while not printed.getvalue().strip() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return printed.getvalue().strip().rstrip("/")
+
+    def _headers(self, url: str) -> Any:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                return resp.headers
+        except urllib.error.HTTPError as exc:
+            return exc.headers
+
+    def test_every_get_path_denies_framing_in_both_modes(self) -> None:
+        for write in (False, True):
+            base = self._base(write=write)
+            paths = {
+                "search page": "/",
+                "todo page": f"/?id={PAGE_TID[:8]}",
+                "permalink": f"/{PAGE_TID[:8]}",
+                "permalink to nothing": "/ffffffff",
+                "search rows": "/search?q=x",
+                "unknown path": "/nope/nope",
+                "todo page that does not resolve": "/?id=zzzz",
+            }
+            for name, path in paths.items():
+                with self.subTest(write=write, path=name):
+                    headers = self._headers(base + path)
+                    self.assertEqual("DENY", headers["X-Frame-Options"])
+                    self.assertEqual("frame-ancestors 'none'", headers["Content-Security-Policy"])
+
+    def test_post_responses_deny_framing(self) -> None:
+        base = self._base(write=True)
+        req = urllib.request.Request(
+            base + "/update",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual("DENY", caught.exception.headers["X-Frame-Options"])
+        self.assertEqual(
+            "frame-ancestors 'none'", caught.exception.headers["Content-Security-Policy"]
+        )
+
+
 class RecordFingerprintTest(unittest.TestCase):
     """The stale-page token: canonical JSON, stamped embedding vectors ignored."""
 

@@ -2133,6 +2133,13 @@ def serve(
             self.end_headers()
             self.wfile.write(body)
 
+        def end_headers(self) -> None:
+            """Every response, errors included, forbids framing: a page that embeds the
+            viewer could otherwise overlay its edit controls (clickjacking)."""
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            super().end_headers()
+
         def log_message(self, format: str, *args: object) -> None:
             if os.environ.get("TODO_WEB_LOG") or _debug_enabled():
                 super().log_message(format, *args)
