@@ -213,7 +213,7 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"audio\n")
     _write_combined(
-        album, ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+        album, ["album;b2", "artist;a1", "genre;gr", "tag;im"]
     )
 
     _run_shadup(tmp_path, shadir, ["store", "work"])
@@ -223,7 +223,7 @@ def test_importtags_end_to_end(tmp_path: Path) -> None:
     assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac")
-    assert tags == ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+    assert tags == ["album;b2", "artist;a1", "genre;gr", "tag;im"]
 
 
 def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
@@ -236,7 +236,7 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     album.mkdir(parents=True)
     (album / "t.flac").write_bytes(b"audio\n")
     _write_combined(
-        album, ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+        album, ["album;b2", "artist;a1", "genre;gr", "tag;im"]
     )
 
     _run_shadup(tmp_path, shadir, ["store", "work"], db=custom_db)
@@ -247,7 +247,7 @@ def test_importtags_end_to_end_custom_db(tmp_path: Path) -> None:
     assert r.stdout == ".\n"
 
     tags = _db_tags_for_path(shadir, "work/disc/t.flac", db_path=custom_db)
-    assert tags == ["album;B2", "artist;A1", "genre;gr", "tag;im"]
+    assert tags == ["album;b2", "artist;a1", "genre;gr", "tag;im"]
 
 
 def test_importtags_reset_clears_before_add(tmp_path: Path) -> None:
@@ -398,3 +398,143 @@ def test_importtags_dryrun_reset_shows_tag_clear(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     assert "would tag-clear" in r.stdout
     assert '"old"' in r.stdout
+
+
+def _regular_files_under(path: Path) -> list[Path]:
+    """Non-hidden regular files under *path* (follow nothing)."""
+    if not path.is_dir():
+        return []
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            out.append(Path(dirpath) / name)
+    return out
+
+
+def test_importtags_dryrun_does_not_write_tags_tree(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, ["tag;x"])
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+
+    r = _run_importtags(tmp_path, shadir, album, dryrun=True)
+    assert r.returncode == 0, r.stderr
+    assert not (album / "_tags").exists()
+
+
+def test_empty_combined_writes_notags_root(tmp_path: Path) -> None:
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    album = work / "disc"
+    album.mkdir(parents=True)
+    (album / "t.flac").write_bytes(b"a\n")
+    _write_combined(album, [])
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+    _run_shadup(tmp_path, shadir, ["tag-add", "work/disc/t.flac", "keep"])
+
+    r = _run_importtags(tmp_path, shadir, album)
+    assert r.returncode == 0
+    assert (album / "_tags" / "NOTAGS").is_dir()
+    assert _regular_files_under(album / "_tags") == []
+    assert _db_tags_for_path(shadir, "work/disc/t.flac") == ["keep"]
+
+
+def test_two_disc_parent_tags_is_union_of_disc_tags(tmp_path: Path) -> None:
+    """Parent ``_tags`` equals set-union of disc ``_tags``; no album-name cases."""
+    mod = _load_importtags()
+    box = tmp_path / "box"
+    disc_a = box / "disc A"
+    disc_b = box / "disc B"
+    disc_a.mkdir(parents=True)
+    disc_b.mkdir(parents=True)
+    (disc_a / "a.flac").write_bytes(b"a\n")
+    (disc_b / "b.flac").write_bytes(b"b\n")
+    tags_a = ["artist;unit", "genre;live"]
+    tags_b = ["artist;unit", "year;1990"]
+    _write_combined(disc_a, tags_a)
+    _write_combined(disc_b, tags_b)
+    # Parent combined must not win over the child-union producer.
+    _write_combined(box, ["album;should-not-appear"])
+
+    # Parent first in argv: materialize must still do discs before union.
+    mod.materialize_directory_tags_roots([box, disc_a, disc_b])
+
+    got_a = mod.read_directory_tags_root(disc_a)
+    got_b = mod.read_directory_tags_root(disc_b)
+    got_parent = mod.read_directory_tags_root(box)
+    assert got_a == frozenset(tags_a)
+    assert got_b == frozenset(tags_b)
+    assert got_parent == got_a | got_b
+    assert got_parent == frozenset({"artist;unit", "genre;live", "year;1990"})
+    assert "album;should-not-appear" not in got_parent
+    assert (disc_a / "_tags" / "artist" / "unit").is_dir()
+    assert (disc_b / "_tags" / "year" / "1990").is_dir()
+    assert (box / "_tags" / "genre" / "live").is_dir()
+    assert (box / "_tags" / "year" / "1990").is_dir()
+    assert _regular_files_under(disc_a / "_tags") == []
+    assert _regular_files_under(disc_b / "_tags") == []
+    assert _regular_files_under(box / "_tags") == []
+
+
+def test_importtags_cli_two_disc_union_and_no_file_rows(tmp_path: Path) -> None:
+    """CLI producer: disc roots from combined; parent union; no MPD file rows."""
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    work = tmp_path / "work"
+    box = work / "box"
+    disc_a = box / "disc A"
+    disc_b = box / "disc B"
+    disc_a.mkdir(parents=True)
+    disc_b.mkdir(parents=True)
+    (disc_a / "a.flac").write_bytes(b"a\n")
+    (disc_b / "b.flac").write_bytes(b"b\n")
+    _write_combined(disc_a, ["artist;unit", "genre;alpha"])
+    _write_combined(disc_b, ["artist;unit", "genre;beta"])
+    _write_combined(box, [])
+    _run_shadup(tmp_path, shadir, ["store", "work"])
+
+    r = _run_importtags(tmp_path, shadir, box, disc_a, disc_b)
+    assert r.returncode == 0, r.stderr
+
+    mod = _load_importtags()
+    parent_tags = mod.read_directory_tags_root(box)
+    assert parent_tags == (
+        mod.read_directory_tags_root(disc_a) | mod.read_directory_tags_root(disc_b)
+    )
+    assert parent_tags == frozenset({"artist;unit", "genre;alpha", "genre;beta"})
+    assert _regular_files_under(box / "_tags") == []
+    assert _regular_files_under(disc_a / "_tags") == []
+    assert _regular_files_under(disc_b / "_tags") == []
+    assert _db_tags_for_path(shadir, "work/box/disc A/a.flac") == [
+        "artist;unit",
+        "genre;alpha",
+    ]
+    assert _db_tags_for_path(shadir, "work/box/disc B/b.flac") == [
+        "artist;unit",
+        "genre;beta",
+    ]
+
+
+def test_union_empty_disc_does_not_force_parent_notags(tmp_path: Path) -> None:
+    mod = _load_importtags()
+    box = tmp_path / "box"
+    disc_a = box / "disc A"
+    disc_b = box / "disc B"
+    disc_a.mkdir(parents=True)
+    disc_b.mkdir(parents=True)
+    (disc_a / "a.flac").write_bytes(b"a\n")
+    (disc_b / "b.flac").write_bytes(b"b\n")
+    _write_combined(disc_a, [])
+    _write_combined(disc_b, ["artist;unit"])
+    mod.materialize_directory_tags_roots([disc_a, disc_b, box])
+    assert (disc_a / "_tags" / "NOTAGS").is_dir()
+    assert not (box / "_tags" / "NOTAGS").exists()
+    assert mod.read_directory_tags_root(box) == frozenset({"artist;unit"})

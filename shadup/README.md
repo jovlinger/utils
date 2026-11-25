@@ -35,10 +35,13 @@ derived from the global browse index.
 Example: `files/Depeche Mode - 101/_tags` equals the union of
 `files/Depeche Mode - 101/disc A/_tags` and `.../disc B/_tags`.
 
-The global browse index `files/_tags/...` is **derived by reading** those
-per-directory roots. Musicology writes the roots; refresh (or its successor)
-builds the global mirrors from them. Do not treat DB `sha_tags` alone as a
-parallel source that ignores on-disk per-directory `_tags`.
+`importtags` is the producer that materializes those roots: audio-bearing
+leaves from `.meta.combined.json`, non-album parents as the union of child
+`_tags` trees (no per-file rows under `_tags`). The global browse index
+`files/_tags/...` is **derived by reading** those per-directory roots.
+Refresh (or its successor) builds the global mirrors from them. Do not treat
+DB `sha_tags` alone as a parallel source that ignores on-disk per-directory
+`_tags`.
 
 The store volume (`/mnt/sdb2` by default) is mounted **read-only**. Anything that
 writes under `files/` or `data/` must remount rw (sudo), then remount ro. The

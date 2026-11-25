@@ -1,5 +1,10 @@
 #!/usr/bin/env venv-run
-"""Import ``.meta.combined.json`` tags into shadup on one file per album dir."""
+"""Import ``.meta.combined.json`` tags into shadup and per-directory ``_tags``.
+
+DB: one stored file per album dir (``tag-add``). On disk: each processed
+directory gets a ``_tags`` tree -- audio leaves from combined tags, non-album
+parents as the union of children's ``_tags``. No per-file rows under ``_tags``.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +13,12 @@ import csv
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Collection, Sequence
 
 _MOD_DIR = Path(__file__).resolve().parent
 if str(_MOD_DIR) not in sys.path:
@@ -94,7 +100,7 @@ def _symlink_resolves_under_shadir(path: str, shadir_abs: str) -> bool:
     return sh.is_under_dir(resolved, shadir_abs)
 
 
-# Same idea as musicology ``audio.AUDIO_EXTS`` — files we treat as music tracks.
+# Same idea as musicology ``audio.AUDIO_EXTS`` -- files we treat as music tracks.
 _AUDIO_EXTS = frozenset(
     {
         ".mp3",
@@ -114,6 +120,8 @@ _AUDIO_EXTS = frozenset(
         ".dff",
     }
 )
+# Do not treat browse trees as library children when unioning ``_tags``.
+_SKIP_CHILD_DIR_NAMES = frozenset({"_tags", "_meta"})
 
 
 def _pick_sort_key(path: str) -> tuple[int, str]:
@@ -177,6 +185,146 @@ def pick_target_file(
         )
     stored.sort(key=_pick_sort_key)
     return stored[0]
+
+
+def _dir_has_audio(dirpath: Path) -> bool:
+    """True if *dirpath* directly contains a recognized audio file (or symlink)."""
+    try:
+        for child in dirpath.iterdir():
+            if child.name.startswith("."):
+                continue
+            if child.is_file() and child.suffix.lower() in _AUDIO_EXTS:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _library_child_dirs(dirpath: Path) -> list[Path]:
+    """Immediate real subdirectories that are not index trees or hidden."""
+    out: list[Path] = []
+    try:
+        children = list(dirpath.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if child.name.startswith(".") or child.name in _SKIP_CHILD_DIR_NAMES:
+            continue
+        out.append(child)
+    out.sort(key=lambda p: p.name)
+    return out
+
+
+def write_directory_tags_root(dirpath: Path, tags: Collection[str]) -> None:
+    """Replace ``dirpath/_tags`` with a tag-path tree (directories only).
+
+    Empty *tags* writes ``_tags/NOTAGS``. Each tag becomes
+    ``_tags/<tag_mirror_relpath>``. No file rows (MPD must not see tracks here).
+    """
+    sh = _shadup_helpers()
+    tags_root = dirpath / "_tags"
+    if tags_root.is_symlink() or tags_root.is_file():
+        tags_root.unlink()
+    elif tags_root.is_dir():
+        shutil.rmtree(tags_root)
+    tags_root.mkdir(parents=True, exist_ok=True)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        stripped = tag.strip()
+        if not stripped or stripped in seen:
+            continue
+        seen.add(stripped)
+        unique.append(stripped)
+    if not unique:
+        (tags_root / sh.NOTAGS_DIR_NAME).mkdir()
+        return
+    for tag in unique:
+        rel: tuple[str, ...] = sh.tag_mirror_relpath(tag)
+        tags_root.joinpath(*rel).mkdir(parents=True, exist_ok=True)
+
+
+def read_directory_tags_root(dirpath: Path) -> frozenset[str]:
+    """Invert ``dirpath/_tags`` into a tag set (``NOTAGS`` is the empty set)."""
+    sh = _shadup_helpers()
+    tags_root = dirpath / "_tags"
+    if tags_root.is_symlink() or not tags_root.is_dir():
+        return frozenset()
+    found: set[str] = set()
+    try:
+        top_entries = list(tags_root.iterdir())
+    except OSError:
+        return frozenset()
+    for entry in top_entries:
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if entry.name == sh.NOTAGS_DIR_NAME:
+            continue
+        try:
+            subdirs = [
+                child
+                for child in entry.iterdir()
+                if child.is_dir() and not child.name.startswith(".")
+            ]
+        except OSError:
+            subdirs = []
+        if not subdirs:
+            found.add(entry.name)
+            continue
+        for sub in subdirs:
+            found.add(f"{entry.name};{sub.name}")
+    return frozenset(found)
+
+
+def union_child_directory_tags(parent: Path) -> frozenset[str]:
+    """Union of immediate children's on-disk ``_tags`` tag sets."""
+    acc: set[str] = set()
+    for child in _library_child_dirs(parent):
+        acc |= set(read_directory_tags_root(child))
+    return frozenset(acc)
+
+
+def materialize_directory_tags_roots(
+    dirs: Sequence[str | Path],
+    *,
+    dryrun: bool = False,
+) -> None:
+    """Write per-directory ``_tags`` roots, deepest first.
+
+    Audio-bearing leaves use ``.meta.combined.json``. Non-album parents use the
+    union of children's ``_tags``. Does not write the global ``files/_tags``
+    index. *dryrun* is a no-op.
+    """
+    if dryrun:
+        return
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for raw in dirs:
+        try:
+            p = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        if not p.is_dir() or p in seen:
+            continue
+        seen.add(p)
+        resolved.append(p)
+    resolved.sort(key=lambda p: (-len(p.parts), str(p)))
+    for d in resolved:
+        if _dir_has_audio(d):
+            if not (d / COMBINED_NAME).is_file():
+                continue
+            write_directory_tags_root(d, read_combined_tags(d))
+            continue
+        children = _library_child_dirs(d)
+        children_have_roots = any((child / "_tags").is_dir() for child in children)
+        if children_have_roots:
+            write_directory_tags_root(d, union_child_directory_tags(d))
+        elif (d / COMBINED_NAME).is_file():
+            write_directory_tags_root(d, read_combined_tags(d))
 
 
 # Separator for typed tags (``type;value``). Must be VFAT/Samba-safe (not ``:``).
@@ -333,11 +481,14 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
             "Per directory: read ``.meta.combined.json`` (canonical type;value "
-            "tags), then shadup tag-add on the earliest stored file (symlink into "
-            "the sha store). Skips dirs with no combined file or no store target. "
-            "Use --dryrun to print DB effects without writing. Quiet mode: one "
-            "dot per album; --debug for one line per album. Pass many DIRs in one "
-            "run so dots stay on one line."
+            "tags), write a per-directory ``_tags`` tree (audio leaf = that "
+            "dir's tags; non-album parent = union of children's ``_tags``), "
+            "then shadup tag-add on the earliest stored file (symlink into "
+            "the sha store). Skips DB import when there is no combined file or "
+            "no store target. Use --dryrun to print DB effects without writing "
+            "(including no ``_tags`` trees). Quiet mode: one dot per album; "
+            "--debug for one line per album. Pass many DIRs in one run so dots "
+            "stay on one line."
         )
     )
     p.add_argument(
@@ -406,6 +557,8 @@ def main(argv: list[str] | None = None) -> int:
     db_opt: str | None = args.db or None
     if db_opt:
         db_opt = _expand_db_path(db_opt)
+
+    materialize_directory_tags_roots(args.dirs, dryrun=args.dryrun)
 
     dots_printed = False
 
