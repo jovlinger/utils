@@ -23,6 +23,7 @@ a complete self-contained artifact.
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import os
 import re
@@ -1614,7 +1615,7 @@ function focusOn(objid){
 focusOn(FOCUS);
 initMdToggles(document.getElementById('top'));
 
-// Editing exists only on a page served by `todo.py web --write` (DATA.write).
+// Editing exists only on a page served to a client class set to `write` (DATA.write).
 // Save is explicit and the only write; nothing is saved on input or on close.
 var WRITE = DATA.write || null;
 
@@ -1895,6 +1896,30 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
 WILDCARD_HOSTS = ("::", "0.0.0.0")
 LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
 UPDATE_PATH = "/update"
+LEVELS = ("none", "read", "write")
+ALL_HOST = "::"
+LOOPBACK_HOST = "localhost"
+
+
+def default_bind_host(public: str) -> str:
+    """The bind host when none was named: loopback unless public clients are served at all."""
+    return LOOPBACK_HOST if public == "none" else ALL_HOST
+
+
+def is_loopback_client(address: str) -> bool:
+    """True when a client's source *address* is loopback: 127.0.0.0/8, ::1, or an
+    IPv4-mapped ::ffff:127.x.x.x (what a dual-stack socket reports for a v4 client).
+
+    The address is the TCP peer, not anything the client sent, so it cannot be
+    claimed by a header.
+    """
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
 
 
 class UpdateRefused(TodoWebError):
@@ -1906,7 +1931,7 @@ class UpdateRefused(TodoWebError):
 
 
 class Updater(Protocol):
-    """The write side `todo.py web --write` injects; the viewer never writes itself."""
+    """The write side `todo.py web` injects for a write class; the viewer never writes itself."""
 
     def update(self, request: JsonDict) -> JsonDict:
         """Apply ``{id, op, target, value}`` and return the JSON payload of the 200 answer.
@@ -1915,17 +1940,22 @@ class Updater(Protocol):
         """
 
 
-def request_refusal(headers: Mapping[str, str], port: int) -> str:
+def request_refusal(headers: Mapping[str, str], port: int, *, loopback: bool = True) -> str:
     """Why a write request must be refused before any command runs, or "".
 
-    The Host must be a loopback name on this server's port, which a DNS-rebound
-    page cannot send. The Origin must be present and be that same origin, which
-    no other page in the browser can claim. The JSON content type cannot be sent
-    cross-origin without a CORS preflight, which this server never answers.
+    From a loopback client the Host must be a loopback name on this server's
+    port, which a DNS-rebound page cannot send; a public client's Host is only
+    required to be present. The Origin must be present and be that same origin,
+    which no other page in the browser can claim. The JSON content type cannot
+    be sent cross-origin without a CORS preflight, which this server never
+    answers.
     """
     host = str(headers.get("Host") or "").strip().lower()
-    if host not in {f"{name}:{port}" for name in LOOPBACK_NAMES}:
-        return f"write refused: Host {host!r} is not a loopback name on port {port}"
+    if loopback:
+        if host not in {f"{name}:{port}" for name in LOOPBACK_NAMES}:
+            return f"write refused: Host {host!r} is not a loopback name on port {port}"
+    elif not host:
+        return "write refused: no Host header"
     origin = str(headers.get("Origin") or "").strip().lower()
     if origin != f"http://{host}":
         return f"write refused: Origin {origin!r} is not this viewer's origin http://{host}"
@@ -1936,16 +1966,22 @@ def request_refusal(headers: Mapping[str, str], port: int) -> str:
 
 
 def handle_update(
-    headers: Mapping[str, str], body: bytes, port: int, updater: Updater
+    headers: Mapping[str, str],
+    body: bytes,
+    port: int,
+    updater: Updater,
+    *,
+    loopback: bool = True,
 ) -> "tuple[int, JsonDict]":
     """Check and apply one POST /update; return ``(status, JSON payload)``.
 
+    *loopback* is whether the client is a loopback one (see ``request_refusal``).
     403 when the request fails ``request_refusal`` or its body is not JSON, 400
     when the JSON is not an object, 200 / the refusal's own status from
     *updater*, and 500 naming the exception type and message for any other
     exception it raises. The updater runs only after every check has passed.
     """
-    refusal = request_refusal(headers, port)
+    refusal = request_refusal(headers, port, loopback=loopback)
     if refusal:
         return 403, {"error": refusal}
     try:
@@ -1984,12 +2020,13 @@ class _DualStackServer(ThreadingHTTPServer):
 def serve(
     root: Path,
     *,
-    host: str = "::",
+    host: Optional[str] = None,
     port: int = 8765,
     initial_id: Optional[str] = None,
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
     searcher: Callable[[str], List[JsonDict]],
-    write: bool = False,
+    loopback: str = "read",
+    public: str = "none",
     updater: Optional[Updater] = None,
 ) -> str:
     """Start the viewer and serve until interrupted.
@@ -1999,23 +2036,49 @@ def serve(
     A bare path renders the search page, whose box calls ``/search?q=`` -> a
     JSON list of rows from *searcher(query)* (an empty query lists all todos).
     *initial_id* only shapes the printed URL so the browser opens straight onto
-    that todo. *write* enables in-place edits: ``POST /update`` goes through
-    ``handle_update`` to *updater*, which *write* therefore requires. Without
-    *write* every POST is answered 405 and the viewer is read-only.
+    that todo.
+
+    *loopback* governs clients whose source address is loopback and *public*
+    every other client, each one of ``LEVELS``: ``none`` answers 403 to every
+    request, ``read`` serves GET and answers 403 to any POST, ``write`` also
+    accepts ``POST /update`` through ``handle_update`` to *updater* (required
+    when either is ``write``). Both ``none`` is refused before anything binds.
+    The class is decided per request from the connection's peer address.
     """
     _debug(
-        f"serve host={host} port={port} root={root} initial_id={initial_id} write={write}",
+        f"serve host={host} port={port} root={root} initial_id={initial_id} "
+        f"loopback={loopback} public={public}",
         phase="serve",
     )
-    if write and updater is None:
+    for name, level in (("loopback", loopback), ("public", public)):
+        if level not in LEVELS:
+            raise TodoWebError(f"{name} must be one of {', '.join(LEVELS)}, not {level!r}")
+    if loopback == "none" and public == "none":
+        raise TodoWebError("loopback and public are both none: nothing could connect")
+    if "write" in (loopback, public) and updater is None:
         raise TodoWebError("write mode needs an updater")
+    if host is None:
+        host = default_bind_host(public)
 
     class Handler(BaseHTTPRequestHandler):
+        def _client_is_loopback(self) -> bool:
+            return is_loopback_client(str(self.client_address[0]))
+
+        def _level(self) -> str:
+            """The access level of the class this request's client belongs to."""
+            return loopback if self._client_is_loopback() else public
+
+        def _forbidden(self) -> bool:
+            """Answer 403 and return True when this client's class may not GET."""
+            if self._level() != "none":
+                return False
+            self._respond_json(403, {"error": "forbidden: this viewer does not serve you"})
+            return True
+
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if not write or updater is None:
-                self._respond_json(
-                    405, {"error": "read-only viewer: start it with `todo.py web --write`"}
-                )
+            level = self._level()
+            if level != "write" or updater is None:
+                self._respond_json(403, {"error": f"forbidden: this client is at level {level}"})
                 return
             if urlparse(self.path).path != UPDATE_PATH:
                 self._respond_json(404, {"error": f"no write endpoint at {self.path}"})
@@ -2026,7 +2089,13 @@ def serve(
                 self._respond_json(400, {"error": "bad Content-Length"})
                 return
             body = self.rfile.read(max(length, 0))
-            status, payload = handle_update(self.headers, body, self.server.server_port, updater)
+            status, payload = handle_update(
+                self.headers,
+                body,
+                self.server.server_port,
+                updater,
+                loopback=self._client_is_loopback(),
+            )
             self._respond_json(status, payload)
 
         def _respond_json(self, status: int, payload: JsonDict) -> None:
@@ -2038,6 +2107,8 @@ def serve(
             self.wfile.write(body)
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            if self._forbidden():
+                return
             parsed = urlparse(self.path)
             if parsed.path == "/search":
                 query = parse_qs(parsed.query).get("q", [""])[0]
@@ -2087,9 +2158,12 @@ def serve(
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
         def _page(self, todo_root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
-            """The todo page, with edit controls when writes are on."""
+            """The todo page, with edit controls when this client's class is `write`."""
             return render_todo_page(
-                todo_root, todo, focus_objid=focus_objid, write=write and updater is not None
+                todo_root,
+                todo,
+                focus_objid=focus_objid,
+                write=self._level() == "write" and updater is not None,
             )
 
         def _respond(self, body: bytes, content_type: str) -> None:
@@ -2112,9 +2186,9 @@ def serve(
 
     server = _DualStackServer((host, port), Handler)
     shown = "localhost" if host in WILDCARD_HOSTS else f"[{host}]" if ":" in host else host
-    base = f"http://{shown}:{server.server_port}/"
-    url = f"{base}{initial_id}" if initial_id else base
-    print(url, flush=True)
+    base = f"http://{shown}:{server.server_port}"
+    url = f"{base}/{initial_id}" if initial_id else base
+    print(f"todo web: {url}  loopback={loopback}  public={public}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

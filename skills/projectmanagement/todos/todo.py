@@ -6823,10 +6823,10 @@ class LogCommand(CorpusQueryCommand):
         return 0
 
 
-# The read-only viewer binds every interface; an editing one binds loopback only,
-# since its write endpoint has no authentication.
-WEB_READ_HOST = "::"
-WEB_WRITE_HOST = "localhost"
+# Built-in defaults of `web`; config.json "web" and the command line override them.
+WEB_DEFAULT_PORT = 8765
+WEB_DEFAULT_LOOPBACK = "read"
+WEB_DEFAULT_PUBLIC = "none"
 
 
 @dataclass(frozen=True)
@@ -6921,7 +6921,7 @@ def _thread_stream(name: str) -> _ThreadStream:
 
 
 class WebUpdater:
-    """The write side `web --write` injects into todo_web.serve (todo_web.Updater).
+    """The write side `web` injects into todo_web.serve (todo_web.Updater) for a write class.
 
     Each update runs the CLI's own command through ``main`` in this process, so
     its validation and refusals are the CLI's, verbatim. A save is last-write-wins:
@@ -6992,15 +6992,19 @@ class WebCommand(EnvironmentCommand):
         "lexical search (the same ranking as 'todo search') over every todo, showing update-time "
         "and State columns, with an empty query listing all. It also serves permalinks: "
         "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
-        "(see 'resolveurl' for the grammar). The viewer is read-only and binds '::' (every "
-        "interface). --write makes the todo page an editor of the CLI's update surface: Edit on "
-        "Summary, Body, LongSummary, AC, ActualSummary, each note and each not-done work item, "
-        "and Up/Down on not-done work items, each saved through the matching set / "
+        "(see 'resolveurl' for the grammar). Access is set per client class, each none, read or "
+        "write: --loopback for clients whose source address is loopback (default read) and "
+        "--public for every other client (default none). none answers 403 to every request, "
+        "read serves GET only, write also lets the todo page edit the CLI's update surface: "
+        "Edit on Summary, Body, LongSummary, AC, ActualSummary, each note and each not-done "
+        "work item, and Up/Down on not-done work items, each saved through the matching set / "
         "note-replace / work-item-replace / work-item-reorder command. Nothing is created or "
         "deleted. Saves are last-write-wins: a save lands even when the todo changed since the "
-        "page loaded. --write binds localhost unless --host is given, "
-        "and refuses any write whose Host, Origin or content type is not this viewer's own "
-        "(see IMPLEMENTATION.md, 'Web edits')."
+        "page loaded. Both none refuses to start. The default bind is localhost when public is "
+        "none and '::' (every interface) otherwise; --host overrides. Every web option "
+        "defaults from the \"web\" object of the todo dir's config.json (CLI beats config "
+        "beats built-in). Writes are refused unless the request's Origin, content type and "
+        "(from loopback clients) Host are this viewer's own (see IMPLEMENTATION.md, 'Web edits')."
     )
 
     @classmethod
@@ -7015,14 +7019,23 @@ class WebCommand(EnvironmentCommand):
         parser.add_argument(
             "--host",
             default=None,
-            help=f"bind host (default {WEB_READ_HOST!r}, which serves IPv4 and IPv6; "
-            f"{WEB_WRITE_HOST!r} under --write)",
+            help=f"bind host (default {todo_web.LOOPBACK_HOST!r} when --public is none, else "
+            f"{todo_web.ALL_HOST!r}, which serves IPv4 and IPv6)",
         )
-        parser.add_argument("--port", type=int, default=8765, help="bind port")
         parser.add_argument(
-            "--write",
-            action="store_true",
-            help="enable in-place edits of the CLI's update surface (default bind: loopback)",
+            "--port", type=int, default=None, help=f"bind port (default {WEB_DEFAULT_PORT})"
+        )
+        parser.add_argument(
+            "--loopback",
+            choices=todo_web.LEVELS,
+            default=None,
+            help="access for loopback clients (default read)",
+        )
+        parser.add_argument(
+            "--public",
+            choices=todo_web.LEVELS,
+            default=None,
+            help="access for every other client (default none)",
         )
         parser.add_argument(
             "--dump-html",
@@ -7030,14 +7043,42 @@ class WebCommand(EnvironmentCommand):
             help="print the rendered HTML and exit instead of starting a server",
         )
 
-    def bind_host(self) -> str:
-        """The host to bind: --host as given, else loopback under --write, else dual-stack."""
-        if self.host is not None:
-            return str(self.host)
-        return WEB_WRITE_HOST if self.write else WEB_READ_HOST
+    def settings(self) -> Dict[str, Any]:
+        """The effective ``loopback``, ``public``, ``host`` and ``port``.
+
+        ``host`` is None when neither the command line nor config.json names one;
+        ``bind_host`` then derives it from ``public``.
+        """
+        cli = {
+            "loopback": self.loopback,
+            "public": self.public,
+            "host": self.host,
+            "port": self.port,
+        }
+        built_in: Dict[str, Any] = {
+            "loopback": WEB_DEFAULT_LOOPBACK,
+            "public": WEB_DEFAULT_PUBLIC,
+            "host": None,
+            "port": WEB_DEFAULT_PORT,
+        }
+        return {key: built_in[key] if cli[key] is None else cli[key] for key in built_in}
+
+    @staticmethod
+    def bind_host(settings: Mapping[str, Any]) -> str:
+        """The host to bind: the explicit one, else loopback unless public clients are served."""
+        if settings["host"] is not None:
+            return str(settings["host"])
+        return todo_web.default_bind_host(settings["public"])
 
     def do(self) -> int:
         """Serve or print the todo web viewer."""
+        settings = self.settings()
+        levels = (settings["loopback"], settings["public"])
+        if not self.dump_html and settings["loopback"] == "none" and settings["public"] == "none":
+            raise TodoError(
+                "web: loopback and public are both none, so no client could connect; "
+                "set at least one to read or write"
+            )
         root = self.root()
         # Header label: the storage anchor (same value `todo basedir` prints),
         # not the current worktree gitroot. The store is shared across all
@@ -7095,19 +7136,24 @@ class WebCommand(EnvironmentCommand):
             if self.dump_html:
                 if initial_id is not None:
                     todo_root, ticket = resolve_todo(initial_id)
-                    print(todo_web.render_todo_page(todo_root, ticket, write=self.write))
+                    print(
+                        todo_web.render_todo_page(
+                            todo_root, ticket, write=settings["loopback"] == "write"
+                        )
+                    )
                 else:
                     print(todo_web.render_search_page(basedir, search_rows("")))
             else:
                 todo_web.serve(
                     basedir,
-                    host=self.bind_host(),
-                    port=self.port,
+                    host=self.bind_host(settings),
+                    port=settings["port"],
                     initial_id=initial_id,
                     resolver=resolve_todo,
                     searcher=search_rows,
-                    write=self.write,
-                    updater=WebUpdater(root) if self.write else None,
+                    loopback=settings["loopback"],
+                    public=settings["public"],
+                    updater=WebUpdater(root) if "write" in levels else None,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
@@ -8197,7 +8243,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     command_name: str = getattr(args, "command", "") or ""
     start: float = time.monotonic()
     exit_code: int = 1
-    # A long-lived process (web --write) runs many commands against one cached store.
+    # A long-lived process (web) runs many commands against one cached store.
     todo_store.discard_written_paths()
     try:
         # Every subcommand reads the store. Resolve once here so library code

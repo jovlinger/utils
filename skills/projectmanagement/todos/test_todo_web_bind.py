@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the viewer's bind: dual-stack, loopback under --write; no real sockets or DNS."""
+"""Tests for the viewer's bind and per-class access settings; no real sockets or DNS."""
 
 from __future__ import annotations
 
@@ -55,45 +55,82 @@ class DualStackServerTest(unittest.TestCase):
 
 
 class ServeDefaultsTest(unittest.TestCase):
-    """serve() defaults to the dual-stack wildcard and prints a browsable URL."""
+    """serve() prints one summary banner and binds by who is served."""
 
-    def _printed_url(self, host: str | None) -> str:
-        kwargs = {} if host is None else {"host": host}
+    def _banner(self, host: str | None, **kwargs: str) -> str:
+        if host is not None:
+            kwargs["host"] = host
         fake_server = mock.Mock(server_port=8765)
         fake_server.serve_forever.side_effect = KeyboardInterrupt
         out = io.StringIO()
         with mock.patch.object(todo_web, "_DualStackServer", return_value=fake_server) as cls:
             with redirect_stdout(out):
-                todo_web.serve(
-                    Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs
-                )
+                todo_web.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs)
         self.last_address = cls.call_args.args[0]
         return out.getvalue().strip()
 
-    def test_default_host_is_the_ipv6_wildcard(self) -> None:
-        default = inspect.signature(todo_web.serve).parameters["host"].default
-        self.assertEqual("::", default)
+    def test_default_binds_loopback_and_prints_the_summary_line(self) -> None:
+        self.assertEqual(
+            "todo web: http://localhost:8765  loopback=read  public=none", self._banner(None)
+        )
+        self.assertEqual(("localhost", 8765), self.last_address)
 
-    def test_default_binds_the_wildcard_and_prints_localhost(self) -> None:
-        self.assertEqual("http://localhost:8765/", self._printed_url(None))
-        self.assertEqual(("::", 8765), self.last_address)
+    def test_the_banner_is_the_only_line(self) -> None:
+        self.assertEqual(1, len(self._banner(None).splitlines()))
+
+    def test_banner_states_both_settings(self) -> None:
+        banner = self._banner(None, loopback="write", public="read", updater=mock.Mock())
+        self.assertEqual("todo web: http://localhost:8765  loopback=write  public=read", banner)
+
+    def test_public_not_none_binds_the_wildcard(self) -> None:
+        for public in ("read", "write"):
+            with self.subTest(public=public):
+                self._banner(None, public=public, updater=mock.Mock())
+                self.assertEqual(("::", 8765), self.last_address)
+
+    def test_public_none_binds_loopback_even_when_loopback_is_write(self) -> None:
+        self._banner(None, loopback="write", updater=mock.Mock())
+        self.assertEqual(("localhost", 8765), self.last_address)
+
+    def test_explicit_host_beats_the_derived_one(self) -> None:
+        self._banner("0.0.0.0", public="none")
+        self.assertEqual(("0.0.0.0", 8765), self.last_address)
 
     def test_ipv4_wildcard_prints_localhost(self) -> None:
-        self.assertEqual("http://localhost:8765/", self._printed_url("0.0.0.0"))
+        self.assertIn("http://localhost:8765  ", self._banner("0.0.0.0"))
 
     def test_ipv6_literal_prints_bracketed(self) -> None:
-        self.assertEqual("http://[::1]:8765/", self._printed_url("::1"))
+        self.assertIn("http://[::1]:8765  ", self._banner("::1"))
 
     def test_ipv4_literal_prints_as_given(self) -> None:
-        self.assertEqual("http://127.0.0.1:8765/", self._printed_url("127.0.0.1"))
+        self.assertIn("http://127.0.0.1:8765  ", self._banner("127.0.0.1"))
 
-    def test_serve_is_read_only_by_default(self) -> None:
-        default = inspect.signature(todo_web.serve).parameters["write"].default
-        self.assertIs(False, default)
+    def test_both_none_refuses_before_binding(self) -> None:
+        with mock.patch.object(todo_web, "_DualStackServer") as cls:
+            with self.assertRaises(todo_web.TodoWebError) as caught:
+                todo_web.serve(
+                    Path("."),
+                    resolver=mock.Mock(),
+                    searcher=mock.Mock(),
+                    loopback="none",
+                    public="none",
+                )
+        self.assertIn("both none", str(caught.exception))
+        cls.assert_not_called()
+
+    def test_a_bad_level_refuses_before_binding(self) -> None:
+        with mock.patch.object(todo_web, "_DualStackServer") as cls:
+            with self.assertRaises(todo_web.TodoWebError):
+                todo_web.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), loopback="rw")
+        cls.assert_not_called()
+
+    def test_serve_defaults_are_loopback_read_public_none(self) -> None:
+        params = inspect.signature(todo_web.serve).parameters
+        self.assertEqual(("read", "none"), (params["loopback"].default, params["public"].default))
 
 
 class WebCommandBindTest(unittest.TestCase):
-    """`todo.py web` binds dual-stack read-only, loopback under --write, --host as given."""
+    """`todo.py web`: loopback=read public=none by default, bind by public, --host as given."""
 
     def _serve_kwargs(self, *argv: str) -> dict:
         """Run `web <argv>` with serve() faked; return the kwargs serve was called with."""
@@ -106,38 +143,54 @@ class WebCommandBindTest(unittest.TestCase):
         serve.assert_called_once()
         return serve.call_args.kwargs
 
-    def test_default_is_read_only_on_the_dual_stack_wildcard(self) -> None:
+    def test_default_is_loopback_read_public_none_on_loopback(self) -> None:
         kwargs = self._serve_kwargs()
-        self.assertEqual("::", kwargs["host"])
-        self.assertIs(False, kwargs["write"])
+        self.assertEqual("localhost", kwargs["host"])
+        self.assertEqual(("read", "none"), (kwargs["loopback"], kwargs["public"]))
+        self.assertEqual(8765, kwargs["port"])
         self.assertIsNone(kwargs["updater"])
 
-    def test_write_binds_loopback_and_enables_writes(self) -> None:
-        kwargs = self._serve_kwargs("--write")
+    def test_loopback_write_gets_an_updater_and_stays_on_loopback(self) -> None:
+        kwargs = self._serve_kwargs("--loopback", "write")
         self.assertEqual("localhost", kwargs["host"])
-        self.assertIs(True, kwargs["write"])
+        self.assertEqual("write", kwargs["loopback"])
         self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
 
-    def test_explicit_host_is_honoured_under_write(self) -> None:
-        kwargs = self._serve_kwargs("--write", "--host", "0.0.0.0")
-        self.assertEqual("0.0.0.0", kwargs["host"])
-        self.assertIs(True, kwargs["write"])
+    def test_public_write_gets_an_updater(self) -> None:
+        kwargs = self._serve_kwargs("--public", "write")
+        self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
 
-    def test_explicit_host_is_honoured_read_only(self) -> None:
-        kwargs = self._serve_kwargs("--host", "127.0.0.1")
-        self.assertEqual("127.0.0.1", kwargs["host"])
-        self.assertIs(False, kwargs["write"])
+    def test_public_read_binds_the_dual_stack_wildcard(self) -> None:
+        kwargs = self._serve_kwargs("--public", "read")
+        self.assertEqual("::", kwargs["host"])
+        self.assertIsNone(kwargs["updater"])
 
-    def test_loopback_name_prints_as_given(self) -> None:
-        fake_server = mock.Mock(server_port=8765)
-        fake_server.serve_forever.side_effect = KeyboardInterrupt
-        out = io.StringIO()
-        with mock.patch.object(todo_web, "_DualStackServer", return_value=fake_server):
-            with redirect_stdout(out):
-                todo_web.serve(
-                    Path("."), host="localhost", resolver=mock.Mock(), searcher=mock.Mock()
-                )
-        self.assertEqual("http://localhost:8765/", out.getvalue().strip())
+    def test_explicit_host_is_honoured_whatever_public_is(self) -> None:
+        for argv in (["--host", "0.0.0.0"], ["--host", "0.0.0.0", "--public", "read"]):
+            with self.subTest(argv=argv):
+                self.assertEqual("0.0.0.0", self._serve_kwargs(*argv)["host"])
+
+    def test_explicit_port_is_passed_on(self) -> None:
+        self.assertEqual(9001, self._serve_kwargs("--port", "9001")["port"])
+
+    def test_both_none_refuses_to_start_and_binds_nothing(self) -> None:
+        args = todo.build_parser().parse_args(["web", "--loopback", "none", "--public", "none"])
+        command = args.command_cls(args, todo_dir=Path("/nonexistent-todo-dir"))
+        with mock.patch.object(todo, "repo_root", return_value=Path(".")), mock.patch.object(
+            todo.todo_web, "serve"
+        ) as serve:
+            with self.assertRaises(todo.TodoError) as caught:
+                command.do()
+        self.assertIn("both none", str(caught.exception))
+        serve.assert_not_called()
+
+    def test_write_flag_is_gone(self) -> None:
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            todo.build_parser().parse_args(["web", "--write"])
+
+    def test_a_level_outside_the_three_is_a_usage_error(self) -> None:
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            todo.build_parser().parse_args(["web", "--public", "admin"])
 
 
 if __name__ == "__main__":

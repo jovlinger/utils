@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the viewer's write endpoint: POST /update under `todo.py web --write`.
+"""Tests for the viewer's write endpoint: POST /update under `todo.py web`.
 
 Three layers: the request checks and status mapping (handle_update against a
 fake updater), the running server in both modes, and the real updater in
@@ -186,6 +186,14 @@ class RejectedRequestTest(unittest.TestCase):
         self.assert_refused(body=b"op=set-body&value=x")
 
 
+def _banner_url(output: str) -> str:
+    """The URL in the start banner `todo web: <url>  loopback=..  public=..`."""
+    found = re.search(r"todo web: (\S+)", output)
+    if not found:
+        raise AssertionError(f"no start banner in {output!r}")
+    return found.group(1).rstrip("/")
+
+
 def _start_server(*, write: bool, updater: Optional[FakeUpdater]) -> str:
     """Start a viewer on an ephemeral loopback port; return its base URL."""
     printed = io.StringIO()
@@ -198,7 +206,7 @@ def _start_server(*, write: bool, updater: Optional[FakeUpdater]) -> str:
                 port=0,
                 resolver=mock.Mock(),
                 searcher=lambda _q: [],
-                write=write,
+                loopback="write" if write else "read",
                 updater=updater,
             )
 
@@ -207,7 +215,7 @@ def _start_server(*, write: bool, updater: Optional[FakeUpdater]) -> str:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if printed.getvalue().strip():
-            return printed.getvalue().strip().rstrip("/")
+            return _banner_url(printed.getvalue())
         time.sleep(0.01)
     raise AssertionError("viewer did not print its URL")
 
@@ -232,7 +240,7 @@ def _post(base: str, path: str, payload: Dict[str, Any]) -> Tuple[int, Dict[str,
 
 
 class WriteServerTest(unittest.TestCase):
-    """The running server under --write routes POST /update through handle_update."""
+    """The running server with loopback=write routes POST /update through handle_update."""
 
     updater: FakeUpdater
     base: str = ""
@@ -270,7 +278,7 @@ class WriteServerTest(unittest.TestCase):
 
 
 class ReadOnlyServerTest(unittest.TestCase):
-    """Without --write every POST is answered with an error and nothing is updated."""
+    """At loopback=read every POST is answered with 403 and nothing is updated."""
 
     def test_post_update_is_refused(self) -> None:
         updater = FakeUpdater()
@@ -289,8 +297,200 @@ class ReadOnlyServerTest(unittest.TestCase):
                 port=0,
                 resolver=mock.Mock(),
                 searcher=mock.Mock(),
-                write=True,
+                loopback="write",
             )
+
+
+class IsLoopbackClientTest(unittest.TestCase):
+    """The class of a client comes from its peer address alone."""
+
+    def test_loopback_addresses(self) -> None:
+        for address in ("127.0.0.1", "127.9.8.7", "::1", "::ffff:127.0.0.1", "::ffff:127.4.4.4"):
+            with self.subTest(address=address):
+                self.assertTrue(todo_web.is_loopback_client(address))
+
+    def test_every_other_address_is_public(self) -> None:
+        for address in (
+            "192.168.1.5",
+            "10.0.0.1",
+            "128.0.0.1",
+            "::ffff:10.0.0.1",
+            "2001:db8::1",
+            "fe80::1%en0",
+            "0.0.0.0",
+            "::",
+            "not an address",
+            "",
+        ):
+            with self.subTest(address=address):
+                self.assertFalse(todo_web.is_loopback_client(address))
+
+
+class PublicWriteChecksTest(unittest.TestCase):
+    """A public client's write needs JSON and Origin == http://<Host>; Host may be any name."""
+
+    def refusal(self, headers: Dict[str, str], *, loopback: bool) -> str:
+        return todo_web.request_refusal(headers, PORT, loopback=loopback)
+
+    def test_public_host_need_not_be_a_loopback_name(self) -> None:
+        headers = {
+            "Host": "todo.example:9000",
+            "Origin": "http://todo.example:9000",
+            "Content-Type": "application/json",
+        }
+        self.assertEqual("", self.refusal(headers, loopback=False))
+        self.assertNotEqual("", self.refusal(headers, loopback=True))
+
+    def test_public_origin_must_match_the_host(self) -> None:
+        headers = {
+            "Host": "todo.example:9000",
+            "Origin": "http://evil.example",
+            "Content-Type": "application/json",
+        }
+        self.assertIn("Origin", self.refusal(headers, loopback=False))
+        self.assertIn("Origin", self.refusal(_without_key(headers, "Origin"), loopback=False))
+
+    def test_public_needs_json_and_a_host(self) -> None:
+        headers = {
+            "Host": "todo.example",
+            "Origin": "http://todo.example",
+            "Content-Type": "text/plain",
+        }
+        self.assertIn("Content-Type", self.refusal(headers, loopback=False))
+        self.assertIn("Host", self.refusal({"Content-Type": "application/json"}, loopback=False))
+
+
+def _without_key(headers: Dict[str, str], key: str) -> Dict[str, str]:
+    return {k: v for k, v in headers.items() if k != key}
+
+
+class ClientClassMatrixTest(unittest.TestCase):
+    """Every loopback level x public level, each class probed over HTTP.
+
+    The test client always connects from 127.0.0.1; a public client is
+    simulated by making the classifier answer "not loopback" for the request.
+    """
+
+    EXPECT = {
+        # level: (GET status, POST /update status, page has edit controls)
+        "none": (403, 403, False),
+        "read": (200, 403, False),
+        "write": (200, 200, True),
+    }
+
+    def _serve(self, loopback: str, public: str, updater: FakeUpdater) -> str:
+        printed = io.StringIO()
+
+        def resolver(_selector: str) -> Tuple[Path, Dict[str, Any]]:
+            return Path("."), json.loads(json.dumps(PAGE_TODO))
+
+        def run() -> None:
+            with contextlib.redirect_stdout(printed):
+                todo_web.serve(
+                    Path("."),
+                    host="127.0.0.1",
+                    port=0,
+                    resolver=resolver,
+                    searcher=lambda _q: [],
+                    loopback=loopback,
+                    public=public,
+                    updater=updater,
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+        deadline = time.monotonic() + 10
+        while not printed.getvalue().strip() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return _banner_url(printed.getvalue())
+
+    def _get(self, base: str, path: str) -> Tuple[int, str]:
+        try:
+            with urllib.request.urlopen(base + path, timeout=10) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8")
+
+    def _as(self, client_is_loopback: bool):
+        return mock.patch.object(todo_web, "is_loopback_client", return_value=client_is_loopback)
+
+    def test_each_class_gets_its_own_level(self) -> None:
+        combos = [
+            (loop, pub)
+            for loop in todo_web.LEVELS
+            for pub in todo_web.LEVELS
+            if (loop, pub) != ("none", "none")
+        ]
+        for loop, pub in combos:
+            updater = FakeUpdater()
+            base = self._serve(loop, pub, updater)
+            for name, level, client_is_loopback in (
+                ("loopback", loop, True),
+                ("public", pub, False),
+            ):
+                get_status, post_status, controls = self.EXPECT[level]
+                with self.subTest(loopback=loop, public=pub, client=name):
+                    updater.requests.clear()
+                    with self._as(client_is_loopback):
+                        status, page = self._get(base, f"/?id={PAGE_TID[:8]}")
+                        search_status, _ = self._get(base, "/search?q=")
+                        post, _payload = _post(base, "/update", REQUEST)
+                    self.assertEqual(get_status, status)
+                    self.assertEqual(get_status, search_status)
+                    self.assertEqual(post_status, post)
+                    self.assertEqual(1 if post_status == 200 else 0, len(updater.requests))
+                    if status == 200:
+                        self.assertEqual(controls, "write" in page_data(page))
+
+    def test_none_is_403_on_every_path(self) -> None:
+        base = self._serve("none", "read", FakeUpdater())
+        with self._as(True):
+            for path in ("/", f"/{PAGE_TID[:8]}", "/search?q=x", "/nope"):
+                with self.subTest(path=path):
+                    self.assertEqual(403, self._get(base, path)[0])
+
+    def test_class_follows_the_peer_address_not_the_host_header(self) -> None:
+        base = self._serve("none", "read", FakeUpdater())
+        req = urllib.request.Request(base + "/", headers={"Host": "localhost:1"})
+        with self._as(True), self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(403, caught.exception.code)
+
+    def test_a_public_write_is_accepted_under_a_non_loopback_host_name(self) -> None:
+        updater = FakeUpdater()
+        base = self._serve("read", "write", updater)
+        port = base.rsplit(":", 1)[1]
+        req = urllib.request.Request(
+            base + "/update",
+            data=json.dumps(REQUEST).encode("utf-8"),
+            method="POST",
+            headers={
+                "Host": f"todo.example:{port}",
+                "Origin": f"http://todo.example:{port}",
+                "Content-Type": "application/json",
+            },
+        )
+        with self._as(False), urllib.request.urlopen(req, timeout=10) as resp:
+            self.assertEqual(200, resp.status)
+        self.assertEqual([REQUEST], updater.requests)
+
+    def test_a_loopback_write_still_needs_a_loopback_host_name(self) -> None:
+        updater = FakeUpdater()
+        base = self._serve("write", "none", updater)
+        port = base.rsplit(":", 1)[1]
+        req = urllib.request.Request(
+            base + "/update",
+            data=json.dumps(REQUEST).encode("utf-8"),
+            method="POST",
+            headers={
+                "Host": f"todo.example:{port}",
+                "Origin": f"http://todo.example:{port}",
+                "Content-Type": "application/json",
+            },
+        )
+        with self._as(True), self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(403, caught.exception.code)
+        self.assertEqual([], updater.requests)
 
 
 PAGE_TID = "5e" * 32
@@ -340,7 +540,7 @@ def meta_row(page: str, key: str) -> str:
 
 
 class FieldEditRenderTest(unittest.TestCase):
-    """Edit controls on Summary/Body/AC/LongSummary/ActualSummary, only under --write."""
+    """Edit controls on Summary/Body/AC/LongSummary/ActualSummary, only for a write class."""
 
     def test_read_only_page_has_no_edit_controls_and_no_write_data(self) -> None:
         page = render(PAGE_TODO)
@@ -535,7 +735,7 @@ class MoveRenderTest(unittest.TestCase):
 
 
 class EditPageServeTest(unittest.TestCase):
-    """The running server renders edit controls only under --write."""
+    """The running server renders edit controls only for a write class."""
 
     def _page(self, *, write: bool) -> str:
         updater = FakeUpdater()
@@ -553,7 +753,7 @@ class EditPageServeTest(unittest.TestCase):
                     port=0,
                     resolver=resolver,
                     searcher=lambda _q: [],
-                    write=write,
+                    loopback="write" if write else "read",
                     updater=updater if write else None,
                 )
 
@@ -561,7 +761,7 @@ class EditPageServeTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while not printed.getvalue().strip() and time.monotonic() < deadline:
             time.sleep(0.01)
-        base = printed.getvalue().strip().rstrip("/")
+        base = _banner_url(printed.getvalue())
         with urllib.request.urlopen(f"{base}/{PAGE_TID[:8]}", timeout=10) as resp:
             return resp.read().decode("utf-8")
 
@@ -595,7 +795,7 @@ class FramingHeaderTest(unittest.TestCase):
                     port=0,
                     resolver=resolver,
                     searcher=lambda _q: [],
-                    write=write,
+                    loopback="write" if write else "read",
                     updater=FakeUpdater() if write else None,
                 )
 
@@ -603,7 +803,7 @@ class FramingHeaderTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while not printed.getvalue().strip() and time.monotonic() < deadline:
             time.sleep(0.01)
-        return printed.getvalue().strip().rstrip("/")
+        return _banner_url(printed.getvalue())
 
     def _headers(self, url: str) -> Any:
         try:
@@ -711,7 +911,7 @@ class WebOpArgvTest(unittest.TestCase):
 
 
 class WebUpdaterCase(test_todo.TodoIntegrationCase):
-    """A real store, todo.main() in-process, and the WebUpdater that `web --write` injects."""
+    """A real store, todo.main() in-process, and the WebUpdater that `web` injects."""
 
     TID = "e7" * 32
 
@@ -917,7 +1117,7 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
     """
 
     def serve(self) -> str:
-        """Start `web --write`'s server for this store; return its base URL."""
+        """Start the server for this store; return its base URL."""
 
         def resolver(selector: str) -> Tuple[Path, Dict[str, Any]]:
             # The page's repo root only feeds diffs, which come from a real git; the
@@ -937,7 +1137,7 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
                     port=0,
                     resolver=resolver,
                     searcher=lambda _q: [],
-                    write=True,
+                    loopback="write",
                     updater=self.updater,
                 )
 
@@ -945,7 +1145,7 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
         deadline = time.monotonic() + 10
         while not printed.getvalue().strip() and time.monotonic() < deadline:
             time.sleep(0.01)
-        return printed.getvalue().strip().rstrip("/")
+        return _banner_url(printed.getvalue())
 
     def load(self, base: str) -> Dict[str, Any]:
         """GET the todo's page as a browser would; return its embedded DATA."""
@@ -1044,7 +1244,7 @@ class ThreadLocalCaptureTest(unittest.TestCase):
 
 
 class AutocommitScopeTest(test_todo.TodoCase):
-    """In one long-lived `web --write` process, each autocommit is only that save's ticket."""
+    """In one long-lived `web` process, each autocommit is only that save's ticket."""
 
     def _store_git(self, *args: str) -> str:
         proc = subprocess.run(
