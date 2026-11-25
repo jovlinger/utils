@@ -268,7 +268,7 @@ default. `host` spellings: [Notes and relto](#notes-and-relto).
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
-| `web [selector] [--host] [--port] [--write] [--dump-html]` | Serve viewer + permalinks on port 8765. Read-only by default, bound to `::` (every interface, IPv4 and IPv6). `--write` adds in-place edits of the CLI's update surface and binds `localhost` instead; an explicit `--host` is used as given either way. See [Web edits](#web-edits-web---write) |
+| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Serve viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-web) |
 
 ### STUB (not automation)
 
@@ -697,12 +697,42 @@ the same page.
 Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
 (`replaceState`), so whatever is on screen is already a copyable permalink.
 
-### Web edits (`web --write`)
+### Web access and edits (`web`)
 
-`todo.py web --write` turns the todo page into an editor for the fields the
-CLI can **update**, and nothing more: the web reads and updates, it never
-creates or deletes. Without `--write` the server is the read-only viewer above,
-renders no edit controls, and answers every POST with 405.
+Two settings decide who may do what. Each is `none`, `read` or `write`:
+
+| Setting | Governs | Default |
+|---------|---------|---------|
+| `--loopback` | clients whose source address is loopback: `127.0.0.0/8`, `::1`, `::ffff:127.x.x.x` | `read` |
+| `--public` | every other client | `none` |
+
+| Level | GET | `POST /update` | Edit controls |
+|-------|-----|----------------|---------------|
+| `none` | 403 | 403 | none |
+| `read` | served | 403 | none |
+| `write` | served | accepted | rendered |
+
+The class is the TCP peer address of each request, never the `Host` header.
+Both settings `none` leaves nothing to serve, so the command exits nonzero
+before binding a socket. The default bind host is `localhost` when public is
+`none` and `::` otherwise; an explicit `--host` (or config `host`) wins, and a
+non-loopback host under `public=none` still refuses non-loopback clients. Start
+prints one line, `todo web: <url>  loopback=<level>  public=<level>`.
+
+Every option (`loopback`, `public`, `host`, `port`) defaults from the `web`
+object of the todo dir's `config.json`; the command line beats config, config
+beats the built-in default:
+
+```json
+{"web": {"loopback": "write", "public": "read", "host": "::", "port": 8765}}
+```
+
+An unknown key, a level outside the three, a non-string `host` or a `port`
+outside 0-65535 refuses to start with a message naming it. The positional
+selector and `--dump-html` are per invocation and have no config key.
+
+At `write` the todo page is an editor for the fields the CLI can **update**,
+and nothing more: the web reads and updates, it never creates or deletes.
 
 | Control | Where | CLI command it runs |
 |---------|-------|---------------------|
@@ -744,12 +774,13 @@ the page sent, even when the todo changed since the page loaded.
 | 403 | refused before any command ran | `{"error"}` |
 | 503 | the store lock is held elsewhere (the CLI's ERETRY); retry | `{"error"}` |
 
-A 403 is any of: the `Host` header is not `localhost`, `127.0.0.1` or `[::1]`
-on the server's port (DNS rebinding); `Origin` is missing or is not
-`http://<that Host>` (a cross-site page); the `Content-Type` is not
-`application/json`, or the body is not JSON. The JSON content type is what
-forces any cross-origin request through a CORS preflight, which the server
-never answers. GET requests are not checked.
+A 403 is any of: the client's class is not `write`; for a loopback client, the
+`Host` header is not `localhost`, `127.0.0.1` or `[::1]` on the server's port
+(DNS rebinding; a public client's `Host` only has to be present); `Origin` is
+missing or is not `http://<that Host>` (a cross-site page); the `Content-Type`
+is not `application/json`, or the body is not JSON. The JSON content type is
+what forces any cross-origin request through a CORS preflight, which the server
+never answers. GET requests carry no such checks beyond the class level.
 
 ### Minimal current skeleton
 

@@ -128,10 +128,12 @@ The parent/child subtodo however has a strong orchestration requirement, capture
 
 ## Viewer
 
-`todo.py web [selector]` serves a read-only viewer on port 8765 (bound to every interface).
+`todo.py web [selector]` serves a viewer on port 8765, by default to loopback clients only.
 This allows a rudimentary URL-based (as opposed to Single Page App) browser for todos.
-`todo.py web --write` binds `localhost` and lets the page edit what the CLI can update
-(text fields, notes, not-done work items and their order); see IMPLEMENTATION.md, "Web edits".
+`--loopback` and `--public` each take `none`, `read` or `write` (defaults `read` and `none`) for
+loopback clients and for every other client; at `write` the page edits what the CLI can update
+(text fields, notes, not-done work items and their order). Every option defaults from the `web`
+object of the todo dir's `config.json`. See IMPLEMENTATION.md, "Web access and edits".
 
 ```
 http://localhost:8765/<todoid>/objid/<objid>
