@@ -11,7 +11,7 @@ browse unusable. Deploy logs still reported success (`getState=200`, `mpc` ok).
 
 ## 2. Evidences
 
-- Installed `/usr/bin/mpd` md5 matched `mpd_indexer/out/mpd`; `mpc ls NAS/gmk/files`
+- Installed `/usr/bin/mpd` md5 matched `../MPD/mpd_indexer/out/mpd (local, unversioned)`; `mpc ls NAS/gmk/files`
   showed `_tags` and not `_meta`; on-device fixture prove against that binary printed
   `PROOF_OK`.
 - Production `tag_cache` mtime was **before** the deploy restart -- so live library
