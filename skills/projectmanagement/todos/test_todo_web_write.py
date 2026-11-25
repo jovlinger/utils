@@ -955,11 +955,9 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
             self.updater.update({"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x"})
         self.assertIn("no todo found for id", str(caught.exception))
 
-    def test_edit_sentinel_is_the_cli_refusal_not_an_editor(self) -> None:
-        with self.assertRaises(todo_web.UpdateRefused) as caught:
-            self.update(op="set-body", value="EDIT")
-        self.assertIn("requires an interactive terminal", str(caught.exception))
-        self.assertEqual("original body", self.stored()["Body"]["raw"])
+    def test_the_text_EDIT_is_stored_literally(self) -> None:
+        self.update(op="set-body", value="EDIT")
+        self.assertEqual("EDIT", self.stored()["Body"]["raw"])
 
     def test_unknown_op_is_refused_and_writes_nothing(self) -> None:
         before = self.stored()
@@ -1035,12 +1033,20 @@ class WebUpdaterOpsTest(WebUpdaterCase):
                 stored = self.stored()[field]
                 self.assertEqual(value, stored["raw"] if isinstance(stored, dict) else stored)
 
-    def test_each_set_op_surfaces_the_cli_refusal(self) -> None:
-        # `set` captures EDIT through an editor for these flags only; --long-summary
-        # takes it literally, so its refusal case is the unknown todo below.
-        for op in ("set-summary", "set-ac", "set-actual-summary"):
+    def test_each_set_op_stores_the_text_EDIT_literally(self) -> None:
+        cases = {
+            "set-summary": "Summary",
+            "set-ac": "AC",
+            "set-long-summary": "LongSummary",
+            "set-actual-summary": "ActualSummary",
+        }
+        for op, field in cases.items():
             with self.subTest(op=op):
-                self.assertIn("requires an interactive terminal", self.refused(op=op, value="EDIT"))
+                self.update(op=op, value="EDIT")
+                stored = self.stored()[field]
+                self.assertEqual("EDIT", stored["raw"] if isinstance(stored, dict) else stored)
+
+    def test_each_set_op_surfaces_the_cli_refusal(self) -> None:
         for op in ("set-summary", "set-ac", "set-long-summary", "set-actual-summary"):
             with self.subTest(op=op, case="unknown todo"):
                 self.assertIn("no todo found", self.refused(op=op, id="ffff" * 16, value="x"))
@@ -1179,6 +1185,13 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
             status, payload = self.save(base, stale, "the page's draft")
             self.assertEqual(200, status, payload)
             self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
+
+    def test_saving_the_text_EDIT_over_http_stores_it(self) -> None:
+        with self.in_env():
+            base = self.serve()
+            status, payload = self.save(base, self.load(base), "EDIT")
+            self.assertEqual(200, status, payload)
+            self.assertEqual("EDIT", self.stored()["Body"]["raw"])
 
     def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(self) -> None:
         with self.in_env():

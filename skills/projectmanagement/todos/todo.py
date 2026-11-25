@@ -177,12 +177,6 @@ class EditNotInteractive(TodoError):
     """An editor was needed but stdin/stdout are not a terminal to run it on."""
 
 
-# Sentinel arg value: when a free-text option is passed exactly this, its real
-# value is captured from $VISUAL/$EDITOR/vi (interactive) or is an error
-# (non-interactive). See TodoSubCommand.edit_fields / resolve_edit_fields.
-EDIT_SENTINEL = "EDIT"
-
-
 def _stdio_is_interactive() -> bool:
     """True only when both stdin and stdout are a tty (an editor can run)."""
     try:
@@ -3836,8 +3830,6 @@ class TodoSubCommand(ABC):
     command_names: ClassVar[Sequence[str]] = ()
     doc_short: ClassVar[str] = ""
     doc_long: ClassVar[str] = ""
-    # Free-text arg dests eligible for the `EDIT` sentinel (see EDIT_SENTINEL).
-    edit_fields: ClassVar[Sequence[str]] = ()
 
     def __init__(self, args: argparse.Namespace, *, todo_dir: Path) -> None:
         """Copy parsed argparse fields onto the command object.
@@ -3856,27 +3848,6 @@ class TodoSubCommand(ABC):
     def __getattr__(self, name: str) -> Any:
         """Expose argparse fields as dynamic command attributes."""
         return getattr(self.args, name)
-
-    def resolve_edit_fields(self, todo_id: str) -> None:
-        """Expand any `EDIT`-valued free-text arg (see ``edit_fields``) in place.
-
-        For each eligible arg whose value is exactly ``EDIT``: in an interactive
-        terminal, capture the value via ``$VISUAL``/``$EDITOR``/vi; otherwise
-        raise ``EditNotInteractive`` (which exits 1). Multiple such args are
-        resolved in ``edit_fields`` order. Callers that create a todo MUST call
-        this before creating anything, so a non-interactive `EDIT` leaves no
-        todo behind.
-        """
-        for field in self.edit_fields:
-            if getattr(self, field, None) != EDIT_SENTINEL:
-                continue
-            if not _stdio_is_interactive():
-                raise EditNotInteractive(
-                    f"--{field.replace('_', '-')}=EDIT requires an interactive terminal"
-                )
-            value = edit_text_via_editor("", prefix=f"{todo_id[:8]}-{field}").strip()
-            setattr(self.args, field, value)
-            self.__dict__[field] = value
 
     @classmethod
     def register(cls, subparsers: argparse._SubParsersAction) -> None:
@@ -4279,7 +4250,6 @@ class GetCommand(TodoFieldCommand):
 
 class InitCommand(TodoCreateCommand):
     command_names = ("init",)
-    edit_fields = ("summary", "body", "ac", "note", "actual_summary")
     doc_short: ClassVar[str] = "Create todo branch (run when ready to work)"
     doc_long: ClassVar[str] = (
         "Init makes a todo branch-bound and ready to work -- run it when the design is ready and "
@@ -4368,10 +4338,6 @@ class InitCommand(TodoCreateCommand):
         branch: str = self.branch or kebab_branch_name(ticket_id, self.summary)
         if branch_exists(root, branch):
             raise TodoError(f"branch {branch!r} already exists")
-
-        # Resolve any EDIT sentinels BEFORE creating the branch/ticket, so a
-        # non-interactive EDIT aborts with nothing created (no todo to RM).
-        self.resolve_edit_fields(ticket_id)
 
         agent_type = self.agent_type or os.environ.get("TODO_AGENT_TYPE")
         session_id = self.session_id or os.environ.get("TODO_SESSION_ID")
@@ -4612,10 +4578,9 @@ class SetCommand(TodoFieldCommand):
         "path from a file or stdin, use set-json-path. The command requires at least one field "
         "change. The write is store-only (sqlite or json-dir backend): no branch checkout and "
         "no commit. For a `groom` todo, changing --summary also refreshes the Branch label so "
-        "`init` later creates a well-named branch. Any free-text value passed as EDIT is "
-        "captured from $VISUAL/$EDITOR/vi (interactive terminals only)."
+        "`init` later creates a well-named branch. To edit one free-text field in "
+        "$VISUAL/$EDITOR, use `edit`."
     )
-    edit_fields = ("summary", "body", "ac", "note", "actual_summary")
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
@@ -4664,7 +4629,6 @@ class SetCommand(TodoFieldCommand):
         """
         root = self.root()
         _loc, todo = resolve_ticket_by_id(root, self.id)
-        self.resolve_edit_fields(str(todo.get("Id", "") or "current"))
         parent_touched = self.parent is not None
         tags_touched = bool(self.tag or self.untag)
         state = apply_set_fields(

@@ -663,18 +663,13 @@ class InitTests(TodoCase):
         ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
         self.assertEqual(ticket["State"], {"groom": {}})
 
-    def test_init_noninteractive_EDIT_creates_nothing(self) -> None:
-        """A non-tty EDIT value aborts with exit 1 and leaves no todo/branch."""
+    def test_init_stores_the_text_EDIT_literally(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        head_before = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        proc = self.todo("init", "--summary=EDIT")
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("interactive terminal", proc.stderr)
-        # no branch switched to / created, no ticket in the store
-        self.assertEqual(
-            self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), head_before
-        )
-        self.assertEqual(self.todo("ls").stdout.strip(), "")
+        self.init_ok("--summary=EDIT", "--body=EDIT", "--ac=EDIT")
+        ticket = self.read_cur()
+        self.assertEqual("EDIT", ticket["Summary"]["raw"])
+        self.assertEqual("EDIT", ticket["Body"]["raw"])
+        self.assertEqual("EDIT", ticket["AC"])
 
 
 class SetStateViaSetTests(TodoIntegrationCase):
@@ -689,6 +684,21 @@ class SetStateViaSetTests(TodoIntegrationCase):
         # the removed subcommand must not resolve anymore
         gone = self.todo("set-state", "done")
         self.assertNotEqual(gone.returncode, 0)
+
+    def test_set_stores_the_text_EDIT_literally(self) -> None:
+        tid = "5e" * 32
+        self.write_ticket("5e5e5e5e-literal", tid, "before", body="before")
+        proc = self.todo(
+            "set", tid[:8], "--summary=EDIT", "--body=EDIT", "--ac=EDIT",
+            "--actual-summary=EDIT", "--state=userneeded", "--note=EDIT",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket = self.read_cur()
+        self.assertEqual("EDIT", ticket["Summary"]["raw"])
+        self.assertEqual("EDIT", ticket["Body"]["raw"])
+        self.assertEqual("EDIT", ticket["AC"])
+        self.assertEqual("EDIT", ticket["ActualSummary"])
+        self.assertEqual({"userneeded": {"note": "EDIT"}}, ticket["State"])
 
 
 class EditCommandTests(TodoIntegrationCase):
