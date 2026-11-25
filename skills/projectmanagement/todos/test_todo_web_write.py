@@ -1115,6 +1115,24 @@ class RoundTripConflictTest(WebUpdaterCase):
             # The token the save returned is the one a reload now carries.
             self.assertEqual(payload["token"], self.load(base)["write"]["token"])
 
+    def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(self) -> None:
+        with self.in_env():
+            base = self.serve()
+            data = self.load(base)
+            with mock.patch.object(
+                todo_store.SqliteTodoStore, "put", side_effect=OSError("disk full")
+            ):
+                status, payload = self.save(base, data, "never lands")
+            self.assertEqual(500, status)
+            self.assertIn("OSError", payload["error"])
+            self.assertIn("disk full", payload["error"])
+            self.assertEqual("original body", self.stored()["Body"]["raw"])
+
+            # The lock was released: the same page saves once the fault is gone.
+            status, payload = self.save(base, data, "lands")
+            self.assertEqual(200, status, payload)
+            self.assertEqual("lands", self.stored()["Body"]["raw"])
+
 
 class AutocommitScopeTest(test_todo.TodoCase):
     """In one long-lived `web --write` process, each autocommit is only that save's ticket."""

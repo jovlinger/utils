@@ -1977,7 +1977,8 @@ def handle_update(
 
     403 when the request fails ``request_refusal`` or its body is not JSON, 400
     when the JSON is not an object, 200 / 409 / the refusal's own status from
-    *updater*. The updater runs only after every check has passed.
+    *updater*, and 500 naming the exception type and message for any other
+    exception it raises. The updater runs only after every check has passed.
     """
     refusal = request_refusal(headers, port)
     if refusal:
@@ -1994,6 +1995,10 @@ def handle_update(
         return 409, {"error": str(exc), "current": exc.current, "token": exc.token}
     except UpdateRefused as exc:
         return exc.status, {"error": str(exc)}
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Anything the command raises that is not a refusal still gets an answer; the
+        # page shows it instead of a dropped connection.
+        return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
 
 class _DualStackServer(ThreadingHTTPServer):
