@@ -89,12 +89,15 @@ with-ro-remounted-rw shadup \
 
 ### Mirror layout
 
-Refresh rebuilds:
+Refresh rebuilds the **global** browse trees only (it does not delete
+per-directory `_tags` roots under album paths):
 
 - `_meta/<album>/album` -> real album directory
 - `_meta/<album>/<tag_path>` -> `_tags/<tag_path>` (backlink)
 - `_tags/<tag_path>/<album>` -> `_meta/<album>`
 
-Cycles between `_meta` and `_tags` are intentional so tag browse and album meta
-share one folder. MPD may store symlink path aliases; Volumio browse should use
-aggregate MPD list commands so Node does not buffer every path.
+Tag sets for that plan come from on-disk per-directory `_tags` when present,
+else from DB `sha_tags` (reconciled fallback). Cycles between `_meta` and
+`_tags` are intentional so tag browse and album meta share one folder. MPD may
+store symlink path aliases; Volumio browse should use aggregate MPD list
+commands so Node does not buffer every path.

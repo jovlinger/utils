@@ -16,6 +16,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Iterator, TypeVar
 
 T = TypeVar("T")
@@ -1663,7 +1664,13 @@ def _stored_relpath_to_shasum(
 def _compute_tags_by_dir(
     conn: sqlite3.Connection, files_root_abs: str
 ) -> dict[str, frozenset[str]]:
-    """Recursive dir_key → tag set under *files_root_abs* (includes ``""`` for root)."""
+    """dir_key → tag set under *files_root_abs* (includes ``\"\"`` for root).
+
+    Prefer on-disk per-directory ``_tags`` roots when present. Directories
+    without a root fall back to unioning DB ``sha_tags`` on stored files.
+    Upward propagation into a parent only runs when that parent has no on-disk
+    root (roots already hold the designed parent = union of children).
+    """
     file_shasum = _stored_relpath_to_shasum(conn, files_root_abs)
     shasum_tags: dict[str, frozenset[str]] = {}
 
@@ -1675,11 +1682,18 @@ def _compute_tags_by_dir(
         return cached
 
     acc: dict[str, set[str]] = {"": set()}
+    has_on_disk_root: dict[str, bool] = {"": False}
     for dirpath_abs, dirnames, filenames in os.walk(files_root_abs, topdown=True):
         dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
         rel_dir = os.path.relpath(dirpath_abs, files_root_abs)
         dir_key = "" if rel_dir in (".", "") else rel_dir.replace(os.sep, "/")
+        on_disk = _read_on_disk_directory_tags(dirpath_abs)
+        if on_disk is not None:
+            acc[dir_key] = set(on_disk)
+            has_on_disk_root[dir_key] = True
+            continue
         acc.setdefault(dir_key, set())
+        has_on_disk_root[dir_key] = False
         for fn in filenames:
             rel_file = f"{dir_key}/{fn}" if dir_key else fn
             shasum = file_shasum.get(rel_file)
@@ -1694,7 +1708,11 @@ def _compute_tags_by_dir(
     for dk in ordered:
         if not dk:
             continue
-        acc[_parent_dir_key(dk)] |= acc[dk]
+        parent = _parent_dir_key(dk)
+        if has_on_disk_root.get(parent, False):
+            continue
+        acc.setdefault(parent, set())
+        acc[parent] |= acc[dk]
 
     return {dk: frozenset(ts) for dk, ts in acc.items()}
 
@@ -1755,9 +1773,11 @@ def _force_symlink(link: str, target_rel: str) -> None:
 
 
 def _remove_index_trees(files_root: str) -> int:
-    """Delete ``files/_tags``, ``files/_meta``, and leftover album-local ``_tags``.
+    """Delete only the global ``files/_tags`` and ``files/_meta`` browse trees.
 
-    Does not follow symlinks when removing. Returns the number of trees removed.
+    Per-directory ``_tags`` roots under album paths are the hierarchy source of
+    truth (see ``importtags.write_directory_tags_root``); they must survive
+    refresh. Does not follow symlinks when removing. Returns trees removed.
     """
     removed = 0
     for name in (META_DIR_NAME, "_tags"):
@@ -1769,22 +1789,22 @@ def _remove_index_trees(files_root: str) -> int:
         else:
             shutil.rmtree(path)
         removed += 1
-
-    for dirpath, dirnames, _filenames in os.walk(files_root, topdown=True):
-        # Do not descend into index trees if somehow still present.
-        dirnames[:] = [d for d in dirnames if d not in _INDEX_TREE_NAMES]
-        if "_tags" not in dirnames:
-            continue
-        tags_path = os.path.join(dirpath, "_tags")
-        dirnames.remove("_tags")
-        if os.path.islink(tags_path) or os.path.isfile(tags_path):
-            os.unlink(tags_path)
-            removed += 1
-            continue
-        if os.path.isdir(tags_path):
-            shutil.rmtree(tags_path)
-            removed += 1
     return removed
+
+
+def _read_on_disk_directory_tags(dirpath: str) -> frozenset[str] | None:
+    """Return tags from ``dirpath/_tags`` if that root exists, else ``None``.
+
+    ``None`` means no on-disk root (caller falls back to DB). An empty frozenset
+    means the root exists and is empty / ``NOTAGS``.
+    """
+    tags_root = os.path.join(dirpath, "_tags")
+    if os.path.islink(tags_root) or not os.path.isdir(tags_root):
+        return None
+    # Lazy import: importtags loads this module for helpers.
+    from importtags import read_directory_tags_root
+
+    return read_directory_tags_root(Path(dirpath))
 
 
 def install_meta_directories(
@@ -1888,19 +1908,21 @@ def install_tag_bucket_meta_links(
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_meta`` and ``files/_tags`` circular browse mirrors.
+    """Rebuild ``files/_meta`` and global ``files/_tags`` browse mirrors.
 
     Passes:
 
-    1. **Bottom-up** walk of ``files/``: build ``dir_key → frozenset(tags)`` by
-       unioning each file's DB tags into its directory and propagating to
-       ancestors (``_tags`` / ``_meta`` skipped while walking).
-    2. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
+    1. Clear only global ``files/_tags`` and ``files/_meta`` (album-local
+       ``_tags`` roots are kept).
+    2. Build ``dir_key → frozenset(tags)`` via :func:`_compute_tags_by_dir`:
+       prefer on-disk per-directory ``_tags`` roots; fall back to DB
+       ``sha_tags`` and upward union when a root is missing.
+    3. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
        per directory, rows ``(tag, meta_relpath, dir_key)``.
-    3. **Meta folders** via :func:`install_meta_directories`: one
+    4. **Meta folders** via :func:`install_meta_directories`: one
        ``_meta/<nested>/`` per directory with ``album`` → real dir and
        ``<tag_path>`` → ``_tags/<tag_path>``.
-    4. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
+    5. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
        ``_tags/<tag_path>/<nested>`` → the **same** ``_meta/<nested>`` (not the
        album). Cycles between meta ↔ tag buckets are intentional.
     """
