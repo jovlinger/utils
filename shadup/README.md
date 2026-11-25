@@ -21,6 +21,25 @@ Repair of albums already in the store: `skills/correct-flac-names` (always
 
 ## Tag ingest and browse symlinks (step 3)
 
+### Per-directory `_tags` hierarchy (normative)
+
+Every directory under `files/` may carry a `_tags` subdirectory. That tree is
+the **root** of the tag hierarchy for that path -- not leftover scrap, and not
+derived from the global browse index.
+
+| Kind of directory | Meaning of `files/<path>/_tags` |
+|-------------------|--------------------------------|
+| Album / audio-bearing leaf (or box that is the album unit) | That album's own tags from musicology / combine / import |
+| Non-album parent (discs or nested boxes) | **Union** of its children's `_tags` |
+
+Example: `files/Depeche Mode - 101/_tags` equals the union of
+`files/Depeche Mode - 101/disc A/_tags` and `.../disc B/_tags`.
+
+The global browse index `files/_tags/...` is **derived by reading** those
+per-directory roots. Musicology writes the roots; refresh (or its successor)
+builds the global mirrors from them. Do not treat DB `sha_tags` alone as a
+parallel source that ignores on-disk per-directory `_tags`.
+
 The store volume (`/mnt/sdb2` by default) is mounted **read-only**. Anything that
 writes under `files/` or `data/` must remount rw (sudo), then remount ro. The
 wrappers below do that via `with-ro-remounted-rw`.
@@ -28,7 +47,7 @@ wrappers below do that via `with-ro-remounted-rw`.
 | Goal | Command |
 |------|---------|
 | Full tag path after albums are already under `files/` | `postingest` |
-| Rebuild `_meta` / `_tags` mirrors from tags already in the DB | `refresh-extracted-tags` |
+| Rebuild `_meta` / global `files/_tags` from per-directory `_tags` roots (and reconciled DB tags) | `refresh-extracted-tags` |
 
 ### `postingest` (import tags into the DB, then rebuild mirrors)
 
