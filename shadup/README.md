@@ -21,6 +21,28 @@ Repair of albums already in the store: `skills/correct-flac-names` (always
 
 ## Tag ingest and browse symlinks (step 3)
 
+### Per-directory `_tags` hierarchy (normative)
+
+Every directory under `files/` may carry a `_tags` subdirectory. That tree is
+the **root** of the tag hierarchy for that path -- not leftover scrap, and not
+derived from the global browse index.
+
+| Kind of directory | Meaning of `files/<path>/_tags` |
+|-------------------|--------------------------------|
+| Album / audio-bearing leaf (or box that is the album unit) | That album's own tags from musicology / combine / import |
+| Non-album parent (discs or nested boxes) | **Union** of its children's `_tags` |
+
+Example: `files/Depeche Mode - 101/_tags` equals the union of
+`files/Depeche Mode - 101/disc A/_tags` and `.../disc B/_tags`.
+
+`importtags` is the producer that materializes those roots: audio-bearing
+leaves from `.meta.combined.json`, non-album parents as the union of child
+`_tags` trees (no per-file rows under `_tags`). The global browse index
+`files/_tags/...` is **derived by reading** those per-directory roots.
+Refresh (or its successor) builds the global mirrors from them. Do not treat
+DB `sha_tags` alone as a parallel source that ignores on-disk per-directory
+`_tags`.
+
 The store volume (`/mnt/sdb2` by default) is mounted **read-only**. Anything that
 writes under `files/` or `data/` must remount rw (sudo), then remount ro. The
 wrappers below do that via `with-ro-remounted-rw`.
@@ -28,7 +50,7 @@ wrappers below do that via `with-ro-remounted-rw`.
 | Goal | Command |
 |------|---------|
 | Full tag path after albums are already under `files/` | `postingest` |
-| Rebuild `_meta` / `_tags` mirrors from tags already in the DB | `refresh-extracted-tags` |
+| Rebuild `_meta` / global `files/_tags` from per-directory `_tags` roots (and reconciled DB tags) | `refresh-extracted-tags` |
 
 ### `postingest` (import tags into the DB, then rebuild mirrors)
 
@@ -67,12 +89,15 @@ with-ro-remounted-rw shadup \
 
 ### Mirror layout
 
-Refresh rebuilds:
+Refresh rebuilds the **global** browse trees only (it does not delete
+per-directory `_tags` roots under album paths):
 
 - `_meta/<album>/album` -> real album directory
 - `_meta/<album>/<tag_path>` -> `_tags/<tag_path>` (backlink)
 - `_tags/<tag_path>/<album>` -> `_meta/<album>`
 
-Cycles between `_meta` and `_tags` are intentional so tag browse and album meta
-share one folder. MPD may store symlink path aliases; Volumio browse should use
-aggregate MPD list commands so Node does not buffer every path.
+Tag sets for that plan come from on-disk per-directory `_tags` when present,
+else from DB `sha_tags` (reconciled fallback). Cycles between `_meta` and
+`_tags` are intentional so tag browse and album meta share one folder. MPD may
+store symlink path aliases; Volumio browse should use aggregate MPD list
+commands so Node does not buffer every path.

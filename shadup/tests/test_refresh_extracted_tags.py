@@ -391,12 +391,6 @@ def test_refresh_extracted_tags_pipeline_find_and_symlinks(
         album = (album_link.parent / os.readlink(album_link)).resolve()
         assert album == (files_root / dir_key).resolve()
 
-    for dir_key in tags_by_dir:
-        if not dir_key:
-            continue
-        assert not (files_root / dir_key / "_tags").exists()
-
-
 def test_shared_meta_across_two_tag_buckets(tmp_path: Path) -> None:
     """``genre/lounge/X`` and ``genre/triphop/X`` are the same ``_meta/X``."""
     files_root = tmp_path / "files"
@@ -430,3 +424,81 @@ def test_shared_meta_across_two_tag_buckets(tmp_path: Path) -> None:
     assert (meta / "genre" / "triphop").resolve() == (
         files_root / "_tags" / "genre" / "triphop"
     ).resolve()
+
+
+def _load_importtags() -> object:
+    it_path = Path(__file__).resolve().parent.parent / "importtags.py"
+    spec = importlib.util.spec_from_file_location("importtags_refresh_mod", it_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_refresh_reads_per_directory_tags_roots_multi_disc(tmp_path: Path) -> None:
+    """On-disk disc/_tags + parent union drive global mirrors; DB can stay thin.
+
+    Red: DB only has artist on one file and refresh ignores rich album-local
+    roots. Green: after refresh, album-local roots survive and global
+    ``files/_tags`` mirrors every tag in the parent union (more than artist).
+    """
+    shadir = tmp_path / "store"
+    shadir.mkdir()
+    files_root = tmp_path / "files"
+    album = files_root / "Unit Artist - Live Box"
+    disc_a = album / "disc A"
+    disc_b = album / "disc B"
+    disc_a.mkdir(parents=True)
+    disc_b.mkdir(parents=True)
+    (disc_a / "01.flac").write_bytes(b"a\n")
+    (disc_b / "01.flac").write_bytes(b"b\n")
+
+    tags_a = ["artist;unitartist", "genre;synthpop", "year;1989"]
+    tags_b = ["artist;unitartist", "genre;live"]
+    it = _load_importtags()
+    it.write_directory_tags_root(disc_a, tags_a)
+    it.write_directory_tags_root(disc_b, tags_b)
+    it.write_directory_tags_root(album, set(tags_a) | set(tags_b))
+
+    _run_shadup(tmp_path, shadir, ["store", "files"])
+    # Thin DB: artist only on one disc file -- not enough for genre/year mirrors.
+    _run_shadup(
+        tmp_path,
+        shadir,
+        ["tag-add", str(disc_b / "01.flac"), "artist;unitartist"],
+    )
+    _run_shadup(tmp_path, shadir, ["extract", "files"])
+
+    # Survive a prior global index wipe path.
+    (files_root / "_tags" / "stale").mkdir(parents=True)
+    (files_root / META_DIR_NAME / "stale").mkdir(parents=True)
+
+    _run_shadup(tmp_path, shadir, ["refresh-extracted-tags"])
+
+    # Album-local roots must not be wiped.
+    assert it.read_directory_tags_root(album) == frozenset(
+        {"artist;unitartist", "genre;synthpop", "genre;live", "year;1989"}
+    )
+    assert it.read_directory_tags_root(disc_a) == frozenset(tags_a)
+    assert it.read_directory_tags_root(disc_b) == frozenset(tags_b)
+
+    # Global mirrors include more than artist for the album box.
+    album_name = "Unit Artist - Live Box"
+    for parts in (
+        ("artist", "unitartist"),
+        ("genre", "synthpop"),
+        ("genre", "live"),
+        ("year", "1989"),
+    ):
+        leaf = files_root.joinpath("_tags", *parts, album_name)
+        assert leaf.exists(), leaf
+        # Nested discs under the same tag make the album path a real dir + _self.
+        if leaf.is_dir() and not leaf.is_symlink():
+            assert (leaf / META_TAG_SELF_LINK_NAME).is_symlink()
+        else:
+            assert leaf.is_symlink()
+    assert (
+        files_root / "_tags" / "genre" / "synthpop" / album_name / "disc A"
+    ).exists()
+    assert (files_root / "_tags" / "genre" / "live" / album_name / "disc B").exists()
+    assert not (files_root / "_tags" / "stale").exists()
