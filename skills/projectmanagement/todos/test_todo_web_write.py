@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 import unittest
@@ -1113,6 +1114,63 @@ class RoundTripConflictTest(WebUpdaterCase):
 
             # The token the save returned is the one a reload now carries.
             self.assertEqual(payload["token"], self.load(base)["write"]["token"])
+
+
+class AutocommitScopeTest(test_todo.TodoCase):
+    """In one long-lived `web --write` process, each autocommit is only that save's ticket."""
+
+    def _store_git(self, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args], cwd=self._db_dir, capture_output=True, text=True, check=True
+        )
+        return proc.stdout
+
+    def mint(self) -> str:
+        proc = self.todo("mint")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_second_save_commits_only_its_own_ticket(self) -> None:
+        for args in (
+            ("init", "-q"),
+            ("config", "user.email", "t@example.com"),
+            ("config", "user.name", "T"),
+        ):
+            self._store_git(*args)
+        (self._db_dir / "config.json").write_text(
+            json.dumps(
+                {"todo_storage": "file://$TODOBASEDIR/storage", "autocommit": ["SetCommand"]}
+            )
+        )
+        self._git("commit", "-q", "--allow-empty", "-m", "init")
+        first, second = self.mint(), self.mint()
+        todo_store.reset_store()
+        todo.todo_db.reset_todo_dir()
+        todo._REPO_KEY_CACHE.clear()
+        try:
+            with mock.patch.dict(os.environ, self._env, clear=True):
+                updater = todo.WebUpdater(self.repo)
+                for tid, value in ((first, "first"), (second, "second")):
+                    record = todo.resolve_ticket_by_id(self.repo, tid)[1]
+                    updater.update(
+                        {
+                            "id": tid,
+                            "op": "set-summary",
+                            "target": "",
+                            "value": value,
+                            "token": updater.token(record),
+                        }
+                    )
+        finally:
+            todo_store.reset_store()
+            todo.todo_db.reset_todo_dir()
+            todo._REPO_KEY_CACHE.clear()
+        subject = self._store_git("log", "-1", "--format=%s")
+        self.assertIn(second[:8], subject)
+        self.assertNotIn(first[:8], subject)
+        changed = self._store_git("show", "--format=", "--name-only", "HEAD").split()
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(second[:8], changed[0])
 
 
 if __name__ == "__main__":

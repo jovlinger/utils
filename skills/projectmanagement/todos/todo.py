@@ -8232,6 +8232,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     command_name: str = getattr(args, "command", "") or ""
     start: float = time.monotonic()
     exit_code: int = 1
+    # A long-lived process (web --write) runs many commands against one cached store.
+    todo_store.discard_written_paths()
     try:
         # Every subcommand reads the store. Resolve once here so library code
         # (todo_db.todo_dir cache) and the command (self.todo_dir) share one path.
