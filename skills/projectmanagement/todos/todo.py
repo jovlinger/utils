@@ -6933,6 +6933,53 @@ def _cli_error_text(stderr: str) -> str:
     return "\n".join(line[len(prefix) :] if line.startswith(prefix) else line for line in lines)
 
 
+class _ThreadStream:
+    """A sys.stdout/sys.stderr stand-in that diverts one thread's writes to a buffer.
+
+    A thread that set a buffer (``capture``) writes there; every other thread
+    writes to the stream that was in place when this was installed.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self._local = threading.local()
+
+    def _target(self) -> Any:
+        return getattr(self._local, "buffer", None) or self._real
+
+    def write(self, text: str) -> int:
+        return int(self._target().write(text))
+
+    def flush(self) -> None:
+        self._target().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    @contextlib.contextmanager
+    def capture(self, buffer: io.StringIO) -> Iterator[None]:
+        """Divert the calling thread's writes to *buffer* for the block."""
+        previous = getattr(self._local, "buffer", None)
+        self._local.buffer = buffer
+        try:
+            yield
+        finally:
+            self._local.buffer = previous
+
+
+_STREAM_INSTALL_LOCK = threading.Lock()
+
+
+def _thread_stream(name: str) -> _ThreadStream:
+    """The ``sys.<name>`` proxy, installed over the current stream on first use."""
+    with _STREAM_INSTALL_LOCK:
+        current = getattr(sys, name)
+        if not isinstance(current, _ThreadStream):
+            current = _ThreadStream(current)
+            setattr(sys, name, current)
+        return current
+
+
 class WebUpdater:
     """The write side `web --write` injects into todo_web.serve (todo_web.Updater).
 
@@ -6940,8 +6987,9 @@ class WebUpdater:
     its validation and refusals are the CLI's, verbatim. The page token is
     compared with the stored record and the command runs under ONE hold of the
     todo's store lock (the command's own write re-enters it), so no other writer
-    can land between the check and the write. Updates are serialized in-process
-    because ``main`` reports through the process-wide stdout/stderr.
+    can land between the check and the write. Updates are serialized in-process;
+    ``main``'s stdout/stderr are captured for the updating thread only, so other
+    request threads keep writing to the real streams.
     """
 
     def __init__(self, root: Path) -> None:
@@ -6997,7 +7045,7 @@ class WebUpdater:
     def _run(self, argv: List[str]) -> None:
         """Run ``todo.py <argv>`` in-process; raise UpdateRefused with its stderr on failure."""
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with _thread_stream("stdout").capture(out), _thread_stream("stderr").capture(err):
             try:
                 code = main(argv)
             except SystemExit as exc:  # argparse usage errors

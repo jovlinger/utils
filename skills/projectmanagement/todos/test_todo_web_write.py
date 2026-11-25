@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -1132,6 +1133,50 @@ class RoundTripConflictTest(WebUpdaterCase):
             status, payload = self.save(base, data, "lands")
             self.assertEqual(200, status, payload)
             self.assertEqual("lands", self.stored()["Body"]["raw"])
+
+
+class ThreadLocalCaptureTest(unittest.TestCase):
+    """A save captures only its own thread's output; other threads keep the real streams."""
+
+    def _run_save(self, fake_main: Any) -> Tuple[str, io.StringIO, io.StringIO]:
+        """Run one save with *fake_main* as the CLI; return (refusal text, stdout, stderr)."""
+        real_out, real_err = io.StringIO(), io.StringIO()
+        updater = todo.WebUpdater(Path("."))
+        text = ""
+        with mock.patch.object(sys, "stdout", real_out), mock.patch.object(
+            sys, "stderr", real_err
+        ), mock.patch.object(todo, "main", fake_main):
+            try:
+                updater._run(["set", "x"])  # pylint: disable=protected-access
+            except todo_web.UpdateRefused as exc:
+                text = str(exc)
+        return text, real_out, real_err
+
+    def test_another_threads_stderr_stays_out_of_the_saves_error_text(self) -> None:
+        def noisy_neighbour() -> None:
+            print("GET-THREAD-NOISE", file=sys.stderr)
+            print("GET-THREAD-OUT")
+
+        def fake_main(_argv: List[str]) -> int:
+            neighbour = threading.Thread(target=noisy_neighbour)
+            neighbour.start()
+            neighbour.join()
+            print("todo.py: the save's own refusal", file=sys.stderr)
+            print("the save's own stdout")
+            return 1
+
+        text, real_out, real_err = self._run_save(fake_main)
+        self.assertEqual("the save's own refusal", text)
+        self.assertIn("GET-THREAD-NOISE", real_err.getvalue())
+        self.assertIn("GET-THREAD-OUT", real_out.getvalue())
+        self.assertNotIn("own", real_out.getvalue())
+        self.assertNotIn("own", real_err.getvalue())
+
+    def test_output_outside_a_save_goes_to_the_real_streams(self) -> None:
+        _text, real_out, real_err = self._run_save(lambda _argv: 0)
+        with mock.patch.object(sys, "stdout", real_out), mock.patch.object(sys, "stderr", real_err):
+            print("after", file=sys.stderr)
+        self.assertIn("after", real_err.getvalue())
 
 
 class AutocommitScopeTest(test_todo.TodoCase):
