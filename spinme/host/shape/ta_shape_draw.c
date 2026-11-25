@@ -59,11 +59,8 @@ unsigned ta_sd_rlc_n(const ta_sd_shape_t *s) {
     if (s == NULL) {
         return TA_SD_RLC_N;
     }
-    n = s->rlc_n ? (unsigned)s->rlc_n : (unsigned)TA_SD_RLC_N;
-    if (n > TA_SD_RLC_N_MAX) {
-        n = TA_SD_RLC_N_MAX;
-    }
-    if (n == 0) {
+    n = ta_shape_flags_rlc_n(s->flags);
+    if (n == 0 || n > TA_SD_RLC_N_MAX) {
         n = TA_SD_RLC_N;
     }
     return n;
@@ -118,9 +115,9 @@ int ta_sd_alloc_bitmap_rlc(unsigned idx, uint8_t tag, uint16_t w, uint16_t h,
         s->w = w;
         s->h = h;
         s->pixels = px;
-        s->dirty = 1;
+        s->flags = ta_shape_flags_set_dirty(s->flags, 1);
         if (tag == TA_SD_TAG_XY) {
-            s->rlc_n = (uint8_t)rlc_n;
+            s->flags = ta_shape_flags_set_rlc_n(s->flags, rlc_n);
             s->badness_overflow_avg = ov_avg;
             s->badness_slack_avg = sl_avg;
             s->badness_paints = paints;
@@ -416,6 +413,104 @@ float ta_sd_badness_slack(const ta_sd_shape_t *s) {
     return s == NULL ? 0.f : s->badness_slack_avg;
 }
 
+float ta_sd_badness_combined(const ta_sd_shape_t *s) {
+    if (s == NULL) {
+        return 0.f;
+    }
+    return s->badness_overflow_avg +
+           TA_SD_BADNESS_PX_PER_SLACK_SLOT * s->badness_slack_avg;
+}
+
+int ta_sd_collect_opaque_runs(const ta_pack66_t *row, uint16_t w, uint8_t *off,
+                              uint8_t *len, int max_n) {
+    uint16_t x = 0;
+    int n = 0;
+
+    if (row == NULL || off == NULL || len == NULL || max_n <= 0) {
+        return 0;
+    }
+    while (x < w && n < max_n) {
+        if (row[x] == TA_PACK66_TRANSPARENT) {
+            x++;
+            continue;
+        }
+        {
+            uint16_t start = x;
+            while (x < w && row[x] != TA_PACK66_TRANSPARENT) {
+                x++;
+            }
+            {
+                unsigned ou = start / 2u;
+                unsigned lu = (x - start) / 2u;
+                if (lu == 0u) {
+                    lu = 1u;
+                }
+                if (ou > 255u) {
+                    ou = 255u;
+                }
+                if (lu > 255u) {
+                    lu = 255u;
+                }
+                off[n] = (uint8_t)ou;
+                len[n] = (uint8_t)lu;
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+unsigned ta_sd_optimize_rlc_n(const ta_pack66_t *px, uint16_t w, uint16_t h,
+                              unsigned n_lo, unsigned n_hi) {
+    unsigned best_n = 1;
+    float best_bad = 1e30f;
+    unsigned n;
+
+    if (px == NULL || w == 0 || h == 0) {
+        return 1u;
+    }
+    if (n_lo < 1u) {
+        n_lo = 1u;
+    }
+    if (n_hi < n_lo) {
+        n_hi = n_lo;
+    }
+    if (n_hi > TA_SD_RLC_N_MAX) {
+        n_hi = TA_SD_RLC_N_MAX;
+    }
+    for (n = n_lo; n <= n_hi; n++) {
+        unsigned max_r = n * TA_SD_RLC_RANGES_PER_WORD;
+        uint32_t ov = 0;
+        uint32_t sl = 0;
+        uint16_t y;
+        float bad;
+
+        for (y = 0; y < h; y++) {
+            uint8_t off[64];
+            uint8_t len[64];
+            int nr;
+            const ta_pack66_t *row = px + (size_t)y * (size_t)w;
+
+            nr = ta_sd_collect_opaque_runs(row, w, off, len, 64);
+            nr = ta_sd_rlc_merge_to_n(off, len, nr, (int)max_r);
+            if (nr < 0) {
+                nr = 0;
+            }
+            ov += count_transparent_in_spans(row, w, off, len, nr);
+            if ((unsigned)nr < max_r) {
+                sl += max_r - (unsigned)nr;
+            }
+        }
+        bad = ((float)ov / (float)h) +
+              TA_SD_BADNESS_PX_PER_SLACK_SLOT * ((float)sl / (float)h);
+        if (bad < best_bad) {
+            best_bad = bad;
+            best_n = n;
+        }
+    }
+    return best_n;
+}
+
 size_t ta_sd_format_badness_report(char *dst, size_t cap) {
     size_t used = 0;
     unsigned i;
@@ -440,9 +535,11 @@ size_t ta_sd_format_badness_report(char *dst, size_t cap) {
             break;
         }
         n = snprintf(dst + used, rem,
-                     "%u ov/line=%.3f sl/line=%.3f paints=%u rlc_n=%u\n", i,
-                     (double)ta_sd_badness_overflow(s),
+                     "%u ov/line=%.3f sl/line=%.3f bad/line=%.3f paints=%u "
+                     "rlc_n=%u\n",
+                     i, (double)ta_sd_badness_overflow(s),
                      (double)ta_sd_badness_slack(s),
+                     (double)ta_sd_badness_combined(s),
                      (unsigned)s->badness_paints, ta_sd_rlc_n(s));
         if (n < 0) {
             break;
@@ -457,33 +554,12 @@ size_t ta_sd_format_badness_report(char *dst, size_t cap) {
 }
 
 void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy) {
-    ta_sd_rlc_word_t *rlc;
-    uint16_t y;
-    uint8_t off[1];
-    uint8_t len[1];
-    unsigned lu;
-    unsigned rlc_n;
-
-    if (xy == NULL || xy->tag != TA_SD_TAG_XY) {
+    /* Bit-blit dirty: content runs vs clear, merge smallest gaps to 2*n.
+     * Not a full-width box -- that defeated tight RLC / badness. */
+    if (xy == NULL || xy->pixels == NULL) {
         return;
     }
-    rlc = ta_sd_xy_rlc(xy);
-    if (rlc == NULL) {
-        return;
-    }
-    rlc_n = ta_sd_rlc_n(xy);
-    off[0] = 0;
-    lu = ((unsigned)xy->w + 1u) / 2u;
-    if (lu > 255u) {
-        lu = 255u;
-    }
-    if (lu == 0u) {
-        lu = 1u;
-    }
-    len[0] = (uint8_t)lu;
-    for (y = 0; y < xy->h; y++) {
-        ta_sd_rlc_set_ranges(rlc + (size_t)y * rlc_n, rlc_n, off, len, 1);
-    }
+    ta_sd_xy_derive_rlc(xy, NULL, xy->pixels);
 }
 
 int ta_sd_xy_rebuild_from_child(unsigned xy_idx) {
@@ -502,7 +578,7 @@ int ta_sd_xy_rebuild_from_child(unsigned xy_idx) {
     n = (size_t)xy->w * (size_t)xy->h;
     memset(xy->pixels, 0, n * sizeof(ta_pack66_t));
     ta_sd_blit(xy->pixels, xy->w, xy->h, 0, 0, ch->pixels, ch->w, ch->h);
-    xy->dirty = 1;
+    xy->flags = ta_shape_flags_set_dirty(xy->flags, 1);
     return 0;
 }
 
@@ -623,8 +699,7 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
     unsigned rlc_n;
     int max_r;
 
-    if (xy == NULL || xy->tag != TA_SD_TAG_XY || old_px == NULL ||
-        new_px == NULL) {
+    if (xy == NULL || xy->tag != TA_SD_TAG_XY || new_px == NULL) {
         return;
     }
     rlc = ta_sd_xy_rlc(xy);
@@ -638,17 +713,23 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
         uint8_t len[64];
         int n = 0;
         uint16_t x = 0;
-        const ta_pack66_t *orow = old_px + (size_t)y * xy->w;
-        const ta_pack66_t *nrow = new_px + (size_t)y * xy->w;
+        const ta_pack66_t *nrow = new_px + (size_t)y * (size_t)xy->w;
+        const ta_pack66_t *orow =
+            old_px != NULL ? old_px + (size_t)y * (size_t)xy->w : NULL;
 
         while (x < xy->w) {
-            if (orow[x] == nrow[x]) {
+            ta_pack66_t o = orow != NULL ? orow[x] : 0u;
+            if (o == nrow[x]) {
                 x++;
                 continue;
             }
             {
                 uint16_t start = x;
-                while (x < xy->w && orow[x] != nrow[x]) {
+                while (x < xy->w) {
+                    ta_pack66_t oo = orow != NULL ? orow[x] : 0u;
+                    if (oo == nrow[x]) {
+                        break;
+                    }
                     x++;
                 }
                 if (n < 64) {
@@ -670,6 +751,7 @@ void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                 }
             }
         }
+        /* Greedy: merge smallest adjacent gaps until <= max_r (= 2*rlc_n). */
         n = ta_sd_rlc_merge_to_n(off, len, n, max_r);
         if (n < 0) {
             n = 0;

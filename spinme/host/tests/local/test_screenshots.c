@@ -234,7 +234,7 @@ int main(void) {
             line_px = fake_alloc((size_t)PANEL * (size_t)g_gb.text_h * 2u);
             CHECK(line_px != NULL);
             line.pixels = line_px;
-            line.dirty = 1;
+            line.flags = ta_shape_flags_set_dirty(line.flags, 1);
             CHECK(ta_shape_table_set((unsigned)(930 + li),
                                      (ta_shape_bitmap_t *)(void *)&line) == 0);
             uilo = ta_uilo_make(1, kTextX, y, (unsigned)(930 + li));

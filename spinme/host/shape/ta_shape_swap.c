@@ -50,7 +50,7 @@ int ta_shape_swap_set_active(ta_shape_swap_t *swap, unsigned active) {
         return -1;
     }
     swap->active = active;
-    swap->dirty = 1;
+    swap->flags = ta_shape_flags_set_dirty(swap->flags, 1);
     return ta_shape_swap_bind(swap);
 }
 

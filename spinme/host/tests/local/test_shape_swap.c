@@ -36,19 +36,19 @@ int main(void) {
     px_b[0] = ta_pack66_rgba(0, 1, 0, 3);
 
     a.tag = TA_SHAPE_TAG_BITMAP;
-    a.dirty = 0;
+    a.flags = ta_shape_flags_set_dirty(a.flags, 0);
     a.w = 2;
     a.h = 2;
     a.pixels = px_a;
     b.tag = TA_SHAPE_TAG_BITMAP;
-    b.dirty = 0;
+    b.flags = ta_shape_flags_set_dirty(b.flags, 0);
     b.w = 2;
     b.h = 2;
     b.pixels = px_b;
 
     memset(&swap, 0, sizeof(swap));
     swap.tag = TA_SHAPE_TAG_SWAP;
-    swap.dirty = 1;
+    swap.flags = ta_shape_flags_set_dirty(swap.flags, 1);
     swap.n = 2;
     swap.active = 0;
     swap.child_idx[0] = 1;
@@ -76,7 +76,7 @@ int main(void) {
     CHECK(swap.pixels == px_a);
 
     /* phase1 + phase2: only the swap (active child pixels) is pushed. */
-    swap.dirty = 1;
+    swap.flags = ta_shape_flags_set_dirty(swap.flags, 1);
     uilo[0] = ta_uilo_make(1, 0, 0, 3);
     memset(&scene, 0, sizeof(scene));
     scene.uilo = uilo;
@@ -86,7 +86,7 @@ int main(void) {
     CHECK(n == 1);
     CHECK(pushes[0].shape_idx == 3);
     CHECK(swap.pixels == px_a);
-    CHECK(swap.dirty == 0);
+    CHECK(ta_shape_flags_dirty(swap.flags) == 0);
 
     if (failures != 0) {
         fprintf(stderr, "%d/%d checks failed\n", failures, checks);

@@ -132,12 +132,18 @@ int main(void) {
     {
         int spans;
         int i;
+        ta_sd_shape_t *rowxy;
+        ta_pack66_t ink = ta_sd_word(0x11, 0, 0, 3);
 
         g_push_n = 0;
         CHECK(ta_sd_alloc_bitmap(203, TA_SD_TAG_XY, 4, 3) == 0);
-        ta_sd_get(203)->u.xy.x = 1;
-        ta_sd_get(203)->u.xy.y = 2;
-        ta_sd_xy_mark_full_dirty(ta_sd_get(203));
+        rowxy = ta_sd_get(203);
+        rowxy->u.xy.x = 1;
+        rowxy->u.xy.y = 2;
+        for (i = 0; i < 4 * 3; i++) {
+            rowxy->pixels[i] = ink;
+        }
+        ta_sd_xy_mark_full_dirty(rowxy);
         spans = ta_sd_xy_push_dirty(203, rec_push, NULL);
         CHECK(spans == 3);
         CHECK(g_push_n == 3);
@@ -145,6 +151,34 @@ int main(void) {
             CHECK(g_push_h[i] == 1);
             CHECK(g_push_y[i] == 2 + i);
         }
+    }
+
+    /* Content silhouette (NULL old): letter-n legs stay two spans, not mark_full. */
+    {
+        int spans;
+        int i;
+        ta_sd_shape_t *legs;
+        ta_pack66_t ink = ta_sd_word(0x20, 0, 0, 3);
+
+        CHECK(ta_sd_alloc_bitmap(210, TA_SD_TAG_XY, 16, 1) == 0);
+        legs = ta_sd_get(210);
+        memset(legs->pixels, 0, (size_t)legs->w * sizeof(ta_pack66_t));
+        legs->pixels[2] = ink;
+        legs->pixels[3] = ink;
+        legs->pixels[10] = ink;
+        legs->pixels[11] = ink;
+        ta_sd_xy_derive_rlc(legs, NULL, legs->pixels);
+        g_push_n = 0;
+        spans = ta_sd_xy_push_dirty(210, rec_push, NULL);
+        CHECK(spans == 2);
+        CHECK(g_push_n == 2);
+        for (i = 0; i < 2; i++) {
+            CHECK(g_push_h[i] == 1);
+        }
+        /* max 4 slots, used 2 => slack 2; no transparent inside legs. */
+        CHECK(ta_sd_badness_slack(legs) > 1.9f &&
+              ta_sd_badness_slack(legs) < 2.1f);
+        CHECK(ta_sd_badness_overflow(legs) < 0.1f);
     }
 
     /* GC: locked glyph slot survives; unmarked high slot freed. */

@@ -207,9 +207,9 @@ $(BUILD)/test_draw_phase1: $(P1_SRCS) ta_draw_phase1.h ta_draw_update.h \
 		ta_viewport.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
-P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c
+P2_SRCS := test_draw_phase2.c ta_draw_phase2.c ta_uilayout.c ta_shape_draw.c
 $(BUILD)/test_draw_phase2: $(P2_SRCS) ta_draw_phase2.h ta_draw_update.h \
-		ta_uilayout.h | $(BUILD)
+		ta_uilayout.h ta_shape_draw.h ta_shape_l2r.h ta_viewport.h | $(BUILD)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 $(BUILD)/test_actor: test_actor.c ta_actor.c ta_actor.h ta_registry.c \

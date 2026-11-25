@@ -4,7 +4,7 @@ Library sources live under four subdirs. Tests:
 
 | Path | Role |
 |------|------|
-| `tests/local/` | PC unit + goldens (`test_xy_timed_redraw`: digits 0-9 / letters a-j, **bit-identical** PNG vs `screenshots/xy_timed/`; `test_screenshots`: pixel RGB) |
+| `tests/local/` | PC unit + goldens (`test_xy_timed_redraw`: UTC HH:MM:SSZ now + spelled zero..nine; PNG under `build/xy_timed/`, REGEN snapshots; `test_screenshots`: pixel RGB) |
 | `tests/ondevice/` | Post-flash/OTA: `POST /event/test/testrun` (alias `run_test`); `get_debug` |
 
 Firmware `src/ta_host/` keeps flat symlink names into the library trees.

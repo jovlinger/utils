@@ -19,7 +19,7 @@ enum {
 
 typedef struct ta_shape_swap {
     uint8_t tag; /* TA_SHAPE_TAG_SWAP */
-    uint8_t dirty;
+    uint8_t flags; /* dirty + rlc_n nibble */
     uint16_t w;
     uint16_t h;
     ta_pack66_t *pixels; /* aliased to active child's pixels after bind */

@@ -26,7 +26,7 @@ enum {
 
 typedef struct ta_shape_l2r {
     uint8_t tag; /* TA_SHAPE_TAG_L2R */
-    uint8_t dirty;
+    uint8_t flags; /* dirty + rlc_n; layout sums child Ns, bake optimizes */
     uint16_t w;
     uint16_t h;
     ta_pack66_t *pixels; /* optional bake target; may be NULL until phase1 */

@@ -52,16 +52,16 @@ int main(void) {
     memset(&scene, 0, sizeof(scene));
 
     /* Clock tick, box fixed: under stays clean. */
-    clock.dirty = 1;
-    under.dirty = 0;
+    clock.flags = ta_shape_flags_set_dirty(clock.flags, 1);
+    under.flags = ta_shape_flags_set_dirty(under.flags, 0);
     CHECK(ta_under_after_update(&uc, &scene, 3, 0) == 0);
-    CHECK(under.dirty == 0);
+    CHECK(ta_shape_flags_dirty(under.flags) == 0);
     CHECK(uc.under_valid == 1);
 
     /* Base dirty: under must rebuild. */
-    base.dirty = 1;
+    base.flags = ta_shape_flags_set_dirty(base.flags, 1);
     CHECK(ta_under_after_update(&uc, &scene, 3, 0) == 1);
-    CHECK(under.dirty == 1);
+    CHECK(ta_shape_flags_dirty(under.flags) == 1);
     CHECK(uc.under_valid == 0);
 
     if (failures != 0) {

@@ -29,10 +29,11 @@ row spans, not a random full rewrite of unchanged glass.
    composites the matching crop of the base (artwork) under glyphs
    (`base_shape_idx`). There is no panel-sized shadow bitmap. Viewports
    blit at `-ox` and again at `period - ox` for wrap.
-3. **`ta_draw_phase2`** -- nearest -> farthest coverage cull; emit the
-   exterior push list; clear dirty bits.
-4. **Execute pushes farthest-first** so a farther rect never overwrites a
-   nearer one already on glass.
+3. **`ta_draw_phase2`** -- merge-sort model: one cursor per dirty shape
+   walking local left-to-right RLC ranges top-down; exteriors listed in
+   first-fragment order (overlap OK). `foreach_frag` emits the merged
+   h=1 spans. Clears dirty on emit.
+4. **Execute pushes in that same top-down order** on glass.
 5. **TRANSPORT / NAV** never push a base-only wipe. `ta_stack_compose`
    builds one scratch: base crop + follow text under the icon + icon with
    pack66 `over`, then one XY/RLC push of that exterior.
@@ -281,14 +282,25 @@ Shapes do not hold function pointers. Interactive slots carry `fn_enum`;
 ### XYShape-only glass write (`ta_shape_draw`)
 
 Only `TA_SD_TAG_XY` reaches the glass. Each XY owns a pixmap plus per-row RLC
-dirty (`rlc_n` words per row, default 2; `/2` units). `rlc_n` lives on the
-shape as layout metadata (not packed into `w`/`h`). Rebuild from child ->
-mark-full or derive RLC -> `ta_sd_xy_blit_glass` / `ta_sd_xy_push_dirty`.
+dirty (`rlc_n` words per row; `/2` units). `rlc_n` is a **4-bit nibble** in the
+shape `flags` byte (with dirty); 0 means default. Glyphs ship at **N=1**;
+L2R layout seeds N as the **sum of child glyph Ns** (clamped to 15). After
+phase1 bake, L2R and viewport (unioning shapes) call `ta_sd_optimize_rlc_n`
+over `[1, seed]` to minimize combined badness on the baked silhouette.
+Simple graphics default to N=1 on push. Bit-blit dirty path: derive RLC from
+content runs (vs clear or old pixmap), greedy-merge smallest gaps until
+`<= 2*rlc_n` ranges, then `ta_sd_xy_blit_glass` / `ta_sd_xy_push_dirty`.
+`mark_full_dirty` is that same content derive (not a full-width box).
 Those paint paths sample TeX-style **badness** on the shape as **mean per
 raster line** (float): overflow = transparent pixels inside combined RLC /
-`h`; slack = unused range slots / `h`. Running mean across paints;
-`ta_sd_format_badness_report` / Draw `debug_status` surface them. Host `test_xy_timed_redraw` paints 0-9 / a-j
-solely through that path. Product `ta_glass_paint` bakes via phase1/phase2,
+`h`; slack = unused range slots / `h`. Combined (auto-tune):
+`bad = ov + TA_SD_BADNESS_PX_PER_SLACK_SLOT * sl` with lambda default **8**
+(px per idle range slot ~= one modest greedy-merge gap).
+`ta_sd_optimize_rlc_n` minimizes that `bad` over candidate `rlc_n`. Running
+mean across paints; `ta_sd_format_badness_report` / Draw `debug_status`
+surface them. Host `test_xy_timed_redraw` paints UTC wall clock
+HH:MM:SSZ (time/gmtime, 1s between frames) plus spelled zero..nine (alpha
+overlap) solely through that path. Product `ta_glass_paint` bakes via phase1/phase2,
 then loads each exterior into a scratch XY and pushes RLC spans.
 
 ### Pseudo: whole UI paint (follow page)
@@ -299,8 +311,8 @@ glass_paint():
     glass_push_xy(full panel of active swap child); return
 
   phase1(scene):                     # bake dirty L2R / Viewport / Swap bind
-  pushes = phase2(scene)             # nearest-first dirty exteriors
-  for push in reverse(pushes):       # farthest first on glass
+  pushes = phase2(scene)             # merge cursors; exteriors first-frag order
+  for push in pushes:                # top-down on glass
     hdr = shape_table[push.shape]
     if hdr is TRANSPORT or NAV:
       composed = stack_compose(
@@ -343,7 +355,7 @@ should read first:
 | `test_draw_glass_contract.c` | Glass pipeline contract: update + phase1 + phase2 + under-image together. |
 | `test_draw_glass_owner.c` | End-to-end: Draw owns glass -- ISR hit, MPD/Net status, paint pushes. |
 | `test_draw_phase1.c` | phase1 bakes dirty L2R/viewport farthest-to-nearest (no LCD push). |
-| `test_draw_phase2.c` | phase2 emits whole dirty exteriors, culls covered ones, clears dirty. |
+| `test_draw_phase2.c` | phase2 k-way merge of per-shape W ranges; exteriors + frag order. |
 | `test_draw_update.c` | update marks defs/dirty and shadow-propagates without rewriting pixels. |
 | `test_event_envelope.c` | Envelope fields + typed event union round-trip (no sync RPC). |
 | `test_follow_chrome.c` | Follow chrome: nine UILayout slots, paint-once vs high-z title/clock. |

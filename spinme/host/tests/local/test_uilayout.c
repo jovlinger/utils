@@ -54,7 +54,7 @@ int main(void) {
     pix[0] = ta_pack66_rgba(1, 2, 3, 3);
     pix[1] = TA_PACK66_TRANSPARENT; /* skip */
     bm.tag = TA_SHAPE_TAG_BITMAP;
-    bm.dirty = 1;
+    bm.flags = ta_shape_flags_set_dirty(bm.flags, 1);
     bm.w = 2;
     bm.h = 1;
     bm.pixels = pix;

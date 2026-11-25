@@ -102,6 +102,7 @@ int ta_shape_l2r_compute_size(ta_shape_l2r_t *l2r) {
     int wsum = 0;
     int hmax = 0;
     size_t item = 0;
+    unsigned nsum = 0;
 
     if (l2r == NULL || l2r->pack == NULL) {
         return -1;
@@ -115,6 +116,7 @@ int ta_shape_l2r_compute_size(ta_shape_l2r_t *l2r) {
         for (i = 0; i < got; i++) {
             ta_shape_bitmap_t *ch;
             int kern = 0;
+            unsigned gn;
 
             if (tmp[i] == 0) {
                 continue;
@@ -127,6 +129,11 @@ int ta_shape_l2r_compute_size(ta_shape_l2r_t *l2r) {
             if ((int)ch->h > hmax) {
                 hmax = (int)ch->h;
             }
+            gn = ta_shape_flags_rlc_n(ch->flags);
+            if (gn == 0) {
+                gn = 1; /* glyph default */
+            }
+            nsum += gn;
             if (l2r->kernings != NULL && item < l2r->n_items) {
                 kern = (int)l2r->kernings[item];
             }
@@ -135,7 +142,14 @@ int ta_shape_l2r_compute_size(ta_shape_l2r_t *l2r) {
         }
         wi++;
     }
+    if (nsum > TA_SHAPE_RLC_MASK) {
+        nsum = TA_SHAPE_RLC_MASK;
+    }
+    if (nsum == 0) {
+        nsum = 1;
+    }
     l2r->w = (uint16_t)(wsum < 0 ? 0 : wsum);
     l2r->h = (uint16_t)hmax;
+    l2r->flags = ta_shape_flags_set_rlc_n(l2r->flags, nsum);
     return 0;
 }

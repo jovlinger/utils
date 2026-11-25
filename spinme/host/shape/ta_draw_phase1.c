@@ -118,6 +118,17 @@ static int rebuild_l2r(ta_shape_l2r_t *l2r, const ta_shape_bitmap_t *under,
         }
         wi++;
     }
+    /* Sum of child Ns is a ceiling; pick N minimizing ov+lambda*sl. */
+    {
+        unsigned n_hi = ta_shape_flags_rlc_n(l2r->flags);
+        unsigned best;
+
+        if (n_hi == 0u) {
+            n_hi = TA_SD_RLC_N_MAX;
+        }
+        best = ta_sd_optimize_rlc_n(l2r->pixels, l2r->w, l2r->h, 1u, n_hi);
+        l2r->flags = ta_shape_flags_set_rlc_n(l2r->flags, best);
+    }
     return 0;
 }
 
@@ -135,13 +146,13 @@ static int bake_viewport(ta_shape_viewport_t *vp, int ex, int ey,
     if (child == NULL) {
         return -1;
     }
-    if (child->dirty && child->tag == TA_SHAPE_TAG_L2R) {
+    if (ta_shape_flags_dirty(child->flags) && child->tag == TA_SHAPE_TAG_L2R) {
         /* Child keeps transparent paper; the window supplies the base. */
         if (rebuild_l2r((ta_shape_l2r_t *)(void *)child, NULL, 0, 0, NULL, 0,
                         0) != 0) {
             return -1;
         }
-        child->dirty = 0;
+        child->flags = ta_shape_flags_set_dirty(child->flags, 0);
     }
     memset(vp->pixels, 0, (size_t)vp->w * (size_t)vp->h * sizeof(ta_pack66_t));
     blit_base_crop(vp->pixels, vp->w, vp->h, ex, ey, base, base_x, base_y);
@@ -160,6 +171,19 @@ static int bake_viewport(ta_shape_viewport_t *vp, int ex, int ey,
                             -(int)vp->oy, child);
     } else {
         ta_draw_blit_bitmap(vp->pixels, vp->w, vp->h, 0, -(int)vp->oy, child);
+    }
+    {
+        unsigned n_hi = ta_shape_flags_rlc_n(vp->flags);
+        unsigned best;
+
+        if (n_hi == 0u) {
+            n_hi = ta_shape_flags_rlc_n(child->flags);
+        }
+        if (n_hi == 0u) {
+            n_hi = TA_SD_RLC_N_MAX;
+        }
+        best = ta_sd_optimize_rlc_n(vp->pixels, vp->w, vp->h, 1u, n_hi);
+        vp->flags = ta_shape_flags_set_rlc_n(vp->flags, best);
     }
     return 0;
 }
@@ -192,7 +216,7 @@ int ta_draw_phase1(ta_draw_scene_t *scene, const ta_phase1_opts_t *opts) {
         unsigned sidx = ta_uilo_shape(w);
         ta_shape_bitmap_t *hdr = ta_shape_table_get(sidx);
 
-        if (hdr == NULL || !hdr->dirty) {
+        if (hdr == NULL || !ta_shape_flags_dirty(hdr->flags)) {
             continue;
         }
         if (hdr->tag == TA_SHAPE_TAG_BITMAP) {

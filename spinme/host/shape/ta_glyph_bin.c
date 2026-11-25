@@ -199,6 +199,7 @@ int ta_glyph_bin_load(ta_glyph_bin_t *gb, const char *path) {
         g = &gb->glyphs[gi];
         memset(g, 0, sizeof(*g));
         g->tag = TA_SHAPE_TAG_BITMAP;
+        g->flags = ta_shape_flags_set_rlc_n(0, 1); /* single-glyph N=1 */
         g->w = w;
         g->h = h;
         g->pixels = px;

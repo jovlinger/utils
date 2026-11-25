@@ -30,10 +30,12 @@ int main(void) {
     memset(&ga, 0, sizeof(ga));
     memset(&gb, 0, sizeof(gb));
     ga.tag = TA_SHAPE_TAG_BITMAP;
+    ga.flags = ta_shape_flags_set_rlc_n(0, 1);
     ga.w = 6;
     ga.h = 10;
     ga.pixels = &pix;
     gb.tag = TA_SHAPE_TAG_BITMAP;
+    gb.flags = ta_shape_flags_set_rlc_n(0, 1);
     gb.w = 4;
     gb.h = 10;
     gb.pixels = &pix;
@@ -54,6 +56,7 @@ int main(void) {
     CHECK(l2r.n_items == 2);
     CHECK(l2r.w == (uint16_t)(6 + 1 + 4)); /* a + kern(a) + b */
     CHECK(l2r.h == 10);
+    CHECK(ta_shape_flags_rlc_n(l2r.flags) == 2u); /* glyph Ns 1+1 */
     CHECK(kern[0] == 1);
     CHECK(kern[1] == 0);
 

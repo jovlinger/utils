@@ -57,9 +57,38 @@ enum {
     TA_SHAPE_TAG_BITMAP = 1
 };
 
+/*
+ * Shared shape header byte1: bit0 = dirty; bits4..7 = rlc_n words/row
+ * (0 = unset/default at consumer; 1..15 stored). 4 bits => up to 15 words
+ * (30 ranges); product often clamps lower.
+ */
+#define TA_SHAPE_FLAG_DIRTY 0x01u
+#define TA_SHAPE_RLC_SHIFT 4
+#define TA_SHAPE_RLC_MASK 0x0fu
+
+static inline int ta_shape_flags_dirty(uint8_t flags) {
+    return (flags & TA_SHAPE_FLAG_DIRTY) != 0;
+}
+
+static inline uint8_t ta_shape_flags_set_dirty(uint8_t flags, int dirty) {
+    if (dirty) {
+        return (uint8_t)(flags | TA_SHAPE_FLAG_DIRTY);
+    }
+    return (uint8_t)(flags & (uint8_t)~TA_SHAPE_FLAG_DIRTY);
+}
+
+static inline unsigned ta_shape_flags_rlc_n(uint8_t flags) {
+    return ((unsigned)flags >> TA_SHAPE_RLC_SHIFT) & TA_SHAPE_RLC_MASK;
+}
+
+static inline uint8_t ta_shape_flags_set_rlc_n(uint8_t flags, unsigned n) {
+    return (uint8_t)((flags & 0x0fu) |
+                     ((n & TA_SHAPE_RLC_MASK) << TA_SHAPE_RLC_SHIFT));
+}
+
 typedef struct ta_shape_bitmap {
     uint8_t tag; /* TA_SHAPE_TAG_BITMAP */
-    uint8_t dirty;
+    uint8_t flags; /* dirty + rlc_n nibble */
     uint16_t w;
     uint16_t h;
     ta_pack66_t *pixels; /* w*h pack66; owned by caller/table */

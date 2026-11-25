@@ -8,7 +8,7 @@ static void mark_dirty(ta_draw_scene_t *scene, unsigned shape_idx) {
 
     hdr = ta_shape_table_get(shape_idx);
     if (hdr != NULL) {
-        hdr->dirty = 1;
+        hdr->flags = ta_shape_flags_set_dirty(hdr->flags, 1);
     }
     for (i = 0; i < scene->n_uilo; i++) {
         if (ta_uilo_shape(scene->uilo[i]) == shape_idx) {

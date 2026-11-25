@@ -50,13 +50,13 @@ int main(void) {
     chrome.tag = TA_SHAPE_TAG_BITMAP;
     chrome.w = 40;
     chrome.h = 40;
-    chrome.dirty = 0;
+    chrome.flags = ta_shape_flags_set_dirty(chrome.flags, 0);
     chrome.pixels = &glyph_px;
     CHECK(ta_shape_table_set(20, &chrome) == 0);
 
     memset(&clock, 0, sizeof(clock));
     clock.tag = TA_SHAPE_TAG_L2R;
-    clock.dirty = 0;
+    clock.flags = ta_shape_flags_set_dirty(clock.flags, 0);
     clock.pack = clock_pack;
     clock.pixels = clock_px;
     CHECK(ta_shape_table_set(10, (ta_shape_bitmap_t *)(void *)&clock) == 0);
@@ -83,8 +83,8 @@ int main(void) {
     memcpy(scene.clock_hhmmss, "12:34:56", 9);
 
     CHECK(ta_draw_update(&scene) == 0);
-    CHECK(clock.dirty == 1);
-    CHECK(chrome.dirty == 1);
+    CHECK(ta_shape_flags_dirty(clock.flags) == 1);
+    CHECK(ta_shape_flags_dirty(chrome.flags) == 1);
     CHECK(ta_uilo_dirty(uilo[0]) == 1);
     CHECK(ta_uilo_dirty(uilo[1]) == 1);
     CHECK(memcmp(clock_px, clock_px_before, sizeof(clock_px)) == 0);

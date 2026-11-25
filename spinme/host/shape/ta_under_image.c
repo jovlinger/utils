@@ -25,17 +25,17 @@ int ta_under_after_update(ta_under_cache_t *u, ta_draw_scene_t *scene,
         return -1;
     }
 
-    if (base->dirty) {
-        under->dirty = 1;
+    if (ta_shape_flags_dirty(base->flags)) {
+        under->flags = ta_shape_flags_set_dirty(under->flags, 1);
         u->under_valid = 0;
         return 1;
     }
-    if (overlay != NULL && overlay->dirty && !overlay_box_moved) {
+    if (overlay != NULL && ta_shape_flags_dirty(overlay->flags) && !overlay_box_moved) {
         /* Scroll/clock tick: overlay dirty only; under-Cache stays. */
         return 0;
     }
     if (overlay_box_moved) {
-        under->dirty = 1;
+        under->flags = ta_shape_flags_set_dirty(under->flags, 1);
         u->under_valid = 0;
         return 1;
     }

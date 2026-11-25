@@ -77,7 +77,7 @@ int ta_kv_editor_bind(ta_kv_editor_t *ed, ta_pack66_t *pixels, uint16_t w,
     ed->panel.w = w;
     ed->panel.h = h;
     ed->panel.pixels = pixels;
-    ed->panel.dirty = 1;
+    ed->panel.flags = ta_shape_flags_set_dirty(ed->panel.flags, 1);
     return 0;
 }
 
@@ -97,7 +97,7 @@ static void fill_view(ta_kv_editor_t *ed) {
     if (ed->panel_w > 0) {
         ed->pixels[ed->cursor % ed->panel_w] = mark;
     }
-    ed->panel.dirty = 1;
+    ed->panel.flags = ta_shape_flags_set_dirty(ed->panel.flags, 1);
 }
 
 int ta_kv_editor_refresh(ta_kv_editor_t *ed) {

@@ -46,7 +46,7 @@ int main(void) {
     under.tag = TA_SHAPE_TAG_BITMAP;
     under.w = 2;
     under.h = 2;
-    under.dirty = 0;
+    under.flags = ta_shape_flags_set_dirty(under.flags, 0);
     under.pixels = under_px;
 
     memset(&glyph, 0, sizeof(glyph));
@@ -59,7 +59,7 @@ int main(void) {
     CHECK(ta_shapepack_encode(pack, 4, &nw, idxs, 1, TA_PACK_TAG_3x10) == 0);
     memset(&text, 0, sizeof(text));
     text.tag = TA_SHAPE_TAG_L2R;
-    text.dirty = 1;
+    text.flags = ta_shape_flags_set_dirty(text.flags, 1);
     text.w = 2;
     text.h = 2;
     text.pack = pack;
@@ -92,7 +92,7 @@ int main(void) {
     CHECK(g == 0x3f); /* under remains at (1,0) */
 
     /* Still dirty (phase2 clears). */
-    CHECK(text.dirty == 1);
+    CHECK(ta_shape_flags_dirty(text.flags) == 1);
     /* No panel-sized shadow buffer allocated -- only shape local pixels. */
 
     /* Base crop under a Viewport placed at (1,1): window gets the base
@@ -115,14 +115,14 @@ int main(void) {
         base.h = 4;
         base.pixels = base_px;
         /* Child: the 2x2 L2R from above (red glyph at (0,0), clear else). */
-        text.dirty = 1;
+        text.flags = ta_shape_flags_set_dirty(text.flags, 1);
         memset(&vp, 0, sizeof(vp));
         vp.tag = TA_SHAPE_TAG_VIEWPORT;
         vp.w = 1;
         vp.h = 2;
         vp.pixels = vp_px;
         vp.child_idx = 3;
-        vp.dirty = 1;
+        vp.flags = ta_shape_flags_set_dirty(vp.flags, 1);
         vp.ox = 1; /* child col 1 is clear -> base shows */
         CHECK(ta_shape_table_set(4, &base) == 0);
         CHECK(ta_shape_table_set(5, (ta_shape_bitmap_t *)(void *)&vp) == 0);
@@ -135,9 +135,9 @@ int main(void) {
         CHECK(ta_draw_phase1(&scene, &opts) == 0);
         ta_unpack66(vp_px[0], &r, &g, &b, &a);
         CHECK(b == 0x3f && a == 3); /* base under, never transparent */
-        CHECK(text.dirty == 0);     /* child rebuilt by the viewport bake */
+        CHECK(ta_shape_flags_dirty(text.flags) == 0);     /* child rebuilt by the viewport bake */
         vp.ox = 0;
-        vp.dirty = 1;
+        vp.flags = ta_shape_flags_set_dirty(vp.flags, 1);
         CHECK(ta_draw_phase1(&scene, &opts) == 0);
         ta_unpack66(vp_px[0], &r, &g, &b, &a);
         CHECK(r == 0x3f && a == 3); /* glyph at ox=0 */

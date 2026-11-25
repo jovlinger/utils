@@ -74,7 +74,7 @@ int ta_text_build(ta_shape_l2r_t *out, const char *ascii,
     }
     memset(out, 0, sizeof(*out));
     out->tag = TA_SHAPE_TAG_L2R;
-    out->dirty = 1;
+    out->flags = ta_shape_flags_set_dirty(out->flags, 1);
     out->pack = pack_buf;
     out->kernings = kern_buf;
     out->n_items = n;

@@ -6,7 +6,7 @@
  * push, backlight, wall clock) and a config (panel size, base pixels, glyph
  * map). Draw builds the chrome on DRAW_SET_SHAPE_STACK, keeps text / status
  * state, runs update -> phase1 -> phase2 and pushes whole exteriors
- * farthest-first. No panel-sized glass shadow: per-shape local pixmaps with
+ * top-down (overlap OK). No panel-sized glass shadow: per-shape local pixmaps with
  * the base crop composited under each text line (PLAN Q1).
  */
 #ifndef SPINME_TA_DRAW_GLASS_H
@@ -126,7 +126,7 @@ int ta_glass_scroll_step(void);
 
 /* Cadence update (clock represent-time + idle/backlight). */
 int ta_glass_update(void);
-/* phase1 + phase2 + farthest-first pushes. Returns pushes or -1. */
+/* phase1 + phase2 + top-down pushes. Returns pushes or -1. */
 int ta_glass_paint(void);
 
 /* Input from ISR mail. Touch returns hit role posted (see ta_hit_dispatch),

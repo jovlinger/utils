@@ -37,6 +37,6 @@ int ta_viewport_bake(ta_shape_viewport_t *vp) {
             vp->pixels[(size_t)y * vp->w + x] = px;
         }
     }
-    vp->dirty = 1;
+    vp->flags = ta_shape_flags_set_dirty(vp->flags, 1);
     return 0;
 }

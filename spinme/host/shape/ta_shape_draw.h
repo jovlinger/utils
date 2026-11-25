@@ -14,10 +14,17 @@ extern "C" {
 #define TA_SD_SLOTS 1024
 #define TA_SD_NONE 0u
 #define TA_SD_LOCKED_MAX 127u /* indices 1..127 locked assets; never GC into */
-#define TA_SD_RLC_N 2         /* default RLC words per row (4 ranges) */
-#define TA_SD_RLC_N_MAX 8     /* hard cap on per-shape rlc_n */
+#define TA_SD_RLC_N 2         /* default RLC words/row when nibble unset */
+#define TA_SD_RLC_N_MAX 15    /* nibble max (4 bits); 15 words => 30 ranges */
 #define TA_SD_RLC_RANGES_PER_WORD 2u
 #define TA_SD_BADNESS_WINDOW 100u /* paints before rolling avg snapshot */
+/*
+ * Auto-tune conversion: 1 unused RLC range slot <-> this many overflow px.
+ * Indifference: one greedy merge of a modest inter-ink gap (~4 /2-units = 8 px)
+ * equals one idle slot. combined = ov + lambda * sl (px-equivalent / line).
+ * Raise lambda to prefer fewer words (tolerate more over); lower to buy slots.
+ */
+#define TA_SD_BADNESS_PX_PER_SLACK_SLOT 8.f
 #define TA_SD_REF_BITS 10
 #define TA_SD_REF_MASK ((1u << TA_SD_REF_BITS) - 1u)
 
@@ -33,14 +40,8 @@ typedef uint32_t ta_sd_rlc_word_t;
 
 typedef struct ta_sd_shape {
     uint8_t tag;
-    uint8_t dirty;
-    /*
-     * XY layout metadata (not packed into w/h -- those stay pixel geometry).
-     * rlc_n: RLC words per raster; 0 means TA_SD_RLC_N. Trailer is h*rlc_n
-     * words after the w*h pixmap.
-     */
-    uint8_t rlc_n;
-    uint8_t _pad_rlc;
+    /* bit0 dirty; bits4..7 rlc_n words/row (0 => TA_SD_RLC_N). */
+    uint8_t flags;
     uint16_t w;
     uint16_t h;
     ta_pack66_t *pixels; /* owned; NULL if none. XY: w*h words then rlc. */
@@ -89,6 +90,9 @@ int ta_sd_rlc_set_ranges(ta_sd_rlc_word_t *row_words, unsigned n_words,
                          const uint8_t *off_u, const uint8_t *len_u, int n_in);
 /* Merge ranges until <= max_out; sorted non-overlapping. */
 int ta_sd_rlc_merge_to_n(uint8_t *off_u, uint8_t *len_u, int n_in, int max_out);
+/* Opaque (non-clear) runs on one row -> /2 off/len; returns run count. */
+int ta_sd_collect_opaque_runs(const ta_pack66_t *row, uint16_t w, uint8_t *off,
+                              uint8_t *len, int max_n);
 
 ta_sd_rlc_word_t *ta_sd_xy_rlc(ta_sd_shape_t *xy);
 
@@ -103,8 +107,18 @@ void ta_sd_xy_sample_badness(ta_sd_shape_t *xy);
 /* Mean-per-line averages (0 if no samples yet). */
 float ta_sd_badness_overflow(const ta_sd_shape_t *s);
 float ta_sd_badness_slack(const ta_sd_shape_t *s);
+/* ov + TA_SD_BADNESS_PX_PER_SLACK_SLOT * sl (px-equivalent / line). */
+float ta_sd_badness_combined(const ta_sd_shape_t *s);
 
-/* One line per XY with samples: "idx ov=.. sl=.. paints=.. rlc_n=.." */
+/*
+ * Pick rlc_n in [n_lo,n_hi] minimizing mean-line (ov + lambda*sl) for a
+ * pack66 pixmap (opaque vs clear silhouette + greedy merge). Returns best N
+ * (at least 1). Used by L2R / viewport after bake.
+ */
+unsigned ta_sd_optimize_rlc_n(const ta_pack66_t *px, uint16_t w, uint16_t h,
+                              unsigned n_lo, unsigned n_hi);
+
+/* One line per XY: "idx ov=.. sl=.. bad=.. paints=.. rlc_n=.." */
 size_t ta_sd_format_badness_report(char *dst, size_t cap);
 
 /*
@@ -121,11 +135,15 @@ ta_pack66_t ta_sd_blend(ta_pack66_t dst, ta_pack66_t src);
 void ta_sd_blit(ta_pack66_t *dst, uint16_t dw, uint16_t dh, int ox, int oy,
                 const ta_pack66_t *src, uint16_t sw, uint16_t sh);
 
-/* Compare old/new child rows into XY RLC (n=2 words/row). */
+/*
+ * Build XY RLC from changed runs (old vs new), then greedy-merge smallest
+ * gaps until <= 2*rlc_n ranges. old_px NULL => all transparent (content
+ * silhouette vs clear).
+ */
 void ta_sd_xy_derive_rlc(ta_sd_shape_t *xy, const ta_pack66_t *old_px,
                          const ta_pack66_t *new_px);
 
-/* Mark every row fully dirty (full width in /2 units, clamped). */
+/* Alias: content-derived RLC vs clear (same as derive_rlc(xy, NULL, px)). */
 void ta_sd_xy_mark_full_dirty(ta_sd_shape_t *xy);
 
 /* Clear XY pixmap and blit child BITMAP into it (0,0). 0 ok. */

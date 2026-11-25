@@ -195,7 +195,7 @@ static void mark_follow_dirty(unsigned follow_slot) {
     }
     hdr = ta_shape_table_get(ta_uilo_shape(g.chrome.uilo[follow_slot]));
     if (hdr != NULL) {
-        hdr->dirty = 1;
+        hdr->flags = ta_shape_flags_set_dirty(hdr->flags, 1);
     }
     g.chrome.uilo[follow_slot] = ta_uilo_set_dirty(g.chrome.uilo[follow_slot], 1);
 }
@@ -206,7 +206,8 @@ static void mark_all_dirty(void) {
     for (i = 0; i < g.chrome.n; i++) {
         mark_follow_dirty((unsigned)i);
     }
-    g.ts[TS_TITLE].l2r.dirty = 1;
+    g.ts[TS_TITLE].l2r.flags =
+        ta_shape_flags_set_dirty(g.ts[TS_TITLE].l2r.flags, 1);
 }
 
 void ta_glass_base_dirty(void) {
@@ -238,7 +239,7 @@ static void set_empty_def(text_slot_t *s) {
     s->l2r.w = 1;
     s->l2r.h = g.cfg.text_h;
     s->l2r.pixels = px;
-    s->l2r.dirty = 1;
+    s->l2r.flags = ta_shape_flags_set_dirty(s->l2r.flags, 1);
 }
 
 /* Sanitize + clip ascii into the slot's L2R; pixels pointer preserved. */
@@ -274,7 +275,7 @@ static int build_text(text_slot_t *s, const char *ascii) {
             (size_t)tmp.w * (size_t)tmp.h <= s->px_cap) {
             s->l2r = tmp;
             s->l2r.pixels = px;
-            s->l2r.dirty = 1;
+            s->l2r.flags = ta_shape_flags_set_dirty(s->l2r.flags, 1);
             return 0;
         }
         /* Too wide (or unbuildable): drop the last char and retry. */
@@ -308,7 +309,7 @@ static int slot_set_text(int ts, const char *ascii) {
     if (ts == TS_TITLE) {
         g.title_vp.ox = 0;
         g.title_vp.oy = 0;
-        g.title_vp.dirty = 1;
+        g.title_vp.flags = ta_shape_flags_set_dirty(g.title_vp.flags, 1);
     }
     mark_follow_dirty(k_ts_follow[ts]);
     return 0;
@@ -371,7 +372,7 @@ static void represent_transport_icon(int force) {
     /* Invalidate the entire transport shape (full w x h), not a sub-rect. */
     g.transport_icon.w = TA_CHROME_ICON_PX;
     g.transport_icon.h = TA_CHROME_ICON_PX;
-    g.transport_icon.dirty = 1;
+    g.transport_icon.flags = ta_shape_flags_set_dirty(g.transport_icon.flags, 1);
     if (g.installed) {
         mark_follow_dirty(TA_FOLLOW_TRANSPORT);
     }
@@ -385,7 +386,7 @@ static void represent_nav_icon(void) {
     }
     g.nav_icon.w = TA_CHROME_NAV_PX;
     g.nav_icon.h = TA_CHROME_NAV_PX;
-    g.nav_icon.dirty = 1;
+    g.nav_icon.flags = ta_shape_flags_set_dirty(g.nav_icon.flags, 1);
     mark_follow_dirty(TA_FOLLOW_NAV);
 }
 
@@ -463,7 +464,7 @@ int ta_glass_install_stack(void) {
     g.base.w = g.cfg.panel_w;
     g.base.h = g.cfg.panel_h;
     g.base.pixels = g.cfg.base_pixels;
-    g.base.dirty = 1;
+    g.base.flags = ta_shape_flags_set_dirty(g.base.flags, 1);
     if (ta_shape_table_set(TA_GLASS_IDX_BASE, &g.base) != 0) {
         return -1;
     }
@@ -472,7 +473,7 @@ int ta_glass_install_stack(void) {
      * full-panel children added via ta_glass_add_page. */
     memset(&g.swap, 0, sizeof(g.swap));
     g.swap.tag = TA_SHAPE_TAG_SWAP;
-    g.swap.dirty = 1;
+    g.swap.flags = ta_shape_flags_set_dirty(g.swap.flags, 1);
     g.swap.n = 1;
     g.swap.active = 0;
     g.swap.child_idx[0] = TA_GLASS_IDX_BASE;
@@ -506,7 +507,7 @@ int ta_glass_install_stack(void) {
         g.st.errors++;
         return -1;
     }
-    g.title_vp.dirty = 1;
+    g.title_vp.flags = ta_shape_flags_set_dirty(g.title_vp.flags, 1);
     if (ta_shape_table_set(TA_GLASS_IDX_TITLE_VP,
                            (ta_shape_bitmap_t *)(void *)&g.title_vp) != 0) {
         return -1;
@@ -517,19 +518,23 @@ int ta_glass_install_stack(void) {
     g.transport_icon.w = TA_CHROME_ICON_PX;
     g.transport_icon.h = TA_CHROME_ICON_PX;
     g.transport_icon.pixels = g.transport_px;
-    g.transport_icon.dirty = 1;
+    g.transport_icon.flags = ta_shape_flags_set_rlc_n(0, 1);
+    g.transport_icon.flags =
+        ta_shape_flags_set_dirty(g.transport_icon.flags, 1);
     memset(&g.nav_icon, 0, sizeof(g.nav_icon));
     g.nav_icon.tag = TA_SHAPE_TAG_BITMAP;
     g.nav_icon.w = TA_CHROME_NAV_PX;
     g.nav_icon.h = TA_CHROME_NAV_PX;
     g.nav_icon.pixels = g.nav_px;
-    g.nav_icon.dirty = 1;
+    g.nav_icon.flags = ta_shape_flags_set_rlc_n(0, 1);
+    g.nav_icon.flags = ta_shape_flags_set_dirty(g.nav_icon.flags, 1);
     memset(&g.debug_icon, 0, sizeof(g.debug_icon));
     g.debug_icon.tag = TA_SHAPE_TAG_BITMAP;
     g.debug_icon.w = TA_CHROME_NAV_PX;
     g.debug_icon.h = TA_CHROME_NAV_PX;
     g.debug_icon.pixels = g.debug_px;
-    g.debug_icon.dirty = 1;
+    g.debug_icon.flags = ta_shape_flags_set_rlc_n(0, 1);
+    g.debug_icon.flags = ta_shape_flags_set_dirty(g.debug_icon.flags, 1);
     ta_chrome_icon_clear(g.debug_px, TA_CHROME_NAV_PX);
     ta_chrome_icon_down_solid(g.debug_px, TA_CHROME_NAV_PX);
     if (ta_shape_table_set(TA_GLASS_IDX_TRANSPORT, &g.transport_icon) != 0 ||
@@ -726,7 +731,7 @@ int ta_glass_add_page(unsigned shape_idx) {
     }
     g.swap.child_idx[g.swap.n] = shape_idx;
     g.swap.n++;
-    g.swap.dirty = 1;
+    g.swap.flags = ta_shape_flags_set_dirty(g.swap.flags, 1);
     if (ta_shape_swap_bind(&g.swap) != 0) {
         g.swap.n--;
         return -1;
@@ -748,19 +753,34 @@ static void glass_xy_push_cb(int x, int y, int w, int h, const ta_pack66_t *px,
     c->be->push_rect(x, y, w, h, px, stride_px);
 }
 
-/* Load exterior pixels into scratch XY and push dirty RLC spans. */
+static unsigned shape_push_rlc_n(const ta_shape_bitmap_t *hdr) {
+    unsigned n;
+
+    if (hdr == NULL) {
+        return 1u;
+    }
+    n = ta_shape_flags_rlc_n(hdr->flags);
+    return n ? n : 1u; /* unset => simple graphics */
+}
+
+/* Load exterior pixels into scratch XY and push dirty RLC spans.
+ * rlc_n_words 0 => 1 (simple graphics default). */
 static int glass_push_xy(int ex, int ey, int ew, int eh, const ta_pack66_t *px,
-                         int stride_px) {
+                         int stride_px, unsigned rlc_n_words) {
     ta_sd_shape_t *xy;
     ta_glass_push_ctx_t ctx;
     int y;
     int spans;
+    unsigned rn = rlc_n_words ? rlc_n_words : 1u;
 
     if (px == NULL || ew <= 0 || eh <= 0) {
         return -1;
     }
-    if (ta_sd_alloc_bitmap(TA_GLASS_XY_SCRATCH, TA_SD_TAG_XY, (uint16_t)ew,
-                           (uint16_t)eh) != 0) {
+    if (rn > TA_SD_RLC_N_MAX) {
+        rn = TA_SD_RLC_N_MAX;
+    }
+    if (ta_sd_alloc_bitmap_rlc(TA_GLASS_XY_SCRATCH, TA_SD_TAG_XY, (uint16_t)ew,
+                               (uint16_t)eh, (uint8_t)rn) != 0) {
         return -1;
     }
     xy = ta_sd_get(TA_GLASS_XY_SCRATCH);
@@ -772,7 +792,8 @@ static int glass_push_xy(int ex, int ey, int ew, int eh, const ta_pack66_t *px,
                px + (size_t)y * (size_t)stride_px,
                (size_t)ew * sizeof(ta_pack66_t));
     }
-    ta_sd_xy_mark_full_dirty(xy);
+    /* Tight RLC: opaque/content runs vs clear, merge smallest gaps to 2*n. */
+    ta_sd_xy_derive_rlc(xy, NULL, xy->pixels);
     ctx.be = g.be;
     spans = ta_sd_xy_push_dirty(TA_GLASS_XY_SCRATCH, glass_xy_push_cb, &ctx);
     return spans < 0 ? -1 : 0;
@@ -804,11 +825,11 @@ int ta_glass_paint(void) {
             return -1;
         }
         if (glass_push_xy(0, 0, (int)g.swap.w, (int)g.swap.h, hdr->pixels,
-                          (int)hdr->w) != 0) {
+                          (int)hdr->w, shape_push_rlc_n(hdr)) != 0) {
             g.st.errors++;
             return -1;
         }
-        g.swap.dirty = 0;
+        g.swap.flags = ta_shape_flags_set_dirty(g.swap.flags, 0);
         g.st.pushes++;
         g.st.paints++;
         return 1;
@@ -826,9 +847,8 @@ int ta_glass_paint(void) {
         g.st.errors++;
         return -1;
     }
-    /* phase2 lists nearest first; the glass wants farthest first so a
-     * partially overlapping lower never overpaints a nearer rect. */
-    for (i = n - 1; i >= 0; i--) {
+    /* phase2 lists top-down (then left-right); overlap OK for now. */
+    for (i = 0; i < n; i++) {
         const ta_shape_bitmap_t *hdr = ta_shape_table_get(pushes[i].shape_idx);
         int ex;
         int ey;
@@ -871,7 +891,7 @@ int ta_glass_paint(void) {
                     ta_uilo_x(g.chrome.uilo[TA_FOLLOW_BASE]),
                     ta_uilo_y(g.chrome.uilo[TA_FOLLOW_BASE]), g.chrome.uilo,
                     g.chrome.n, top_slot, hdr) == 0) {
-                if (glass_push_xy(ex, ey, ew, eh, composed, ew) != 0) {
+                if (glass_push_xy(ex, ey, ew, eh, composed, ew, 1u) != 0) {
                     free(composed);
                     g.st.errors++;
                     return -1;
@@ -882,7 +902,8 @@ int ta_glass_paint(void) {
             }
             free(composed);
         }
-        if (glass_push_xy(ex, ey, ew, eh, hdr->pixels, (int)hdr->w) != 0) {
+        if (glass_push_xy(ex, ey, ew, eh, hdr->pixels, (int)hdr->w,
+                          shape_push_rlc_n(hdr)) != 0) {
             g.st.errors++;
             return -1;
         }
@@ -914,8 +935,8 @@ int ta_glass_paint(void) {
             }
         }
         if (glass_push_xy((int)g.cfg.panel_w / 2 - 50,
-                          (int)g.cfg.panel_h / 2 - 50, 100, 100, ring,
-                          100) != 0) {
+                          (int)g.cfg.panel_h / 2 - 50, 100, 100, ring, 100,
+                          1u) != 0) {
             free(ring);
             g.st.errors++;
             return -1;
@@ -936,7 +957,7 @@ int ta_glass_scroll_ox(int16_t ox) {
         return 0; /* fits: no scroll churn */
     }
     g.title_vp.ox = ox;
-    g.title_vp.dirty = 1;
+    g.title_vp.flags = ta_shape_flags_set_dirty(g.title_vp.flags, 1);
     mark_follow_dirty(TA_FOLLOW_TITLE);
     g.st.scrolls++;
     return 1;

@@ -15,7 +15,7 @@ enum {
 
 typedef struct ta_shape_viewport {
     uint8_t tag;
-    uint8_t dirty;
+    uint8_t flags; /* dirty + rlc_n nibble */
     uint16_t w; /* window width */
     uint16_t h;
     ta_pack66_t *pixels; /* window-sized bake target */
