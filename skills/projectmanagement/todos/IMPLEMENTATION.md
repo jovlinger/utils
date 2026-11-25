@@ -723,7 +723,7 @@ saves on its click.
 Every edit is `POST /update` with a JSON body:
 
 ```json
-{"id": "<64-hex todo Id>", "op": "set-body", "target": "", "value": "<new text>", "token": "<page token>"}
+{"id": "<64-hex todo Id>", "op": "set-body", "target": "", "value": "<new text>"}
 ```
 
 | `op` | `target` | `value` |
@@ -734,17 +734,12 @@ Every edit is `POST /update` with a JSON body:
 | `work-item-reorder` | `objid:<hex>` | the destination index |
 
 The server runs the matching CLI command in-process, so its validation and
-refusals are the CLI's own. **token** is the page's stale-page token: the
-sha256 of the record's canonical JSON with embedding vectors stripped (not
-`update_dt`, which has one-second resolution and is not bumped by the search
-backfill). The server compares it with the stored record and runs the command
-under one hold of that todo's store lock, so no writer lands between the
-check and the write.
+refusals are the CLI's own. Saves are last-write-wins: a save applies whatever
+the page sent, even when the todo changed since the page loaded.
 
 | Status | Means | Body |
 |--------|-------|------|
-| 200 | saved | `{"token": <the record's new token>}` |
-| 409 | the record changed since the page loaded; nothing was written | `{"error", "current": <stored value of the addressed field>, "token"}`. The page shows `current` beside the unsaved draft, never merges, and a reload is what lets the page save again |
+| 200 | saved | `{}` |
 | 400 | the command refused, or the request is malformed | `{"error": <the command's own error text>}` |
 | 403 | refused before any command ran | `{"error"}` |
 | 503 | the store lock is held elsewhere (the CLI's ERETRY); retry | `{"error"}` |

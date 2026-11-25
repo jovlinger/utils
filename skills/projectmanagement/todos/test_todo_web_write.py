@@ -3,8 +3,7 @@
 
 Three layers: the request checks and status mapping (handle_update against a
 fake updater), the running server in both modes, and the real updater in
-todo.py against a real store, which is where the stale-page token and the
-single-lock compare-and-write live.
+todo.py against a real store, where a save is last-write-wins.
 """
 
 from __future__ import annotations
@@ -37,19 +36,16 @@ GOOD_HEADERS = {
     "Origin": ORIGIN,
     "Content-Type": "application/json",
 }
-REQUEST = {"id": "ab" * 32, "op": "set-body", "target": "", "value": "new", "token": "t0"}
+REQUEST = {"id": "ab" * 32, "op": "set-body", "target": "", "value": "new"}
 
 
 class FakeUpdater:
     """Records requests; answers with a canned result or raises a canned error."""
 
     def __init__(self, result: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None):
-        self.result = result if result is not None else {"token": "t1"}
+        self.result = result if result is not None else {}
         self.error = error
         self.requests: List[Dict[str, Any]] = []
-
-    def token(self, todo_record: Dict[str, Any]) -> str:
-        return "t0:" + str(todo_record.get("Id", ""))
 
     def update(self, request: Dict[str, Any]) -> Dict[str, Any]:
         self.requests.append(request)
@@ -75,24 +71,14 @@ def _without(key: str) -> Dict[str, str]:
 
 
 class HandleUpdateTest(unittest.TestCase):
-    """Status mapping: 200 applied, 409 stale page, 4xx/503 CLI refusal."""
+    """Status mapping: 200 applied, 4xx/503 CLI refusal."""
 
     def test_success_passes_the_request_to_the_updater(self) -> None:
-        updater = FakeUpdater(result={"token": "t9"})
+        updater = FakeUpdater(result={"ok": True})
         status, payload = _handle(updater)
         self.assertEqual(200, status)
-        self.assertEqual({"token": "t9"}, payload)
+        self.assertEqual({"ok": True}, payload)
         self.assertEqual([REQUEST], updater.requests)
-
-    def test_stale_token_is_409_with_the_stored_value_and_its_token(self) -> None:
-        updater = FakeUpdater(
-            error=todo_web.UpdateConflict("page is stale", current="cli text", token="t5")
-        )
-        status, payload = _handle(updater)
-        self.assertEqual(409, status)
-        self.assertEqual("cli text", payload["current"])
-        self.assertEqual("t5", payload["token"])
-        self.assertEqual("page is stale", payload["error"])
 
     def test_cli_refusal_carries_the_command_text(self) -> None:
         updater = FakeUpdater(error=todo_web.UpdateRefused("no todo found for id 'abab'"))
@@ -253,7 +239,7 @@ class WriteServerTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.updater = FakeUpdater(result={"token": "t2"})
+        cls.updater = FakeUpdater(result={"ok": True})
         cls.base = _start_server(write=True, updater=cls.updater)
 
     def setUp(self) -> None:
@@ -262,7 +248,7 @@ class WriteServerTest(unittest.TestCase):
     def test_update_is_applied(self) -> None:
         status, payload = _post(self.base, "/update", REQUEST)
         self.assertEqual(200, status)
-        self.assertEqual({"token": "t2"}, payload)
+        self.assertEqual({"ok": True}, payload)
         self.assertEqual([REQUEST], self.updater.requests)
 
     def test_other_post_paths_are_404(self) -> None:
@@ -362,14 +348,14 @@ class FieldEditRenderTest(unittest.TestCase):
         self.assertNotIn("write", page_data(page))
 
     def test_write_page_has_one_control_per_text_field(self) -> None:
-        page = render(PAGE_TODO, write=True, token="tok")
+        page = render(PAGE_TODO, write=True)
         keys = edit_keys(page)
         self.assertEqual(sorted(FIELD_EDITS), sorted(keys))
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_write_page_embeds_the_token_and_each_request(self) -> None:
-        data = page_data(render(PAGE_TODO, write=True, token="tok"))
-        self.assertEqual("tok", data["write"]["token"])
+    def test_write_page_embeds_each_request(self) -> None:
+        data = page_data(render(PAGE_TODO, write=True))
+        self.assertNotIn("token", data["write"])
         edits = data["write"]["edits"]
         self.assertEqual(FIELD_EDITS, set(edits))
         self.assertEqual(
@@ -380,7 +366,7 @@ class FieldEditRenderTest(unittest.TestCase):
         self.assertEqual("", edits["set-ac"]["value"])
 
     def test_empty_editable_fields_get_a_place_to_be_edited(self) -> None:
-        page = render(PAGE_TODO, write=True, token="tok")
+        page = render(PAGE_TODO, write=True)
         self.assertIn("<h2>Long summary</h2>", page)
         self.assertIn('data-edit="set-ac"', meta_row(page, "AC"))
         self.assertIn('data-edit="set-actual-summary"', meta_row(page, "ActualSummary"))
@@ -393,13 +379,13 @@ class FieldEditRenderTest(unittest.TestCase):
 
     def test_stored_ac_and_actual_summary_carry_their_controls(self) -> None:
         record = {**PAGE_TODO, "AC": "done when x", "ActualSummary": "it went fine"}
-        page = render(record, write=True, token="tok")
+        page = render(record, write=True)
         self.assertIn("done when x", meta_row(page, "AC"))
         self.assertIn('data-edit="set-ac"', meta_row(page, "AC"))
         self.assertIn('data-edit="set-actual-summary"', meta_row(page, "ActualSummary"))
 
     def test_no_control_on_identity_state_tag_scope_or_timestamps(self) -> None:
-        page = render(PAGE_TODO, write=True, token="tok")
+        page = render(PAGE_TODO, write=True)
         for key in ("Branch", "Scope", "Tag", "create_dt", "update_dt"):
             with self.subTest(field=key):
                 self.assertNotIn("edit-toggle", meta_row(page, key))
@@ -414,7 +400,7 @@ class FieldEditRenderTest(unittest.TestCase):
             "Subtodos": [{"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0003"}],
             "_nextobjid": 4,
         }
-        entry = page_data(render(record, write=True, token="tok"))["objects"]["0003"]
+        entry = page_data(render(record, write=True))["objects"]["0003"]
         self.assertNotIn("edit-toggle", entry["html"])
 
 
@@ -449,13 +435,13 @@ class ListEditRenderTest(unittest.TestCase):
                 self.assertNotIn("edit-toggle", tile(page, objid))
 
     def test_every_note_tile_has_its_edit(self) -> None:
-        page = render(LIST_TODO, write=True, token="tok")
+        page = render(LIST_TODO, write=True)
         for objid in ("0003", "0004"):
             with self.subTest(objid=objid):
                 self.assertIn(f'data-edit="note-replace:{objid}"', tile(page, objid))
 
     def test_not_done_items_have_an_edit_and_done_items_none(self) -> None:
-        page = render(LIST_TODO, write=True, token="tok")
+        page = render(LIST_TODO, write=True)
         for objid in ("0007", "0008"):
             with self.subTest(objid=objid, done=False):
                 self.assertIn(f'data-edit="work-item-replace:{objid}"', tile(page, objid))
@@ -464,7 +450,7 @@ class ListEditRenderTest(unittest.TestCase):
                 self.assertNotIn("edit-toggle", tile(page, objid))
 
     def test_each_control_sends_its_own_command_and_target(self) -> None:
-        edits = page_data(render(LIST_TODO, write=True, token="tok"))["write"]["edits"]
+        edits = page_data(render(LIST_TODO, write=True))["write"]["edits"]
         self.assertEqual(
             {
                 "op": "note-replace",
@@ -487,7 +473,7 @@ class ListEditRenderTest(unittest.TestCase):
         self.assertNotIn("work-item-replace:0006", edits)
 
     def test_no_control_adds_or_removes_anything(self) -> None:
-        edits = page_data(render(LIST_TODO, write=True, token="tok"))["write"]["edits"]
+        edits = page_data(render(LIST_TODO, write=True))["write"]["edits"]
         ops = {spec["op"] for spec in edits.values()}
         self.assertEqual(
             FIELD_EDITS | {"note-replace", "work-item-replace"}, ops - {"work-item-reorder"}
@@ -515,7 +501,7 @@ class MoveRenderTest(unittest.TestCase):
         self.assertEqual([], move_keys(render(MOVE_TODO)))
 
     def test_moves_stay_inside_the_not_done_frontier(self) -> None:
-        page = render(MOVE_TODO, write=True, token="tok")
+        page = render(MOVE_TODO, write=True)
         self.assertEqual(
             {
                 "work-item-reorder:0007:down",
@@ -530,7 +516,7 @@ class MoveRenderTest(unittest.TestCase):
                 self.assertNotIn("move-btn", tile(page, objid))
 
     def test_each_move_names_its_item_and_destination_index(self) -> None:
-        edits = page_data(render(MOVE_TODO, write=True, token="tok"))["write"]["edits"]
+        edits = page_data(render(MOVE_TODO, write=True))["write"]["edits"]
         self.assertEqual(
             {
                 "op": "work-item-reorder",
@@ -545,11 +531,11 @@ class MoveRenderTest(unittest.TestCase):
 
     def test_a_lone_open_item_has_no_moves(self) -> None:
         record = {**LIST_TODO, "WorkItems": LIST_TODO["WorkItems"][:3]}
-        self.assertEqual([], move_keys(render(record, write=True, token="tok")))
+        self.assertEqual([], move_keys(render(record, write=True)))
 
 
 class EditPageServeTest(unittest.TestCase):
-    """The running server renders edit controls and the token only under --write."""
+    """The running server renders edit controls only under --write."""
 
     def _page(self, *, write: bool) -> str:
         updater = FakeUpdater()
@@ -579,10 +565,10 @@ class EditPageServeTest(unittest.TestCase):
         with urllib.request.urlopen(f"{base}/{PAGE_TID[:8]}", timeout=10) as resp:
             return resp.read().decode("utf-8")
 
-    def test_write_server_pages_carry_controls_and_the_updater_token(self) -> None:
+    def test_write_server_pages_carry_controls(self) -> None:
         page = self._page(write=True)
         self.assertEqual(sorted(FIELD_EDITS), sorted(edit_keys(page)))
-        self.assertEqual("t0:" + PAGE_TID, page_data(page)["write"]["token"])
+        self.assertIn("write", page_data(page))
 
     def test_read_only_server_pages_carry_neither(self) -> None:
         page = self._page(write=False)
@@ -658,47 +644,6 @@ class FramingHeaderTest(unittest.TestCase):
         self.assertEqual(
             "frame-ancestors 'none'", caught.exception.headers["Content-Security-Policy"]
         )
-
-
-class RecordFingerprintTest(unittest.TestCase):
-    """The stale-page token: canonical JSON, stamped embedding vectors ignored."""
-
-    RECORD = {
-        "Id": "cd" * 32,
-        "Branch": "cdcdcdcd-x",
-        "Summary": {"raw": "s", "objid": "0001"},
-        "Body": {"raw": "b", "objid": "0002"},
-        "update_dt": "2026-10-30T00:00:00Z",
-    }
-
-    def test_key_order_does_not_matter(self) -> None:
-        reordered = dict(reversed(list(self.RECORD.items())))
-        self.assertEqual(todo.record_fingerprint(self.RECORD), todo.record_fingerprint(reordered))
-
-    def test_any_content_change_changes_it(self) -> None:
-        changed = json.loads(json.dumps(self.RECORD))
-        changed["Body"]["raw"] = "b2"
-        self.assertNotEqual(todo.record_fingerprint(self.RECORD), todo.record_fingerprint(changed))
-
-    def test_a_same_second_rewrite_still_changes_it(self) -> None:
-        # update_dt has one-second resolution; the token must not lean on it.
-        changed = json.loads(json.dumps(self.RECORD))
-        changed["Summary"]["raw"] = "s2"
-        self.assertEqual(self.RECORD["update_dt"], changed["update_dt"])
-        self.assertNotEqual(todo.record_fingerprint(self.RECORD), todo.record_fingerprint(changed))
-
-    def test_stamped_vectors_are_ignored(self) -> None:
-        stamped = json.loads(json.dumps(self.RECORD))
-        stamped["Body"]["bow-v1"] = [[0.1, 0.2, 0.3]]
-        stamped["Summary"]["bow-v1"] = [[0.3, 0.4, 0.5], [0.6, 0.7, 0.8]]
-        self.assertEqual(todo.record_fingerprint(self.RECORD), todo.record_fingerprint(stamped))
-
-    def test_it_does_not_mutate_the_record(self) -> None:
-        stamped = json.loads(json.dumps(self.RECORD))
-        stamped["Body"]["bow-v1"] = [[0.1, 0.2, 0.3]]
-        before = json.dumps(stamped, sort_keys=True)
-        todo.record_fingerprint(stamped)
-        self.assertEqual(before, json.dumps(stamped, sort_keys=True))
 
 
 class WebOpArgvTest(unittest.TestCase):
@@ -785,46 +730,29 @@ class WebUpdaterCase(test_todo.TodoIntegrationCase):
     def stored(self) -> Dict[str, Any]:
         return self.read_cur()
 
-    def page_token(self) -> str:
-        """The token a freshly loaded page carries."""
-        with self.in_env():
-            return self.updater.token(self.stored())
-
     def update(self, **request: Any) -> Dict[str, Any]:
-        full = {"id": self.TID, "target": "", "token": self.page_token(), **request}
+        full = {"id": self.TID, "target": "", **request}
         with self.in_env():
             return self.updater.update(full)
 
 
 class WebUpdaterSetBodyTest(WebUpdaterCase):
-    """set-body through the CLI's own `set --body`, guarded by the page token."""
+    """set-body through the CLI's own `set --body`; saves are last-write-wins."""
 
-    def test_save_with_a_fresh_token_writes_the_body(self) -> None:
-        result = self.update(op="set-body", value="edited from the page")
-        stored = self.stored()
-        self.assertEqual("edited from the page", stored["Body"]["raw"])
-        self.assertEqual(todo.record_fingerprint(stored), result["token"])
+    def test_save_writes_the_body(self) -> None:
+        self.update(op="set-body", value="edited from the page")
+        self.assertEqual("edited from the page", self.stored()["Body"]["raw"])
 
-    def test_the_token_survives_reads(self) -> None:
-        self.assertEqual(self.page_token(), self.page_token())
-
-    def test_stale_token_is_a_conflict_carrying_the_stored_body(self) -> None:
-        stale = self.page_token()
+    def test_a_save_from_a_page_loaded_before_a_cli_write_still_lands(self) -> None:
         proc = self.todo("set", self.TID, "--body=written by the cli")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        with self.in_env(), self.assertRaises(todo_web.UpdateConflict) as caught:
-            self.updater.update(
-                {"id": self.TID, "op": "set-body", "target": "", "value": "draft", "token": stale}
-            )
-        self.assertEqual("written by the cli", caught.exception.current)
-        self.assertEqual(todo.record_fingerprint(self.stored()), caught.exception.token)
         self.assertEqual("written by the cli", self.stored()["Body"]["raw"])
+        self.update(op="set-body", value="the page's draft")
+        self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
 
     def test_unknown_todo_is_the_cli_refusal(self) -> None:
         with self.in_env(), self.assertRaises(todo_web.UpdateRefused) as caught:
-            self.updater.update(
-                {"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x", "token": "t"}
-            )
+            self.updater.update({"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x"})
         self.assertIn("no todo found for id", str(caught.exception))
 
     def test_edit_sentinel_is_the_cli_refusal_not_an_editor(self) -> None:
@@ -845,47 +773,14 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
             self.update(op="set-body", value=["not", "text"])
         self.assertEqual("original body", self.stored()["Body"]["raw"])
 
-    def test_check_and_write_happen_under_one_lock_hold(self) -> None:
-        seen: List[str] = []
-        real_fingerprint = todo.record_fingerprint
-        real_write = todo.write_todo_worktree
-
-        def fingerprint(record: Dict[str, Any]) -> str:
-            seen.append("check:" + str(self.TID in todo_store.held_locks()))
-            return real_fingerprint(record)
-
-        def write(*args: Any, **kwargs: Any) -> None:
-            seen.append("write:" + str(self.TID in todo_store.held_locks()))
-            real_write(*args, **kwargs)
-
-        token = self.page_token()
-        with mock.patch.object(todo, "record_fingerprint", fingerprint), mock.patch.object(
-            todo, "write_todo_worktree", write
-        ):
-            with self.in_env():
-                self.updater.update(
-                    {"id": self.TID, "op": "set-body", "target": "", "value": "v", "token": token}
-                )
-        self.assertEqual("check:True", seen[0])
-        self.assertIn("write:True", seen)
-        self.assertNotIn("write:False", seen)
-        self.assertEqual(set(), todo_store.held_locks())
-
     def test_a_foreign_lock_holder_makes_the_save_retryable(self) -> None:
-        token = self.page_token()
         with self.in_env():
             store = todo_store.get_store()
             store._grace = 0.2
             with mock.patch.object(store, "_try_acquire", return_value=False):
                 with self.assertRaises(todo_web.UpdateRefused) as caught:
                     self.updater.update(
-                        {
-                            "id": self.TID,
-                            "op": "set-body",
-                            "target": "",
-                            "value": "v",
-                            "token": token,
-                        }
+                        {"id": self.TID, "op": "set-body", "target": "", "value": "v"}
                     )
         self.assertEqual(503, caught.exception.status)
         self.assertEqual("original body", self.stored()["Body"]["raw"])
@@ -961,23 +856,6 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         text = self.refused(op="note-replace", target="objid:fff0", value="x")
         self.assertIn("note", text)
 
-    def test_note_replace_conflict_carries_the_stored_note(self) -> None:
-        target = self.objid("Notes", 0)
-        stale = self.page_token()
-        proc = self.todo("note-replace", self.TID, target, "--raw=cli wrote this")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        with self.in_env(), self.assertRaises(todo_web.UpdateConflict) as caught:
-            self.updater.update(
-                {
-                    "id": self.TID,
-                    "op": "note-replace",
-                    "target": target,
-                    "value": "d",
-                    "token": stale,
-                }
-            )
-        self.assertEqual("cli wrote this", caught.exception.current)
-
     def test_work_item_replace_rewords_a_not_done_item(self) -> None:
         target = self.objid("WorkItems", 2)
         self.update(op="work-item-replace", target=target, value="open two, reworded")
@@ -1010,9 +888,7 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         """The move requests a write page rendered from the stored record offers."""
         with self.in_env():
             stored = self.stored()
-            page = todo_web.render_todo_page(
-                Path("."), stored, write=True, token=self.updater.token(stored)
-            )
+            page = todo_web.render_todo_page(Path("."), stored, write=True)
         edits = page_data(page)["write"]["edits"]
         return {k: v for k, v in edits.items() if v["op"] == "work-item-reorder"}
 
@@ -1033,12 +909,11 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         self.assertIn("done prefix", text)
 
 
-class RoundTripConflictTest(WebUpdaterCase):
-    """The whole loop over HTTP: page load, a CLI write, a stale save, a fresh save.
+class RoundTripLastWriteWinsTest(WebUpdaterCase):
+    """The whole loop over HTTP: page load, a CLI write, then a save from that page.
 
-    A real server with the real WebUpdater on a real store, so the token the page
-    carries is the one the server rendered, and the CLI write in between is an
-    ordinary `todo.py set`.
+    A real server with the real WebUpdater on a real store; the CLI write in
+    between is an ordinary `todo.py set`.
     """
 
     def serve(self) -> str:
@@ -1088,11 +963,10 @@ class RoundTripConflictTest(WebUpdaterCase):
                 "op": spec["op"],
                 "target": spec["target"],
                 "value": value,
-                "token": data["write"]["token"],
             },
         )
 
-    def test_cli_write_between_load_and_save_is_a_409_then_a_fresh_load_saves(self) -> None:
+    def test_a_save_from_a_page_loaded_before_a_cli_write_lands_last_write_wins(self) -> None:
         with self.in_env():
             base = self.serve()
             stale = self.load(base)
@@ -1100,21 +974,11 @@ class RoundTripConflictTest(WebUpdaterCase):
 
             proc = self.todo("set", self.TID, "--body=written by the cli")
             self.assertEqual(0, proc.returncode, proc.stderr)
-
-            status, payload = self.save(base, stale, "the page's draft")
-            self.assertEqual(409, status)
-            self.assertEqual("written by the cli", payload["current"])
             self.assertEqual("written by the cli", self.stored()["Body"]["raw"])
 
-            fresh = self.load(base)
-            self.assertEqual("written by the cli", fresh["write"]["edits"]["set-body"]["value"])
-            self.assertEqual(payload["token"], fresh["write"]["token"])
-            status, payload = self.save(base, fresh, "the page's draft")
+            status, payload = self.save(base, stale, "the page's draft")
             self.assertEqual(200, status, payload)
             self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
-
-            # The token the save returned is the one a reload now carries.
-            self.assertEqual(payload["token"], self.load(base)["write"]["token"])
 
     def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(self) -> None:
         with self.in_env():
@@ -1214,14 +1078,12 @@ class AutocommitScopeTest(test_todo.TodoCase):
             with mock.patch.dict(os.environ, self._env, clear=True):
                 updater = todo.WebUpdater(self.repo)
                 for tid, value in ((first, "first"), (second, "second")):
-                    record = todo.resolve_ticket_by_id(self.repo, tid)[1]
                     updater.update(
                         {
                             "id": tid,
                             "op": "set-summary",
                             "target": "",
                             "value": value,
-                            "token": updater.token(record),
                         }
                     )
         finally:

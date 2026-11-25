@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import copy
 import hashlib
 import io
 import json
@@ -6830,72 +6829,16 @@ WEB_READ_HOST = "::"
 WEB_WRITE_HOST = "localhost"
 
 
-def record_fingerprint(todo: JsonDict) -> str:
-    """The stale-page token: sha256 of *todo*'s canonical JSON, embedding vectors stripped.
-
-    Not ``update_dt``: that has one-second resolution, and the search backfill
-    rewrites records (stamping vectors) without bumping it. Stripping the
-    vectors keeps a backfill from invalidating every open page. *todo* is not
-    modified.
-    """
-    clean = copy.deepcopy(todo)
-    for field_path, _key in _json_embeddings_present(clean):
-        _strip_vectors_at(clean, field_path)
-    canonical = json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
-
-
-def _web_raw(todo: JsonDict, key: str) -> str:
-    """A text field's stored value, whether it is a ``{raw}`` dict or a bare string."""
-    value = todo.get(key)
-    if isinstance(value, dict):
-        value = value.get("raw")
-    return value if isinstance(value, str) else ""
-
-
 @dataclass(frozen=True)
 class WebOp:
-    """One web edit: the CLI argv that applies it, and the stored value a 409 shows."""
+    """One web edit: the CLI argv that applies it."""
 
     argv: Callable[[str, str, str], List[str]]  # (todo_id, target, value)
-    current: Callable[[JsonDict, str], Any]  # (record, target)
 
 
-def _web_item_at(record: JsonDict, resolve: Callable[[], int], key: str) -> Optional[JsonDict]:
-    """The list element *resolve* indexes into *key*, or None when it no longer resolves."""
-    try:
-        index = resolve()
-    except TodoError:
-        return None
-    items = record.get(key) or []
-    return items[index] if isinstance(items[index], dict) else None
-
-
-def _web_note_raw(record: JsonDict, target: str) -> Optional[str]:
-    note = _web_item_at(record, lambda: resolve_note_index(record, target), "Notes")
-    return None if note is None else str(note.get("raw", ""))
-
-
-def _web_item_summary(record: JsonDict, target: str) -> Optional[str]:
-    item = _web_item_at(
-        record, lambda: resolve_workitem_index(record, target, what="replace"), "WorkItems"
-    )
-    return None if item is None else str(item.get("summary", ""))
-
-
-def _web_item_index(record: JsonDict, target: str) -> Optional[int]:
-    try:
-        return resolve_workitem_index(record, target, what="reorder")
-    except TodoError:
-        return None
-
-
-def _web_set_op(flag: str, field: str) -> WebOp:
-    """A `set --<flag>=<value>` edit of the text field *field*."""
-    return WebOp(
-        argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid],
-        current=lambda record, _target: _web_raw(record, field),
-    )
+def _web_set_op(flag: str) -> WebOp:
+    """A `set --<flag>=<value>` edit of a text field."""
+    return WebOp(argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid])
 
 
 # The CLI's update surface and nothing else: no op creates, deletes or closes
@@ -6903,25 +6846,22 @@ def _web_set_op(flag: str, field: str) -> WebOp:
 # can be parsed as a flag (the "--" must precede ALL positionals: argparse
 # fills an optional positional with nothing before a later "--").
 WEB_OPS: Dict[str, WebOp] = {
-    "set-summary": _web_set_op("summary", "Summary"),
-    "set-body": _web_set_op("body", "Body"),
-    "set-ac": _web_set_op("ac", "AC"),
-    "set-long-summary": _web_set_op("long-summary", "LongSummary"),
-    "set-actual-summary": _web_set_op("actual-summary", "ActualSummary"),
+    "set-summary": _web_set_op("summary"),
+    "set-body": _web_set_op("body"),
+    "set-ac": _web_set_op("ac"),
+    "set-long-summary": _web_set_op("long-summary"),
+    "set-actual-summary": _web_set_op("actual-summary"),
     "note-replace": WebOp(
         argv=lambda tid, target, value: ["note-replace", f"--raw={value}", "--", tid, target],
-        current=_web_note_raw,
     ),
     "work-item-replace": WebOp(
         argv=lambda tid, target, value: [
             "work-item-replace", f"--summary={value}", "--", tid, target
         ],
-        current=_web_item_summary,
     ),
     # value is the destination index, as work-item-reorder's DST.
     "work-item-reorder": WebOp(
         argv=lambda tid, target, value: ["work-item-reorder", "--", tid, target, value],
-        current=_web_item_index,
     ),
 }
 
@@ -6984,28 +6924,22 @@ class WebUpdater:
     """The write side `web --write` injects into todo_web.serve (todo_web.Updater).
 
     Each update runs the CLI's own command through ``main`` in this process, so
-    its validation and refusals are the CLI's, verbatim. The page token is
-    compared with the stored record and the command runs under ONE hold of the
-    todo's store lock (the command's own write re-enters it), so no other writer
-    can land between the check and the write. Updates are serialized in-process;
-    ``main``'s stdout/stderr are captured for the updating thread only, so other
-    request threads keep writing to the real streams.
+    its validation and refusals are the CLI's, verbatim. A save is last-write-wins:
+    it applies whatever the page sent, whether or not the todo changed since the
+    page loaded. Updates are serialized in-process; ``main``'s stdout/stderr are
+    captured for the updating thread only, so other request threads keep writing
+    to the real streams.
     """
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self._serial = threading.Lock()
 
-    def token(self, todo: JsonDict) -> str:
-        """The stale-page token of *todo* as just read."""
-        return record_fingerprint(todo)
-
     def update(self, request: JsonDict) -> JsonDict:
-        """Apply one ``{id, op, target, value, token}`` request; return the new token.
+        """Apply one ``{id, op, target, value}`` request; return ``{}``.
 
-        Raises ``todo_web.UpdateConflict`` (nothing written) when the stored
-        record no longer matches *token*, and ``todo_web.UpdateRefused`` with
-        the CLI's error text when the request or the command is refused.
+        Raises ``todo_web.UpdateRefused`` with the CLI's error text when the
+        request or the command is refused.
         """
         op_name = request.get("op")
         op = WEB_OPS.get(op_name) if isinstance(op_name, str) else None
@@ -7013,7 +6947,7 @@ class WebUpdater:
             raise todo_web.UpdateRefused(
                 f"unknown web op {op_name!r}; known: {', '.join(sorted(WEB_OPS))}"
             )
-        fields = {name: request.get(name) for name in ("id", "target", "value", "token")}
+        fields = {name: request.get(name) for name in ("id", "target", "value")}
         for name, value in fields.items():
             if not isinstance(value, str):
                 raise todo_web.UpdateRefused(f"{op_name}: {name} must be a string")
@@ -7021,20 +6955,8 @@ class WebUpdater:
             raise todo_web.UpdateRefused("web edits need the todo store, not legacy TODO.json mode")
         with self._serial:
             todo_id = str(self._read(fields["id"])["Id"])
-            try:
-                with todo_store.get_store().lock(todo_id):
-                    stored = self._read(todo_id)
-                    stored_token = record_fingerprint(stored)
-                    if stored_token != fields["token"]:
-                        raise todo_web.UpdateConflict(
-                            "this todo changed since the page loaded; nothing was saved",
-                            current=op.current(stored, fields["target"]),
-                            token=stored_token,
-                        )
-                    self._run(op.argv(todo_id, fields["target"], fields["value"]))
-            except todo_store.LockTimeout as exc:
-                raise todo_web.UpdateRefused(f"ERETRY: {exc}", status=503) from exc
-            return {"token": record_fingerprint(self._read(todo_id))}
+            self._run(op.argv(todo_id, fields["target"], fields["value"]))
+            return {}
 
     def _read(self, selector: str) -> JsonDict:
         try:
@@ -7075,8 +6997,8 @@ class WebCommand(EnvironmentCommand):
         "Summary, Body, LongSummary, AC, ActualSummary, each note and each not-done work item, "
         "and Up/Down on not-done work items, each saved through the matching set / "
         "note-replace / work-item-replace / work-item-reorder command. Nothing is created or "
-        "deleted. A save made from a page loaded before another write is refused (409) with the "
-        "stored value shown beside the draft. --write binds localhost unless --host is given, "
+        "deleted. Saves are last-write-wins: a save lands even when the todo changed since the "
+        "page loaded. --write binds localhost unless --host is given, "
         "and refuses any write whose Host, Origin or content type is not this viewer's own "
         "(see IMPLEMENTATION.md, 'Web edits')."
     )
@@ -7173,12 +7095,7 @@ class WebCommand(EnvironmentCommand):
             if self.dump_html:
                 if initial_id is not None:
                     todo_root, ticket = resolve_todo(initial_id)
-                    token = WebUpdater(root).token(ticket) if self.write else ""
-                    print(
-                        todo_web.render_todo_page(
-                            todo_root, ticket, write=self.write, token=token
-                        )
-                    )
+                    print(todo_web.render_todo_page(todo_root, ticket, write=self.write))
                 else:
                     print(todo_web.render_search_page(basedir, search_rows("")))
             else:

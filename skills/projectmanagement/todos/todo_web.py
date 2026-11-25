@@ -785,8 +785,8 @@ _FIELD_EDIT_LABELS = {
 def _edit_registry(todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]) -> JsonDict:
     """Every edit control the page offers, keyed by the control's ``data-edit``.
 
-    Each entry is the request the control would send minus the token: the op,
-    its target, and the stored value the editor opens on. A done work item gets
+    Each entry is the request the control would send: the op, its target, and
+    the stored value the editor opens on. A done work item gets
     none: the done prefix is closed, and the CLI refuses to edit it.
     """
     edits: JsonDict = {}
@@ -1366,8 +1366,6 @@ _STYLE = """<style>
   .edit-bar { display: flex; gap: 8px; align-items: center; }
   .edit-row { display: flex; gap: 4px; margin-top: 6px; }
   .edit-status { font-size: 12px; color: #cf222e; overflow-wrap: anywhere; white-space: pre-wrap; }
-  .edit-stored-value { background: #fff8c5; padding: 10px; border-radius: 6px; max-height: 30vh;
-                       overflow: auto; }
 </style>"""
 
 
@@ -1618,10 +1616,6 @@ initMdToggles(document.getElementById('top'));
 
 // Editing exists only on a page served by `todo.py web --write` (DATA.write).
 // Save is explicit and the only write; nothing is saved on input or on close.
-// Every save carries the token the page loaded with, so a todo changed since
-// then answers 409 and the editor shows the stored value beside the draft --
-// it never merges, and it never adopts the newer token: reloading is how the
-// page catches up, which keeps a save from landing over text it never showed.
 var WRITE = DATA.write || null;
 
 function postUpdate(req){
@@ -1654,9 +1648,7 @@ function openEditor(key){
     '<textarea class="edit-area" spellcheck="false"></textarea>' +
     '<div class="edit-bar"><button type="button" class="edit-save">Save</button>' +
     '<button type="button" class="edit-cancel">Cancel</button>' +
-    '<span class="edit-status" role="status"></span></div>' +
-    '<div class="edit-stored" hidden><h3>Stored value now</h3>' +
-    '<pre class="edit-stored-value"></pre></div></div>';
+    '<span class="edit-status" role="status"></span></div></div>';
   var area = fold.querySelector('.edit-area');
   var status = fold.querySelector('.edit-status');
   var save = fold.querySelector('.edit-save');
@@ -1665,18 +1657,10 @@ function openEditor(key){
   save.addEventListener('click', function(){
     save.disabled = true;
     status.textContent = 'saving...';
-    postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: area.value,
-                token: WRITE.token}).then(function(res){
+    postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: area.value})
+    .then(function(res){
       if (res.status === 200) { location.reload(); return; }
       save.disabled = false;
-      if (res.status === 409) {
-        fold.querySelector('.edit-stored').hidden = false;
-        fold.querySelector('.edit-stored-value').textContent =
-          res.body.current == null ? '(no longer present)' : String(res.body.current);
-        status.textContent = (res.body.error || 'conflict') +
-          '. Your draft is unchanged above; reload the page to edit the stored version.';
-        return;
-      }
       status.textContent = res.body.error || ('HTTP ' + res.status);
     }, function(err){
       save.disabled = false;
@@ -1694,7 +1678,7 @@ document.querySelectorAll('#top .edit-toggle').forEach(function(b){
 });
 
 // A move is its own explicit act (the click), so it saves at once; a refusal
-// or a stale page is reported in the fold and the plan is left as it was.
+// is reported in the fold and the plan is left as it was.
 function moveItem(key){
   var spec = WRITE && WRITE.edits[key];
   if (!spec) return;
@@ -1704,11 +1688,10 @@ function moveItem(key){
   fold.innerHTML = '<div class="fold-edit"><h3>'+esc(spec.label)+'</h3>' +
     '<span class="edit-status" role="status">moving...</span></div>';
   var status = fold.querySelector('.edit-status');
-  postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: spec.value,
-              token: WRITE.token}).then(function(res){
+  postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: spec.value})
+  .then(function(res){
     if (res.status === 200) { location.reload(); return; }
-    status.textContent = (res.body.error || ('HTTP ' + res.status)) +
-      (res.status === 409 ? '. Nothing moved; reload the page to see the current plan.' : '');
+    status.textContent = res.body.error || ('HTTP ' + res.status);
   }, function(err){ status.textContent = 'move failed: ' + err; });
 }
 
@@ -1745,7 +1728,7 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 
 
 def render_todo_page(
-    root: Path, todo: JsonDict, *, focus_objid: str = "", write: bool = False, token: str = ""
+    root: Path, todo: JsonDict, *, focus_objid: str = "", write: bool = False
 ) -> str:
     """Render the single-todo viewer: representation on top, message/diff below.
 
@@ -1755,8 +1738,7 @@ def render_todo_page(
     the todo. An objid naming a non-box section is marked instead; one that
     is not on the page at all is ignored, and the todo simply renders.
 
-    *write* renders the edit controls, and *token* is the stale-page token
-    every save from this page carries (the updater's token of *todo*).
+    *write* renders the edit controls.
     """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
@@ -1770,7 +1752,7 @@ def render_todo_page(
     data = _page_data(root, todo, witems, stodos, parents, notes, github)
     edits = _edit_registry(todo, witems, notes) if write else None
     if edits is not None:
-        data["write"] = {"token": token, "edits": edits}
+        data["write"] = {"edits": edits}
     top_html = _sections_html(
         todo,
         witems,
@@ -1915,19 +1897,6 @@ LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
 UPDATE_PATH = "/update"
 
 
-class UpdateConflict(TodoWebError):
-    """The page's token no longer matches the stored record; nothing was written.
-
-    *current* is the stored value of the field the save addressed and *token*
-    the stored record's token, so the page can show both beside its draft.
-    """
-
-    def __init__(self, message: str, *, current: Any, token: str) -> None:
-        super().__init__(message)
-        self.current = current
-        self.token = token
-
-
 class UpdateRefused(TodoWebError):
     """The update command refused; the message is the command's own error text."""
 
@@ -1939,14 +1908,10 @@ class UpdateRefused(TodoWebError):
 class Updater(Protocol):
     """The write side `todo.py web --write` injects; the viewer never writes itself."""
 
-    def token(self, todo: JsonDict) -> str:
-        """The stale-page token of *todo* as just read."""
-
     def update(self, request: JsonDict) -> JsonDict:
-        """Apply ``{id, op, target, value, token}``; return ``{"token": <new token>}``.
+        """Apply ``{id, op, target, value}`` and return the JSON payload of the 200 answer.
 
-        Raises UpdateConflict when *token* is stale, UpdateRefused when the
-        command refuses.
+        Raises UpdateRefused when the command refuses.
         """
 
 
@@ -1976,7 +1941,7 @@ def handle_update(
     """Check and apply one POST /update; return ``(status, JSON payload)``.
 
     403 when the request fails ``request_refusal`` or its body is not JSON, 400
-    when the JSON is not an object, 200 / 409 / the refusal's own status from
+    when the JSON is not an object, 200 / the refusal's own status from
     *updater*, and 500 naming the exception type and message for any other
     exception it raises. The updater runs only after every check has passed.
     """
@@ -1991,8 +1956,6 @@ def handle_update(
         return 400, {"error": "update request must be a JSON object"}
     try:
         return 200, updater.update(request)
-    except UpdateConflict as exc:
-        return 409, {"error": str(exc), "current": exc.current, "token": exc.token}
     except UpdateRefused as exc:
         return exc.status, {"error": str(exc)}
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -2124,11 +2087,9 @@ def serve(
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
         def _page(self, todo_root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
-            """The todo page, with edit controls and its token when writes are on."""
-            if not write or updater is None:
-                return render_todo_page(todo_root, todo, focus_objid=focus_objid)
+            """The todo page, with edit controls when writes are on."""
             return render_todo_page(
-                todo_root, todo, focus_objid=focus_objid, write=True, token=updater.token(todo)
+                todo_root, todo, focus_objid=focus_objid, write=write and updater is not None
             )
 
         def _respond(self, body: bytes, content_type: str) -> None:
