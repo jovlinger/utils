@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -54,49 +55,30 @@ def test_extract_help_describes_copy_hardlink_and_symlink_modes() -> None:
     assert "copy when it is on a different filesystem" in help_text
     assert "With -s / --symlink, extract writes symlinks" in help_text
     assert "-s, --symlink" in help_text
-    assert "-p N / --strip N" in help_text
-    assert "-p, --strip N" in help_text
+    assert "live library root" in help_text
+    assert "-p" not in help_text.split("options:")[-1] or "--strip" not in help_text
 
 
-def test_strip_path_components_matches_patch_p() -> None:
-    sample = "/u/hans/src/blurf/blurf.c"
-    assert _MOD.strip_path_components(sample, 0) == sample
-    assert _MOD.strip_path_components(sample, 1) == "u/hans/src/blurf/blurf.c"
-    assert _MOD.strip_path_components(sample, 4) == "blurf/blurf.c"
+def test_extract_destination_path_under_live_files_root(tmp_path: Path) -> None:
+    files_root = tmp_path / "files"
+    cwd = str(tmp_path)
+    assert _MOD.extract_destination_path(
+        str(files_root), "files", "hegre", "a.jpg", cwd=cwd
+    ) == str(files_root / "hegre" / "a.jpg")
+    assert _MOD.extract_destination_path(
+        str(files_root), "files/nud", "", "b.jpg", cwd=cwd
+    ) == str(files_root / "nud" / "b.jpg")
+    assert _MOD.extract_destination_path(
+        str(files_root), "work", "", "hello.txt", cwd=cwd
+    ) == str(tmp_path / "work" / "hello.txt")
 
 
-def test_apply_extract_strip_joins_remainder_under_cwd(tmp_path: Path) -> None:
-    old = "/Users/goofus/Downloads/news/misc/notesxxx/files/nud/87050.jpg"
-    # strip '', Users, goofus, Downloads, news, misc, notesxxx -> files/nud/...
-    got = _MOD.apply_extract_strip(old, 7, str(tmp_path))
-    assert got == str(tmp_path / "files" / "nud" / "87050.jpg")
-
-
-def test_extract_strip_rewrites_old_absolute_root(tmp_path: Path) -> None:
-    import sqlite3
-
-    cwd, shadir, restored, blob, content = _setup_stored_file(tmp_path)
-    db = shadir / ".shadup.db"
-    conn = sqlite3.connect(db)
-    try:
-        row = conn.execute(
-            "SELECT root, root_rel, dirpath, filename FROM stored_files"
-        ).fetchone()
-        assert row is not None
-        _root, root_rel, dirpath, filename = row
-        fake_root = "/Users/goofus/Downloads/news/misc/notesxxx/" + root_rel
-        conn.execute("UPDATE stored_files SET root = ?", (fake_root,))
-        conn.commit()
-    finally:
-        conn.close()
-
-    # Drop '', Users, goofus, Downloads, news, misc, notesxxx (7) so dest is
-    # <cwd>/<root_rel>/... matching the original store layout under tmp_path.
-    _run(cwd, shadir, ["extract", "-p7", root_rel])
-
-    assert restored.read_bytes() == content
-    assert not restored.is_symlink()
-    assert os.path.samefile(restored, blob)
+def test_live_files_root_for_dot_shadir(tmp_path: Path) -> None:
+    shadir = tmp_path / "notesxxx" / ".shadir"
+    shadir.mkdir(parents=True)
+    assert _MOD.live_files_root_for_extract(str(shadir)) == str(
+        tmp_path / "notesxxx" / "files"
+    )
 
 
 def test_extract_default_hardlinks_on_same_filesystem(tmp_path: Path) -> None:
@@ -144,3 +126,48 @@ def test_extract_helper_copies_on_different_filesystems(
     assert size == len(content)
     assert dest.read_bytes() == content
     assert not os.path.samefile(blob, dest)
+
+
+def test_extract_uses_live_files_root_not_stale_absolute_root(tmp_path: Path) -> None:
+    """Classic ``.shadir`` beside ``files/``: ignore old host ``root`` column."""
+    project = tmp_path / "notesxxx"
+    shadir = project / ".shadir"
+    shadir.mkdir(parents=True)
+    files = project / "files"
+    files.mkdir()
+    src = files / "pic.jpg"
+    content = b"jpeg-bytes\n"
+    src.write_bytes(content)
+
+    _run(project, shadir, ["store", "files"])
+    assert src.is_symlink()
+    blob = src.resolve(strict=True)
+
+    db = shadir / ".shadup.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "UPDATE stored_files SET root = ?",
+            ("/Users/goofus/old/notesxxx/files",),
+        )
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'shadir'",
+            ("/share/CACHEDEV1_DATA/missing/.shadir",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Only --db: rediscover shadir from cwd and extract under live files/.
+    cmd = [
+        sys.executable,
+        str(SHADUP_PY),
+        "--db",
+        str(db),
+        "extract",
+        "files",
+    ]
+    subprocess.run(cmd, cwd=project, check=True, capture_output=True, text=True)
+
+    assert src.read_bytes() == content
+    assert os.path.samefile(src, blob)
