@@ -174,7 +174,7 @@ class TodoError(Exception):
 
 
 class EditNotInteractive(TodoError):
-    """A free-text arg was `EDIT` but no terminal is available to edit it."""
+    """An editor was needed but stdin/stdout are not a terminal to run it on."""
 
 
 # Sentinel arg value: when a free-text option is passed exactly this, its real
@@ -191,30 +191,33 @@ def _stdio_is_interactive() -> bool:
         return False
 
 
-def edit_value_via_editor(todo_id: str, field: str) -> str:
-    """Capture a value for *field* by launching an editor on a temp file.
+def edit_text_via_editor(initial: str, *, prefix: str) -> str:
+    """Return the text left in a temp file after an editor ran on *initial*.
 
-    Opens ``$VISUAL`` (else ``$EDITOR`` else ``vi``) on a temp file whose only
-    seeded content is a commented instruction line. Lines beginning with ``#``
-    are stripped on read-back (git-style), so the instruction never leaks into
-    the value; the remainder is returned with surrounding whitespace trimmed.
-    Precondition: a tty is available (see ``_stdio_is_interactive``).
+    Opens ``$VISUAL`` (else ``$EDITOR`` else ``vi``) on a temp file holding
+    exactly *initial* (plus a final newline when it lacks one), and returns the
+    file's whole content unmodified -- no comment stripping, since the value
+    may itself be markdown with ``#`` headings. An editor that cannot start or
+    exits nonzero raises TodoError. Precondition: a tty is available (see
+    ``_stdio_is_interactive``).
     """
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-    header = (
-        f"# edit value for todo:{todo_id} {field}\n"
-        "# lines starting with '#' are ignored\n"
-    )
     handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".todoedit", prefix=f"{field}-", delete=False, encoding="utf-8"
+        mode="w", suffix=".todoedit", prefix=f"{prefix}-", delete=False, encoding="utf-8"
     )
     try:
-        handle.write(header)
+        handle.write(initial if not initial or initial.endswith("\n") else initial + "\n")
         handle.close()
-        subprocess.run([*shlex.split(editor), handle.name], check=True)
+        try:
+            proc = subprocess.run([*shlex.split(editor), handle.name], check=False)
+        except OSError as exc:
+            raise TodoError(f"could not run editor {editor!r}: {exc}") from exc
+        if proc.returncode != 0:
+            raise TodoError(
+                f"editor {editor!r} exited with status {proc.returncode}; nothing written"
+            )
         with open(handle.name, encoding="utf-8") as fh:
-            body = "\n".join(ln for ln in fh.read().splitlines() if not ln.startswith("#"))
-        return body.strip()
+            return fh.read()
     finally:
         try:
             os.unlink(handle.name)
@@ -3871,7 +3874,7 @@ class TodoSubCommand(ABC):
                 raise EditNotInteractive(
                     f"--{field.replace('_', '-')}=EDIT requires an interactive terminal"
                 )
-            value = edit_value_via_editor(todo_id, field)
+            value = edit_text_via_editor("", prefix=f"{todo_id[:8]}-{field}").strip()
             setattr(self.args, field, value)
             self.__dict__[field] = value
 
@@ -4704,6 +4707,98 @@ class SetCommand(TodoFieldCommand):
         teardown_worktree_for_terminal_state(root, todo, state=state)
         if state:
             print(json.dumps(todo["State"], indent=2))
+        return 0
+
+
+_NOTE_PATH_RE = re.compile(r"\ANotes\.(\d+)\Z")
+_WORKITEM_PATH_RE = re.compile(r"\AWorkItems\.(\d+)\Z")
+
+
+def resolve_edit_target(todo: JsonDict, target: str) -> str:
+    """Return the dot path of the free-text string *target* names in *todo*.
+
+    ``objid:<hex>`` (leading zeros optional) must name a note, edited at its
+    ``raw``, or a not-done work item, edited at its ``summary`` -- the fields
+    note-replace and work-item-replace rewrite. Anything else is a dot path in
+    the get-json-path grammar: a string is edited as is, and an object whose
+    ``raw`` is a string (Summary, Body, LongSummary, a note) is edited at its
+    ``raw``. Every other target raises TodoError.
+    """
+    if target.startswith(WORKITEM_OBJID_SCHEME):
+        prefix = target[len(WORKITEM_OBJID_SCHEME) :]
+        if not prefix or not todo_objid.is_objid_prefix(prefix):
+            raise TodoError(f"objid {prefix!r} is not lowercase hex")
+        try:
+            path = todo_ref.resolve_local(
+                todo, WORKITEM_OBJID_SCHEME + todo_objid.normalize_objid_prefix(prefix)
+            )
+        except todo_ref.TodoRefError as exc:
+            raise TodoError(str(exc)) from exc
+        note = _NOTE_PATH_RE.match(path)
+        if note:
+            return f"{path}.raw"
+        item = _WORKITEM_PATH_RE.match(path)
+        if item:
+            require_open_workitem(todo, int(item.group(1)))
+            return f"{path}.summary"
+        raise TodoError(
+            f"{target} names {path}, not a note or work item; address it by dot path instead"
+        )
+    value = get_at_path(todo, target)
+    if isinstance(value, str):
+        return target
+    if isinstance(value, dict) and isinstance(value.get("raw"), str):
+        return f"{target}.raw"
+    raise TodoError(f"{target} is not free text (it holds a {type(value).__name__})")
+
+
+class EditCommand(TodoFieldCommand):
+    command_names = ("edit",)
+    doc_short: ClassVar[str] = "Edit a free-text field in $VISUAL/$EDITOR"
+    doc_long: ClassVar[str] = (
+        "Edit opens $VISUAL (else $EDITOR, else vi) on a temp file holding the current text of "
+        "one free-text field of the selected todo, then stores what the editor leaves, with "
+        "surrounding whitespace trimmed. TARGET is either a dot path in the get-json-path "
+        "grammar (Summary, Body, AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a "
+        "string, or an object whose raw is a string, which is then edited at its raw -- or "
+        "objid:<hex> (leading zeros optional) naming a note, edited like note-replace (its "
+        "objid and relto survive), or a not-done work item, edited like work-item-replace (a "
+        "done item is refused). Unchanged text writes nothing. Refused with exit 1 and nothing "
+        "written: stdin/stdout not a terminal, a target that is not free text, an empty result, "
+        "and an editor that fails or exits nonzero. The write is store-only."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register edit arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "target",
+            help="dot path (e.g. Body, Summary, AC, Notes.0) or objid:<hex> of a note or "
+            "not-done work item",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Edit the target's current text in an editor; store it when it changed."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        path = resolve_edit_target(todo, self.target)
+        if not _stdio_is_interactive():
+            raise EditNotInteractive("edit requires an interactive terminal; nothing written")
+        current: str = get_at_path(todo, path)
+        edited = edit_text_via_editor(
+            current, prefix=f"{str(todo.get('Id', ''))[:8]}-{path.replace('.', '-')}"
+        ).strip()
+        if edited == current.strip():
+            print(f"todo: {self.target} unchanged; nothing written", file=sys.stderr)
+            return 0
+        if not edited:
+            raise TodoError(f"edited {self.target} is empty; nothing written")
+        set_at_path(todo, path, edited)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): edit {path}")
         return 0
 
 
