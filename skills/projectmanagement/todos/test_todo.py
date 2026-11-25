@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pty
 import re
 import shutil
 import sqlite3
@@ -701,208 +702,202 @@ class SetStateViaSetTests(TodoIntegrationCase):
         self.assertEqual({"userneeded": {"note": "EDIT"}}, ticket["State"])
 
 
-class EditCommandTests(TodoIntegrationCase):
-    """`edit <selector> <target>` runs $VISUAL/$EDITOR on the target's current text."""
+def _edit_fixture_todo() -> Dict[str, Any]:
+    """A todo record as the store returns it, for edit's unit tests."""
+    return {
+        "Id": "ed" * 32,
+        "Summary": {"raw": "original summary", "objid": "0001"},
+        "Body": {"raw": "original body", "objid": "0002"},
+        "AC": "original ac",
+        "State": {"working": {}},
+        "_nextobjid": 7,
+        "Notes": [
+            {"raw": "first note", "objid": "0003"},
+            {"raw": "second note", "objid": "0004", "relto": [
+                {"objid": "0007", "type": "relates", "target": "objid:0003"}
+            ]},
+        ],
+        "WorkItems": [
+            {
+                "summary": "landed", "done": True, "kind": "code",
+                "sha": "a" * 40, "message": "landed", "objid": "0005",
+            },
+            {"summary": "open one", "done": False, "kind": "task", "objid": "0006"},
+        ],
+    }
 
-    TID = "ed" * 32
+
+class EditTargetUnitTests(unittest.TestCase):
+    """resolve_edit_target: which free-text string a target names."""
+
+    def resolve(self, target: str) -> str:
+        return todo.resolve_edit_target(_edit_fixture_todo(), target)
+
+    def test_a_dot_path_to_a_string_is_itself(self) -> None:
+        self.assertEqual("Body.raw", self.resolve("Body.raw"))
+        self.assertEqual("AC", self.resolve("AC"))
+
+    def test_a_dot_path_to_an_object_with_a_raw_string_is_its_raw(self) -> None:
+        for path in ("Body", "Summary", "Notes.1"):
+            with self.subTest(path=path):
+                self.assertEqual(f"{path}.raw", self.resolve(path))
+
+    def test_a_note_objid_is_its_raw_with_leading_zeros_optional(self) -> None:
+        self.assertEqual("Notes.1.raw", self.resolve("objid:4"))
+        self.assertEqual("Notes.1.raw", self.resolve("objid:0004"))
+
+    def test_an_open_work_item_objid_is_its_summary(self) -> None:
+        self.assertEqual("WorkItems.1.summary", self.resolve("objid:0006"))
+
+    def test_refusals_name_the_problem(self) -> None:
+        cases = {
+            "objid:5": "is done",
+            "objid:1": "not a note or work item",
+            "objid:fff0": "fff0",
+            "objid:XY": "not lowercase hex",
+            "Nope": "no such field Nope",
+            "WorkItems": "not free text",
+            "State": "not free text",
+            "_nextobjid": "not free text",
+            "Notes": "not free text",
+        }
+        for target, text in cases.items():
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(todo.TodoError, text):
+                    self.resolve(target)
+
+
+class EditCommandUnitTests(unittest.TestCase):
+    """EditCommand.do with the store, the write/commit path and the editor mocked."""
 
     def setUp(self) -> None:
-        super().setUp()
-        extra = {
-            "AC": "original ac",
-            "Notes": [{"raw": "first note"}, {"raw": "second note"}],
-            "WorkItems": [
-                {
-                    "summary": "landed",
-                    "done": True,
-                    "kind": "code",
-                    "sha": "a" * 40,
-                    "message": "landed",
-                },
-                {"summary": "open one", "done": False, "kind": "task"},
-            ],
+        self.record = _edit_fixture_todo()
+        self.mocks: Dict[str, unittest.mock.MagicMock] = {}
+        patches = {
+            "resolve_ticket_by_id": {"return_value": ("store", self.record)},
+            "_stdio_is_interactive": {"return_value": True},
+            "edit_text_via_editor": {"return_value": "edited text\n"},
+            "write_todo_worktree": {},
+            "commit_todo": {},
         }
-        self.write_ticket(
-            "edededed-edit", self.TID, "original summary", body="original body", extra=extra
-        )
+        for name, kwargs in patches.items():
+            patcher = unittest.mock.patch.object(todo, name, **kwargs)
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+        root = unittest.mock.patch.object(todo.EditCommand, "root", return_value=Path("/r"))
+        root.start()
+        self.addCleanup(root.stop)
 
-    def editor(self, name: str, text: Optional[str] = None, exit_code: int = 0) -> str:
-        """Install a fake editor; return its path.
+    def run_edit(self, target: str, *, no_commit: bool = False) -> int:
+        args = argparse.Namespace(selector="eded", target=target, no_commit=no_commit)
+        return todo.EditCommand(args, todo_dir=Path("/unused")).do()
 
-        It copies the file it is handed to ``<path>.seen``, overwrites the file
-        with *text* (None leaves it untouched), and exits with *exit_code*.
-        """
-        script = self._db_dir / name
-        lines = ["#!/bin/sh", f'cp "$1" "{script}.seen"']
-        if text is not None:
-            text_file = self._db_dir / f"{name}.text"
-            text_file.write_text(text, encoding="utf-8")
-            lines.append(f'cat "{text_file}" > "$1"')
-        lines.append(f"exit {exit_code}")
-        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        script.chmod(0o755)
-        return str(script)
+    def editor_call(self) -> tuple[str, str]:
+        """(initial value, header) the editor was opened with."""
+        call = self.mocks["edit_text_via_editor"].call_args
+        return call.args[0], call.kwargs["header"]
 
-    def seen(self, editor: str) -> Optional[str]:
-        """What the fake editor was handed, or None when it never ran."""
-        path = Path(f"{editor}.seen")
-        return path.read_text(encoding="utf-8") if path.exists() else None
+    def assert_nothing_written(self) -> None:
+        self.mocks["write_todo_worktree"].assert_not_called()
+        self.mocks["commit_todo"].assert_not_called()
+        self.assertEqual(_edit_fixture_todo(), self.record)
 
-    def assert_offered(self, editor: str, value: str) -> None:
-        """The editor was handed the comment header, then *value*."""
-        seen = self.seen(editor) or ""
-        self.assertTrue(seen.startswith("<!--"), seen)
-        self.assertIn(f"todo:{self.TID[:8]}", seen.split("-->")[0])
-        self.assertTrue(seen.endswith(f"-->\n\n{value}\n"), seen)
+    def test_a_change_is_stored_trimmed_written_and_committed(self) -> None:
+        self.assertEqual(0, self.run_edit("Body"))
+        self.assertEqual("edited text", self.record["Body"]["raw"])
+        self.mocks["write_todo_worktree"].assert_called_once_with(Path("/r"), self.record)
+        self.assertIn("Body.raw", self.mocks["commit_todo"].call_args.args[1])
 
-    def edit(self, *args: str, interactive: bool = True) -> subprocess.CompletedProcess[str]:
-        with unittest.mock.patch.object(
-            todo, "_stdio_is_interactive", return_value=interactive
-        ):
-            return self.todo("edit", *args)
+    def test_the_editor_gets_the_current_value_and_a_header_naming_it(self) -> None:
+        self.run_edit("objid:4")
+        initial, header = self.editor_call()
+        self.assertEqual("second note", initial)
+        self.assertTrue(header.startswith("<!--") and header.rstrip().endswith("-->"))
+        for text in ("todo:edededed", "objid:4", "Notes.1.raw", "stripped"):
+            self.assertIn(text, header)
 
-    def use_visual(self, editor: str) -> None:
-        self._env["VISUAL"] = editor
-        self._env.pop("EDITOR", None)
+    def test_a_note_edit_keeps_its_objid_and_relto(self) -> None:
+        self.run_edit("objid:0004")
+        expected = {**_edit_fixture_todo()["Notes"][1], "raw": "edited text"}
+        self.assertEqual(expected, self.record["Notes"][1])
+        self.assertEqual(_edit_fixture_todo()["Notes"][0], self.record["Notes"][0])
 
-    def assert_refused(self, proc: subprocess.CompletedProcess[str], text: str) -> None:
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIn(text, proc.stderr)
+    def test_a_work_item_edit_rewrites_only_its_summary(self) -> None:
+        self.run_edit("objid:6")
+        expected = {**_edit_fixture_todo()["WorkItems"][1], "summary": "edited text"}
+        self.assertEqual(expected, self.record["WorkItems"][1])
 
-    def objid(self, key: str, index: int, *, short: bool = False) -> str:
-        value = self.read_cur()[key][index]["objid"]
-        return "objid:" + (value.lstrip("0") if short else value)
+    def test_no_commit_writes_but_does_not_commit(self) -> None:
+        self.run_edit("AC", no_commit=True)
+        self.assertEqual("edited text", self.record["AC"])
+        self.mocks["write_todo_worktree"].assert_called_once()
+        self.mocks["commit_todo"].assert_not_called()
 
-    def test_dot_path_to_a_string_is_edited_from_its_current_value(self) -> None:
-        editor = self.editor("ed", "rewritten body\n")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], "Body.raw")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assert_offered(editor, "original body")
-        self.assertEqual("rewritten body", self.read_cur()["Body"]["raw"])
+    def test_unchanged_text_writes_nothing(self) -> None:
+        for returned in (None, "  original body \n\n"):
+            with self.subTest(returned=returned):
+                self.mocks["edit_text_via_editor"].return_value = returned
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(0, self.run_edit("Body"))
+                self.assertIn("unchanged", err.getvalue())
+                self.assert_nothing_written()
 
-    def test_dot_path_to_an_object_edits_its_raw(self) -> None:
-        for path, text in (("Body", "body via Body"), ("Summary", "summary via Summary")):
-            with self.subTest(path=path):
-                self.use_visual(self.editor(f"ed-{path}", text))
-                proc = self.edit(self.TID[:8], path)
-                self.assertEqual(0, proc.returncode, proc.stderr)
-                self.assertEqual(text, self.read_cur()[path]["raw"])
+    def test_non_interactive_stdio_is_refused_before_the_editor(self) -> None:
+        self.mocks["_stdio_is_interactive"].return_value = False
+        with self.assertRaisesRegex(todo.EditNotInteractive, "interactive terminal"):
+            self.run_edit("Body")
+        self.mocks["edit_text_via_editor"].assert_not_called()
+        self.assert_nothing_written()
 
-    def test_top_level_string_field(self) -> None:
-        editor = self.editor("ed", "new ac")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], "AC")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assert_offered(editor, "original ac")
-        self.assertEqual("new ac", self.read_cur()["AC"])
+    def test_a_refused_target_never_opens_the_editor(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            self.run_edit("objid:5")
+        self.mocks["edit_text_via_editor"].assert_not_called()
+        self.assert_nothing_written()
 
-    def test_note_objid_rewrites_that_note_and_keeps_its_objid(self) -> None:
-        before = self.read_cur()["Notes"]
-        editor = self.editor("ed", "second, rewritten")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], self.objid("Notes", 1, short=True))
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assert_offered(editor, "second note")
-        after = self.read_cur()["Notes"]
-        self.assertEqual(before[0], after[0])
-        self.assertEqual({**before[1], "raw": "second, rewritten"}, after[1])
+    def test_an_empty_result_is_refused(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = "  \n\n"
+        with self.assertRaisesRegex(todo.TodoError, "empty"):
+            self.run_edit("Body")
+        self.assert_nothing_written()
 
-    def test_open_work_item_objid_rewrites_its_summary(self) -> None:
-        before = self.read_cur()["WorkItems"]
-        editor = self.editor("ed", "open one, reworded")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], self.objid("WorkItems", 1))
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assert_offered(editor, "open one")
-        after = self.read_cur()["WorkItems"]
-        self.assertEqual(before[0], after[0])
-        self.assertEqual({**before[1], "summary": "open one, reworded"}, after[1])
-
-    def test_done_work_item_objid_is_refused_before_the_editor_runs(self) -> None:
-        before = self.read_cur()
-        editor = self.editor("ed", "rewriting history")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], self.objid("WorkItems", 0))
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIsNone(self.seen(editor))
-        self.assertEqual(before, self.read_cur())
-
-    def test_objid_of_anything_but_a_note_or_work_item_is_refused(self) -> None:
-        before = self.read_cur()
-        editor = self.editor("ed", "x")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], "objid:" + before["Summary"]["objid"])
-        self.assert_refused(proc, "not a note or work item")
-        self.assertIsNone(self.seen(editor))
-        self.assertEqual(before, self.read_cur())
-
-    def test_unknown_objid_and_unknown_path_are_refused(self) -> None:
-        before = self.read_cur()
-        self.use_visual(self.editor("ed", "x"))
-        self.assert_refused(self.edit(self.TID[:8], "objid:fff0"), "fff0")
-        self.assert_refused(self.edit(self.TID[:8], "Nope"), "no such field Nope")
-        self.assertEqual(before, self.read_cur())
-
-    def test_target_that_is_not_free_text_is_refused(self) -> None:
-        before = self.read_cur()
-        editor = self.editor("ed", "x")
-        self.use_visual(editor)
-        for path in ("WorkItems", "State", "_nextobjid", "Notes"):
-            with self.subTest(path=path):
-                self.assert_refused(self.edit(self.TID[:8], path), "not free text")
-        self.assertIsNone(self.seen(editor))
-        self.assertEqual(before, self.read_cur())
-
-    def test_unchanged_content_writes_nothing(self) -> None:
-        before = self.read_cur()
-        editor = self.editor("ed")
-        self.use_visual(editor)
-        with unittest.mock.patch.object(
-            todo, "write_todo_worktree", wraps=todo.write_todo_worktree
-        ) as write:
-            proc = self.edit(self.TID[:8], "Body")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assert_offered(editor, "original body")
-        write.assert_not_called()
-        self.assertIn("unchanged", proc.stderr)
-        self.assertEqual(before, self.read_cur())
-
-    def test_non_interactive_stdio_is_refused_and_runs_no_editor(self) -> None:
-        before = self.read_cur()
-        editor = self.editor("ed", "never")
-        self.use_visual(editor)
-        proc = self.edit(self.TID[:8], "Body", interactive=False)
-        self.assert_refused(proc, "interactive terminal")
-        self.assertIsNone(self.seen(editor))
-        self.assertEqual(before, self.read_cur())
-
-    def test_empty_result_is_refused_and_writes_nothing(self) -> None:
-        before = self.read_cur()
-        self.use_visual(self.editor("ed", "  \n\n"))
-        self.assert_refused(self.edit(self.TID[:8], "Body"), "empty")
-        self.assertEqual(before, self.read_cur())
-
-    def test_editor_failure_is_refused_and_writes_nothing(self) -> None:
-        before = self.read_cur()
-        self.use_visual(self.editor("ed", "half typed", exit_code=3))
-        self.assert_refused(self.edit(self.TID[:8], "Body"), "exited with status 3")
-        self.assertEqual(before, self.read_cur())
-
-    def test_visual_wins_over_editor_and_editor_is_the_fallback(self) -> None:
-        visual = self.editor("visual", "from visual")
-        fallback = self.editor("fallback", "from editor")
-        self._env["VISUAL"] = visual
-        self._env["EDITOR"] = fallback
-        self.assertEqual(0, self.edit(self.TID[:8], "Body").returncode)
-        self.assertEqual("from visual", self.read_cur()["Body"]["raw"])
-        self.assertIsNone(self.seen(fallback))
-        del self._env["VISUAL"]
-        self.assertEqual(0, self.edit(self.TID[:8], "Body").returncode)
-        self.assertEqual("from editor", self.read_cur()["Body"]["raw"])
+    def test_an_editor_failure_writes_nothing(self) -> None:
+        self.mocks["edit_text_via_editor"].side_effect = todo.TodoError("exited with status 3")
+        with self.assertRaisesRegex(todo.TodoError, "status 3"):
+            self.run_edit("Body")
+        self.assert_nothing_written()
 
 
 class EditEndTests(TodoCase):
+    def test_edit_on_a_terminal_stores_the_text_after_the_header(self) -> None:
+        """The whole command over a pty, with a real fake-editor script."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=Edit me", "--body=keep this")
+        script = self._db_dir / "fake-editor"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'cp "$1" "{script}.seen"\n'
+            "printf '<!-- mine -->\\n\\nrewritten body\\n<!-- kept -->\\n' > \"$1\"\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        primary, secondary = pty.openpty()
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(TODO_PY), "edit", self.tid[:8], "Body"],
+                cwd=str(self.repo), stdin=secondary, stdout=secondary, stderr=secondary,
+                env={**self._env, "VISUAL": str(script)}, check=False, timeout=120,
+            )
+        finally:
+            os.close(secondary)
+            os.close(primary)
+        self.assertEqual(0, proc.returncode)
+        seen = Path(f"{script}.seen").read_text(encoding="utf-8")
+        self.assertTrue(seen.startswith("<!--"), seen)
+        self.assertTrue(seen.endswith("\n\nkeep this\n"), seen)
+        self.assertEqual("rewritten body\n<!-- kept -->", self.read_cur()["Body"]["raw"])
+
     def test_edit_without_a_terminal_is_refused_and_writes_nothing(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         self.init_ok("--summary=Edit me", "--body=keep this")
