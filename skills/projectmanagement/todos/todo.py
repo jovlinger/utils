@@ -185,33 +185,58 @@ def _stdio_is_interactive() -> bool:
         return False
 
 
-def edit_text_via_editor(initial: str, *, prefix: str) -> str:
-    """Return the text left in a temp file after an editor ran on *initial*.
+def strip_leading_html_comments(text: str) -> str:
+    """Drop the HTML comments and blank lines that lead *text*.
+
+    Everything from the first other character on is returned verbatim, so a
+    ``<!-- -->`` later in the text survives as markdown. A leading comment that
+    is never closed swallows the rest, leaving the empty string.
+    """
+    rest = text
+    while True:
+        rest = rest.lstrip()
+        if not rest.startswith("<!--"):
+            return rest
+        end = rest.find("-->", len("<!--"))
+        if end < 0:
+            return ""
+        rest = rest[end + len("-->") :]
+
+
+def _run_editor(argv: Sequence[str]) -> int:
+    """Run the editor command *argv* on the inherited terminal; return its exit status."""
+    return subprocess.run(list(argv), check=False).returncode
+
+
+def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[str]:
+    """Return what the user left after an editor ran on *initial*, or None if untouched.
 
     Opens ``$VISUAL`` (else ``$EDITOR`` else ``vi``) on a temp file holding
-    exactly *initial* (plus a final newline when it lacks one), and returns the
-    file's whole content unmodified -- no comment stripping, since the value
-    may itself be markdown with ``#`` headings. An editor that cannot start or
-    exits nonzero raises TodoError. Precondition: a tty is available (see
-    ``_stdio_is_interactive``).
+    *header* (an HTML comment), a blank line, then *initial* with a final
+    newline. On read-back a file identical to the one written returns None;
+    otherwise the leading HTML comments and blank lines are stripped (see
+    ``strip_leading_html_comments``) and the rest returned. An editor that
+    cannot start or exits nonzero raises TodoError. Precondition: a tty is
+    available (see ``_stdio_is_interactive``).
     """
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    body = initial if not initial or initial.endswith("\n") else initial + "\n"
+    written = header.rstrip("\n") + "\n\n" + body
     handle = tempfile.NamedTemporaryFile(
         mode="w", suffix=".todoedit", prefix=f"{prefix}-", delete=False, encoding="utf-8"
     )
     try:
-        handle.write(initial if not initial or initial.endswith("\n") else initial + "\n")
+        handle.write(written)
         handle.close()
         try:
-            proc = subprocess.run([*shlex.split(editor), handle.name], check=False)
+            status = _run_editor([*shlex.split(editor), handle.name])
         except OSError as exc:
             raise TodoError(f"could not run editor {editor!r}: {exc}") from exc
-        if proc.returncode != 0:
-            raise TodoError(
-                f"editor {editor!r} exited with status {proc.returncode}; nothing written"
-            )
+        if status != 0:
+            raise TodoError(f"editor {editor!r} exited with status {status}; nothing written")
         with open(handle.name, encoding="utf-8") as fh:
-            return fh.read()
+            edited = fh.read()
+        return None if edited == written else strip_leading_html_comments(edited)
     finally:
         try:
             os.unlink(handle.name)
@@ -4720,9 +4745,12 @@ class EditCommand(TodoFieldCommand):
     command_names = ("edit",)
     doc_short: ClassVar[str] = "Edit a free-text field in $VISUAL/$EDITOR"
     doc_long: ClassVar[str] = (
-        "Edit opens $VISUAL (else $EDITOR, else vi) on a temp file holding the current text of "
-        "one free-text field of the selected todo, then stores what the editor leaves, with "
-        "surrounding whitespace trimmed. TARGET is either a dot path in the get-json-path "
+        "Edit opens $VISUAL (else $EDITOR, else vi) on a temp file holding an HTML comment "
+        "header naming the todo and target, then the current text of one free-text field of "
+        "the selected todo. It stores what the editor leaves, minus leading HTML comments and "
+        "blank lines and with surrounding whitespace trimmed; a comment after the first other "
+        "line is kept. A file saved untouched writes nothing, so a value that itself begins "
+        "with <!-- survives a no-op edit but loses that leading comment on a real one. TARGET is either a dot path in the get-json-path "
         "grammar (Summary, Body, AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a "
         "string, or an object whose raw is a string, which is then edited at its raw -- or "
         "objid:<hex> (leading zeros optional) naming a note, edited like note-replace (its "
@@ -4751,9 +4779,16 @@ class EditCommand(TodoFieldCommand):
         if not _stdio_is_interactive():
             raise EditNotInteractive("edit requires an interactive terminal; nothing written")
         current: str = get_at_path(todo, path)
-        edited = edit_text_via_editor(
-            current, prefix=f"{str(todo.get('Id', ''))[:8]}-{path.replace('.', '-')}"
-        ).strip()
+        short_id = str(todo.get("Id", ""))[:8]
+        what = path if self.target == path else f"{self.target} ({path})"
+        header = (
+            f"<!-- editing todo:{short_id} {what}\n"
+            "     Leading HTML comments and blank lines are stripped on save. -->\n"
+        )
+        result = edit_text_via_editor(
+            current, prefix=f"{short_id}-{path.replace('.', '-')}", header=header
+        )
+        edited = current.strip() if result is None else result.strip()
         if edited == current.strip():
             print(f"todo: {self.target} unchanged; nothing written", file=sys.stderr)
             return 0

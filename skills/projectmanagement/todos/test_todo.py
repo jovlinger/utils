@@ -23,7 +23,7 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import pytest
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
@@ -748,6 +748,13 @@ class EditCommandTests(TodoIntegrationCase):
         path = Path(f"{editor}.seen")
         return path.read_text(encoding="utf-8") if path.exists() else None
 
+    def assert_offered(self, editor: str, value: str) -> None:
+        """The editor was handed the comment header, then *value*."""
+        seen = self.seen(editor) or ""
+        self.assertTrue(seen.startswith("<!--"), seen)
+        self.assertIn(f"todo:{self.TID[:8]}", seen.split("-->")[0])
+        self.assertTrue(seen.endswith(f"-->\n\n{value}\n"), seen)
+
     def edit(self, *args: str, interactive: bool = True) -> subprocess.CompletedProcess[str]:
         with unittest.mock.patch.object(
             todo, "_stdio_is_interactive", return_value=interactive
@@ -771,7 +778,7 @@ class EditCommandTests(TodoIntegrationCase):
         self.use_visual(editor)
         proc = self.edit(self.TID[:8], "Body.raw")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("original body\n", self.seen(editor))
+        self.assert_offered(editor, "original body")
         self.assertEqual("rewritten body", self.read_cur()["Body"]["raw"])
 
     def test_dot_path_to_an_object_edits_its_raw(self) -> None:
@@ -787,7 +794,7 @@ class EditCommandTests(TodoIntegrationCase):
         self.use_visual(editor)
         proc = self.edit(self.TID[:8], "AC")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("original ac\n", self.seen(editor))
+        self.assert_offered(editor, "original ac")
         self.assertEqual("new ac", self.read_cur()["AC"])
 
     def test_note_objid_rewrites_that_note_and_keeps_its_objid(self) -> None:
@@ -796,7 +803,7 @@ class EditCommandTests(TodoIntegrationCase):
         self.use_visual(editor)
         proc = self.edit(self.TID[:8], self.objid("Notes", 1, short=True))
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("second note\n", self.seen(editor))
+        self.assert_offered(editor, "second note")
         after = self.read_cur()["Notes"]
         self.assertEqual(before[0], after[0])
         self.assertEqual({**before[1], "raw": "second, rewritten"}, after[1])
@@ -807,7 +814,7 @@ class EditCommandTests(TodoIntegrationCase):
         self.use_visual(editor)
         proc = self.edit(self.TID[:8], self.objid("WorkItems", 1))
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("open one\n", self.seen(editor))
+        self.assert_offered(editor, "open one")
         after = self.read_cur()["WorkItems"]
         self.assertEqual(before[0], after[0])
         self.assertEqual({**before[1], "summary": "open one, reworded"}, after[1])
@@ -856,7 +863,7 @@ class EditCommandTests(TodoIntegrationCase):
         ) as write:
             proc = self.edit(self.TID[:8], "Body")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("original body\n", self.seen(editor))
+        self.assert_offered(editor, "original body")
         write.assert_not_called()
         self.assertIn("unchanged", proc.stderr)
         self.assertEqual(before, self.read_cur())
@@ -904,6 +911,105 @@ class EditEndTests(TodoCase):
         self.assertEqual(1, proc.returncode, proc.stdout)
         self.assertIn("interactive terminal", proc.stderr)
         self.assertEqual(before, self.read_cur())
+
+
+class StripLeadingHtmlCommentsUnitTests(unittest.TestCase):
+    """What survives of the edit temp file once its leading comments are dropped."""
+
+    def strip(self, text: str) -> str:
+        return todo.strip_leading_html_comments(text)
+
+    def test_leading_comments_and_blank_lines_are_dropped(self) -> None:
+        text = "<!-- one\n  two -->\n\n<!-- three -->\n   \nbody line\n"
+        self.assertEqual("body line\n", self.strip(text))
+
+    def test_everything_from_the_first_content_line_is_verbatim(self) -> None:
+        text = "<!-- header -->\n\nfirst\n\n<!-- kept: markdown -->\n  indented\n"
+        self.assertEqual("first\n\n<!-- kept: markdown -->\n  indented\n", self.strip(text))
+
+    def test_text_after_a_comment_on_its_line_is_content(self) -> None:
+        self.assertEqual("tail\nnext", self.strip("<!-- c -->tail\nnext"))
+
+    def test_no_comment_is_unchanged(self) -> None:
+        self.assertEqual("plain\n", self.strip("plain\n"))
+
+    def test_an_unterminated_comment_leaves_nothing(self) -> None:
+        self.assertEqual("", self.strip("<!-- never closed\nbody\n"))
+
+
+class EditorFileTests(unittest.TestCase):
+    """edit_text_via_editor: the temp file it writes and what it reads back.
+
+    The editor exec seam (``todo._run_editor``) is replaced by a function that
+    records argv and rewrites the temp file, so no process starts.
+    """
+
+    pytestmark = pytest.mark.integration
+
+    HEADER = "<!-- editing todo:abcd1234 Body\n     leading comments are dropped -->\n"
+
+    def run_editor(
+        self, initial: str, rewrite: Optional[str] = None, status: int = 0
+    ) -> tuple[Optional[str], str, List[str]]:
+        """Run the helper; return (result, file as handed over, editor argv)."""
+        handed: Dict[str, Any] = {}
+
+        def fake(argv: List[str]) -> int:
+            path = Path(argv[-1])
+            handed["text"] = path.read_text(encoding="utf-8")
+            handed["argv"] = argv
+            if rewrite is not None:
+                path.write_text(rewrite, encoding="utf-8")
+            return status
+
+        with unittest.mock.patch.object(todo, "_run_editor", side_effect=fake):
+            result = todo.edit_text_via_editor(initial, prefix="t", header=self.HEADER)
+        return result, handed["text"], handed["argv"]
+
+    def test_the_file_is_the_header_a_blank_line_then_the_value(self) -> None:
+        _result, handed, _argv = self.run_editor("current value")
+        self.assertEqual(self.HEADER + "\ncurrent value\n", handed)
+
+    def test_an_untouched_file_reads_back_as_none(self) -> None:
+        self.assertIsNone(self.run_editor("current value")[0])
+
+    def test_the_header_is_stripped_and_later_comments_are_kept(self) -> None:
+        result, handed, _argv = self.run_editor(
+            "x", rewrite=self.HEADER + "\nnew text\n<!-- kept -->\n"
+        )
+        self.assertTrue(handed.startswith("<!--"))
+        self.assertEqual("new text\n<!-- kept -->\n", result)
+
+    def test_a_value_beginning_with_a_comment_is_kept_when_untouched(self) -> None:
+        self.assertIsNone(self.run_editor("<!-- mine -->\nbody")[0])
+
+    def test_a_value_beginning_with_a_comment_loses_it_when_edited(self) -> None:
+        result, _handed, _argv = self.run_editor(
+            "<!-- mine -->\nbody", rewrite=self.HEADER + "\n<!-- mine -->\nbody, edited\n"
+        )
+        self.assertEqual("body, edited\n", result)
+
+    def test_a_nonzero_editor_exit_is_refused(self) -> None:
+        with self.assertRaisesRegex(todo.TodoError, "exited with status 3"):
+            self.run_editor("v", rewrite="half typed", status=3)
+
+    def test_an_editor_that_cannot_start_is_refused(self) -> None:
+        with unittest.mock.patch.object(todo, "_run_editor", side_effect=OSError("nope")):
+            with self.assertRaisesRegex(todo.TodoError, "could not run editor"):
+                todo.edit_text_via_editor("v", prefix="t", header=self.HEADER)
+
+    def test_visual_then_editor_then_vi(self) -> None:
+        cases = (
+            ({"VISUAL": "vis --wait", "EDITOR": "ed"}, ["vis", "--wait"]),
+            ({"EDITOR": "ed"}, ["ed"]),
+            ({}, ["vi"]),
+        )
+        for env, expected in cases:
+            with self.subTest(env=env):
+                base = {k: v for k, v in os.environ.items() if k not in ("VISUAL", "EDITOR")}
+                with unittest.mock.patch.dict(os.environ, {**base, **env}, clear=True):
+                    argv = self.run_editor("v")[2]
+                self.assertEqual(expected, argv[:-1])
 
 
 class RmTests(TodoIntegrationCase):
