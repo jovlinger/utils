@@ -177,6 +177,7 @@ TODO=skills/projectmanagement/todos/todo.py
 
 ID=$("$TODO" mint)
 "$TODO" set "$ID" --summary="..." --body="..." --ac="..."
+"$TODO" edit "$ID" Body    # $VISUAL/$EDITOR on the current Body; also a path or objid:<hex>
 "$TODO" init --id "$ID" --stay-on-parent
 
 # in the todo worktree:
