@@ -6827,6 +6827,41 @@ class LogCommand(CorpusQueryCommand):
 WEB_DEFAULT_PORT = 8765
 WEB_DEFAULT_LOOPBACK = "read"
 WEB_DEFAULT_PUBLIC = "none"
+WEB_CONFIG_KEY = "web"
+
+
+def web_config(todo_dir: Path) -> Dict[str, Any]:
+    """The validated ``web`` object of *todo_dir*'s config.json; ``{}`` when absent.
+
+    Keys are ``loopback`` and ``public`` (each one of ``todo_web.LEVELS``),
+    ``host`` (a non-empty string) and ``port`` (an integer 0-65535). Anything
+    else raises TodoError naming the key, so a typo fails at startup instead of
+    silently leaving a default in force.
+    """
+    raw = todo_store.config_value_raw(todo_dir, WEB_CONFIG_KEY)
+    if raw is None:
+        return {}
+    where = f'config.json "{WEB_CONFIG_KEY}"'
+    if not isinstance(raw, dict):
+        raise TodoError(f"{where} must be an object, not {type(raw).__name__}")
+    known = ("loopback", "public", "host", "port")
+    unknown = sorted(key for key in raw if key not in known)
+    if unknown:
+        raise TodoError(
+            f"{where} has unknown key(s) {', '.join(unknown)}; known: {', '.join(known)}"
+        )
+    for key in ("loopback", "public"):
+        if key in raw and raw[key] not in todo_web.LEVELS:
+            raise TodoError(
+                f"{where} {key} must be one of {', '.join(todo_web.LEVELS)}, not {raw[key]!r}"
+            )
+    if "host" in raw and not (isinstance(raw["host"], str) and raw["host"].strip()):
+        raise TodoError(f"{where} host must be a non-empty string, not {raw['host']!r}")
+    if "port" in raw:
+        port = raw["port"]
+        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+            raise TodoError(f"{where} port must be an integer 0-65535, not {port!r}")
+    return dict(raw)
 
 
 @dataclass(frozen=True)
@@ -7029,13 +7064,13 @@ class WebCommand(EnvironmentCommand):
             "--loopback",
             choices=todo_web.LEVELS,
             default=None,
-            help="access for loopback clients (default read)",
+            help="access for loopback clients (default read; config.json web.loopback)",
         )
         parser.add_argument(
             "--public",
             choices=todo_web.LEVELS,
             default=None,
-            help="access for every other client (default none)",
+            help="access for every other client (default none; config.json web.public)",
         )
         parser.add_argument(
             "--dump-html",
@@ -7046,8 +7081,10 @@ class WebCommand(EnvironmentCommand):
     def settings(self) -> Dict[str, Any]:
         """The effective ``loopback``, ``public``, ``host`` and ``port``.
 
-        ``host`` is None when neither the command line nor config.json names one;
-        ``bind_host`` then derives it from ``public``.
+        Precedence per key: the command line, then the ``web`` object of the todo
+        dir's config.json, then the built-in default. ``host`` is None when none
+        of them names one; ``bind_host`` then derives it from ``public``. A
+        malformed ``web`` object raises TodoError.
         """
         cli = {
             "loopback": self.loopback,
@@ -7055,13 +7092,20 @@ class WebCommand(EnvironmentCommand):
             "host": self.host,
             "port": self.port,
         }
+        configured = web_config(self.todo_dir)
         built_in: Dict[str, Any] = {
             "loopback": WEB_DEFAULT_LOOPBACK,
             "public": WEB_DEFAULT_PUBLIC,
             "host": None,
             "port": WEB_DEFAULT_PORT,
         }
-        return {key: built_in[key] if cli[key] is None else cli[key] for key in built_in}
+        merged: Dict[str, Any] = {}
+        for key, default in built_in.items():
+            if cli[key] is not None:
+                merged[key] = cli[key]
+            else:
+                merged[key] = configured.get(key, default)
+        return merged
 
     @staticmethod
     def bind_host(settings: Mapping[str, Any]) -> str:
