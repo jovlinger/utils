@@ -935,14 +935,19 @@ class EditCommandUnitTests(unittest.TestCase):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
                     self.assertEqual(0, self.run_edit(target))
-                self.assertEqual([_edit_fixture_todo()["Notes"][0]], self.record["Notes"])
-                self.mocks["write_todo_worktree"].assert_called_once_with(Path("/r"), self.record)
+                self.assertEqual(
+                    [_edit_fixture_todo()["Notes"][0]], self.record["Notes"]
+                )
+                self.mocks["write_todo_worktree"].assert_called_once_with(
+                    Path("/r"), self.record
+                )
                 self.assertEqual(
                     "chore(todo): delete note: second note",
                     self.mocks["commit_todo"].call_args.args[1],
                 )
                 self.assertEqual(
-                    {"deleted_index": 1, "raw": "second note"}, json.loads(out.getvalue())
+                    {"deleted_index": 1, "raw": "second note"},
+                    json.loads(out.getvalue()),
                 )
 
     def test_emptying_the_last_note_drops_the_notes_field(self) -> None:
