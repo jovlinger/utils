@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for the viewer's bind and per-class access settings; no real sockets or DNS."""
 
+# Test names state the intent, and the private helpers are the units under test.
+# pylint: disable=missing-function-docstring,protected-access
+
 from __future__ import annotations
 
 import inspect
@@ -74,6 +77,7 @@ class ServeDefaultsTest(unittest.TestCase):
                 todoweb.serve(
                     Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs
                 )
+        # pylint: disable-next=attribute-defined-outside-init
         self.last_address = cls.call_args.args[0]
         return out.getvalue().strip()
 

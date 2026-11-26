@@ -9,6 +9,12 @@ a throwaway git repo, exactly as an agent would invoke it. Run with:
     ./test_todo.py
 """
 
+# Test names state the intent, and the private helpers are the units under test.
+# pylint: disable=missing-class-docstring,missing-function-docstring,protected-access
+# One file holds the whole CLI suite, and its local modules import after the
+# sys.path insert below so it also runs from outside this directory.
+# pylint: disable=too-many-lines,wrong-import-position
+
 from __future__ import annotations
 
 import argparse
@@ -20,20 +26,20 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import contextlib
+import io
 import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 import pytest
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import contextlib  # noqa: E402
-import io  # noqa: E402
-
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import git_command  # noqa: E402  (the seam an integration test fakes)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
@@ -57,6 +63,9 @@ BOW = fake_nlce.FINGERPRINT
 
 class TodoHelpers:
     """Helpers written purely in terms of ``self.todo``, so both harnesses share them."""
+
+    # A mixin: self.todo, self.tid and the asserts come from the TestCase it joins.
+    # pylint: disable=no-member,attribute-defined-outside-init
 
     def read_cur(self) -> Dict[str, Any]:
         """Return the tracked current ticket (self.tid)."""
@@ -133,6 +142,7 @@ class TodoCase(TodoHelpers, unittest.TestCase):
             env=self._env,
         )
 
+    # pylint: disable-next=too-many-arguments
     def write_ticket(
         self,
         branch: str,
@@ -339,6 +349,7 @@ class TodoIntegrationCase(TodoHelpers, unittest.TestCase):
             argv, code or 0, out.getvalue(), err.getvalue()
         )
 
+    # pylint: disable-next=too-many-arguments
     def write_ticket(
         self,
         branch: str,
@@ -425,7 +436,7 @@ class MintSetInitFlowTests(TodoCase):
 
     def test_set_json_path_seeds_workitems_on_branchless_groom(self) -> None:
         # set-json-path by id must write store-only, like `set <id>`: a groom
-        # todo has a Branch label but no git branch, so requiring a checkout
+        # todo has a Branch label but no git branch, so requiring a checkout  # pylint: disable=fixme
         # used to make seeding a plan onto a freshly minted todo impossible.
         tid = self.mint()
         self.todo("set", tid, "--summary", "seed my plan")
@@ -687,6 +698,7 @@ class InitTests(TodoCase):
         ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
         self.assertEqual(ticket["State"], {"groom": {}})
 
+    # pylint: disable-next=invalid-name
     def test_init_stores_the_text_EDIT_literally(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         self.init_ok("--summary=EDIT", "--body=EDIT", "--ac=EDIT")
@@ -709,6 +721,7 @@ class SetStateViaSetTests(TodoIntegrationCase):
         gone = self.todo("set-state", "done")
         self.assertNotEqual(gone.returncode, 0)
 
+    # pylint: disable-next=invalid-name
     def test_set_stores_the_text_EDIT_literally(self) -> None:
         tid = "5e" * 32
         self.write_ticket("5e5e5e5e-literal", tid, "before", body="before")
@@ -1191,6 +1204,7 @@ class FieldAndWorkItemTests(TodoIntegrationCase):
         )
 
 
+# pylint: disable-next=too-many-public-methods
 class NoteTests(TodoIntegrationCase):
     """note-add / note-read: status-free facts, addressed by objid, no cursor."""
 
@@ -1987,6 +2001,7 @@ class WaitTests(TodoCase):
         )
 
 
+# pylint: disable-next=too-many-public-methods
 class DoctorTests(TodoCase):
     def test_doctor_passes_for_minimal_ticket(self) -> None:
         tid = self.mint()
@@ -2534,6 +2549,7 @@ class LogTests(TodoCase):
         self.assertFalse(child_lines[0].startswith("* "), proc.stdout)
         self.assertIn("*", child_lines[0])
 
+    # pylint: disable-next=invalid-name
     def test_log_ALL_includes_root_ticket(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         init = self.todo("init", "--summary=Solo ticket")
@@ -2957,6 +2973,7 @@ class ParentPromptTests(TodoCase):
         self.assertEqual(parent["Subtodos"][0]["Id"], child_id)
         self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
 
+    # pylint: disable-next=invalid-name
     def test_doctor_ALL_sweeps_corpus_and_repairs(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
         base = self._base_branch()
@@ -3765,6 +3782,7 @@ class MissingRepoCwdTests(unittest.TestCase):
         self.assertFalse(todo.branch_exists(self.MISSING, "main"))
 
 
+# pylint: disable-next=too-many-public-methods
 class WorkItemInvariantTests(TodoCase):
     """CLI-level tests for the typed WorkItem invariants, cursor, and properties."""
 
@@ -4065,7 +4083,7 @@ class WorkItemInvariantTests(TodoCase):
         subprocess.run(
             [sys.executable, str(TODO_PY), "set-json-path", self.tid, "BaseSha"],
             cwd=str(self.repo),
-            input='"%s"' % ("deadbeef" * 5),
+            input='"' + "deadbeef" * 5 + '"',
             capture_output=True,
             text=True,
             check=False,
@@ -4976,7 +4994,7 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
             todo_ops, "run_gh", side_effect=_gh_returning(pr)
         ):
             with unittest.mock.patch.object(todo_ops, "write_todo_worktree") as write:
-                self.write = write
+                self.write = write  # pylint: disable=attribute-defined-outside-init
                 return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
 
     def test_done_with_open_pr_becomes_merged_with_pr(self) -> None:
@@ -5799,6 +5817,8 @@ class CommandTaxonomyTests(unittest.TestCase):
                 group.command_names, f"{group.__name__} declares a command"
             )
             with self.assertRaises(TypeError):
+                # Instantiating the abstract group is the refusal under test.
+                # pylint: disable-next=abstract-class-instantiated
                 group(argparse.Namespace())  # type: ignore[abstract]
 
     def test_help_lists_every_command_under_a_group_heading(self) -> None:
@@ -5984,6 +6004,7 @@ class FileStoreGitSyncTests(unittest.TestCase):
         self.assertEqual(self._log(), "")
 
     def test_autopush_sends_the_commit_and_push_alone_does_not_commit(self) -> None:
+        # pylint: disable-next=attribute-defined-outside-init
         self.remote = Path(tempfile.mkdtemp(prefix="todo-remote-"))
         self._git(self.remote, "init", "--bare", "-q")
         self._git(self.store, "remote", "add", "origin", str(self.remote))
