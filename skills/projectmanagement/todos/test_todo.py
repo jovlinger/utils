@@ -869,13 +869,45 @@ class EditCommandUnitTests(unittest.TestCase):
         self.mocks["write_todo_worktree"].assert_called_once()
         self.mocks["commit_todo"].assert_called_once()
 
-    def test_an_empty_note_is_refused_since_doctor_requires_note_text(self) -> None:
+    def use_record(self, record: Dict[str, Any]) -> None:
+        self.record = record
+        self.mocks["resolve_ticket_by_id"].return_value = ("store", record)
+        self.mocks["write_todo_worktree"].reset_mock()
+        self.mocks["commit_todo"].reset_mock()
+
+    def test_an_empty_note_is_deleted_as_note_delete_deletes_it(self) -> None:
         self.mocks["edit_text_via_editor"].return_value = "\n"
         for target in ("objid:4", "Notes.1", "Notes.1.raw"):
             with self.subTest(target=target):
-                with self.assertRaisesRegex(todo.TodoError, "non-empty"):
-                    self.run_edit(target)
-                self.assert_nothing_written()
+                self.use_record(_edit_fixture_todo())
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(0, self.run_edit(target))
+                self.assertEqual([_edit_fixture_todo()["Notes"][0]], self.record["Notes"])
+                self.mocks["write_todo_worktree"].assert_called_once_with(Path("/r"), self.record)
+                self.assertEqual(
+                    "chore(todo): delete note: second note",
+                    self.mocks["commit_todo"].call_args.args[1],
+                )
+                self.assertEqual(
+                    {"deleted_index": 1, "raw": "second note"}, json.loads(out.getvalue())
+                )
+
+    def test_emptying_the_last_note_drops_the_notes_field(self) -> None:
+        record = _edit_fixture_todo()
+        record["Notes"] = record["Notes"][:1]
+        self.use_record(record)
+        self.mocks["edit_text_via_editor"].return_value = ""
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.run_edit("objid:3")
+        self.assertNotIn("Notes", self.record)
+
+    def test_an_empty_note_with_no_commit_is_deleted_uncommitted(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = ""
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.run_edit("objid:4", no_commit=True)
+        self.assertEqual(1, len(self.record["Notes"]))
+        self.mocks["commit_todo"].assert_not_called()
 
     def test_an_editor_failure_writes_nothing(self) -> None:
         self.mocks["edit_text_via_editor"].side_effect = todo.TodoError("exited with status 3")

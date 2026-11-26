@@ -4700,7 +4700,7 @@ class SetCommand(TodoFieldCommand):
 
 
 _WORKITEM_PATH_RE = re.compile(r"\AWorkItems\.(\d+)\Z")
-_NOTE_RAW_PATH_RE = re.compile(r"\ANotes\.\d+\.raw\Z")
+_NOTE_RAW_PATH_RE = re.compile(r"\ANotes\.(\d+)\.raw\Z")
 
 
 def resolve_edit_target(todo: JsonDict, target: str) -> str:
@@ -4747,15 +4747,15 @@ class EditCommand(TodoFieldCommand):
         "blank lines and with surrounding whitespace trimmed; a comment after the first other "
         "line is kept. A file saved untouched writes nothing, so a value that itself begins "
         "with <!-- survives a no-op edit but loses that leading comment on a real one. An "
-        "empty result stores the empty string, except for a note, whose text must be "
-        "non-empty. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
+        "empty result stores the empty string, except on a note, where it deletes the note "
+        "exactly as note-delete does. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
         "AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a string, or an object whose "
         "raw is a string, which is then edited at its raw -- or objid:<hex> (leading zeros "
         "optional) naming a note, edited at its raw (its objid and relto survive), or a work "
         "item, done or not, edited at its summary (its objid and status survive). Refused "
         "with exit 1 and nothing written: stdin/stdout not a terminal, a target that is not "
-        "free text, a leading <!-- that is never closed, an empty note, and an editor that "
-        "fails or exits nonzero. The write is store-only."
+        "free text, a leading <!-- that is never closed, and an editor that fails or exits "
+        "nonzero. The write is store-only."
     )
 
     @classmethod
@@ -4790,10 +4790,10 @@ class EditCommand(TodoFieldCommand):
         if edited == current.strip():
             print(f"todo: {self.target} unchanged; nothing written", file=sys.stderr)
             return 0
-        if not edited and _NOTE_RAW_PATH_RE.match(path):
-            raise TodoError(
-                f"{path} must be non-empty (doctor requires note text); nothing written"
-            )
+        note = _NOTE_RAW_PATH_RE.match(path)
+        if not edited and note:
+            delete_note(root, todo, int(note.group(1)), no_commit=self.no_commit)
+            return 0
         set_at_path(todo, path, edited)
         write_todo_worktree(root, todo)
         if not self.no_commit:
@@ -5454,20 +5454,26 @@ class NoteDeleteCommand(NoteCommand):
         """Delete the addressed note."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
-        index = resolve_note_index(todo, self.target)
-        notes: List[JsonDict] = list(todo.get("Notes") or [])
-        removed = notes.pop(index)
-        if notes:
-            todo["Notes"] = notes
-        else:
-            todo.pop("Notes", None)
-        write_todo_worktree(root, todo)
-        if not self.no_commit:
-            commit_todo(
-                root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}"
-            )
-        print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
+        delete_note(root, todo, resolve_note_index(todo, self.target), no_commit=self.no_commit)
         return 0
+
+
+def delete_note(root: Path, todo: JsonDict, index: int, *, no_commit: bool) -> None:
+    """Delete Notes[*index*], write the todo, commit unless *no_commit*, print what went.
+
+    Deleting the last note drops the Notes field. A relto elsewhere that
+    targets the deleted objid is left as-is (doctor reports it).
+    """
+    notes: List[JsonDict] = list(todo.get("Notes") or [])
+    removed = notes.pop(index)
+    if notes:
+        todo["Notes"] = notes
+    else:
+        todo.pop("Notes", None)
+    write_todo_worktree(root, todo)
+    if not no_commit:
+        commit_todo(root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}")
+    print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
 
 
 def _relto_read_all(todo: JsonDict) -> List[JsonDict]:
