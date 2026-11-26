@@ -23,9 +23,11 @@ doctor's recompute wiring -- is proven by the implementor's own tests + review):
     similarity to text -- the ported ef4ad78d scoring, adapted to emit elements.
 """
 
+# Test names state the intent.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from __future__ import annotations
 
-import json
 import unittest
 
 import fake_nlce

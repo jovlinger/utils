@@ -6,6 +6,11 @@ fake updater), the running server in both modes, and the real updater running
 todo.py against a real store, where a save is last-write-wins.
 """
 
+# Test names state the intent.
+# pylint: disable=missing-function-docstring
+# The write endpoint's checks, server and updater are one suite.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import contextlib
@@ -38,6 +43,7 @@ GOOD_HEADERS = {
 REQUEST = {"id": "ab" * 32, "op": "set-body", "target": "", "value": "new"}
 
 
+# pylint: disable-next=too-few-public-methods
 class FakeUpdater:
     """Records requests; answers with a canned result or raises a canned error."""
 
@@ -289,6 +295,8 @@ class WriteServerTest(unittest.TestCase):
             },
         )
         with self.assertRaises(urllib.error.HTTPError) as caught:
+            # The request is refused, so there is no response to close.
+            # pylint: disable-next=consider-using-with
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(403, caught.exception.code)
         self.assertEqual([], self.updater.requests)
@@ -442,6 +450,7 @@ class ClientClassMatrixTest(unittest.TestCase):
             todoweb, "is_loopback_client", return_value=client_is_loopback
         )
 
+    # pylint: disable-next=too-many-locals
     def test_each_class_gets_its_own_level(self) -> None:
         combos = [
             (loop, pub)
@@ -483,6 +492,8 @@ class ClientClassMatrixTest(unittest.TestCase):
         base = self._serve("none", "read", FakeUpdater())
         req = urllib.request.Request(base + "/", headers={"Host": "localhost:1"})
         with self._as(True), self.assertRaises(urllib.error.HTTPError) as caught:
+            # The request is refused, so there is no response to close.
+            # pylint: disable-next=consider-using-with
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(403, caught.exception.code)
 
@@ -519,6 +530,8 @@ class ClientClassMatrixTest(unittest.TestCase):
             },
         )
         with self._as(True), self.assertRaises(urllib.error.HTTPError) as caught:
+            # The request is refused, so there is no response to close.
+            # pylint: disable-next=consider-using-with
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(403, caught.exception.code)
         self.assertEqual([], updater.requests)
@@ -910,6 +923,8 @@ class FramingHeaderTest(unittest.TestCase):
             },
         )
         with self.assertRaises(urllib.error.HTTPError) as caught:
+            # The request is refused, so there is no response to close.
+            # pylint: disable-next=consider-using-with
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual("DENY", caught.exception.headers["X-Frame-Options"])
         self.assertEqual(
@@ -1014,6 +1029,7 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
             )
         self.assertIn("no todo found for id", str(caught.exception))
 
+    # pylint: disable-next=invalid-name
     def test_the_text_EDIT_is_stored_literally(self) -> None:
         self.update(op="set-body", value="EDIT")
         self.assertEqual("EDIT", self.stored()["Body"]["raw"])
@@ -1120,6 +1136,7 @@ class WebUpdaterOpsTest(WebUpdaterCase):
                     value, stored["raw"] if isinstance(stored, dict) else stored
                 )
 
+    # pylint: disable-next=invalid-name
     def test_each_set_op_stores_the_text_EDIT_literally(self) -> None:
         cases = {
             "set-summary": "Summary",
@@ -1277,6 +1294,7 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
         self.assertEqual(200, status, payload)
         self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
 
+    # pylint: disable-next=invalid-name
     def test_saving_the_text_EDIT_over_http_stores_it(self) -> None:
         base = self.serve()
         status, payload = self.save(base, self.load(base), "EDIT")

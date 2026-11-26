@@ -7,6 +7,9 @@ nothing from it: State rendered as the bare word "userneeded" next to the Id
 with its note nowhere, and a no-commit item's stored message was never read
 (the fold asked git, which has no commit to answer with)."""
 
+# Test names state the intent, and the private helpers are the units under test.
+# pylint: disable=missing-function-docstring,protected-access
+
 from __future__ import annotations
 
 import json

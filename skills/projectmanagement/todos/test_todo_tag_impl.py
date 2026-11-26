@@ -14,6 +14,9 @@ Run with:
     python3 -m unittest test_todo_tag_impl -v
 """
 
+# Test names state the intent, and the private helpers are the units under test.
+# pylint: disable=missing-function-docstring,protected-access
+
 from __future__ import annotations
 
 import json
@@ -500,6 +503,7 @@ class TagClearCliTests(TodoCase):
         self.assertEqual(self._tags_of(target), [])
         self.assertEqual(self._tags_of(other), ["o"])
 
+    # pylint: disable-next=invalid-name
     def test_ALL_sentinel_clears_the_whole_corpus(self) -> None:
         first = self._seed("first", [{"raw": "a", "manual": True}])
         second = self._seed("second", [{"raw": "b", "manual": False}])

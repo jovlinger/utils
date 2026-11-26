@@ -6,6 +6,9 @@ test_todo_common.py; the black-box acceptance walk lives in
 test_todo_search_idf.py.
 """
 
+# Test names state the intent.
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import json
@@ -16,6 +19,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# pylint: disable-next=wrong-import-position
 from test_todo import TodoCase  # noqa: E402  (temp-repo + subprocess harness)
 
 

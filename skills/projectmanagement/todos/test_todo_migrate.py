@@ -22,6 +22,9 @@ Contract this pins (what the implementor must build):
     set_data_version(SCHEMA_VERSION). dry_run reports counts and writes nothing.
 """
 
+# Test names state the intent.
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import json
@@ -29,10 +32,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 import todo_common
 import todo_db
 import todo_store
-import pytest
 
 # A pre-versioning record: no _schema, plus legacy shapes migrate_record must
 # normalize (Chunks->WorkItems, Subtickets->Subtodos, singular Parent dict->list,

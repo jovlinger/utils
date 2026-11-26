@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for the viewer's permalink route: /<todoid>/<path...> -> anchored page."""
 
+# Test names state the intent.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from __future__ import annotations
 
 import contextlib
