@@ -41,7 +41,9 @@ REQUEST = {"id": "ab" * 32, "op": "set-body", "target": "", "value": "new"}
 class FakeUpdater:
     """Records requests; answers with a canned result or raises a canned error."""
 
-    def __init__(self, result: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None):
+    def __init__(
+        self, result: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None
+    ):
         self.result = result if result is not None else {}
         self.error = error
         self.requests: List[Dict[str, Any]] = []
@@ -80,7 +82,9 @@ class HandleUpdateTest(unittest.TestCase):
         self.assertEqual([REQUEST], updater.requests)
 
     def test_cli_refusal_carries_the_command_text(self) -> None:
-        updater = FakeUpdater(error=todoweb.UpdateRefused("no todo found for id 'abab'"))
+        updater = FakeUpdater(
+            error=todoweb.UpdateRefused("no todo found for id 'abab'")
+        )
         status, payload = _handle(updater)
         self.assertEqual(400, status)
         self.assertEqual("no todo found for id 'abab'", payload["error"])
@@ -144,7 +148,11 @@ class RejectedRequestTest(unittest.TestCase):
 
     def test_loopback_host_on_another_port(self) -> None:
         self.assert_refused(
-            headers={**GOOD_HEADERS, "Host": "localhost:9999", "Origin": "http://localhost:9999"}
+            headers={
+                **GOOD_HEADERS,
+                "Host": "localhost:9999",
+                "Origin": "http://localhost:9999",
+            }
         )
 
     def test_host_without_port(self) -> None:
@@ -162,17 +170,24 @@ class RejectedRequestTest(unittest.TestCase):
         self.assert_refused(headers={**GOOD_HEADERS, "Origin": "https://evil.example"})
 
     def test_origin_of_another_loopback_name(self) -> None:
-        self.assert_refused(headers={**GOOD_HEADERS, "Origin": f"http://127.0.0.1:{PORT}"})
+        self.assert_refused(
+            headers={**GOOD_HEADERS, "Origin": f"http://127.0.0.1:{PORT}"}
+        )
 
     def test_https_origin(self) -> None:
-        self.assert_refused(headers={**GOOD_HEADERS, "Origin": f"https://localhost:{PORT}"})
+        self.assert_refused(
+            headers={**GOOD_HEADERS, "Origin": f"https://localhost:{PORT}"}
+        )
 
     def test_null_origin(self) -> None:
         self.assert_refused(headers={**GOOD_HEADERS, "Origin": "null"})
 
     def test_form_content_type(self) -> None:
         self.assert_refused(
-            headers={**GOOD_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+            headers={
+                **GOOD_HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
         )
 
     def test_text_plain_content_type(self) -> None:
@@ -268,7 +283,10 @@ class WriteServerTest(unittest.TestCase):
             self.base + "/update",
             data=json.dumps(REQUEST).encode("utf-8"),
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://evil.example",
+            },
         )
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=10)
@@ -304,7 +322,13 @@ class IsLoopbackClientTest(unittest.TestCase):
     """The class of a client comes from its peer address alone."""
 
     def test_loopback_addresses(self) -> None:
-        for address in ("127.0.0.1", "127.9.8.7", "::1", "::ffff:127.0.0.1", "::ffff:127.4.4.4"):
+        for address in (
+            "127.0.0.1",
+            "127.9.8.7",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:127.4.4.4",
+        ):
             with self.subTest(address=address):
                 self.assertTrue(todoweb.is_loopback_client(address))
 
@@ -347,7 +371,9 @@ class PublicWriteChecksTest(unittest.TestCase):
             "Content-Type": "application/json",
         }
         self.assertIn("Origin", self.refusal(headers, loopback=False))
-        self.assertIn("Origin", self.refusal(_without_key(headers, "Origin"), loopback=False))
+        self.assertIn(
+            "Origin", self.refusal(_without_key(headers, "Origin"), loopback=False)
+        )
 
     def test_public_needs_json_and_a_host(self) -> None:
         headers = {
@@ -356,7 +382,9 @@ class PublicWriteChecksTest(unittest.TestCase):
             "Content-Type": "text/plain",
         }
         self.assertIn("Content-Type", self.refusal(headers, loopback=False))
-        self.assertIn("Host", self.refusal({"Content-Type": "application/json"}, loopback=False))
+        self.assertIn(
+            "Host", self.refusal({"Content-Type": "application/json"}, loopback=False)
+        )
 
 
 def _without_key(headers: Dict[str, str], key: str) -> Dict[str, str]:
@@ -410,7 +438,9 @@ class ClientClassMatrixTest(unittest.TestCase):
             return exc.code, exc.read().decode("utf-8")
 
     def _as(self, client_is_loopback: bool):
-        return mock.patch.object(todoweb, "is_loopback_client", return_value=client_is_loopback)
+        return mock.patch.object(
+            todoweb, "is_loopback_client", return_value=client_is_loopback
+        )
 
     def test_each_class_gets_its_own_level(self) -> None:
         combos = [
@@ -436,7 +466,9 @@ class ClientClassMatrixTest(unittest.TestCase):
                     self.assertEqual(get_status, status)
                     self.assertEqual(get_status, search_status)
                     self.assertEqual(post_status, post)
-                    self.assertEqual(1 if post_status == 200 else 0, len(updater.requests))
+                    self.assertEqual(
+                        1 if post_status == 200 else 0, len(updater.requests)
+                    )
                     if status == 200:
                         self.assertEqual(controls, "write" in page_data(page))
 
@@ -505,18 +537,31 @@ PAGE_TODO: Dict[str, Any] = {
     "update_dt": "2026-10-30T00:00:01Z",
     "_nextobjid": 3,
 }
-FIELD_EDITS = {"set-summary", "set-body", "set-long-summary", "set-ac", "set-actual-summary"}
+FIELD_EDITS = {
+    "set-summary",
+    "set-body",
+    "set-long-summary",
+    "set-ac",
+    "set-actual-summary",
+}
 
 
 def render(todo_record: Dict[str, Any], **kwargs: Any) -> str:
-    return todoweb.render_todo_page(Path("."), json.loads(json.dumps(todo_record)), **kwargs)
+    return todoweb.render_todo_page(
+        Path("."), json.loads(json.dumps(todo_record)), **kwargs
+    )
 
 
 def page_data(page: str) -> Dict[str, Any]:
     """The page's embedded DATA object."""
     match = re.search(r"const DATA = (\{.*?\});\n", page, re.S)
     assert match, "page carries no embedded DATA"
-    raw = match.group(1).replace("\\u003c", "<").replace("\\u003e", ">").replace("\\u0026", "&")
+    raw = (
+        match.group(1)
+        .replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\u0026", "&")
+    )
     return json.loads(raw)
 
 
@@ -588,7 +633,9 @@ class FieldEditRenderTest(unittest.TestCase):
         for key in ("Branch", "Scope", "Tag", "create_dt", "update_dt"):
             with self.subTest(field=key):
                 self.assertNotIn("edit-toggle", meta_row(page, key))
-        id_section = re.search(r"<section class=\"part\"><h2>Id</h2>.*?</section>", page, re.S)
+        id_section = re.search(
+            r"<section class=\"part\"><h2>Id</h2>.*?</section>", page, re.S
+        )
         self.assertNotIn("edit-toggle", id_section.group(0))
         state = re.search(r"<h2>State</h2>.*?</section>", page, re.S)
         self.assertNotIn("edit-toggle", state.group(0))
@@ -596,7 +643,9 @@ class FieldEditRenderTest(unittest.TestCase):
     def test_a_subtodo_rendition_in_the_fold_has_no_controls(self) -> None:
         record = {
             **PAGE_TODO,
-            "Subtodos": [{"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0003"}],
+            "Subtodos": [
+                {"Id": "13e5" + "0" * 60, "Branch": "13e5-child", "objid": "0003"}
+            ],
             "_nextobjid": 4,
         }
         entry = page_data(render(record, write=True))["objects"]["0003"]
@@ -605,10 +654,25 @@ class FieldEditRenderTest(unittest.TestCase):
 
 LIST_TODO: Dict[str, Any] = {
     **PAGE_TODO,
-    "Notes": [{"raw": "first note", "objid": "0003"}, {"raw": "second note", "objid": "0004"}],
+    "Notes": [
+        {"raw": "first note", "objid": "0003"},
+        {"raw": "second note", "objid": "0004"},
+    ],
     "WorkItems": [
-        {"summary": "landed", "done": True, "kind": "code", "sha": "a" * 40, "objid": "0005"},
-        {"summary": "parked", "done": True, "kind": "blocked", "message": "m", "objid": "0006"},
+        {
+            "summary": "landed",
+            "done": True,
+            "kind": "code",
+            "sha": "a" * 40,
+            "objid": "0005",
+        },
+        {
+            "summary": "parked",
+            "done": True,
+            "kind": "blocked",
+            "message": "m",
+            "objid": "0006",
+        },
         {"summary": "open one", "done": False, "kind": "task", "objid": "0007"},
         {"summary": "open two", "done": False, "kind": "task", "objid": "0008"},
     ],
@@ -643,7 +707,9 @@ class ListEditRenderTest(unittest.TestCase):
         page = render(LIST_TODO, write=True)
         for objid in ("0007", "0008"):
             with self.subTest(objid=objid, done=False):
-                self.assertIn(f'data-edit="work-item-replace:{objid}"', tile(page, objid))
+                self.assertIn(
+                    f'data-edit="work-item-replace:{objid}"', tile(page, objid)
+                )
         for objid in ("0005", "0006"):
             with self.subTest(objid=objid, done=True):
                 self.assertNotIn("edit-toggle", tile(page, objid))
@@ -675,7 +741,8 @@ class ListEditRenderTest(unittest.TestCase):
         edits = page_data(render(LIST_TODO, write=True))["write"]["edits"]
         ops = {spec["op"] for spec in edits.values()}
         self.assertEqual(
-            FIELD_EDITS | {"note-replace", "work-item-replace"}, ops - {"work-item-reorder"}
+            FIELD_EDITS | {"note-replace", "work-item-replace"},
+            ops - {"work-item-reorder"},
         )
 
 
@@ -827,7 +894,9 @@ class FramingHeaderTest(unittest.TestCase):
                 with self.subTest(write=write, path=name):
                     headers = self._headers(base + path)
                     self.assertEqual("DENY", headers["X-Frame-Options"])
-                    self.assertEqual("frame-ancestors 'none'", headers["Content-Security-Policy"])
+                    self.assertEqual(
+                        "frame-ancestors 'none'", headers["Content-Security-Policy"]
+                    )
 
     def test_post_responses_deny_framing(self) -> None:
         base = self._base(write=True)
@@ -835,13 +904,17 @@ class FramingHeaderTest(unittest.TestCase):
             base + "/update",
             data=b"{}",
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://evil.example",
+            },
         )
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual("DENY", caught.exception.headers["X-Frame-Options"])
         self.assertEqual(
-            "frame-ancestors 'none'", caught.exception.headers["Content-Security-Policy"]
+            "frame-ancestors 'none'",
+            caught.exception.headers["Content-Security-Policy"],
         )
 
 
@@ -936,7 +1009,9 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
 
     def test_unknown_todo_is_the_cli_refusal(self) -> None:
         with self.assertRaises(todoweb.UpdateRefused) as caught:
-            self.updater.update({"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x"})
+            self.updater.update(
+                {"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x"}
+            )
         self.assertIn("no todo found for id", str(caught.exception))
 
     def test_the_text_EDIT_is_stored_literally(self) -> None:
@@ -1041,7 +1116,9 @@ class WebUpdaterOpsTest(WebUpdaterCase):
             with self.subTest(op=op):
                 self.update(op=op, value=value)
                 stored = self.stored()[field]
-                self.assertEqual(value, stored["raw"] if isinstance(stored, dict) else stored)
+                self.assertEqual(
+                    value, stored["raw"] if isinstance(stored, dict) else stored
+                )
 
     def test_each_set_op_stores_the_text_EDIT_literally(self) -> None:
         cases = {
@@ -1054,12 +1131,16 @@ class WebUpdaterOpsTest(WebUpdaterCase):
             with self.subTest(op=op):
                 self.update(op=op, value="EDIT")
                 stored = self.stored()[field]
-                self.assertEqual("EDIT", stored["raw"] if isinstance(stored, dict) else stored)
+                self.assertEqual(
+                    "EDIT", stored["raw"] if isinstance(stored, dict) else stored
+                )
 
     def test_each_set_op_surfaces_the_cli_refusal(self) -> None:
         for op in ("set-summary", "set-ac", "set-long-summary", "set-actual-summary"):
             with self.subTest(op=op, case="unknown todo"):
-                self.assertIn("no todo found", self.refused(op=op, id="ffff" * 16, value="x"))
+                self.assertIn(
+                    "no todo found", self.refused(op=op, id="ffff" * 16, value="x")
+                )
 
     def test_note_replace_rewrites_that_note_only(self) -> None:
         target = self.objid("Notes", 1)
@@ -1080,7 +1161,9 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         self.assertEqual(target, "objid:" + items[2]["objid"])
 
     def test_work_item_replace_of_a_done_item_is_the_cli_refusal(self) -> None:
-        text = self.refused(op="work-item-replace", target=self.objid("WorkItems", 0), value="x")
+        text = self.refused(
+            op="work-item-replace", target=self.objid("WorkItems", 0), value="x"
+        )
         self.assertIn("done", text)
 
     def test_work_item_reorder_moves_a_not_done_item(self) -> None:
@@ -1090,11 +1173,15 @@ class WebUpdaterOpsTest(WebUpdaterCase):
         self.assertEqual(["landed", "open three", "open one", "open two"], summaries)
 
     def test_work_item_reorder_into_the_done_prefix_is_the_cli_refusal(self) -> None:
-        text = self.refused(op="work-item-reorder", target=self.objid("WorkItems", 2), value="0")
+        text = self.refused(
+            op="work-item-reorder", target=self.objid("WorkItems", 2), value="0"
+        )
         self.assertIn("done prefix", text)
 
     def test_work_item_reorder_of_a_done_item_is_the_cli_refusal(self) -> None:
-        text = self.refused(op="work-item-reorder", target=self.objid("WorkItems", 0), value="2")
+        text = self.refused(
+            op="work-item-reorder", target=self.objid("WorkItems", 0), value="2"
+        )
         self.assertIn("done", text)
 
     def test_a_flag_shaped_target_is_never_parsed_as_a_flag(self) -> None:
@@ -1159,7 +1246,9 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
         with urllib.request.urlopen(f"{base}/{self.TID[:8]}", timeout=30) as resp:
             return page_data(resp.read().decode("utf-8"))
 
-    def save(self, base: str, data: Dict[str, Any], value: str) -> Tuple[int, Dict[str, Any]]:
+    def save(
+        self, base: str, data: Dict[str, Any], value: str
+    ) -> Tuple[int, Dict[str, Any]]:
         """Save *value* through the page's Body control, as its Save button does."""
         spec = data["write"]["edits"]["set-body"]
         return _post(
@@ -1173,7 +1262,9 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
             },
         )
 
-    def test_a_save_from_a_page_loaded_before_a_cli_write_lands_last_write_wins(self) -> None:
+    def test_a_save_from_a_page_loaded_before_a_cli_write_lands_last_write_wins(
+        self,
+    ) -> None:
         base = self.serve()
         stale = self.load(base)
         self.assertEqual("original body", stale["write"]["edits"]["set-body"]["value"])
@@ -1192,7 +1283,9 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
         self.assertEqual(200, status, payload)
         self.assertEqual("EDIT", self.stored()["Body"]["raw"])
 
-    def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(self) -> None:
+    def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(
+        self,
+    ) -> None:
         base = self.serve()
         data = self.load(base)
         client = self.updater.client
@@ -1229,12 +1322,17 @@ class AutocommitScopeTest(todoweb_harness.WebStoreCase):
         ):
             self.store_git(*args)
         self.write_config(
-            {"todo_storage": "file://$TODOBASEDIR/storage", "autocommit": ["SetCommand"]}
+            {
+                "todo_storage": "file://$TODOBASEDIR/storage",
+                "autocommit": ["SetCommand"],
+            }
         )
         first, second = self.mint(), self.mint()
         updater = todoweb.WebUpdater(self.client())
         for tid, value in ((first, "first"), (second, "second")):
-            updater.update({"id": tid, "op": "set-summary", "target": "", "value": value})
+            updater.update(
+                {"id": tid, "op": "set-summary", "target": "", "value": value}
+            )
         subject = self.store_git("log", "-1", "--format=%s")
         self.assertIn(second[:8], subject)
         self.assertNotIn(first[:8], subject)

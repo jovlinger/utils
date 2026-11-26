@@ -67,15 +67,20 @@ class ServeDefaultsTest(unittest.TestCase):
         fake_server = mock.Mock(server_port=8765)
         fake_server.serve_forever.side_effect = KeyboardInterrupt
         out = io.StringIO()
-        with mock.patch.object(todoweb, "_DualStackServer", return_value=fake_server) as cls:
+        with mock.patch.object(
+            todoweb, "_DualStackServer", return_value=fake_server
+        ) as cls:
             with redirect_stdout(out):
-                todoweb.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs)
+                todoweb.serve(
+                    Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs
+                )
         self.last_address = cls.call_args.args[0]
         return out.getvalue().strip()
 
     def test_default_binds_loopback_and_prints_the_summary_line(self) -> None:
         self.assertEqual(
-            "todo web: http://localhost:8765  loopback=read  public=none", self._banner(None)
+            "todo web: http://localhost:8765  loopback=read  public=none",
+            self._banner(None),
         )
         self.assertEqual(("localhost", 8765), self.last_address)
 
@@ -83,8 +88,12 @@ class ServeDefaultsTest(unittest.TestCase):
         self.assertEqual(1, len(self._banner(None).splitlines()))
 
     def test_banner_states_both_settings(self) -> None:
-        banner = self._banner(None, loopback="write", public="read", updater=mock.Mock())
-        self.assertEqual("todo web: http://localhost:8765  loopback=write  public=read", banner)
+        banner = self._banner(
+            None, loopback="write", public="read", updater=mock.Mock()
+        )
+        self.assertEqual(
+            "todo web: http://localhost:8765  loopback=write  public=read", banner
+        )
 
     def test_public_not_none_binds_the_wildcard(self) -> None:
         for public in ("read", "write"):
@@ -125,12 +134,16 @@ class ServeDefaultsTest(unittest.TestCase):
     def test_a_bad_level_refuses_before_binding(self) -> None:
         with mock.patch.object(todoweb, "_DualStackServer") as cls:
             with self.assertRaises(todoweb.TodoWebError):
-                todoweb.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), loopback="rw")
+                todoweb.serve(
+                    Path("."), resolver=mock.Mock(), searcher=mock.Mock(), loopback="rw"
+                )
         cls.assert_not_called()
 
     def test_serve_defaults_are_loopback_read_public_none(self) -> None:
         params = inspect.signature(todoweb.serve).parameters
-        self.assertEqual(("read", "none"), (params["loopback"].default, params["public"].default))
+        self.assertEqual(
+            ("read", "none"), (params["loopback"].default, params["public"].default)
+        )
 
 
 class WebCommandBindTest(todoweb_harness.WebStoreCase):
@@ -175,7 +188,9 @@ class WebCommandBindTest(todoweb_harness.WebStoreCase):
         self.assertEqual(9001, self._serve_kwargs("--port", "9001")["port"])
 
     def test_both_none_refuses_to_start_and_binds_nothing(self) -> None:
-        args = todoweb.build_parser().parse_args(["--loopback", "none", "--public", "none"])
+        args = todoweb.build_parser().parse_args(
+            ["--loopback", "none", "--public", "none"]
+        )
         with mock.patch.object(todoweb, "serve") as serve:
             with self.assertRaises(todoweb_core.TodoWebError) as caught:
                 todoweb.run(args, self.client())
@@ -238,7 +253,9 @@ class WebConfigTest(todoweb_harness.WebStoreCase):
         )
 
     def test_config_supplies_every_option(self) -> None:
-        self._config({"loopback": "write", "public": "read", "host": "0.0.0.0", "port": 9100})
+        self._config(
+            {"loopback": "write", "public": "read", "host": "0.0.0.0", "port": 9100}
+        )
         kwargs = self._serve_kwargs()
         self.assertEqual(
             ("write", "read", "0.0.0.0", 9100),
@@ -255,9 +272,18 @@ class WebConfigTest(todoweb_harness.WebStoreCase):
         )
 
     def test_the_command_line_beats_config_per_option(self) -> None:
-        self._config({"loopback": "write", "public": "read", "host": "0.0.0.0", "port": 9100})
+        self._config(
+            {"loopback": "write", "public": "read", "host": "0.0.0.0", "port": 9100}
+        )
         kwargs = self._serve_kwargs(
-            "--loopback", "read", "--public", "none", "--host", "127.0.0.1", "--port", "9200"
+            "--loopback",
+            "read",
+            "--public",
+            "none",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9200",
         )
         self.assertEqual(
             ("read", "none", "127.0.0.1", 9200),

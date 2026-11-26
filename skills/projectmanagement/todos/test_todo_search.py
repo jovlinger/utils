@@ -29,13 +29,19 @@ class SearchTimeFilterTest(TodoCase):
             f"{old_id[:8]}-o",
             old_id,
             summary="old widget",
-            extra={"create_dt": "2026-08-24T12:00:00Z", "update_dt": "2026-08-24T12:00:00Z"},
+            extra={
+                "create_dt": "2026-08-24T12:00:00Z",
+                "update_dt": "2026-08-24T12:00:00Z",
+            },
         )
         self.write_ticket(
             f"{new_id[:8]}-n",
             new_id,
             summary="new widget",
-            extra={"create_dt": "2026-08-25T12:00:00Z", "update_dt": "2026-08-25T12:00:00Z"},
+            extra={
+                "create_dt": "2026-08-25T12:00:00Z",
+                "update_dt": "2026-08-25T12:00:00Z",
+            },
         )
         proc = self.todo(
             "search",
@@ -55,13 +61,19 @@ class SearchTimeFilterTest(TodoCase):
             f"{old_id[:8]}-o",
             old_id,
             summary="old widget",
-            extra={"create_dt": "2026-01-01T00:00:00Z", "update_dt": "2026-01-01T00:00:00Z"},
+            extra={
+                "create_dt": "2026-01-01T00:00:00Z",
+                "update_dt": "2026-01-01T00:00:00Z",
+            },
         )
         self.write_ticket(
             f"{new_id[:8]}-n",
             new_id,
             summary="new widget",
-            extra={"create_dt": "2026-06-01T00:00:00Z", "update_dt": "2026-06-01T00:00:00Z"},
+            extra={
+                "create_dt": "2026-06-01T00:00:00Z",
+                "update_dt": "2026-06-01T00:00:00Z",
+            },
         )
         proc = self.todo(
             "search",
@@ -81,15 +93,23 @@ class SearchTimeFilterTest(TodoCase):
             f"{in_id[:8]}-i",
             in_id,
             summary="inside",
-            extra={"create_dt": "2026-06-01T00:00:00Z", "update_dt": "2026-06-01T00:00:00Z"},
+            extra={
+                "create_dt": "2026-06-01T00:00:00Z",
+                "update_dt": "2026-06-01T00:00:00Z",
+            },
         )
         self.write_ticket(
             f"{out_id[:8]}-o",
             out_id,
             summary="outside",
-            extra={"create_dt": "2026-01-01T00:00:00Z", "update_dt": "2026-01-01T00:00:00Z"},
+            extra={
+                "create_dt": "2026-01-01T00:00:00Z",
+                "update_dt": "2026-01-01T00:00:00Z",
+            },
         )
-        proc = self.todo("search", "tc_after:2026-03-01T00:00:00Z", "--embedder", "apple")
+        proc = self.todo(
+            "search", "tc_after:2026-03-01T00:00:00Z", "--embedder", "apple"
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(in_id[:8], proc.stdout)
         self.assertNotIn(out_id[:8], proc.stdout)
@@ -189,14 +209,20 @@ class SoloTermIdPrefixSearchTest(TodoCase):
         # token that shares no word with any Summary.
         self._set_config(embedder=None)
         target = "cafefeed" + "0" * 56
-        self.write_ticket(f"{target[:8]}-target", target, summary="zzz unrelated summary text")
+        self.write_ticket(
+            f"{target[:8]}-target", target, summary="zzz unrelated summary text"
+        )
         for n in range(3):
             filler = f"1234000{n}" + "0" * 56
-            self.write_ticket(f"{filler[:8]}-filler{n}", filler, summary="widget maintenance")
+            self.write_ticket(
+                f"{filler[:8]}-filler{n}", filler, summary="widget maintenance"
+            )
         proc = self.todo("search", "cafefeed")
         self.assertEqual(0, proc.returncode, proc.stderr)
         first_line = proc.stdout.strip().splitlines()[0]
-        self.assertIn("cafefeed", first_line, f"expected id hit pinned first:\n{proc.stdout}")
+        self.assertIn(
+            "cafefeed", first_line, f"expected id hit pinned first:\n{proc.stdout}"
+        )
 
     def test_prefix_matching_nothing_falls_back_without_error(self) -> None:
         self._set_config(embedder=None)
@@ -304,7 +330,9 @@ class ClearSearchDataTest(TodoCase):
         before = self._vectors()
         self.todo("clear-search-data", "ALL")
         self._search()
-        self.assertEqual(before, self._vectors(), "re-derive should restore the vectors")
+        self.assertEqual(
+            before, self._vectors(), "re-derive should restore the vectors"
+        )
 
     def test_clear_strips_vectors_stamped_into_the_ticket_json(self) -> None:
         # The index is not the only copy -- vectors are stamped into the record
@@ -312,7 +340,9 @@ class ClearSearchDataTest(TodoCase):
         tid = self._seed(1)
         self._search()
         record = json.loads(self.todo("read", tid).stdout)
-        self.assertTrue([k for k in record["Summary"] if k != "raw"], "expected stamped vectors")
+        self.assertTrue(
+            [k for k in record["Summary"] if k != "raw"], "expected stamped vectors"
+        )
         self.todo("clear-search-data", "ALL")
         record = json.loads(self.todo("read", tid).stdout)
         self.assertEqual(["raw"], [k for k in record["Summary"] if k != "objid"])

@@ -136,11 +136,17 @@ class TagEmbeddingIntegrationTests(TodoCase):
         finally:
             conn.close()
 
-    def _set_json_path(self, *args: str, stdin: str) -> subprocess.CompletedProcess[str]:
+    def _set_json_path(
+        self, *args: str, stdin: str
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(TODO_PY), "set-json-path", *args],
-            cwd=str(self.repo), input=stdin, capture_output=True, text=True,
-            check=False, env=self._env,
+            cwd=str(self.repo),
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self._env,
         )
 
     def test_search_stamps_vector_for_a_tag_element(self) -> None:
@@ -275,14 +281,18 @@ class ComputeAutoTagsTests(unittest.TestCase):
 
     def test_top_k_are_automatic_elements_whose_raw_is_a_candidate(self) -> None:
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
-        elems = todo_ops.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 2)
+        elems = todo_ops.compute_auto_tags(
+            "alpha beta gamma", candidates, self.embedder, 2
+        )
         self.assertEqual(len(elems), 2)
         self.assertTrue(all(e["manual"] is False for e in elems))
         self.assertTrue(all(e["raw"] in candidates for e in elems))
 
     def test_best_match_ranks_first(self) -> None:
         candidates = ["alpha beta gamma", "totally unrelated words"]
-        elems = todo_ops.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 1)
+        elems = todo_ops.compute_auto_tags(
+            "alpha beta gamma", candidates, self.embedder, 1
+        )
         self.assertEqual(elems, [{"raw": "alpha beta gamma", "manual": False}])
 
     def test_k_larger_than_candidate_pool_returns_all_of_them(self) -> None:
@@ -312,7 +322,9 @@ class PhraseMiningTests(unittest.TestCase):
         )
 
     def test_split_phrases_keeps_a_decimal_intact(self) -> None:
-        self.assertEqual(todo_ops._split_phrases("version 3.5 released"), ["version 3.5 released"])
+        self.assertEqual(
+            todo_ops._split_phrases("version 3.5 released"), ["version 3.5 released"]
+        )
 
     def test_nphrase_windows_covers_1_through_max_n_contiguous_windows(self) -> None:
         self.assertEqual(
@@ -372,7 +384,9 @@ class CrossFieldTagInvalidationTests(TodoCase):
         )
         proc = self.todo("set", self.tid, "--body", "a whole new body")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("Tag", self.read_cur())  # only element was automatic -> field dropped
+        self.assertNotIn(
+            "Tag", self.read_cur()
+        )  # only element was automatic -> field dropped
 
     def test_unrelated_field_edit_leaves_automatic_tags(self) -> None:
         tid = self.mint()
@@ -394,7 +408,9 @@ class CrossFieldTagInvalidationTests(TodoCase):
             summary="original summary",
             extra={"Tag": [{"raw": "auto one", "manual": False}]},
         )
-        proc = self.todo("set", self.tid, "--summary", "trivial rewording", "--no-clear")
+        proc = self.todo(
+            "set", self.tid, "--summary", "trivial rewording", "--no-clear"
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("auto one", _raws(self.read_cur()))
 
@@ -538,9 +554,7 @@ class TagClearCliTests(TodoCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         conn = sqlite3.connect(str(self._db_dir / "sqlite.db"))
         try:
-            repos = dict(
-                conn.execute("SELECT id, repo_path FROM tickets").fetchall()
-            )
+            repos = dict(conn.execute("SELECT id, repo_path FROM tickets").fetchall())
         finally:
             conn.close()
         self.assertEqual(repos[foreign], "github.com/elsewhere/other")
@@ -644,7 +658,9 @@ class SetTagPluralShapeTests(TodoCase):
         )
         proc = self.todo("set", self.tid, "--untag", "shared")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("shared", _raws(self.read_cur()))  # automatic: not set's to remove
+        self.assertIn(
+            "shared", _raws(self.read_cur())
+        )  # automatic: not set's to remove
 
     def test_search_tag_matches_an_automatic_element_case_insensitively(self) -> None:
         tagged = self.mint()

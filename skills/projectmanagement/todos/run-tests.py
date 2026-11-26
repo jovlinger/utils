@@ -100,7 +100,8 @@ def _macos_ramdisk(size_mb: int, mount: Path):
         finally:
             subprocess.run(
                 ["diskutil", "unmount", "force", str(mount)],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
             )
             mount.rmdir()
     finally:
@@ -139,12 +140,16 @@ def ramdisk(size_mb: int):
                 yield path
                 return
     except (OSError, subprocess.CalledProcessError, IndexError) as exc:
-        print(f"run-tests: no ramdisk ({exc}); using {tempfile.gettempdir()}",
-              file=sys.stderr)
+        print(
+            f"run-tests: no ramdisk ({exc}); using {tempfile.gettempdir()}",
+            file=sys.stderr,
+        )
         yield None
         return
-    print(f"run-tests: no ramdisk recipe for {system}; using "
-          f"{tempfile.gettempdir()}", file=sys.stderr)
+    print(
+        f"run-tests: no ramdisk recipe for {system}; using " f"{tempfile.gettempdir()}",
+        file=sys.stderr,
+    )
     yield None
 
 
@@ -158,10 +163,14 @@ def _files_by_surface() -> dict[str, str]:
     on_disk = {p.name for p in HERE.glob("test_*.py")}
     unknown = sorted(on_disk - set(by_file))
     if unknown:
-        sys.exit("run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown))
+        sys.exit(
+            "run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown)
+        )
     missing = sorted(set(by_file) - on_disk)
     if missing:
-        sys.exit("run-tests: SURFACES names files that do not exist: " + ", ".join(missing))
+        sys.exit(
+            "run-tests: SURFACES names files that do not exist: " + ", ".join(missing)
+        )
     return by_file
 
 
@@ -173,7 +182,10 @@ def _suite_surfaces(suites: list[str]) -> list[str]:
             owners.setdefault(surface, []).append(suite)
     wrong = sorted(s for s, o in owners.items() if len(o) != 1 or s not in SURFACES)
     if wrong:
-        sys.exit("run-tests: each surface must be in exactly one SUITES entry: " + ", ".join(wrong))
+        sys.exit(
+            "run-tests: each surface must be in exactly one SUITES entry: "
+            + ", ".join(wrong)
+        )
     return [surface for suite in suites for surface in SUITES[suite]]
 
 
@@ -203,7 +215,9 @@ def _limit(expression: str) -> float:
             return float(raw)
         except ValueError:
             sys.exit(f"run-tests: TODO_TEST_TIMEOUT is not a number: {raw!r}")
-    selects_e2e = expression == "" or ("e2e" in expression and "not e2e" not in expression)
+    selects_e2e = expression == "" or (
+        "e2e" in expression and "not e2e" not in expression
+    )
     return E2E_TIMEOUT if selects_e2e else FAST_TIMEOUT
 
 
@@ -211,22 +225,34 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all", action="store_true", help="include the e2e tier")
     parser.add_argument(
-        "--tier", action="append", default=[], metavar="NAME", choices=tiering.TIERS,
+        "--tier",
+        action="append",
+        default=[],
+        metavar="NAME",
+        choices=tiering.TIERS,
         help=f"run one tier only (repeatable): {', '.join(tiering.TIERS)}",
     )
     parser.add_argument(
-        "--surface", action="append", default=[], metavar="NAME",
+        "--surface",
+        action="append",
+        default=[],
+        metavar="NAME",
         help=f"run one surface only (repeatable): {', '.join(sorted(SURFACES))}",
     )
     parser.add_argument(
-        "--suite", action="append", default=[], metavar="NAME", choices=sorted(SUITES),
+        "--suite",
+        action="append",
+        default=[],
+        metavar="NAME",
+        choices=sorted(SUITES),
         help=f"run one suite only (repeatable): {', '.join(sorted(SUITES))}",
     )
     parser.add_argument(
         "--list", action="store_true", help="print the suite and surface map and exit"
     )
     parser.add_argument(
-        "--no-ramdisk", action="store_true",
+        "--no-ramdisk",
+        action="store_true",
         help="keep $TMPDIR on disk instead of a memory-backed directory",
     )
     args, pytest_args = parser.parse_known_args()

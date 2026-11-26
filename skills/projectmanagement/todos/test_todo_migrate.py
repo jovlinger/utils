@@ -56,10 +56,13 @@ LEGACY_RECORD = {
 
 class MigrateToLatestEndTest(unittest.TestCase):
     """migrate-to-latest brings a below-latest store to SCHEMA_VERSION on both backends."""
+
     pytestmark = pytest.mark.integration
 
     def _seed(self, store) -> None:
-        store.put("test/repo", LEGACY_RECORD["Branch"], json.loads(json.dumps(LEGACY_RECORD)))
+        store.put(
+            "test/repo", LEGACY_RECORD["Branch"], json.loads(json.dumps(LEGACY_RECORD))
+        )
 
     def _only_record(self, store) -> dict:
         located = store.list_located()

@@ -142,9 +142,7 @@ class PermalinkRouteTest(unittest.TestCase):
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todoweb.serve(
-                    Path("."), port=0, resolver=resolver, searcher=searcher
-                )
+                todoweb.serve(Path("."), port=0, resolver=resolver, searcher=searcher)
 
         # Daemon: serve_forever() never returns, and the socket dies with the
         # test process. One server serves every case in this class.
@@ -152,7 +150,9 @@ class PermalinkRouteTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if printed.getvalue().strip():
-                cls.base = printed.getvalue().split("todo web: ", 1)[1].split()[0].rstrip("/")
+                cls.base = (
+                    printed.getvalue().split("todo web: ", 1)[1].split()[0].rstrip("/")
+                )
                 return
             time.sleep(0.01)
         raise AssertionError("viewer did not print its URL")
@@ -164,14 +164,18 @@ class PermalinkRouteTest(unittest.TestCase):
             def redirect_request(self, *_args, **_kwargs):  # noqa: D102
                 return None
 
-        return urllib.request.build_opener(NoRedirect).open(self.base + path, timeout=10)
+        return urllib.request.build_opener(NoRedirect).open(
+            self.base + path, timeout=10
+        )
 
     def test_permalink_renders_the_focused_page_in_place(self) -> None:
         resp = self._get("/557ab9d3/workitem/1")
         self.assertEqual(200, resp.status)
         page = resp.read().decode("utf-8")
         self.assertIn('const FOCUS = "0003";', page)
-        self.assertIn("routing and agent choice", page)  # the WHOLE todo, not a fragment
+        self.assertIn(
+            "routing and agent choice", page
+        )  # the WHOLE todo, not a fragment
         self.assertIn('data-obj="0003"', page)
 
     def test_short_selector_and_scalar_path(self) -> None:
