@@ -10,6 +10,8 @@ todo.py against a real store, where a save is last-write-wins.
 # pylint: disable=missing-function-docstring
 # The write endpoint's checks, server and updater are one suite.
 # pylint: disable=too-many-lines
+# Seed records repeat the render tests' on purpose, so each file reads on its own.
+# pylint: disable=duplicate-code
 
 from __future__ import annotations
 

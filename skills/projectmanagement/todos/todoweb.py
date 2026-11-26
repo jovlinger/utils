@@ -9,6 +9,9 @@ request checks and the error mapping; ``todoweb_core`` renders pages and runs
 the processes. See IMPLEMENTATION.md, "Web access and edits".
 """
 
+# The options mirror `todo.py web`, which may not import this front end.
+# pylint: disable=duplicate-code
+
 from __future__ import annotations
 
 import argparse
