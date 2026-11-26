@@ -26,6 +26,7 @@ from unittest import mock
 
 import test_todo
 import todo
+import todo_common
 import todo_store
 import todo_web
 
@@ -924,7 +925,7 @@ class WebUpdaterCase(test_todo.TodoIntegrationCase):
         """The environment a `todo.py web` process would run the updater in."""
         todo_store.reset_store()
         todo.todo_db.reset_todo_dir()
-        todo._REPO_KEY_CACHE.clear()
+        todo_common._REPO_KEY_CACHE.clear()
         return mock.patch.dict(os.environ, self._env, clear=True)
 
     def stored(self) -> Dict[str, Any]:
@@ -1286,7 +1287,7 @@ class AutocommitScopeTest(test_todo.TodoCase):
         first, second = self.mint(), self.mint()
         todo_store.reset_store()
         todo.todo_db.reset_todo_dir()
-        todo._REPO_KEY_CACHE.clear()
+        todo_common._REPO_KEY_CACHE.clear()
         try:
             with mock.patch.dict(os.environ, self._env, clear=True):
                 updater = todo.WebUpdater(self.repo)
@@ -1302,7 +1303,7 @@ class AutocommitScopeTest(test_todo.TodoCase):
         finally:
             todo_store.reset_store()
             todo.todo_db.reset_todo_dir()
-            todo._REPO_KEY_CACHE.clear()
+            todo_common._REPO_KEY_CACHE.clear()
         subject = self._store_git("log", "-1", "--format=%s")
         self.assertIn(second[:8], subject)
         self.assertNotIn(first[:8], subject)

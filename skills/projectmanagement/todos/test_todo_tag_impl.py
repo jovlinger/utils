@@ -25,7 +25,9 @@ from typing import Any, Dict
 
 import fake_nlce
 import todo
+import todo_common
 import todo_db
+import todo_ops
 
 from test_todo import BOW, TODO_PY, TodoCase
 
@@ -152,35 +154,35 @@ class EmbedTargetsUnitTests(unittest.TestCase):
             "Body": {"raw": "b"},
             "Tag": [{"raw": "one", "manual": True}, {"raw": "two", "manual": True}],
         }
-        targets = todo._embed_targets(d)
+        targets = todo_common._embed_targets(d)
         paths = [path for path, _container, _raw in targets]
         self.assertEqual(paths, ["Summary.raw", "Body.raw", "Tag.0.raw", "Tag.1.raw"])
 
     def test_embed_targets_skips_blank_tag_raw(self) -> None:
         d = {"Tag": [{"raw": "", "manual": True}, {"raw": "kept", "manual": True}]}
-        targets = todo._embed_targets(d)
+        targets = todo_common._embed_targets(d)
         self.assertEqual([p for p, _c, _r in targets], ["Tag.1.raw"])
 
     def test_container_at_resolves_tag_index_and_missing_index(self) -> None:
         d = {"Tag": [{"raw": "one", "manual": True}]}
-        self.assertIs(todo._container_at(d, "Tag.0.raw"), d["Tag"][0])
-        self.assertIsNone(todo._container_at(d, "Tag.5.raw"))
-        self.assertIsNone(todo._container_at(d, "Tag.not-an-index.raw"))
+        self.assertIs(todo_common._container_at(d, "Tag.0.raw"), d["Tag"][0])
+        self.assertIsNone(todo_common._container_at(d, "Tag.5.raw"))
+        self.assertIsNone(todo_common._container_at(d, "Tag.not-an-index.raw"))
 
     def test_container_at_resolves_summary(self) -> None:
         d = {"Summary": {"raw": "s"}}
-        self.assertIs(todo._container_at(d, "Summary.raw"), d["Summary"])
+        self.assertIs(todo_common._container_at(d, "Summary.raw"), d["Summary"])
 
     def test_changed_raw_fields_flags_new_and_edited_tag(self) -> None:
         old = {"Tag": [{"raw": "one", "manual": True}]}
         new = {"Tag": [{"raw": "one-edited", "manual": True}, {"raw": "two", "manual": True}]}
-        changed = set(todo._changed_raw_fields(old, new))
+        changed = set(todo_common._changed_raw_fields(old, new))
         self.assertIn("Tag.0.raw", changed)  # same position, raw text differs
         self.assertIn("Tag.1.raw", changed)  # newly present
 
     def test_changed_raw_fields_empty_for_identical_tags(self) -> None:
         same = {"Tag": [{"raw": "one", "manual": True}]}
-        self.assertEqual(todo._changed_raw_fields(same, dict(same)), [])
+        self.assertEqual(todo_common._changed_raw_fields(same, dict(same)), [])
 
 
 class TagEmbeddingIntegrationTests(TodoCase):
@@ -332,7 +334,7 @@ class TagCliRoundTripTests(TodoCase):
 
 
 class ComputeAutoTagsTests(unittest.TestCase):
-    """Unit coverage for todo.compute_auto_tags beyond the oracle's pinned case."""
+    """Unit coverage for todo_ops.compute_auto_tags beyond the oracle's pinned case."""
 
     def setUp(self) -> None:
         # Bag-of-words double: scoring is by shared tokens, which is what these
@@ -341,29 +343,29 @@ class ComputeAutoTagsTests(unittest.TestCase):
 
     def test_top_k_are_automatic_elements_whose_raw_is_a_candidate(self) -> None:
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
-        elems = todo.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 2)
+        elems = todo_ops.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 2)
         self.assertEqual(len(elems), 2)
         self.assertTrue(all(e["manual"] is False for e in elems))
         self.assertTrue(all(e["raw"] in candidates for e in elems))
 
     def test_best_match_ranks_first(self) -> None:
         candidates = ["alpha beta gamma", "totally unrelated words"]
-        elems = todo.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 1)
+        elems = todo_ops.compute_auto_tags("alpha beta gamma", candidates, self.embedder, 1)
         self.assertEqual(elems, [{"raw": "alpha beta gamma", "manual": False}])
 
     def test_k_larger_than_candidate_pool_returns_all_of_them(self) -> None:
-        elems = todo.compute_auto_tags("one two", ["one", "two"], self.embedder, 5)
+        elems = todo_ops.compute_auto_tags("one two", ["one", "two"], self.embedder, 5)
         self.assertEqual(len(elems), 2)
 
     def test_empty_candidates_returns_empty(self) -> None:
-        self.assertEqual(todo.compute_auto_tags("text", [], self.embedder, 3), [])
+        self.assertEqual(todo_ops.compute_auto_tags("text", [], self.embedder, 3), [])
 
     def test_tie_break_is_deterministic_by_candidate_text(self) -> None:
         # "zulu alpha" and "alpha zulu" are the same bag of words, so BowEmbedder
         # scores them identically against "alpha zulu" -- a tie
         # that must break on candidate text (ascending), not input order.
         candidates = ["zulu alpha", "alpha zulu"]
-        elems = todo.compute_auto_tags("alpha zulu", candidates, self.embedder, 1)
+        elems = todo_ops.compute_auto_tags("alpha zulu", candidates, self.embedder, 1)
         self.assertEqual(elems[0]["raw"], "alpha zulu")
 
 
@@ -373,22 +375,22 @@ class PhraseMiningTests(unittest.TestCase):
     def test_split_phrases_splits_on_sentence_terminators_and_newlines(self) -> None:
         text = "First sentence. Second one!\nThird line\n\nFourth."
         self.assertEqual(
-            todo._split_phrases(text),
+            todo_ops._split_phrases(text),
             ["First sentence", "Second one", "Third line", "Fourth"],
         )
 
     def test_split_phrases_keeps_a_decimal_intact(self) -> None:
-        self.assertEqual(todo._split_phrases("version 3.5 released"), ["version 3.5 released"])
+        self.assertEqual(todo_ops._split_phrases("version 3.5 released"), ["version 3.5 released"])
 
     def test_nphrase_windows_covers_1_through_max_n_contiguous_windows(self) -> None:
         self.assertEqual(
-            todo._nphrase_windows("one. two. three."),
+            todo_ops._nphrase_windows("one. two. three."),
             ["one", "two", "three", "one two", "two three", "one two three"],
         )
 
     def test_nphrase_windows_respects_a_smaller_max_n(self) -> None:
         self.assertEqual(
-            todo._nphrase_windows("a. b. c.", max_n=2),
+            todo_ops._nphrase_windows("a. b. c.", max_n=2),
             ["a", "b", "c", "a b", "b c"],
         )
 
@@ -397,7 +399,7 @@ class PhraseMiningTests(unittest.TestCase):
             "t1": {"Summary.raw": "Alpha Beta. Gamma."},
             "t2": {"Summary.raw": "gamma. Alpha beta."},
         }
-        candidates = todo._mine_tag_candidates(raws)
+        candidates = todo_ops._mine_tag_candidates(raws)
         self.assertEqual(candidates[0], "alpha beta")  # first-seen, downcased
         self.assertIn("alpha beta gamma", candidates)
         # t2 contributes no duplicate of the already-seen downcased phrases
