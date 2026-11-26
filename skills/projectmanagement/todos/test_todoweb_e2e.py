@@ -8,7 +8,9 @@ are exactly what the same ``todo.py`` command leaves behind.
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import unittest
@@ -146,6 +148,29 @@ class TodowebEndToEndTest(todoweb_harness.WebStoreCase):
         page = self.get("/")
         self.assertIn(TID_WEB, page)
         self.assertIn(TID_CLI, page)
+
+
+class TodoPyWebForwardTest(todoweb_harness.WebStoreCase):
+    """`todo.py web` runs todoweb.py and ends the way the viewer itself does."""
+
+    def test_ctrl_c_ends_quietly_with_exit_zero(self) -> None:
+        """Ctrl-C reaches both processes; the pair exits 0 with no traceback."""
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+            [sys.executable, str(todoweb_harness.TODO_PY), "web", "--port", "0"],
+            cwd=self.repo,
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        self.assertIn("todo web: http://", proc.stdout.readline())
+        os.killpg(proc.pid, signal.SIGINT)
+        _out, err = proc.communicate(timeout=60)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(0, proc.returncode, err)
 
 
 if __name__ == "__main__":

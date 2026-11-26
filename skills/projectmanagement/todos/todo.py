@@ -3857,10 +3857,16 @@ class WebCommand(EnvironmentCommand):
         return argv
 
     def do(self) -> int:
-        """Run todoweb.py with these options; its exit status is this command's."""
-        return subprocess.run(
-            [sys.executable, str(TODOWEB_PY), *self.todoweb_argv()], check=False
-        ).returncode
+        """Run todoweb.py with these options; its exit status is this command's.
+
+        Ctrl-C reaches todoweb too, which stops serving and exits; this waits
+        for that exit rather than dying on the interrupt itself.
+        """
+        with subprocess.Popen([sys.executable, str(TODOWEB_PY), *self.todoweb_argv()]) as child:
+            try:
+                return child.wait()
+            except KeyboardInterrupt:
+                return child.wait()
 
 
 class ImportJsonCommand(StoreMaintenanceCommand):
