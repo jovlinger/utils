@@ -23,6 +23,9 @@ stores and git repos do not churn SSD pages. This is best effort: ``--no-ramdisk
 opts out, and a platform that cannot provide one runs against the disk instead.
 """
 
+# The file is run as ./run-tests.py (Makefile, docs), never imported by name.
+# pylint: disable=invalid-name
+
 from __future__ import annotations
 
 import argparse
@@ -222,6 +225,7 @@ def _limit(expression: str) -> float:
 
 
 def main() -> int:
+    """Parse the selection, then run pytest on it under the timebox and ramdisk."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all", action="store_true", help="include the e2e tier")
     parser.add_argument(
@@ -285,18 +289,18 @@ def main() -> int:
 def _spawn(argv: list[str], env: dict[str, str], limit: float) -> int:
     # Own process group: todo.py shells out to git, so a timeout has to take the
     # children with it.
-    proc = subprocess.Popen(argv, cwd=HERE, env=env, start_new_session=True)
-    try:
-        return proc.wait(timeout=limit)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGTERM)
+    with subprocess.Popen(argv, cwd=HERE, env=env, start_new_session=True) as proc:
         try:
-            proc.wait(timeout=5)
+            return proc.wait(timeout=limit)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-        print(f"run-tests: timed out after {limit:g}s", file=sys.stderr)
-        return TIMEOUT_EXIT
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            print(f"run-tests: timed out after {limit:g}s", file=sys.stderr)
+            return TIMEOUT_EXIT
 
 
 if __name__ == "__main__":
