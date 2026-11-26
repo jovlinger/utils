@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pty
 import re
 import shutil
 import sqlite3
@@ -23,7 +24,7 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import pytest
 
 TODO_PY: Path = Path(__file__).resolve().parent / "todo.py"
@@ -663,18 +664,13 @@ class InitTests(TodoCase):
         ticket = json.loads(self.todo("read", json.loads(proc.stdout)["Id"][:8]).stdout)
         self.assertEqual(ticket["State"], {"groom": {}})
 
-    def test_init_noninteractive_EDIT_creates_nothing(self) -> None:
-        """A non-tty EDIT value aborts with exit 1 and leaves no todo/branch."""
+    def test_init_stores_the_text_EDIT_literally(self) -> None:
         self._git("commit", "--allow-empty", "-qm", "seed")
-        head_before = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        proc = self.todo("init", "--summary=EDIT")
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("interactive terminal", proc.stderr)
-        # no branch switched to / created, no ticket in the store
-        self.assertEqual(
-            self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), head_before
-        )
-        self.assertEqual(self.todo("ls").stdout.strip(), "")
+        self.init_ok("--summary=EDIT", "--body=EDIT", "--ac=EDIT")
+        ticket = self.read_cur()
+        self.assertEqual("EDIT", ticket["Summary"]["raw"])
+        self.assertEqual("EDIT", ticket["Body"]["raw"])
+        self.assertEqual("EDIT", ticket["AC"])
 
 
 class SetStateViaSetTests(TodoIntegrationCase):
@@ -689,6 +685,382 @@ class SetStateViaSetTests(TodoIntegrationCase):
         # the removed subcommand must not resolve anymore
         gone = self.todo("set-state", "done")
         self.assertNotEqual(gone.returncode, 0)
+
+    def test_set_stores_the_text_EDIT_literally(self) -> None:
+        tid = "5e" * 32
+        self.write_ticket("5e5e5e5e-literal", tid, "before", body="before")
+        proc = self.todo(
+            "set", tid[:8], "--summary=EDIT", "--body=EDIT", "--ac=EDIT",
+            "--actual-summary=EDIT", "--state=userneeded", "--note=EDIT",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        ticket = self.read_cur()
+        self.assertEqual("EDIT", ticket["Summary"]["raw"])
+        self.assertEqual("EDIT", ticket["Body"]["raw"])
+        self.assertEqual("EDIT", ticket["AC"])
+        self.assertEqual("EDIT", ticket["ActualSummary"])
+        self.assertEqual({"userneeded": {"note": "EDIT"}}, ticket["State"])
+
+
+def _edit_fixture_todo() -> Dict[str, Any]:
+    """A todo record as the store returns it, for edit's unit tests."""
+    return {
+        "Id": "ed" * 32,
+        "Summary": {"raw": "original summary", "objid": "0001"},
+        "Body": {"raw": "original body", "objid": "0002"},
+        "AC": "original ac",
+        "State": {"working": {}},
+        "_nextobjid": 7,
+        "Notes": [
+            {"raw": "first note", "objid": "0003"},
+            {"raw": "second note", "objid": "0004", "relto": [
+                {"objid": "0007", "type": "relates", "target": "objid:0003"}
+            ]},
+        ],
+        "WorkItems": [
+            {
+                "summary": "landed", "done": True, "kind": "code",
+                "sha": "a" * 40, "message": "landed", "objid": "0005",
+            },
+            {"summary": "open one", "done": False, "kind": "task", "objid": "0006"},
+        ],
+    }
+
+
+class EditTargetUnitTests(unittest.TestCase):
+    """resolve_edit_target: which free-text string a target names."""
+
+    def resolve(self, target: str) -> str:
+        return todo.resolve_edit_target(_edit_fixture_todo(), target)
+
+    def test_a_dot_path_to_a_string_is_itself(self) -> None:
+        self.assertEqual("Body.raw", self.resolve("Body.raw"))
+        self.assertEqual("AC", self.resolve("AC"))
+
+    def test_a_dot_path_to_an_object_with_a_raw_string_is_its_raw(self) -> None:
+        for path in ("Body", "Summary", "Notes.1"):
+            with self.subTest(path=path):
+                self.assertEqual(f"{path}.raw", self.resolve(path))
+
+    def test_a_note_objid_is_its_raw_with_leading_zeros_optional(self) -> None:
+        self.assertEqual("Notes.1.raw", self.resolve("objid:4"))
+        self.assertEqual("Notes.1.raw", self.resolve("objid:0004"))
+
+    def test_a_work_item_objid_is_its_summary_done_or_not(self) -> None:
+        self.assertEqual("WorkItems.1.summary", self.resolve("objid:0006"))
+        self.assertEqual("WorkItems.0.summary", self.resolve("objid:5"))
+
+    def test_refusals_name_the_problem(self) -> None:
+        cases = {
+            "objid:1": "not a note or work item",
+            "objid:fff0": "fff0",
+            "objid:XY": "not lowercase hex",
+            "Nope": "no such field Nope",
+            "WorkItems": "not free text",
+            "State": "not free text",
+            "_nextobjid": "not free text",
+            "Notes": "not free text",
+        }
+        for target, text in cases.items():
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(todo.TodoError, text):
+                    self.resolve(target)
+
+
+class EditCommandUnitTests(unittest.TestCase):
+    """EditCommand.do with the store, the write/commit path and the editor mocked."""
+
+    def setUp(self) -> None:
+        self.record = _edit_fixture_todo()
+        self.mocks: Dict[str, unittest.mock.MagicMock] = {}
+        patches = {
+            "resolve_ticket_by_id": {"return_value": ("store", self.record)},
+            "_stdio_is_interactive": {"return_value": True},
+            "edit_text_via_editor": {"return_value": "edited text\n"},
+            "write_todo_worktree": {},
+            "commit_todo": {},
+        }
+        for name, kwargs in patches.items():
+            patcher = unittest.mock.patch.object(todo, name, **kwargs)
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+        root = unittest.mock.patch.object(todo.EditCommand, "root", return_value=Path("/r"))
+        root.start()
+        self.addCleanup(root.stop)
+
+    def run_edit(self, target: str, *, no_commit: bool = False) -> int:
+        args = argparse.Namespace(selector="eded", target=target, no_commit=no_commit)
+        return todo.EditCommand(args, todo_dir=Path("/unused")).do()
+
+    def editor_call(self) -> tuple[str, str]:
+        """(initial value, header) the editor was opened with."""
+        call = self.mocks["edit_text_via_editor"].call_args
+        return call.args[0], call.kwargs["header"]
+
+    def assert_nothing_written(self) -> None:
+        self.mocks["write_todo_worktree"].assert_not_called()
+        self.mocks["commit_todo"].assert_not_called()
+        self.assertEqual(_edit_fixture_todo(), self.record)
+
+    def test_a_change_is_stored_trimmed_written_and_committed(self) -> None:
+        self.assertEqual(0, self.run_edit("Body"))
+        self.assertEqual("edited text", self.record["Body"]["raw"])
+        self.mocks["write_todo_worktree"].assert_called_once_with(Path("/r"), self.record)
+        self.assertIn("Body.raw", self.mocks["commit_todo"].call_args.args[1])
+
+    def test_the_editor_gets_the_current_value_and_a_header_naming_it(self) -> None:
+        self.run_edit("objid:4")
+        initial, header = self.editor_call()
+        self.assertEqual("second note", initial)
+        self.assertTrue(header.startswith("<!--") and header.rstrip().endswith("-->"))
+        for text in ("todo:edededed", "objid:4", "Notes.1.raw", "stripped"):
+            self.assertIn(text, header)
+
+    def test_a_note_edit_keeps_its_objid_and_relto(self) -> None:
+        self.run_edit("objid:0004")
+        expected = {**_edit_fixture_todo()["Notes"][1], "raw": "edited text"}
+        self.assertEqual(expected, self.record["Notes"][1])
+        self.assertEqual(_edit_fixture_todo()["Notes"][0], self.record["Notes"][0])
+
+    def test_a_work_item_edit_rewrites_only_its_summary(self) -> None:
+        self.run_edit("objid:6")
+        expected = {**_edit_fixture_todo()["WorkItems"][1], "summary": "edited text"}
+        self.assertEqual(expected, self.record["WorkItems"][1])
+
+    def test_a_done_work_item_edit_rewrites_its_summary_and_keeps_it_done(self) -> None:
+        self.assertEqual(0, self.run_edit("objid:5"))
+        expected = {**_edit_fixture_todo()["WorkItems"][0], "summary": "edited text"}
+        self.assertEqual(expected, self.record["WorkItems"][0])
+        self.mocks["write_todo_worktree"].assert_called_once()
+
+    def test_no_commit_writes_but_does_not_commit(self) -> None:
+        self.run_edit("AC", no_commit=True)
+        self.assertEqual("edited text", self.record["AC"])
+        self.mocks["write_todo_worktree"].assert_called_once()
+        self.mocks["commit_todo"].assert_not_called()
+
+    def test_unchanged_text_writes_nothing(self) -> None:
+        for returned in (None, "  original body \n\n"):
+            with self.subTest(returned=returned):
+                self.mocks["edit_text_via_editor"].return_value = returned
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(0, self.run_edit("Body"))
+                self.assertIn("unchanged", err.getvalue())
+                self.assert_nothing_written()
+
+    def test_non_interactive_stdio_is_refused_before_the_editor(self) -> None:
+        self.mocks["_stdio_is_interactive"].return_value = False
+        with self.assertRaisesRegex(todo.EditNotInteractive, "interactive terminal"):
+            self.run_edit("Body")
+        self.mocks["edit_text_via_editor"].assert_not_called()
+        self.assert_nothing_written()
+
+    def test_a_refused_target_never_opens_the_editor(self) -> None:
+        with self.assertRaises(todo.TodoError):
+            self.run_edit("objid:1")
+        self.mocks["edit_text_via_editor"].assert_not_called()
+        self.assert_nothing_written()
+
+    def test_an_empty_result_stores_the_empty_string(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = "  \n\n"
+        self.assertEqual(0, self.run_edit("Body"))
+        self.assertEqual("", self.record["Body"]["raw"])
+        self.mocks["write_todo_worktree"].assert_called_once()
+        self.mocks["commit_todo"].assert_called_once()
+
+    def use_record(self, record: Dict[str, Any]) -> None:
+        self.record = record
+        self.mocks["resolve_ticket_by_id"].return_value = ("store", record)
+        self.mocks["write_todo_worktree"].reset_mock()
+        self.mocks["commit_todo"].reset_mock()
+
+    def test_an_empty_note_is_deleted_as_note_delete_deletes_it(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = "\n"
+        for target in ("objid:4", "Notes.1", "Notes.1.raw"):
+            with self.subTest(target=target):
+                self.use_record(_edit_fixture_todo())
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(0, self.run_edit(target))
+                self.assertEqual([_edit_fixture_todo()["Notes"][0]], self.record["Notes"])
+                self.mocks["write_todo_worktree"].assert_called_once_with(Path("/r"), self.record)
+                self.assertEqual(
+                    "chore(todo): delete note: second note",
+                    self.mocks["commit_todo"].call_args.args[1],
+                )
+                self.assertEqual(
+                    {"deleted_index": 1, "raw": "second note"}, json.loads(out.getvalue())
+                )
+
+    def test_emptying_the_last_note_drops_the_notes_field(self) -> None:
+        record = _edit_fixture_todo()
+        record["Notes"] = record["Notes"][:1]
+        self.use_record(record)
+        self.mocks["edit_text_via_editor"].return_value = ""
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.run_edit("objid:3")
+        self.assertNotIn("Notes", self.record)
+
+    def test_an_empty_note_with_no_commit_is_deleted_uncommitted(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = ""
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.run_edit("objid:4", no_commit=True)
+        self.assertEqual(1, len(self.record["Notes"]))
+        self.mocks["commit_todo"].assert_not_called()
+
+    def test_an_editor_failure_writes_nothing(self) -> None:
+        self.mocks["edit_text_via_editor"].side_effect = todo.TodoError("exited with status 3")
+        with self.assertRaisesRegex(todo.TodoError, "status 3"):
+            self.run_edit("Body")
+        self.assert_nothing_written()
+
+
+class EditEndTests(TodoCase):
+    def test_edit_on_a_terminal_stores_the_text_after_the_header(self) -> None:
+        """The whole command over a pty, with a real fake-editor script."""
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=Edit me", "--body=keep this")
+        script = self._db_dir / "fake-editor"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'cp "$1" "{script}.seen"\n'
+            "printf '<!-- mine -->\\n\\nrewritten body\\n<!-- kept -->\\n' > \"$1\"\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        primary, secondary = pty.openpty()
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(TODO_PY), "edit", self.tid[:8], "Body"],
+                cwd=str(self.repo), stdin=secondary, stdout=secondary, stderr=secondary,
+                env={**self._env, "VISUAL": str(script)}, check=False, timeout=120,
+            )
+        finally:
+            os.close(secondary)
+            os.close(primary)
+        self.assertEqual(0, proc.returncode)
+        seen = Path(f"{script}.seen").read_text(encoding="utf-8")
+        self.assertTrue(seen.startswith("<!--"), seen)
+        self.assertTrue(seen.endswith("\n\nkeep this\n"), seen)
+        self.assertEqual("rewritten body\n<!-- kept -->", self.read_cur()["Body"]["raw"])
+
+    def test_edit_without_a_terminal_is_refused_and_writes_nothing(self) -> None:
+        self._git("commit", "--allow-empty", "-qm", "seed")
+        self.init_ok("--summary=Edit me", "--body=keep this")
+        before = self.read_cur()
+        proc = self.todo("edit", self.tid[:8], "Body")
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("interactive terminal", proc.stderr)
+        self.assertEqual(before, self.read_cur())
+
+
+class StripLeadingHtmlCommentsUnitTests(unittest.TestCase):
+    """What survives of the edit temp file once its leading comments are dropped."""
+
+    def strip(self, text: str) -> str:
+        return todo.strip_leading_html_comments(text)
+
+    def test_leading_comments_and_blank_lines_are_dropped(self) -> None:
+        text = "<!-- one\n  two -->\n\n<!-- three -->\n   \nbody line\n"
+        self.assertEqual("body line\n", self.strip(text))
+
+    def test_everything_from_the_first_content_line_is_verbatim(self) -> None:
+        text = "<!-- header -->\n\nfirst\n\n<!-- kept: markdown -->\n  indented\n"
+        self.assertEqual("first\n\n<!-- kept: markdown -->\n  indented\n", self.strip(text))
+
+    def test_text_after_a_comment_on_its_line_is_content(self) -> None:
+        self.assertEqual("tail\nnext", self.strip("<!-- c -->tail\nnext"))
+
+    def test_no_comment_is_unchanged(self) -> None:
+        self.assertEqual("plain\n", self.strip("plain\n"))
+
+    def test_an_unclosed_leading_comment_is_refused(self) -> None:
+        for text in ("<!-- never closed\nbody\n", "<!-- ok -->\n\n<!-- open\nbody"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(todo.TodoError, "never closed"):
+                    self.strip(text)
+
+    def test_an_unclosed_comment_after_content_is_content(self) -> None:
+        self.assertEqual("body\n<!-- open\n", self.strip("<!-- h -->\nbody\n<!-- open\n"))
+
+    def test_only_comments_and_blank_lines_leave_the_empty_string(self) -> None:
+        self.assertEqual("", self.strip("<!-- header -->\n\n  \n"))
+
+
+class EditorFileTests(unittest.TestCase):
+    """edit_text_via_editor: the temp file it writes and what it reads back.
+
+    The editor exec seam (``todo._run_editor``) is replaced by a function that
+    records argv and rewrites the temp file, so no process starts.
+    """
+
+    pytestmark = pytest.mark.integration
+
+    HEADER = "<!-- editing todo:abcd1234 Body\n     leading comments are dropped -->\n"
+
+    def run_editor(
+        self, initial: str, rewrite: Optional[str] = None, status: int = 0
+    ) -> tuple[Optional[str], str, List[str]]:
+        """Run the helper; return (result, file as handed over, editor argv)."""
+        handed: Dict[str, Any] = {}
+
+        def fake(argv: List[str]) -> int:
+            path = Path(argv[-1])
+            handed["text"] = path.read_text(encoding="utf-8")
+            handed["argv"] = argv
+            if rewrite is not None:
+                path.write_text(rewrite, encoding="utf-8")
+            return status
+
+        with unittest.mock.patch.object(todo, "_run_editor", side_effect=fake):
+            result = todo.edit_text_via_editor(initial, prefix="t", header=self.HEADER)
+        return result, handed["text"], handed["argv"]
+
+    def test_the_file_is_the_header_a_blank_line_then_the_value(self) -> None:
+        _result, handed, _argv = self.run_editor("current value")
+        self.assertEqual(self.HEADER + "\ncurrent value\n", handed)
+
+    def test_an_untouched_file_reads_back_as_none(self) -> None:
+        self.assertIsNone(self.run_editor("current value")[0])
+
+    def test_the_header_is_stripped_and_later_comments_are_kept(self) -> None:
+        result, handed, _argv = self.run_editor(
+            "x", rewrite=self.HEADER + "\nnew text\n<!-- kept -->\n"
+        )
+        self.assertTrue(handed.startswith("<!--"))
+        self.assertEqual("new text\n<!-- kept -->\n", result)
+
+    def test_a_value_beginning_with_a_comment_is_kept_when_untouched(self) -> None:
+        self.assertIsNone(self.run_editor("<!-- mine -->\nbody")[0])
+
+    def test_a_value_beginning_with_a_comment_loses_it_when_edited(self) -> None:
+        result, _handed, _argv = self.run_editor(
+            "<!-- mine -->\nbody", rewrite=self.HEADER + "\n<!-- mine -->\nbody, edited\n"
+        )
+        self.assertEqual("body, edited\n", result)
+
+    def test_a_nonzero_editor_exit_is_refused(self) -> None:
+        with self.assertRaisesRegex(todo.TodoError, "exited with status 3"):
+            self.run_editor("v", rewrite="half typed", status=3)
+
+    def test_an_editor_that_cannot_start_is_refused(self) -> None:
+        with unittest.mock.patch.object(todo, "_run_editor", side_effect=OSError("nope")):
+            with self.assertRaisesRegex(todo.TodoError, "could not run editor"):
+                todo.edit_text_via_editor("v", prefix="t", header=self.HEADER)
+
+    def test_visual_then_editor_then_vi(self) -> None:
+        cases = (
+            ({"VISUAL": "vis --wait", "EDITOR": "ed"}, ["vis", "--wait"]),
+            ({"EDITOR": "ed"}, ["ed"]),
+            ({}, ["vi"]),
+        )
+        for env, expected in cases:
+            with self.subTest(env=env):
+                base = {k: v for k, v in os.environ.items() if k not in ("VISUAL", "EDITOR")}
+                with unittest.mock.patch.dict(os.environ, {**base, **env}, clear=True):
+                    argv = self.run_editor("v")[2]
+                self.assertEqual(expected, argv[:-1])
 
 
 class RmTests(TodoIntegrationCase):

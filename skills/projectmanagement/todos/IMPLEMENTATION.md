@@ -173,7 +173,8 @@ or legacy `TODO.json` directly. Filtering after a sanctioned read is fine:
 | `get <selector> --summary\|--body\|--ac\|--state\|--actual-summary\|--long-summary\|--parent\|--tag` | Exactly one flag; friendly wrapper over `get-json-path` |
 | `get-json-path <selector> <path>` | Low-level path read |
 | `set-json-path <selector> <path> [--file <path>]` | Low-level path write (stdin or `--file`). Store-only |
-| `set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--long-summary=] [--parent=<id>] [--tag=] [--untag=]` | Patch fields and/or state. Store-only. Requires at least one field. `--parent` is make-it-so Parent list + INFO backlinks. `EDIT` as a value captures free text from `$VISUAL`/`$EDITOR`/`vi` (exits 1 non-interactively) |
+| `set <selector> [--summary=] [--body=] [--ac=] [--state=<s>] [--actual-summary=] [--long-summary=] [--parent=<id>] [--tag=] [--untag=]` | Patch fields and/or state. Store-only. Requires at least one field. `--parent` is make-it-so Parent list + INFO backlinks. Every value is stored as given |
+| `edit <selector> <target> [--no-commit]` | Opens `$VISUAL` (else `$EDITOR`, else `vi`) on a temp file holding an HTML comment header (todo id, target, and that leading comments are stripped), a blank line, then the target's current text. Stores the result with leading HTML comments and blank lines removed (a later `<!-- -->` is kept as markdown), whitespace-trimmed. A file saved untouched writes nothing; a value that itself begins with `<!--` loses that comment on a real edit. `<target>` is a dot path in the `get-json-path` grammar naming a string, or an object whose `raw` is a string (`Summary`, `Body`, `LongSummary`, `Notes.0`: edited at `raw`); or `objid:<hex>` (leading zeros optional) naming a note (its `raw`; `objid` and `relto` kept) or a work item, done or not (its `summary`; `objid` and status kept). Unchanged text writes nothing. An empty result stores the empty string (like `set --body=`), except on a note, where it deletes the note through `note-delete`'s own path (same relto handling, last note drops `Notes`, same commit message and printed JSON). Exits 1 with nothing written when stdin/stdout is not a terminal, the target is not free text, a leading `<!--` is never closed, or the editor fails. Store-only |
 | `tag-add` / `tag-rm` / `tag-clear` | Manual tag ops (`set --tag`/`--untag` aliases for add/rm) |
 | `resolveurl <path-or-url>` | Dereference permalink; no selector (todo is first path segment) |
 
@@ -268,7 +269,7 @@ default. `host` spellings: [Notes and relto](#notes-and-relto).
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
-| `web [selector] [--host] [--port] [--dump-html]` | Serve viewer + permalinks (default bind `localhost:8765`) |
+| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Serve viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-web) |
 
 ### STUB (not automation)
 
@@ -696,6 +697,91 @@ the same page.
 
 Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
 (`replaceState`), so whatever is on screen is already a copyable permalink.
+
+### Web access and edits (`web`)
+
+Two settings decide who may do what. Each is `none`, `read` or `write`:
+
+| Setting | Governs | Default |
+|---------|---------|---------|
+| `--loopback` | clients whose source address is loopback: `127.0.0.0/8`, `::1`, `::ffff:127.x.x.x` | `read` |
+| `--public` | every other client | `none` |
+
+| Level | GET | `POST /update` | Edit controls |
+|-------|-----|----------------|---------------|
+| `none` | 403 | 403 | none |
+| `read` | served | 403 | none |
+| `write` | served | accepted | rendered |
+
+The class is the TCP peer address of each request, never the `Host` header.
+Both settings `none` leaves nothing to serve, so the command exits nonzero
+before binding a socket. The default bind host is `localhost` when public is
+`none` and `::` otherwise; an explicit `--host` (or config `host`) wins, and a
+non-loopback host under `public=none` still refuses non-loopback clients. Start
+prints one line, `todo web: <url>  loopback=<level>  public=<level>`.
+
+Every option (`loopback`, `public`, `host`, `port`) defaults from the `web`
+object of the todo dir's `config.json`; the command line beats config, config
+beats the built-in default:
+
+```json
+{"web": {"loopback": "write", "public": "read", "host": "::", "port": 8765}}
+```
+
+An unknown key, a level outside the three, a non-string `host` or a `port`
+outside 0-65535 refuses to start with a message naming it. The positional
+selector and `--dump-html` are per invocation and have no config key.
+
+At `write` the todo page is an editor for the fields the CLI can **update**,
+and nothing more: the web reads and updates, it never creates or deletes.
+
+| Control | Where | CLI command it runs |
+|---------|-------|---------------------|
+| Edit | Summary, Body, Long summary, AC, ActualSummary (shown even when empty) | `set --summary` / `--body` / `--long-summary` / `--ac` / `--actual-summary` |
+| Edit | each note tile | `note-replace <objid>` |
+| Edit | each not-done work item | `work-item-replace <objid>` |
+| Up / Down | each not-done work item; the first open item has no Up, the last item no Down | `work-item-reorder <objid> <index>` |
+
+Nothing else has a control: not State or the closing dispositions (`done`,
+`checkpoint`, `blocked`, `obsolete`), not Tag, relto or Parent, not Id, Branch,
+Scope or the timestamps, and no add or remove of any note, work item, tag,
+relation or todo. The done prefix has no controls at all.
+
+Edit opens an editor in the fold with Save and Cancel. Nothing is saved on
+input; Save is the only write, and a successful save reloads the page. A move
+saves on its click.
+
+Every edit is `POST /update` with a JSON body:
+
+```json
+{"id": "<64-hex todo Id>", "op": "set-body", "target": "", "value": "<new text>"}
+```
+
+| `op` | `target` | `value` |
+|------|----------|---------|
+| `set-summary`, `set-body`, `set-long-summary`, `set-ac`, `set-actual-summary` | `""` | the field's new text |
+| `note-replace` | `objid:<hex>` | the note's new raw text |
+| `work-item-replace` | `objid:<hex>` | the item's new summary |
+| `work-item-reorder` | `objid:<hex>` | the destination index |
+
+The server runs the matching CLI command in-process, so its validation and
+refusals are the CLI's own. Saves are last-write-wins: a save applies whatever
+the page sent, even when the todo changed since the page loaded.
+
+| Status | Means | Body |
+|--------|-------|------|
+| 200 | saved | `{}` |
+| 400 | the command refused, or the request is malformed | `{"error": <the command's own error text>}` |
+| 403 | refused before any command ran | `{"error"}` |
+| 503 | the store lock is held elsewhere (the CLI's ERETRY); retry | `{"error"}` |
+
+A 403 is any of: the client's class is not `write`; for a loopback client, the
+`Host` header is not `localhost`, `127.0.0.1` or `[::1]` on the server's port
+(DNS rebinding; a public client's `Host` only has to be present); `Origin` is
+missing or is not `http://<that Host>` (a cross-site page); the `Content-Type`
+is not `application/json`, or the body is not JSON. The JSON content type is
+what forces any cross-origin request through a CORS preflight, which the server
+never answers. GET requests carry no such checks beyond the class level.
 
 ### Minimal current skeleton
 

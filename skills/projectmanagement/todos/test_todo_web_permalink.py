@@ -152,7 +152,7 @@ class PermalinkRouteTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if printed.getvalue().strip():
-                cls.base = printed.getvalue().strip().rstrip("/")
+                cls.base = printed.getvalue().split("todo web: ", 1)[1].split()[0].rstrip("/")
                 return
             time.sleep(0.01)
         raise AssertionError("viewer did not print its URL")

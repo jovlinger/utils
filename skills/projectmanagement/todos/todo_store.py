@@ -122,8 +122,8 @@ class TodoStore(ABC):
     def __init__(self, *, grace: float = DEFAULT_LOCK_GRACE, ttl: float = DEFAULT_LOCK_TTL) -> None:
         self._grace = grace
         self._ttl = ttl
-        # Files this process created, replaced, or removed. File backends record
-        # them so a later autocommit can stage exactly those paths; sqlite never
+        # Files the running command created, replaced, or removed. File backends
+        # record them so its autocommit can stage exactly those paths; sqlite never
         # calls note_written, and the setting is ignored for that backend.
         self._written: List[Path] = []
 
@@ -134,8 +134,12 @@ class TodoStore(ABC):
             self._written.append(resolved)
 
     def written_paths(self) -> List[Path]:
-        """Store files mutated since this process started, in write order."""
+        """Store files mutated since the running command started, in write order."""
         return list(self._written)
+
+    def discard_written(self) -> None:
+        """Forget the files noted so far; a command's autocommit covers only its own writes."""
+        self._written.clear()
 
     @abstractmethod
     def get(self, repo: str, branch: str) -> Optional[JsonDict]:
@@ -666,6 +670,12 @@ def get_store() -> TodoStore:
     ttl = _float_config(config, "lock_ttl", DEFAULT_LOCK_TTL)
     _STORE = _store_from_dsn(dsn, base, grace=grace, ttl=ttl)
     return _STORE
+
+
+def discard_written_paths() -> None:
+    """Clear the written-path record of the cached store, if one exists, without creating it."""
+    if _STORE is not None:
+        _STORE.discard_written()
 
 
 def reset_store() -> None:

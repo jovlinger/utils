@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import logging
 import logging.handlers
@@ -15,13 +17,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import git_command
 import todo_db
@@ -160,13 +174,7 @@ class TodoError(Exception):
 
 
 class EditNotInteractive(TodoError):
-    """A free-text arg was `EDIT` but no terminal is available to edit it."""
-
-
-# Sentinel arg value: when a free-text option is passed exactly this, its real
-# value is captured from $VISUAL/$EDITOR/vi (interactive) or is an error
-# (non-interactive). See TodoSubCommand.edit_fields / resolve_edit_fields.
-EDIT_SENTINEL = "EDIT"
+    """An editor was needed but stdin/stdout are not a terminal to run it on."""
 
 
 def _stdio_is_interactive() -> bool:
@@ -177,30 +185,58 @@ def _stdio_is_interactive() -> bool:
         return False
 
 
-def edit_value_via_editor(todo_id: str, field: str) -> str:
-    """Capture a value for *field* by launching an editor on a temp file.
+def strip_leading_html_comments(text: str) -> str:
+    """Drop the HTML comments and blank lines that lead *text*.
 
-    Opens ``$VISUAL`` (else ``$EDITOR`` else ``vi``) on a temp file whose only
-    seeded content is a commented instruction line. Lines beginning with ``#``
-    are stripped on read-back (git-style), so the instruction never leaks into
-    the value; the remainder is returned with surrounding whitespace trimmed.
-    Precondition: a tty is available (see ``_stdio_is_interactive``).
+    Everything from the first other character on is returned verbatim, so a
+    ``<!-- -->`` later in the text survives as markdown. A leading comment that
+    is never closed raises TodoError, so it cannot silently empty the value.
+    """
+    rest = text
+    while True:
+        rest = rest.lstrip()
+        if not rest.startswith("<!--"):
+            return rest
+        end = rest.find("-->", len("<!--"))
+        if end < 0:
+            raise TodoError("a leading <!-- comment is never closed; nothing written")
+        rest = rest[end + len("-->") :]
+
+
+def _run_editor(argv: Sequence[str]) -> int:
+    """Run the editor command *argv* on the inherited terminal; return its exit status."""
+    return subprocess.run(list(argv), check=False).returncode
+
+
+def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[str]:
+    """Return what the user left after an editor ran on *initial*, or None if untouched.
+
+    Opens ``$VISUAL`` (else ``$EDITOR`` else ``vi``) on a temp file holding
+    *header* (an HTML comment), a blank line, then *initial* with a final
+    newline. On read-back a file identical to the one written returns None;
+    otherwise the leading HTML comments and blank lines are stripped (see
+    ``strip_leading_html_comments``) and the rest returned. An editor that
+    cannot start or exits nonzero raises TodoError. Precondition: a tty is
+    available (see ``_stdio_is_interactive``).
     """
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-    header = (
-        f"# edit value for todo:{todo_id} {field}\n"
-        "# lines starting with '#' are ignored\n"
-    )
+    body = initial if not initial or initial.endswith("\n") else initial + "\n"
+    written = header.rstrip("\n") + "\n\n" + body
     handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".todoedit", prefix=f"{field}-", delete=False, encoding="utf-8"
+        mode="w", suffix=".todoedit", prefix=f"{prefix}-", delete=False, encoding="utf-8"
     )
     try:
-        handle.write(header)
+        handle.write(written)
         handle.close()
-        subprocess.run([*shlex.split(editor), handle.name], check=True)
+        try:
+            status = _run_editor([*shlex.split(editor), handle.name])
+        except OSError as exc:
+            raise TodoError(f"could not run editor {editor!r}: {exc}") from exc
+        if status != 0:
+            raise TodoError(f"editor {editor!r} exited with status {status}; nothing written")
         with open(handle.name, encoding="utf-8") as fh:
-            body = "\n".join(ln for ln in fh.read().splitlines() if not ln.startswith("#"))
-        return body.strip()
+            edited = fh.read()
+        return None if edited == written else strip_leading_html_comments(edited)
     finally:
         try:
             os.unlink(handle.name)
@@ -3819,8 +3855,6 @@ class TodoSubCommand(ABC):
     command_names: ClassVar[Sequence[str]] = ()
     doc_short: ClassVar[str] = ""
     doc_long: ClassVar[str] = ""
-    # Free-text arg dests eligible for the `EDIT` sentinel (see EDIT_SENTINEL).
-    edit_fields: ClassVar[Sequence[str]] = ()
 
     def __init__(self, args: argparse.Namespace, *, todo_dir: Path) -> None:
         """Copy parsed argparse fields onto the command object.
@@ -3839,27 +3873,6 @@ class TodoSubCommand(ABC):
     def __getattr__(self, name: str) -> Any:
         """Expose argparse fields as dynamic command attributes."""
         return getattr(self.args, name)
-
-    def resolve_edit_fields(self, todo_id: str) -> None:
-        """Expand any `EDIT`-valued free-text arg (see ``edit_fields``) in place.
-
-        For each eligible arg whose value is exactly ``EDIT``: in an interactive
-        terminal, capture the value via ``$VISUAL``/``$EDITOR``/vi; otherwise
-        raise ``EditNotInteractive`` (which exits 1). Multiple such args are
-        resolved in ``edit_fields`` order. Callers that create a todo MUST call
-        this before creating anything, so a non-interactive `EDIT` leaves no
-        todo behind.
-        """
-        for field in self.edit_fields:
-            if getattr(self, field, None) != EDIT_SENTINEL:
-                continue
-            if not _stdio_is_interactive():
-                raise EditNotInteractive(
-                    f"--{field.replace('_', '-')}=EDIT requires an interactive terminal"
-                )
-            value = edit_value_via_editor(todo_id, field)
-            setattr(self.args, field, value)
-            self.__dict__[field] = value
 
     @classmethod
     def register(cls, subparsers: argparse._SubParsersAction) -> None:
@@ -4262,7 +4275,6 @@ class GetCommand(TodoFieldCommand):
 
 class InitCommand(TodoCreateCommand):
     command_names = ("init",)
-    edit_fields = ("summary", "body", "ac", "note", "actual_summary")
     doc_short: ClassVar[str] = "Create todo branch (run when ready to work)"
     doc_long: ClassVar[str] = (
         "Init makes a todo branch-bound and ready to work -- run it when the design is ready and "
@@ -4351,10 +4363,6 @@ class InitCommand(TodoCreateCommand):
         branch: str = self.branch or kebab_branch_name(ticket_id, self.summary)
         if branch_exists(root, branch):
             raise TodoError(f"branch {branch!r} already exists")
-
-        # Resolve any EDIT sentinels BEFORE creating the branch/ticket, so a
-        # non-interactive EDIT aborts with nothing created (no todo to RM).
-        self.resolve_edit_fields(ticket_id)
 
         agent_type = self.agent_type or os.environ.get("TODO_AGENT_TYPE")
         session_id = self.session_id or os.environ.get("TODO_SESSION_ID")
@@ -4595,10 +4603,9 @@ class SetCommand(TodoFieldCommand):
         "path from a file or stdin, use set-json-path. The command requires at least one field "
         "change. The write is store-only (sqlite or json-dir backend): no branch checkout and "
         "no commit. For a `groom` todo, changing --summary also refreshes the Branch label so "
-        "`init` later creates a well-named branch. Any free-text value passed as EDIT is "
-        "captured from $VISUAL/$EDITOR/vi (interactive terminals only)."
+        "`init` later creates a well-named branch. To edit one free-text field in "
+        "$VISUAL/$EDITOR, use `edit`."
     )
-    edit_fields = ("summary", "body", "ac", "note", "actual_summary")
 
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
@@ -4647,7 +4654,6 @@ class SetCommand(TodoFieldCommand):
         """
         root = self.root()
         _loc, todo = resolve_ticket_by_id(root, self.id)
-        self.resolve_edit_fields(str(todo.get("Id", "") or "current"))
         parent_touched = self.parent is not None
         tags_touched = bool(self.tag or self.untag)
         state = apply_set_fields(
@@ -4690,6 +4696,108 @@ class SetCommand(TodoFieldCommand):
         teardown_worktree_for_terminal_state(root, todo, state=state)
         if state:
             print(json.dumps(todo["State"], indent=2))
+        return 0
+
+
+_WORKITEM_PATH_RE = re.compile(r"\AWorkItems\.(\d+)\Z")
+_NOTE_RAW_PATH_RE = re.compile(r"\ANotes\.(\d+)\.raw\Z")
+
+
+def resolve_edit_target(todo: JsonDict, target: str) -> str:
+    """Return the dot path of the free-text string *target* names in *todo*.
+
+    ``objid:<hex>`` (leading zeros optional) must name a note, edited at its
+    ``raw``, or a work item, done or not, edited at its ``summary``. Anything else is a dot path in
+    the get-json-path grammar: a string is edited as is, and an object whose
+    ``raw`` is a string (Summary, Body, LongSummary, a note) is edited at its
+    ``raw``. Every other target raises TodoError.
+    """
+    if target.startswith(WORKITEM_OBJID_SCHEME):
+        prefix = target[len(WORKITEM_OBJID_SCHEME) :]
+        if not prefix or not todo_objid.is_objid_prefix(prefix):
+            raise TodoError(f"objid {prefix!r} is not lowercase hex")
+        try:
+            path = todo_ref.resolve_local(
+                todo, WORKITEM_OBJID_SCHEME + todo_objid.normalize_objid_prefix(prefix)
+            )
+        except todo_ref.TodoRefError as exc:
+            raise TodoError(str(exc)) from exc
+        if _NOTE_PATH_RE.match(path):
+            return f"{path}.raw"
+        if _WORKITEM_PATH_RE.match(path):
+            return f"{path}.summary"
+        raise TodoError(
+            f"{target} names {path}, not a note or work item; address it by dot path instead"
+        )
+    value = get_at_path(todo, target)
+    if isinstance(value, str):
+        return target
+    if isinstance(value, dict) and isinstance(value.get("raw"), str):
+        return f"{target}.raw"
+    raise TodoError(f"{target} is not free text (it holds a {type(value).__name__})")
+
+
+class EditCommand(TodoFieldCommand):
+    command_names = ("edit",)
+    doc_short: ClassVar[str] = "Edit a free-text field in $VISUAL/$EDITOR"
+    doc_long: ClassVar[str] = (
+        "Edit opens $VISUAL (else $EDITOR, else vi) on a temp file holding an HTML comment "
+        "header naming the todo and target, then the current text of one free-text field of "
+        "the selected todo. It stores what the editor leaves, minus leading HTML comments and "
+        "blank lines and with surrounding whitespace trimmed; a comment after the first other "
+        "line is kept. A file saved untouched writes nothing, so a value that itself begins "
+        "with <!-- survives a no-op edit but loses that leading comment on a real one. An "
+        "empty result stores the empty string, except on a note, where it deletes the note "
+        "exactly as note-delete does. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
+        "AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a string, or an object whose "
+        "raw is a string, which is then edited at its raw -- or objid:<hex> (leading zeros "
+        "optional) naming a note, edited at its raw (its objid and relto survive), or a work "
+        "item, done or not, edited at its summary (its objid and status survive). Refused "
+        "with exit 1 and nothing written: stdin/stdout not a terminal, a target that is not "
+        "free text, a leading <!-- that is never closed, and an editor that fails or exits "
+        "nonzero. The write is store-only."
+    )
+
+    @classmethod
+    def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Register edit arguments."""
+        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "target",
+            help="dot path (e.g. Body, Summary, AC, Notes.0) or objid:<hex> of a note or "
+            "work item",
+        )
+        parser.add_argument("--no-commit", action="store_true")
+
+    def do(self) -> int:
+        """Edit the target's current text in an editor; store it when it changed."""
+        root = self.root()
+        _, todo = resolve_ticket_by_id(root, self.selector)
+        path = resolve_edit_target(todo, self.target)
+        if not _stdio_is_interactive():
+            raise EditNotInteractive("edit requires an interactive terminal; nothing written")
+        current: str = get_at_path(todo, path)
+        short_id = str(todo.get("Id", ""))[:8]
+        what = path if self.target == path else f"{self.target} ({path})"
+        header = (
+            f"<!-- editing todo:{short_id} {what}\n"
+            "     Leading HTML comments and blank lines are stripped on save. -->\n"
+        )
+        result = edit_text_via_editor(
+            current, prefix=f"{short_id}-{path.replace('.', '-')}", header=header
+        )
+        edited = current.strip() if result is None else result.strip()
+        if edited == current.strip():
+            print(f"todo: {self.target} unchanged; nothing written", file=sys.stderr)
+            return 0
+        note = _NOTE_RAW_PATH_RE.match(path)
+        if not edited and note:
+            delete_note(root, todo, int(note.group(1)), no_commit=self.no_commit)
+            return 0
+        set_at_path(todo, path, edited)
+        write_todo_worktree(root, todo)
+        if not self.no_commit:
+            commit_todo(root, f"chore(todo): edit {path}")
         return 0
 
 
@@ -5346,20 +5454,26 @@ class NoteDeleteCommand(NoteCommand):
         """Delete the addressed note."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
-        index = resolve_note_index(todo, self.target)
-        notes: List[JsonDict] = list(todo.get("Notes") or [])
-        removed = notes.pop(index)
-        if notes:
-            todo["Notes"] = notes
-        else:
-            todo.pop("Notes", None)
-        write_todo_worktree(root, todo)
-        if not self.no_commit:
-            commit_todo(
-                root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}"
-            )
-        print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
+        delete_note(root, todo, resolve_note_index(todo, self.target), no_commit=self.no_commit)
         return 0
+
+
+def delete_note(root: Path, todo: JsonDict, index: int, *, no_commit: bool) -> None:
+    """Delete Notes[*index*], write the todo, commit unless *no_commit*, print what went.
+
+    Deleting the last note drops the Notes field. A relto elsewhere that
+    targets the deleted objid is left as-is (doctor reports it).
+    """
+    notes: List[JsonDict] = list(todo.get("Notes") or [])
+    removed = notes.pop(index)
+    if notes:
+        todo["Notes"] = notes
+    else:
+        todo.pop("Notes", None)
+    write_todo_worktree(root, todo)
+    if not no_commit:
+        commit_todo(root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}")
+    print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
 
 
 def _relto_read_all(todo: JsonDict) -> List[JsonDict]:
@@ -6809,6 +6923,196 @@ class LogCommand(CorpusQueryCommand):
         return 0
 
 
+# Built-in defaults of `web`; config.json "web" and the command line override them.
+WEB_DEFAULT_PORT = 8765
+WEB_DEFAULT_LOOPBACK = "read"
+WEB_DEFAULT_PUBLIC = "none"
+WEB_CONFIG_KEY = "web"
+
+
+def web_config(todo_dir: Path) -> Dict[str, Any]:
+    """The validated ``web`` object of *todo_dir*'s config.json; ``{}`` when absent.
+
+    Keys are ``loopback`` and ``public`` (each one of ``todo_web.LEVELS``),
+    ``host`` (a non-empty string) and ``port`` (an integer 0-65535). Anything
+    else raises TodoError naming the key, so a typo fails at startup instead of
+    silently leaving a default in force.
+    """
+    raw = todo_store.config_value_raw(todo_dir, WEB_CONFIG_KEY)
+    if raw is None:
+        return {}
+    where = f'config.json "{WEB_CONFIG_KEY}"'
+    if not isinstance(raw, dict):
+        raise TodoError(f"{where} must be an object, not {type(raw).__name__}")
+    known = ("loopback", "public", "host", "port")
+    unknown = sorted(key for key in raw if key not in known)
+    if unknown:
+        raise TodoError(
+            f"{where} has unknown key(s) {', '.join(unknown)}; known: {', '.join(known)}"
+        )
+    for key in ("loopback", "public"):
+        if key in raw and raw[key] not in todo_web.LEVELS:
+            raise TodoError(
+                f"{where} {key} must be one of {', '.join(todo_web.LEVELS)}, not {raw[key]!r}"
+            )
+    if "host" in raw and not (isinstance(raw["host"], str) and raw["host"].strip()):
+        raise TodoError(f"{where} host must be a non-empty string, not {raw['host']!r}")
+    if "port" in raw:
+        port = raw["port"]
+        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+            raise TodoError(f"{where} port must be an integer 0-65535, not {port!r}")
+    return dict(raw)
+
+
+@dataclass(frozen=True)
+class WebOp:
+    """One web edit: the CLI argv that applies it."""
+
+    argv: Callable[[str, str, str], List[str]]  # (todo_id, target, value)
+
+
+def _web_set_op(flag: str) -> WebOp:
+    """A `set --<flag>=<value>` edit of a text field."""
+    return WebOp(argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid])
+
+
+# The CLI's update surface and nothing else: no op creates, deletes or closes
+# anything. Every positional follows "--", flags before it, so no request field
+# can be parsed as a flag (the "--" must precede ALL positionals: argparse
+# fills an optional positional with nothing before a later "--").
+WEB_OPS: Dict[str, WebOp] = {
+    "set-summary": _web_set_op("summary"),
+    "set-body": _web_set_op("body"),
+    "set-ac": _web_set_op("ac"),
+    "set-long-summary": _web_set_op("long-summary"),
+    "set-actual-summary": _web_set_op("actual-summary"),
+    "note-replace": WebOp(
+        argv=lambda tid, target, value: ["note-replace", f"--raw={value}", "--", tid, target],
+    ),
+    "work-item-replace": WebOp(
+        argv=lambda tid, target, value: [
+            "work-item-replace", f"--summary={value}", "--", tid, target
+        ],
+    ),
+    # value is the destination index, as work-item-reorder's DST.
+    "work-item-reorder": WebOp(
+        argv=lambda tid, target, value: ["work-item-reorder", "--", tid, target, value],
+    ),
+}
+
+
+def _cli_error_text(stderr: str) -> str:
+    """The CLI's own error text from captured stderr, minus the ``todo.py:`` prefix."""
+    prefix = "todo.py: "
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return "\n".join(line[len(prefix) :] if line.startswith(prefix) else line for line in lines)
+
+
+class _ThreadStream:
+    """A sys.stdout/sys.stderr stand-in that diverts one thread's writes to a buffer.
+
+    A thread that set a buffer (``capture``) writes there; every other thread
+    writes to the stream that was in place when this was installed.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self._local = threading.local()
+
+    def _target(self) -> Any:
+        return getattr(self._local, "buffer", None) or self._real
+
+    def write(self, text: str) -> int:
+        return int(self._target().write(text))
+
+    def flush(self) -> None:
+        self._target().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    @contextlib.contextmanager
+    def capture(self, buffer: io.StringIO) -> Iterator[None]:
+        """Divert the calling thread's writes to *buffer* for the block."""
+        previous = getattr(self._local, "buffer", None)
+        self._local.buffer = buffer
+        try:
+            yield
+        finally:
+            self._local.buffer = previous
+
+
+_STREAM_INSTALL_LOCK = threading.Lock()
+
+
+def _thread_stream(name: str) -> _ThreadStream:
+    """The ``sys.<name>`` proxy, installed over the current stream on first use."""
+    with _STREAM_INSTALL_LOCK:
+        current = getattr(sys, name)
+        if not isinstance(current, _ThreadStream):
+            current = _ThreadStream(current)
+            setattr(sys, name, current)
+        return current
+
+
+class WebUpdater:
+    """The write side `web` injects into todo_web.serve (todo_web.Updater) for a write class.
+
+    Each update runs the CLI's own command through ``main`` in this process, so
+    its validation and refusals are the CLI's, verbatim. A save is last-write-wins:
+    it applies whatever the page sent, whether or not the todo changed since the
+    page loaded. Updates are serialized in-process; ``main``'s stdout/stderr are
+    captured for the updating thread only, so other request threads keep writing
+    to the real streams.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._serial = threading.Lock()
+
+    def update(self, request: JsonDict) -> JsonDict:
+        """Apply one ``{id, op, target, value}`` request; return ``{}``.
+
+        Raises ``todo_web.UpdateRefused`` with the CLI's error text when the
+        request or the command is refused.
+        """
+        op_name = request.get("op")
+        op = WEB_OPS.get(op_name) if isinstance(op_name, str) else None
+        if op is None:
+            raise todo_web.UpdateRefused(
+                f"unknown web op {op_name!r}; known: {', '.join(sorted(WEB_OPS))}"
+            )
+        fields = {name: request.get(name) for name in ("id", "target", "value")}
+        for name, value in fields.items():
+            if not isinstance(value, str):
+                raise todo_web.UpdateRefused(f"{op_name}: {name} must be a string")
+        if not use_store():
+            raise todo_web.UpdateRefused("web edits need the todo store, not legacy TODO.json mode")
+        with self._serial:
+            todo_id = str(self._read(fields["id"])["Id"])
+            self._run(op.argv(todo_id, fields["target"], fields["value"]))
+            return {}
+
+    def _read(self, selector: str) -> JsonDict:
+        try:
+            return resolve_ticket_by_id(self.root, selector)[1]
+        except TodoError as exc:
+            raise todo_web.UpdateRefused(str(exc)) from exc
+
+    def _run(self, argv: List[str]) -> None:
+        """Run ``todo.py <argv>`` in-process; raise UpdateRefused with its stderr on failure."""
+        out, err = io.StringIO(), io.StringIO()
+        with _thread_stream("stdout").capture(out), _thread_stream("stderr").capture(err):
+            try:
+                code = main(argv)
+            except SystemExit as exc:  # argparse usage errors
+                code = exc.code if isinstance(exc.code, int) else 2
+        if code == 0:
+            return
+        text = _cli_error_text(err.getvalue()) or f"todo.py {argv[0]} exited {code}"
+        raise todo_web.UpdateRefused(text, status=503 if code == 75 else 400)
+
+
 class WebCommand(EnvironmentCommand):
     command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo viewer"
@@ -6823,7 +7127,19 @@ class WebCommand(EnvironmentCommand):
         "lexical search (the same ranking as 'todo search') over every todo, showing update-time "
         "and State columns, with an empty query listing all. It also serves permalinks: "
         "/<todoid>/<path...> renders the whole todo focused on the object that path resolves to "
-        "(see 'resolveurl' for the grammar)."
+        "(see 'resolveurl' for the grammar). Access is set per client class, each none, read or "
+        "write: --loopback for clients whose source address is loopback (default read) and "
+        "--public for every other client (default none). none answers 403 to every request, "
+        "read serves GET only, write also lets the todo page edit the CLI's update surface: "
+        "Edit on Summary, Body, LongSummary, AC, ActualSummary, each note and each not-done "
+        "work item, and Up/Down on not-done work items, each saved through the matching set / "
+        "note-replace / work-item-replace / work-item-reorder command. Nothing is created or "
+        "deleted. Saves are last-write-wins: a save lands even when the todo changed since the "
+        "page loaded. Both none refuses to start. The default bind is localhost when public is "
+        "none and '::' (every interface) otherwise; --host overrides. Every web option "
+        "defaults from the \"web\" object of the todo dir's config.json (CLI beats config "
+        "beats built-in). Writes are refused unless the request's Origin, content type and "
+        "(from loopback clients) Host are this viewer's own (see IMPLEMENTATION.md, 'Web edits')."
     )
 
     @classmethod
@@ -6835,16 +7151,78 @@ class WebCommand(EnvironmentCommand):
             default=None,
             help="todo selector: 4+ hex Id prefix or full digest (default: search page)",
         )
-        parser.add_argument("--host", default="::", help="bind host (:: serves IPv4 and IPv6)")
-        parser.add_argument("--port", type=int, default=8765, help="bind port")
+        parser.add_argument(
+            "--host",
+            default=None,
+            help=f"bind host (default {todo_web.LOOPBACK_HOST!r} when --public is none, else "
+            f"{todo_web.ALL_HOST!r}, which serves IPv4 and IPv6)",
+        )
+        parser.add_argument(
+            "--port", type=int, default=None, help=f"bind port (default {WEB_DEFAULT_PORT})"
+        )
+        parser.add_argument(
+            "--loopback",
+            choices=todo_web.LEVELS,
+            default=None,
+            help="access for loopback clients (default read; config.json web.loopback)",
+        )
+        parser.add_argument(
+            "--public",
+            choices=todo_web.LEVELS,
+            default=None,
+            help="access for every other client (default none; config.json web.public)",
+        )
         parser.add_argument(
             "--dump-html",
             action="store_true",
             help="print the rendered HTML and exit instead of starting a server",
         )
 
+    def settings(self) -> Dict[str, Any]:
+        """The effective ``loopback``, ``public``, ``host`` and ``port``.
+
+        Precedence per key: the command line, then the ``web`` object of the todo
+        dir's config.json, then the built-in default. ``host`` is None when none
+        of them names one; ``bind_host`` then derives it from ``public``. A
+        malformed ``web`` object raises TodoError.
+        """
+        cli = {
+            "loopback": self.loopback,
+            "public": self.public,
+            "host": self.host,
+            "port": self.port,
+        }
+        configured = web_config(self.todo_dir)
+        built_in: Dict[str, Any] = {
+            "loopback": WEB_DEFAULT_LOOPBACK,
+            "public": WEB_DEFAULT_PUBLIC,
+            "host": None,
+            "port": WEB_DEFAULT_PORT,
+        }
+        merged: Dict[str, Any] = {}
+        for key, default in built_in.items():
+            if cli[key] is not None:
+                merged[key] = cli[key]
+            else:
+                merged[key] = configured.get(key, default)
+        return merged
+
+    @staticmethod
+    def bind_host(settings: Mapping[str, Any]) -> str:
+        """The host to bind: the explicit one, else loopback unless public clients are served."""
+        if settings["host"] is not None:
+            return str(settings["host"])
+        return todo_web.default_bind_host(settings["public"])
+
     def do(self) -> int:
         """Serve or print the todo web viewer."""
+        settings = self.settings()
+        levels = (settings["loopback"], settings["public"])
+        if not self.dump_html and settings["loopback"] == "none" and settings["public"] == "none":
+            raise TodoError(
+                "web: loopback and public are both none, so no client could connect; "
+                "set at least one to read or write"
+            )
         root = self.root()
         # Header label: the storage anchor (same value `todo basedir` prints),
         # not the current worktree gitroot. The store is shared across all
@@ -6902,17 +7280,24 @@ class WebCommand(EnvironmentCommand):
             if self.dump_html:
                 if initial_id is not None:
                     todo_root, ticket = resolve_todo(initial_id)
-                    print(todo_web.render_todo_page(todo_root, ticket))
+                    print(
+                        todo_web.render_todo_page(
+                            todo_root, ticket, write=settings["loopback"] == "write"
+                        )
+                    )
                 else:
                     print(todo_web.render_search_page(basedir, search_rows("")))
             else:
                 todo_web.serve(
                     basedir,
-                    host=self.host,
-                    port=self.port,
+                    host=self.bind_host(settings),
+                    port=settings["port"],
                     initial_id=initial_id,
                     resolver=resolve_todo,
                     searcher=search_rows,
+                    loopback=settings["loopback"],
+                    public=settings["public"],
+                    updater=WebUpdater(root) if "write" in levels else None,
                 )
         except todo_web.TodoWebError as exc:
             raise TodoError(str(exc)) from exc
@@ -8002,6 +8387,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     command_name: str = getattr(args, "command", "") or ""
     start: float = time.monotonic()
     exit_code: int = 1
+    # A long-lived process (web) runs many commands against one cached store.
+    todo_store.discard_written_paths()
     try:
         # Every subcommand reads the store. Resolve once here so library code
         # (todo_db.todo_dir cache) and the command (self.todo_dir) share one path.

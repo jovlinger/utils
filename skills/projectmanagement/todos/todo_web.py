@@ -23,6 +23,7 @@ a complete self-contained artifact.
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import os
 import re
@@ -33,7 +34,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 from urllib.parse import parse_qs, urlparse
 
 import todo_ref
@@ -514,7 +515,15 @@ def _box_attrs(obj: JsonDict, *, interactive: bool) -> str:
     return f' id="obj-{safe}" data-obj="{safe}"'
 
 
-def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
+def _tile_controls(*buttons: str) -> str:
+    """A tile's row of edit controls, or "" when it has none."""
+    inner = "".join(b for b in buttons if b)
+    return f'<div class="edit-row">{inner}</div>' if inner else ""
+
+
+def _wi_box(
+    item: JsonDict, *, interactive: bool, github: str = "", edits: Optional[JsonDict] = None
+) -> str:
     """Render one work-item box: the box opens the commit message/diff in the
     fold. Any git sha is shown as ``sha:<short>`` (a github hyperlink on
     interactive boxes) and any referenced subtodo as ``todo:<short>`` (a
@@ -562,11 +571,16 @@ def _wi_box(item: JsonDict, *, interactive: bool, github: str = "") -> str:
         + _clamped(item["summary"], "wi-sum", interactive=interactive)
         + f"{todo_html}{sep}{sha_html}"
         + _relto_chips_html(item["relto"], interactive=interactive)
+        + _tile_controls(
+            _edit_button(_item_edit_key(item), edits),
+            _move_button(item, "up", edits),
+            _move_button(item, "down", edits),
+        )
         + "</div>"
     )
 
 
-def _note_box(note: JsonDict, *, interactive: bool) -> str:
+def _note_box(note: JsonDict, *, interactive: bool, edits: Optional[JsonDict] = None) -> str:
     """Render one note box: the sibling of ``_wi_box``, built from the same
     primitives, but deliberately NOT a branch inside it. A note is a fact, not
     a task, so its box has no checkbox mark, no ``sha`` chip and no ``todo:``
@@ -584,6 +598,7 @@ def _note_box(note: JsonDict, *, interactive: bool) -> str:
         + _objid_badge(note["objid"], interactive=interactive)
         + _clamped(note["raw"], "wi-sum", interactive=interactive)
         + _relto_chips_html(note["relto"], interactive=interactive)
+        + _tile_controls(_edit_button(_note_edit_key(note), edits))
         + "</div>"
     )
 
@@ -750,17 +765,118 @@ def _section(
     )
 
 
+# Top-level text fields the web can edit, each through its own `set` flag. The
+# key is the todo_web op name, which is also the field's edit-control key.
+_FIELD_EDIT_OPS = {
+    "Summary": "set-summary",
+    "Body": "set-body",
+    "LongSummary": "set-long-summary",
+    "AC": "set-ac",
+    "ActualSummary": "set-actual-summary",
+}
+_FIELD_EDIT_LABELS = {
+    "Summary": "Summary",
+    "Body": "Body",
+    "LongSummary": "Long summary",
+    "AC": "AC",
+    "ActualSummary": "ActualSummary",
+}
+
+
+def _edit_registry(todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]) -> JsonDict:
+    """Every edit control the page offers, keyed by the control's ``data-edit``.
+
+    Each entry is the request the control would send: the op, its target, and
+    the stored value the editor opens on. A done work item gets
+    none: the done prefix is closed, and the CLI refuses to edit it.
+    """
+    edits: JsonDict = {}
+    for field, op in _FIELD_EDIT_OPS.items():
+        edits[op] = {
+            "op": op,
+            "target": "",
+            "value": _raw_field(todo, field),
+            "label": _FIELD_EDIT_LABELS[field],
+        }
+    for note in notes:
+        if note["objid"]:
+            edits[_note_edit_key(note)] = {
+                "op": "note-replace",
+                "target": f"objid:{note['objid']}",
+                "value": note["raw"],
+                "label": f"note objid:{note['objid']}",
+            }
+    open_items = [item for item in witems if item["objid"] and not item["done"]]
+    for item in open_items:
+        edits[_item_edit_key(item)] = {
+            "op": "work-item-replace",
+            "target": f"objid:{item['objid']}",
+            "value": item["summary"],
+            "label": f"work item objid:{item['objid']}",
+        }
+    # Moves stay inside the not-done frontier: the first open item cannot move up
+    # into the done prefix, and the last item has nowhere further down to go.
+    last_index = len(todo.get("WorkItems") or []) - 1
+    for position, item in enumerate(open_items):
+        for direction, step in (("up", -1), ("down", 1)):
+            if (direction == "up" and position == 0) or (
+                direction == "down" and item["idx"] >= last_index
+            ):
+                continue
+            edits[_move_key(item, direction)] = {
+                "op": "work-item-reorder",
+                "target": f"objid:{item['objid']}",
+                "value": str(item["idx"] + step),
+                "label": f"move work item objid:{item['objid']} {direction}",
+            }
+    return edits
+
+
+def _move_key(item: JsonDict, direction: str) -> str:
+    return f"work-item-reorder:{item['objid']}:{direction}"
+
+
+def _move_button(item: JsonDict, direction: str, edits: Optional[JsonDict]) -> str:
+    """A move-up / move-down control, or "" when this item cannot move that way."""
+    key = _move_key(item, direction)
+    if not edits or key not in edits:
+        return ""
+    return (
+        f'<button type="button" class="move-btn" data-move="{html.escape(key)}" '
+        f'title="move {direction}">{"Up" if direction == "up" else "Down"}</button>'
+    )
+
+
+def _note_edit_key(note: JsonDict) -> str:
+    return f"note-replace:{note['objid']}"
+
+
+def _item_edit_key(item: JsonDict) -> str:
+    return f"work-item-replace:{item['objid']}"
+
+
+def _edit_button(key: str, edits: Optional[JsonDict]) -> str:
+    """The Edit control for *key*, or "" when the page offers no such edit."""
+    if not edits or key not in edits:
+        return ""
+    return f'<button type="button" class="edit-toggle" data-edit="{html.escape(key)}">Edit</button>'
+
+
 def _md_field_html(
     text: str,
     *,
     interactive: bool = True,
     monospace: bool = False,
     label: str = "Field",
+    edit_key: str = "",
+    edits: Optional[JsonDict] = None,
 ) -> str:
     """Wrap prose *text* with a Preview control that renders markdown in the fold.
 
     The raw source stays in the upper pane for find/copy; preview is rendered
-    client-side into the lower pane on first toggle.
+    client-side into the lower pane on first toggle. With *edit_key* in *edits*
+    the bar also carries that field's Edit control, whose editor opens in the
+    fold the same way.
     """
     escaped = html.escape(text)
     if not interactive:
@@ -774,27 +890,42 @@ def _md_field_html(
         raw_inner = f'<div class="{raw_cls}">{escaped}</div>'
     return (
         f'<div class="md-field" data-md-label="{html.escape(label)}">'
-        '<div class="md-bar"><button type="button" class="md-toggle" '
-        'aria-pressed="false">Preview</button></div>'
+        f'<div class="md-bar">{_edit_button(edit_key, edits)}'
+        '<button type="button" class="md-toggle" aria-pressed="false">Preview</button></div>'
         f"{raw_inner}"
         "</div>"
     )
 
 
-def _meta_html(todo: JsonDict, *, interactive: bool = True, focus_objid: str = "") -> str:
+def _meta_html(
+    todo: JsonDict,
+    *,
+    interactive: bool = True,
+    focus_objid: str = "",
+    edits: Optional[JsonDict] = None,
+) -> str:
     """Render remaining non-opaque top-level fields (Branch, create/update time,
     AC, Scope, and any future field) as labeled rows -- one source of truth for
-    'show everything the todo carries'."""
+    'show everything the todo carries'. An editable field (*edits*) gets its
+    Edit control, and a row even while it is empty, since that is where it is
+    edited."""
     rows: List[str] = []
-    for key, value in todo.items():
+    fields = dict(todo)
+    for key in ("AC", "ActualSummary"):
+        if _FIELD_EDIT_OPS[key] in (edits or {}) and fields.get(key) in (None, ""):
+            fields[key] = ""
+    for key, value in fields.items():
         if key in _DEDICATED_FIELDS:
             continue
-        if value in (None, "", [], {}):
+        edit_key = _FIELD_EDIT_OPS.get(str(key), "")
+        if value in (None, "", [], {}) and not (edit_key and edits and edit_key in edits):
             continue
         if isinstance(value, (dict, list)):
             rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
         else:
-            rendered = _md_field_html(str(value), interactive=interactive, label=str(key))
+            rendered = _md_field_html(
+                str(value), interactive=interactive, label=str(key), edit_key=edit_key, edits=edits
+            )
         attrs = _section_attrs(value, interactive=interactive)
         badge = _objid_badge(_first_objid(value), interactive=interactive)
         rows.append(
@@ -871,12 +1002,17 @@ def _sections_html(
     interactive: bool,
     github: str = "",
     focus_objid: str = "",
+    edits: Optional[JsonDict] = None,
 ) -> str:
     """Render the labeled todo representation: Id, State, Parent, Summary, Body,
     notes, work items, subtodos, and remaining non-opaque fields.
 
     A section holding *focus_objid* renders OPEN even when its size would
-    otherwise collapse it, and nothing ever renders closed that was open."""
+    otherwise collapse it, and nothing ever renders closed that was open.
+    *edits* (``_edit_registry``) is given only to an editing page; without it no
+    edit control is rendered."""
+    if not interactive:
+        edits = None
     tid = str(todo.get("Id") or "")
     summary = _summary_text(todo)
     body = _body_text(todo)
@@ -888,17 +1024,30 @@ def _sections_html(
     # Only when present: an empty "Long summary" heading on every todo that has
     # none is noise. Rendered as its own section rather than through _meta_html,
     # which would dump the whole dict including embedding vectors.
+    summary_edit = _edit_button("set-summary", edits)
+    summary_bar = f'<div class="md-bar">{summary_edit}</div>' if summary_edit else ""
     long_summary = _raw_field(todo, "LongSummary")
+    long_summary_editable = "set-long-summary" in (edits or {})
     long_summary_html = _section(
         "Long summary",
-        _md_field_html(long_summary, interactive=interactive, monospace=True, label="Long summary"),
+        _md_field_html(
+            long_summary,
+            interactive=interactive,
+            monospace=True,
+            label="Long summary",
+            edit_key="set-long-summary",
+            edits=edits,
+        ),
         interactive=interactive,
         attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
         objid=_first_objid(todo.get("LongSummary")),
         text=long_summary,
         is_open=_holds(todo.get("LongSummary"), focus_objid),
-    ) if long_summary else ""
-    wi_boxes = "".join(_wi_box(w, interactive=interactive, github=github) for w in witems)
+    ) if long_summary or long_summary_editable else ""
+    wi_boxes = "".join(
+        _wi_box(w, interactive=interactive, github=github, edits=edits) for w in witems
+    )
+    note_boxes = "".join(_note_box(n, interactive=interactive, edits=edits) for n in notes)
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
     wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
     st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
@@ -907,7 +1056,7 @@ def _sections_html(
     notes_html = (
         _section(
             "Notes",
-            f'<div class="row">{"".join(_note_box(n, interactive=interactive) for n in notes)}</div>',
+            f'<div class="row">{note_boxes}</div>',
             interactive=interactive,
             text="".join(str(n["raw"]) for n in notes),
             items=len(notes),
@@ -925,7 +1074,8 @@ def _sections_html(
         f"{parents_html}"
         + _section(
             "Summary",
-            f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
+            summary_bar
+            + f'<div class="val">{html.escape(summary or "(no summary)")}</div>',
             interactive=interactive,
             attrs=_section_attrs(todo.get("Summary"), interactive=interactive),
             objid=_first_objid(todo.get("Summary")),
@@ -935,7 +1085,14 @@ def _sections_html(
         + long_summary_html
         + _section(
             "Body",
-            _md_field_html(body, interactive=interactive, monospace=True, label="Body")
+            _md_field_html(
+                body,
+                interactive=interactive,
+                monospace=True,
+                label="Body",
+                edit_key="set-body",
+                edits=edits,
+            )
             + _relto_chips_html(body_relto, interactive=interactive),
             interactive=interactive,
             attrs=_section_attrs(todo.get("Body"), interactive=interactive),
@@ -962,7 +1119,7 @@ def _sections_html(
             hint=_size_hint(len(stodos), "subtodos"),
             is_open=_holds(todo.get("Subtodos"), focus_objid),
         )
-        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid)
+        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid, edits=edits)
     )
 
 
@@ -1198,6 +1355,18 @@ _STYLE = """<style>
                      background: #eaeef2; padding: 0 3px; border-radius: 3px; font-size: 12px; }
   .md-preview pre.md-code { background: #eaeef2; padding: 10px; border-radius: 6px; overflow: auto; }
   .md-preview pre.md-code code { background: none; padding: 0; }
+  .edit-toggle, .move-btn { font-size: 11px; color: #1a7f37; background: #fff;
+                            border: 1px solid #d8dee4; border-radius: 4px; padding: 2px 8px;
+                            cursor: pointer; }
+  .fold-edit { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+  .fold-edit h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+                  color: #57606a; }
+  .edit-area { flex: 1 1 auto; min-height: 6em; width: 100%; box-sizing: border-box;
+               font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px;
+               border: 1px solid #d8dee4; border-radius: 6px; }
+  .edit-bar { display: flex; gap: 8px; align-items: center; }
+  .edit-row { display: flex; gap: 4px; margin-top: 6px; }
+  .edit-status { font-size: 12px; color: #cf222e; overflow-wrap: anywhere; white-space: pre-wrap; }
 </style>"""
 
 
@@ -1446,6 +1615,94 @@ function focusOn(objid){
 focusOn(FOCUS);
 initMdToggles(document.getElementById('top'));
 
+// Editing exists only on a page served to a client class set to `write` (DATA.write).
+// Save is explicit and the only write; nothing is saved on input or on close.
+var WRITE = DATA.write || null;
+
+function postUpdate(req){
+  return fetch('/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(req)
+  }).then(function(r){
+    return r.text().then(function(t){
+      var body;
+      try { body = JSON.parse(t); } catch (e) { body = {error: t || ('HTTP ' + r.status)}; }
+      return {status: r.status, body: body};
+    });
+  });
+}
+
+function closeEditor(){
+  fold.className = 'fold';
+  fold.innerHTML = foldHint;
+}
+
+function openEditor(key){
+  var spec = WRITE && WRITE.edits[key];
+  if (!spec) return;
+  clearMdPreview();
+  clearHi();
+  fold.className = 'fold';
+  fold.innerHTML =
+    '<div class="fold-edit"><h3>Edit '+esc(spec.label)+'</h3>' +
+    '<textarea class="edit-area" spellcheck="false"></textarea>' +
+    '<div class="edit-bar"><button type="button" class="edit-save">Save</button>' +
+    '<button type="button" class="edit-cancel">Cancel</button>' +
+    '<span class="edit-status" role="status"></span></div></div>';
+  var area = fold.querySelector('.edit-area');
+  var status = fold.querySelector('.edit-status');
+  var save = fold.querySelector('.edit-save');
+  area.value = spec.value;
+  fold.querySelector('.edit-cancel').addEventListener('click', closeEditor);
+  save.addEventListener('click', function(){
+    save.disabled = true;
+    status.textContent = 'saving...';
+    postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: area.value})
+    .then(function(res){
+      if (res.status === 200) { location.reload(); return; }
+      save.disabled = false;
+      status.textContent = res.body.error || ('HTTP ' + res.status);
+    }, function(err){
+      save.disabled = false;
+      status.textContent = 'save failed: ' + err;
+    });
+  });
+  area.focus();
+}
+
+document.querySelectorAll('#top .edit-toggle').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    openEditor(b.getAttribute('data-edit'));
+  });
+});
+
+// A move is its own explicit act (the click), so it saves at once; a refusal
+// is reported in the fold and the plan is left as it was.
+function moveItem(key){
+  var spec = WRITE && WRITE.edits[key];
+  if (!spec) return;
+  clearMdPreview();
+  clearHi();
+  fold.className = 'fold';
+  fold.innerHTML = '<div class="fold-edit"><h3>'+esc(spec.label)+'</h3>' +
+    '<span class="edit-status" role="status">moving...</span></div>';
+  var status = fold.querySelector('.edit-status');
+  postUpdate({id: DATA.id, op: spec.op, target: spec.target, value: spec.value})
+  .then(function(res){
+    if (res.status === 200) { location.reload(); return; }
+    status.textContent = res.body.error || ('HTTP ' + res.status);
+  }, function(err){ status.textContent = 'move failed: ' + err; });
+}
+
+document.querySelectorAll('#top .move-btn').forEach(function(b){
+  b.addEventListener('click', function(e){
+    e.stopPropagation();
+    moveItem(b.getAttribute('data-move'));
+  });
+});
+
 // Delta from the mousedown point, not an absolute position re-derived from
 // getBoundingClientRect() on every move: a real (trusted) mousedown over text
 // content can start a native text-selection drag unless prevented, and a
@@ -1471,7 +1728,9 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 </script>"""
 
 
-def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+def render_todo_page(
+    root: Path, todo: JsonDict, *, focus_objid: str = "", write: bool = False
+) -> str:
     """Render the single-todo viewer: representation on top, message/diff below.
 
     *focus_objid* is the object a permalink resolved to. The page opens with
@@ -1479,17 +1738,22 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
     into view -- so a deep link lands ON the item rather than at the top of
     the todo. An objid naming a non-box section is marked instead; one that
     is not on the page at all is ignored, and the todo simply renders.
+
+    *write* renders the edit controls.
     """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
     started = time.monotonic()
-    _debug(f"render_todo_page id={tid[:8]}", phase="render")
+    _debug(f"render_todo_page id={tid[:8]} write={write}", phase="render")
     witems = _workitems_view(todo)
     stodos = _subtodos_view(root, todo)
     parents = _parents_view(root, todo)
     notes = _notes_view(todo)
     github = github_repo_url(repo_origin(root))
     data = _page_data(root, todo, witems, stodos, parents, notes, github)
+    edits = _edit_registry(todo, witems, notes) if write else None
+    if edits is not None:
+        data["write"] = {"edits": edits}
     top_html = _sections_html(
         todo,
         witems,
@@ -1499,6 +1763,7 @@ def render_todo_page(root: Path, todo: JsonDict, *, focus_objid: str = "") -> st
         interactive=True,
         github=github or "",
         focus_objid=focus_objid,
+        edits=edits,
     )
     title = html.escape(_summary_text(todo) or "todo")
     script = _TODO_SCRIPT.replace("__DATA__", _embed_json(data)).replace(
@@ -1629,6 +1894,110 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
 
 
 WILDCARD_HOSTS = ("::", "0.0.0.0")
+LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
+UPDATE_PATH = "/update"
+LEVELS = ("none", "read", "write")
+ALL_HOST = "::"
+LOOPBACK_HOST = "localhost"
+
+
+def default_bind_host(public: str) -> str:
+    """The bind host when none was named: loopback unless public clients are served at all."""
+    return LOOPBACK_HOST if public == "none" else ALL_HOST
+
+
+def is_loopback_client(address: str) -> bool:
+    """True when a client's source *address* is loopback: 127.0.0.0/8, ::1, or an
+    IPv4-mapped ::ffff:127.x.x.x (what a dual-stack socket reports for a v4 client).
+
+    The address is the TCP peer, not anything the client sent, so it cannot be
+    claimed by a header.
+    """
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+class UpdateRefused(TodoWebError):
+    """The update command refused; the message is the command's own error text."""
+
+    def __init__(self, message: str, *, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class Updater(Protocol):
+    """The write side `todo.py web` injects for a write class; the viewer never writes itself."""
+
+    def update(self, request: JsonDict) -> JsonDict:
+        """Apply ``{id, op, target, value}`` and return the JSON payload of the 200 answer.
+
+        Raises UpdateRefused when the command refuses.
+        """
+
+
+def request_refusal(headers: Mapping[str, str], port: int, *, loopback: bool = True) -> str:
+    """Why a write request must be refused before any command runs, or "".
+
+    From a loopback client the Host must be a loopback name on this server's
+    port, which a DNS-rebound page cannot send; a public client's Host is only
+    required to be present. The Origin must be present and be that same origin,
+    which no other page in the browser can claim. The JSON content type cannot
+    be sent cross-origin without a CORS preflight, which this server never
+    answers.
+    """
+    host = str(headers.get("Host") or "").strip().lower()
+    if loopback:
+        if host not in {f"{name}:{port}" for name in LOOPBACK_NAMES}:
+            return f"write refused: Host {host!r} is not a loopback name on port {port}"
+    elif not host:
+        return "write refused: no Host header"
+    origin = str(headers.get("Origin") or "").strip().lower()
+    if origin != f"http://{host}":
+        return f"write refused: Origin {origin!r} is not this viewer's origin http://{host}"
+    content_type = str(headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return f"write refused: Content-Type {content_type!r} is not application/json"
+    return ""
+
+
+def handle_update(
+    headers: Mapping[str, str],
+    body: bytes,
+    port: int,
+    updater: Updater,
+    *,
+    loopback: bool = True,
+) -> "tuple[int, JsonDict]":
+    """Check and apply one POST /update; return ``(status, JSON payload)``.
+
+    *loopback* is whether the client is a loopback one (see ``request_refusal``).
+    403 when the request fails ``request_refusal`` or its body is not JSON, 400
+    when the JSON is not an object, 200 / the refusal's own status from
+    *updater*, and 500 naming the exception type and message for any other
+    exception it raises. The updater runs only after every check has passed.
+    """
+    refusal = request_refusal(headers, port, loopback=loopback)
+    if refusal:
+        return 403, {"error": refusal}
+    try:
+        request = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return 403, {"error": "write refused: body is not JSON"}
+    if not isinstance(request, dict):
+        return 400, {"error": "update request must be a JSON object"}
+    try:
+        return 200, updater.update(request)
+    except UpdateRefused as exc:
+        return exc.status, {"error": str(exc)}
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Anything the command raises that is not a refusal still gets an answer; the
+        # page shows it instead of a dropped connection.
+        return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
 
 class _DualStackServer(ThreadingHTTPServer):
@@ -1651,11 +2020,14 @@ class _DualStackServer(ThreadingHTTPServer):
 def serve(
     root: Path,
     *,
-    host: str = "::",
+    host: Optional[str] = None,
     port: int = 8765,
     initial_id: Optional[str] = None,
     resolver: Callable[[str], "tuple[Path, JsonDict]"],
     searcher: Callable[[str], List[JsonDict]],
+    loopback: str = "read",
+    public: str = "none",
+    updater: Optional[Updater] = None,
 ) -> str:
     """Start the viewer and serve until interrupted.
 
@@ -1665,11 +2037,78 @@ def serve(
     JSON list of rows from *searcher(query)* (an empty query lists all todos).
     *initial_id* only shapes the printed URL so the browser opens straight onto
     that todo.
+
+    *loopback* governs clients whose source address is loopback and *public*
+    every other client, each one of ``LEVELS``: ``none`` answers 403 to every
+    request, ``read`` serves GET and answers 403 to any POST, ``write`` also
+    accepts ``POST /update`` through ``handle_update`` to *updater* (required
+    when either is ``write``). Both ``none`` is refused before anything binds.
+    The class is decided per request from the connection's peer address.
     """
-    _debug(f"serve host={host} port={port} root={root} initial_id={initial_id}", phase="serve")
+    _debug(
+        f"serve host={host} port={port} root={root} initial_id={initial_id} "
+        f"loopback={loopback} public={public}",
+        phase="serve",
+    )
+    for name, level in (("loopback", loopback), ("public", public)):
+        if level not in LEVELS:
+            raise TodoWebError(f"{name} must be one of {', '.join(LEVELS)}, not {level!r}")
+    if loopback == "none" and public == "none":
+        raise TodoWebError("loopback and public are both none: nothing could connect")
+    if "write" in (loopback, public) and updater is None:
+        raise TodoWebError("write mode needs an updater")
+    if host is None:
+        host = default_bind_host(public)
 
     class Handler(BaseHTTPRequestHandler):
+        def _client_is_loopback(self) -> bool:
+            return is_loopback_client(str(self.client_address[0]))
+
+        def _level(self) -> str:
+            """The access level of the class this request's client belongs to."""
+            return loopback if self._client_is_loopback() else public
+
+        def _forbidden(self) -> bool:
+            """Answer 403 and return True when this client's class may not GET."""
+            if self._level() != "none":
+                return False
+            self._respond_json(403, {"error": "forbidden: this viewer does not serve you"})
+            return True
+
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            level = self._level()
+            if level != "write" or updater is None:
+                self._respond_json(403, {"error": f"forbidden: this client is at level {level}"})
+                return
+            if urlparse(self.path).path != UPDATE_PATH:
+                self._respond_json(404, {"error": f"no write endpoint at {self.path}"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._respond_json(400, {"error": "bad Content-Length"})
+                return
+            body = self.rfile.read(max(length, 0))
+            status, payload = handle_update(
+                self.headers,
+                body,
+                self.server.server_port,
+                updater,
+                loopback=self._client_is_loopback(),
+            )
+            self._respond_json(status, payload)
+
+        def _respond_json(self, status: int, payload: JsonDict) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            if self._forbidden():
+                return
             parsed = urlparse(self.path)
             if parsed.path == "/search":
                 query = parse_qs(parsed.query).get("q", [""])[0]
@@ -1692,7 +2131,7 @@ def serve(
             try:
                 if todo_id:
                     todo_root, todo = resolver(todo_id)
-                    payload = render_todo_page(todo_root, todo)
+                    payload = self._page(todo_root, todo)
                 else:
                     payload = render_search_page(root, searcher(""))
             except TodoWebError as exc:
@@ -1712,11 +2151,20 @@ def serve(
                 selector, segments = todo_url.split_url_path(path)
                 todo_root, todo = resolver(selector)
                 focus = resolve_focus(todo_root, todo, segments)
-                payload = render_todo_page(todo_root, todo, focus_objid=focus)
+                payload = self._page(todo_root, todo, focus_objid=focus)
             except (todo_url.TodoUrlError, TodoWebError) as exc:
                 self.send_error(404, str(exc))
                 return
             self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _page(self, todo_root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
+            """The todo page, with edit controls when this client's class is `write`."""
+            return render_todo_page(
+                todo_root,
+                todo,
+                focus_objid=focus_objid,
+                write=self._level() == "write" and updater is not None,
+            )
 
         def _respond(self, body: bytes, content_type: str) -> None:
             self.send_response(200)
@@ -1725,15 +2173,22 @@ def serve(
             self.end_headers()
             self.wfile.write(body)
 
+        def end_headers(self) -> None:
+            """Every response, errors included, forbids framing: a page that embeds the
+            viewer could otherwise overlay its edit controls (clickjacking)."""
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            super().end_headers()
+
         def log_message(self, format: str, *args: object) -> None:
             if os.environ.get("TODO_WEB_LOG") or _debug_enabled():
                 super().log_message(format, *args)
 
     server = _DualStackServer((host, port), Handler)
     shown = "localhost" if host in WILDCARD_HOSTS else f"[{host}]" if ":" in host else host
-    base = f"http://{shown}:{server.server_port}/"
-    url = f"{base}{initial_id}" if initial_id else base
-    print(url, flush=True)
+    base = f"http://{shown}:{server.server_port}"
+    url = f"{base}/{initial_id}" if initial_id else base
+    print(f"todo web: {url}  loopback={loopback}  public={public}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
