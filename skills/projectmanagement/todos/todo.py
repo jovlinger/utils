@@ -190,7 +190,7 @@ def strip_leading_html_comments(text: str) -> str:
 
     Everything from the first other character on is returned verbatim, so a
     ``<!-- -->`` later in the text survives as markdown. A leading comment that
-    is never closed swallows the rest, leaving the empty string.
+    is never closed raises TodoError, so it cannot silently empty the value.
     """
     rest = text
     while True:
@@ -199,7 +199,7 @@ def strip_leading_html_comments(text: str) -> str:
             return rest
         end = rest.find("-->", len("<!--"))
         if end < 0:
-            return ""
+            raise TodoError("a leading <!-- comment is never closed; nothing written")
         rest = rest[end + len("-->") :]
 
 
@@ -4701,6 +4701,7 @@ class SetCommand(TodoFieldCommand):
 
 _NOTE_PATH_RE = re.compile(r"\ANotes\.(\d+)\Z")
 _WORKITEM_PATH_RE = re.compile(r"\AWorkItems\.(\d+)\Z")
+_NOTE_RAW_PATH_RE = re.compile(r"\ANotes\.\d+\.raw\Z")
 
 
 def resolve_edit_target(todo: JsonDict, target: str) -> str:
@@ -4750,14 +4751,16 @@ class EditCommand(TodoFieldCommand):
         "the selected todo. It stores what the editor leaves, minus leading HTML comments and "
         "blank lines and with surrounding whitespace trimmed; a comment after the first other "
         "line is kept. A file saved untouched writes nothing, so a value that itself begins "
-        "with <!-- survives a no-op edit but loses that leading comment on a real one. TARGET is either a dot path in the get-json-path "
-        "grammar (Summary, Body, AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a "
-        "string, or an object whose raw is a string, which is then edited at its raw -- or "
-        "objid:<hex> (leading zeros optional) naming a note, edited like note-replace (its "
-        "objid and relto survive), or a not-done work item, edited like work-item-replace (a "
-        "done item is refused). Unchanged text writes nothing. Refused with exit 1 and nothing "
-        "written: stdin/stdout not a terminal, a target that is not free text, an empty result, "
-        "and an editor that fails or exits nonzero. The write is store-only."
+        "with <!-- survives a no-op edit but loses that leading comment on a real one. An "
+        "empty result stores the empty string, except for a note, whose text must be "
+        "non-empty. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
+        "AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a string, or an object whose "
+        "raw is a string, which is then edited at its raw -- or objid:<hex> (leading zeros "
+        "optional) naming a note, edited like note-replace (its objid and relto survive), or a "
+        "not-done work item, edited like work-item-replace (a done item is refused). Refused "
+        "with exit 1 and nothing written: stdin/stdout not a terminal, a target that is not "
+        "free text, a leading <!-- that is never closed, an empty note, and an editor that "
+        "fails or exits nonzero. The write is store-only."
     )
 
     @classmethod
@@ -4792,8 +4795,10 @@ class EditCommand(TodoFieldCommand):
         if edited == current.strip():
             print(f"todo: {self.target} unchanged; nothing written", file=sys.stderr)
             return 0
-        if not edited:
-            raise TodoError(f"edited {self.target} is empty; nothing written")
+        if not edited and _NOTE_RAW_PATH_RE.match(path):
+            raise TodoError(
+                f"{path} must be non-empty (doctor requires note text); nothing written"
+            )
         set_at_path(todo, path, edited)
         write_todo_worktree(root, todo)
         if not self.no_commit:

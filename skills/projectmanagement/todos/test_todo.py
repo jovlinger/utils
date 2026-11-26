@@ -856,11 +856,20 @@ class EditCommandUnitTests(unittest.TestCase):
         self.mocks["edit_text_via_editor"].assert_not_called()
         self.assert_nothing_written()
 
-    def test_an_empty_result_is_refused(self) -> None:
+    def test_an_empty_result_stores_the_empty_string(self) -> None:
         self.mocks["edit_text_via_editor"].return_value = "  \n\n"
-        with self.assertRaisesRegex(todo.TodoError, "empty"):
-            self.run_edit("Body")
-        self.assert_nothing_written()
+        self.assertEqual(0, self.run_edit("Body"))
+        self.assertEqual("", self.record["Body"]["raw"])
+        self.mocks["write_todo_worktree"].assert_called_once()
+        self.mocks["commit_todo"].assert_called_once()
+
+    def test_an_empty_note_is_refused_since_doctor_requires_note_text(self) -> None:
+        self.mocks["edit_text_via_editor"].return_value = "\n"
+        for target in ("objid:4", "Notes.1", "Notes.1.raw"):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(todo.TodoError, "non-empty"):
+                    self.run_edit(target)
+                self.assert_nothing_written()
 
     def test_an_editor_failure_writes_nothing(self) -> None:
         self.mocks["edit_text_via_editor"].side_effect = todo.TodoError("exited with status 3")
@@ -928,8 +937,17 @@ class StripLeadingHtmlCommentsUnitTests(unittest.TestCase):
     def test_no_comment_is_unchanged(self) -> None:
         self.assertEqual("plain\n", self.strip("plain\n"))
 
-    def test_an_unterminated_comment_leaves_nothing(self) -> None:
-        self.assertEqual("", self.strip("<!-- never closed\nbody\n"))
+    def test_an_unclosed_leading_comment_is_refused(self) -> None:
+        for text in ("<!-- never closed\nbody\n", "<!-- ok -->\n\n<!-- open\nbody"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(todo.TodoError, "never closed"):
+                    self.strip(text)
+
+    def test_an_unclosed_comment_after_content_is_content(self) -> None:
+        self.assertEqual("body\n<!-- open\n", self.strip("<!-- h -->\nbody\n<!-- open\n"))
+
+    def test_only_comments_and_blank_lines_leave_the_empty_string(self) -> None:
+        self.assertEqual("", self.strip("<!-- header -->\n\n  \n"))
 
 
 class EditorFileTests(unittest.TestCase):
