@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
 import logging
 import logging.handlers
@@ -16,19 +14,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     ClassVar,
     Dict,
     Iterator,
     List,
-    Mapping,
     Optional,
     Sequence,
 )
@@ -40,7 +34,6 @@ import todo_ref
 import todo_store
 import todo_embed
 import todo_url
-import todo_web
 from todo_common import (
     JsonDict,
     SEARCH_STOPWORDS_KEY,
@@ -53,7 +46,6 @@ from todo_common import (
     commit_todo,
     current_branch,
     current_state_name,
-    discover_all_tickets,
     find_todos_by_id,
     forest_roots,
     git_fetch_if_remote,
@@ -3776,194 +3768,10 @@ class LogCommand(CorpusQueryCommand):
         return 0
 
 
-# Built-in defaults of `web`; config.json "web" and the command line override them.
+# The options `web` hands on to todoweb.py; todoweb defines what they mean.
+WEB_LEVELS = ("none", "read", "write")
 WEB_DEFAULT_PORT = 8765
-WEB_DEFAULT_LOOPBACK = "read"
-WEB_DEFAULT_PUBLIC = "none"
-WEB_CONFIG_KEY = "web"
-
-
-def web_config(todo_dir: Path) -> Dict[str, Any]:
-    """The validated ``web`` object of *todo_dir*'s config.json; ``{}`` when absent.
-
-    Keys are ``loopback`` and ``public`` (each one of ``todo_web.LEVELS``),
-    ``host`` (a non-empty string) and ``port`` (an integer 0-65535). Anything
-    else raises TodoError naming the key, so a typo fails at startup instead of
-    silently leaving a default in force.
-    """
-    raw = todo_store.config_value_raw(todo_dir, WEB_CONFIG_KEY)
-    if raw is None:
-        return {}
-    where = f'config.json "{WEB_CONFIG_KEY}"'
-    if not isinstance(raw, dict):
-        raise TodoError(f"{where} must be an object, not {type(raw).__name__}")
-    known = ("loopback", "public", "host", "port")
-    unknown = sorted(key for key in raw if key not in known)
-    if unknown:
-        raise TodoError(
-            f"{where} has unknown key(s) {', '.join(unknown)}; known: {', '.join(known)}"
-        )
-    for key in ("loopback", "public"):
-        if key in raw and raw[key] not in todo_web.LEVELS:
-            raise TodoError(
-                f"{where} {key} must be one of {', '.join(todo_web.LEVELS)}, not {raw[key]!r}"
-            )
-    if "host" in raw and not (isinstance(raw["host"], str) and raw["host"].strip()):
-        raise TodoError(f"{where} host must be a non-empty string, not {raw['host']!r}")
-    if "port" in raw:
-        port = raw["port"]
-        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
-            raise TodoError(f"{where} port must be an integer 0-65535, not {port!r}")
-    return dict(raw)
-
-
-@dataclass(frozen=True)
-class WebOp:
-    """One web edit: the CLI argv that applies it."""
-
-    argv: Callable[[str, str, str], List[str]]  # (todo_id, target, value)
-
-
-def _web_set_op(flag: str) -> WebOp:
-    """A `set --<flag>=<value>` edit of a text field."""
-    return WebOp(argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid])
-
-
-# The CLI's update surface and nothing else: no op creates, deletes or closes
-# anything. Every positional follows "--", flags before it, so no request field
-# can be parsed as a flag (the "--" must precede ALL positionals: argparse
-# fills an optional positional with nothing before a later "--").
-WEB_OPS: Dict[str, WebOp] = {
-    "set-summary": _web_set_op("summary"),
-    "set-body": _web_set_op("body"),
-    "set-ac": _web_set_op("ac"),
-    "set-long-summary": _web_set_op("long-summary"),
-    "set-actual-summary": _web_set_op("actual-summary"),
-    "note-replace": WebOp(
-        argv=lambda tid, target, value: ["note-replace", f"--raw={value}", "--", tid, target],
-    ),
-    "work-item-replace": WebOp(
-        argv=lambda tid, target, value: [
-            "work-item-replace", f"--summary={value}", "--", tid, target
-        ],
-    ),
-    # value is the destination index, as work-item-reorder's DST.
-    "work-item-reorder": WebOp(
-        argv=lambda tid, target, value: ["work-item-reorder", "--", tid, target, value],
-    ),
-}
-
-
-def _cli_error_text(stderr: str) -> str:
-    """The CLI's own error text from captured stderr, minus the ``todo.py:`` prefix."""
-    prefix = "todo.py: "
-    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    return "\n".join(line[len(prefix) :] if line.startswith(prefix) else line for line in lines)
-
-
-class _ThreadStream:
-    """A sys.stdout/sys.stderr stand-in that diverts one thread's writes to a buffer.
-
-    A thread that set a buffer (``capture``) writes there; every other thread
-    writes to the stream that was in place when this was installed.
-    """
-
-    def __init__(self, real: Any) -> None:
-        self._real = real
-        self._local = threading.local()
-
-    def _target(self) -> Any:
-        return getattr(self._local, "buffer", None) or self._real
-
-    def write(self, text: str) -> int:
-        return int(self._target().write(text))
-
-    def flush(self) -> None:
-        self._target().flush()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
-
-    @contextlib.contextmanager
-    def capture(self, buffer: io.StringIO) -> Iterator[None]:
-        """Divert the calling thread's writes to *buffer* for the block."""
-        previous = getattr(self._local, "buffer", None)
-        self._local.buffer = buffer
-        try:
-            yield
-        finally:
-            self._local.buffer = previous
-
-
-_STREAM_INSTALL_LOCK = threading.Lock()
-
-
-def _thread_stream(name: str) -> _ThreadStream:
-    """The ``sys.<name>`` proxy, installed over the current stream on first use."""
-    with _STREAM_INSTALL_LOCK:
-        current = getattr(sys, name)
-        if not isinstance(current, _ThreadStream):
-            current = _ThreadStream(current)
-            setattr(sys, name, current)
-        return current
-
-
-class WebUpdater:
-    """The write side `web` injects into todo_web.serve (todo_web.Updater) for a write class.
-
-    Each update runs the CLI's own command through ``main`` in this process, so
-    its validation and refusals are the CLI's, verbatim. A save is last-write-wins:
-    it applies whatever the page sent, whether or not the todo changed since the
-    page loaded. Updates are serialized in-process; ``main``'s stdout/stderr are
-    captured for the updating thread only, so other request threads keep writing
-    to the real streams.
-    """
-
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self._serial = threading.Lock()
-
-    def update(self, request: JsonDict) -> JsonDict:
-        """Apply one ``{id, op, target, value}`` request; return ``{}``.
-
-        Raises ``todo_web.UpdateRefused`` with the CLI's error text when the
-        request or the command is refused.
-        """
-        op_name = request.get("op")
-        op = WEB_OPS.get(op_name) if isinstance(op_name, str) else None
-        if op is None:
-            raise todo_web.UpdateRefused(
-                f"unknown web op {op_name!r}; known: {', '.join(sorted(WEB_OPS))}"
-            )
-        fields = {name: request.get(name) for name in ("id", "target", "value")}
-        for name, value in fields.items():
-            if not isinstance(value, str):
-                raise todo_web.UpdateRefused(f"{op_name}: {name} must be a string")
-        if not use_store():
-            raise todo_web.UpdateRefused("web edits need the todo store, not legacy TODO.json mode")
-        with self._serial:
-            todo_id = str(self._read(fields["id"])["Id"])
-            self._run(op.argv(todo_id, fields["target"], fields["value"]))
-            return {}
-
-    def _read(self, selector: str) -> JsonDict:
-        try:
-            return resolve_ticket_by_id(self.root, selector)[1]
-        except TodoError as exc:
-            raise todo_web.UpdateRefused(str(exc)) from exc
-
-    def _run(self, argv: List[str]) -> None:
-        """Run ``todo.py <argv>`` in-process; raise UpdateRefused with its stderr on failure."""
-        out, err = io.StringIO(), io.StringIO()
-        with _thread_stream("stdout").capture(out), _thread_stream("stderr").capture(err):
-            try:
-                code = main(argv)
-            except SystemExit as exc:  # argparse usage errors
-                code = exc.code if isinstance(exc.code, int) else 2
-        if code == 0:
-            return
-        text = _cli_error_text(err.getvalue()) or f"todo.py {argv[0]} exited {code}"
-        raise todo_web.UpdateRefused(text, status=503 if code == 75 else 400)
+TODOWEB_PY = Path(__file__).resolve().with_name("todoweb.py")
 
 
 class WebCommand(EnvironmentCommand):
@@ -4007,21 +3815,21 @@ class WebCommand(EnvironmentCommand):
         parser.add_argument(
             "--host",
             default=None,
-            help=f"bind host (default {todo_web.LOOPBACK_HOST!r} when --public is none, else "
-            f"{todo_web.ALL_HOST!r}, which serves IPv4 and IPv6)",
+            help="bind host (default 'localhost' when --public is none, else "
+            "'::', which serves IPv4 and IPv6)",
         )
         parser.add_argument(
             "--port", type=int, default=None, help=f"bind port (default {WEB_DEFAULT_PORT})"
         )
         parser.add_argument(
             "--loopback",
-            choices=todo_web.LEVELS,
+            choices=WEB_LEVELS,
             default=None,
             help="access for loopback clients (default read; config.json web.loopback)",
         )
         parser.add_argument(
             "--public",
-            choices=todo_web.LEVELS,
+            choices=WEB_LEVELS,
             default=None,
             help="access for every other client (default none; config.json web.public)",
         )
@@ -4031,130 +3839,28 @@ class WebCommand(EnvironmentCommand):
             help="print the rendered HTML and exit instead of starting a server",
         )
 
-    def settings(self) -> Dict[str, Any]:
-        """The effective ``loopback``, ``public``, ``host`` and ``port``.
-
-        Precedence per key: the command line, then the ``web`` object of the todo
-        dir's config.json, then the built-in default. ``host`` is None when none
-        of them names one; ``bind_host`` then derives it from ``public``. A
-        malformed ``web`` object raises TodoError.
-        """
-        cli = {
-            "loopback": self.loopback,
-            "public": self.public,
-            "host": self.host,
-            "port": self.port,
-        }
-        configured = web_config(self.todo_dir)
-        built_in: Dict[str, Any] = {
-            "loopback": WEB_DEFAULT_LOOPBACK,
-            "public": WEB_DEFAULT_PUBLIC,
-            "host": None,
-            "port": WEB_DEFAULT_PORT,
-        }
-        merged: Dict[str, Any] = {}
-        for key, default in built_in.items():
-            if cli[key] is not None:
-                merged[key] = cli[key]
-            else:
-                merged[key] = configured.get(key, default)
-        return merged
-
-    @staticmethod
-    def bind_host(settings: Mapping[str, Any]) -> str:
-        """The host to bind: the explicit one, else loopback unless public clients are served."""
-        if settings["host"] is not None:
-            return str(settings["host"])
-        return todo_web.default_bind_host(settings["public"])
+    def todoweb_argv(self) -> List[str]:
+        """The todoweb.py arguments that carry this command's own options."""
+        argv: List[str] = []
+        for flag, value in (
+            ("--host", self.host),
+            ("--port", self.port),
+            ("--loopback", self.loopback),
+            ("--public", self.public),
+        ):
+            if value is not None:
+                argv += [flag, str(value)]
+        if self.dump_html:
+            argv.append("--dump-html")
+        if self.selector is not None:
+            argv += ["--", self.selector]
+        return argv
 
     def do(self) -> int:
-        """Serve or print the todo web viewer."""
-        settings = self.settings()
-        levels = (settings["loopback"], settings["public"])
-        if not self.dump_html and settings["loopback"] == "none" and settings["public"] == "none":
-            raise TodoError(
-                "web: loopback and public are both none, so no client could connect; "
-                "set at least one to read or write"
-            )
-        root = self.root()
-        # Header label: the storage anchor (same value `todo basedir` prints),
-        # not the current worktree gitroot. The store is shared across all
-        # worktrees, so labelling the page with this worktree misrepresents it.
-        # `root` still drives git ops (diffs/selectors) below -- only the label moves.
-        basedir = self.todo_dir
-
-        def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
-            """Resolve an ?id= selector to (repo_root, todo) for the viewer.
-
-            The concrete repo is always the CWD; git failures for a todo whose
-            commits are not present here render as 'diff unavailable'.
-            """
-            try:
-                ticket = resolve_ticket_by_id(root, selector)[1]
-            except TodoError as exc:
-                raise todo_web.TodoWebError(str(exc)) from exc
-            return root, ticket
-
-        def list_todos() -> List[JsonDict]:
-            """Every todo in the store -- no repo scoping, no filtering."""
-            if not use_store():
-                return list(discover_all_tickets(root).values())
-            return [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
-
-        def search_rows(query: str) -> List[JsonDict]:
-            """Structured rows for the viewer's search box.
-
-            A non-empty query runs the same lexical search as `todo search`
-            (rank order preserved); an empty query lists every todo. The box has
-            no shell, so it is split with ``shlex`` -- a quoted phrase becomes one
-            term, mirroring the CLI (unbalanced quotes fall back to whitespace
-            splitting). Rows carry state/update-time so the page can render the
-            -tu/-s columns.
-            """
-            if query.strip():
-                try:
-                    terms = shlex.split(query)
-                except ValueError:
-                    terms = query.split()
-                if terms:
-                    try:
-                        rows, _hidden = run_search(terms)
-                        return rows
-                    except TodoError as exc:
-                        raise todo_web.TodoWebError(str(exc)) from exc
-            return [todo_row(todo) for todo in list_todos()]
-
-        initial_id: Optional[str] = None
-        if self.selector is not None:
-            _, ticket = resolve_ticket_by_id(root, self.selector)
-            initial_id = str(ticket.get("Id") or "") or None
-
-        try:
-            if self.dump_html:
-                if initial_id is not None:
-                    todo_root, ticket = resolve_todo(initial_id)
-                    print(
-                        todo_web.render_todo_page(
-                            todo_root, ticket, write=settings["loopback"] == "write"
-                        )
-                    )
-                else:
-                    print(todo_web.render_search_page(basedir, search_rows("")))
-            else:
-                todo_web.serve(
-                    basedir,
-                    host=self.bind_host(settings),
-                    port=settings["port"],
-                    initial_id=initial_id,
-                    resolver=resolve_todo,
-                    searcher=search_rows,
-                    loopback=settings["loopback"],
-                    public=settings["public"],
-                    updater=WebUpdater(root) if "write" in levels else None,
-                )
-        except todo_web.TodoWebError as exc:
-            raise TodoError(str(exc)) from exc
-        return 0
+        """Run todoweb.py with these options; its exit status is this command's."""
+        return subprocess.run(
+            [sys.executable, str(TODOWEB_PY), *self.todoweb_argv()], check=False
+        ).returncode
 
 
 class ImportJsonCommand(StoreMaintenanceCommand):

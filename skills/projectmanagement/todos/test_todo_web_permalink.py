@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import todo_url
-import todo_web
+import todoweb
 
 TID = "557ab9d3" + "0" * 56
 
@@ -48,7 +48,7 @@ class ResolveFocusTest(unittest.TestCase):
     """resolve_focus picks the object the page should open focused on."""
 
     def focus(self, *segments: str) -> str:
-        return todo_web.resolve_focus(Path("."), dict(TODO), list(segments))
+        return todoweb.resolve_focus(dict(TODO), list(segments))
 
     def test_object_path_focuses_that_object(self) -> None:
         self.assertEqual("0003", self.focus("workitem", "1"))
@@ -105,7 +105,7 @@ class RenderFocusTest(unittest.TestCase):
     """
 
     def render(self, **kwargs: str) -> str:
-        return todo_web.render_todo_page(Path("."), dict(TODO), **kwargs)
+        return todoweb.render_todo_page(Path("."), dict(TODO), **kwargs)
 
     def test_focus_objid_is_embedded(self) -> None:
         page = self.render(focus_objid="0003")
@@ -132,7 +132,7 @@ class PermalinkRouteTest(unittest.TestCase):
 
         def resolver(selector: str) -> Tuple[Path, dict]:
             if not TID.startswith(selector):
-                raise todo_web.TodoWebError(f"no todo matches {selector!r}")
+                raise todoweb.TodoWebError(f"no todo matches {selector!r}")
             return Path("."), TODO
 
         def searcher(_query: str) -> List[dict]:
@@ -142,7 +142,7 @@ class PermalinkRouteTest(unittest.TestCase):
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
+                todoweb.serve(
                     Path("."), port=0, resolver=resolver, searcher=searcher
                 )
 

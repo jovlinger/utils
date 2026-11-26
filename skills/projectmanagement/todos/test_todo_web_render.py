@@ -15,7 +15,8 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict
 
-import todo_web
+import todoweb
+import todoweb_core
 
 TID = "d56d5d65" + "0" * 56
 
@@ -44,7 +45,7 @@ def _todo(state: Dict[str, Any], items: list) -> Dict[str, Any]:
 
 
 def _page(todo: Dict[str, Any]) -> str:
-    return todo_web.render_todo_page(Path("."), dict(todo))
+    return todoweb.render_todo_page(Path("."), dict(todo))
 
 
 def _fold_entry(page: str, objid: str) -> Dict[str, Any]:
@@ -155,7 +156,7 @@ class BlockedWorkItemTest(unittest.TestCase):
         self.assertNotIn("stored copy", _fold_entry(page, "001d")["message"])
 
 
-BIG = "x" * (todo_web._COLLAPSE_CHARS + 1)
+BIG = "x" * (todoweb_core._COLLAPSE_CHARS + 1)
 
 
 def _top(page: str) -> str:
@@ -193,7 +194,7 @@ class SectionCollapseTest(unittest.TestCase):
         # the item count is its own trigger, independent of text length.
         items = [
             {"kind": "code", "summary": "short", "sha": "a" * 40, "done": True, "objid": f"01{i:02d}"}
-            for i in range(todo_web._COLLAPSE_ITEMS + 1)
+            for i in range(todoweb_core._COLLAPSE_ITEMS + 1)
         ]
         section = _section_of(_page(_todo({"working": {}}, items)), "Work items")
         self.assertIn("<details", section)
@@ -209,13 +210,13 @@ class SectionCollapseTest(unittest.TestCase):
         self.assertIn("<details", section)
 
     def test_singular_hint_reads_as_one_item(self) -> None:
-        self.assertEqual("1 item", todo_web._size_hint(1, "items"))
-        self.assertEqual("2 items", todo_web._size_hint(2, "items"))
+        self.assertEqual("1 item", todoweb_core._size_hint(1, "items"))
+        self.assertEqual("2 items", todoweb_core._size_hint(2, "items"))
 
     def test_static_fold_rendition_never_grows_toggles(self) -> None:
         # The fold shows another todo read-only; it is not a page you navigate.
         big = {**_todo({"working": {}}, []), "Body": {"raw": BIG, "objid": "0001"}}
-        self.assertNotIn("<details", todo_web._static_repr_html(Path("."), big, ""))
+        self.assertNotIn("<details", todoweb_core._static_repr_html(big, ""))
 
 
 class BoxClampTest(unittest.TestCase):
@@ -231,7 +232,7 @@ class BoxClampTest(unittest.TestCase):
         }
 
     def test_paragraph_summary_clamps_with_an_expander(self) -> None:
-        para = "y" * (todo_web._CLAMP_CHARS + 1)
+        para = "y" * (todoweb_core._CLAMP_CHARS + 1)
         top = _top(_page(_todo({"working": {}}, [self._item(para)])))
         self.assertIn('class="wi-sum clamped"', top)
         self.assertIn('<button class="more" type="button">...more</button>', top)
@@ -257,7 +258,7 @@ class BoxClampTest(unittest.TestCase):
             "Summary": {"raw": "child", "objid": "0000"},
             "WorkItems": [self._item("w" * 400)],
         }
-        static = todo_web._static_repr_html(Path("."), big, "")
+        static = todoweb_core._static_repr_html(big, "")
         self.assertNotIn("clamped", static)
         self.assertNotIn('class="more"', static)
 
@@ -274,12 +275,12 @@ class FocusOpensTest(unittest.TestCase):
                 "done": True,
                 "objid": f"02{i:02d}",
             }
-            for i in range(todo_web._COLLAPSE_ITEMS + 2)
+            for i in range(todoweb_core._COLLAPSE_ITEMS + 2)
         ]
         return {**_todo({"working": {}}, items), "Body": {"raw": BIG, "objid": "0001"}}
 
     def render(self, focus: str = "") -> str:
-        return todo_web.render_todo_page(Path("."), self._big_todo(), focus_objid=focus)
+        return todoweb.render_todo_page(Path("."), self._big_todo(), focus_objid=focus)
 
     def test_section_holding_the_target_renders_open(self) -> None:
         section = _section_of(self.render(focus="0203"), "Work items")
@@ -307,8 +308,8 @@ class FocusOpensTest(unittest.TestCase):
 
     def test_holds_never_reports_true_without_a_target(self) -> None:
         # The guard that keeps an unfocused page from opening every section.
-        self.assertFalse(todo_web._holds({"objid": "0001"}, ""))
-        self.assertTrue(todo_web._holds({"objid": "0001"}, "0001"))
+        self.assertFalse(todoweb_core._holds({"objid": "0001"}, ""))
+        self.assertTrue(todoweb_core._holds({"objid": "0001"}, "0001"))
 
 
 class ObjidBadgeTest(unittest.TestCase):
@@ -337,7 +338,7 @@ class ObjidBadgeTest(unittest.TestCase):
             "Subtodos": [child_ref],
             "Parent": [{**child_ref, "objid": "0007"}],
         }
-        top = _top(todo_web.render_todo_page(Path("."), todo))
+        top = _top(todoweb.render_todo_page(Path("."), todo))
         self.assertIn('<span class="objid-tag mono">0006</span>', top)
         self.assertIn('<span class="objid-tag mono">0007</span>', top)
 
@@ -362,7 +363,7 @@ class ObjidBadgeTest(unittest.TestCase):
             "Summary": {"raw": "child", "objid": "0000"},
             "WorkItems": [{"kind": "task", "summary": "x", "done": False, "objid": "0101"}],
         }
-        static = todo_web._static_repr_html(Path("."), big, "")
+        static = todoweb_core._static_repr_html(big, "")
         self.assertNotIn("objid-tag", static)
 
 
@@ -411,7 +412,7 @@ class MarkdownPreviewTest(unittest.TestCase):
             "WorkItems": [],
             "Subtodos": [],
         }
-        html = todo_web._static_repr_html(Path("."), child)
+        html = todoweb_core._static_repr_html(child)
         self.assertNotIn("md-toggle", html)
         self.assertIn("# Title", html)
 
@@ -429,13 +430,13 @@ class WorkItemTextInFoldTest(unittest.TestCase):
         }
 
     def test_tile_summary_is_small_and_unbold(self) -> None:
-        rule = todo_web._STYLE.split(".wi-sum {", 1)[1].split("}", 1)[0]
+        rule = todoweb_core._STYLE.split(".wi-sum {", 1)[1].split("}", 1)[0]
         self.assertIn("font-size: 12px", rule)
         self.assertNotIn("font-weight", rule)
 
     def test_subtodo_summary_keeps_its_weight(self) -> None:
         # Only the work-item tile changed: a subtodo box summary is one line.
-        rule = todo_web._STYLE.split(".st-sum {", 1)[1].split("}", 1)[0]
+        rule = todoweb_core._STYLE.split(".st-sum {", 1)[1].split("}", 1)[0]
         self.assertIn("font-weight: 600", rule)
 
     def test_fold_entry_carries_the_items_own_text(self) -> None:
@@ -474,7 +475,7 @@ class NotesSectionTest(unittest.TestCase):
         self.assertLess(top.index("<h2>Notes</h2>"), top.index("<h2>Work items</h2>"))
 
     def test_note_box_carries_its_objid_badge_and_clamped_text(self) -> None:
-        long_raw = "y" * (todo_web._CLAMP_CHARS + 1)
+        long_raw = "y" * (todoweb_core._CLAMP_CHARS + 1)
         todo = {**_todo({"working": {}}, []), "Notes": [self._note(long_raw, "000f")]}
         top = _top(_page(todo))
         self.assertIn('<span class="objid-tag mono">000f</span>', top)
@@ -523,14 +524,14 @@ class NotesSectionTest(unittest.TestCase):
 
     def test_permalink_to_a_note_focuses_its_box(self) -> None:
         todo = {**_todo({"working": {}}, []), "Notes": [self._note("a fact", "000f")]}
-        focus = todo_web.resolve_focus(Path("."), dict(todo), ["objid", "000f"])
+        focus = todoweb.resolve_focus(dict(todo), ["objid", "000f"])
         self.assertEqual("000f", focus)
-        page = todo_web.render_todo_page(Path("."), dict(todo), focus_objid=focus)
+        page = todoweb.render_todo_page(Path("."), dict(todo), focus_objid=focus)
         self.assertIn('const FOCUS = "000f";', page)
         self.assertIn('data-obj="000f"', page)
 
     def test_long_notes_list_collapses_with_a_hint(self) -> None:
-        notes = [self._note("short", f"01{i:02d}") for i in range(todo_web._COLLAPSE_ITEMS + 1)]
+        notes = [self._note("short", f"01{i:02d}") for i in range(todoweb_core._COLLAPSE_ITEMS + 1)]
         section = _section_of(_page({**_todo({"working": {}}, []), "Notes": notes}), "Notes")
         self.assertIn("<details", section)
         self.assertIn(f"{len(notes)} notes", section)
@@ -627,7 +628,7 @@ class ReltoChipTest(unittest.TestCase):
             ],
             "WorkItems": [],
         }
-        static = todo_web._static_repr_html(Path("."), child, "")
+        static = todoweb_core._static_repr_html(child, "")
         self.assertIn("relto-chip", static)
         self.assertNotIn("idlink", static)
 
