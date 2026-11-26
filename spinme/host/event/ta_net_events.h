@@ -1,0 +1,70 @@
+/* Net TaskActor event interface (API + stub; no HTTP). */
+#ifndef SPINME_TA_NET_EVENTS_H
+#define SPINME_TA_NET_EVENTS_H
+
+#include "ta_event.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+#define TA_NET_NAME "Net"
+
+/* Net-owned type range 0x300.. */
+enum {
+    TA_EV_NET_SET_DIALECT = 0x300, /* MPD vs Sonos wire dialect */
+    TA_EV_NET_POLL = 0x301,        /* status poll request */
+    TA_EV_NET_SET = 0x302,         /* volume/transport set */
+    TA_EV_NET_ALBUMART = 0x303,    /* fetch artwork */
+    /* Completions (post to reply_to). */
+    TA_EV_NET_POLL_DONE = 0x310,
+    TA_EV_NET_SET_DONE = 0x311,
+    TA_EV_NET_ALBUMART_DONE = 0x312,
+    /* HTTP POST /event/... sync reply (session_id correlates). */
+    TA_EV_NET_HTTP_REPLY = 0x320,
+    /* Log -> Net: short RFC-5424 batch (TCP QuLog). */
+    TA_EV_NET_LOG_DRAIN = 0x321,
+    /* Net -> Log: ACK cursor; Log advances ring heads through max_seq. */
+    TA_EV_NET_LOG_DRAIN_ACK = 0x322,
+    /* Scheduler -> Net: re-advertise mDNS (spinme.local). */
+    TA_EV_NET_MDNS_ADVERTISE = 0x323
+};
+
+#define TA_NET_MDNS_HOSTNAME "spinme"
+#define TA_NET_MDNS_PERIOD_MS 30000u
+
+#define TA_NET_LOG_DRAIN_MAX 512
+
+/* ControlEvents (toward Controller via Router) -- shared surface doc. */
+enum {
+    TA_EV_CTRL_TOGGLE = 0x400,
+    TA_EV_CTRL_VOLUME = 0x401,
+    TA_EV_CTRL_NEXT = 0x402,
+    TA_EV_CTRL_PREV = 0x403,
+    TA_EV_CTRL_SET_ACTIVE = 0x404,
+    TA_EV_CTRL_POLL = 0x405 /* poll-now tick (Scheduler cadence or ad hoc) */
+};
+/* DebugAll / DebugStatus: TA_EV_DEBUG_* in ta_event.h (0x406 / 0x407). */
+
+typedef struct ta_net_stats {
+    unsigned handled;
+    unsigned unknown;
+    unsigned set_dialect;
+    unsigned poll;
+    unsigned set;
+    unsigned albumart;
+    unsigned replies_posted;
+} ta_net_stats_t;
+
+void ta_net_reset(void);
+void ta_net_start(void);
+int ta_net_enqueue(const ta_event_envelope_t *env);
+int ta_net_handle(const ta_event_envelope_t *env);
+const ta_net_stats_t *ta_net_stats(void);
+
+
+#ifdef __cplusplus
+}
+#endif
+#endif

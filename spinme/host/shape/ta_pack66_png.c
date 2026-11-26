@@ -1,0 +1,429 @@
+#include "ta_pack66_png.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zlib.h>
+
+static uint8_t expand6(uint8_t v6) {
+    return (uint8_t)((v6 * 255u) / 63u);
+}
+
+/* a2 src-over into an already-populated pack66 fb (resolved a=3). */
+static ta_pack66_t blend_a2_pack(ta_pack66_t dst, ta_pack66_t src) {
+    uint8_t sr, sg, sb, sa;
+    uint8_t dr, dg, db, da;
+    unsigned inv;
+
+    ta_unpack66(src, &sr, &sg, &sb, &sa);
+    if (sa == 0) {
+        return dst;
+    }
+    if (sa >= 3) {
+        return src;
+    }
+    ta_unpack66(dst, &dr, &dg, &db, &da);
+    (void)da;
+    inv = 3u - (unsigned)sa;
+    return ta_pack66_rgba(
+        (uint8_t)(((unsigned)sr * sa + (unsigned)dr * inv) / 3u),
+        (uint8_t)(((unsigned)sg * sa + (unsigned)dg * inv) / 3u),
+        (uint8_t)(((unsigned)sb * sa + (unsigned)db * inv) / 3u), 3);
+}
+
+void ta_pack66_blit_fb(ta_pack66_t *fb, uint16_t panel_w, uint16_t panel_h,
+                       int x, int y, int w, int h, const ta_pack66_t *src,
+                       int stride_px) {
+    int row;
+    int col;
+
+    if (fb == NULL || src == NULL || panel_w == 0 || panel_h == 0 || w <= 0 ||
+        h <= 0 || stride_px <= 0) {
+        return;
+    }
+    for (row = 0; row < h; row++) {
+        int dy = y + row;
+
+        if (dy < 0 || dy >= (int)panel_h) {
+            continue;
+        }
+        for (col = 0; col < w; col++) {
+            int dx = x + col;
+            size_t di;
+            uint8_t r, g, b, a;
+            ta_pack66_t p;
+
+            if (dx < 0 || dx >= (int)panel_w) {
+                continue;
+            }
+            p = src[(size_t)row * (size_t)stride_px + (size_t)col];
+            ta_unpack66(p, &r, &g, &b, &a);
+            if (a == 0) {
+                continue;
+            }
+            di = (size_t)dy * (size_t)panel_w + (size_t)dx;
+            if (a >= 3) {
+                fb[di] = p;
+            } else {
+                fb[di] = blend_a2_pack(fb[di], p);
+            }
+        }
+    }
+}
+
+static void crc_table_init(uint32_t *table) {
+    uint32_t n;
+    uint32_t c;
+    int k;
+
+    for (n = 0; n < 256; n++) {
+        c = n;
+        for (k = 0; k < 8; k++) {
+            if (c & 1u) {
+                c = 0xedb88320u ^ (c >> 1);
+            } else {
+                c = c >> 1;
+            }
+        }
+        table[n] = c;
+    }
+}
+
+static uint32_t crc_update(uint32_t crc, const uint8_t *buf, size_t len,
+                           const uint32_t *table) {
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        crc = table[(crc ^ buf[i]) & 0xffu] ^ (crc >> 8);
+    }
+    return crc;
+}
+
+static uint32_t crc_chunk(const uint8_t *typeb, const uint8_t *data, size_t len,
+                          const uint32_t *table) {
+    uint32_t crc = 0xffffffffu;
+
+    crc = crc_update(crc, typeb, 4, table);
+    if (len > 0 && data != NULL) {
+        crc = crc_update(crc, data, len, table);
+    }
+    return crc ^ 0xffffffffu;
+}
+
+static void be32(uint8_t *out, uint32_t v) {
+    out[0] = (uint8_t)(v >> 24);
+    out[1] = (uint8_t)(v >> 16);
+    out[2] = (uint8_t)(v >> 8);
+    out[3] = (uint8_t)v;
+}
+
+static int write_chunk(FILE *fp, const char *type, const uint8_t *data,
+                       size_t len, const uint32_t *table) {
+    uint8_t lenb[4];
+    uint8_t typeb[4];
+    uint8_t crcb[4];
+    uint32_t crc;
+    size_t i;
+
+    be32(lenb, (uint32_t)len);
+    for (i = 0; i < 4; i++) {
+        typeb[i] = (uint8_t)type[i];
+    }
+    crc = crc_chunk(typeb, data, len, table);
+    be32(crcb, crc);
+    if (fwrite(lenb, 1, 4, fp) != 4 || fwrite(typeb, 1, 4, fp) != 4) {
+        return -1;
+    }
+    if (len > 0 && fwrite(data, 1, len, fp) != len) {
+        return -1;
+    }
+    if (fwrite(crcb, 1, 4, fp) != 4) {
+        return -1;
+    }
+    return 0;
+}
+
+int ta_pack66_write_png_scaled(const char *path, uint16_t w, uint16_t h,
+                               const ta_pack66_t *px, unsigned scale) {
+    ta_pack66_t *big = NULL;
+    uint16_t bw;
+    uint16_t bh;
+    unsigned y;
+    unsigned x;
+    int rc;
+
+    if (px == NULL || w == 0 || h == 0 || scale == 0) {
+        return -1;
+    }
+    if (scale == 1) {
+        return ta_pack66_write_png(path, w, h, px);
+    }
+    bw = (uint16_t)(w * scale);
+    bh = (uint16_t)(h * scale);
+    big = (ta_pack66_t *)malloc((size_t)bw * (size_t)bh * sizeof(ta_pack66_t));
+    if (big == NULL) {
+        return -1;
+    }
+    for (y = 0; y < h; y++) {
+        unsigned sy;
+
+        for (sy = 0; sy < scale; sy++) {
+            for (x = 0; x < w; x++) {
+                unsigned sx;
+                ta_pack66_t p = px[(size_t)y * w + x];
+
+                for (sx = 0; sx < scale; sx++) {
+                    big[((size_t)y * scale + sy) * bw + (size_t)x * scale + sx] =
+                        p;
+                }
+            }
+        }
+    }
+    rc = ta_pack66_write_png(path, bw, bh, big);
+    free(big);
+    return rc;
+}
+
+int ta_pack66_write_png(const char *path, uint16_t w, uint16_t h,
+                        const ta_pack66_t *px) {
+    FILE *fp;
+    uint32_t table[256];
+    uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    uint8_t ihdr[13];
+    size_t raw_n;
+    uint8_t *raw = NULL;
+    uint8_t *comp = NULL;
+    uLongf comp_bound;
+    uLongf comp_n;
+    size_t y;
+    int rc = -1;
+
+    if (path == NULL || px == NULL || w == 0 || h == 0) {
+        return -1;
+    }
+    crc_table_init(table);
+    raw_n = (size_t)h * ((size_t)w * 3u + 1u);
+    raw = (uint8_t *)malloc(raw_n);
+    if (raw == NULL) {
+        return -1;
+    }
+    for (y = 0; y < h; y++) {
+        size_t row = y * ((size_t)w * 3u + 1u);
+        size_t x;
+
+        raw[row] = 0; /* filter None */
+        for (x = 0; x < w; x++) {
+            uint8_t r6, g6, b6, a2;
+            size_t o = row + 1u + x * 3u;
+
+            ta_unpack66(px[y * w + x], &r6, &g6, &b6, &a2);
+            if (a2 == 0) {
+                raw[o] = 0;
+                raw[o + 1] = 0;
+                raw[o + 2] = 0;
+            } else {
+                raw[o] = expand6(r6);
+                raw[o + 1] = expand6(g6);
+                raw[o + 2] = expand6(b6);
+            }
+        }
+    }
+    comp_bound = compressBound((uLong)raw_n);
+    comp = (uint8_t *)malloc(comp_bound);
+    if (comp == NULL) {
+        free(raw);
+        return -1;
+    }
+    comp_n = comp_bound;
+    if (compress2(comp, &comp_n, raw, (uLong)raw_n, Z_BEST_SPEED) != Z_OK) {
+        free(comp);
+        free(raw);
+        return -1;
+    }
+    fp = fopen(path, "wb");
+    if (fp == NULL) {
+        free(comp);
+        free(raw);
+        return -1;
+    }
+    if (fwrite(sig, 1, 8, fp) != 8) {
+        goto done;
+    }
+    be32(ihdr + 0, w);
+    be32(ihdr + 4, h);
+    ihdr[8] = 8;  /* bit depth */
+    ihdr[9] = 2;  /* RGB */
+    ihdr[10] = 0; /* compression */
+    ihdr[11] = 0; /* filter */
+    ihdr[12] = 0; /* interlace */
+    if (write_chunk(fp, "IHDR", ihdr, 13, table) != 0) {
+        goto done;
+    }
+    if (write_chunk(fp, "IDAT", comp, (size_t)comp_n, table) != 0) {
+        goto done;
+    }
+    if (write_chunk(fp, "IEND", NULL, 0, table) != 0) {
+        goto done;
+    }
+    rc = 0;
+done:
+    fclose(fp);
+    free(comp);
+    free(raw);
+    return rc;
+}
+
+static uint32_t rd_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+int ta_pack66_read_png_rgb(const char *path, uint16_t *out_w, uint16_t *out_h,
+                           uint8_t **out_rgb) {
+    FILE *fp;
+    uint8_t sig[8];
+    uint8_t expect[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    uint32_t w = 0;
+    uint32_t h = 0;
+    uint8_t *idat = NULL;
+    size_t idat_n = 0;
+    uint8_t *raw = NULL;
+    uint8_t *rgb = NULL;
+    uLongf raw_n = 0;
+    size_t y;
+    int got_ihdr = 0;
+    int got_iend = 0;
+
+    if (path == NULL || out_w == NULL || out_h == NULL || out_rgb == NULL) {
+        return -1;
+    }
+    *out_rgb = NULL;
+    fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return -1;
+    }
+    if (fread(sig, 1, 8, fp) != 8 || memcmp(sig, expect, 8) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    while (!got_iend) {
+        uint8_t lenb[4];
+        uint8_t type[4];
+        uint32_t len;
+        uint8_t *data = NULL;
+
+        if (fread(lenb, 1, 4, fp) != 4 || fread(type, 1, 4, fp) != 4) {
+            goto fail;
+        }
+        len = rd_be32(lenb);
+        if (len > 0) {
+            data = (uint8_t *)malloc(len);
+            if (data == NULL || fread(data, 1, len, fp) != len) {
+                free(data);
+                goto fail;
+            }
+        }
+        if (fseek(fp, 4, SEEK_CUR) != 0) { /* skip CRC */
+            free(data);
+            goto fail;
+        }
+        if (memcmp(type, "IHDR", 4) == 0) {
+            if (len != 13 || data == NULL || data[8] != 8 || data[9] != 2 ||
+                data[10] != 0 || data[11] != 0 || data[12] != 0) {
+                free(data);
+                goto fail;
+            }
+            w = rd_be32(data);
+            h = rd_be32(data + 4);
+            got_ihdr = 1;
+            free(data);
+        } else if (memcmp(type, "IDAT", 4) == 0) {
+            uint8_t *nbuf;
+            if (!got_ihdr) {
+                free(data);
+                goto fail;
+            }
+            nbuf = (uint8_t *)realloc(idat, idat_n + len);
+            if (nbuf == NULL) {
+                free(data);
+                goto fail;
+            }
+            idat = nbuf;
+            if (len > 0 && data != NULL) {
+                memcpy(idat + idat_n, data, len);
+            }
+            idat_n += len;
+            free(data);
+        } else if (memcmp(type, "IEND", 4) == 0) {
+            free(data);
+            got_iend = 1;
+        } else {
+            free(data);
+        }
+    }
+    fclose(fp);
+    fp = NULL;
+    if (!got_ihdr || w == 0 || h == 0 || w > 4096 || h > 4096 || idat == NULL) {
+        goto fail;
+    }
+    raw_n = (uLongf)h * ((uLongf)w * 3u + 1u);
+    raw = (uint8_t *)malloc(raw_n);
+    if (raw == NULL) {
+        goto fail;
+    }
+    if (uncompress(raw, &raw_n, idat, (uLong)idat_n) != Z_OK) {
+        goto fail;
+    }
+    free(idat);
+    idat = NULL;
+    rgb = (uint8_t *)malloc((size_t)w * (size_t)h * 3u);
+    if (rgb == NULL) {
+        goto fail;
+    }
+    for (y = 0; y < h; y++) {
+        size_t row = y * ((size_t)w * 3u + 1u);
+        if (raw[row] != 0) {
+            goto fail; /* only filter None */
+        }
+        memcpy(rgb + y * (size_t)w * 3u, raw + row + 1u, (size_t)w * 3u);
+    }
+    free(raw);
+    *out_w = (uint16_t)w;
+    *out_h = (uint16_t)h;
+    *out_rgb = rgb;
+    return 0;
+fail:
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    free(idat);
+    free(raw);
+    free(rgb);
+    return -1;
+}
+
+int ta_pack66_png_pixel_equal(const char *path_a, const char *path_b) {
+    uint16_t wa, ha, wb, hb;
+    uint8_t *ra = NULL;
+    uint8_t *rb = NULL;
+    size_t n;
+    int rc;
+
+    if (ta_pack66_read_png_rgb(path_a, &wa, &ha, &ra) != 0) {
+        return -1;
+    }
+    if (ta_pack66_read_png_rgb(path_b, &wb, &hb, &rb) != 0) {
+        free(ra);
+        return -1;
+    }
+    if (wa != wb || ha != hb) {
+        free(ra);
+        free(rb);
+        return 1;
+    }
+    n = (size_t)wa * (size_t)ha * 3u;
+    rc = memcmp(ra, rb, n) == 0 ? 0 : 1;
+    free(ra);
+    free(rb);
+    return rc;
+}

@@ -1,1 +1,1 @@
-../../../../host/ta_registry.c
+../../../../host/actor/ta_registry.c

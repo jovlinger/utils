@@ -1,10 +1,26 @@
 #!/usr/bin/env python3
-"""Post-ingest: musicscan → .meta.combined.json → importtags → tag mirror refresh.
+"""Post-ingest stage: musicscan -> .meta.combined.json -> importtags -> tag mirrors.
+
+Not a library entry point -- ``ingest`` is the ONE command that adds albums to
+the playable collection. Run this after the album is already under ``files/``,
+ideally after dirname rename from embedded-tag consensus to ``Artist - Album``
+(year stays out of the folder name). Provider lookups parse the basename; junk
+dirnames yield thin or wrong sidecars.
+
+Pipeline (writes need the store remounted rw; this program re-execs under
+``with-ro-remounted-rw`` unless ``--dry-run``, ``SHASRV_RW=1``, or
+``POSTINGEST_NO_REMOUNT=1``):
+
+1. musicscan for missing provider sidecars (or ``--force_provider``).
+2. Rebuild ``.meta.combined.json`` when stale (or ``--force_retag``).
+3. ``importtags`` into the shadup DB (unless ``--skip-import``).
+4. ``shadup refresh-extracted-tags`` to rebuild ``files/_meta`` and
+   ``files/_tags`` (unless ``--skip-refresh``). For mirrors only, use the
+   ``refresh-extracted-tags`` wrapper instead of this full path.
 
 Discovers every directory that contains audio (including nested), plus parents
-of those dirs (multi-CD boxes get a set-union combined). Rebuilds
-``.meta.combined.json`` when inputs are newer (or ``--force_retag``). Provider APIs
-are queried only for missing sidecars, or when ``--force_provider`` is set.
+of those dirs (multi-CD boxes get a set-union combined). See
+``shadup/README.md`` ("Tag ingest and browse symlinks").
 """
 
 from __future__ import annotations
@@ -215,12 +231,14 @@ def maybe_reexec_under_remount(argv: Sequence[str], *, dry_run: bool) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "For album dirs under the store: run musicology (working providers), "
-            "write .meta.combined.json (synonym-normalized type;value tags), "
-            "importtags from that file, and refresh files/_tags. Parents of "
-            "multi-CD / nested albums get a set-union combined. Skips work when "
-            "combined is newer than inputs unless --force_retag. Does not re-query "
-            "musicology providers unless sidecars are missing or --force_provider."
+            "Post-ingest only (ingest is the library entry point). For album dirs "
+            "already under the store: run musicology (working providers), write "
+            ".meta.combined.json (synonym-normalized type;value tags), importtags "
+            "from that file, and refresh files/_tags. Prefer running after the "
+            "folder is ``Artist - Album``. Parents of multi-CD / nested albums get "
+            "a set-union combined. Skips work when combined is newer than inputs "
+            "unless --force_retag. Does not re-query musicology providers unless "
+            "sidecars are missing or --force_provider."
         )
     )
     parser.add_argument(

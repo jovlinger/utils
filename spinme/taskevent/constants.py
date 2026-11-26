@@ -1,0 +1,106 @@
+"""Sizes and type ids mirrored from host/ta_event.h and actor headers."""
+
+from __future__ import annotations
+
+TA_NAME_MAX: int = 24
+TA_TEXT_MAX: int = 96
+TA_PATH_MAX: int = 48
+TA_LOG_TEXT_MAX: int = 30
+TA_DRAW_TEXT_CHUNK_MAX: int = 30
+TA_ALL_KEY_MAX: int = 32
+TA_ALL_INFORM_MAX: int = 64
+TA_NET_HTTP_REPLY_MAX: int = 64
+
+# Foundation
+TA_EV_NOP: int = 0
+TA_EV_LOG: int = 1
+TA_EV_SET_ROUTE: int = 2
+TA_EV_ALL_PERFORM_INIT: int = 3
+TA_EV_ALL_INFORM_RESULT: int = 4
+
+# ISR
+TA_EV_ISR_TOUCH: int = 0x100
+TA_EV_ISR_ROTARY: int = 0x101
+
+# Draw
+TA_EV_DRAW_UPDATE: int = 0x200
+TA_EV_DRAW_PAINT: int = 0x201
+TA_EV_DRAW_REACT_TOUCH: int = 0x202
+TA_EV_DRAW_REACT_ROTATE: int = 0x203
+TA_EV_DRAW_SET_SHAPE_STACK: int = 0x204
+TA_EV_DRAW_LOG: int = 0x205
+TA_EV_DRAW_SCROLL_OX: int = 0x206
+TA_EV_DRAW_SET_TEXT: int = 0x207
+TA_EV_DRAW_UPDATE_DONE: int = 0x210
+TA_EV_DRAW_PAINT_DONE: int = 0x211
+# Draw inform bodies (Python SoT; C enums land in ta_draw_events.h).
+TA_EV_DRAW_INFORM_SONGINFO: int = 0x220
+TA_EV_DRAW_INFORM_VOLUME: int = 0x221
+TA_EV_DRAW_INFORM_CURRPOS: int = 0x222
+
+# Net
+TA_EV_NET_SET_DIALECT: int = 0x300
+TA_EV_NET_POLL: int = 0x301
+TA_EV_NET_SET: int = 0x302
+TA_EV_NET_ALBUMART: int = 0x303
+TA_EV_NET_POLL_DONE: int = 0x310
+TA_EV_NET_SET_DONE: int = 0x311
+TA_EV_NET_ALBUMART_DONE: int = 0x312
+TA_EV_NET_HTTP_REPLY: int = 0x320
+TA_EV_NET_LOG_DRAIN: int = 0x321
+TA_EV_NET_LOG_DRAIN_ACK: int = 0x322
+TA_EV_NET_MDNS_ADVERTISE: int = 0x323
+TA_NET_LOG_DRAIN_MAX: int = 512
+TA_TIMEOUT_SHORT_MS: int = 2000
+
+# Control
+TA_EV_CTRL_TOGGLE: int = 0x400
+TA_EV_CTRL_VOLUME: int = 0x401
+TA_EV_CTRL_NEXT: int = 0x402
+TA_EV_CTRL_PREV: int = 0x403
+TA_EV_CTRL_SET_ACTIVE: int = 0x404
+TA_EV_CTRL_POLL: int = 0x405
+# Controller debug fan-out (HTTP async -> sync; incomplete -> 201).
+TA_EV_DEBUG_ALL: int = 0x406
+TA_EV_DEBUG_STATUS: int = 0x407
+# Universal: every TaskActor replies with its accepted HTTP/event slugs.
+TA_EV_LIST_EVENTS: int = 0x408
+# Controller: newline-separated registered TaskActor names.
+TA_EV_LIST_TASKS: int = 0x409
+
+# Scheduler
+TA_EV_SCHED_START: int = 0x500
+TA_EV_SCHED_STOP: int = 0x501
+TA_EV_SCHED_TICK: int = 0x502
+
+# Test (host / dev-only actor)
+TA_EV_TEST_RUN: int = 0x600
+TA_EV_TEST_GET_DEBUG: int = 0x601
+TA_EV_TEST_DONE: int = 0x610
+TA_TEST_SEL_MAX: int = 48
+TA_TEST_MODE_ONE: int = 0
+TA_TEST_MODE_SUITE: int = 1
+TA_TEST_MODE_TIMING: int = 2
+
+# KvConfig TaskActor (owns linked-list KV image)
+TA_EV_KV_GET: int = 0x700
+TA_EV_KV_SET: int = 0x701
+TA_EV_KV_LIST: int = 0x702
+TA_EV_KV_DELETE: int = 0x703
+TA_KV_KEY_MAX: int = 32
+TA_KV_FORM_VAL_MAX: int = 96
+
+TA_PLAYING_STOP: int = 0
+TA_PLAYING_PLAY: int = 1
+TA_PLAYING_PAUSE: int = 2
+
+TA_DRAW_UPD_CADENCE: int = 0
+TA_DRAW_UPD_STATUS: int = 1
+TA_DRAW_UPD_BASE_DIRTY: int = 2
+
+TA_CTRL_VOL_NONE: int = 0
+TA_CTRL_VOL_REL: int = 1
+TA_CTRL_VOL_ABS: int = 2
+
+TA_NET_SET_OP_VOLUME: int = 0
+TA_NET_SET_OP_TOGGLE: int = 1

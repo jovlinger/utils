@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """Ingest files/dirs into /mnt/sdb2/music/flac via shadup.py.
 
+``ingest`` (``ingest.sh`` on PATH) is the ONE command that enters an album into
+the playable library. This module is the hash-copy stage only.
+
+Stages of the entry path (see also ``ingest.sh`` and ``shadup/README.md``):
+
+1. Hash copy into ``data/`` + ``files/<basename>/`` (this file; wrapped by
+   ``ingest.sh`` which remounts the store rw via sudo).
+2. Optional rename from embedded-tag consensus to ``Artist - Album``
+   (``ingest_rename``).
+3. Tag ingest and browse symlinks are a separate follow-up, not invoked here:
+   - ``postingest`` -- musicscan, ``.meta.combined.json``, importtags into the
+     shadup DB, then ``shadup refresh-extracted-tags`` (remounts itself).
+   - ``refresh-extracted-tags`` -- rebuild ``files/_meta`` and ``files/_tags``
+     from tags already in the DB only (``refresh-extracted-tags.sh``; remounts).
+
+``postingest`` / ``musicscan`` / ``shadup mv`` alone do not add an album to the
+playable library.
+
 Observable contract (matches deprecated/shasrv_old/ingest.sh):
 - payloads under <store-root>/data/XX/<sha256> (``--shadir`` is the store root, not ``data/``)
 - browse tree under files/<dest_prefix>/<rel>
@@ -24,11 +42,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+_MOD_DIR = Path(__file__).resolve().parent
+if str(_MOD_DIR) not in sys.path:
+    sys.path.insert(0, str(_MOD_DIR))
+
+from ingest_rename import maybe_rename_ingested_album  # noqa: E402
+
 STORE_ROOT = Path(os.environ.get("SHASRV_STORE_ROOT", "/mnt/sdb2/music/flac"))
 DATA_DIR = STORE_ROOT / "data"
 FILES_DIR = STORE_ROOT / "files"
 DB_PATH = Path(os.environ.get("SHASRV_DB", str(Path.home() / "Music/shasrv/shadup.db")))
-SHADUP_PY = Path(__file__).resolve().parent / "shadup.py"
+SHADUP_PY = _MOD_DIR / "shadup.py"
 # Skipped by file extension (e.g. release.sfv, release.nfo, folder.url, or basename ".sfv").
 INGEST_SKIP_EXTENSIONS = frozenset({".sfv", ".nfo", ".url"})
 # Skipped when basename matches glob (``*`` is wildcard; leading ``.`` is literal).
@@ -361,28 +385,33 @@ def ingest_dir(src_dir: Path) -> None:
             copied_dests.append(dst)
             pending.append(rel)
 
-        if not pending:
-            prune_empty_dirs(src_dir)
-            return
+        if pending:
+            # Delegate walking/storage to shadup.py.
+            store_with_shadup(dest_root)
 
-        # Delegate walking/storage to shadup.py.
-        store_with_shadup(dest_root)
+            for rel in pending:
+                dst = dest_root / rel
+                payload = rewrite_symlink_relative(dst)
+                try:
+                    payload.chmod(0o644)
+                except OSError:
+                    pass
 
-        for rel in pending:
-            dst = dest_root / rel
-            payload = rewrite_symlink_relative(dst)
-            try:
-                payload.chmod(0o644)
-            except OSError:
-                pass
-
-        for rel in rel_files:
-            src = src_dir / rel
-            if not src.exists():
-                continue
-            dst = dest_root / rel
-            remove_source_if_verified(src, dst)
+            for rel in rel_files:
+                src = src_dir / rel
+                if not src.exists():
+                    continue
+                dst = dest_root / rel
+                remove_source_if_verified(src, dst)
         prune_empty_dirs(src_dir)
+        if dest_root.is_dir():
+            maybe_rename_ingested_album(
+                album_dir=dest_root,
+                files_dir=FILES_DIR,
+                store_root=STORE_ROOT,
+                db_path=DB_PATH,
+                shadup_py=SHADUP_PY,
+            )
     except Exception as exc:
         err(f"ingest failed for {src_dir}: {exc}")
         for dst in copied_dests:

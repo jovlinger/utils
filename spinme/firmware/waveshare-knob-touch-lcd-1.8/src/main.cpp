@@ -14,6 +14,7 @@
  * "query" line.
  */
 #include <Arduino.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>
@@ -43,6 +44,7 @@
 #include "ta_registry.h"
 #include "ta_router.h"
 #include "ta_sched_events.h"
+
 
 /* ISR -> Draw only. Two single-producer mails: the encoder ISR and the
  * touch sampler (Core A task context) never share a tail. */
@@ -191,6 +193,7 @@ static void draw_task(void *arg) {
     /* Scheduler real time: this task is the only fabric runner. */
     ta_device_tick_ms(millis());
     pump_player_http();
+    /* Inbound :80 is Http actor (ta_http listen task). */
     handled += ta_draw_pump(mails, 2);
     if (handled > 0) {
       const ta_draw_stats_t *ds = ta_draw_stats();
@@ -337,6 +340,14 @@ static void service_query(void) {
       (void)ta_isr_post_rotary(&gMailRotary, (int8_t)steps, 0);
       notify_draw();
       Serial.printf("rot inject %d\n", steps);
+      continue;
+    }
+    if (strcmp(buf, "ip") == 0) {
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("ip %s\n", WiFi.localIP().toString().c_str());
+      } else {
+        Serial.println("ip none");
+      }
       continue;
     }
     if (strcmp(buf, "query") != 0) {

@@ -1,0 +1,1 @@
+../../../../host/shape/ta_artwork.h

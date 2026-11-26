@@ -83,9 +83,11 @@ cd "$("$TODO" ensure_worktree "$ID" | jq -r .worktree)"
 "$TODO" relto-add "$ID" workitem:0 --target=objid:0012  # cite it from the item it bears on
 "$TODO" work-item-done "$ID" -m "..." # or add-subtodo / merge after git merge
 
-# finish (WORKING.md section 6 -- includes worktree remove after set done)
+# finish (WORKING.md section 6 -- worktree remove, THEN merge into DEFAULT_BRANCH)
 "$TODO" doctor "$ID"                  # must be ok
 "$TODO" set "$ID" --state done --actual-summary="..."
+# last necessary step: git merge the todo branch into DEFAULT_BRANCH
+# (the checkout the user runs). Push is separate and only when asked.
 
 # review cycle before the PR goes to humans (WORKING.md section 7, fixed order):
 # HICAP review + fix -> push -> Copilot review (per-repo table; opportunity only)

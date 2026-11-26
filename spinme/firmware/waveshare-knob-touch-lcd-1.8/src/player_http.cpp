@@ -12,7 +12,12 @@
 #include <esp_heap_caps.h>
 #include <lwip/sockets.h>
 
+#include "ta_net_sntp.h"
+#include "ta_runtime_cfg.h"
 #include "wifi_local.h"
+
+extern "C" int ta_net_mdns_advertise(void);
+#include "ta_http_actor.h"
 
 #ifndef WIFI_SSID
 #define WIFI_SSID SPINME_WIFI_SSID
@@ -20,12 +25,14 @@
 #ifndef WIFI_PASS
 #define WIFI_PASS SPINME_WIFI_PASS
 #endif
-#ifndef VOLUMIO_HOST
-#define VOLUMIO_HOST "miniDSP-SHD.local"
-#endif
 #ifndef VOLUMIO_PORT
 #define VOLUMIO_PORT 3000
 #endif
+
+static const char *volumio_host(void) {
+  const ta_runtime_cfg_t *rc = ta_runtime_cfg();
+  return rc->mpd_host[0] != '\0' ? rc->mpd_host : TA_KV_DEF_MPD_HOST;
+}
 
 #ifndef PLAYER_HTTP_BODY_MAX
 #define PLAYER_HTTP_BODY_MAX (16u * 1024u)
@@ -155,13 +162,16 @@ static bool ensure_wifi_boot(uint32_t timeout_ms) {
   }
   gVolumioResolved = false;
   Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
-  setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0/2", 1);
-  tzset();
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  /* Wall clock: Net owns SNTP (todo:15b92eaa). */
+  ta_net_sntp_after_wifi();
+  /* mDNS needs WiFi; boot ALL_PERFORM_INIT may have run too early. */
+  (void)ta_net_mdns_advertise();
+  ta_http_wifi_up();
   return true;
 }
 
 static bool ensure_volumio_ip_boot(void) {
+  (void)ta_runtime_cfg_load(nullptr);
   IPAddress ip;
   if (gVolumioResolved) {
     return true;
@@ -170,8 +180,8 @@ static bool ensure_volumio_ip_boot(void) {
     return false;
   }
   /* Boot-only DNS. Runtime never calls hostByName. */
-  if (!WiFi.hostByName(VOLUMIO_HOST, ip) || ip == IPAddress((uint32_t)0)) {
-    Serial.printf("volumio dns fail %s\n", VOLUMIO_HOST);
+  if (!WiFi.hostByName(volumio_host(), ip) || ip == IPAddress((uint32_t)0)) {
+    Serial.printf("volumio dns fail %s\n", volumio_host());
     return false;
   }
   gVolumioIp = ip;
@@ -304,7 +314,7 @@ static bool build_request(OpKind kind) {
   }
   n = snprintf(gReq, sizeof gReq,
                "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path,
-               VOLUMIO_HOST);
+               volumio_host());
   if (n <= 0 || (size_t)n >= sizeof gReq) {
     return false;
   }

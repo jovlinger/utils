@@ -53,6 +53,9 @@ report."
 - "Next item looks like a different kind of work."
 - "I did two commits already."
 - Ending with **Next:** as if you are handing off to a future session.
+- "The branch is pushed." "The user did not ask to merge." "A PR is optional."
+  Finish merges the todo branch into `DEFAULT_BRANCH`
+  ([`WORKING.md` section 6](WORKING.md#6-finish-and-remove-the-worktree)).
 
 If you need to surface status, do it **while continuing**, not instead of
 continuing.
@@ -136,6 +139,7 @@ or escalate with `userneeded`.
 | Is `is-done` false? | Then I am not finished. |
 | Did I run the cursor item at its `[TIER]`? | Must be yes for any code I wrote this turn. |
 | Did I stop after a progress report? | That is a failure mode; continue. |
+| Is the todo branch merged into `DEFAULT_BRANCH`? | Required once finish has started. A pushed branch is not a merge. |
 
 ---
 

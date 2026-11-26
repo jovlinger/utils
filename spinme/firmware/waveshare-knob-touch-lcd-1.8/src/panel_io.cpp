@@ -303,12 +303,62 @@ static inline uint16_t pack66_to_565(uint32_t px) {
   return (uint16_t)(((r6 >> 1) << 11) | (g6 << 5) | (b6 >> 1));
 }
 
+static inline uint8_t pack66_a2(uint32_t px) {
+  return (uint8_t)((px >> 24) & 3u);
+}
+
+/* a2 src-over in RGB565: a=0 keep dst, a=3 src, else (s*a + d*(3-a))/3. */
+static uint16_t blend_a2_565(uint16_t dst, uint16_t src, uint8_t a2) {
+  if (a2 == 0) {
+    return dst;
+  }
+  if (a2 >= 3) {
+    return src;
+  }
+  const int sa = (int)a2;
+  const int inv = 3 - sa;
+  const int dr = (dst >> 11) & 31;
+  const int dg = (dst >> 5) & 63;
+  const int db = dst & 31;
+  const int sr = (src >> 11) & 31;
+  const int sg = (src >> 5) & 63;
+  const int sb = src & 31;
+  const int r = (sr * sa + dr * inv) / 3;
+  const int g = (sg * sa + dg * inv) / 3;
+  const int b = (sb * sa + db * inv) / 3;
+  return static_cast<uint16_t>((r << 11) | (g << 5) | b);
+}
+
+/* Shadow of what pack66 has put on the glass; a2 blends against this. */
+static uint16_t *gPackUnder = nullptr;
+
+static bool ensure_pack_under(void) {
+  if (gPackUnder != nullptr) {
+    return true;
+  }
+  const size_t bytes =
+      (size_t)LCD_WIDTH * (size_t)LCD_HEIGHT * sizeof(uint16_t);
+  gPackUnder = static_cast<uint16_t *>(
+      heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (gPackUnder == nullptr) {
+    gPackUnder = static_cast<uint16_t *>(malloc(bytes));
+  }
+  if (gPackUnder == nullptr) {
+    return false;
+  }
+  memset(gPackUnder, 0, bytes);
+  return true;
+}
+
 void panel_push_pack66(int x, int y, int w, int h, const uint32_t *src,
                        int stride_px) {
   int row = 0;
   int sx0 = 0;
   int sy0 = 0;
   if (gDev == nullptr || src == nullptr || w <= 0 || h <= 0 || stride_px < w) {
+    return;
+  }
+  if (!ensure_pack_under()) {
     return;
   }
   if (x < 0) {
@@ -343,8 +393,19 @@ void panel_push_pack66(int x, int y, int w, int h, const uint32_t *src,
     for (int r = 0; r < rows; ++r) {
       const uint32_t *line =
           src + (size_t)(sy0 + row + r) * (size_t)stride_px + (size_t)sx0;
+      uint16_t *under =
+          gPackUnder + (size_t)(y + row + r) * (size_t)LCD_WIDTH + (size_t)x;
       for (int c = 0; c < w; ++c) {
-        gBand[n++] = swap16(pack66_to_565(line[c]));
+        const uint32_t px = line[c];
+        const uint8_t a2 = pack66_a2(px);
+        uint16_t out;
+        if (a2 == 0) {
+          out = under[c]; /* keep album art / prior chrome */
+        } else {
+          out = blend_a2_565(under[c], pack66_to_565(px), a2);
+          under[c] = out;
+        }
+        gBand[n++] = swap16(out);
       }
     }
     set_window(x, y + row, w, rows);

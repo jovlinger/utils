@@ -8,7 +8,9 @@ The Waveshare firmware boots TaskActor-only (Draw is the sole glass owner;
 MPDController -> Net -> `player_http`); the old Core-B `uimk2_host` path is
 retired and unbuilt (`firmware/waveshare-knob-touch-lcd-1.8/retired/`).
 
-**As-built host catalog (events, shapes, ISR, flows):** [`EXPOSITION.md`](EXPOSITION.md).
+**As-built host catalog (events, shapes, ISR, flows):** [`docs/`](docs/README.md)
+(stub pointer: [`EXPOSITION.md`](EXPOSITION.md)). "Update exposition" means
+edit the section file named in that index.
 
 Python / Cursor agent notes: [`AGENTS.md`](AGENTS.md) (venv conventions also in
 root [`AGENTS.md`](../AGENTS.md)).
@@ -66,6 +68,10 @@ toggle or mute. Optional later: display from getState, haptics where present
 
 Toolchain default: Arduino ESP32 core via PlatformIO; ESP-IDF if OTA/layout needs
 it. MicroPython is optional, not factory default on the probed CrowPanel.
+
+Board install from `spinme/`: `make usbinstallall` (USB full image),
+`make usbinstalltasks` / `make otainstalltasks` (staged `ota_tasks/` blobs via
+`PUT /kv/<key>`). See [`AGENTS.md`](AGENTS.md).
 
 ```text
 Encoder/touch -> firmware logic -> WiFi HTTP -> Volumio :3000

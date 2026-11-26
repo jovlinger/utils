@@ -384,8 +384,28 @@ transition and worktree removal are separate halves; both must succeed.
    git worktree remove "$WT"
    git worktree list   # must not list $WT
    ```
-6. Branch handoff/retirement is **separate** -- see section 7. Do not `git branch -D`
-   as part of finish.
+6. **Merge the todo branch into `DEFAULT_BRANCH`.** This is the last necessary
+   step of finish. Do it in the main checkout after the worktree is gone:
+
+   ```bash
+   git -C "$MAIN" branch --show-current   # must equal $DEFAULT_BRANCH
+   git -C "$MAIN" merge "$BRANCH" -m "Merge branch '$BRANCH'"
+   git -C "$MAIN" merge-base --is-ancestor "$BRANCH" HEAD
+   ```
+
+   The checkout the user runs stays on `DEFAULT_BRANCH`. A finished branch that
+   is not an ancestor of that checkout is unused work. Stopping at `done`,
+   at worktree removal, at a pushed feature branch, or at "they did not ask
+   for a PR" skips this step. Section 7 is a later PR handoff. It does not
+   replace the merge. `todo.py set --state merged` is the PR bookkeeping
+   state, not this git merge. Leave the ticket at `done` here.
+
+   "Do not push unless asked" is only about `git push`. It is not a reason
+   to skip `git merge` into `DEFAULT_BRANCH`.
+
+   If the main checkout has dirty files that overlap the merge, stop and say
+   which paths. Do not stash, reset, or commit those other files to force
+   the merge through. Do not `git branch -D` as part of finish.
 
 **Failure handling**
 

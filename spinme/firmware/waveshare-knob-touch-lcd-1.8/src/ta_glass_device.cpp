@@ -102,12 +102,18 @@ static bool build_glyph(int i, uint16_t *max_h) {
   if (rgba == nullptr) {
     /* Shim (space): transparent run of the word gap width. */
     for (int k = 0; k < w * h; ++k) {
-      g->pixels[k] = ta_pack66_rgba(0, 0, 0, 0);
+      g->pixels[k] = TA_PACK66_TRANSPARENT;
     }
   } else {
     for (int k = 0; k < w * h; ++k) {
       const uint8_t a = rgba[(size_t)k * 4u + 3u];
-      g->pixels[k] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, a2_of(a));
+      const uint8_t a2 = a2_of(a);
+      /* a2==0 must be TRANSPARENT; white+a2==0 is additive wash. */
+      if (a2 == 0u) {
+        g->pixels[k] = TA_PACK66_TRANSPARENT;
+      } else {
+        g->pixels[k] = ta_pack66_rgba(0x3f, 0x3f, 0x3f, a2);
+      }
     }
   }
   if (g->h > *max_h) {

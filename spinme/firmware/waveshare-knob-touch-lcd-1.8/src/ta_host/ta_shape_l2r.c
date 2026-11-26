@@ -1,1 +1,1 @@
-../../../../host/ta_shape_l2r.c
+../../../../host/shape/ta_shape_l2r.c

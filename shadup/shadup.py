@@ -270,6 +270,14 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _nonnegative_int(value: str) -> int:
+    """Accept integers >= 0 for ``extract --strip``."""
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0: {value!r}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the AWS-style ``shadup [global] <action> [action-opts]`` parser."""
     parser = argparse.ArgumentParser(
@@ -330,7 +338,13 @@ def build_parser() -> argparse.ArgumentParser:
         "Materialization: by default, extract writes a hardlink when the target "
         "is on the same filesystem as shadir and a copy when it is on a "
         "different filesystem. With -s / --symlink, extract writes symlinks to "
-        "the stored blobs."
+        "the stored blobs.\n\n"
+        "Path rewrite: -p N / --strip N drops N leading path components from "
+        "each absolute destination (same counting as patch -p), then writes "
+        "the remainder under the current working directory. Use this when the "
+        "DB still records an old host root (e.g. /Users/.../notesxxx/files/...) "
+        "but you are extracting from a different tree. Pass --shadir for the "
+        "local store when meta.shadir still points at the old absolute path."
     )
     p_extract = sub.add_parser(
         "extract",
@@ -346,6 +360,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_extract.add_argument(
         "-d", "--show-deleted", action="store_true", help="Include deleted entries"
+    )
+    p_extract.add_argument(
+        "-p",
+        "--strip",
+        type=_nonnegative_int,
+        default=0,
+        metavar="N",
+        help=(
+            "Strip N leading destination path components (patch -p style) and "
+            "write under cwd (default: 0, keep absolute root from DB)"
+        ),
     )
     p_extract.add_argument(
         "-s",
@@ -634,8 +659,8 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-extracted-tags",
         help=(
             "Rebuild files/_meta/ and files/_tags/ browse mirrors from "
-            "filesystem + DB tags (tag leaves link to shared meta folders; "
-            "meta only links album — no _meta→_tags cycles; see tag_mirror_relpath)"
+            "filesystem + DB tags (tag leaves link to shared meta; meta also "
+            "links back into _tags -- intentional cycles; see tag_mirror_relpath)"
         ),
     )
 
@@ -1767,20 +1792,15 @@ def install_meta_directories(
     tags_by_dir: dict[str, frozenset[str]],
     name_by_dir: dict[str, str],
 ) -> int:
-    """Create ``_meta/<nested-path>/`` with ``album`` → real album only.
+    """Create ``_meta/<nested-path>/`` with ``album`` + per-tag links into ``_tags/``.
 
     *name_by_dir* maps ``dir_key`` → nested relpath (usually equal to ``dir_key``).
     Nested albums share path prefixes (``_meta/woodstock/vol 01`` under
     ``_meta/woodstock``); parent metas are real directories that may contain child
-    meta folders alongside ``album``.
-
-    Deliberately does **not** link ``_meta/.../<tag_path>`` back into ``_tags/``:
-    that back-edge created cycles with :func:`install_tag_bucket_meta_links`
-    (``_tags → _meta → _tags``) that MPD unrolls into path explosions.
-    *tags_by_dir* is accepted for call-site compatibility but unused.
+    meta folders alongside ``album`` / tag links.
     """
-    del tags_by_dir  # API compat; tag membership lives only under ``_tags/``.
     meta_root = os.path.join(files_root, META_DIR_NAME)
+    tags_root = os.path.join(files_root, "_tags")
     n_meta = 0
     for dir_key, name in sorted(name_by_dir.items(), key=lambda kv: kv[1]):
         meta_dir = os.path.join(meta_root, *name.split("/"))
@@ -1789,11 +1809,22 @@ def install_meta_directories(
         album_abs = os.path.join(files_root, *dir_key.split("/"))
         album_link = os.path.join(meta_dir, META_ALBUM_LINK_NAME)
         _force_symlink(album_link, os.path.relpath(album_abs, meta_dir))
-        out(
-            "refresh-extracted-tags meta {name}/album",
-            2,
-            name=name,
-        )
+
+        tags = tags_by_dir.get(dir_key) or frozenset()
+        tag_names = sorted(tags) if tags else [NOTAGS_DIR_NAME]
+        for tag in tag_names:
+            parts = tag_mirror_relpath(tag)
+            bucket = os.path.join(tags_root, *parts)
+            os.makedirs(bucket, exist_ok=True)
+            link = os.path.join(meta_dir, *parts)
+            parent = os.path.dirname(link)
+            _force_symlink(link, os.path.relpath(bucket, parent))
+            out(
+                "refresh-extracted-tags meta {name}/{tag_dir}",
+                2,
+                name=name,
+                tag_dir="/".join(parts),
+            )
     return n_meta
 
 
@@ -1857,7 +1888,7 @@ def install_tag_bucket_meta_links(
 
 
 def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None:
-    """Rebuild ``files/_meta`` and ``files/_tags`` acyclic browse mirrors.
+    """Rebuild ``files/_meta`` and ``files/_tags`` circular browse mirrors.
 
     Passes:
 
@@ -1867,11 +1898,11 @@ def handle_refresh_extracted_tags(conn: sqlite3.Connection, shadir: str) -> None
     2. **Plan** via :func:`plan_refresh_extracted_tag_mirrors`: nested relpath
        per directory, rows ``(tag, meta_relpath, dir_key)``.
     3. **Meta folders** via :func:`install_meta_directories`: one
-       ``_meta/<nested>/`` per directory with ``album`` → real dir only
-       (no backlinks into ``_tags/``).
+       ``_meta/<nested>/`` per directory with ``album`` → real dir and
+       ``<tag_path>`` → ``_tags/<tag_path>``.
     4. **Tag buckets** via :func:`install_tag_bucket_meta_links`:
        ``_tags/<tag_path>/<nested>`` → the **same** ``_meta/<nested>`` (not the
-       album). Edges are one-way: tags → meta → album.
+       album). Cycles between meta ↔ tag buckets are intentional.
     """
     files_root = resolve_files_root_abs(conn, shadir)
     if files_root is None:
@@ -1953,6 +1984,37 @@ def _normalize_extract_prefixes(prefixes: list[str]) -> tuple[list[str], list[st
         normalized.append(os.path.normpath(prefix))
         abs_prefixes.append(os.path.abspath(prefix))
     return normalized, abs_prefixes
+
+
+def strip_path_components(path: str, n: int) -> str:
+    """Return *path* with *n* leading components removed (``patch -p`` semantics).
+
+    Splits on ``os.sep``. For an absolute path, the empty segment before the
+    first separator counts as a component, so ``-p1`` drops the leading slash.
+    *n* <= 0 leaves *path* unchanged. Raises ``ValueError`` when *n* would
+    remove the entire path.
+    """
+    if n <= 0:
+        return path
+    parts: list[str] = path.split(os.sep)
+    if n >= len(parts):
+        raise ValueError(f"strip count {n} removes entire path: {path!r}")
+    return os.sep.join(parts[n:])
+
+
+def apply_extract_strip(dest_path: str, strip_count: int, cwd: str) -> str:
+    """Rewrite an extract destination with optional ``patch -p`` stripping.
+
+    With *strip_count* > 0, strip that many leading components from the
+    absolute *dest_path*, then join the remainder under *cwd* when the result
+    is relative.
+    """
+    if strip_count <= 0:
+        return dest_path
+    stripped = strip_path_components(os.path.abspath(dest_path), strip_count)
+    if os.path.isabs(stripped):
+        return stripped
+    return os.path.normpath(os.path.join(cwd, stripped))
 
 
 def _fetch_extract_rows(
@@ -2054,17 +2116,23 @@ def extract_from_db(
     prefixes: list[str],
     show_deleted: bool,
     symlink: bool,
+    strip_count: int = 0,
+    cwd: str | None = None,
 ) -> int:
     """Extract files listed in db that match any path prefix."""
     normalized_prefixes, abs_prefixes = _normalize_extract_prefixes(prefixes)
     shadir_real = os.path.realpath(shadir)
+    work_cwd = os.path.abspath(cwd if cwd is not None else os.getcwd())
     extracted_bytes = 0
     seen_paths: set[str] = set()
     rows = _fetch_extract_rows(conn, show_deleted)
     for shasum, root, root_rel, dirpath, filename in rows:
         root_path = os.path.abspath(root)
         dest_dir = os.path.join(root_path, dirpath)
-        dest_path = os.path.join(dest_dir, filename)
+        dest_path = apply_extract_strip(
+            os.path.join(dest_dir, filename), strip_count, work_cwd
+        )
+        dest_dir = os.path.dirname(dest_path)
         if dest_path in seen_paths:
             continue
         target_rel = os.path.normpath(os.path.join(root_rel, dirpath, filename))
@@ -2616,10 +2684,16 @@ def handle_extract(
     shadir: str,
     show_deleted: bool,
     symlink: bool,
+    strip_count: int = 0,
 ) -> None:
     """Extract files from the db that match prefix paths."""
     extracted_bytes = extract_from_db(
-        conn, shadir, prefixes, show_deleted=show_deleted, symlink=symlink
+        conn,
+        shadir,
+        prefixes,
+        show_deleted=show_deleted,
+        symlink=symlink,
+        strip_count=strip_count,
     )
     out("extracted bytes: {extracted_bytes}", 0, extracted_bytes=extracted_bytes)
 
@@ -3697,6 +3771,7 @@ def dispatch_action(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             shadir,
             show_deleted=args.show_deleted,
             symlink=args.symlink,
+            strip_count=args.strip,
         )
         return 0
     if action in ("ls", "lspath"):
