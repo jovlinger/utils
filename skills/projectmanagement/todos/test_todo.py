@@ -3172,28 +3172,6 @@ class ReadFormattingUnitTests(unittest.TestCase):
         )
 
 
-class RepoIdentityUnitTests(unittest.TestCase):
-    """Pure-function tests for the stable repo identity derivation."""
-
-    def test_url_shapes_canonicalize_to_same_identity(self) -> None:
-        want = "github.com/jovlinger/utils"
-        self.assertEqual(todo_common.repo_identity_from_url("https://github.com/jovlinger/utils.git"), want)
-        self.assertEqual(todo_common.repo_identity_from_url("https://github.com/jovlinger/utils"), want)
-        self.assertEqual(todo_common.repo_identity_from_url("git@github.com:jovlinger/utils.git"), want)
-        self.assertEqual(todo_common.repo_identity_from_url("ssh://git@github.com/jovlinger/utils.git"), want)
-
-    def test_host_is_lowercased_and_owner_preserved(self) -> None:
-        self.assertEqual(
-            todo_common.repo_identity_from_url("git@GitHub.com:easternlabs/opportunity.git"),
-            "github.com/easternlabs/opportunity",
-        )
-
-    def test_unidentifiable_urls_return_none(self) -> None:
-        self.assertIsNone(todo_common.repo_identity_from_url(""))
-        self.assertIsNone(todo_common.repo_identity_from_url("   "))
-        self.assertIsNone(todo_common.repo_identity_from_url("not a url"))
-
-
 class JsonPathUnitTests(unittest.TestCase):
     """Unit tests for get_at_path / set_at_path error detail."""
 

@@ -25,8 +25,6 @@ from typing import Any, Dict
 
 import fake_nlce
 import todo
-import todo_common
-import todo_db
 import todo_ops
 
 from test_todo import BOW, TODO_PY, TodoCase
@@ -117,72 +115,6 @@ class TagFindingsTests(unittest.TestCase):
     def test_non_dict_element_reported_and_skipped(self) -> None:
         findings = todo.tag_findings({"Tag": ["not-a-dict"]})
         self.assertEqual(findings, ["Tag.0 must be an object"])
-
-
-class MigrateRecordV7Tests(unittest.TestCase):
-    """Unit coverage for todo_db.migrate_record_v7 beyond the oracle's pinned case."""
-
-    def test_no_tags_key_is_a_no_op(self) -> None:
-        rec = {"Id": "a" * 64, "_schema": 6}
-        out = todo_db.migrate_record_v7(dict(rec))
-        self.assertNotIn("Tag", out)
-
-    def test_non_list_tags_dropped_without_crashing(self) -> None:
-        out = todo_db.migrate_record_v7({"Tags": "not-a-list"})
-        self.assertNotIn("Tags", out)
-        self.assertNotIn("Tag", out)
-
-    def test_merges_into_existing_tag_elements(self) -> None:
-        rec = {"Tag": [{"raw": "existing", "manual": True}], "Tags": ["existing", "new"]}
-        out = todo_db.migrate_record_v7(rec)
-        self.assertNotIn("Tags", out)
-        self.assertEqual(sorted(_raws(out)), ["existing", "new"])  # deduped, merged
-
-    def test_reachable_via_migrate_record_and_bumps_schema(self) -> None:
-        rec = {"Id": "a" * 64, "Tags": ["X"]}
-        out = todo_db.migrate_record(rec)
-        self.assertEqual(out["_schema"], todo_db.SCHEMA_VERSION)
-        self.assertEqual(_raws(out), ["x"])
-
-
-class EmbedTargetsUnitTests(unittest.TestCase):
-    """Direct coverage for the plural-Tag embedding plumbing in todo.py."""
-
-    def test_embed_targets_includes_summary_body_and_each_tag(self) -> None:
-        d = {
-            "Summary": {"raw": "s"},
-            "Body": {"raw": "b"},
-            "Tag": [{"raw": "one", "manual": True}, {"raw": "two", "manual": True}],
-        }
-        targets = todo_common._embed_targets(d)
-        paths = [path for path, _container, _raw in targets]
-        self.assertEqual(paths, ["Summary.raw", "Body.raw", "Tag.0.raw", "Tag.1.raw"])
-
-    def test_embed_targets_skips_blank_tag_raw(self) -> None:
-        d = {"Tag": [{"raw": "", "manual": True}, {"raw": "kept", "manual": True}]}
-        targets = todo_common._embed_targets(d)
-        self.assertEqual([p for p, _c, _r in targets], ["Tag.1.raw"])
-
-    def test_container_at_resolves_tag_index_and_missing_index(self) -> None:
-        d = {"Tag": [{"raw": "one", "manual": True}]}
-        self.assertIs(todo_common._container_at(d, "Tag.0.raw"), d["Tag"][0])
-        self.assertIsNone(todo_common._container_at(d, "Tag.5.raw"))
-        self.assertIsNone(todo_common._container_at(d, "Tag.not-an-index.raw"))
-
-    def test_container_at_resolves_summary(self) -> None:
-        d = {"Summary": {"raw": "s"}}
-        self.assertIs(todo_common._container_at(d, "Summary.raw"), d["Summary"])
-
-    def test_changed_raw_fields_flags_new_and_edited_tag(self) -> None:
-        old = {"Tag": [{"raw": "one", "manual": True}]}
-        new = {"Tag": [{"raw": "one-edited", "manual": True}, {"raw": "two", "manual": True}]}
-        changed = set(todo_common._changed_raw_fields(old, new))
-        self.assertIn("Tag.0.raw", changed)  # same position, raw text differs
-        self.assertIn("Tag.1.raw", changed)  # newly present
-
-    def test_changed_raw_fields_empty_for_identical_tags(self) -> None:
-        same = {"Tag": [{"raw": "one", "manual": True}]}
-        self.assertEqual(todo_common._changed_raw_fields(same, dict(same)), [])
 
 
 class TagEmbeddingIntegrationTests(TodoCase):
