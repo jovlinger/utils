@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for the viewer's write endpoint: POST /update under `todo.py web`.
+"""Tests for the viewer's write endpoint: POST /update under todoweb.
 
 Three layers: the request checks and status mapping (handle_update against a
-fake updater), the running server in both modes, and the real updater in
+fake updater), the running server in both modes, and the real updater running
 todo.py against a real store, where a save is last-write-wins.
 """
 
@@ -24,11 +24,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
-import test_todo
-import todo
-import todo_common
-import todo_store
-import todo_web
+import todoweb
+import todoweb_core
+import todoweb_harness
 
 PORT = 8765
 ORIGIN = f"http://localhost:{PORT}"
@@ -64,7 +62,7 @@ def _handle(
 ) -> Tuple[int, Dict[str, Any]]:
     sent = dict(GOOD_HEADERS if headers is None else headers)
     raw = json.dumps(REQUEST).encode("utf-8") if body is None else body
-    return todo_web.handle_update(sent, raw, port, updater)
+    return todoweb.handle_update(sent, raw, port, updater)
 
 
 def _without(key: str) -> Dict[str, str]:
@@ -82,13 +80,13 @@ class HandleUpdateTest(unittest.TestCase):
         self.assertEqual([REQUEST], updater.requests)
 
     def test_cli_refusal_carries_the_command_text(self) -> None:
-        updater = FakeUpdater(error=todo_web.UpdateRefused("no todo found for id 'abab'"))
+        updater = FakeUpdater(error=todoweb.UpdateRefused("no todo found for id 'abab'"))
         status, payload = _handle(updater)
         self.assertEqual(400, status)
         self.assertEqual("no todo found for id 'abab'", payload["error"])
 
     def test_refusal_keeps_its_own_status(self) -> None:
-        updater = FakeUpdater(error=todo_web.UpdateRefused("ERETRY: busy", status=503))
+        updater = FakeUpdater(error=todoweb.UpdateRefused("ERETRY: busy", status=503))
         status, payload = _handle(updater)
         self.assertEqual(503, status)
         self.assertEqual("ERETRY: busy", payload["error"])
@@ -201,7 +199,7 @@ def _start_server(*, write: bool, updater: Optional[FakeUpdater]) -> str:
 
     def run() -> None:
         with contextlib.redirect_stdout(printed):
-            todo_web.serve(
+            todoweb.serve(
                 Path("."),
                 host="127.0.0.1",
                 port=0,
@@ -291,8 +289,8 @@ class ReadOnlyServerTest(unittest.TestCase):
         self.assertEqual([], updater.requests)
 
     def test_write_without_an_updater_is_refused_at_start(self) -> None:
-        with self.assertRaises(todo_web.TodoWebError):
-            todo_web.serve(
+        with self.assertRaises(todoweb.TodoWebError):
+            todoweb.serve(
                 Path("."),
                 host="127.0.0.1",
                 port=0,
@@ -308,7 +306,7 @@ class IsLoopbackClientTest(unittest.TestCase):
     def test_loopback_addresses(self) -> None:
         for address in ("127.0.0.1", "127.9.8.7", "::1", "::ffff:127.0.0.1", "::ffff:127.4.4.4"):
             with self.subTest(address=address):
-                self.assertTrue(todo_web.is_loopback_client(address))
+                self.assertTrue(todoweb.is_loopback_client(address))
 
     def test_every_other_address_is_public(self) -> None:
         for address in (
@@ -324,14 +322,14 @@ class IsLoopbackClientTest(unittest.TestCase):
             "",
         ):
             with self.subTest(address=address):
-                self.assertFalse(todo_web.is_loopback_client(address))
+                self.assertFalse(todoweb.is_loopback_client(address))
 
 
 class PublicWriteChecksTest(unittest.TestCase):
     """A public client's write needs JSON and Origin == http://<Host>; Host may be any name."""
 
     def refusal(self, headers: Dict[str, str], *, loopback: bool) -> str:
-        return todo_web.request_refusal(headers, PORT, loopback=loopback)
+        return todoweb.request_refusal(headers, PORT, loopback=loopback)
 
     def test_public_host_need_not_be_a_loopback_name(self) -> None:
         headers = {
@@ -387,7 +385,7 @@ class ClientClassMatrixTest(unittest.TestCase):
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
+                todoweb.serve(
                     Path("."),
                     host="127.0.0.1",
                     port=0,
@@ -412,13 +410,13 @@ class ClientClassMatrixTest(unittest.TestCase):
             return exc.code, exc.read().decode("utf-8")
 
     def _as(self, client_is_loopback: bool):
-        return mock.patch.object(todo_web, "is_loopback_client", return_value=client_is_loopback)
+        return mock.patch.object(todoweb, "is_loopback_client", return_value=client_is_loopback)
 
     def test_each_class_gets_its_own_level(self) -> None:
         combos = [
             (loop, pub)
-            for loop in todo_web.LEVELS
-            for pub in todo_web.LEVELS
+            for loop in todoweb.LEVELS
+            for pub in todoweb.LEVELS
             if (loop, pub) != ("none", "none")
         ]
         for loop, pub in combos:
@@ -511,7 +509,7 @@ FIELD_EDITS = {"set-summary", "set-body", "set-long-summary", "set-ac", "set-act
 
 
 def render(todo_record: Dict[str, Any], **kwargs: Any) -> str:
-    return todo_web.render_todo_page(Path("."), json.loads(json.dumps(todo_record)), **kwargs)
+    return todoweb.render_todo_page(Path("."), json.loads(json.dumps(todo_record)), **kwargs)
 
 
 def page_data(page: str) -> Dict[str, Any]:
@@ -748,7 +746,7 @@ class EditPageServeTest(unittest.TestCase):
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
+                todoweb.serve(
                     Path("."),
                     host="127.0.0.1",
                     port=0,
@@ -783,14 +781,14 @@ class FramingHeaderTest(unittest.TestCase):
     def _base(self, *, write: bool) -> str:
         def resolver(selector: str) -> Tuple[Path, Dict[str, Any]]:
             if selector != PAGE_TID[:8]:
-                raise todo_web.TodoWebError("no such todo")
+                raise todoweb.TodoWebError("no such todo")
             return Path("."), json.loads(json.dumps(PAGE_TODO))
 
         printed = io.StringIO()
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
+                todoweb.serve(
                     Path("."),
                     host="127.0.0.1",
                     port=0,
@@ -848,13 +846,13 @@ class FramingHeaderTest(unittest.TestCase):
 
 
 class WebOpArgvTest(unittest.TestCase):
-    """Each op's argv parses to exactly the fields it means, whatever the request holds."""
+    """Each op's argv names exactly its own command and flag, whatever the request holds."""
 
     TID = "e7" * 32
     HOSTILE = "--summary=hijack"  # a flag-shaped request field must stay data
 
-    def parsed(self, op: str, target: str, value: str):
-        return todo.build_parser().parse_args(todo.WEB_OPS[op].argv(self.TID, target, value))
+    def argv(self, op: str, target: str, value: str) -> List[str]:
+        return todoweb.WEB_OPS[op].argv(self.TID, target, value)
 
     def test_the_op_set_is_the_cli_update_surface(self) -> None:
         self.assertEqual(
@@ -868,7 +866,7 @@ class WebOpArgvTest(unittest.TestCase):
                 "work-item-replace",
                 "work-item-reorder",
             },
-            set(todo.WEB_OPS),
+            set(todoweb.WEB_OPS),
         )
 
     def test_set_ops_write_only_their_own_flag(self) -> None:
@@ -876,65 +874,50 @@ class WebOpArgvTest(unittest.TestCase):
             "set-summary": "summary",
             "set-body": "body",
             "set-ac": "ac",
-            "set-long-summary": "long_summary",
-            "set-actual-summary": "actual_summary",
+            "set-long-summary": "long-summary",
+            "set-actual-summary": "actual-summary",
         }
-        for op, dest in flags.items():
+        for op, flag in flags.items():
             with self.subTest(op=op):
-                ns = self.parsed(op, self.HOSTILE, self.HOSTILE)
-                self.assertEqual("set", ns.command)
-                self.assertEqual(self.TID, ns.id)
-                self.assertEqual(self.HOSTILE, getattr(ns, dest))
-                others = set(flags.values()) - {dest}
-                self.assertEqual({None}, {getattr(ns, other) for other in others})
-                self.assertIsNone(ns.state)
+                self.assertEqual(
+                    ["set", f"--{flag}={self.HOSTILE}", "--", self.TID],
+                    self.argv(op, self.HOSTILE, self.HOSTILE),
+                )
 
     def test_note_replace(self) -> None:
-        ns = self.parsed("note-replace", self.HOSTILE, self.HOSTILE)
         self.assertEqual(
-            ("note-replace", self.TID, self.HOSTILE, self.HOSTILE),
-            (ns.command, ns.selector, ns.target, ns.raw),
+            ["note-replace", f"--raw={self.HOSTILE}", "--", self.TID, self.HOSTILE],
+            self.argv("note-replace", self.HOSTILE, self.HOSTILE),
         )
 
     def test_work_item_replace_names_its_target_never_the_cursor(self) -> None:
-        ns = self.parsed("work-item-replace", self.HOSTILE, "new words")
         self.assertEqual(
-            ("work-item-replace", self.TID, self.HOSTILE, "new words"),
-            (ns.command, ns.selector, ns.target, ns.summary),
+            ["work-item-replace", "--summary=new words", "--", self.TID, self.HOSTILE],
+            self.argv("work-item-replace", self.HOSTILE, "new words"),
         )
 
     def test_work_item_reorder_takes_a_negative_destination(self) -> None:
-        ns = self.parsed("work-item-reorder", "objid:0003", "-1")
         self.assertEqual(
-            ("work-item-reorder", self.TID, "objid:0003", "-1"),
-            (ns.command, ns.selector, ns.src, ns.dst),
+            ["work-item-reorder", "--", self.TID, "objid:0003", "-1"],
+            self.argv("work-item-reorder", "objid:0003", "-1"),
         )
 
 
-class WebUpdaterCase(test_todo.TodoIntegrationCase):
-    """A real store, todo.main() in-process, and the WebUpdater that `web` injects."""
+class WebUpdaterCase(todoweb_harness.WebStoreCase):
+    """A real store, todo.py as a child process, and the WebUpdater todoweb serves with."""
 
     TID = "e7" * 32
 
     def setUp(self) -> None:
         super().setUp()
-        self.write_ticket("e7e7e7e7-web", self.TID, "web edits", body="original body")
-        self.updater = todo.WebUpdater(self.REPO)
+        self.seed(self.TID, "web edits", body="original body")
+        self.updater = todoweb.WebUpdater(self.client())
 
-    def in_env(self):
-        """The environment a `todo.py web` process would run the updater in."""
-        todo_store.reset_store()
-        todo.todo_db.reset_todo_dir()
-        todo_common._REPO_KEY_CACHE.clear()
-        return mock.patch.dict(os.environ, self._env, clear=True)
-
-    def stored(self) -> Dict[str, Any]:
-        return self.read_cur()
+    def stored(self, ticket_id: str = "") -> Dict[str, Any]:
+        return super().stored(ticket_id or self.TID)
 
     def update(self, **request: Any) -> Dict[str, Any]:
-        full = {"id": self.TID, "target": "", **request}
-        with self.in_env():
-            return self.updater.update(full)
+        return self.updater.update({"id": self.TID, "target": "", **request})
 
 
 class WebUpdaterSetBodyTest(WebUpdaterCase):
@@ -952,7 +935,7 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
         self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
 
     def test_unknown_todo_is_the_cli_refusal(self) -> None:
-        with self.in_env(), self.assertRaises(todo_web.UpdateRefused) as caught:
+        with self.assertRaises(todoweb.UpdateRefused) as caught:
             self.updater.update({"id": "ffff" * 16, "op": "set-body", "target": "", "value": "x"})
         self.assertIn("no todo found for id", str(caught.exception))
 
@@ -962,34 +945,60 @@ class WebUpdaterSetBodyTest(WebUpdaterCase):
 
     def test_unknown_op_is_refused_and_writes_nothing(self) -> None:
         before = self.stored()
-        with self.assertRaises(todo_web.UpdateRefused) as caught:
+        with self.assertRaises(todoweb.UpdateRefused) as caught:
             self.update(op="rm", value="")
         self.assertIn("rm", str(caught.exception))
         self.assertEqual(before, self.stored())
 
     def test_non_string_value_is_refused(self) -> None:
-        with self.assertRaises(todo_web.UpdateRefused):
+        with self.assertRaises(todoweb.UpdateRefused):
             self.update(op="set-body", value=["not", "text"])
         self.assertEqual("original body", self.stored()["Body"]["raw"])
 
     def test_a_foreign_lock_holder_makes_the_save_retryable(self) -> None:
-        with self.in_env():
-            store = todo_store.get_store()
-            store._grace = 0.2
-            with mock.patch.object(store, "_try_acquire", return_value=False):
-                with self.assertRaises(todo_web.UpdateRefused) as caught:
-                    self.updater.update(
-                        {"id": self.TID, "op": "set-body", "target": "", "value": "v"}
-                    )
+        self.write_config({"lock_grace": 0.2, "lock_ttl": 600})
+        holder = subprocess.Popen(  # pylint: disable=consider-using-with
+            [sys.executable, "-c", _HOLD_LOCK, str(todoweb_harness.HERE), self.TID],
+            env=self.env,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual("locked", holder.stdout.readline().strip())
+        with self.assertRaises(todoweb.UpdateRefused) as caught:
+            self.update(op="set-body", value="v")
         self.assertEqual(503, caught.exception.status)
+        holder.kill()
+        holder.wait()
         self.assertEqual("original body", self.stored()["Body"]["raw"])
+
+    def test_legacy_json_mode_is_refused(self) -> None:
+        with mock.patch.dict(os.environ, {todoweb.LEGACY_JSON_ENV: "1"}):
+            with self.assertRaises(todoweb.UpdateRefused) as caught:
+                self.update(op="set-body", value="v")
+        self.assertIn("legacy", str(caught.exception))
+        self.assertEqual("original body", self.stored()["Body"]["raw"])
+
+
+# Holds one todo's store lock from another process until killed: the "foreign
+# lock holder" a save must answer 503 to. argv: <todos dir> <todo id>.
+_HOLD_LOCK = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import todo_store
+with todo_store.get_store().lock(sys.argv[2]):
+    print("locked", flush=True)
+    time.sleep(600)
+"""
 
 
 class WebUpdaterOpsTest(WebUpdaterCase):
     """Every other op, each through its own CLI command, each refusal the CLI's own."""
 
     def setUp(self) -> None:
-        test_todo.TodoIntegrationCase.setUp(self)
+        todoweb_harness.WebStoreCase.setUp(self)
+        landed = self.git("rev-parse", "HEAD").strip()
         extra = {
             "AC": "original ac",
             "Notes": [{"raw": "first note"}, {"raw": "second note"}],
@@ -998,7 +1007,7 @@ class WebUpdaterOpsTest(WebUpdaterCase):
                     "summary": "landed",
                     "done": True,
                     "kind": "code",
-                    "sha": "a" * 40,
+                    "sha": landed,
                     "message": "landed",
                 },
                 {"summary": "open one", "done": False, "kind": "task"},
@@ -1006,8 +1015,8 @@ class WebUpdaterOpsTest(WebUpdaterCase):
                 {"summary": "open three", "done": False, "kind": "task"},
             ],
         }
-        self.write_ticket("e7e7e7e7-web", self.TID, "web edits", body="b", extra=extra)
-        self.updater = todo.WebUpdater(self.REPO)
+        self.seed(self.TID, "web edits", body="b", extra=extra)
+        self.updater = todoweb.WebUpdater(self.client())
 
     def objid(self, key: str, index: int) -> str:
         return "objid:" + self.stored()[key][index]["objid"]
@@ -1015,7 +1024,7 @@ class WebUpdaterOpsTest(WebUpdaterCase):
     def refused(self, **request: Any) -> str:
         """Run a request that must be refused; assert nothing changed; return the text."""
         before = self.stored()
-        with self.assertRaises(todo_web.UpdateRefused) as caught:
+        with self.assertRaises(todoweb.UpdateRefused) as caught:
             self.update(**request)
         self.assertEqual(400, caught.exception.status)
         self.assertEqual(before, self.stored())
@@ -1093,9 +1102,7 @@ class WebUpdaterOpsTest(WebUpdaterCase):
 
     def page_moves(self) -> Dict[str, Dict[str, Any]]:
         """The move requests a write page rendered from the stored record offers."""
-        with self.in_env():
-            stored = self.stored()
-            page = todo_web.render_todo_page(Path("."), stored, write=True)
+        page = todoweb_core.render_todo_page(self.repo, self.stored(), write=True)
         edits = page_data(page)["write"]["edits"]
         return {k: v for k, v in edits.items() if v["op"] == "work-item-reorder"}
 
@@ -1119,33 +1126,26 @@ class WebUpdaterOpsTest(WebUpdaterCase):
 class RoundTripLastWriteWinsTest(WebUpdaterCase):
     """The whole loop over HTTP: page load, a CLI write, then a save from that page.
 
-    A real server with the real WebUpdater on a real store; the CLI write in
-    between is an ordinary `todo.py set`.
+    A real server with the real WebUpdater on a real store, reading through the
+    same todo.py client; the CLI write in between is an ordinary `todo.py set`.
     """
 
     def serve(self) -> str:
         """Start the server for this store; return its base URL."""
-
-        def resolver(selector: str) -> Tuple[Path, Dict[str, Any]]:
-            # The page's repo root only feeds diffs, which come from a real git; the
-            # notional REPO exists only to the faked git the store reads through.
-            try:
-                return Path("."), todo.resolve_ticket_by_id(self.REPO, selector)[1]
-            except todo.TodoError as exc:
-                raise todo_web.TodoWebError(str(exc)) from exc
-
+        client = self.client()
         printed = io.StringIO()
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
-                    Path("."),
+                todoweb.serve(
+                    self.store_dir,
                     host="127.0.0.1",
                     port=0,
-                    resolver=resolver,
+                    resolver=lambda selector: (self.repo, client.read(selector)),
                     searcher=lambda _q: [],
                     loopback="write",
                     updater=self.updater,
+                    reader_factory=client.reader,
                 )
 
         threading.Thread(target=run, daemon=True).start()
@@ -1156,7 +1156,7 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
 
     def load(self, base: str) -> Dict[str, Any]:
         """GET the todo's page as a browser would; return its embedded DATA."""
-        with urllib.request.urlopen(f"{base}/{self.TID[:8]}", timeout=10) as resp:
+        with urllib.request.urlopen(f"{base}/{self.TID[:8]}", timeout=30) as resp:
             return page_data(resp.read().decode("utf-8"))
 
     def save(self, base: str, data: Dict[str, Any], value: str) -> Tuple[int, Dict[str, Any]]:
@@ -1174,97 +1174,47 @@ class RoundTripLastWriteWinsTest(WebUpdaterCase):
         )
 
     def test_a_save_from_a_page_loaded_before_a_cli_write_lands_last_write_wins(self) -> None:
-        with self.in_env():
-            base = self.serve()
-            stale = self.load(base)
-            self.assertEqual("original body", stale["write"]["edits"]["set-body"]["value"])
+        base = self.serve()
+        stale = self.load(base)
+        self.assertEqual("original body", stale["write"]["edits"]["set-body"]["value"])
 
-            proc = self.todo("set", self.TID, "--body=written by the cli")
-            self.assertEqual(0, proc.returncode, proc.stderr)
-            self.assertEqual("written by the cli", self.stored()["Body"]["raw"])
+        proc = self.todo("set", self.TID, "--body=written by the cli")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("written by the cli", self.stored()["Body"]["raw"])
 
-            status, payload = self.save(base, stale, "the page's draft")
-            self.assertEqual(200, status, payload)
-            self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
+        status, payload = self.save(base, stale, "the page's draft")
+        self.assertEqual(200, status, payload)
+        self.assertEqual("the page's draft", self.stored()["Body"]["raw"])
 
     def test_saving_the_text_EDIT_over_http_stores_it(self) -> None:
-        with self.in_env():
-            base = self.serve()
-            status, payload = self.save(base, self.load(base), "EDIT")
-            self.assertEqual(200, status, payload)
-            self.assertEqual("EDIT", self.stored()["Body"]["raw"])
+        base = self.serve()
+        status, payload = self.save(base, self.load(base), "EDIT")
+        self.assertEqual(200, status, payload)
+        self.assertEqual("EDIT", self.stored()["Body"]["raw"])
 
     def test_an_unexpected_exception_is_a_500_json_answer_and_frees_the_lock(self) -> None:
-        with self.in_env():
-            base = self.serve()
-            data = self.load(base)
-            with mock.patch.object(
-                todo_store.SqliteTodoStore, "put", side_effect=OSError("disk full")
-            ):
-                status, payload = self.save(base, data, "never lands")
-            self.assertEqual(500, status)
-            self.assertIn("OSError", payload["error"])
-            self.assertIn("disk full", payload["error"])
-            self.assertEqual("original body", self.stored()["Body"]["raw"])
+        base = self.serve()
+        data = self.load(base)
+        client = self.updater.client
+        real_cwd = client.cwd
+        client.cwd = self.repo / "no-such-dir"  # todo.py cannot even be started there
+        status, payload = self.save(base, data, "never lands")
+        self.assertEqual(500, status)
+        self.assertIn("FileNotFoundError", payload["error"])
+        self.assertEqual("original body", self.stored()["Body"]["raw"])
 
-            # The lock was released: the same page saves once the fault is gone.
-            status, payload = self.save(base, data, "lands")
-            self.assertEqual(200, status, payload)
-            self.assertEqual("lands", self.stored()["Body"]["raw"])
-
-
-class ThreadLocalCaptureTest(unittest.TestCase):
-    """A save captures only its own thread's output; other threads keep the real streams."""
-
-    def _run_save(self, fake_main: Any) -> Tuple[str, io.StringIO, io.StringIO]:
-        """Run one save with *fake_main* as the CLI; return (refusal text, stdout, stderr)."""
-        real_out, real_err = io.StringIO(), io.StringIO()
-        updater = todo.WebUpdater(Path("."))
-        text = ""
-        with mock.patch.object(sys, "stdout", real_out), mock.patch.object(
-            sys, "stderr", real_err
-        ), mock.patch.object(todo, "main", fake_main):
-            try:
-                updater._run(["set", "x"])  # pylint: disable=protected-access
-            except todo_web.UpdateRefused as exc:
-                text = str(exc)
-        return text, real_out, real_err
-
-    def test_another_threads_stderr_stays_out_of_the_saves_error_text(self) -> None:
-        def noisy_neighbour() -> None:
-            print("GET-THREAD-NOISE", file=sys.stderr)
-            print("GET-THREAD-OUT")
-
-        def fake_main(_argv: List[str]) -> int:
-            neighbour = threading.Thread(target=noisy_neighbour)
-            neighbour.start()
-            neighbour.join()
-            print("todo.py: the save's own refusal", file=sys.stderr)
-            print("the save's own stdout")
-            return 1
-
-        text, real_out, real_err = self._run_save(fake_main)
-        self.assertEqual("the save's own refusal", text)
-        self.assertIn("GET-THREAD-NOISE", real_err.getvalue())
-        self.assertIn("GET-THREAD-OUT", real_out.getvalue())
-        self.assertNotIn("own", real_out.getvalue())
-        self.assertNotIn("own", real_err.getvalue())
-
-    def test_output_outside_a_save_goes_to_the_real_streams(self) -> None:
-        _text, real_out, real_err = self._run_save(lambda _argv: 0)
-        with mock.patch.object(sys, "stdout", real_out), mock.patch.object(sys, "stderr", real_err):
-            print("after", file=sys.stderr)
-        self.assertIn("after", real_err.getvalue())
+        # The updater's lock was released: the same page saves once the fault is gone.
+        client.cwd = real_cwd
+        status, payload = self.save(base, data, "lands")
+        self.assertEqual(200, status, payload)
+        self.assertEqual("lands", self.stored()["Body"]["raw"])
 
 
-class AutocommitScopeTest(test_todo.TodoCase):
-    """In one long-lived `web` process, each autocommit is only that save's ticket."""
+class AutocommitScopeTest(todoweb_harness.WebStoreCase):
+    """In one long-lived todoweb process, each autocommit is only that save's ticket."""
 
-    def _store_git(self, *args: str) -> str:
-        proc = subprocess.run(
-            ["git", *args], cwd=self._db_dir, capture_output=True, text=True, check=True
-        )
-        return proc.stdout
+    def store_git(self, *args: str) -> str:
+        return self.git(*args, cwd=self.store_dir)
 
     def mint(self) -> str:
         proc = self.todo("mint")
@@ -1277,37 +1227,18 @@ class AutocommitScopeTest(test_todo.TodoCase):
             ("config", "user.email", "t@example.com"),
             ("config", "user.name", "T"),
         ):
-            self._store_git(*args)
-        (self._db_dir / "config.json").write_text(
-            json.dumps(
-                {"todo_storage": "file://$TODOBASEDIR/storage", "autocommit": ["SetCommand"]}
-            )
+            self.store_git(*args)
+        self.write_config(
+            {"todo_storage": "file://$TODOBASEDIR/storage", "autocommit": ["SetCommand"]}
         )
-        self._git("commit", "-q", "--allow-empty", "-m", "init")
         first, second = self.mint(), self.mint()
-        todo_store.reset_store()
-        todo.todo_db.reset_todo_dir()
-        todo_common._REPO_KEY_CACHE.clear()
-        try:
-            with mock.patch.dict(os.environ, self._env, clear=True):
-                updater = todo.WebUpdater(self.repo)
-                for tid, value in ((first, "first"), (second, "second")):
-                    updater.update(
-                        {
-                            "id": tid,
-                            "op": "set-summary",
-                            "target": "",
-                            "value": value,
-                        }
-                    )
-        finally:
-            todo_store.reset_store()
-            todo.todo_db.reset_todo_dir()
-            todo_common._REPO_KEY_CACHE.clear()
-        subject = self._store_git("log", "-1", "--format=%s")
+        updater = todoweb.WebUpdater(self.client())
+        for tid, value in ((first, "first"), (second, "second")):
+            updater.update({"id": tid, "op": "set-summary", "target": "", "value": value})
+        subject = self.store_git("log", "-1", "--format=%s")
         self.assertIn(second[:8], subject)
         self.assertNotIn(first[:8], subject)
-        changed = self._store_git("show", "--format=", "--name-only", "HEAD").split()
+        changed = self.store_git("show", "--format=", "--name-only", "HEAD").split()
         self.assertEqual(1, len(changed), changed)
         self.assertIn(second[:8], changed[0])
 

@@ -5,27 +5,27 @@ from __future__ import annotations
 
 import inspect
 import io
-import json
+import re
 import socket
-import tempfile
+import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Tuple
+from typing import List, Tuple
 from unittest import mock
 
-import pytest
+import todoweb
+import todoweb_core
+import todoweb_harness
 
-import todo
-import todo_web
 
-
-def _bind(host: str) -> Tuple[todo_web._DualStackServer, mock.MagicMock]:
+def _bind(host: str) -> Tuple[todoweb._DualStackServer, mock.MagicMock]:
     """Build a server on *host* against a fake socket; return it and the fake."""
     fake = mock.MagicMock()
     fake.getsockname.return_value = (host, 4321)
     with mock.patch("socket.socket", return_value=fake) as make:
-        server = todo_web._DualStackServer((host, 0), mock.Mock())
+        server = todoweb._DualStackServer((host, 0), mock.Mock())
     make.assert_called_once()
     return server, fake
 
@@ -67,9 +67,9 @@ class ServeDefaultsTest(unittest.TestCase):
         fake_server = mock.Mock(server_port=8765)
         fake_server.serve_forever.side_effect = KeyboardInterrupt
         out = io.StringIO()
-        with mock.patch.object(todo_web, "_DualStackServer", return_value=fake_server) as cls:
+        with mock.patch.object(todoweb, "_DualStackServer", return_value=fake_server) as cls:
             with redirect_stdout(out):
-                todo_web.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs)
+                todoweb.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), **kwargs)
         self.last_address = cls.call_args.args[0]
         return out.getvalue().strip()
 
@@ -110,9 +110,9 @@ class ServeDefaultsTest(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8765  ", self._banner("127.0.0.1"))
 
     def test_both_none_refuses_before_binding(self) -> None:
-        with mock.patch.object(todo_web, "_DualStackServer") as cls:
-            with self.assertRaises(todo_web.TodoWebError) as caught:
-                todo_web.serve(
+        with mock.patch.object(todoweb, "_DualStackServer") as cls:
+            with self.assertRaises(todoweb.TodoWebError) as caught:
+                todoweb.serve(
                     Path("."),
                     resolver=mock.Mock(),
                     searcher=mock.Mock(),
@@ -123,27 +123,24 @@ class ServeDefaultsTest(unittest.TestCase):
         cls.assert_not_called()
 
     def test_a_bad_level_refuses_before_binding(self) -> None:
-        with mock.patch.object(todo_web, "_DualStackServer") as cls:
-            with self.assertRaises(todo_web.TodoWebError):
-                todo_web.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), loopback="rw")
+        with mock.patch.object(todoweb, "_DualStackServer") as cls:
+            with self.assertRaises(todoweb.TodoWebError):
+                todoweb.serve(Path("."), resolver=mock.Mock(), searcher=mock.Mock(), loopback="rw")
         cls.assert_not_called()
 
     def test_serve_defaults_are_loopback_read_public_none(self) -> None:
-        params = inspect.signature(todo_web.serve).parameters
+        params = inspect.signature(todoweb.serve).parameters
         self.assertEqual(("read", "none"), (params["loopback"].default, params["public"].default))
 
 
-class WebCommandBindTest(unittest.TestCase):
-    """`todo.py web`: loopback=read public=none by default, bind by public, --host as given."""
+class WebCommandBindTest(todoweb_harness.WebStoreCase):
+    """`todoweb`: loopback=read public=none by default, bind by public, --host as given."""
 
     def _serve_kwargs(self, *argv: str) -> dict:
-        """Run `web <argv>` with serve() faked; return the kwargs serve was called with."""
-        args = todo.build_parser().parse_args(["web", *argv])
-        command = args.command_cls(args, todo_dir=Path("/nonexistent-todo-dir"))
-        with mock.patch.object(todo, "repo_root", return_value=Path(".")), mock.patch.object(
-            todo.todo_web, "serve"
-        ) as serve:
-            self.assertEqual(0, command.do())
+        """Run todoweb with serve() faked; return the kwargs serve was called with."""
+        args = todoweb.build_parser().parse_args(list(argv))
+        with mock.patch.object(todoweb, "serve") as serve:
+            self.assertEqual(0, todoweb.run(args, self.client()))
         serve.assert_called_once()
         return serve.call_args.kwargs
 
@@ -158,11 +155,11 @@ class WebCommandBindTest(unittest.TestCase):
         kwargs = self._serve_kwargs("--loopback", "write")
         self.assertEqual("localhost", kwargs["host"])
         self.assertEqual("write", kwargs["loopback"])
-        self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
+        self.assertIsInstance(kwargs["updater"], todoweb.WebUpdater)
 
     def test_public_write_gets_an_updater(self) -> None:
         kwargs = self._serve_kwargs("--public", "write")
-        self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
+        self.assertIsInstance(kwargs["updater"], todoweb.WebUpdater)
 
     def test_public_read_binds_the_dual_stack_wildcard(self) -> None:
         kwargs = self._serve_kwargs("--public", "read")
@@ -178,54 +175,66 @@ class WebCommandBindTest(unittest.TestCase):
         self.assertEqual(9001, self._serve_kwargs("--port", "9001")["port"])
 
     def test_both_none_refuses_to_start_and_binds_nothing(self) -> None:
-        args = todo.build_parser().parse_args(["web", "--loopback", "none", "--public", "none"])
-        command = args.command_cls(args, todo_dir=Path("/nonexistent-todo-dir"))
-        with mock.patch.object(todo, "repo_root", return_value=Path(".")), mock.patch.object(
-            todo.todo_web, "serve"
-        ) as serve:
-            with self.assertRaises(todo.TodoError) as caught:
-                command.do()
+        args = todoweb.build_parser().parse_args(["--loopback", "none", "--public", "none"])
+        with mock.patch.object(todoweb, "serve") as serve:
+            with self.assertRaises(todoweb_core.TodoWebError) as caught:
+                todoweb.run(args, self.client())
         self.assertIn("both none", str(caught.exception))
         serve.assert_not_called()
 
     def test_write_flag_is_gone(self) -> None:
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
-            todo.build_parser().parse_args(["web", "--write"])
+            todoweb.build_parser().parse_args(["--write"])
 
     def test_a_level_outside_the_three_is_a_usage_error(self) -> None:
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
-            todo.build_parser().parse_args(["web", "--public", "admin"])
+            todoweb.build_parser().parse_args(["--public", "admin"])
+
+    def test_todo_py_web_takes_the_same_options(self) -> None:
+        def options(*argv: str) -> List[str]:
+            proc = subprocess.run(
+                [sys.executable, *argv, "--help"],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=self.env,
+            )
+            return sorted(set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", proc.stdout)))
+
+        self.assertEqual(
+            options(str(todoweb_harness.TODO_PY), "web"),
+            options(str(todoweb_harness.TODOWEB_PY)),
+        )
 
 
-class WebConfigTest(unittest.TestCase):
+class WebConfigTest(todoweb_harness.WebStoreCase):
     """Every web option defaults from config.json "web"; CLI beats config beats built-in."""
 
-    pytestmark = pytest.mark.integration
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.todo_dir = Path(self._tmp.name)
-
     def _config(self, web: object) -> None:
-        (self.todo_dir / "config.json").write_text(json.dumps({"web": web}), encoding="utf-8")
+        self.write_config({"web": web})
 
-    def _command(self, *argv: str):
-        args = todo.build_parser().parse_args(["web", *argv])
-        return args.command_cls(args, todo_dir=self.todo_dir)
+    def _args(self, *argv: str):
+        return todoweb.build_parser().parse_args(list(argv))
+
+    def _settings(self, *argv: str) -> dict:
+        return todoweb.settings(self._args(*argv), self.client().basedir())
 
     def _serve_kwargs(self, *argv: str) -> dict:
-        command = self._command(*argv)
-        with mock.patch.object(todo, "repo_root", return_value=Path(".")), mock.patch.object(
-            todo.todo_web, "serve"
-        ) as serve:
-            self.assertEqual(0, command.do())
+        with mock.patch.object(todoweb, "serve") as serve:
+            self.assertEqual(0, todoweb.run(self._args(*argv), self.client()))
         return serve.call_args.kwargs
+
+    def _refused(self, *argv: str) -> str:
+        with mock.patch.object(todoweb, "serve") as serve:
+            with self.assertRaises(todoweb_core.TodoWebError) as caught:
+                todoweb.run(self._args(*argv), self.client())
+        serve.assert_not_called()
+        return str(caught.exception)
 
     def test_no_config_gives_the_built_in_defaults(self) -> None:
         self.assertEqual(
             {"loopback": "read", "public": "none", "host": None, "port": 8765},
-            self._command().settings(),
+            self._settings(),
         )
 
     def test_config_supplies_every_option(self) -> None:
@@ -235,7 +244,7 @@ class WebConfigTest(unittest.TestCase):
             ("write", "read", "0.0.0.0", 9100),
             (kwargs["loopback"], kwargs["public"], kwargs["host"], kwargs["port"]),
         )
-        self.assertIsInstance(kwargs["updater"], todo.WebUpdater)
+        self.assertIsInstance(kwargs["updater"], todoweb.WebUpdater)
 
     def test_a_partial_config_leaves_the_rest_at_the_built_in_default(self) -> None:
         self._config({"public": "read"})
@@ -263,13 +272,7 @@ class WebConfigTest(unittest.TestCase):
 
     def test_config_that_makes_both_none_refuses_to_start(self) -> None:
         self._config({"loopback": "none"})
-        with mock.patch.object(todo, "repo_root", return_value=Path(".")), mock.patch.object(
-            todo.todo_web, "serve"
-        ) as serve:
-            with self.assertRaises(todo.TodoError) as caught:
-                self._command().do()
-        self.assertIn("both none", str(caught.exception))
-        serve.assert_not_called()
+        self.assertIn("both none", self._refused())
 
     def test_bad_config_is_refused_with_a_message_naming_the_problem(self) -> None:
         cases = {
@@ -286,23 +289,16 @@ class WebConfigTest(unittest.TestCase):
         for name, (web, fragment) in cases.items():
             with self.subTest(name):
                 self._config(web)
-                with mock.patch.object(
-                    todo, "repo_root", return_value=Path(".")
-                ), mock.patch.object(todo.todo_web, "serve") as serve:
-                    with self.assertRaises(todo.TodoError) as caught:
-                        self._command().do()
-                self.assertIn(fragment, str(caught.exception))
-                serve.assert_not_called()
+                self.assertIn(fragment, self._refused())
 
     def test_bad_config_is_refused_even_for_dump_html(self) -> None:
         self._config({"nope": 1})
-        with self.assertRaises(todo.TodoError):
-            self._command("--dump-html").do()
+        self._refused("--dump-html")
 
     def test_a_cli_value_does_not_rescue_a_bad_config(self) -> None:
         self._config({"loopback": "rw"})
-        with self.assertRaises(todo.TodoError):
-            self._command("--loopback", "read").settings()
+        with self.assertRaises(todoweb_core.TodoWebError):
+            self._settings("--loopback", "read")
 
 
 if __name__ == "__main__":
