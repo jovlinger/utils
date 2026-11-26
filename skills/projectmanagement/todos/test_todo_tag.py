@@ -18,19 +18,22 @@ doctor's recompute wiring -- is proven by the implementor's own tests + review):
     only removes MANUAL elements (automatic tags are doctor's to manage).
   * todo.tag_findings(todo) -> list[str]: empty for a well-formed Tag, non-empty
     for a malformed one (wired into doctor).
-  * todo.compute_auto_tags(text, candidates, embedder, k) -> list of AUTOMATIC
+  * todo_ops.compute_auto_tags(text, candidates, embedder, k) -> list of AUTOMATIC
     elements ({raw in candidates, manual: False}), the top-k candidates by cosine
     similarity to text -- the ported ef4ad78d scoring, adapted to emit elements.
 """
 
+# Test names state the intent.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from __future__ import annotations
 
-import json
 import unittest
 
 import fake_nlce
 import todo
 import todo_db
+import todo_ops
 
 
 def _raws(todo_dict) -> list:
@@ -46,8 +49,11 @@ class PluralTagEndTest(unittest.TestCase):
 
     def test_migration_flat_tags_to_plural(self) -> None:
         rec = {
-            "Id": "a" * 64, "Branch": "aaaaaaaa-x", "State": {"init": {}},
-            "Summary": {"raw": "s"}, "Tags": ["Todo Tool", "baz", "BAZ"],
+            "Id": "a" * 64,
+            "Branch": "aaaaaaaa-x",
+            "State": {"init": {}},
+            "Summary": {"raw": "s"},
+            "Tags": ["Todo Tool", "baz", "BAZ"],
         }
         out = todo_db.migrate_record(rec)
         self.assertNotIn("Tags", out)
@@ -73,20 +79,24 @@ class PluralTagEndTest(unittest.TestCase):
         self.assertNotIn("Tag", d)  # optional field absent, not []
 
     def test_tagrm_leaves_automatic_tags(self) -> None:
-        d = {"Tag": [
-            {"raw": "manual one", "manual": True},
-            {"raw": "auto one", "manual": False},
-        ]}
+        d = {
+            "Tag": [
+                {"raw": "manual one", "manual": True},
+                {"raw": "auto one", "manual": False},
+            ]
+        }
         todo.apply_tag_remove(d, "auto one")  # not a manual element
         self.assertIn("auto one", _raws(d))
 
     def test_doctor_tag_findings(self) -> None:
         good = {"Tag": [{"raw": "ok", "manual": True}]}
         self.assertEqual(todo.tag_findings(good), [])
-        for bad in ({"Tag": "notalist"},
-                    {"Tag": [{"manual": True}]},          # missing raw
-                    {"Tag": [{"raw": 5, "manual": True}]},  # raw not str
-                    {"Tag": [{"raw": "x"}]}):             # missing manual
+        for bad in (
+            {"Tag": "notalist"},
+            {"Tag": [{"manual": True}]},  # missing raw
+            {"Tag": [{"raw": 5, "manual": True}]},  # raw not str
+            {"Tag": [{"raw": "x"}]},
+        ):  # missing manual
             self.assertTrue(todo.tag_findings(bad), f"expected a finding for {bad}")
 
     def test_compute_auto_tags_top_k(self) -> None:
@@ -95,7 +105,7 @@ class PluralTagEndTest(unittest.TestCase):
         embedder = fake_nlce.BowEmbedder()
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
         text = "alpha beta gamma"
-        elems = todo.compute_auto_tags(text, candidates, embedder, 2)
+        elems = todo_ops.compute_auto_tags(text, candidates, embedder, 2)
         self.assertEqual(len(elems), 2)
         self.assertTrue(all(e["manual"] is False for e in elems))
         self.assertTrue(all(e["raw"] in candidates for e in elems))

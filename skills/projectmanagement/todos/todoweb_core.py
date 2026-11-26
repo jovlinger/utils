@@ -1,4 +1,6 @@
-"""Web viewer for todo tickets: a labeled representation with a movable split.
+"""Local core of todoweb: page rendering, git reads, and todo.py as a child process.
+
+Web viewer for todo tickets: a labeled representation with a movable split.
 
 Above the split: the todo itself -- Id, Parent (horizontal boxes), Summary,
 Body, Notes (horizontal boxes), Work items (horizontal boxes), Subtodos
@@ -18,12 +20,19 @@ resolving. Opened bare it shows a search box over every discoverable todo
 (empty query lists them all). All
 below-fold content is pre-computed and embedded in the page, so a dumped page is
 a complete self-contained artifact.
+
+Every todo this module renders arrives from todo.py through TodoCli;
+it imports no store module. The options, access levels and request checks are
+todoweb.py's.
 """
+
+# pylint: disable=too-many-lines
+# todo_row mirrors todo_common.todo_row, which todoweb may not import.
+# pylint: disable=duplicate-code
 
 from __future__ import annotations
 
 import html
-import ipaddress
 import json
 import os
 import re
@@ -31,16 +40,19 @@ import socket
 import socketserver
 import subprocess
 import sys
+import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import todo_ref
 import todo_url
 
 JsonDict = Dict[str, Any]
+
+# A todo read by Id for a subtodo or parent box; None when todo.py refused it.
+Reader = Callable[[str], Optional[JsonDict]]
 
 _DONE_KINDS = frozenset({"code", "merge_subtodo", "start_subtodo"})
 
@@ -66,17 +78,23 @@ def _debug(message: str, *, phase: str = "todo_web") -> None:
     """Emit a stderr trace line when TODO_WEB_DEBUG is set."""
     if not _debug_enabled():
         return
-    global _DEBUG_COUNTER
+    global _DEBUG_COUNTER  # pylint: disable=global-statement
     _DEBUG_COUNTER += 1
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
-    print(f"todo_web[{stamp}] #{_DEBUG_COUNTER} {phase}: {message}", file=sys.stderr, flush=True)
+    print(
+        f"todo_web[{stamp}] #{_DEBUG_COUNTER} {phase}: {message}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 class TodoWebError(Exception):
     """User-facing web viewer error."""
 
 
-def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_git(
+    root: Path, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     """Run git in *root* and return the completed process."""
     cmd = "git " + " ".join(args)
     started = time.monotonic()
@@ -116,21 +134,6 @@ def current_state_name(todo: JsonDict) -> Optional[str]:
     return next(iter(state.keys()))
 
 
-def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
-    """Read TODO.json at *ref*, returning None when absent or invalid."""
-    _debug(f"read_todo_at_ref ref={ref!r}")
-    result = run_git(root, "show", f"{ref}:TODO.json", check=False)
-    if result.returncode != 0:
-        return None
-    try:
-        parsed = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return normalize_todo(parsed)
-
-
 def github_repo_url(remote_url: Optional[str]) -> Optional[str]:
     """Predict a GitHub web URL from common origin URL shapes."""
     if not remote_url:
@@ -155,12 +158,12 @@ def repo_origin(root: Path) -> Optional[str]:
     return result.stdout.strip() or None
 
 
-def load_child_ticket(root: Path, entry: JsonDict) -> JsonDict:
-    """Load a child ticket from its branch, or fall back to the Subtodos snapshot."""
+def load_child_ticket(entry: JsonDict, reader: Optional[Reader] = None) -> JsonDict:
+    """Read a subtodo or parent through *reader*, or fall back to the entry's snapshot."""
     entry_id = str(entry.get("Id") or "")
     branch = str(entry.get("Branch") or "")
-    if branch:
-        child = read_todo_at_ref(root, branch)
+    if reader is not None and entry_id:
+        child = reader(entry_id)
         if child is not None and str(child.get("Id") or "") == entry_id:
             return child
     return {
@@ -288,13 +291,13 @@ def _notes_view(todo: JsonDict) -> List[JsonDict]:
     return out
 
 
-def _subtodos_view(root: Path, todo: JsonDict) -> List[JsonDict]:
+def _subtodos_view(todo: JsonDict, reader: Optional[Reader] = None) -> List[JsonDict]:
     """Light per-subtodo dicts, each carrying the loaded child for read-only render."""
     out: List[JsonDict] = []
     for entry in todo.get("Subtodos") or []:
         if not isinstance(entry, dict):
             continue
-        child = normalize_todo(load_child_ticket(root, entry))
+        child = normalize_todo(load_child_ticket(entry, reader))
         cid = str(child.get("Id") or entry.get("Id") or "")
         out.append(
             {
@@ -522,7 +525,11 @@ def _tile_controls(*buttons: str) -> str:
 
 
 def _wi_box(
-    item: JsonDict, *, interactive: bool, github: str = "", edits: Optional[JsonDict] = None
+    item: JsonDict,
+    *,
+    interactive: bool,
+    github: str = "",
+    edits: Optional[JsonDict] = None,
 ) -> str:
     """Render one work-item box: the box opens the commit message/diff in the
     fold. Any git sha is shown as ``sha:<short>`` (a github hyperlink on
@@ -549,7 +556,9 @@ def _wi_box(
             f'todo:{html.escape(item["subtodo"][:8])}</a>'
         )
     else:
-        todo_html = f'<div class="wi-sub mono">todo:{html.escape(item["subtodo"][:8])}</div>'
+        todo_html = (
+            f'<div class="wi-sub mono">todo:{html.escape(item["subtodo"][:8])}</div>'
+        )
     if item["blocked"]:
         # Where a sha would go: the item is done in the sense that the cursor
         # moved past it, but nothing was achieved and no commit exists.
@@ -580,7 +589,9 @@ def _wi_box(
     )
 
 
-def _note_box(note: JsonDict, *, interactive: bool, edits: Optional[JsonDict] = None) -> str:
+def _note_box(
+    note: JsonDict, *, interactive: bool, edits: Optional[JsonDict] = None
+) -> str:
     """Render one note box: the sibling of ``_wi_box``, built from the same
     primitives, but deliberately NOT a branch inside it. A note is a fact, not
     a task, so its box has no checkbox mark, no ``sha`` chip and no ``todo:``
@@ -615,7 +626,9 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
         )
     else:
         attrs = ""
-        id_html = f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
+        id_html = (
+            f'<div class="st-id mono">todo:{html.escape(sub["short"] or "?")}</div>'
+        )
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(sub, interactive=interactive)}{attrs}>'
         + _objid_badge(sub["objid"], interactive=interactive)
@@ -626,7 +639,7 @@ def _st_box(sub: JsonDict, *, interactive: bool) -> str:
     )
 
 
-def _parents_view(root: Path, todo: JsonDict) -> List[JsonDict]:
+def _parents_view(todo: JsonDict, reader: Optional[Reader] = None) -> List[JsonDict]:
     """Per-parent dicts from the Parent field (a list of {Id, Branch}), each
     carrying the loaded parent so the fold can show a read-only repr."""
     out: List[JsonDict] = []
@@ -641,7 +654,7 @@ def _parents_view(root: Path, todo: JsonDict) -> List[JsonDict]:
         pid = str(entry.get("Id") or "")
         if not pid:
             continue
-        child = normalize_todo(load_child_ticket(root, entry))
+        child = normalize_todo(load_child_ticket(entry, reader))
         out.append(
             {
                 "id": pid,
@@ -669,7 +682,9 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     else:
         attrs = ""
         id_html = f'<div class="st-id mono">todo:{html.escape(p["short"] or "?")}</div>'
-    branch = f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
+    branch = (
+        f'<div class="st-state">{html.escape(p["branch"])}</div>' if p["branch"] else ""
+    )
     return (
         f'<div class="{" ".join(classes)}"{_box_attrs(p, interactive=interactive)}{attrs}>'
         + _objid_badge(p["objid"], interactive=interactive)
@@ -681,7 +696,9 @@ def _parent_box(p: JsonDict, *, interactive: bool) -> str:
     )
 
 
-def _parents_html(parents: List[JsonDict], *, interactive: bool, focus_objid: str = "") -> str:
+def _parents_html(
+    parents: List[JsonDict], *, interactive: bool, focus_objid: str = ""
+) -> str:
     """Render the Parent section as boxes (same click model as subtodos)."""
     if not parents:
         return ""
@@ -702,7 +719,17 @@ def _parents_html(parents: List[JsonDict], *, interactive: bool, focus_objid: st
 # live inside Summary/Body as .hash and only .raw is rendered), so nothing
 # opaque reaches the generic path.
 _DEDICATED_FIELDS = frozenset(
-    {"Id", "Summary", "LongSummary", "Body", "Notes", "Parent", "WorkItems", "Subtodos", "State"}
+    {
+        "Id",
+        "Summary",
+        "LongSummary",
+        "Body",
+        "Notes",
+        "Parent",
+        "WorkItems",
+        "Subtodos",
+        "State",
+    }
 )
 
 # Size past which a section starts COLLAPSED. Measured on the content's text,
@@ -720,6 +747,7 @@ def _size_hint(count: int, noun: str) -> str:
     return f"{count} {noun}" if count != 1 else f"{count} {noun[:-1]}"
 
 
+# pylint: disable-next=too-many-arguments
 def _section(
     title: str,
     inner: str,
@@ -783,7 +811,9 @@ _FIELD_EDIT_LABELS = {
 }
 
 
-def _edit_registry(todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]) -> JsonDict:
+def _edit_registry(
+    todo: JsonDict, witems: List[JsonDict], notes: List[JsonDict]
+) -> JsonDict:
     """Every edit control the page offers, keyed by the control's ``data-edit``.
 
     Each entry is the request the control would send: the op, its target, and
@@ -862,6 +892,7 @@ def _edit_button(key: str, edits: Optional[JsonDict]) -> str:
     return f'<button type="button" class="edit-toggle" data-edit="{html.escape(key)}">Edit</button>'
 
 
+# pylint: disable-next=too-many-arguments
 def _md_field_html(
     text: str,
     *,
@@ -883,7 +914,9 @@ def _md_field_html(
         if monospace or "\n" in text:
             return f'<pre class="val body">{escaped}</pre>'
         return f'<div class="val">{escaped}</div>'
-    raw_cls = "val body md-view md-raw" if monospace or "\n" in text else "val md-view md-raw"
+    raw_cls = (
+        "val body md-view md-raw" if monospace or "\n" in text else "val md-view md-raw"
+    )
     if monospace or "\n" in text:
         raw_inner = f'<pre class="{raw_cls}">{escaped}</pre>'
     else:
@@ -918,13 +951,20 @@ def _meta_html(
         if key in _DEDICATED_FIELDS:
             continue
         edit_key = _FIELD_EDIT_OPS.get(str(key), "")
-        if value in (None, "", [], {}) and not (edit_key and edits and edit_key in edits):
+        if value in (None, "", [], {}) and not (
+            edit_key and edits and edit_key in edits
+        ):
             continue
         if isinstance(value, (dict, list)):
-            rendered = f'<pre class="val body">{html.escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
+            dumped = html.escape(json.dumps(value, indent=2, sort_keys=True))
+            rendered = f'<pre class="val body">{dumped}</pre>'
         else:
             rendered = _md_field_html(
-                str(value), interactive=interactive, label=str(key), edit_key=edit_key, edits=edits
+                str(value),
+                interactive=interactive,
+                label=str(key),
+                edit_key=edit_key,
+                edits=edits,
             )
         attrs = _section_attrs(value, interactive=interactive)
         badge = _objid_badge(_first_objid(value), interactive=interactive)
@@ -972,7 +1012,12 @@ def _state_section_html(todo: JsonDict, *, interactive: bool = True) -> str:
         text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
         # A note is prose with paragraphs; a pr number or branch name is a word.
         rendered = (
-            _md_field_html(text, interactive=interactive, monospace="\n" in text, label=f"State {key}")
+            _md_field_html(
+                text,
+                interactive=interactive,
+                monospace="\n" in text,
+                label=f"State {key}",
+            )
             if key == "note"
             else (
                 f'<pre class="val body">{html.escape(text)}</pre>'
@@ -992,6 +1037,7 @@ def _state_section_html(todo: JsonDict, *, interactive: bool = True) -> str:
     )
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals
 def _sections_html(
     todo: JsonDict,
     witems: List[JsonDict],
@@ -1020,7 +1066,9 @@ def _sections_html(
     body_relto = _relto_view(
         todo, body_field.get("relto") if isinstance(body_field, dict) else None
     )
-    parents_html = _parents_html(parents, interactive=interactive, focus_objid=focus_objid)
+    parents_html = _parents_html(
+        parents, interactive=interactive, focus_objid=focus_objid
+    )
     # Only when present: an empty "Long summary" heading on every todo that has
     # none is noise. Rendered as its own section rather than through _meta_html,
     # which would dump the whole dict including embedding vectors.
@@ -1028,29 +1076,43 @@ def _sections_html(
     summary_bar = f'<div class="md-bar">{summary_edit}</div>' if summary_edit else ""
     long_summary = _raw_field(todo, "LongSummary")
     long_summary_editable = "set-long-summary" in (edits or {})
-    long_summary_html = _section(
-        "Long summary",
-        _md_field_html(
-            long_summary,
+    long_summary_html = (
+        _section(
+            "Long summary",
+            _md_field_html(
+                long_summary,
+                interactive=interactive,
+                monospace=True,
+                label="Long summary",
+                edit_key="set-long-summary",
+                edits=edits,
+            ),
             interactive=interactive,
-            monospace=True,
-            label="Long summary",
-            edit_key="set-long-summary",
-            edits=edits,
-        ),
-        interactive=interactive,
-        attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
-        objid=_first_objid(todo.get("LongSummary")),
-        text=long_summary,
-        is_open=_holds(todo.get("LongSummary"), focus_objid),
-    ) if long_summary or long_summary_editable else ""
+            attrs=_section_attrs(todo.get("LongSummary"), interactive=interactive),
+            objid=_first_objid(todo.get("LongSummary")),
+            text=long_summary,
+            is_open=_holds(todo.get("LongSummary"), focus_objid),
+        )
+        if long_summary or long_summary_editable
+        else ""
+    )
     wi_boxes = "".join(
         _wi_box(w, interactive=interactive, github=github, edits=edits) for w in witems
     )
-    note_boxes = "".join(_note_box(n, interactive=interactive, edits=edits) for n in notes)
+    note_boxes = "".join(
+        _note_box(n, interactive=interactive, edits=edits) for n in notes
+    )
     st_boxes = "".join(_st_box(s, interactive=interactive) for s in stodos)
-    wi_row = f'<div class="row">{wi_boxes}</div>' if wi_boxes else '<div class="none">none</div>'
-    st_row = f'<div class="row">{st_boxes}</div>' if st_boxes else '<div class="none">none</div>'
+    wi_row = (
+        f'<div class="row">{wi_boxes}</div>'
+        if wi_boxes
+        else '<div class="none">none</div>'
+    )
+    st_row = (
+        f'<div class="row">{st_boxes}</div>'
+        if st_boxes
+        else '<div class="none">none</div>'
+    )
     # Absent, not "0 notes": a record that carries no Notes renders exactly as
     # it did before this field existed, the way Long summary already does.
     notes_html = (
@@ -1119,16 +1181,20 @@ def _sections_html(
             hint=_size_hint(len(stodos), "subtodos"),
             is_open=_holds(todo.get("Subtodos"), focus_objid),
         )
-        + _meta_html(todo, interactive=interactive, focus_objid=focus_objid, edits=edits)
+        + _meta_html(
+            todo, interactive=interactive, focus_objid=focus_objid, edits=edits
+        )
     )
 
 
-def _static_repr_html(root: Path, child: JsonDict, github: str = "") -> str:
+def _static_repr_html(
+    child: JsonDict, github: str = "", reader: Optional[Reader] = None
+) -> str:
     """Read-only rendition of a subtodo/parent, mirroring the layout, no links."""
     child = normalize_todo(child)
     witems = _workitems_view(child)
-    stodos = _subtodos_view(root, child)
-    parents = _parents_view(root, child)
+    stodos = _subtodos_view(child, reader)
+    parents = _parents_view(child, reader)
     notes = _notes_view(child)
     return (
         '<div class="static-repr">'
@@ -1137,6 +1203,7 @@ def _static_repr_html(root: Path, child: JsonDict, github: str = "") -> str:
     )
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals,too-many-positional-arguments
 def _page_data(
     root: Path,
     todo: JsonDict,
@@ -1145,6 +1212,7 @@ def _page_data(
     parents: List[JsonDict],
     notes: List[JsonDict],
     github: Optional[str],
+    reader: Optional[Reader] = None,
 ) -> JsonDict:
     """Assemble the embedded JSON: per-work-item message/diff, per-note full
     text, and per-subtodo / per-parent repr HTML."""
@@ -1185,7 +1253,7 @@ def _page_data(
             continue
         objects[s["objid"]] = {
             "mode": "repr",
-            "html": _static_repr_html(root, s["child"], github),
+            "html": _static_repr_html(s["child"], github, reader),
             "hi": referencing.get(s["id"], []),
         }
     for p in parents:
@@ -1193,7 +1261,7 @@ def _page_data(
             continue
         objects[p["objid"]] = {
             "mode": "repr",
-            "html": _static_repr_html(root, p["child"], github),
+            "html": _static_repr_html(p["child"], github, reader),
             "hi": [],
         }
     for n in notes:
@@ -1207,7 +1275,9 @@ def _page_data(
             "mode": "repr",
             "html": (
                 '<div class="note-fold"><h3>Note</h3>'
-                + _md_field_html(n["raw"], interactive=False, monospace=True, label="Note")
+                + _md_field_html(
+                    n["raw"], interactive=False, monospace=True, label="Note"
+                )
                 + "</div>"
             ),
             "hi": [chip["objid"] for chip in n["relto"] if chip["objid"]],
@@ -1728,8 +1798,14 @@ window.addEventListener('mouseup', function(){ dragging = false; document.body.s
 </script>"""
 
 
+# pylint: disable-next=too-many-locals
 def render_todo_page(
-    root: Path, todo: JsonDict, *, focus_objid: str = "", write: bool = False
+    root: Path,
+    todo: JsonDict,
+    *,
+    focus_objid: str = "",
+    write: bool = False,
+    reader: Optional[Reader] = None,
 ) -> str:
     """Render the single-todo viewer: representation on top, message/diff below.
 
@@ -1739,18 +1815,19 @@ def render_todo_page(
     the todo. An objid naming a non-box section is marked instead; one that
     is not on the page at all is ignored, and the todo simply renders.
 
-    *write* renders the edit controls.
+    *write* renders the edit controls. *reader* loads each subtodo and parent
+    for its box; without one they render from this todo's own snapshot.
     """
     todo = normalize_todo(todo)
     tid = str(todo.get("Id") or "")
     started = time.monotonic()
     _debug(f"render_todo_page id={tid[:8]} write={write}", phase="render")
     witems = _workitems_view(todo)
-    stodos = _subtodos_view(root, todo)
-    parents = _parents_view(root, todo)
+    stodos = _subtodos_view(todo, reader)
+    parents = _parents_view(todo, reader)
     notes = _notes_view(todo)
     github = github_repo_url(repo_origin(root))
-    data = _page_data(root, todo, witems, stodos, parents, notes, github)
+    data = _page_data(root, todo, witems, stodos, parents, notes, github, reader)
     edits = _edit_registry(todo, witems, notes) if write else None
     if edits is not None:
         data["write"] = {"edits": edits}
@@ -1862,7 +1939,9 @@ def _focusable_objids(
     focused -- the caller walks outward to the box that contains it, a note
     included, exactly the way it already does for a work item.
     """
-    focusable = {v["objid"] for v in (*witems, *stodos, *parents, *notes) if v.get("objid")}
+    focusable = {
+        v["objid"] for v in (*witems, *stodos, *parents, *notes) if v.get("objid")
+    }
     focusable.update(_objids_within(todo.get("Summary")))
     focusable.update(_objids_within(todo.get("Body")))
     for key, value in todo.items():
@@ -1871,7 +1950,9 @@ def _focusable_objids(
     return focusable
 
 
-def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
+def resolve_focus(
+    todo: JsonDict, segments: List[str], *, reader: Optional[Reader] = None
+) -> str:
     """Return the objid a permalink's *segments* should open the page focused on.
 
     Raises ``todo_url.TodoUrlError`` when the path addresses nothing. Resolving
@@ -1883,121 +1964,14 @@ def resolve_focus(root: Path, todo: JsonDict, segments: List[str]) -> str:
     focusable = _focusable_objids(
         todo,
         _workitems_view(todo),
-        _subtodos_view(root, todo),
-        _parents_view(root, todo),
+        _subtodos_view(todo, reader),
+        _parents_view(todo, reader),
         _notes_view(todo),
     )
     for objid in todo_url.objid_chain(todo, json_path):
         if objid in focusable:
             return objid
     return ""
-
-
-WILDCARD_HOSTS = ("::", "0.0.0.0")
-LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
-UPDATE_PATH = "/update"
-LEVELS = ("none", "read", "write")
-ALL_HOST = "::"
-LOOPBACK_HOST = "localhost"
-
-
-def default_bind_host(public: str) -> str:
-    """The bind host when none was named: loopback unless public clients are served at all."""
-    return LOOPBACK_HOST if public == "none" else ALL_HOST
-
-
-def is_loopback_client(address: str) -> bool:
-    """True when a client's source *address* is loopback: 127.0.0.0/8, ::1, or an
-    IPv4-mapped ::ffff:127.x.x.x (what a dual-stack socket reports for a v4 client).
-
-    The address is the TCP peer, not anything the client sent, so it cannot be
-    claimed by a header.
-    """
-    try:
-        ip = ipaddress.ip_address(address.split("%", 1)[0])
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_loopback
-
-
-class UpdateRefused(TodoWebError):
-    """The update command refused; the message is the command's own error text."""
-
-    def __init__(self, message: str, *, status: int = 400) -> None:
-        super().__init__(message)
-        self.status = status
-
-
-class Updater(Protocol):
-    """The write side `todo.py web` injects for a write class; the viewer never writes itself."""
-
-    def update(self, request: JsonDict) -> JsonDict:
-        """Apply ``{id, op, target, value}`` and return the JSON payload of the 200 answer.
-
-        Raises UpdateRefused when the command refuses.
-        """
-
-
-def request_refusal(headers: Mapping[str, str], port: int, *, loopback: bool = True) -> str:
-    """Why a write request must be refused before any command runs, or "".
-
-    From a loopback client the Host must be a loopback name on this server's
-    port, which a DNS-rebound page cannot send; a public client's Host is only
-    required to be present. The Origin must be present and be that same origin,
-    which no other page in the browser can claim. The JSON content type cannot
-    be sent cross-origin without a CORS preflight, which this server never
-    answers.
-    """
-    host = str(headers.get("Host") or "").strip().lower()
-    if loopback:
-        if host not in {f"{name}:{port}" for name in LOOPBACK_NAMES}:
-            return f"write refused: Host {host!r} is not a loopback name on port {port}"
-    elif not host:
-        return "write refused: no Host header"
-    origin = str(headers.get("Origin") or "").strip().lower()
-    if origin != f"http://{host}":
-        return f"write refused: Origin {origin!r} is not this viewer's origin http://{host}"
-    content_type = str(headers.get("Content-Type") or "").split(";")[0].strip().lower()
-    if content_type != "application/json":
-        return f"write refused: Content-Type {content_type!r} is not application/json"
-    return ""
-
-
-def handle_update(
-    headers: Mapping[str, str],
-    body: bytes,
-    port: int,
-    updater: Updater,
-    *,
-    loopback: bool = True,
-) -> "tuple[int, JsonDict]":
-    """Check and apply one POST /update; return ``(status, JSON payload)``.
-
-    *loopback* is whether the client is a loopback one (see ``request_refusal``).
-    403 when the request fails ``request_refusal`` or its body is not JSON, 400
-    when the JSON is not an object, 200 / the refusal's own status from
-    *updater*, and 500 naming the exception type and message for any other
-    exception it raises. The updater runs only after every check has passed.
-    """
-    refusal = request_refusal(headers, port, loopback=loopback)
-    if refusal:
-        return 403, {"error": refusal}
-    try:
-        request = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return 403, {"error": "write refused: body is not JSON"}
-    if not isinstance(request, dict):
-        return 400, {"error": "update request must be a JSON object"}
-    try:
-        return 200, updater.update(request)
-    except UpdateRefused as exc:
-        return exc.status, {"error": str(exc)}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        # Anything the command raises that is not a refusal still gets an answer; the
-        # page shows it instead of a dropped connection.
-        return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
 
 class _DualStackServer(ThreadingHTTPServer):
@@ -2017,182 +1991,168 @@ class _DualStackServer(ThreadingHTTPServer):
         self.server_name, self.server_port = self.server_address[:2]
 
 
-def serve(
-    root: Path,
-    *,
-    host: Optional[str] = None,
-    port: int = 8765,
-    initial_id: Optional[str] = None,
-    resolver: Callable[[str], "tuple[Path, JsonDict]"],
-    searcher: Callable[[str], List[JsonDict]],
-    loopback: str = "read",
-    public: str = "none",
-    updater: Optional[Updater] = None,
-) -> str:
-    """Start the viewer and serve until interrupted.
+# --- todo.py as a child process --------------------------------------------
+#
+# The viewer's only route to the store: every read and every save runs todo.py,
+# so the CLI's own normalization, refusals and autocommit apply unchanged.
 
-    ``?id=<selector>`` renders that todo via *resolver*, which returns the
-    ``(repo_root, todo)`` pair (the repo is where that todo's diffs come from).
-    A bare path renders the search page, whose box calls ``/search?q=`` -> a
-    JSON list of rows from *searcher(query)* (an empty query lists all todos).
-    *initial_id* only shapes the printed URL so the browser opens straight onto
-    that todo.
+TODO_PY = Path(__file__).resolve().with_name("todo.py")
 
-    *loopback* governs clients whose source address is loopback and *public*
-    every other client, each one of ``LEVELS``: ``none`` answers 403 to every
-    request, ``read`` serves GET and answers 403 to any POST, ``write`` also
-    accepts ``POST /update`` through ``handle_update`` to *updater* (required
-    when either is ``write``). Both ``none`` is refused before anything binds.
-    The class is decided per request from the connection's peer address.
-    """
-    _debug(
-        f"serve host={host} port={port} root={root} initial_id={initial_id} "
-        f"loopback={loopback} public={public}",
-        phase="serve",
+_CLI_PREFIX = "todo.py: "
+
+
+class TodoCliError(TodoWebError):
+    """todo.py exited non-zero; the message is its own error text."""
+
+    def __init__(self, message: str, *, code: int) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def cli_error_text(stderr: str) -> str:
+    """todo.py's own error text from captured stderr, minus the ``todo.py:`` prefix."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return "\n".join(
+        line[len(_CLI_PREFIX) :] if line.startswith(_CLI_PREFIX) else line
+        for line in lines
     )
-    for name, level in (("loopback", loopback), ("public", public)):
-        if level not in LEVELS:
-            raise TodoWebError(f"{name} must be one of {', '.join(LEVELS)}, not {level!r}")
-    if loopback == "none" and public == "none":
-        raise TodoWebError("loopback and public are both none: nothing could connect")
-    if "write" in (loopback, public) and updater is None:
-        raise TodoWebError("write mode needs an updater")
-    if host is None:
-        host = default_bind_host(public)
 
-    class Handler(BaseHTTPRequestHandler):
-        def _client_is_loopback(self) -> bool:
-            return is_loopback_client(str(self.client_address[0]))
 
-        def _level(self) -> str:
-            """The access level of the class this request's client belongs to."""
-            return loopback if self._client_is_loopback() else public
+def todo_row(todo: JsonDict) -> JsonDict:
+    """The search page's row for one todo: the fields its template renders."""
+    full = str(todo.get("Id", ""))
+    summary = todo.get("Summary")
+    summary = (
+        summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
+    )
+    return {
+        "id": full,
+        "short": full[:8],
+        "summary": summary,
+        "state": current_state_name(todo) or "",
+        "ctime": str(todo.get("create_dt", "") or ""),
+        "utime": str(todo.get("update_dt", "") or ""),
+    }
 
-        def _forbidden(self) -> bool:
-            """Answer 403 and return True when this client's class may not GET."""
-            if self._level() != "none":
-                return False
-            self._respond_json(403, {"error": "forbidden: this viewer does not serve you"})
-            return True
 
-        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            level = self._level()
-            if level != "write" or updater is None:
-                self._respond_json(403, {"error": f"forbidden: this client is at level {level}"})
-                return
-            if urlparse(self.path).path != UPDATE_PATH:
-                self._respond_json(404, {"error": f"no write endpoint at {self.path}"})
-                return
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                self._respond_json(400, {"error": "bad Content-Length"})
-                return
-            body = self.rfile.read(max(length, 0))
-            status, payload = handle_update(
-                self.headers,
-                body,
-                self.server.server_port,
-                updater,
-                loopback=self._client_is_loopback(),
+def listed_ids(text: str) -> List[str]:
+    """The id column of `todo.py ls` / `todo.py search` output, in its order."""
+    return [line.split()[0] for line in text.splitlines() if line.strip()]
+
+
+class TodoCli:
+    """Runs todo.py in *cwd*; the viewer's only access to the store.
+
+    *env* is the child's environment, this process's own when None.
+    """
+
+    def __init__(
+        self,
+        cwd: Path,
+        *,
+        env: Optional[Mapping[str, str]] = None,
+        todo_py: Path = TODO_PY,
+    ) -> None:
+        self.cwd = cwd
+        self.env = None if env is None else dict(env)
+        self.todo_py = todo_py
+
+    def run(self, argv: List[str]) -> subprocess.CompletedProcess[str]:
+        """Run ``todo.py <argv>`` and return the finished process, whatever its exit."""
+        _debug(f"todo.py {' '.join(argv)}", phase="cli")
+        return subprocess.run(
+            [sys.executable, str(self.todo_py), *argv],
+            cwd=self.cwd,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def check(self, argv: List[str]) -> str:
+        """Run ``todo.py <argv>``; return its stdout, or raise TodoCliError with its error text."""
+        proc = self.run(argv)
+        if proc.returncode != 0:
+            text = (
+                cli_error_text(proc.stderr)
+                or f"todo.py {argv[0]} exited {proc.returncode}"
             )
-            self._respond_json(status, payload)
+            raise TodoCliError(text, code=proc.returncode)
+        return proc.stdout
 
-        def _respond_json(self, status: int, payload: JsonDict) -> None:
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+    def read(self, selector: str) -> JsonDict:
+        """The todo *selector* names, as `todo.py read` prints it."""
+        parsed = json.loads(self.check(["read", "--", selector]))
+        if not isinstance(parsed, dict):
+            raise TodoWebError(f"todo.py read {selector} printed no todo")
+        return parsed
 
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self._forbidden():
-                return
-            parsed = urlparse(self.path)
-            if parsed.path == "/search":
-                query = parse_qs(parsed.query).get("q", [""])[0]
+    def basedir(self) -> Path:
+        """The resolved todo directory, as `todo.py basedir` prints it."""
+        return Path(self.check(["basedir"]).strip())
+
+    def records(self) -> Dict[str, JsonDict]:
+        """Every todo in the store by Id, as `todo.py export-to-file ALL` writes them."""
+        with tempfile.TemporaryDirectory(prefix="todoweb-") as tmp:
+            self.check(["export-to-file", "--basedir", tmp, "ALL"])
+            found: Dict[str, JsonDict] = {}
+            for path in sorted((Path(tmp) / "storage").glob("*.json")):
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(record, dict) and record.get("Id"):
+                    found[str(record["Id"])] = record
+        return found
+
+    def _rows(self, listing: str) -> List[JsonDict]:
+        """Rows for the ids *listing* names, in its order, from one bulk read."""
+        shorts = listed_ids(listing)
+        if not shorts:
+            return []
+        records = self.records()
+        rows: List[JsonDict] = []
+        for short in shorts:
+            matches = [r for tid, r in records.items() if tid.startswith(short)]
+            if len(matches) == 1:
+                rows.append(todo_row(matches[0]))
+        return rows
+
+    def ls_rows(self) -> List[JsonDict]:
+        """Every todo in the store, every state, in `todo.py ls` order."""
+        return self._rows(self.check(["ls", "--states=ALL"]))
+
+    def search_rows(self, terms: List[str]) -> List[JsonDict]:
+        """`todo.py search` hits, in its rank order and under its default state filter."""
+        return self._rows(self.check(["search", "--", *terms]))
+
+    def reader(self) -> Reader:
+        """A reader for one page: each Id is read at most once; a refused read is None."""
+        seen: Dict[str, Optional[JsonDict]] = {}
+
+        def read(todo_id: str) -> Optional[JsonDict]:
+            if todo_id not in seen:
                 try:
-                    rows = searcher(query)
-                except TodoWebError as exc:
-                    self.send_error(400, str(exc))
-                    return
-                self._respond(
-                    json.dumps(rows).encode("utf-8"), "application/json; charset=utf-8"
-                )
-                return
-            if parsed.path not in {"/", "/index.html"}:
-                if _PERMALINK_HEAD.match(parsed.path):
-                    self._permalink(parsed.path)
-                    return
-                self.send_error(404)
-                return
-            todo_id = parse_qs(parsed.query).get("id", [None])[0]
-            try:
-                if todo_id:
-                    todo_root, todo = resolver(todo_id)
-                    payload = self._page(todo_root, todo)
-                else:
-                    payload = render_search_page(root, searcher(""))
-            except TodoWebError as exc:
-                self.send_error(400, str(exc))
-                return
-            self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
+                    seen[todo_id] = self.read(todo_id)
+                except TodoWebError:
+                    seen[todo_id] = None
+            return seen[todo_id]
 
-        def _permalink(self, path: str) -> None:
-            """Serve /<todoid>/<path...>: the whole todo, focused on that item.
+        return read
 
-            The path IS the resource -- "todo d56d, focused on objid 23" -- so it
-            renders 200 in place. It does not redirect: a permalink that bounced
-            you to a different URL would not be the durable name it claims to be,
-            and the address bar would stop matching the link you were handed.
-            """
-            try:
-                selector, segments = todo_url.split_url_path(path)
-                todo_root, todo = resolver(selector)
-                focus = resolve_focus(todo_root, todo, segments)
-                payload = self._page(todo_root, todo, focus_objid=focus)
-            except (todo_url.TodoUrlError, TodoWebError) as exc:
-                self.send_error(404, str(exc))
-                return
-            self._respond(payload.encode("utf-8"), "text/html; charset=utf-8")
 
-        def _page(self, todo_root: Path, todo: JsonDict, *, focus_objid: str = "") -> str:
-            """The todo page, with edit controls when this client's class is `write`."""
-            return render_todo_page(
-                todo_root,
-                todo,
-                focus_objid=focus_objid,
-                write=self._level() == "write" and updater is not None,
-            )
+def git_toplevel(cwd: Path) -> Path:
+    """The git work tree containing *cwd*: where commit messages and diffs come from."""
+    result = run_git(cwd, "rev-parse", "--show-toplevel", check=False)
+    if result.returncode != 0:
+        raise TodoWebError(f"not a git repository: {cwd}")
+    return Path(result.stdout.strip())
 
-        def _respond(self, body: bytes, content_type: str) -> None:
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
 
-        def end_headers(self) -> None:
-            """Every response, errors included, forbids framing: a page that embeds the
-            viewer could otherwise overlay its edit controls (clickjacking)."""
-            self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
-            super().end_headers()
-
-        def log_message(self, format: str, *args: object) -> None:
-            if os.environ.get("TODO_WEB_LOG") or _debug_enabled():
-                super().log_message(format, *args)
-
-    server = _DualStackServer((host, port), Handler)
-    shown = "localhost" if host in WILDCARD_HOSTS else f"[{host}]" if ":" in host else host
-    base = f"http://{shown}:{server.server_port}"
-    url = f"{base}/{initial_id}" if initial_id else base
-    print(f"todo web: {url}  loopback={loopback}  public={public}", flush=True)
+def read_config_key(basedir: Path, key: str) -> Any:
+    """*key* of ``<basedir>/config.json``; None when the file or the key is absent."""
+    path = basedir / "config.json"
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        return url
-    finally:
-        server.server_close()
-    return url
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TodoWebError(f"{path}: {exc}") from exc
+    return config.get(key) if isinstance(config, dict) else None

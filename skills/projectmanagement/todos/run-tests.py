@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Timeboxed pytest driver for the todos CLI, selectable by tier and by surface.
+"""Timeboxed pytest driver for the todo tools, selectable by tier, suite and surface.
 
 Plain ``./run-tests.py`` is the fast suite: every test except the ``e2e`` tier,
 which is the only tier that starts a fresh CLI and a fresh store per test.
@@ -9,6 +9,7 @@ which is the only tier that starts a fresh CLI and a fresh store per test.
   ./run-tests.py                     fast: unit + integration, all surfaces
   ./run-tests.py --all               everything, including e2e
   ./run-tests.py --tier e2e          one tier
+  ./run-tests.py --suite core        one suite: core, todo or todoweb (see --list)
   ./run-tests.py --surface web       one surface (see --list)
   ./run-tests.py --surface store -k redirect -vv   unknown args go to pytest
 
@@ -21,6 +22,9 @@ and the exit code is 124, the same code ``timeout(1)`` uses.
 stores and git repos do not churn SSD pages. This is best effort: ``--no-ramdisk``
 opts out, and a platform that cannot provide one runs against the disk instead.
 """
+
+# The file is run as ./run-tests.py (Makefile, docs), never imported by name.
+# pylint: disable=invalid-name
 
 from __future__ import annotations
 
@@ -42,20 +46,30 @@ HERE = Path(__file__).resolve().parent
 # Surface area, an axis orthogonal to tier: which part of the tool a file covers.
 SURFACES: dict[str, tuple[str, ...]] = {
     "store": ("test_todo_db.py", "test_todo_migrate.py"),
-    "objid": ("test_todo_objid.py", "test_todo_ref.py"),
+    "objid": ("test_todo_objid.py", "test_todo_ref.py", "test_todo_url.py"),
+    "common": ("test_todo_common.py",),
     "web": (
-        "test_todo_url.py",
         "test_todo_web_bind.py",
         "test_todo_web_permalink.py",
         "test_todo_web_render.py",
         "test_todo_web_write.py",
+        "test_todoweb_e2e.py",
     ),
     "embed": ("test_todo_embed.py", "test_todo_embed_apple.py"),
     "search": ("test_todo_search.py", "test_todo_search_idf.py"),
     "tag": ("test_todo_tag.py", "test_todo_tag_impl.py"),
     "cli": ("test_todo.py", "test_todo_all_sentinel.py"),
     "git": ("test_git_command.py",),
-    "meta": ("test_todo_tiering.py",),
+    "meta": ("test_todo_tiering.py", "test_import_graph.py"),
+}
+
+# One suite per piece of the layered tool (IMPLEMENTATION.md, "Code layout"),
+# each a set of surfaces: the common core, the todo CLI (its policy and local
+# core), and the todoweb viewer.
+SUITES: dict[str, tuple[str, ...]] = {
+    "core": ("store", "objid", "common", "embed", "git", "meta"),
+    "todo": ("cli", "search", "tag"),
+    "todoweb": ("web",),
 }
 
 FAST_TIMEOUT = 60.0
@@ -89,7 +103,8 @@ def _macos_ramdisk(size_mb: int, mount: Path):
         finally:
             subprocess.run(
                 ["diskutil", "unmount", "force", str(mount)],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
             )
             mount.rmdir()
     finally:
@@ -128,12 +143,16 @@ def ramdisk(size_mb: int):
                 yield path
                 return
     except (OSError, subprocess.CalledProcessError, IndexError) as exc:
-        print(f"run-tests: no ramdisk ({exc}); using {tempfile.gettempdir()}",
-              file=sys.stderr)
+        print(
+            f"run-tests: no ramdisk ({exc}); using {tempfile.gettempdir()}",
+            file=sys.stderr,
+        )
         yield None
         return
-    print(f"run-tests: no ramdisk recipe for {system}; using "
-          f"{tempfile.gettempdir()}", file=sys.stderr)
+    print(
+        f"run-tests: no ramdisk recipe for {system}; using " f"{tempfile.gettempdir()}",
+        file=sys.stderr,
+    )
     yield None
 
 
@@ -147,11 +166,30 @@ def _files_by_surface() -> dict[str, str]:
     on_disk = {p.name for p in HERE.glob("test_*.py")}
     unknown = sorted(on_disk - set(by_file))
     if unknown:
-        sys.exit("run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown))
+        sys.exit(
+            "run-tests: add these to SURFACES in run-tests.py: " + ", ".join(unknown)
+        )
     missing = sorted(set(by_file) - on_disk)
     if missing:
-        sys.exit("run-tests: SURFACES names files that do not exist: " + ", ".join(missing))
+        sys.exit(
+            "run-tests: SURFACES names files that do not exist: " + ", ".join(missing)
+        )
     return by_file
+
+
+def _suite_surfaces(suites: list[str]) -> list[str]:
+    """The surfaces of *suites*, refusing to run if a surface is in no suite or in two."""
+    owners: dict[str, list[str]] = {surface: [] for surface in SURFACES}
+    for suite, surfaces in SUITES.items():
+        for surface in surfaces:
+            owners.setdefault(surface, []).append(suite)
+    wrong = sorted(s for s, o in owners.items() if len(o) != 1 or s not in SURFACES)
+    if wrong:
+        sys.exit(
+            "run-tests: each surface must be in exactly one SUITES entry: "
+            + ", ".join(wrong)
+        )
+    return [surface for suite in suites for surface in SUITES[suite]]
 
 
 def _surface_files(surfaces: list[str]) -> list[str]:
@@ -180,36 +218,59 @@ def _limit(expression: str) -> float:
             return float(raw)
         except ValueError:
             sys.exit(f"run-tests: TODO_TEST_TIMEOUT is not a number: {raw!r}")
-    selects_e2e = expression == "" or ("e2e" in expression and "not e2e" not in expression)
+    selects_e2e = expression == "" or (
+        "e2e" in expression and "not e2e" not in expression
+    )
     return E2E_TIMEOUT if selects_e2e else FAST_TIMEOUT
 
 
 def main() -> int:
+    """Parse the selection, then run pytest on it under the timebox and ramdisk."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all", action="store_true", help="include the e2e tier")
     parser.add_argument(
-        "--tier", action="append", default=[], metavar="NAME", choices=tiering.TIERS,
+        "--tier",
+        action="append",
+        default=[],
+        metavar="NAME",
+        choices=tiering.TIERS,
         help=f"run one tier only (repeatable): {', '.join(tiering.TIERS)}",
     )
     parser.add_argument(
-        "--surface", action="append", default=[], metavar="NAME",
+        "--surface",
+        action="append",
+        default=[],
+        metavar="NAME",
         help=f"run one surface only (repeatable): {', '.join(sorted(SURFACES))}",
     )
-    parser.add_argument("--list", action="store_true", help="print the surface map and exit")
     parser.add_argument(
-        "--no-ramdisk", action="store_true",
+        "--suite",
+        action="append",
+        default=[],
+        metavar="NAME",
+        choices=sorted(SUITES),
+        help=f"run one suite only (repeatable): {', '.join(sorted(SUITES))}",
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="print the suite and surface map and exit"
+    )
+    parser.add_argument(
+        "--no-ramdisk",
+        action="store_true",
         help="keep $TMPDIR on disk instead of a memory-backed directory",
     )
     args, pytest_args = parser.parse_known_args()
 
+    suite_of = {s: suite for suite, surfaces in SUITES.items() for s in surfaces}
     if args.list:
         for surface in sorted(SURFACES):
             for name in SURFACES[surface]:
-                print(f"{surface:8} {name}")
+                print(f"{suite_of.get(surface, '?'):8} {surface:8} {name}")
         return 0
 
     _files_by_surface()  # fail fast on an unclassified file, whatever the selection
-    files = _surface_files(args.surface)
+    surfaces = _suite_surfaces(args.suite) + args.surface
+    files = _surface_files(surfaces)
     expression = _marker_expression(args.tier, args.all)
     selection = ["-m", expression] if expression else []
 
@@ -228,18 +289,18 @@ def main() -> int:
 def _spawn(argv: list[str], env: dict[str, str], limit: float) -> int:
     # Own process group: todo.py shells out to git, so a timeout has to take the
     # children with it.
-    proc = subprocess.Popen(argv, cwd=HERE, env=env, start_new_session=True)
-    try:
-        return proc.wait(timeout=limit)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGTERM)
+    with subprocess.Popen(argv, cwd=HERE, env=env, start_new_session=True) as proc:
         try:
-            proc.wait(timeout=5)
+            return proc.wait(timeout=limit)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-        print(f"run-tests: timed out after {limit:g}s", file=sys.stderr)
-        return TIMEOUT_EXIT
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            print(f"run-tests: timed out after {limit:g}s", file=sys.stderr)
+            return TIMEOUT_EXIT
 
 
 if __name__ == "__main__":

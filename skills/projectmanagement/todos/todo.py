@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """AWS-style CLI for branch-bound todo tickets (sqlite-backed; legacy JSON import)."""
 
+# One file per front end: every subcommand's arg parse and policy live here.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import argparse
-import contextlib
-import hashlib
-import io
 import json
 import logging
 import logging.handlers
@@ -17,60 +17,127 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     ClassVar,
     Dict,
     Iterator,
     List,
-    Mapping,
     Optional,
     Sequence,
-    Tuple,
 )
 
 import git_command
 import todo_db
 import todo_objid
 import todo_ref
-import todo_search
 import todo_store
 import todo_embed
 import todo_url
-import todo_web
-
-JsonDict = Dict[str, Any]
-
-LEGACY_JSON_ENV = "TODO_USE_JSON"
-
-# Local-first: remote polling is feature-flagged off for now. Flip to True to
-# re-enable best-effort fetch on read once multi-agent sync is wanted.
-FETCH_ENABLED: bool = False
-
-VALID_STATES = frozenset(
-    {
-        "groom",  # minted, still collecting data / grooming; not yet workable (was pre/pre-init)
-        "ready",  # groomed and ready to work (was init)
-        "working",
-        "userneeded",
-        "stopped",
-        "done",
-        "merged",
-        "rejected",  # PR closed without merging; the handoff was refused
-        "waiting",
-        "fact",  # never worked; an informational anchor for vector-memory recall (was info)
-        "N/a",
-    }
+from todo_common import (
+    JsonDict,
+    SEARCH_STOPWORDS_KEY,
+    TodoError,
+    _json_embeddings_present,
+    _merge_stored_embeddings,
+    _strip_vectors_at,
+    branch_exists,
+    commit_exists,
+    commit_todo,
+    current_branch,
+    current_state_name,
+    find_todos_by_id,
+    forest_roots,
+    git_fetch_if_remote,
+    git_url_for_repo,
+    head_sha,
+    id_matches,
+    import_all_json_refs,
+    import_json_ticket,
+    is_all_selector,
+    migrate_store,
+    mint_id,
+    normalize_todo_schema,
+    read_todo_at_ref,
+    read_todo_worktree,
+    repo_root,
+    resolve_ticket_by_id,
+    run_git,
+    run_search,
+    sha_matches,
+    todo_row,
+    use_store,
+    utc_now,
+    write_todo_worktree,
 )
-STOPWORDS = frozenset({"a", "an", "the", "to", "from", "for", "and", "or", "in", "on", "of"})
+from todo_ops import (
+    SUBTODO_STATE_INFO,
+    VALID_STATES,
+    WORKITEM_BLOCKED,
+    WORKITEM_CHECKPOINT,
+    WORKITEM_CODE,
+    WORKITEM_DONE_KINDS,
+    WORKITEM_MERGE_SUBTODO,
+    WORKITEM_NOCOMMIT_KINDS,
+    WORKITEM_NULL_SHA,
+    WORKITEM_OBJID_SCHEME,
+    WORKITEM_OBSOLETE,
+    WORKITEM_START_SUBTODO,
+    WORKITEM_TASK,
+    WORKTREE_TEARDOWN_STATES,
+    _RELTO_HOST_RE,
+    _autopush,
+    _build_relto_element,
+    _commit_store_paths,
+    _recompute_auto_tags,
+    _summary_snippet,
+    _ticket_ids_in_paths,
+    _workitem_index_by_number,
+    apply_parent_links,
+    apply_set_fields,
+    apply_tag_add,
+    apply_tag_clear,
+    apply_tag_remove,
+    apply_ticket_path,
+    assert_todo_worktree_removable,
+    build_ticket_skeleton,
+    close_workitem,
+    closed_workitem_payload,
+    code_workitem,
+    cursor_index,
+    cursor_summary,
+    ensure_todo_worktree,
+    get_at_path,
+    gh_gate_reason,
+    is_done,
+    kebab_branch_name,
+    last_sha,
+    load_json_file,
+    mark_cursor_done,
+    maybe_init_todo_branch,
+    merge_subtodo,
+    next_action,
+    promote_groom_todo,
+    reconcile_pr_state,
+    reestablish_backlinks,
+    remove_todo_worktree_for_branch,
+    resolve_note_index,
+    resolve_relto_host,
+    resolve_workitem_index,
+    set_at_path,
+    set_state,
+    start_subtodo_workitem,
+    sync_mentions,
+    teardown_worktree_for_terminal_state,
+    upsert_subtodo,
+    wait_for_state,
+    workitem_is_done,
+    workitem_kind,
+    worktree_path_for_branch,
+)
 
 # Uppercase macros usable in a --states expression (see parse_state_filter). They
 # expand to state sets, so a token is unambiguously a macro (UPPERCASE) or a state
@@ -96,21 +163,6 @@ DEFAULT_STATE_FILTER = "ALL,-FINAL"
 # the class and still does nothing, because it wrote no file.
 AUTOCOMMIT_KEY = "autocommit"
 AUTOPUSH_KEY = "autopush"
-
-# Search config keys, all per todo dir in config.json.
-#   search_stopwords         the DISCOVERED stopword list (see resolve_stopwords);
-#                            derived data, dropped by clear-search-data
-#   search_stopword_min_idf  the IDF below which a term is a stopword here
-#   embedder                 null or absent turns vector search OFF; a name/list
-#                            or --embedder re-enables embedders for search
-SEARCH_STOPWORDS_KEY = "search_stopwords"
-SEARCH_STOPWORD_MIN_IDF_KEY = "search_stopword_min_idf"
-SEARCH_EMBEDDER_KEY = "embedder"
-
-# A term appearing in ~74% or more of the corpus (ln(N+1/df+1) < 0.3) carries
-# too little signal to rank on. Tunable per store; the value only decides where
-# the discovered list is cut, never whether discovery happens.
-DEFAULT_STOPWORD_MIN_IDF = 0.3
 
 
 def parse_state_filter(expr: str) -> frozenset:
@@ -169,10 +221,6 @@ def resolve_state_filter(states_arg: Optional[str], show_all: bool) -> frozenset
     return parse_state_filter(expr)
 
 
-class TodoError(Exception):
-    """User-facing todo CLI error."""
-
-
 class EditNotInteractive(TodoError):
     """An editor was needed but stdin/stdout are not a terminal to run it on."""
 
@@ -222,8 +270,14 @@ def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
     body = initial if not initial or initial.endswith("\n") else initial + "\n"
     written = header.rstrip("\n") + "\n\n" + body
+    # Closed by hand before the editor opens the file, and removed in the finally.
+    # pylint: disable-next=consider-using-with
     handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".todoedit", prefix=f"{prefix}-", delete=False, encoding="utf-8"
+        mode="w",
+        suffix=".todoedit",
+        prefix=f"{prefix}-",
+        delete=False,
+        encoding="utf-8",
     )
     try:
         handle.write(written)
@@ -233,7 +287,9 @@ def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[
         except OSError as exc:
             raise TodoError(f"could not run editor {editor!r}: {exc}") from exc
         if status != 0:
-            raise TodoError(f"editor {editor!r} exited with status {status}; nothing written")
+            raise TodoError(
+                f"editor {editor!r} exited with status {status}; nothing written"
+            )
         with open(handle.name, encoding="utf-8") as fh:
             edited = fh.read()
         return None if edited == written else strip_leading_html_comments(edited)
@@ -242,1032 +298,6 @@ def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[
             os.unlink(handle.name)
         except OSError:
             pass
-
-
-def repo_root(start: Optional[Path] = None) -> Path:
-    """Return git toplevel for *start* (default cwd)."""
-    cwd: Path = start or Path.cwd()
-    result = git_command.get_git().run(cwd, "rev-parse", "--show-toplevel")
-    if result.returncode != 0:
-        raise TodoError(f"not a git repository: {cwd}")
-    return Path(result.stdout.strip())
-
-
-def utc_now() -> str:
-    """Return current UTC time as RFC3339 Z."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run a git command in *root*."""
-    result = git_command.get_git().run(root, *args)
-    if check and result.returncode != 0:
-        detail: str = (result.stderr or result.stdout or "").strip()
-        raise TodoError(f"git {' '.join(args)} failed: {detail}")
-    return result
-
-
-def git_fetch_if_remote(root: Path) -> None:
-    """Best-effort fetch when a remote exists; never fatal."""
-    if not FETCH_ENABLED:
-        return
-    remotes = git_command.get_git().run(root, "remote", check=True)
-    if not remotes.stdout.strip():
-        return
-    fetched = git_command.get_git().run(root, "fetch", "--quiet")
-    if fetched.returncode != 0:
-        print("todo.py: fetch failed; using cached refs", file=sys.stderr)
-
-
-def list_branch_refs(root: Path) -> List[str]:
-    """Short names for local branches and remote-tracking branches."""
-    result = git_command.get_git().run(
-        root,
-        "for-each-ref",
-        "--format=%(refname:short)",
-        "refs/heads",
-        "refs/remotes",
-        check=True,
-    )
-    refs: List[str] = []
-    for line in result.stdout.splitlines():
-        ref: str = line.strip()
-        if not ref or ref.endswith("/HEAD"):
-            continue
-        refs.append(ref)
-    return refs
-
-
-def branch_exists(root: Path, name: str) -> bool:
-    """Return True when a local branch *name* exists."""
-    result = run_git(root, "show-ref", "--verify", "--quiet", f"refs/heads/{name}", check=False)
-    return result.returncode == 0
-
-
-def normalize_todo_schema(todo: JsonDict) -> JsonDict:
-    """Migrate legacy field names (Chunks, Subtickets) to WorkItems, Subtodos.
-
-    Also migrates the singular ``Parent`` dict to a ``Parent`` list of
-    ``{Id, Branch}`` refs. Element 0 is the structural (fork) parent used for the
-    log diff base and merge; later entries are context-only references set by
-    ``set --parent`` (make-it-so).
-
-    Also folds legacy flat ``Tags`` into plural ``Tag`` elements (v7) and renames
-    legacy state keys to nouns (pre/pre-init -> groom, init -> ready, info ->
-    fact; v8) so old records read back with the current shape and vocabulary even
-    before a sweep.
-
-    Delegates to ``todo_db.migrate_record_v6``/``_v7``/``_v8`` (the same
-    transforms registered in ``todo_db.RECORD_MIGRATIONS`` for the migration
-    sweep) so the logic lives in exactly one place. Unlike
-    ``todo_db.migrate_record``, this does not stamp ``_schema`` -- ordinary
-    reads/writes keep their existing shape; only an explicit ``migrate-to-latest``
-    sweep version-stamps records.
-    """
-    todo = todo_db.migrate_record_v6(todo)
-    todo = todo_db.migrate_record_v7(todo)
-    return todo_db.migrate_record_v8(todo)
-
-
-def migrate_store(store: "todo_store.TodoStore", *, dry_run: bool = False) -> Dict[str, int]:
-    """Sweep *store* to ``todo_db.SCHEMA_VERSION`` and report a summary.
-
-    Table-level migrations apply as a side effect of the store's own storage
-    calls (sqlite runs ``todo_db.migrate()`` on every connect via
-    ``list_located()`` below; the file-dir backend has no table to migrate).
-    This then sweeps every record via ``list_located()``, runs
-    ``todo_db.migrate_record`` on a copy of each, and writes back the ones that
-    changed (a changed ``_schema`` -- i.e. a record that was below latest --
-    counts as changed, same as any renamed field). Unless *dry_run*, the
-    changed records are ``put`` back and the store's data version is advanced
-    to ``SCHEMA_VERSION``; ``dry_run`` reports the would-migrate count and
-    writes nothing (no put, no data-version bump).
-    """
-    located = store.list_located()
-    scanned = len(located)
-    migrated = 0
-    for repo, branch, record in located:
-        original = json.loads(json.dumps(record))
-        candidate = todo_db.migrate_record(json.loads(json.dumps(record)))
-        if candidate != original:
-            migrated += 1
-            if not dry_run:
-                store.put(repo, branch, candidate)
-    if not dry_run:
-        store.set_data_version(todo_db.SCHEMA_VERSION)
-    return {"scanned": scanned, "migrated": migrated}
-
-
-def use_store() -> bool:
-    """Return True when tickets live in the resolved store (default).
-
-    The store has two interchangeable backends -- sqlite.db or a
-    .todo/storage json dir -- selected by the todo_storage DSN (see
-    todo_store). Either way the record is a JSON object addressed by id.
-    False only in legacy TODO_USE_JSON=1 mode, where the record is a
-    TODO.json file committed on its branch.
-    """
-    return os.environ.get(LEGACY_JSON_ENV) != "1"
-
-
-# Canonical repo identity lives in todo_db so the schema migration can reuse it.
-repo_identity_from_url = todo_db.repo_identity_from_url
-
-
-_REPO_KEY_CACHE: Dict[str, str] = {}
-
-
-def repo_key(root: Path) -> str:
-    """Stable repo identity for sqlite keys.
-
-    Derived from the origin remote (``host/owner/name``) so it survives moving
-    the db between machines/users and collapses git worktrees (which share the
-    origin) onto their repo. Falls back to the gitroot basename when there is no
-    identifiable origin remote. Cached per resolved root for the process, since
-    it shells out to git.
-    """
-    resolved = str(root.resolve())
-    cached = _REPO_KEY_CACHE.get(resolved)
-    if cached is not None:
-        return cached
-    url = git_url_for_repo(root)
-    key = (repo_identity_from_url(url) if url else None) or Path(resolved).name
-    _REPO_KEY_CACHE[resolved] = key
-    return key
-
-
-def read_todo_at_ref(root: Path, ref: str) -> Optional[JsonDict]:
-    """Return parsed ticket from sqlite or legacy git ref TODO.json."""
-    if use_store():
-        ticket = todo_store.get_store().get(repo_key(root), ref)
-        if ticket is not None:
-            return normalize_todo_schema(ticket)
-    # *root* recorded on another machine and absent here comes back non-zero.
-    show = git_command.get_git().run(root, "show", f"{ref}:TODO.json")
-    if show.returncode != 0:
-        return None
-    try:
-        parsed: Any = json.loads(show.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return normalize_todo_schema(parsed)
-
-
-def read_todo_worktree(root: Path) -> Optional[JsonDict]:
-    """Return parsed ticket for the current branch from sqlite or legacy file."""
-    branch = current_branch(root)
-    if branch and use_store():
-        ticket = todo_store.get_store().get(repo_key(root), branch)
-        if ticket is not None:
-            return normalize_todo_schema(ticket)
-    path: Path = root / "TODO.json"
-    if not path.is_file():
-        return None
-    if use_store():
-        return None
-    try:
-        parsed: Any = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return normalize_todo_schema(parsed)
-
-
-# (Summary/Body field name, its stored field_path) pairs we embed.
-_EMBED_FIELDS: tuple[tuple[str, str], ...] = (
-    ("Summary", "Summary.raw"),
-    ("Body", "Body.raw"),
-    # LongSummary is written to BE embedded (see IMPLEMENTATION.md): Body is often
-    # too long to embed well, so the summary vector is the one worth matching on.
-    ("LongSummary", "LongSummary.raw"),
-)
-
-# Largest n-phrase window (unigram..trigram) used to mine tag candidates from
-# corpus text (see _mine_tag_candidates). Ported from ef4ad78d's zero-shot
-# tagger, where it also sized embedding chunks; chunking has not landed here,
-# so this constant now serves candidate mining alone.
-_MAX_NPHRASE = 3
-
-# A phrase boundary is a sentence terminator followed by whitespace/EOL, or one
-# or more newlines. The trailing-whitespace lookahead keeps decimals like "3.5"
-# from splitting; newlines make headings, list items, and ascii-art lines each
-# stand alone as their own phrase. Ported unchanged from ef4ad78d.
-_PHRASE_SPLIT_RE = re.compile(r"[.!?]+(?=\s|$)|\n+")
-
-
-def _split_phrases(text: str) -> List[str]:
-    """Split raw text into phrases on sentence terminators and line breaks.
-
-    A phrase is the unit between phrase separators (see ``_PHRASE_SPLIT_RE``).
-    Whitespace-only fragments are dropped; each returned phrase is stripped.
-    """
-    return [p.strip() for p in _PHRASE_SPLIT_RE.split(text) if p.strip()]
-
-
-def _nphrase_windows(text: str, max_n: int = _MAX_NPHRASE) -> List[str]:
-    """Contiguous 1..max_n phrase windows over *text* (its n-phrases).
-
-    Each window joins its phrases with a single space. Source order is
-    preserved and duplicates are kept; callers dedup when they need a set
-    (candidate mining) but not when they need one window per occurrence.
-    """
-    phrases = _split_phrases(text)
-    windows: List[str] = []
-    for n in range(1, max_n + 1):
-        for i in range(len(phrases) - n + 1):
-            windows.append(" ".join(phrases[i : i + n]))
-    return windows
-
-
-def _is_flat_vector(value: Any) -> bool:
-    """True for a single embedding vector: a list of >2 numbers, no bools."""
-    return (
-        isinstance(value, list)
-        and len(value) > 2
-        and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in value)
-    )
-
-
-def _is_vector(value: Any) -> bool:
-    """True for a stored embedding value: a non-empty list-of-arrays, one vector per chunk.
-
-    A legacy single-array stamp (flat list of numbers) is intentionally *not*
-    matched here, so it reads as absent and is recomputed/overwritten in the new
-    shape on the next write rather than lingering as a mixed-format value.
-    """
-    return isinstance(value, list) and len(value) > 0 and all(_is_flat_vector(v) for v in value)
-
-
-def _raw_of(todo: Optional[JsonDict], field_name: str) -> Optional[str]:
-    """Return a non-empty ``todo[field_name]['raw']`` string, else None."""
-    if not isinstance(todo, dict):
-        return None
-    obj = todo.get(field_name)
-    if isinstance(obj, dict):
-        raw = obj.get("raw")
-        if isinstance(raw, str) and raw.strip():
-            return raw
-    return None
-
-
-def _tag_field_path(index: int) -> str:
-    """Stored field_path for the Tag element at *index* (positional, like WorkItems.<i>)."""
-    return f"Tag.{index}.raw"
-
-
-def _embed_targets(todo: JsonDict) -> List[tuple[str, JsonDict, str]]:
-    """Return ``(field_path, container, raw)`` for every embeddable location.
-
-    Covers the fixed Summary/Body dicts and, positionally, every ``Tag``
-    element with a non-empty raw string. ``container`` is the dict the raw text
-    lives in -- embedder vectors are stamped onto it as extra keys alongside
-    ``raw`` (and, for a Tag element, ``manual``). This is the single place the
-    embedding machinery (cheap-embed-on-write, clear-on-write, search ranking)
-    learns that Tag is plural: every other helper below iterates this list
-    instead of assuming one dict per field.
-    """
-    targets: List[tuple[str, JsonDict, str]] = []
-    for field_name, field_path in _EMBED_FIELDS:
-        obj = todo.get(field_name)
-        if isinstance(obj, dict):
-            raw = obj.get("raw")
-            if isinstance(raw, str) and raw.strip():
-                targets.append((field_path, obj, raw))
-    tag = todo.get("Tag")
-    if isinstance(tag, list):
-        for index, element in enumerate(tag):
-            if isinstance(element, dict):
-                raw = element.get("raw")
-                if isinstance(raw, str) and raw.strip():
-                    targets.append((_tag_field_path(index), element, raw))
-    return targets
-
-
-def _raw_map(todo: Optional[JsonDict]) -> Dict[str, str]:
-    """``field_path -> raw`` for every embeddable location in *todo* (see ``_embed_targets``)."""
-    if not isinstance(todo, dict):
-        return {}
-    return {field_path: raw for field_path, _container, raw in _embed_targets(todo)}
-
-
-def _container_at(todo: JsonDict, field_path: str) -> Optional[JsonDict]:
-    """Return the dict backing *field_path* in *todo* right now, or None.
-
-    Unlike ``_embed_targets``, this does not require a non-empty raw -- it
-    resolves the location itself (``Summary``/``Body``, or the ``Tag`` element
-    at the path's index), so a caller can strip stale vectors even after the
-    raw text has been blanked out, or find nothing when a Tag element has since
-    been removed (a silent no-op, since there is nothing left to strip/stamp).
-    """
-    field_name = _FIELD_NAME_BY_PATH.get(field_path)
-    if field_name is not None:
-        obj = todo.get(field_name)
-        return obj if isinstance(obj, dict) else None
-    if field_path.startswith("Tag.") and field_path.endswith(".raw"):
-        try:
-            index = int(field_path[len("Tag.") : -len(".raw")])
-        except ValueError:
-            return None
-        tag = todo.get("Tag")
-        if isinstance(tag, list) and 0 <= index < len(tag) and isinstance(tag[index], dict):
-            return tag[index]
-    return None
-
-
-def _changed_raw_fields(old: Optional[JsonDict], new: JsonDict) -> List[str]:
-    """Return the field_paths (Summary/Body/Tag.<i>) whose raw text differs.
-
-    Tag elements are compared positionally: inserting/removing a tag shifts the
-    field_path of every later element, so a removal ahead of an unrelated tag
-    can flag it "changed" too (a harmless cheap re-embed; expensive vectors
-    re-backfill at the next search) -- see module notes on the plural Tag
-    embedding machinery.
-    """
-    old_map = _raw_map(old)
-    new_map = _raw_map(new)
-    return [
-        path
-        for path in sorted(set(old_map) | set(new_map))
-        if old_map.get(path) != new_map.get(path)
-    ]
-
-
-def _strip_vectors_at(todo: JsonDict, field_path: str) -> None:
-    """Drop stamped embedding vectors from the dict at *field_path*, in place."""
-    obj = _container_at(todo, field_path)
-    if isinstance(obj, dict):
-        for key in [k for k, v in obj.items() if k != "raw" and _is_vector(v)]:
-            del obj[key]
-
-
-def _json_embeddings_present(todo: JsonDict) -> set:
-    """(field_path, fingerprint) pairs already stamped into the ticket JSON."""
-    present: set = set()
-    for field_name, field_path in _EMBED_FIELDS:
-        obj = todo.get(field_name)
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if key != "raw" and _is_vector(value):
-                    present.add((field_path, key))
-    tag = todo.get("Tag")
-    if isinstance(tag, list):
-        for index, element in enumerate(tag):
-            if isinstance(element, dict):
-                field_path = _tag_field_path(index)
-                for key, value in element.items():
-                    if key not in ("raw", "manual") and _is_vector(value):
-                        present.add((field_path, key))
-    return present
-
-
-_FIELD_NAME_BY_PATH: Dict[str, str] = dict((path, name) for name, path in _EMBED_FIELDS)
-
-
-def _merge_stored_embeddings(todo: JsonDict) -> None:
-    """Stamp every embeddings-table vector for this ticket into its Summary/Body/Tag dicts.
-
-    Embedders are normally inline already: cheap vectors are written during a
-    regular save and expensive vectors during search's lazy backfill. Merging the
-    derived sqlite index keeps reads compatible with tickets written before lazy
-    backfill also persisted the complete TODO. A store without the index
-    (has_vector_index False) simply yields no rows here, so this is a no-op there.
-    """
-    ticket_id = str(todo.get("Id", ""))
-    if not ticket_id:
-        return
-    store = todo_store.get_store()
-    if not store.has_vector_index:
-        return
-    for field_path, embedder, vector in store.embeddings_for_ticket(ticket_id):
-        obj = _container_at(todo, field_path)
-        if isinstance(obj, dict):
-            obj[embedder] = vector
-
-
-def _cheap_embedding_rows(
-    todo: JsonDict, existing: set
-) -> List[tuple[str, str, List[List[float]]]]:
-    """Stamp missing cheap vectors into the ticket JSON; return rows to store.
-
-    ``existing`` is the set of ``(field_path, fingerprint)`` already in the db.
-    Stamps ``todo`` in place so ``put_ticket`` serializes the vectors; the caller
-    must ``put_embedding`` the returned rows *after* ``put_ticket`` (the FK needs
-    the ticket row first). Degrades to fewer/no rows if a cheap embedder fails,
-    so a broken embedder never blocks the save. Iterates ``_embed_targets``, so
-    every Tag element gets the same treatment as Summary/Body.
-    """
-    rows: List[tuple[str, str, List[float]]] = []
-    try:
-        embedders = todo_embed.cheap_embedders()
-    except (ValueError, RuntimeError):
-        return rows
-    targets = _embed_targets(todo)
-    for embedder in embedders:
-        try:
-            fingerprint = embedder.fingerprint()
-        except (ValueError, RuntimeError):
-            continue
-        for field_path, container, raw in targets:
-            if (field_path, fingerprint) in existing:
-                continue
-            try:
-                vec = embedder.embed(raw)
-            except (ValueError, RuntimeError):
-                continue
-            # One vector per chunk; until chunking lands the whole field is one chunk.
-            chunks = [vec]
-            container[fingerprint] = chunks
-            rows.append((field_path, fingerprint, chunks))
-    return rows
-
-
-def _drop_stale_automatic_tags(old: Optional[JsonDict], todo: JsonDict) -> None:
-    """Drop AUTOMATIC Tag elements from *todo*, in place, when Summary/Body changed.
-
-    Automatic tags (``manual: False``) are computed from a todo's Summary+Body
-    text (see ``compute_auto_tags`` and doctor's recompute); once that text
-    changes they no longer describe the todo, so they are dropped here to be
-    recomputed fresh rather than linger stale. MANUAL elements are never
-    touched. A no-op when *old* is None (a brand-new ticket has nothing to have
-    changed away from -- any automatic tags seeded into its first write are
-    trusted, not invalidated) or when neither Summary.raw nor Body.raw differs
-    from *old*. Called from ``write_todo_worktree`` before it computes
-    per-field vector changes, so ``Tag`` is already in its final shape by the
-    time positional Tag.<i>.raw paths are derived from it.
-    """
-    if old is None:
-        return
-    if _raw_of(old, "Summary") == _raw_of(todo, "Summary") and _raw_of(old, "Body") == _raw_of(
-        todo, "Body"
-    ):
-        return
-    tag = todo.get("Tag")
-    if not isinstance(tag, list):
-        return
-    kept = [e for e in tag if not (isinstance(e, dict) and e.get("manual") is False)]
-    if kept:
-        todo["Tag"] = kept
-    else:
-        todo.pop("Tag", None)
-
-
-def write_todo_worktree(
-    root: Path, todo: JsonDict, *, no_clear: bool = False, repo: Optional[str] = None
-) -> None:
-    """Persist ticket to the store (default) or legacy TODO.json.
-
-    *repo* overrides the repo key the record is stored under, which otherwise
-    comes from *root*. A command sweeping the WHOLE corpus (`tag-clear ALL`) must
-    pass each record's own repo -- the store is shared across repos, and the
-    sqlite backend keys tickets by ``(repo_path, branch)``, so writing a
-    foreign-repo record under the current root would silently move it.
-
-    On sqlite: when a raw field changed, its stored vectors are cleared (all
-    embedders) so stale expensive vectors do not linger -- unless ``no_clear``,
-    which keeps them (for semantically trivial edits). Cheap embedders are then
-    re-populated eagerly; expensive ones are left for lazy backfill at search.
-    A Summary/Body raw change also drops any AUTOMATIC Tag elements (see
-    ``_drop_stale_automatic_tags``) -- also skipped under ``no_clear``, since
-    that flag means the edit is being treated as semantically trivial.
-    """
-    normalize_todo_schema(todo)
-    # Every persisted record carries objids: stamping at the single write choke
-    # point means no command has to remember to do it, and a permalink minted
-    # against any object stays valid because existing ids are never rewritten.
-    todo_objid.stamp_objids(todo)
-    todo["update_dt"] = utc_now()
-    branch = str(todo.get("Branch") or current_branch(root) or "")
-    if not branch:
-        raise TodoError("todo missing Branch")
-    if use_store():
-        ticket_id = str(todo["Id"])
-        store = todo_store.get_store()
-        if repo is None:
-            repo = repo_key(root)
-        # Lock the complete read/calculate/write operation for this TODO. This
-        # prevents a concurrent writer from changing raw text while its vectors
-        # are being calculated, and lets us persist the fully embedded TODO once.
-        with store.lock(ticket_id):
-            old = store.get(repo, branch)
-            if not no_clear:
-                _drop_stale_automatic_tags(old, todo)
-            changed = [] if no_clear else _changed_raw_fields(old, todo)
-            for field_path in changed:
-                _strip_vectors_at(todo, field_path)
-            # Embeddings live in the todo JSON: calculate every missing cheap
-            # vector before the single ticket write. The sqlite embeddings table
-            # is only a derived search index, mirrored afterward when available.
-            rows = _cheap_embedding_rows(todo, _json_embeddings_present(todo))
-            store.put(repo, branch, todo)
-            if store.has_vector_index:
-                for field_path in changed:
-                    store.clear_embeddings(ticket_id, field_path)
-                for field_path, fingerprint, vec in rows:
-                    store.put_embedding(ticket_id, field_path, fingerprint, vec)
-        return
-    # Legacy TODO_USE_JSON mode: the record IS the branch's TODO.json, so a
-    # write is only coherent with that branch checked out.
-    checked_out = current_branch(root)
-    if checked_out != branch:
-        raise TodoError(
-            f"legacy TODO.json mode: todo {str(todo.get('Id', ''))[:8]} lives on "
-            f"branch {branch!r}; checkout that branch first (currently on {checked_out!r})"
-        )
-    path: Path = root / "TODO.json"
-    tmp: Path = root / "TODO.json.tmp"
-    tmp.write_text(json.dumps(todo, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
-
-
-def commit_todo(root: Path, message: str) -> None:
-    """Commit TODO.json in legacy file mode; no-op in store mode.
-
-    In store mode the record lives in the store, addressed by id -- there is
-    no branch-bound file to commit, and an empty marker commit would land on
-    whatever branch the caller happens to have checked out.
-    """
-    if use_store():
-        return
-    if not (root / "TODO.json").is_file():
-        raise TodoError("TODO.json missing; nothing to commit")
-    run_git(root, "add", "TODO.json")
-    run_git(root, "commit", "-m", message, check=False)
-
-
-def head_sha(root: Path) -> Optional[str]:
-    """Return the current HEAD commit sha, or None when there is no commit."""
-    result = git_command.get_git().run(root, "rev-parse", "HEAD")
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def sha_matches(head: str, candidate: str) -> bool:
-    """True when *candidate* names commit *head*: the exact sha, or a prefix.
-
-    Same MIN_PREFIX convention permalinks use for the sha/subtodo_id/objid
-    where-clauses (todo_url.MIN_PREFIX) -- a candidate shorter than that is
-    never accepted, so a chance collision with a short abbreviation can't
-    silently pass this check.
-    """
-    return len(candidate) >= todo_url.MIN_PREFIX and head.startswith(candidate)
-
-
-def current_branch(root: Path) -> Optional[str]:
-    """Return short name of the checked-out branch, if any."""
-    result = git_command.get_git().run(root, "branch", "--show-current", check=True)
-    name: str = result.stdout.strip()
-    return name or None
-
-
-def is_all_selector(selector: str) -> bool:
-    """Return True when *selector* is the reserved ALL sentinel (the whole corpus).
-
-    Uppercase, matching the --states=ALL macro convention. Ids are hex (lowercase),
-    so ALL can never collide with a real ticket id prefix.
-    """
-    return selector == "ALL"
-
-
-def id_matches(ticket_id: str, query: str) -> bool:
-    """True when *query* selects ticket *ticket_id* (exact or prefix)."""
-    if ticket_id == query:
-        return True
-    if ticket_id.startswith(query):
-        return True
-    return False
-
-
-def branch_name_hint(query: str) -> str:
-    """Leading token used in Branch naming (first eight id chars)."""
-    token: str = query.split("-", 1)[0]
-    return token[:8]
-
-
-def candidate_refs(refs: Sequence[str], query: str) -> List[str]:
-    """Narrow branch refs using the id prefix convention when possible."""
-    hint: str = branch_name_hint(query)
-    if len(hint) < 2:
-        return list(refs)
-    narrowed: List[str] = [ref for ref in refs if hint in ref]
-    return narrowed if narrowed else list(refs)
-
-
-def kebab_branch_name(ticket_id: str, summary: str) -> str:
-    """Build Branch label from id prefix and summary words."""
-    words: List[str] = re.sub(r"[^a-zA-Z0-9\s]", " ", summary.lower()).split()
-    slug_words: List[str] = [word for word in words if word not in STOPWORDS][:4]
-    slug: str = "-".join(slug_words) if slug_words else "ticket"
-    branch: str = f"{ticket_id[:8]}-{slug}"
-    return branch[:32]
-
-
-def current_state_name(todo: JsonDict) -> Optional[str]:
-    """Return the single State key, if well-formed."""
-    state = todo.get("State")
-    if not isinstance(state, dict) or len(state) != 1:
-        return None
-    return next(iter(state.keys()))
-
-
-# Which State metadata each state actually keeps. A state absent here keeps none
-# (groom, ready, fact, waiting, N/a). Metadata a state does not keep used to be
-# accepted and silently dropped; set_state now rejects it, so a flag that would
-# have done nothing says so instead of looking like it worked.
-_STATE_METADATA: Dict[str, frozenset] = {
-    "working": frozenset({"owner"}),
-    "userneeded": frozenset({"note"}),
-    "stopped": frozenset({"note"}),
-    "rejected": frozenset({"note", "pr"}),
-    "done": frozenset({"last_commit"}),
-    "merged": frozenset({"merged_into", "last_commit", "pr", "merge_commit"}),
-}
-
-
-def _as_flag(name: str) -> str:
-    """Render a set_state metadata parameter as its CLI flag, for error text."""
-    return "--" + name.replace("_", "-")
-
-
-def set_state(
-    todo: JsonDict,
-    state: str,
-    *,
-    note: Optional[str] = None,
-    last_commit: Optional[str] = None,
-    merged_into: Optional[str] = None,
-    owner: Optional[str] = None,
-    pr: Optional[int] = None,
-    merge_commit: Optional[str] = None,
-) -> None:
-    """Replace State with a single-key object.
-
-    ``merged`` covers BOTH handoff shapes, distinguished by which keys are set:
-    a subtodo absorbed by its parent (``merged_into`` = parent branch) and a root
-    todo whose branch was handed to a PR (``pr``, plus ``merge_commit`` once that
-    PR actually merged). ``rejected`` is the PR-closed-unmerged outcome and keeps
-    the ``pr`` it was refused under, so doctor can re-check a reopened PR.
-
-    Raises TodoError when *state* is unknown, or when metadata is supplied that
-    the target state does not keep (see ``_STATE_METADATA``) -- silently dropping
-    it would make a no-op flag look like it took effect.
-    """
-    if state not in VALID_STATES:
-        raise TodoError(f"invalid state {state!r}")
-    supplied = {
-        name
-        for name, given in (
-            ("note", note),
-            ("last_commit", last_commit),
-            ("merged_into", merged_into),
-            ("owner", owner),
-            ("pr", pr),
-            ("merge_commit", merge_commit),
-        )
-        if given is not None
-    }
-    allowed = _STATE_METADATA.get(state, frozenset())
-    inapplicable = sorted(supplied - allowed)
-    if inapplicable:
-        takes = ", ".join(_as_flag(n) for n in sorted(allowed)) or "no metadata"
-        raise TodoError(
-            f"state {state!r} does not take "
-            f"{', '.join(_as_flag(n) for n in inapplicable)} (it takes: {takes})"
-        )
-    value: JsonDict = {}
-    if state == "working" and owner:
-        value["owner"] = owner
-    if state in {"userneeded", "stopped", "rejected"} and note:
-        value["note"] = note
-    # `merged` accepts last_commit too: merge_subtodo passes one, and the State
-    # table documents it. It used to be dropped here for merged, silently.
-    if state in {"done", "merged"} and last_commit:
-        value["last_commit"] = last_commit
-    if state == "merged":
-        if merged_into:
-            value["merged_into"] = merged_into
-        if merge_commit:
-            value["merge_commit"] = merge_commit
-    if state in {"merged", "rejected"} and pr is not None:
-        value["pr"] = pr
-    todo["State"] = {state: value}
-
-
-# States that must not keep a linked worktree (scratch checkout only).
-WORKTREE_TEARDOWN_STATES = frozenset({"done", "merged"})
-
-
-def linked_worktrees_by_branch(root: Path) -> Dict[str, Path]:
-    """Map branch name -> linked worktree path (never the main checkout)."""
-    main = todo_db.main_checkout_root(root)
-    listed = run_git(root, "worktree", "list", "--porcelain", check=False)
-    if listed.returncode != 0:
-        return {}
-    out: Dict[str, Path] = {}
-    current_path: Optional[Path] = None
-    for line in listed.stdout.splitlines():
-        if line.startswith("worktree "):
-            current_path = Path(line[len("worktree ") :].strip())
-        elif line.startswith("branch ") and current_path is not None:
-            ref = line[len("branch ") :].strip()
-            name = ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
-            if main is None or current_path.resolve() != main.resolve():
-                out[name] = current_path
-            current_path = None
-        elif line.startswith("detached") or line == "":
-            current_path = None
-    return out
-
-
-def worktree_path_for_branch(root: Path, branch: str) -> Optional[Path]:
-    """Return the linked worktree path for *branch*, if any."""
-    if not branch:
-        return None
-    return linked_worktrees_by_branch(root).get(branch)
-
-
-def intended_worktree_path(root: Path, branch: str) -> Path:
-    """Return the conventional linked worktree path for *branch*."""
-    return Path(todo_db.todo_dir()) / "worktrees" / repo_key(root) / branch
-
-
-def resolve_ticket_branch(ticket: JsonDict, *, branch: Optional[str] = None) -> str:
-    """Return the git branch name for *ticket* (label on record, not existence)."""
-    ticket_id = str(ticket["Id"])
-    return branch or str(ticket.get("Branch") or "") or kebab_branch_name(
-        ticket_id, _raw_of(ticket, "Summary") or ""
-    )
-
-
-def promote_groom_todo(
-    root: Path,
-    ticket: JsonDict,
-    *,
-    branch: Optional[str] = None,
-    stay_on_parent: bool = True,
-    no_commit: bool = False,
-) -> JsonDict:
-    """Create the git branch for a groom ticket and move it to ``ready``."""
-    ticket_id = str(ticket["Id"])
-    branch_name = resolve_ticket_branch(ticket, branch=branch)
-    if branch_exists(root, branch_name):
-        raise TodoError(f"branch {branch_name!r} already exists")
-    parent_branch = current_branch(root)
-    run_git(root, "checkout", "-b", branch_name)
-    base = head_sha(root)
-    if base:
-        ticket["BaseSha"] = base
-    ticket["Branch"] = branch_name
-    if isinstance(ticket.get("Scope"), dict):
-        ticket["Scope"]["branch"] = branch_name
-    set_state(ticket, "ready")
-    write_todo_worktree(root, ticket)
-    if not no_commit:
-        commit_todo(root, f"chore(todo): init ticket {ticket_id[:8]}")
-    if stay_on_parent and parent_branch:
-        run_git(root, "checkout", parent_branch)
-    return ticket
-
-
-def maybe_init_todo_branch(
-    root: Path,
-    ticket: JsonDict,
-    *,
-    stay_on_parent: bool = True,
-    no_commit: bool = False,
-) -> tuple[JsonDict, bool]:
-    """Run ``init`` promote when the ticket branch is absent; else noop.
-
-    Returns ``(ticket, inited)`` where ``inited`` is True when a new branch was
-    created.
-    """
-    branch_name = resolve_ticket_branch(ticket)
-    if branch_name and branch_exists(root, branch_name):
-        return ticket, False
-    ticket = promote_groom_todo(
-        root,
-        ticket,
-        branch=branch_name or None,
-        stay_on_parent=stay_on_parent,
-        no_commit=no_commit,
-    )
-    return ticket, True
-
-
-def ensure_todo_worktree(root: Path, todo: JsonDict) -> JsonDict:
-    """Create or reuse the linked worktree for *todo*'s branch.
-
-    Returns a JSON-serializable payload with ``worktree`` and ``created``.
-    Raises TodoError when the ticket has no Branch, the branch is missing in
-    git (promote with ``init`` first), or ``git worktree add`` fails.
-    """
-    branch = str(todo.get("Branch") or "")
-    if not branch:
-        raise TodoError("ticket missing Branch; run todo init --id <selector> first")
-    if not branch_exists(root, branch):
-        ticket_id = str(todo.get("Id") or "")[:8]
-        hint = f"todo init --id {ticket_id}" if ticket_id else "todo init"
-        raise TodoError(f"branch {branch!r} does not exist; run {hint} first")
-
-    intended = intended_worktree_path(root, branch)
-    existing = worktree_path_for_branch(root, branch)
-    if existing is not None:
-        return {"worktree": str(existing), "created": False}
-
-    if intended.is_dir() and not (intended / ".git").exists():
-        raise TodoError(
-            f"worktree path {intended} exists but is not a git worktree; "
-            "remove or rename it, then retry"
-        )
-
-    main = todo_db.main_checkout_root(root) or root
-    intended.parent.mkdir(parents=True, exist_ok=True)
-    run_git(main, "worktree", "add", str(intended), branch)
-    return {"worktree": str(intended), "created": True}
-
-
-def assert_todo_worktree_removable(root: Path, branch: str) -> None:
-    """Raise TodoError if the todo's linked worktree exists and is dirty."""
-    path = worktree_path_for_branch(root, branch)
-    if path is None:
-        return
-    status = run_git(path, "status", "--porcelain", check=False)
-    if status.returncode != 0:
-        raise TodoError(
-            f"cannot inspect worktree for {branch!r} at {path}: "
-            f"{(status.stderr or status.stdout or '').strip()}"
-        )
-    if status.stdout.strip():
-        raise TodoError(
-            f"worktree for {branch!r} is dirty ({path}); "
-            "finish or stash before State done/merged (teardown is required)"
-        )
-
-
-def remove_todo_worktree_for_branch(root: Path, branch: str) -> Optional[str]:
-    """Tear down the linked worktree for *branch* after done/merged.
-
-    Idempotent when no linked worktree exists. Never removes the main checkout.
-    Returns the removed path as a string, or None.
-    """
-    path = worktree_path_for_branch(root, branch)
-    if path is None:
-        return None
-    assert_todo_worktree_removable(root, branch)
-    main = todo_db.main_checkout_root(root) or root
-    run_git(main, "worktree", "remove", str(path))
-    run_git(main, "worktree", "prune", check=False)
-    return str(path)
-
-
-def teardown_worktree_for_terminal_state(
-    root: Path, todo: JsonDict, *, state: Optional[str]
-) -> Optional[str]:
-    """If *state* is done/merged, remove the todo's linked worktree."""
-    if state not in WORKTREE_TEARDOWN_STATES:
-        return None
-    branch = str(todo.get("Branch") or "")
-    return remove_todo_worktree_for_branch(root, branch)
-
-
-def apply_set_fields(
-    todo: JsonDict,
-    *,
-    summary: Optional[str] = None,
-    body: Optional[str] = None,
-    ac: Optional[str] = None,
-    state: Optional[str] = None,
-    note: Optional[str] = None,
-    last_commit: Optional[str] = None,
-    merged_into: Optional[str] = None,
-    owner: Optional[str] = None,
-    pr: Optional[int] = None,
-    merge_commit: Optional[str] = None,
-    actual_summary: Optional[str] = None,
-    long_summary: Optional[str] = None,
-    parent_touched: bool = False,
-    tags_touched: bool = False,
-) -> Optional[str]:
-    """Apply `set`-style edits to *todo* in memory (shared by `set` and `init`).
-
-    Patches Summary/Body/AC/ActualSummary when given, and transitions State when
-    *state* is given. Returns the new state name if State was changed, else None
-    (the caller uses that to choose the commit message). Raises TodoError if no
-    field at all was supplied. *parent_touched*/*tags_touched* count as a field
-    change when the caller applies ``set --parent`` or ``set --tag/--untag``
-    separately (parent needs root for back-links; tags are applied in place).
-    """
-    changed = False
-    if summary is not None:
-        todo.setdefault("Summary", {})["raw"] = summary
-        changed = True
-    if body is not None:
-        todo.setdefault("Body", {})["raw"] = body
-        changed = True
-    if ac is not None:
-        todo["AC"] = ac
-        changed = True
-    if actual_summary is not None:
-        todo["ActualSummary"] = actual_summary
-        changed = True
-    if long_summary is not None:
-        # Deliberately independent of Body: either may be written without the
-        # other (see "LongSummary" in IMPLEMENTATION.md). Nothing here reads Body.
-        todo.setdefault("LongSummary", {})["raw"] = long_summary
-        changed = True
-    if state is not None:
-        set_state(todo, state, note=note, last_commit=last_commit,
-                  merged_into=merged_into, owner=owner, pr=pr,
-                  merge_commit=merge_commit)
-        changed = True
-    if not changed and not parent_touched and not tags_touched:
-        raise TodoError(
-            "pass at least one of --summary, --body, --ac, --state, "
-            "--actual-summary, --long-summary, --parent, --tag, --untag"
-        )
-    return state
-
-
-def _tag_elements(todo: JsonDict) -> List[JsonDict]:
-    """Return ``todo["Tag"]`` as a list, tolerating an absent or malformed field."""
-    tag = todo.get("Tag")
-    return list(tag) if isinstance(tag, list) else []
-
-
-def apply_tag_add(todo: JsonDict, *tags: str) -> None:
-    """Add MANUAL tags to the plural ``Tag`` list, in place.
-
-    Each tag is stripped and downcased; a tag already present (by that same
-    downcased text, regardless of which element added it) is a no-op, so
-    repeated ``tagadd`` calls stay idempotent. New elements are appended as
-    ``{"raw": <downcased>, "manual": True}``; existing elements (including any
-    automatic ones -- see ``compute_auto_tags``, batch B) are left untouched.
-    """
-    elements = _tag_elements(todo)
-    seen = {e["raw"] for e in elements if isinstance(e, dict) and isinstance(e.get("raw"), str)}
-    for tag in tags:
-        if not isinstance(tag, str):
-            continue
-        raw = tag.strip().lower()
-        if raw and raw not in seen:
-            elements.append({"raw": raw, "manual": True})
-            seen.add(raw)
-    if elements:
-        todo["Tag"] = elements
-
-
-def apply_tag_remove(todo: JsonDict, *tags: str) -> None:
-    """Remove MANUAL tags from the plural ``Tag`` list, in place.
-
-    Matches case-insensitively against each element's downcased ``raw``. Only
-    elements with ``manual: True`` are ever removed -- automatic tags (``manual:
-    False``, set by doctor's auto-tagging) are doctor's to manage, never a
-    human command's. Drops the whole ``Tag`` field once it is empty (optional
-    fields are absent, not ``[]`` -- see doctor).
-    """
-    targets = {tag.strip().lower() for tag in tags if isinstance(tag, str) and tag.strip()}
-    elements = _tag_elements(todo)
-    kept = [
-        e
-        for e in elements
-        if not (
-            isinstance(e, dict)
-            and e.get("manual") is True
-            and isinstance(e.get("raw"), str)
-            and e["raw"] in targets
-        )
-    ]
-    if kept:
-        todo["Tag"] = kept
-    else:
-        todo.pop("Tag", None)
-
-
-def apply_tag_clear(todo: JsonDict, *, include_manual: bool = False) -> int:
-    """Drop tags from the plural ``Tag`` list, in place; return how many went.
-
-    By default only AUTOMATIC elements (``manual: False``) are removed, mirroring
-    which side of the field each command owns: ``tag-add``/``tag-rm`` own the
-    manual elements, and the automatic ones are recomputed rather than curated,
-    so wiping them is always safe. With *include_manual* the field is emptied
-    outright -- hand-set tags included, which no other command will bring back.
-    Drops the whole ``Tag`` field once it is empty (optional fields are absent,
-    not ``[]`` -- see doctor).
-    """
-    elements = _tag_elements(todo)
-    kept = (
-        []
-        if include_manual
-        else [e for e in elements if not (isinstance(e, dict) and e.get("manual") is False)]
-    )
-    if kept:
-        todo["Tag"] = kept
-    else:
-        todo.pop("Tag", None)
-    return len(elements) - len(kept)
 
 
 def tag_findings(todo: JsonDict) -> List[str]:
@@ -1293,91 +323,6 @@ def tag_findings(todo: JsonDict) -> List[str]:
         if not isinstance(element.get("manual"), bool):
             findings.append(f"Tag.{index}.manual must be a bool")
     return findings
-
-
-# Default top-k for compute_auto_tags, ported from ef4ad78d's zero-shot tagger.
-_AUTO_TAG_K = 3
-
-
-def _load_corpus(
-    store: "todo_store.TodoStore", states: Optional[frozenset] = None
-) -> tuple[Dict[str, JsonDict], Dict[str, Dict[str, str]]]:
-    """Load every ticket and its embeddable raw fields (Summary/Body) through the store.
-
-    Returns ``(tickets, raws)``: ``tickets`` maps Id -> the ticket dict; ``raws``
-    maps Id -> {field_path -> raw text} over the non-empty Summary/Body fields.
-    Ported from ef4ad78d's zero-shot tagger; used here only to mine the tag
-    candidate domain (see ``_mine_tag_candidates``) -- Tag elements themselves
-    are excluded from the mined text via ``_EMBED_FIELDS``, so a todo is never
-    auto-tagged from its own already-applied tags. When *states* is given,
-    only tickets whose current State is in that set are included.
-    """
-    tickets: Dict[str, JsonDict] = {}
-    raws: Dict[str, Dict[str, str]] = {}
-    for parsed in store.list_all():
-        if not isinstance(parsed, dict):
-            continue
-        ticket_id = str(parsed.get("Id", ""))
-        if not ticket_id:
-            continue
-        if states is not None and (current_state_name(parsed) or "") not in states:
-            continue
-        tickets[ticket_id] = parsed
-        raws[ticket_id] = {
-            field_path: raw
-            for field_name, field_path in _EMBED_FIELDS
-            if (raw := _raw_of(parsed, field_name)) is not None
-        }
-    return tickets, raws
-
-
-def _mine_tag_candidates(raws: Dict[str, Dict[str, str]]) -> List[str]:
-    """Deduped, downcased union of 1..3 n-phrases across the corpus -- the tag domain.
-
-    Candidates are mined from every ticket's Summary/Body raw text. Ported from
-    ef4ad78d's zero-shot tagger; adapted to downcase+strip each window before
-    dedup/append (ef4's version kept source case) so a mined candidate is
-    already a valid Tag.raw -- see ``apply_tag_add``, where a manual tag is
-    downcased the same way. Order is first appearance, for stable output.
-    """
-    seen: set[str] = set()
-    candidates: List[str] = []
-    for field_raws in raws.values():
-        for raw in field_raws.values():
-            for window in _nphrase_windows(raw):
-                candidate = window.strip().lower()
-                if candidate and candidate not in seen:
-                    seen.add(candidate)
-                    candidates.append(candidate)
-    return candidates
-
-
-def compute_auto_tags(
-    text: str,
-    candidates: Sequence[str],
-    embedder: "todo_embed.Embedder",
-    k: int = _AUTO_TAG_K,
-) -> List[JsonDict]:
-    """Top-k AUTOMATIC Tag elements for *text*, scored against *candidates*.
-
-    Embeds *text* once and every candidate with *embedder*, scores each
-    candidate by ``todo_embed.cosine_similarity(text_vec, candidate_vec)``, and
-    returns the k highest-scoring candidates as ``{"raw": <candidate>,
-    "manual": False}`` elements -- ef4ad78d's zero-shot tagger scoring, adapted
-    to emit plural Tag elements instead of a bare ``{candidate: score}`` map.
-    ``raw`` is exactly the candidate string (no downcasing here); a caller that
-    wants downcased tags mines downcased candidates -- see
-    ``_mine_tag_candidates``. Ties break on score (descending) then candidate
-    text (ascending) for a deterministic order. Returns fewer than *k* elements
-    when there are fewer than *k* candidates.
-    """
-    text_vec = embedder.embed(text)
-    scored = [
-        (todo_embed.cosine_similarity(text_vec, embedder.embed(candidate)), candidate)
-        for candidate in candidates
-    ]
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [{"raw": candidate, "manual": False} for _score, candidate in scored[:k]]
 
 
 def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1421,308 +366,13 @@ def add_state_set_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def git_url_for_repo(root: Path) -> Optional[str]:
-    """Best-effort origin URL for Scope.git_url."""
-    result = run_git(root, "remote", "get-url", "origin", check=False)
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def build_ticket_skeleton(
-    root: Path,
-    ticket_id: str,
-    branch: str,
-    summary: str,
-    body: str,
-    ac: str,
-    *,
-    path_from_root: Optional[str] = None,
-    parent: Optional[List[JsonDict]] = None,
-    work_items: Optional[List[JsonDict]] = None,
-    agent_type: Optional[str] = None,
-    session_id: Optional[str] = None,
-) -> JsonDict:
-    """Construct a fresh TODO.json object."""
-    now = utc_now()
-    scope: JsonDict = {
-        "branch": branch,
-    }
-    remote = git_url_for_repo(root)
-    if remote:
-        scope["git_url"] = remote
-    if path_from_root:
-        scope["path_from_root"] = path_from_root
-    ticket: JsonDict = {
-        "Id": ticket_id,
-        "Branch": branch,
-        "create_dt": now,
-        "update_dt": now,
-        "State": {"ready": {}},
-        "Scope": scope,
-        "Summary": {"raw": summary},
-        "Body": {"raw": body},
-        "AC": ac,
-    }
-    if work_items is not None:
-        ticket["WorkItems"] = work_items
-    if parent is not None:
-        ticket["Parent"] = parent
-    if agent_type or session_id:
-        agent: JsonDict = {}
-        if agent_type:
-            agent["type"] = agent_type
-        if session_id:
-            agent["session_id"] = session_id
-        ticket["Agent"] = agent
-    return ticket
-
-
-# --- WorkItem model: typed items, cursor, and invariants -------------------
-#
-# A WorkItem is either not-done freetext (kind "task") or one of six typed
-# done kinds. ONE COMMAND PER KIND, always: the command performs the work and
-# the kind is the receipt it writes down, which is why a kind is never a
-# `--status` a caller can assert without doing the thing it claims. What each
-# receipt carries is what its command can actually witness:
-#   - "code"          local coding; carries a `sha` (invariant #1)
-#                     [work-item-done; needs the branch checked out, and makes
-#                     the commit itself when the tree is dirty]
-#   - "merge_subtodo" a merged subtodo; carries `subtodo_id` and a `sha`
-#                     [merge-subtodo, after YOUR git merge]
-#   - "start_subtodo" a fired subtodo; carries `subtodo_id`, no sha
-#                     [add-subtodo, which creates the child branch]
-#   - "checkpoint"    the step FINISHED but produced no commit (recon, waits,
-#                     bookkeeping); carries `at_sha` -- observational (where
-#                     HEAD stood), never attribution -- and a `message` saying
-#                     what the no-code step did. [work-item-checkpoint; needs
-#                     the branch checked out to read HEAD, and a clean tree so
-#                     no real work is stranded]
-#   - "blocked"       the step is still OWED but cannot be done AS WRITTEN (the
-#                     approach turned out to be impossible, or the data it needs
-#                     does not exist). Carries the long-form `message`: what was
-#                     tried, what was found, what the options are. No sha of
-#                     either sort -- nothing was produced and nothing observed.
-#                     [work-item-blocked, store-only]
-#   - "obsolete"      the step is no longer WANTED: descoped, superseded, or
-#                     subsumed by another step. Carries a `message` saying why.
-#                     No sha of either sort. Nobody owes an obsolete step
-#                     anything, which is the whole difference from `blocked`.
-#                     [work-item-obsolete, store-only]
-# The last three close an item without a commit and share one mechanism
-# (close_workitem): patch the node, then slot it at the end of the done prefix.
-# Only their MEANING differs, and that is what having three names buys. Each
-# kind still keeps only its own metadata, mirroring the State-value doctrine:
-# inapplicable metadata raises instead of being silently dropped.
-# Deleting a step is none of the above -- it erases that the step was ever
-# planned, so it is for a plan that was never right, not one that changed.
-# The cursor is the first not-done item (derived). Working proceeds by marking
-# the cursor done and advancing; the index never decreases though the list may
-# grow (invariant #3). A todo is done when nothing is not-done (invariant #7).
-
-WORKITEM_TASK = "task"
-WORKITEM_CODE = "code"
-WORKITEM_MERGE_SUBTODO = "merge_subtodo"
-WORKITEM_START_SUBTODO = "start_subtodo"
-WORKITEM_CHECKPOINT = "checkpoint"
-WORKITEM_BLOCKED = "blocked"
-WORKITEM_OBSOLETE = "obsolete"
-# The three that close an item with no commit: same mechanism, different
-# claim. Every one of them requires its reason to be recorded.
-WORKITEM_NOCOMMIT_KINDS = (WORKITEM_CHECKPOINT, WORKITEM_BLOCKED, WORKITEM_OBSOLETE)
-# git's null object id: an EXPLICIT no-change sentinel on a done code/merge
-# item's `sha`. LEGACY ENCODING, no live producer. It was how `work-item-done
-# --blocked` recorded "no commit, and none is coming" -- a `code` item that was
-# not code, so every reader needed a special case for it. kind="blocked" says
-# the same thing in the field that is supposed to say it, and the sentinel is
-# left only for records already carrying it: old blocked items, and the
-# retrofit for records that misattribute a foreign commit. It is deliberately
-# NOT migrated to kind=blocked, because those two producers are
-# indistinguishable after the fact and guessing would relabel a bad
-# attribution as a decision nobody made. Readers must never resolve it,
-# attribute it, or report it as a branch commit; doctor accepts it mid-list and
-# rejects it as the last item.
-WORKITEM_NULL_SHA = "0" * 40
-# "Done" here means CLOSED -- the cursor is past it and the plan owes it
-# nothing further. An obsolete item is closed without ever having been done,
-# which is why the flag on the node stays `done: true`: every reader that walks
-# the plan (cursor, is-done, #3's prefix rule) asks "is this still open?", and
-# the answer for a dropped step is no.
-WORKITEM_DONE_KINDS = frozenset(
-    {
-        WORKITEM_CODE,
-        WORKITEM_MERGE_SUBTODO,
-        WORKITEM_START_SUBTODO,
-        *WORKITEM_NOCOMMIT_KINDS,
-    }
-)
 WORKITEM_KINDS = WORKITEM_DONE_KINDS | {WORKITEM_TASK}
 
-
-def workitem_kind(item: JsonDict) -> str:
-    """Best-effort kind for a work item, tolerating legacy shapes."""
-    kind = item.get("kind")
-    if isinstance(kind, str) and kind:
-        return kind
-    return WORKITEM_CODE if item.get("done") else WORKITEM_TASK
-
-
-def workitem_is_done(item: JsonDict) -> bool:
-    """True when a work item is complete (a done kind or the legacy done flag)."""
-    if item.get("done"):
-        return True
-    return workitem_kind(item) in WORKITEM_DONE_KINDS
-
-
-def cursor_index(todo: JsonDict) -> Optional[int]:
-    """Index of the current work item -- the first not-done one, or None if none."""
-    items = todo.get("WorkItems") or []
-    for index, item in enumerate(items):
-        if isinstance(item, dict) and not workitem_is_done(item):
-            return index
-    return None
-
-
-def cursor_summary(todo: JsonDict) -> str:
-    """Summary text of the cursor work item, or '' when there is no open item."""
-    index = cursor_index(todo)
-    if index is None:
-        return ""
-    item = todo["WorkItems"][index]
-    return str(item.get("summary") or "") if isinstance(item, dict) else ""
-
-
-def is_done(todo: JsonDict) -> bool:
-    """A todo is done when it has no not-yet-done work items (invariant #7)."""
-    return cursor_index(todo) is None
-
-
-# --- WorkItem addressing ---------------------------------------------------
-#
-# A work-item command names ONE item, three ways:
-#
-#   (omitted)      the cursor -- the first not-done item; the working default,
-#                  which is what the one-item-at-a-time loop wants
-#   <int>          a 0-based index into WorkItems; a negative one counts from
-#                  the end the way python's own indexing does, so -1 is the
-#                  last item and -2 the one before it
-#   objid:<hex>    the item carrying that objid -- the same stable handle
-#                  permalinks are built on. An objid is an allocation number
-#                  rendered %04x, so leading zeros are optional on input:
-#                  objid:3 == objid:03 == objid:0003
-#
-# Indexes read straight off `work-item-read`, `doctor` findings, and permalinks
-# (all 0-based), which makes them easy to type and unsafe to keep: an insert,
-# a delete, or a reorder renumbers everything after it. An objid never moves,
-# so a plan edit worked out in advance -- a topological pass over a plan whose
-# steps came out in the wrong dependency order, say -- addresses by objid.
-#
-# A bare hex string is an INDEX, never an id: `12` means index 12, not objid
-# 0012. That is the permalink grammar's rule too (a bare segment is always an
-# index), and it is why an objid has to name its scheme.
-#
-# The 4-character floor permalinks put on a prefix (``todo_url.MIN_PREFIX``)
-# does NOT apply here, and neither does its refusal to pad. There, a prefix is
-# matched against every object in the record, so a short one is a coin flip;
-# here the short form is padded to a whole id first (an id is a number, and
-# 0003 is how 3 is written) and then matched against one short list, where it
-# is either unique or reported as ambiguous.
-
-WORKITEM_OBJID_SCHEME: str = "objid:"
 
 WORKITEM_TARGET_HELP: str = (
     "which work item: an index (0-based; negative counts from the end) or "
     f"{WORKITEM_OBJID_SCHEME}<hex> (leading zeros optional). Defaults to the cursor"
 )
-
-
-def _index_by_objid(items: Sequence[Any], prefix: str, *, noun: str) -> int:
-    """Return the index of the one *noun* in *items* whose objid matches *prefix*.
-
-    *prefix* is zero-padded to a whole id first, so `3` finds `0003`; a value
-    already that long acts as a plain prefix. See the section comment above.
-    *noun* names what is being addressed ("work item", "note", ...) so the
-    error wording stays specific to the kind of thing a caller misaddressed.
-    """
-    if not prefix:
-        raise TodoError(
-            f"{WORKITEM_OBJID_SCHEME} needs a value, e.g. {WORKITEM_OBJID_SCHEME}0a3f"
-        )
-    if not todo_objid.is_objid_prefix(prefix):
-        raise TodoError(
-            f"objid {prefix!r} is not lowercase hex; an objid has exactly one spelling"
-        )
-    padded = todo_objid.normalize_objid_prefix(prefix)
-    hits = [
-        index
-        for index, item in enumerate(items)
-        if isinstance(item, dict)
-        and isinstance(item.get(todo_objid.OBJID_KEY), str)
-        and item[todo_objid.OBJID_KEY].startswith(padded)
-    ]
-    if not hits:
-        raise TodoError(
-            f"no {noun} in this todo carries objid {padded!r}"
-            + (f" (from {prefix!r})" if padded != prefix else "")
-        )
-    if len(hits) > 1:
-        joined = ", ".join(str(index) for index in hits)
-        raise TodoError(
-            f"objid {padded!r} is ambiguous: matches {noun}s {joined}; " "use the whole id"
-        )
-    return hits[0]
-
-
-def _workitem_index_by_objid(items: Sequence[Any], prefix: str) -> int:
-    """Return the index of the one work item whose objid matches *prefix*."""
-    return _index_by_objid(items, prefix, noun="work item")
-
-
-def _index_by_number(items: Sequence[Any], address: str, *, noun: str) -> int:
-    """Return the index *address* names, resolving a negative one from the end.
-
-    *noun* names what is being addressed, for error wording specific to it.
-    """
-    try:
-        index = int(address, 10)
-    except ValueError:
-        raise TodoError(
-            f"{address!r} addresses nothing: pass an index (negative counts from the "
-            f"end) or {WORKITEM_OBJID_SCHEME}<hex>"
-        ) from None
-    if not items:
-        raise TodoError(f"this todo has no {noun}s")
-    resolved = index + len(items) if index < 0 else index
-    if not 0 <= resolved < len(items):
-        raise TodoError(
-            f"{noun} {index} is out of range; this todo has {len(items)} "
-            f"(0..{len(items) - 1}, or -1..-{len(items)} from the end)"
-        )
-    return resolved
-
-
-def _workitem_index_by_number(items: Sequence[Any], address: str) -> int:
-    """Return the index *address* names, resolving a negative one from the end."""
-    return _index_by_number(items, address, noun="work item")
-
-
-def resolve_workitem_index(todo: JsonDict, address: Optional[str], *, what: str) -> int:
-    """Return the WorkItems index *address* names, or the cursor's when it is None.
-
-    *what* is the verb for the no-open-item message ("replace", "delete"), which
-    only an omitted address can produce. Raises TodoError naming what failed --
-    no open item, a non-address, an out-of-range index, an unknown or ambiguous
-    objid -- so no caller has to re-check the result.
-    """
-    items: Sequence[Any] = todo.get("WorkItems") or []
-    if address is None:
-        index = cursor_index(todo)
-        if index is None:
-            raise TodoError(f"no open work item to {what}")
-        return index
-    if address.startswith(WORKITEM_OBJID_SCHEME):
-        return _workitem_index_by_objid(items, address[len(WORKITEM_OBJID_SCHEME) :])
-    return _workitem_index_by_number(items, address)
 
 
 # How a note is addressed, and the two things an omitted target can mean.
@@ -1736,20 +386,6 @@ NOTE_TARGET_HELP: str = f"{_NOTE_ADDRESS_HELP} Omit to print every note"
 NOTE_REQUIRED_TARGET_HELP: str = f"{_NOTE_ADDRESS_HELP} There is no cursor default"
 
 
-def resolve_note_index(todo: JsonDict, address: str) -> int:
-    """Return the Notes index *address* names.
-
-    Same addressing grammar as a work item -- an index (negative counts from
-    the end) or objid:<hex> -- but there is no cursor default: a note has no
-    status, so an omitted target means "every note", which the caller (not
-    this function) handles before *address* is required.
-    """
-    items: Sequence[Any] = todo.get("Notes") or []
-    if address.startswith(WORKITEM_OBJID_SCHEME):
-        return _index_by_objid(items, address[len(WORKITEM_OBJID_SCHEME) :], noun="note")
-    return _index_by_number(items, address, noun="note")
-
-
 # How a relto HOST is addressed -- one grammar serving all three relto-bearing
 # node kinds, so relto-add/-remove/-read are one command family rather than a
 # per-kind one. See resolve_relto_host.
@@ -1759,46 +395,6 @@ RELTO_HOST_HELP: str = (
     "against the three legal relto hosts), or note:<index> / workitem:<index> (0-based, "
     "negative counting from the end)"
 )
-
-
-def resolve_relto_host(todo: JsonDict, host: str) -> str:
-    """Return the json dot-path *host* names among the three legal relto hosts.
-
-    Four spellings collapse onto the three hosts ``_RELTO_HOST_RE`` encodes
-    (see ``relto_findings``): the literal ``body`` for the ``Body`` field;
-    ``objid:<hex>`` (4+ hex, record-wide), resolved with ``todo_ref.resolve_local``
-    exactly as a permalink resolves ``objid:<hex>`` and then checked against
-    ``_RELTO_HOST_RE`` -- an objid landing on a Tag, a Subtodos entry, or a
-    relto element itself is refused, naming what it hit; and
-    ``note:<index>`` / ``workitem:<index>`` (0-based, negative counting from
-    the end), reusing ``_index_by_number`` against the Notes / WorkItems list
-    the way work-item and note addressing already do.
-    """
-    if host == "body":
-        return "Body"
-    if host.startswith(todo_ref.OBJID_SCHEME):
-        try:
-            path = todo_ref.resolve_local(todo, host)
-        except todo_ref.TodoRefError as exc:
-            raise TodoError(str(exc)) from exc
-        if not _RELTO_HOST_RE.match(path):
-            raise TodoError(
-                f"{host} resolves to {path}, which is not a legal relto host; relto is "
-                "legal only on Body, a Notes element, or a WorkItems element"
-            )
-        return path
-    if host.startswith("note:"):
-        items: Sequence[Any] = todo.get("Notes") or []
-        index = _index_by_number(items, host[len("note:") :], noun="note")
-        return f"Notes.{index}"
-    if host.startswith("workitem:"):
-        items = todo.get("WorkItems") or []
-        index = _index_by_number(items, host[len("workitem:") :], noun="work item")
-        return f"WorkItems.{index}"
-    raise TodoError(
-        f"unrecognized relto host {host!r}; expected body, {todo_ref.OBJID_SCHEME}<hex>, "
-        "note:<index>, or workitem:<index>"
-    )
 
 
 def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
@@ -1818,808 +414,9 @@ def require_open_workitem(todo: JsonDict, index: int) -> JsonDict:
     return item
 
 
-def next_action(todo: JsonDict) -> JsonDict:
-    """Deterministic next mechanical step for the cursor, where the tool can tell.
-
-    Mechanism only: it maps the cursor item's execution hints (or the empty
-    cursor) to the exact command that advances the loop. It does NOT make policy
-    calls -- whether a plain task should instead become a subtodo, or be split
-    because it is too coarse -- which stay with the agent and the skill's
-    dispatch table. A plain freetext task with no execution hints defaults to
-    work-item-done, the common local-coding completion.
-    """
-    self_id = str(todo.get("Id", ""))[:8] or "<id>"
-    index = cursor_index(todo)
-    if index is None:
-        return {
-            "action": "finish",
-            "command": f'todo.py set {self_id} --state done --actual-summary="..."',
-            "note": "run doctor first (must be ok); synthesize ActualSummary from the done WorkItems",
-        }
-    item = todo["WorkItems"][index]
-    execution = item.get("execution") if isinstance(item, dict) else None
-    execution = execution if isinstance(execution, dict) else {}
-    primitive = execution.get("primitive")
-    wait_for = [w[:8] for w in (execution.get("wait_for") or []) if isinstance(w, str)]
-    subtodo_id = execution.get("subtodo_id")
-    child = subtodo_id[:8] if isinstance(subtodo_id, str) and subtodo_id else "<child-id>"
-    ids = " ".join(wait_for) or "<child-id>..."
-    if primitive == "add-subtodo":
-        return {"action": "add-subtodo", "command": f"todo.py add-subtodo {self_id} --summary=..."}
-    if primitive in (WORKITEM_MERGE_SUBTODO, "merge-subtodo"):
-        return {"action": "merge-subtodo", "command": f"todo.py merge-subtodo {child}"}
-    if primitive == "wait-and-merge" or (wait_for and execution.get("mode") == "barrier"):
-        return {"action": "wait-and-merge", "command": f"todo.py wait-and-merge {ids}"}
-    if primitive == "wait-for" or wait_for:
-        return {"action": "wait-for", "command": f"todo.py wait-for {ids}"}
-    return {"action": "work-item-done", "command": f"todo.py work-item-done {self_id}"}
-
-
-def last_sha(todo: JsonDict) -> Optional[str]:
-    """Sha of the last work item -- the last branch commit (invariant #6), if any.
-
-    The no-change sentinel (WORKITEM_NULL_SHA) is not a branch commit and
-    reports as None; doctor separately flags it as the last item of a done todo."""
-    items = todo.get("WorkItems") or []
-    if not items or not isinstance(items[-1], dict):
-        return None
-    sha = items[-1].get("sha")
-    if sha == WORKITEM_NULL_SHA:
-        return None
-    return sha if isinstance(sha, str) and sha else None
-
-
-def code_workitem(sha: str, summary: str = "", message: str = "") -> JsonDict:
-    """Build a done 'code' work item.
-
-    `summary` is the high-level step description (carries over from the cursor task).
-    `message` is the full commit message recorded at `sha`, so the WorkItems trail is
-    self-describing (what actually changed -- e.g. tests added) without resolving shas."""
-    item = {"kind": WORKITEM_CODE, "summary": summary, "sha": sha, "done": True}
-    if message:
-        item["message"] = message
-    return item
-
-
-def start_subtodo_workitem(subtodo_id: str, summary: str = "") -> JsonDict:
-    """Build a done 'start_subtodo' work item (no sha)."""
-    return {
-        "kind": WORKITEM_START_SUBTODO,
-        "summary": summary,
-        "subtodo_id": subtodo_id,
-        "done": True,
-    }
-
-
-def merge_subtodo_workitem(subtodo_id: str, sha: str, summary: str = "") -> JsonDict:
-    """Build a done 'merge_subtodo' work item."""
-    return {
-        "kind": WORKITEM_MERGE_SUBTODO,
-        "summary": summary,
-        "subtodo_id": subtodo_id,
-        "sha": sha,
-        "done": True,
-    }
-
-
-def mark_cursor_done(todo: JsonDict, done_item: JsonDict) -> int:
-    """Convert the cursor (first not-done) item into *done_item*, or append it when
-    the plan has no open item. The cursor's freetext summary carries over as the
-    item's high-level description unless *done_item* already set one, and so does
-    its objid. Returns the affected index."""
-    items = list(todo.get("WorkItems") or [])
-    index = cursor_index(todo)
-    if index is None:
-        items.append(done_item)
-        index = len(items) - 1
-    else:
-        if not done_item.get("summary"):
-            done_item["summary"] = items[index].get("summary", "")
-        # Completing a step does not make it a different step. The objid is the
-        # item's identity, so it carries over and a permalink minted while the
-        # step was still open goes on resolving to it -- dropping it would mint
-        # a fresh id at the next write, and silently, since stamping only fills
-        # gaps.
-        objid = items[index].get(todo_objid.OBJID_KEY)
-        if todo_objid.is_objid(objid):
-            done_item[todo_objid.OBJID_KEY] = objid
-        items[index] = done_item
-    todo["WorkItems"] = items
-    return index
-
-
 # Recorded on a checkpoint whose caller gave no -m, so the trail never
 # inherits the HEAD commit's own message and pretends it described the step.
 NOOP_CHECKPOINT_MESSAGE = "(no-op checkpoint; no commit produced)"
-
-
-def close_workitem(
-    todo: JsonDict,
-    index: int,
-    kind: str,
-    *,
-    message: str,
-    summary: str = "",
-    extra: Optional[JsonDict] = None,
-) -> int:
-    """Close the not-done item at *index* as done *kind*; return where it landed.
-
-    The one mechanism behind checkpoint, blocked and obsolete -- the three
-    receipts that close an item without a commit. Two moves:
-
-    PATCH, never rebuild. The step is not being swapped for a different one, so
-    the node keeps its objid (every permalink already handed out for it stays
-    valid) along with anything else the plan attached to it. *extra* adds the
-    kind's own metadata; *summary* overrides the step's description only when
-    given, since patching already keeps it.
-
-    SLOT it at the end of the done prefix. A closed step belongs to the history
-    rather than the remaining plan, and without the move a step closed further
-    down the list would leave a done item sitting behind not-done ones, which
-    is exactly what invariant #3 forbids.
-
-    Caller must have checked that *index* names a not-done item
-    (``require_open_workitem``), which is also what makes the cursor lookup
-    here safe."""
-    frontier = resolve_workitem_index(todo, None, what=f"close as {kind}")
-    item = todo["WorkItems"][index]
-    item["kind"] = kind
-    item["message"] = message
-    item["done"] = True
-    if summary:
-        item["summary"] = summary
-    item.update(extra or {})
-    items: List[JsonDict] = list(todo["WorkItems"])
-    items.insert(frontier, items.pop(index))
-    todo["WorkItems"] = items
-    return frontier
-
-
-def closed_workitem_payload(todo: JsonDict, index: int, *, from_index: int) -> JsonDict:
-    """The JSON a close command prints: what was closed, and where it landed."""
-    node = todo["WorkItems"][index]
-    payload: JsonDict = {
-        "index": index,
-        "from_index": from_index,
-        "kind": node.get("kind", ""),
-        "objid": node.get(todo_objid.OBJID_KEY, ""),
-        "summary": node.get("summary", ""),
-        "message": node.get("message", ""),
-    }
-    if node.get("at_sha"):
-        payload["at_sha"] = node["at_sha"]
-    return payload
-
-
-def find_todos_by_id(root: Path, query: str) -> List[tuple[str, JsonDict]]:
-    """Locate tickets whose Id matches *query* via sqlite or git refs."""
-    matches: List[tuple[str, JsonDict]] = []
-    seen_ids: set[str] = set()
-
-    if use_store():
-        for repo_path, branch, todo in todo_store.get_store().find_by_id_prefix(query):
-            ticket_id = str(todo.get("Id", ""))
-            if ticket_id and ticket_id not in seen_ids:
-                loc = f"{repo_path}:{branch}" if repo_path != repo_key(root) else branch
-                matches.append((loc, todo))
-                seen_ids.add(ticket_id)
-        if matches:
-            return matches
-
-    branch: Optional[str] = current_branch(root)
-    worktree: Optional[JsonDict] = read_todo_worktree(root)
-    if worktree is not None:
-        ticket_id: str = str(worktree.get("Id", ""))
-        if ticket_id and id_matches(ticket_id, query):
-            loc: str = f"worktree:{branch or 'detached'}"
-            matches.append((loc, worktree))
-            seen_ids.add(ticket_id)
-
-    refs: List[str] = candidate_refs(list_branch_refs(root), query)
-    for ref in refs:
-        todo: Optional[JsonDict] = read_todo_at_ref(root, ref)
-        if todo is None:
-            continue
-        ticket_id = str(todo.get("Id", ""))
-        if not ticket_id or not id_matches(ticket_id, query):
-            continue
-        if ticket_id in seen_ids:
-            continue
-        matches.append((ref, todo))
-        seen_ids.add(ticket_id)
-    return matches
-
-
-def resolve_ticket_by_id(root: Path, query: str) -> tuple[str, JsonDict]:
-    """Return a unique (location, ticket) pair for *query*."""
-    if len(query) < 4:
-        raise TodoError("id prefix must be at least 4 hex chars")
-    matches = find_todos_by_id(root, query)
-    if not matches:
-        raise TodoError(f"no todo found for id {query!r}")
-    if len(matches) > 1:
-        locations: str = ", ".join(loc for loc, _ in matches)
-        raise TodoError(f"ambiguous id {query!r}; matches on: {locations}")
-    loc, ticket = matches[0]
-    # Complain when this ticket's implementation repo is not the CWD repo.
-    current = repo_key(root)
-    other = loc.rsplit(":", 1)[0]
-    if ":" in loc and other not in {"worktree", current} and "/" in other:
-        print(
-            f"todo: implementation of {query!r} is in {other}, not the current repo {current}",
-            file=sys.stderr,
-        )
-    return matches[0]
-
-
-def mint_id(root: Path, attempts: int = 1000) -> str:
-    """Mint a fresh ticket Id with no 8-hex prefix clash in the repo or db."""
-    for _ in range(attempts):
-        ticket_id: str = hashlib.sha256(uuid.uuid1().bytes).hexdigest()
-        if not find_todos_by_id(root, ticket_id[:8]):
-            return ticket_id
-    raise TodoError("could not mint a collision-free Id")
-
-
-def import_json_ticket(root: Path, ticket: JsonDict, *, branch: Optional[str] = None) -> JsonDict:
-    """Load one ticket dict into the store for *root*."""
-    normalize_todo_schema(ticket)
-    branch_name = branch or str(ticket.get("Branch") or "")
-    if not branch_name:
-        raise TodoError("ticket missing Branch")
-    ticket["Branch"] = branch_name
-    scope = dict(ticket.get("Scope") or {})
-    scope.pop("path_to_project", None)
-    scope["branch"] = branch_name
-    remote = git_url_for_repo(root)
-    if remote:
-        scope.setdefault("git_url", remote)
-    ticket["Scope"] = scope
-    ticket.setdefault("create_dt", utc_now())
-    ticket.setdefault("update_dt", utc_now())
-    ticket.setdefault("State", {"ready": {}})
-    write_todo_worktree(root, ticket)
-    return ticket
-
-
-def import_all_json_refs(root: Path) -> int:
-    """Import every TODO.json found on git refs in *root* into the store."""
-    count = 0
-    for ref in list_branch_refs(root):
-        todo = read_todo_at_ref_legacy(root, ref)
-        if todo is None:
-            continue
-        import_json_ticket(root, todo, branch=ref.split("/", 1)[-1] if ref.startswith("origin/") else ref)
-        count += 1
-    return count
-
-
-def read_todo_at_ref_legacy(root: Path, ref: str) -> Optional[JsonDict]:
-    """Read TODO.json from git only (ignore sqlite)."""
-    show = git_command.get_git().run(root, "show", f"{ref}:TODO.json")
-    if show.returncode != 0:
-        return None
-    try:
-        parsed: Any = json.loads(show.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return normalize_todo_schema(parsed)
-
-
-# Reciprocal-rank-fusion constant; larger flattens the contribution curve.
-_RRF_K = 60
-
-# Search query prefix operators (no space between operator and value).
-_SEARCH_TIME_OPERATORS = frozenset(
-    {"tc_before", "tc_after", "tu_before", "tu_after"}
-)
-_RFC3339_Z_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
-_RFC3339_DATE_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
-_RFC3339_DATE_SLASH_RE = re.compile(r"\A\d{4}/\d{2}/\d{2}\Z")
-
-
-@dataclass(frozen=True)
-class SearchTimeFilters:
-    """Inclusive RFC3339 Z bounds on create_dt / update_dt from search terms."""
-
-    create_before: Optional[str] = None
-    create_after: Optional[str] = None
-    update_before: Optional[str] = None
-    update_after: Optional[str] = None
-
-    def active(self) -> bool:
-        """True when at least one bound is set."""
-        return (
-            self.create_before is not None
-            or self.create_after is not None
-            or self.update_before is not None
-            or self.update_after is not None
-        )
-
-
-def _normalize_search_date(value: str) -> str:
-    """Accept ``YYYY-MM-DD`` or ``YYYY/MM/DD``; return hyphenated date."""
-    if _RFC3339_DATE_SLASH_RE.match(value):
-        return value.replace("/", "-")
-    return value
-
-
-def _parse_search_timestamp(value: str, *, bound: str) -> str:
-    """Validate *value* and return an RFC3339 Z string for comparison.
-
-    Accepts a full timestamp (``2026-01-01T00:00:00Z``) or a date-only value
-    (``2026-01-01`` or ``2026/01/01``). Date-only *after* bounds start at
-    00:00:00Z that day; date-only *before* bounds end at 23:59:59Z that day.
-    """
-    if _RFC3339_Z_RE.match(value):
-        return value
-    date_value = _normalize_search_date(value)
-    if _RFC3339_DATE_RE.match(date_value):
-        if bound == "after":
-            return f"{date_value}T00:00:00Z"
-        if bound == "before":
-            return f"{date_value}T23:59:59Z"
-    raise TodoError(
-        f"invalid search timestamp {value!r}; expected YYYY-MM-DD, YYYY/MM/DD, "
-        "or YYYY-MM-DDTHH:MM:SSZ"
-    )
-
-
-def parse_search_query(
-    terms: Sequence[str],
-) -> tuple[List[str], SearchTimeFilters]:
-    """Split *terms* into text matchers and colon-based time-filter operators.
-
-    Recognized operators (glued to the value, no space): ``tc_before:``,
-    ``tc_after:``, ``tu_before:``, ``tu_after:`` each followed by RFC3339 Z or a
-    date-only ``YYYY-MM-DD``. Any other token is a normal search term (including strings that
-    happen to contain a colon but do not match a known operator prefix).
-    """
-    text_terms: List[str] = []
-    create_before: Optional[str] = None
-    create_after: Optional[str] = None
-    update_before: Optional[str] = None
-    update_after: Optional[str] = None
-    for term in terms:
-        if ":" not in term:
-            text_terms.append(term)
-            continue
-        prefix, _, value = term.partition(":")
-        if prefix not in _SEARCH_TIME_OPERATORS:
-            text_terms.append(term)
-            continue
-        if not value:
-            raise TodoError(f"search operator {prefix!r} requires a value after ':'")
-        bound = "before" if prefix.endswith("_before") else "after"
-        timestamp = _parse_search_timestamp(value, bound=bound)
-        if prefix == "tc_before":
-            create_before = timestamp
-        elif prefix == "tc_after":
-            create_after = timestamp
-        elif prefix == "tu_before":
-            update_before = timestamp
-        else:
-            update_after = timestamp
-    return text_terms, SearchTimeFilters(
-        create_before=create_before,
-        create_after=create_after,
-        update_before=update_before,
-        update_after=update_after,
-    )
-
-
-def _ticket_matches_time_filters(
-    ticket: JsonDict, filters: SearchTimeFilters
-) -> bool:
-    """True when *ticket* satisfies every set bound in *filters*."""
-    create_dt = str(ticket.get("create_dt") or "")
-    update_dt = str(ticket.get("update_dt") or "")
-    if filters.create_before is not None:
-        if not create_dt or create_dt > filters.create_before:
-            return False
-    if filters.create_after is not None:
-        if not create_dt or create_dt < filters.create_after:
-            return False
-    if filters.update_before is not None:
-        if not update_dt or update_dt > filters.update_before:
-            return False
-    if filters.update_after is not None:
-        if not update_dt or update_dt < filters.update_after:
-            return False
-    return True
-
-
-@dataclass(frozen=True)
-class SearchTicketsResult:
-    """Ranked search hits plus how many matches the state filter hid."""
-
-    hits: List[JsonDict]
-    hidden_by_status: int
-
-
-def _ticket_matches_tag_filter(ticket: JsonDict, tags: Optional[frozenset]) -> bool:
-    if tags is None:
-        return True
-    return bool(
-        {
-            e["raw"]
-            for e in (ticket.get("Tag") or [])
-            if isinstance(e, dict) and isinstance(e.get("raw"), str)
-        }
-        & tags
-    )
-
-
-def _partition_search_candidates(
-    store: todo_store.TodoStore,
-    *,
-    states: Optional[frozenset],
-    tags: Optional[frozenset],
-    time_filters: SearchTimeFilters,
-) -> tuple[Dict[str, JsonDict], Dict[str, JsonDict], Dict[str, tuple[str, str]]]:
-    """Split store tickets into visible vs status-hidden search pools."""
-    visible: Dict[str, JsonDict] = {}
-    hidden: Dict[str, JsonDict] = {}
-    locations: Dict[str, tuple[str, str]] = {}
-    for repo_path, branch, parsed in store.list_located():
-        parsed = normalize_todo_schema(parsed)
-        ticket_id = str(parsed.get("Id", ""))
-        if not ticket_id:
-            continue
-        if not _ticket_matches_tag_filter(parsed, tags):
-            continue
-        if not _ticket_matches_time_filters(parsed, time_filters):
-            continue
-        locations[ticket_id] = (repo_path, branch)
-        state = current_state_name(parsed) or ""
-        if states is not None and state not in states:
-            hidden[ticket_id] = parsed
-        else:
-            visible[ticket_id] = parsed
-    return visible, hidden, locations
-
-
-def _text_search_match_ids(
-    tickets: Mapping[str, JsonDict],
-    raws: Mapping[str, Dict[str, str]],
-    text_terms: Sequence[str],
-    prepared: Sequence[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]],
-    stored_by_fingerprint: Mapping[str, Mapping[tuple[str, str], List[List[float]]]],
-    *,
-    persist_stopwords: bool,
-) -> set[str]:
-    """Ticket ids that match *text_terms* under the same rankers as search."""
-    if not text_terms or not tickets:
-        return set()
-
-    rankings: List[Dict[str, float]] = []
-    for _name, _embedder, fingerprint, term_vecs in prepared:
-        stored = stored_by_fingerprint[fingerprint]
-        for _term, query_vec in term_vecs:
-            scores: Dict[str, float] = {}
-            for tid in tickets:
-                best = 0.0
-                for field_path in raws.get(tid, {}):
-                    chunks = stored.get((tid, field_path)) or []
-                    for chunk in chunks:
-                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
-                if best > 0.0:
-                    scores[tid] = best
-            rankings.append(scores)
-
-    index = todo_search.LexicalIndex(
-        {tid: " ".join(raws[tid].values()) for tid in tickets}
-    )
-    index.use_stopwords(resolve_stopwords(index, persist=persist_stopwords))
-    rankings.append(index.score(text_terms))
-    fused = _rrf_fuse(rankings)
-    return {tid for tid, score in fused.items() if score > 0.0}
-
-
-def _rrf_fuse(rankings: List[Dict[str, float]]) -> Dict[str, float]:
-    """Reciprocal rank fusion: sum 1/(k+rank) across rankers, scale-free."""
-    fused: Dict[str, float] = {}
-    for scores in rankings:
-        ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        for rank, (tid, _score) in enumerate(ordered, start=1):
-            fused[tid] = fused.get(tid, 0.0) + 1.0 / (_RRF_K + rank)
-    return fused
-
-
-def resolve_embedder_names(requested: Optional[Sequence[str]]) -> List[str]:
-    """Which embedders this search runs, honoring the store's ``embedder`` config.
-
-    An explicit ``--embedder`` always wins. Otherwise the todo dir decides:
-
-    ==========================  ==========================================
-    ``config.json``             search runs with
-    ==========================  ==========================================
-    (key absent)                NO embedder -- lexical IDF only (default)
-    ``"embedder": null``        NO embedder: lexical IDF is the only ranker
-    ``"embedder": "apple"``     that embedder (comma list, like --embedder)
-    ``"embedder": ["a", "b"]``  those embedders
-    ==========================  ==========================================
-
-    Vector search remains available: set ``embedder`` in config or pass
-    ``--embedder`` explicitly. The default skips instantiation entirely, so
-    nothing spawns the macOS NLCE sidecar and search stays fast and hermetic.
-    """
-    if requested:
-        return list(requested)
-    todo_dir = todo_db.todo_dir()
-    if not todo_store.config_has(todo_dir, SEARCH_EMBEDDER_KEY):
-        return []
-    configured = todo_store.config_value_raw(todo_dir, SEARCH_EMBEDDER_KEY)
-    if configured is None:
-        return []
-    if isinstance(configured, str):
-        return [part.strip() for part in configured.split(",") if part.strip()]
-    if isinstance(configured, list):
-        return [str(part).strip() for part in configured if str(part).strip()]
-    raise TodoError(
-        f"config.json {SEARCH_EMBEDDER_KEY!r} must be null (no embedder), a name, "
-        f"or a list of names; got {type(configured).__name__}"
-    )
-
-
-def resolve_stopwords(
-    index: todo_search.LexicalIndex, *, persist: bool = True
-) -> List[str]:
-    """This corpus's stopwords: the persisted list, or discover and persist one.
-
-    Nobody writes the list by hand. A term earns the label by falling below
-    ``search_stopword_min_idf`` -- i.e. by being so widespread it carries no
-    signal -- which is what makes it catch the domain words a shipped English
-    list never would (``todo``, ``sha``, ``branch``, ``commit``).
-
-    Discovery is LAZY and sticky, exactly like the embedding backfill next to
-    it: computed when the config holds no list, then reused verbatim (a
-    hand-edited list is therefore honored). ``clear-search-data`` is how you
-    ask for a fresh one after the corpus has moved on. ``persist`` is False
-    under ``--dry-run``, which still uses the discovered list but writes
-    nothing.
-    """
-    todo_dir = todo_db.todo_dir()
-    stored = todo_store.config_list(todo_dir, SEARCH_STOPWORDS_KEY)
-    if stored or not index.document_count:
-        return stored
-    min_idf = todo_store.config_float(
-        todo_dir, SEARCH_STOPWORD_MIN_IDF_KEY, DEFAULT_STOPWORD_MIN_IDF
-    )
-    discovered = index.stopword_candidates(min_idf)
-    if discovered and persist:
-        todo_store.update_config(todo_dir, {SEARCH_STOPWORDS_KEY: discovered})
-    return discovered
-
-
-def _solo_term_id_prefix_hit(terms: Sequence[str], tickets: Dict[str, JsonDict]) -> Optional[str]:
-    """Ticket id uniquely selected by *terms* as a bare hex Id prefix.
-
-    Only engages for a single search term shaped like a selector (4+ lowercase
-    hex chars) -- the same shape ``resolve_ticket_by_id`` accepts. Zero or more
-    than one match is not an error here, unlike the selector resolver: it just
-    means the term is not, in fact, an id prefix on this corpus, so ordinary
-    ranked search decides instead.
-    """
-    if len(terms) != 1:
-        return None
-    term = terms[0]
-    if len(term) < 4 or not re.fullmatch(r"[0-9a-f]+", term):
-        return None
-    matches = [tid for tid in tickets if id_matches(tid, term)]
-    return matches[0] if len(matches) == 1 else None
-
-
-def search_tickets(
-    terms: Sequence[str],
-    *,
-    limit: int = 20,
-    embedder_names: Optional[Sequence[str]] = None,
-    dry_run: bool = False,
-    states: Optional[frozenset] = None,
-    tags: Optional[frozenset] = None,
-) -> SearchTicketsResult:
-    """Rank tickets by reciprocal-rank fusion over the chosen embedders + lexical.
-
-    Reads the resolved todo directory (``$TODO_DIR``, then the ``.todo`` walk),
-    the same store as ``ls``. The current directory does not need to be a git
-    repo.
-
-    ``terms`` is a list of independent search terms (google-style): each term is
-    embedded and matched on its own, contributing its own ranker to the fusion,
-    so their scores add. A term is the unit of embedding and matching -- a term
-    holding whitespace (a quoted phrase from the shell) is embedded/matched whole
-    rather than split. ``embedder_names`` defaults to the store's ``embedder``
-    config -- absent or null means no embedder (see ``resolve_embedder_names``).
-    A requested embedder that cannot be instantiated or run raises ``TodoError``
-    (choose ``--embedder`` explicitly). Unless ``dry_run``, vectors missing for a
-    chosen embedder are computed and stored (lazy backfill) before ranking; a
-    ticket still missing a vector simply does not contribute to that ranker. When
-    ``states`` is given, only tickets whose current State is in that set are
-    considered; ``tags`` likewise keeps only tickets with a plural ``Tag``
-    element (manual or automatic) whose ``raw`` is in it -- callers pass
-    already-downcased tag text, matching how ``Tag.raw`` is always stored.
-    Both filters apply before ranking, so the limit counts matches only.
-
-    A solo term that uniquely prefix-matches one ticket's Id (see
-    ``_solo_term_id_prefix_hit``) is pinned first regardless of its
-    vector/lexical score -- a bare id prefix otherwise has no lexical or
-    semantic overlap with Summary/Body text and would not reliably surface on
-    its own.
-
-    Search terms may include colon-based time operators (no space before the
-    value): ``tc_before:``, ``tc_after:``, ``tu_before:``, ``tu_after:`` each
-    followed by an RFC3339 Z timestamp. They are ANDed with each other and with
-    text terms. Space-separated text terms are google-style OR: each term is its
-    own matcher and matching more terms ranks higher; a doc matching only one
-    term can still appear.
-    """
-    text_terms, time_filters = parse_search_query(terms)
-    names = resolve_embedder_names(embedder_names)
-    embedders: List[tuple[str, todo_embed.Embedder]] = []
-    for name in names:
-        try:
-            embedders.append((name, todo_embed.get_embedder(name)))
-        except (ValueError, RuntimeError) as exc:
-            raise TodoError(
-                f"embedder {name!r} unavailable: {exc}; "
-                f"choose --embedder explicitly (e.g. --embedder mock)"
-            ) from exc
-
-    store = todo_store.get_store()
-    tickets, hidden_tickets, locations = _partition_search_candidates(
-        store, states=states, tags=tags, time_filters=time_filters
-    )
-    raws: Dict[str, Dict[str, str]] = {
-        ticket_id: _raw_map(parsed) for ticket_id, parsed in tickets.items()
-    }
-    hidden_raws: Dict[str, Dict[str, str]] = {
-        ticket_id: _raw_map(parsed) for ticket_id, parsed in hidden_tickets.items()
-    }
-
-    if not text_terms:
-        ranked_ids = sorted(
-            tickets.keys(),
-            key=lambda tid: (
-                str(tickets[tid].get("update_dt") or ""),
-                str(tickets[tid].get("create_dt") or ""),
-            ),
-            reverse=True,
-        )
-        return SearchTicketsResult(
-            hits=[tickets[tid] for tid in ranked_ids[:limit]],
-            hidden_by_status=len(hidden_tickets),
-        )
-
-    prefix_hit = _solo_term_id_prefix_hit(text_terms, tickets)
-
-    prepared: List[tuple[str, todo_embed.Embedder, str, List[tuple[str, List[float]]]]] = []
-    stored_by_fingerprint: Dict[str, Dict[tuple[str, str], List[List[float]]]] = {}
-    for name, embedder in embedders:
-        try:
-            fingerprint = embedder.fingerprint()
-            term_vecs = [(term, embedder.embed(term)) for term in text_terms]
-        except (ValueError, RuntimeError) as exc:
-            raise TodoError(f"embedder {name!r} failed: {exc}") from exc
-        prepared.append((name, embedder, fingerprint, term_vecs))
-        stored_by_fingerprint[fingerprint] = {
-            (tid, field): vec for tid, field, vec in store.all_embeddings(fingerprint)
-        }
-
-    refreshing_embeddings = False
-    if not dry_run:
-        for tid, field_raws in list(raws.items()):
-            needs_refresh = any(
-                (tid, field_path) not in stored_by_fingerprint[fingerprint]
-                for _name, _embedder, fingerprint, _term_vecs in prepared
-                for field_path in field_raws
-            )
-            if not needs_refresh:
-                continue
-
-            repo, branch = locations[tid]
-            with store.lock(tid):
-                # Re-read after taking the lock. Every selected embedding for
-                # this TODO is then calculated from one stable snapshot,
-                # stamped into that snapshot, and persisted with one put.
-                latest = store.get(repo, branch)
-                if latest is None:
-                    continue
-                # (field_path, container, raw) for Summary/Body and every Tag
-                # element -- the same target list the write path stamps.
-                latest_targets = _embed_targets(latest)
-                indexed = {
-                    (field_path, fingerprint): chunks
-                    for field_path, fingerprint, chunks in store.embeddings_for_ticket(tid)
-                }
-                new_rows: List[tuple[str, str, List[List[float]]]] = []
-                for name, embedder, fingerprint, _term_vecs in prepared:
-                    for field_path, container, raw in latest_targets:
-                        chunks = indexed.get((field_path, fingerprint))
-                        if chunks is not None:
-                            container[fingerprint] = chunks
-                            stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
-                            continue
-                        if not refreshing_embeddings:
-                            print(
-                                "refreshing embeddings",
-                                end="",
-                                file=sys.stderr,
-                                flush=True,
-                            )
-                            refreshing_embeddings = True
-                        try:
-                            vec = embedder.embed(raw)
-                        except (ValueError, RuntimeError) as exc:
-                            raise TodoError(f"embedder {name!r} failed: {exc}") from exc
-                        print(".", end="", file=sys.stderr, flush=True)
-                        chunks = [vec]
-                        container[fingerprint] = chunks
-                        indexed[(field_path, fingerprint)] = chunks
-                        stored_by_fingerprint[fingerprint][(tid, field_path)] = chunks
-                        new_rows.append((field_path, fingerprint, chunks))
-
-                if not new_rows:
-                    continue
-                store.put(repo, branch, latest)
-                for field_path, fingerprint, chunks in new_rows:
-                    store.put_embedding(tid, field_path, fingerprint, chunks)
-                tickets[tid] = latest
-                raws[tid] = {field_path: raw for field_path, _container, raw in latest_targets}
-
-    rankings: List[Dict[str, float]] = []
-    for _name, _embedder, fingerprint, term_vecs in prepared:
-        stored = stored_by_fingerprint[fingerprint]
-        for _term, query_vec in term_vecs:
-            scores: Dict[str, float] = {}
-            for tid in tickets:
-                best = 0.0
-                # Every embeddable field this ticket actually has (Summary, Body,
-                # and however many Tag elements) -- not a fixed pair, since Tag is
-                # plural and its count varies per ticket.
-                for field_path in raws.get(tid, {}):
-                    chunks = stored.get((tid, field_path)) or []
-                    for chunk in chunks:
-                        best = max(best, todo_embed.cosine_similarity(query_vec, chunk))
-                if best > 0.0:
-                    scores[tid] = best
-            rankings.append(scores)
-
-    # Lexical half: one IDF ranking over all terms (their weights add), so a
-    # rare term outranks a corpus-wide one instead of every term counting the
-    # same. Built fresh here -- see todo_search on why none of it is persisted.
-    index = todo_search.LexicalIndex(
-        {tid: " ".join(raws[tid].values()) for tid in tickets}
-    )
-    index.use_stopwords(resolve_stopwords(index, persist=not dry_run))
-    rankings.append(index.score(text_terms))
-
-    if refreshing_embeddings:
-        print("Done", file=sys.stderr, flush=True)
-
-    fused = _rrf_fuse(rankings)
-    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
-    ordered_ids = [tid for tid, _score in ranked]
-    if prefix_hit is not None:
-        # Pinned first: an id prefix has no lexical/semantic score of its own,
-        # so it may otherwise be absent from `fused` entirely (see _rrf_fuse).
-        ordered_ids = [prefix_hit] + [tid for tid in ordered_ids if tid != prefix_hit]
-    hidden_by_status = len(
-        _text_search_match_ids(
-            hidden_tickets,
-            hidden_raws,
-            text_terms,
-            prepared,
-            stored_by_fingerprint,
-            persist_stopwords=not dry_run,
-        )
-    )
-    return SearchTicketsResult(
-        hits=[tickets[tid] for tid in ordered_ids[:limit]],
-        hidden_by_status=hidden_by_status,
-    )
 
 
 # A path names a Notes element (and only a Notes element) when it matches this
@@ -2740,92 +537,6 @@ def build_prompt_chain(root: Path, selector: str) -> str:
     return "\n\n".join(sections)
 
 
-def load_json_file(path: Path) -> JsonDict:
-    """Load a JSON object from *path*."""
-    try:
-        parsed: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise TodoError(f"could not read JSON from {path}: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise TodoError(f"expected JSON object in {path}")
-    return parsed
-
-
-def parse_jsonpath(path_str: str) -> List[Any]:
-    """Parse a dot-separated JSON path (optional ``$.`` prefix); numeric segments index lists."""
-    path_str = path_str.strip()
-    if path_str.startswith("$."):
-        path_str = path_str[2:]
-    elif path_str == "$":
-        raise TodoError("jsonpath must name a field, not the root object")
-    elif path_str.startswith("$"):
-        path_str = path_str[1:].lstrip(".")
-    if not path_str:
-        raise TodoError("jsonpath is empty")
-    segments: List[Any] = []
-    for part in path_str.split("."):
-        if part.isdigit():
-            segments.append(int(part))
-        else:
-            segments.append(part)
-    return segments
-
-
-def format_jsonpath(keys: Sequence[Any]) -> str:
-    """Render path segments as a dotted path, or ``<root>`` when empty."""
-    if not keys:
-        return "<root>"
-    return ".".join(str(key) for key in keys)
-
-
-def available_path_options(node: Any) -> str:
-    """Comma-separated keys (dicts) or indices (lists) at *node*; empty otherwise."""
-    if isinstance(node, dict):
-        return ",".join(sorted(str(key) for key in node.keys()))
-    if isinstance(node, list):
-        return ",".join(str(index) for index in range(len(node)))
-    return ""
-
-
-def no_such_path_error(worked: Sequence[Any], missing: Any, current: Any) -> TodoError:
-    """Build a TodoError naming the path that worked, the missing field, and options."""
-    return TodoError(
-        f"path {format_jsonpath(worked)} no such field {missing}. "
-        f"available: {available_path_options(current)}"
-    )
-
-
-def resolve_path_segment(current: Any, key: Any, worked: Sequence[Any]) -> Any:
-    """Descend one path segment; raise TodoError with context on failure."""
-    if isinstance(key, int):
-        if not isinstance(current, list):
-            raise TodoError(
-                f"path {format_jsonpath(worked)} expected list at segment {key!r}; "
-                f"available: {available_path_options(current)}"
-            )
-        if key < 0 or key >= len(current):
-            raise no_such_path_error(worked, key, current)
-        return current[key]
-    if not isinstance(current, dict):
-        raise TodoError(
-            f"path {format_jsonpath(worked)} expected object at segment {key!r}; "
-            f"available: {available_path_options(current)}"
-        )
-    if key not in current:
-        raise no_such_path_error(worked, key, current)
-    return current[key]
-
-
-def get_at_path(root: JsonDict, path_str: str) -> Any:
-    """Return the value at *path_str* within *root*."""
-    current: Any = root
-    worked: List[Any] = []
-    for key in parse_jsonpath(path_str):
-        current = resolve_path_segment(current, key, worked)
-        worked.append(key)
-    return current
-
-
 def print_json_value(value: Any) -> None:
     """Print a JSON value in a script-friendly form."""
     if isinstance(value, (dict, list)):
@@ -2836,444 +547,6 @@ def print_json_value(value: Any) -> None:
         sys.stdout.write("\n")
     else:
         sys.stdout.write(f"{value}\n")
-
-
-def set_at_path(root: JsonDict, path_str: str, value: Any) -> None:
-    """Set the value at *path_str* within *root*, creating missing object keys."""
-    keys = parse_jsonpath(path_str)
-    current: Any = root
-    worked: List[Any] = []
-    for index, key in enumerate(keys[:-1]):
-        next_key = keys[index + 1]
-        if isinstance(key, int):
-            current = resolve_path_segment(current, key, worked)
-        else:
-            if not isinstance(current, dict):
-                raise TodoError(
-                    f"path {format_jsonpath(worked)} expected object at segment {key!r}; "
-                    f"available: {available_path_options(current)}"
-                )
-            nested = current.get(key)
-            if not isinstance(nested, (dict, list)):
-                current[key] = [] if isinstance(next_key, int) else {}
-                nested = current[key]
-            current = nested
-        worked.append(key)
-    last = keys[-1]
-    if isinstance(last, int):
-        if not isinstance(current, list):
-            raise TodoError(
-                f"path {format_jsonpath(worked)} expected list at final segment {last!r}; "
-                f"available: {available_path_options(current)}"
-            )
-        if last < 0 or last >= len(current):
-            raise no_such_path_error(worked, last, current)
-        current[last] = value
-    else:
-        if not isinstance(current, dict):
-            raise TodoError(
-                f"path {format_jsonpath(worked)} expected object at final segment {last!r}; "
-                f"available: {available_path_options(current)}"
-            )
-        current[last] = value
-
-
-# Subtodos[].State for a child-declared informational back-link: a follow-only
-# link (HATEOAS) inserted by `set --parent` and repaired by `doctor`, distinct
-# from a tracked subtodo the parent must merge. Excluded from merge-completeness.
-SUBTODO_STATE_INFO = "INFO"
-
-
-def subtodo_entry_from_child(child: JsonDict) -> JsonDict:
-    """Build a parent Subtodos row from a child todo."""
-    return {
-        "Id": child["Id"],
-        "Branch": child.get("Branch", ""),
-        "Summary": child.get("Summary", {}).get("raw", ""),
-        "State": current_state_name(child) or "ready",
-    }
-
-
-def info_backlink_entry(child: JsonDict) -> JsonDict:
-    """A parent Subtodos row for a child-declared informational back-link.
-
-    `State` is INFO (follow-only, not a mergeable subtodo); `Summary` is a
-    best-effort copy of the child's summary that doctor refreshes when sweeping.
-    """
-    summary_obj = child.get("Summary")
-    summary = summary_obj.get("raw", "") if isinstance(summary_obj, dict) else ""
-    return {
-        "Id": str(child["Id"]),
-        "Branch": str(child.get("Branch", "")),
-        "Summary": summary,
-        "State": SUBTODO_STATE_INFO,
-    }
-
-
-def upsert_info_backlink(parent: JsonDict, child: JsonDict) -> bool:
-    """Ensure *parent*'s Subtodos carries an INFO back-link to *child*.
-
-    Returns True when the parent changed. Never downgrades a real (tracked)
-    subtodo entry to INFO -- if the child is already listed as a mergeable
-    subtodo it is left untouched; an existing INFO entry gets its best-effort
-    Summary/Branch refreshed.
-    """
-    entry = info_backlink_entry(child)
-    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
-    for existing in subtodos:
-        if existing.get("Id") == entry["Id"]:
-            if existing.get("State") != SUBTODO_STATE_INFO:
-                return False  # a real tracked subtodo -- do not clobber it
-            if (
-                existing.get("Summary") == entry["Summary"]
-                and existing.get("Branch") == entry["Branch"]
-            ):
-                return False
-            existing["Summary"] = entry["Summary"]
-            existing["Branch"] = entry["Branch"]
-            parent["Subtodos"] = subtodos
-            return True
-    subtodos.append(entry)
-    parent["Subtodos"] = subtodos
-    return True
-
-
-def remove_info_backlink(parent: JsonDict, child_id: str) -> bool:
-    """Drop an INFO Subtodos entry for *child_id* from *parent*.
-
-    Returns True when the parent changed. Leaves non-INFO (tracked/mergeable)
-    Subtodos entries alone -- those belong to add-subtodo, not set --parent.
-    """
-    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
-    kept: List[JsonDict] = []
-    changed = False
-    for entry in subtodos:
-        if (
-            isinstance(entry, dict)
-            and entry.get("Id") == child_id
-            and entry.get("State") == SUBTODO_STATE_INFO
-        ):
-            changed = True
-            continue
-        kept.append(entry)
-    if changed:
-        parent["Subtodos"] = kept
-    return changed
-
-
-def resolve_parent_refs(root: Path, parent_ids: Sequence[str]) -> List[JsonDict]:
-    """Resolve ``set --parent`` selectors to ordered ``{Id, Branch}`` refs.
-
-    Blank tokens are skipped (so ``--parent=`` alone yields an empty desired
-    list and clears Parent). Duplicate Ids keep the first occurrence.
-    """
-    refs: List[JsonDict] = []
-    seen: set = set()
-    for raw in parent_ids:
-        parent_id = raw.strip()
-        if not parent_id:
-            continue
-        _loc, ptodo = resolve_ticket_by_id(root, parent_id)
-        full_id = str(ptodo["Id"])
-        if full_id in seen:
-            continue
-        seen.add(full_id)
-        refs.append({"Id": full_id, "Branch": str(ptodo.get("Branch", ""))})
-    return refs
-
-
-def apply_parent_links(
-    root: Path,
-    child: JsonDict,
-    parent_ids: Sequence[str],
-    *,
-    dry_run: bool = False,
-) -> List[str]:
-    """Make-it-so: set *child*.Parent to *parent_ids* and sync INFO back-links.
-
-    Desired end-state replaces the child's Parent list. Former parents that
-    carried a follow-only INFO back-link to this child lose it; desired parents
-    gain (or refresh) one. Tracked/mergeable Subtodos rows are never removed.
-    Returns human descriptions of back-link changes. Child Parent is updated in
-    memory always; parent writes are skipped when *dry_run* or not sqlite.
-    """
-    child_id = str(child.get("Id") or "")
-    desired = resolve_parent_refs(root, parent_ids)
-    for ref in desired:
-        if ref["Id"] == child_id:
-            raise TodoError("a todo cannot be its own parent")
-
-    old_ids: set = set()
-    for ref in child.get("Parent") or []:
-        if isinstance(ref, dict):
-            oid = str(ref.get("Id") or "")
-            if oid:
-                old_ids.add(oid)
-    new_ids = {str(ref["Id"]) for ref in desired}
-    child["Parent"] = desired
-
-    changes: List[str] = []
-    if not use_store():
-        return changes
-
-    current = repo_key(root)
-    for old_id in sorted(old_ids - new_ids):
-        try:
-            loc, parent = resolve_ticket_by_id(root, old_id)
-        except TodoError:
-            continue
-        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
-        if parent_repo and parent_repo not in ("worktree", current):
-            continue
-        if remove_info_backlink(parent, child_id):
-            changes.append(f"parent {old_id[:8]} -/ INFO back-link {child_id[:8]}")
-            if not dry_run:
-                write_todo_worktree(root, parent)
-
-    changes.extend(reestablish_backlinks(root, child, dry_run=dry_run))
-    return changes
-
-
-def reestablish_backlinks(root: Path, child: JsonDict, *, dry_run: bool = False) -> List[str]:
-    """Make each of *child*'s `Parent` refs point back at the child.
-
-    For every parent the child references, ensure the parent's Subtodos carries
-    an INFO back-link to this child (so a reader can follow parent -> child, not
-    just child -> parent). Returns human descriptions of the back-links added or
-    refreshed; writes them unless *dry_run*.
-
-    Best-effort and store-only: unresolvable and cross-repo parents are skipped
-    (a write keys by the current repo, so persisting another repo's parent would
-    misfile it), and legacy JSON mode -- where a write targets the current
-    branch's file -- makes no changes.
-    """
-    if not use_store():
-        return []
-    child_id = str(child.get("Id") or "")
-    current = repo_key(root)
-    repairs: List[str] = []
-    seen: set = set()
-    for ref in child.get("Parent") or []:
-        if not isinstance(ref, dict):
-            continue
-        parent_id = str(ref.get("Id") or "")
-        if not parent_id or parent_id in seen:
-            continue
-        seen.add(parent_id)
-        try:
-            loc, parent = resolve_ticket_by_id(root, parent_id)
-        except TodoError:
-            continue
-        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
-        if parent_repo and parent_repo not in ("worktree", current):
-            continue  # cross-repo parent: cannot safely persist here
-        if str(parent.get("Id") or "") == child_id:
-            continue  # never self-link
-        if upsert_info_backlink(parent, child):
-            repairs.append(f"parent {parent_id[:8]} <- INFO back-link {child_id[:8]}")
-            if not dry_run:
-                write_todo_worktree(root, parent)
-    return repairs
-
-
-def child_is_tracked_subtodo(root: Path, child: JsonDict) -> bool:
-    """Whether *child* is a genuinely TRACKED subtodo of any of its Parent refs.
-
-    A child's own `Parent` refs look identical whether the link is a real,
-    mergeable subtodo (created via `add-subtodo`) or a purely informational
-    back-link (created via `set --parent` / `reestablish_backlinks`); the
-    distinction lives only on the *parent's* own Subtodos[].State for this
-    child's entry -- SUBTODO_STATE_INFO means follow-only, anything else means
-    the parent must still merge this child (see `unmerged_subtodos`, the
-    parent-side version of this same rule).
-
-    Best-effort and skip-on-failure, mirroring `reestablish_backlinks`:
-    unresolvable and cross-repo parents are simply skipped rather than raising.
-    Returns False when no parent resolves to a non-INFO entry for this child,
-    including when Parent is empty or every parent ref fails to resolve.
-    """
-    child_id = str(child.get("Id") or "")
-    current = repo_key(root)
-    for ref in child.get("Parent") or []:
-        if not isinstance(ref, dict):
-            continue
-        parent_id = str(ref.get("Id") or "")
-        if not parent_id:
-            continue
-        try:
-            loc, parent = resolve_ticket_by_id(root, parent_id)
-        except TodoError:
-            continue
-        parent_repo = loc.rsplit(":", 1)[0] if ":" in loc else ""
-        if parent_repo and parent_repo not in ("worktree", current):
-            continue  # cross-repo parent: not authoritative here
-        for entry in parent.get("Subtodos") or []:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("Id") or "") != child_id:
-                continue
-            if entry.get("State") != SUBTODO_STATE_INFO:
-                return True
-    return False
-
-
-def upsert_subtodo(parent: JsonDict, child: JsonDict) -> None:
-    """Insert or refresh a Subtodos entry on *parent*."""
-    entry = subtodo_entry_from_child(child)
-    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
-    for index, existing in enumerate(subtodos):
-        if existing.get("Id") == entry["Id"]:
-            subtodos[index] = entry
-            parent["Subtodos"] = subtodos
-            return
-    subtodos.append(entry)
-    parent["Subtodos"] = subtodos
-
-
-def update_subtodo_state(parent: JsonDict, child_id: str, state: str) -> None:
-    """Set Subtodos[].State for *child_id* on *parent*."""
-    subtodos: List[JsonDict] = list(parent.get("Subtodos") or [])
-    found = False
-    for entry in subtodos:
-        if entry.get("Id") == child_id:
-            entry["State"] = state
-            found = True
-            break
-    if not found:
-        raise TodoError(f"child Id {child_id[:8]} not listed in parent Subtodos")
-    parent["Subtodos"] = subtodos
-
-
-def apply_ticket_path(
-    root: Path,
-    selector: str,
-    jsonpath: str,
-    value: Any,
-    *,
-    stay: bool = False,
-    no_commit: bool = False,
-    no_clear: bool = False,
-) -> Any:
-    """Set *jsonpath* to an already-parsed *value* on a selected ticket.
-
-    The selector resolves the todo by Id through the store and writes it back
-    store-only (sqlite or json-dir backend): no branch checkout and no commit.
-    Storage access -- which reading the todo already proves we have -- is all
-    that is required, so this works on a branchless ``groom`` todo (it carries
-    a Branch *label* but has no git branch yet) and never lands a commit on
-    whatever branch the caller happens to be on. ``stay`` is retained for CLI
-    backward compatibility but is a no-op: with no checkout there is no branch
-    to return from. ``no_commit`` only matters in legacy TODO_USE_JSON mode,
-    where the record is a branch-bound file (see ``commit_todo``).
-    """
-    _, todo = resolve_ticket_by_id(root, selector)
-    set_at_path(todo, jsonpath, value)
-    write_todo_worktree(root, todo, no_clear=no_clear)
-    if not no_commit:
-        commit_todo(root, f"chore(todo): update {jsonpath}")
-    return get_at_path(todo, jsonpath)
-
-
-def merge_subtodo(
-    root: Path,
-    child_selector: str,
-    *,
-    merged_into: Optional[str] = None,
-    last_commit: Optional[str] = None,
-) -> JsonDict:
-    """Mark a child todo merged and update its parent's bookkeeping.
-
-    The parent is the child's ``Parent[0]`` ref -- the structural parent
-    ``add-subtodo`` recorded. Both records are updated through the store with
-    no branch checkout. The recorded merge sha is the tip of the parent's
-    branch: the caller's actual git merge (or absorption) commit, which the
-    caller must have landed before calling (invariant #6 keeps holding, with a
-    real sha instead of a marker commit).
-    """
-    _, child = resolve_ticket_by_id(root, child_selector)
-    child_id = str(child["Id"])
-    child_branch = str(child.get("Branch") or "")
-    if not child_branch:
-        raise TodoError("child ticket missing Branch")
-    child_state = current_state_name(child)
-    if child_state not in {"done", "merged"}:
-        raise TodoError(
-            f"child {child_id[:8]} is {child_state!r}; expected done before merge-subtodo"
-        )
-    parents = child.get("Parent") or []
-    first_ref = parents[0] if parents and isinstance(parents[0], dict) else {}
-    parent_id_ref = str(first_ref.get("Id") or "")
-    if not parent_id_ref:
-        raise TodoError(
-            f"child {child_id[:8]} has no Parent ref; cannot locate the parent todo"
-        )
-    _, parent = resolve_ticket_by_id(root, parent_id_ref)
-    parent_branch = str(parent.get("Branch") or "")
-    if not parent_branch:
-        raise TodoError(f"parent {parent_id_ref[:8]} ticket missing Branch")
-
-    merge_target = merged_into or parent_branch
-    merge_sha = run_git(
-        root, "rev-parse", "--verify", "--quiet", parent_branch, check=False
-    ).stdout.strip()
-    if not merge_sha:
-        raise TodoError(
-            f"parent branch {parent_branch!r} not found here; git-merge the child "
-            "into the parent branch before merge-subtodo"
-        )
-
-    set_state(child, "merged", merged_into=merge_target, last_commit=last_commit)
-    write_todo_worktree(root, child)
-
-    # Prefer the child's ActualSummary (how the work actually panned out) over
-    # its planned Summary for the merge message and work item node; fall back to
-    # Summary.raw for children that never recorded one.
-    child_summary = ""
-    if isinstance(child.get("Summary"), dict):
-        child_summary = str(child["Summary"].get("raw", ""))
-    child_actual = str(child.get("ActualSummary") or "").strip()
-    merge_message = child_actual or child_summary
-    merge_subject = f"merge subtodo {child_id[:8]}"
-    if merge_message:
-        merge_subject += f": {_summary_snippet(merge_message)}"
-
-    update_subtodo_state(parent, child_id, "merged")
-    index = mark_cursor_done(parent, merge_subtodo_workitem(child_id, merge_sha, summary=""))
-    if not parent["WorkItems"][index].get("summary"):
-        parent["WorkItems"][index]["summary"] = merge_subject
-    write_todo_worktree(root, parent)
-    # State merged implies no linked worktree for the child (property of terminal).
-    remove_todo_worktree_for_branch(root, child_branch)
-    return {"child": child_id, "State": "merged", "merged_into": merge_target, "sha": merge_sha}
-
-
-def wait_for_state(
-    root: Path,
-    selectors: Sequence[str],
-    *,
-    target_state: str = "done",
-    timeout: float = 300.0,
-    interval: float = 5.0,
-) -> List[str]:
-    """Poll selected todos until each reaches *target_state*."""
-    deadline = time.monotonic() + timeout
-    remaining: List[str] = list(selectors)
-    while True:
-        still_waiting: List[str] = []
-        for selector in remaining:
-            _, todo = resolve_ticket_by_id(root, selector)
-            state = current_state_name(todo)
-            if state != target_state:
-                still_waiting.append(selector)
-        if not still_waiting:
-            return list(selectors)
-        if time.monotonic() >= deadline:
-            waiting = ", ".join(still_waiting)
-            raise TodoError(f"timed out waiting for {target_state}: {waiting}")
-        remaining = still_waiting
-        sleep_for = min(interval, max(0.0, deadline - time.monotonic()))
-        if sleep_for:
-            time.sleep(sleep_for)
 
 
 ALLOWED_TOP_LEVEL_FIELDS = frozenset(
@@ -3304,11 +577,7 @@ ALLOWED_TOP_LEVEL_FIELDS = frozenset(
 REQUIRED_TOP_LEVEL_FIELDS = frozenset({"Branch", "Id", "State", "Summary"})
 
 
-def commit_exists(root: Path, sha: str) -> bool:
-    """True when *sha* resolves to a commit in this repo (best effort)."""
-    return run_git(root, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
-
-
+# pylint: disable-next=too-many-branches
 def workitem_findings(todo: JsonDict) -> List[str]:
     """Hard findings for the WorkItems invariants (#1, #3, #6, #7)."""
     findings: List[str] = []
@@ -3351,7 +620,9 @@ def workitem_findings(todo: JsonDict) -> List[str]:
             # For both of these the reason is the item's whole content: without
             # it the trail says a step stopped and nothing about why, which is
             # what deleting it would have said.
-            if not (isinstance(item.get("message"), str) and item.get("message").strip()):
+            if not (
+                isinstance(item.get("message"), str) and item.get("message").strip()
+            ):
                 findings.append(
                     f"WorkItems.{index} {k} item is missing a message; why a step was "
                     "closed without a commit IS the record"
@@ -3445,12 +716,6 @@ def notes_findings(todo: JsonDict) -> List[str]:
     return findings
 
 
-# The three node kinds relto is legal on: Body itself, a Notes element, or a
-# WorkItems element -- see IMPLEMENTATION.md / the relto design. Matched
-# against todo_objid.iter_objects' dot-path spelling.
-_RELTO_HOST_RE = re.compile(r"^(Body|Notes\.\d+|WorkItems\.\d+)$")
-
-
 def relto_findings(todo: JsonDict) -> List[str]:
     """Hard findings for every ``relto`` list found anywhere in *todo*.
 
@@ -3485,7 +750,9 @@ def relto_findings(todo: JsonDict) -> List[str]:
                 findings.append(f"{label} has unexpected fields: {', '.join(extra)}")
             rel_type = element.get("type")
             if rel_type not in todo_ref.RELATION_TYPES:
-                findings.append(f"{label}.type {rel_type!r} is not a known relation type")
+                findings.append(
+                    f"{label}.type {rel_type!r} is not a known relation type"
+                )
             try:
                 parsed = todo_ref.parse_target(element.get("target"))
             except todo_ref.TodoRefError as exc:
@@ -3501,76 +768,6 @@ def relto_findings(todo: JsonDict) -> List[str]:
                 except todo_ref.TodoRefError as exc:
                     findings.append(f"{label}.target: {exc}")
     return findings
-
-
-# The prose a derived mention is read from. A work item's ``message`` is
-# deliberately absent: it is copied from git when the item completes and is
-# not editable afterwards, so a relation derived from it could never be
-# corrected -- only removed by rewriting history.
-_MENTION_PROSE_FIELDS: Tuple[str, ...] = ("raw", "summary")
-
-
-def _prose_targets(node: JsonDict) -> List[str]:
-    """Every target *node*'s own editable prose names, first-occurrence order."""
-    named: List[str] = []
-    for field in _MENTION_PROSE_FIELDS:
-        text = node.get(field)
-        if not isinstance(text, str):
-            continue
-        for target in todo_ref.scan_targets(text):
-            if target not in named:
-                named.append(target)
-    return named
-
-
-def sync_mentions(todo: JsonDict) -> List[str]:
-    """Reconcile every relto-bearing node's derived ``mention`` entries in place.
-
-    A ``mention`` says "this node's prose names that target", so doctor owns it
-    outright: it is added when the prose gains a target, dropped when the prose
-    loses one, and never written by hand. Every entry of any OTHER type is left
-    exactly as it stands -- same target, same type, same position -- which is
-    the only rule that makes a derived field safe to edit by hand.
-
-    A target a manual entry already carries is already related, so no second
-    entry is derived for it; that keeps the one-host-one-target rule
-    ``relto-add`` enforces.
-
-    Returns one line per change, empty when the record already says what its
-    prose says. Nothing is touched on a node that needs no change, so a second
-    consecutive run allocates no objid and produces no write at all.
-    """
-    changes: List[str] = []
-    for path, node in todo_objid.iter_objects(todo):
-        if not _RELTO_HOST_RE.match(path):
-            continue
-        named = _prose_targets(node)
-        existing = node.get("relto")
-        existing = list(existing) if isinstance(existing, list) else []
-        kept: List[Any] = []
-        for element in existing:
-            # A malformed element is relto_findings' to report, not this
-            # function's to silently discard.
-            if not isinstance(element, dict) or element.get("type") != todo_ref.TYPE_MENTION:
-                kept.append(element)
-                continue
-            if element.get("target") in named:
-                kept.append(element)
-            else:
-                changes.append(f"{path}: dropped mention of {element.get('target')}")
-        carried = {e.get("target") for e in kept if isinstance(e, dict)}
-        for target in named:
-            if target in carried:
-                continue
-            kept.append({"type": todo_ref.TYPE_MENTION, "target": target})
-            changes.append(f"{path}: derived mention of {target}")
-        if kept == existing:
-            continue
-        if kept:
-            node["relto"] = kept
-        else:
-            node.pop("relto", None)
-    return changes
 
 
 def objid_findings(todo: JsonDict) -> List[str]:
@@ -3614,6 +811,7 @@ def objid_findings(todo: JsonDict) -> List[str]:
     return findings
 
 
+# pylint: disable-next=too-many-branches,too-many-locals
 def doctor_findings(root: Path, selector: str) -> List[str]:
     """Return hard doctor findings for the selected todo (shape invariants)."""
     _, todo = resolve_ticket_by_id(root, selector)
@@ -3642,7 +840,8 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
     # that disagrees with its Body is not a defect the tool can judge.
     long_summary = todo.get("LongSummary")
     if long_summary is not None and (
-        not isinstance(long_summary, dict) or not isinstance(long_summary.get("raw"), str)
+        not isinstance(long_summary, dict)
+        or not isinstance(long_summary.get("raw"), str)
     ):
         findings.append("LongSummary.raw must be a string")
     tags = todo.get("Tags")
@@ -3691,6 +890,7 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
     return findings
 
 
+# pylint: disable-next=too-many-branches,too-many-locals,too-many-statements
 def doctor_warnings(root: Path, selector: str) -> List[str]:
     """Return soft doctor warnings that need an absent subbranch or other repo to
     verify. These never fail doctor, so transitional and cross-repo todos (where
@@ -3710,7 +910,9 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                 try:
                     resolve_ticket_by_id(root, child_id[:8])
                 except TodoError:
-                    warnings.append(f"Subtodos.{index}.Id {child_id[:8]} not discoverable here")
+                    warnings.append(
+                        f"Subtodos.{index}.Id {child_id[:8]} not discoverable here"
+                    )
     for path, node in todo_objid.iter_objects(todo):
         if not _RELTO_HOST_RE.match(path):
             continue
@@ -3731,7 +933,9 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                 continue
             if parsed.is_remote:
                 try:
-                    todo_ref.resolve_local(other, todo_ref.OBJID_SCHEME + parsed.objid_prefix)
+                    todo_ref.resolve_local(
+                        other, todo_ref.OBJID_SCHEME + parsed.objid_prefix
+                    )
                 except todo_ref.TodoRefError as exc:
                     warnings.append(f"{label}: {exc}")
     items = todo.get("WorkItems") or []
@@ -3743,16 +947,21 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
             if (
                 isinstance(sha, str)
                 and sha
-                and sha != WORKITEM_NULL_SHA  # explicit no-change sentinel, never resolvable
+                and sha
+                != WORKITEM_NULL_SHA  # explicit no-change sentinel, never resolvable
                 and not commit_exists(root, sha)
             ):
-                warnings.append(f"WorkItems.{index}.sha {sha[:8]} not found in this repo")
+                warnings.append(
+                    f"WorkItems.{index}.sha {sha[:8]} not found in this repo"
+                )
             sub = item.get("subtodo_id")
             if isinstance(sub, str) and sub:
                 try:
                     resolve_ticket_by_id(root, sub[:8])
                 except TodoError:
-                    warnings.append(f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here")
+                    warnings.append(
+                        f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here"
+                    )
     # Surface unmerged subtodos while the parent is still open; once the parent
     # is done/merged this escalates to a hard finding (see doctor_findings).
     if current_state_name(todo) not in TERMINAL_PARENT_STATES:
@@ -3786,7 +995,9 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
             continue
         for child_selector in wait_for:
             if not isinstance(child_selector, str):
-                findings.append(f"WorkItems.{index}.execution.wait_for entries must be strings")
+                findings.append(
+                    f"WorkItems.{index}.execution.wait_for entries must be strings"
+                )
                 continue
             if ticket_id and id_matches(ticket_id, child_selector):
                 findings.append(f"WorkItems.{index} waits on itself")
@@ -3794,7 +1005,9 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
             try:
                 resolve_ticket_by_id(root, child_selector)
             except TodoError as exc:
-                findings.append(f"WorkItems.{index} wait target not discoverable: {exc}")
+                findings.append(
+                    f"WorkItems.{index} wait target not discoverable: {exc}"
+                )
                 continue
             wait_targets.append(child_selector)
     findings.extend(wait_cycle_findings(root, ticket_id, wait_targets))
@@ -3836,7 +1049,9 @@ def wait_cycle_findings(root: Path, root_id: str, targets: Sequence[str]) -> Lis
         child_id = str(child.get("Id") or selector)
         if child_id in stack:
             cycle = stack[stack.index(child_id) :] + [child_id]
-            findings.append("wait dependency cycle: " + " -> ".join(item[:8] for item in cycle))
+            findings.append(
+                "wait dependency cycle: " + " -> ".join(item[:8] for item in cycle)
+            )
             return
         if child_id in visited:
             return
@@ -4027,11 +1242,14 @@ def _command_leaves(node: type[TodoSubCommand]) -> Iterator[type[TodoSubCommand]
 
 
 class MintCommand(TodoCreateCommand):
+    """The `mint` subcommand: mint todo Id."""
+
     command_names = ("mint",)
     doc_short: ClassVar[str] = "Mint todo Id"
     doc_long: ClassVar[str] = (
         "Mint creates a new TODO and prints its Id. It hashes a uuid1 value into the canonical "
-        "64-character lowercase hex Id (collision-checked against existing todos), then materializes "
+        "64-character lowercase hex Id (collision-checked against existing todos), then "
+        "materializes "
         "a data-collection record for it: State `groom` (still collecting data / grooming), no git "
         "branch, store-only (no commit). Fill it in with `set <id>`; run `init` when it is "
         "ready to be worked (gives it a branch and moves it to `ready`). Prints only the Id so "
@@ -4114,13 +1332,16 @@ def elide_embedding_vectors(obj: Any) -> Any:
 
 
 class ReadCommand(TodoFieldCommand):
+    """The `read` subcommand: print todo JSON."""
+
     command_names = ("read",)
     doc_short: ClassVar[str] = "Print todo JSON"
     doc_long: ClassVar[str] = (
         "Read locates a TODO by full Id or by an unambiguous prefix of at least four hex "
         "characters. It searches the store first, then local and cached remote refs. "
         "Legacy field names are normalized and fields are "
-        "ordered Id/Summary/Body first, Subtodos/WorkItems last. Every embedder with a stored vector "
+        "ordered Id/Summary/Body first, Subtodos/WorkItems last. Every embedder with a "
+        "stored vector "
         "for this todo is shown (cheap ones written at save time, expensive ones backfilled by "
         "search), merged in from the sqlite embeddings index regardless of which path wrote them. "
         "By default embedding vectors are elided to their first two elements; pass -v/--verbose to "
@@ -4130,7 +1351,9 @@ class ReadCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "-v",
             "--verbose",
@@ -4154,6 +1377,8 @@ class ReadCommand(TodoFieldCommand):
 
 
 class GetJsonPathCommand(TodoFieldCommand):
+    """The `get-json-path` subcommand: print a JSON path value."""
+
     command_names = ("get-json-path",)
     doc_short: ClassVar[str] = "Print a JSON path value"
     doc_long: ClassVar[str] = (
@@ -4164,8 +1389,12 @@ class GetJsonPathCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
+        parser.add_argument(
+            "jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary"
+        )
 
     def do(self) -> int:
         """Print a selected path value."""
@@ -4176,6 +1405,8 @@ class GetJsonPathCommand(TodoFieldCommand):
 
 
 class ResolveUrlCommand(CorpusQueryCommand):
+    """The `resolveurl` subcommand: print the value a permalink addresses."""
+
     command_names = ("resolveurl",)
     doc_short: ClassVar[str] = "Print the value a permalink addresses"
     doc_long: ClassVar[str] = (
@@ -4228,13 +1459,16 @@ _GET_FIELD_PATHS: Dict[str, str] = {
 
 
 class GetCommand(TodoFieldCommand):
+    """The `get` subcommand: print one named todo field."""
+
     command_names = ("get",)
     doc_short: ClassVar[str] = "Print one named todo field"
     doc_long: ClassVar[str] = (
         "Get is a friendly-field-name wrapper over get-json-path: pass exactly one of "
         "--summary/--body/--ac/--state/--actual-summary/--long-summary/--parent/--tag and it "
         "expands to the matching internal path (Summary.raw, Body.raw, AC, State, "
-        "ActualSummary, LongSummary.raw, Parent, Tag respectively) and prints that value as JSON -- exactly like `get-json-path <selector> "
+        "ActualSummary, LongSummary.raw, Parent, Tag respectively) and prints that value "
+        "as JSON -- exactly like `get-json-path <selector> "
         "<path>` with the path already filled in. <selector> is an Id prefix or full digest. "
         "For any other path, or a nested value like WorkItems.0.summary, use get-json-path "
         "directly."
@@ -4243,17 +1477,23 @@ class GetCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--summary", action="store_true", help="print Summary.raw")
         parser.add_argument("--body", action="store_true", help="print Body.raw")
         parser.add_argument("--ac", action="store_true", help="print AC")
         parser.add_argument("--state", action="store_true", help="print State")
         parser.add_argument(
-            "--actual-summary", dest="actual_summary", action="store_true",
+            "--actual-summary",
+            dest="actual_summary",
+            action="store_true",
             help="print ActualSummary",
         )
         parser.add_argument(
-            "--long-summary", dest="long_summary", action="store_true",
+            "--long-summary",
+            dest="long_summary",
+            action="store_true",
             help="print LongSummary.raw",
         )
         parser.add_argument("--parent", action="store_true", help="print Parent")
@@ -4274,6 +1514,8 @@ class GetCommand(TodoFieldCommand):
 
 
 class InitCommand(TodoCreateCommand):
+    """The `init` subcommand: create todo branch (run when ready to work)."""
+
     command_names = ("init",)
     doc_short: ClassVar[str] = "Create todo branch (run when ready to work)"
     doc_long: ClassVar[str] = (
@@ -4306,8 +1548,13 @@ class InitCommand(TodoCreateCommand):
         )
         parser.add_argument("--branch", help="override Branch name")
         parser.add_argument("--path-from-root", help="Scope.path_from_root")
-        parser.add_argument("--agent-type", help="agent type that created this todo (e.g. claude, cursor)")
-        parser.add_argument("--session-id", help="agent session id that created this todo")
+        parser.add_argument(
+            "--agent-type",
+            help="agent type that created this todo (e.g. claude, cursor)",
+        )
+        parser.add_argument(
+            "--session-id", help="agent session id that created this todo"
+        )
         parser.add_argument("--no-commit", action="store_true", help="skip git commit")
         parser.add_argument(
             "--stay-on-parent",
@@ -4325,7 +1572,9 @@ class InitCommand(TodoCreateCommand):
         """
         root = self.root()
         if read_todo_worktree(root) is not None:
-            raise TodoError("todo already exists on current branch; resume it instead of init")
+            raise TodoError(
+                "todo already exists on current branch; resume it instead of init"
+            )
 
         # PROMOTE mode: --id names an existing (groom) record -> give it a
         # branch and move it to `init`, reusing the Branch `set` finalized.
@@ -4334,7 +1583,9 @@ class InitCommand(TodoCreateCommand):
             if existing:
                 if len(existing) > 1:
                     locations = ", ".join(loc for loc, _ in existing)
-                    raise TodoError(f"ambiguous id {self.id!r}; matches on: {locations}")
+                    raise TodoError(
+                        f"ambiguous id {self.id!r}; matches on: {locations}"
+                    )
                 return self._promote(root, existing[0][1])
 
         return self._create_fresh(root)
@@ -4423,6 +1674,8 @@ class InitCommand(TodoCreateCommand):
 
 
 class EnsureWorktreeCommand(SubtodoCommand):
+    """The `ensure_worktree` subcommand: ensure a linked git worktree exists for a todo."""
+
     command_names = ("ensure_worktree",)
     doc_short: ClassVar[str] = "Ensure a linked git worktree exists for a todo"
     doc_long: ClassVar[str] = (
@@ -4439,7 +1692,9 @@ class EnsureWorktreeCommand(SubtodoCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ensure_worktree arguments."""
-        parser.add_argument("todoid", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "todoid", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "--init",
             action="store_true",
@@ -4455,7 +1710,9 @@ class EnsureWorktreeCommand(SubtodoCommand):
         """Create or reuse the linked worktree for the todo's branch."""
         root = self.root()
         if self.init and read_todo_worktree(root) is not None:
-            raise TodoError("todo already exists on current branch; resume it instead of init")
+            raise TodoError(
+                "todo already exists on current branch; resume it instead of init"
+            )
         _loc, todo = resolve_ticket_by_id(root, self.todoid)
         inited = False
         if self.init:
@@ -4481,6 +1738,8 @@ class EnsureWorktreeCommand(SubtodoCommand):
 
 
 class AddSubtodoCommand(SubtodoMergeCommand):
+    """The `add-subtodo` subcommand: create child todo."""
+
     command_names = ("add-subtodo",)
     doc_short: ClassVar[str] = "Create child todo"
     doc_long: ClassVar[str] = (
@@ -4494,7 +1753,9 @@ class AddSubtodoCommand(SubtodoMergeCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register add-subtodo arguments."""
-        parser.add_argument("parent", help="parent todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "parent", help="parent todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--from-json", help="seed todo JSON (Id, Branch, fields)")
         parser.add_argument("--summary", help="Summary.raw when not using --from-json")
         parser.add_argument("--body", default="", help="Body.raw")
@@ -4539,7 +1800,9 @@ class AddSubtodoCommand(SubtodoMergeCommand):
         if not child_id:
             raise TodoError("child ticket must include Id")
         raw_summary = child_spec.get("Summary", {}).get("raw", "child")
-        child_branch = str(child_spec.get("Branch") or kebab_branch_name(child_id, raw_summary))
+        child_branch = str(
+            child_spec.get("Branch") or kebab_branch_name(child_id, raw_summary)
+        )
         child_spec["Branch"] = child_branch
         child_spec["Parent"] = [{"Id": parent["Id"], "Branch": parent_branch}]
         scope = dict(child_spec.get("Scope") or {})
@@ -4574,22 +1837,30 @@ class AddSubtodoCommand(SubtodoMergeCommand):
         # start_subtodo done item and advances the cursor (invariants #1, #3).
         index = mark_cursor_done(parent, start_subtodo_workitem(child_id, summary=""))
         if not parent["WorkItems"][index].get("summary"):
-            parent["WorkItems"][index]["summary"] = (
-                f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
-            )
+            parent["WorkItems"][index][
+                "summary"
+            ] = f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
         write_todo_worktree(root, parent)
 
-        print(json.dumps({"Id": child_id, "Branch": child_branch, "Parent": parent_branch}, indent=2))
+        print(
+            json.dumps(
+                {"Id": child_id, "Branch": child_branch, "Parent": parent_branch},
+                indent=2,
+            )
+        )
         return 0
 
 
 class SetCommand(TodoFieldCommand):
+    """The `set` subcommand: patch todo fields / state."""
+
     command_names = ("set",)
     doc_short: ClassVar[str] = "Patch todo fields / state"
     doc_long: ClassVar[str] = (
         "Set edits a todo's fields without changing branches. <selector> is required and is an "
         "Id prefix or full digest (works equally on a branch-bound todo or a branchless `groom` "
-        "todo from `mint`). It updates Summary.raw, Body.raw, AC, ActualSummary, and/or the workflow State "
+        "todo from `mint`). It updates Summary.raw, Body.raw, AC, ActualSummary, and/or "
+        "the workflow State "
         "(--state, which replaces the removed `set-state` subcommand; State metadata "
         "--note/--last-commit/--merged-into/--owner ride along). "
         "Transitioning to done or merged tears down any linked git worktree for the todo's branch "
@@ -4691,7 +1962,11 @@ class SetCommand(TodoFieldCommand):
             assert_todo_worktree_removable(root, str(todo.get("Branch") or ""))
         write_todo_worktree(root, todo, no_clear=self.no_clear)
         if not self.no_commit:
-            message = f"chore(todo): state -> {state}" if state else "chore(todo): update ticket fields"
+            message = (
+                f"chore(todo): state -> {state}"
+                if state
+                else "chore(todo): update ticket fields"
+            )
             commit_todo(root, message)
         teardown_worktree_for_terminal_state(root, todo, state=state)
         if state:
@@ -4738,6 +2013,8 @@ def resolve_edit_target(todo: JsonDict, target: str) -> str:
 
 
 class EditCommand(TodoFieldCommand):
+    """The `edit` subcommand: edit a free-text field in $VISUAL/$EDITOR."""
+
     command_names = ("edit",)
     doc_short: ClassVar[str] = "Edit a free-text field in $VISUAL/$EDITOR"
     doc_long: ClassVar[str] = (
@@ -4748,7 +2025,8 @@ class EditCommand(TodoFieldCommand):
         "line is kept. A file saved untouched writes nothing, so a value that itself begins "
         "with <!-- survives a no-op edit but loses that leading comment on a real one. An "
         "empty result stores the empty string, except on a note, where it deletes the note "
-        "exactly as note-delete does. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
+        "exactly as note-delete does. TARGET is either a dot path in the get-json-path "
+        "grammar (Summary, Body, "
         "AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a string, or an object whose "
         "raw is a string, which is then edited at its raw -- or objid:<hex> (leading zeros "
         "optional) naming a note, edited at its raw (its objid and relto survive), or a work "
@@ -4761,7 +2039,9 @@ class EditCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register edit arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "target",
             help="dot path (e.g. Body, Summary, AC, Notes.0) or objid:<hex> of a note or "
@@ -4775,7 +2055,9 @@ class EditCommand(TodoFieldCommand):
         _, todo = resolve_ticket_by_id(root, self.selector)
         path = resolve_edit_target(todo, self.target)
         if not _stdio_is_interactive():
-            raise EditNotInteractive("edit requires an interactive terminal; nothing written")
+            raise EditNotInteractive(
+                "edit requires an interactive terminal; nothing written"
+            )
         current: str = get_at_path(todo, path)
         short_id = str(todo.get("Id", ""))[:8]
         what = path if self.target == path else f"{self.target} ({path})"
@@ -4802,6 +2084,8 @@ class EditCommand(TodoFieldCommand):
 
 
 class RmCommand(TodoFieldCommand):
+    """The `rm` subcommand: soft-delete a todo."""
+
     command_names = ("rm",)
     doc_short: ClassVar[str] = "Soft-delete a todo"
     doc_long: ClassVar[str] = (
@@ -4840,6 +2124,8 @@ class RmCommand(TodoFieldCommand):
 
 
 class TagAddCommand(TagCommand):
+    """The `tag-add` subcommand: add manual tag(s)."""
+
     command_names = ("tag-add",)
     doc_short: ClassVar[str] = "Add manual tag(s)"
     doc_long: ClassVar[str] = (
@@ -4852,7 +2138,9 @@ class TagAddCommand(TagCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tag-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to add")
         parser.add_argument("--no-commit", action="store_true")
 
@@ -4868,6 +2156,8 @@ class TagAddCommand(TagCommand):
 
 
 class TagRmCommand(TagCommand):
+    """The `tag-rm` subcommand: remove manual tag(s)."""
+
     command_names = ("tag-rm",)
     doc_short: ClassVar[str] = "Remove manual tag(s)"
     doc_long: ClassVar[str] = (
@@ -4881,7 +2171,9 @@ class TagRmCommand(TagCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tag-rm arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to remove")
         parser.add_argument("--no-commit", action="store_true")
 
@@ -4897,6 +2189,8 @@ class TagRmCommand(TagCommand):
 
 
 class TagClearCommand(TagCommand):
+    """The `tag-clear` subcommand: clear tags (automatic by default)."""
+
     command_names = ("tag-clear",)
     doc_short: ClassVar[str] = "Clear tags (automatic by default)"
     doc_long: ClassVar[str] = (
@@ -4936,7 +2230,8 @@ class TagClearCommand(TagCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             targets = [
-                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                (repo, t)
+                for repo, _branch, t in todo_store.get_store().list_located()
                 if t.get("Id")
             ]
         else:
@@ -4973,6 +2268,8 @@ class TagClearCommand(TagCommand):
 
 
 class ClearSearchDataCommand(StoreMaintenanceCommand):
+    """The `clear-search-data` subcommand: drop derived search data (re-derived lazily)."""
+
     command_names = ("clear-search-data",)
     doc_short: ClassVar[str] = "Drop derived search data (re-derived lazily)"
     doc_long: ClassVar[str] = (
@@ -5011,7 +2308,8 @@ class ClearSearchDataCommand(StoreMaintenanceCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             targets = [
-                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                (repo, t)
+                for repo, _branch, t in todo_store.get_store().list_located()
                 if t.get("Id")
             ]
         else:
@@ -5059,6 +2357,8 @@ class ClearSearchDataCommand(StoreMaintenanceCommand):
 
 
 class WorkItemAddCommand(WorkItemEditCommand):
+    """The `work-item-add` subcommand: append work item."""
+
     command_names = ("work-item-add",)
     doc_short: ClassVar[str] = "Append work item"
     doc_long: ClassVar[str] = (
@@ -5071,7 +2371,9 @@ class WorkItemAddCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -5080,15 +2382,21 @@ class WorkItemAddCommand(WorkItemEditCommand):
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        work_items.append({"kind": WORKITEM_TASK, "summary": self.summary, "done": False})
+        work_items.append(
+            {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        )
         todo["WorkItems"] = work_items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): add work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root, f"chore(todo): add work item: {_summary_snippet(self.summary)}"
+            )
         return 0
 
 
 class WorkItemDoneCommand(WorkItemProgressCommand):
+    """The `work-item-done` subcommand: complete cursor work item as code."""
+
     command_names = ("work-item-done",)
     doc_short: ClassVar[str] = "Complete cursor work item as code"
     doc_long: ClassVar[str] = (
@@ -5111,10 +2419,21 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
-        parser.add_argument("--sha", help="commit sha (full, or a 4+ char prefix) for a clean tree; must name HEAD")
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
+        parser.add_argument(
+            "-m",
+            "--message",
+            help="commit message for a dirty tree (defaults to the work item summary)",
+        )
+        parser.add_argument(
+            "--sha",
+            help="commit sha (full, or a 4+ char prefix) for a clean tree; must name HEAD",
+        )
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         # Migration stubs. Both moved to commands of their own, because a
         # disposition that records no commit has no business being a flag on
         # the command whose whole job is recording one. Kept registered, and
@@ -5123,6 +2442,7 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
         parser.add_argument("--checkpoint", action="store_true", help=argparse.SUPPRESS)
         parser.add_argument("--blocked", action="store_true", help=argparse.SUPPRESS)
 
+    # pylint: disable-next=too-many-locals
     def do(self) -> int:
         """Complete the cursor work item as code (invariant #1).
 
@@ -5159,8 +2479,12 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
         if dirty:
             if self.sha:
-                raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
-            message = self.message or self.summary or cursor_summary(todo) or "work-item-done"
+                raise TodoError(
+                    "--sha is not allowed with a dirty tree; a new commit will be made"
+                )
+            message = (
+                self.message or self.summary or cursor_summary(todo) or "work-item-done"
+            )
             run_git(root, "add", "-A")
             run_git(root, "commit", "-m", message)
             sha = head_sha(root)
@@ -5190,14 +2514,24 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
             sha = head
         # Capture the full commit message recorded at `sha` so the WorkItem node itself
         # says what changed (e.g. which test files were added), not just the task summary.
-        commit_message = run_git(root, "log", "-1", "--format=%B", str(sha), check=False).stdout.strip()
-        item = code_workitem(str(sha), summary=self.summary or "", message=commit_message)
+        commit_message = run_git(
+            root, "log", "-1", "--format=%B", str(sha), check=False
+        ).stdout.strip()
+        item = code_workitem(
+            str(sha), summary=self.summary or "", message=commit_message
+        )
         index = mark_cursor_done(todo, item)
         write_todo_worktree(root, todo)
         summary = todo["WorkItems"][index].get("summary", "")
         print(
             json.dumps(
-                {"index": index, "kind": WORKITEM_CODE, "sha": sha, "summary": summary, "message": commit_message},
+                {
+                    "index": index,
+                    "kind": WORKITEM_CODE,
+                    "sha": sha,
+                    "summary": summary,
+                    "message": commit_message,
+                },
                 indent=2,
             )
         )
@@ -5205,6 +2539,8 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
 
 
 class WorkItemReadCommand(WorkItemProgressCommand):
+    """The `work-item-read` subcommand: read the cursor, or any, work item."""
+
     command_names = ("work-item-read",)
     doc_short: ClassVar[str] = "Read the cursor, or any, work item"
     doc_long: ClassVar[str] = (
@@ -5223,7 +2559,9 @@ class WorkItemReadCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
 
     def do(self) -> int:
@@ -5254,33 +2592,6 @@ class WorkItemReadCommand(WorkItemProgressCommand):
         return 0
 
 
-def _build_relto_element(target: str, rel_type: str) -> JsonDict:
-    """Validate an explicit (target, type) pair and build one relto element.
-
-    Shared by ``note-add``'s ``--relto=TARGET[:TYPE]`` parsing (``_parse_relto_arg``) and
-    ``relto-add``'s separate ``--target``/``--type`` flags, so the relation-type allow-list
-    check, the ``mention`` refusal, and the target-syntax check live in exactly one place.
-    ``rel_type`` must be one of ``todo_ref.RELATION_TYPES``; ``mention`` is refused even
-    though it is a valid type, since doctor derives and owns mention entries from a node's
-    own prose and a hand-written one would immediately fight that sync. ``target`` is
-    checked for SYNTAX only, via ``todo_ref.parse_target`` -- whether it resolves to
-    anything is doctor's concern, not this one.
-    """
-    if rel_type not in todo_ref.RELATION_TYPES:
-        allowed = ", ".join(sorted(todo_ref.RELATION_TYPES))
-        raise TodoError(f"unknown relation type {rel_type!r}; expected one of {allowed}")
-    if rel_type == todo_ref.TYPE_MENTION:
-        raise TodoError(
-            "relto may not set type=mention by hand; doctor derives and owns mention "
-            "entries from a node's own prose"
-        )
-    try:
-        todo_ref.parse_target(target)
-    except todo_ref.TodoRefError as exc:
-        raise TodoError(str(exc)) from exc
-    return {"target": target, "type": rel_type}
-
-
 def _parse_relto_arg(value: str) -> JsonDict:
     """Parse one ``--relto=TARGET[:TYPE]`` value into a relto element.
 
@@ -5293,7 +2604,9 @@ def _parse_relto_arg(value: str) -> JsonDict:
     does the split.
     """
     if not value:
-        raise TodoError("--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates")
+        raise TodoError(
+            "--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates"
+        )
     head, sep, suffix = value.rpartition(":")
     if sep and suffix in todo_ref.RELATION_TYPES:
         target, rel_type = head, suffix
@@ -5303,6 +2616,8 @@ def _parse_relto_arg(value: str) -> JsonDict:
 
 
 class NoteAddCommand(NoteCommand):
+    """The `note-add` subcommand: append a note."""
+
     command_names = ("note-add",)
     doc_short: ClassVar[str] = "Append a note"
     doc_long: ClassVar[str] = (
@@ -5324,7 +2639,9 @@ class NoteAddCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--raw", required=True, help="the fact or finding")
         parser.add_argument(
             "--relto",
@@ -5356,6 +2673,8 @@ class NoteAddCommand(NoteCommand):
 
 
 class NoteReadCommand(NoteCommand):
+    """The `note-read` subcommand: read one note, or every note."""
+
     command_names = ("note-read",)
     doc_short: ClassVar[str] = "Read one note, or every note"
     doc_long: ClassVar[str] = (
@@ -5371,7 +2690,9 @@ class NoteReadCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=NOTE_TARGET_HELP)
 
     def do(self) -> int:
@@ -5388,6 +2709,8 @@ class NoteReadCommand(NoteCommand):
 
 
 class NoteReplaceCommand(NoteCommand):
+    """The `note-replace` subcommand: overwrite a note's text."""
+
     command_names = ("note-replace",)
     doc_short: ClassVar[str] = "Overwrite a note's text"
     doc_long: ClassVar[str] = (
@@ -5404,9 +2727,13 @@ class NoteReplaceCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-replace arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
-        parser.add_argument("--raw", required=True, help="the replacement fact or finding")
+        parser.add_argument(
+            "--raw", required=True, help="the replacement fact or finding"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -5423,12 +2750,16 @@ class NoteReplaceCommand(NoteCommand):
         todo["Notes"] = notes
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): replace note: {_summary_snippet(self.raw)}")
+            commit_todo(
+                root, f"chore(todo): replace note: {_summary_snippet(self.raw)}"
+            )
         print(json.dumps({"index": index, "raw": self.raw}, indent=2))
         return 0
 
 
 class NoteDeleteCommand(NoteCommand):
+    """The `note-delete` subcommand: delete a note."""
+
     command_names = ("note-delete",)
     doc_short: ClassVar[str] = "Delete a note"
     doc_long: ClassVar[str] = (
@@ -5446,7 +2777,9 @@ class NoteDeleteCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-delete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -5454,7 +2787,9 @@ class NoteDeleteCommand(NoteCommand):
         """Delete the addressed note."""
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
-        delete_note(root, todo, resolve_note_index(todo, self.target), no_commit=self.no_commit)
+        delete_note(
+            root, todo, resolve_note_index(todo, self.target), no_commit=self.no_commit
+        )
         return 0
 
 
@@ -5472,7 +2807,10 @@ def delete_note(root: Path, todo: JsonDict, index: int, *, no_commit: bool) -> N
         todo.pop("Notes", None)
     write_todo_worktree(root, todo)
     if not no_commit:
-        commit_todo(root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}")
+        commit_todo(
+            root,
+            f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}",
+        )
     print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
 
 
@@ -5505,6 +2843,8 @@ def _relto_read_all(todo: JsonDict) -> List[JsonDict]:
 
 
 class RelToAddCommand(NoteCommand):
+    """The `relto-add` subcommand: add a cross-reference to a relto-bearing node."""
+
     command_names = ("relto-add",)
     doc_short: ClassVar[str] = "Add a cross-reference to a relto-bearing node"
     doc_long: ClassVar[str] = (
@@ -5528,9 +2868,13 @@ class RelToAddCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", help=RELTO_HOST_HELP)
-        parser.add_argument("--target", required=True, help="qualified target, e.g. objid:0034")
+        parser.add_argument(
+            "--target", required=True, help="qualified target, e.g. objid:0034"
+        )
         parser.add_argument(
             "--type",
             default=todo_ref.TYPE_RELATES,
@@ -5558,6 +2902,8 @@ class RelToAddCommand(NoteCommand):
 
 
 class RelToRemoveCommand(NoteCommand):
+    """The `relto-remove` subcommand: remove a cross-reference from a relto-bearing node."""
+
     command_names = ("relto-remove",)
     doc_short: ClassVar[str] = "Remove a cross-reference from a relto-bearing node"
     doc_long: ClassVar[str] = (
@@ -5574,9 +2920,13 @@ class RelToRemoveCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-remove arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", help=RELTO_HOST_HELP)
-        parser.add_argument("--target", required=True, help="the exact stored target to remove")
+        parser.add_argument(
+            "--target", required=True, help="the exact stored target to remove"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -5587,7 +2937,12 @@ class RelToRemoveCommand(NoteCommand):
         node = get_at_path(todo, path)
         relto: List[JsonDict] = list(node.get("relto") or [])
         index = next(
-            (i for i, element in enumerate(relto) if element.get("target") == self.target), None
+            (
+                i
+                for i, element in enumerate(relto)
+                if element.get("target") == self.target
+            ),
+            None,
         )
         if index is None:
             raise TodoError(f"{path} has no relto entry targeting {self.target!r}")
@@ -5603,14 +2958,20 @@ class RelToRemoveCommand(NoteCommand):
             node.pop("relto", None)
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): relto-remove {path} -> {removed['target']}")
+            commit_todo(
+                root, f"chore(todo): relto-remove {path} -> {removed['target']}"
+            )
         print(json.dumps(removed, indent=2))
         return 0
 
 
 class RelToReadCommand(NoteCommand):
+    """The `relto-read` subcommand: read one host's relations, or every relation in the record."""
+
     command_names = ("relto-read",)
-    doc_short: ClassVar[str] = "Read one host's relations, or every relation in the record"
+    doc_short: ClassVar[str] = (
+        "Read one host's relations, or every relation in the record"
+    )
     doc_long: ClassVar[str] = (
         "Relto-read prints the addressed HOST's relto list as JSON when HOST is given, or "
         "every relation anywhere in the record as a JSON list when HOST is omitted. HOST takes "
@@ -5625,7 +2986,9 @@ class RelToReadCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", nargs="?", help=RELTO_HOST_HELP)
 
     def do(self) -> int:
@@ -5642,6 +3005,8 @@ class RelToReadCommand(NoteCommand):
 
 
 class WorkItemInsertCommand(WorkItemEditCommand):
+    """The `work-item-insert` subcommand: insert a task in the plan."""
+
     command_names = ("work-item-insert",)
     doc_short: ClassVar[str] = "Insert a task in the plan"
     doc_long: ClassVar[str] = (
@@ -5656,7 +3021,9 @@ class WorkItemInsertCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-insert arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
@@ -5683,12 +3050,16 @@ class WorkItemInsertCommand(WorkItemEditCommand):
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): insert work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root, f"chore(todo): insert work item: {_summary_snippet(self.summary)}"
+            )
         print(json.dumps({"index": index, "summary": self.summary}, indent=2))
         return 0
 
 
 class WorkItemReplaceCommand(WorkItemEditCommand):
+    """The `work-item-replace` subcommand: reword a not-done work item."""
+
     command_names = ("work-item-replace",)
     doc_short: ClassVar[str] = "Reword a not-done work item"
     doc_long: ClassVar[str] = (
@@ -5702,7 +3073,9 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-replace arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
@@ -5726,12 +3099,17 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): replace work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root,
+                f"chore(todo): replace work item: {_summary_snippet(self.summary)}",
+            )
         print(json.dumps({"index": index, "summary": self.summary}, indent=2))
         return 0
 
 
 class WorkItemDeleteCommand(WorkItemEditCommand):
+    """The `work-item-delete` subcommand: delete a not-done work item."""
+
     command_names = ("work-item-delete",)
     doc_short: ClassVar[str] = "Delete a not-done work item"
     doc_long: ClassVar[str] = (
@@ -5747,7 +3125,9 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-delete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -5766,11 +3146,18 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
                 root,
                 f"chore(todo): delete work item: {_summary_snippet(removed.get('summary', ''))}",
             )
-        print(json.dumps({"deleted_index": index, "summary": removed.get("summary", "")}, indent=2))
+        print(
+            json.dumps(
+                {"deleted_index": index, "summary": removed.get("summary", "")},
+                indent=2,
+            )
+        )
         return 0
 
 
 class WorkItemReorderCommand(WorkItemEditCommand):
+    """The `work-item-reorder` subcommand: move a not-done item in the plan."""
+
     command_names = ("work-item-reorder",)
     doc_short: ClassVar[str] = "Move a not-done item in the plan"
     doc_long: ClassVar[str] = (
@@ -5793,7 +3180,9 @@ class WorkItemReorderCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-reorder arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "src",
             help=(
@@ -5847,7 +3236,9 @@ class WorkItemReorderCommand(WorkItemEditCommand):
         node = todo["WorkItems"][dst]
         summary = str(node.get("summary", ""))
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): reorder work item: {_summary_snippet(summary)}")
+            commit_todo(
+                root, f"chore(todo): reorder work item: {_summary_snippet(summary)}"
+            )
         print(
             json.dumps(
                 {
@@ -5863,6 +3254,8 @@ class WorkItemReorderCommand(WorkItemEditCommand):
 
 
 class WorkItemCheckpointCommand(WorkItemProgressCommand):
+    """The `work-item-checkpoint` subcommand: close an item that finished with no commit."""
+
     command_names = ("work-item-checkpoint",)
     doc_short: ClassVar[str] = "Close an item that finished with no commit"
     doc_long: ClassVar[str] = (
@@ -5882,14 +3275,18 @@ class WorkItemCheckpointCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-checkpoint arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
             "--message",
             help="what the no-commit step did; defaults to an explicit no-op marker",
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -5928,12 +3325,17 @@ class WorkItemCheckpointCommand(WorkItemProgressCommand):
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): checkpoint work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): checkpoint work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
 
 class WorkItemBlockedCommand(WorkItemProgressCommand):
+    """The `work-item-blocked` subcommand: close an item that cannot be done as written."""
+
     command_names = ("work-item-blocked",)
     doc_short: ClassVar[str] = "Close an item that cannot be done as written"
     doc_long: ClassVar[str] = (
@@ -5957,7 +3359,9 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-blocked arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
@@ -5968,7 +3372,9 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
                 "and the options"
             ),
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -5984,17 +3390,26 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
         index = resolve_workitem_index(todo, self.target, what="mark blocked")
         require_open_workitem(todo, index)
         landed = close_workitem(
-            todo, index, WORKITEM_BLOCKED, message=self.message, summary=self.summary or ""
+            todo,
+            index,
+            WORKITEM_BLOCKED,
+            message=self.message,
+            summary=self.summary or "",
         )
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): blocked work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): blocked work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
 
 class WorkItemObsoleteCommand(WorkItemProgressCommand):
+    """The `work-item-obsolete` subcommand: close an item as no longer wanted."""
+
     command_names = ("work-item-obsolete",)
     doc_short: ClassVar[str] = "Close an item as no longer wanted"
     doc_long: ClassVar[str] = (
@@ -6017,7 +3432,9 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-obsolete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
@@ -6028,7 +3445,9 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
                 "which other step subsumed it"
             ),
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -6044,17 +3463,26 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
         index = resolve_workitem_index(todo, self.target, what="mark obsolete")
         require_open_workitem(todo, index)
         landed = close_workitem(
-            todo, index, WORKITEM_OBSOLETE, message=self.message, summary=self.summary or ""
+            todo,
+            index,
+            WORKITEM_OBSOLETE,
+            message=self.message,
+            summary=self.summary or "",
         )
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): obsolete work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): obsolete work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
 
 class IsDoneCommand(WorkItemProgressCommand):
+    """The `is-done` subcommand: report todo completion."""
+
     command_names = ("is-done",)
     doc_short: ClassVar[str] = "Report todo completion"
     doc_long: ClassVar[str] = (
@@ -6066,7 +3494,9 @@ class IsDoneCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register is-done arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
 
     def do(self) -> int:
         """Print and return the todo's done state."""
@@ -6074,11 +3504,15 @@ class IsDoneCommand(WorkItemProgressCommand):
         _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         done = is_done(todo)
-        print(json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2))
+        print(
+            json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2)
+        )
         return 0 if done else 1
 
 
 class LastShaCommand(WorkItemProgressCommand):
+    """The `last-sha` subcommand: print the last work item sha."""
+
     command_names = ("last-sha",)
     doc_short: ClassVar[str] = "Print the last work item sha"
     doc_long: ClassVar[str] = (
@@ -6089,7 +3523,9 @@ class LastShaCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register last-sha arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
 
     def do(self) -> int:
         """Print the last work item's sha."""
@@ -6104,6 +3540,8 @@ class LastShaCommand(WorkItemProgressCommand):
 
 
 class SetJsonPathCommand(TodoFieldCommand):
+    """The `set-json-path` subcommand: set a JSON path from stdin or file."""
+
     command_names = ("set-json-path",)
     doc_short: ClassVar[str] = "Set a JSON path from stdin or file"
     doc_long: ClassVar[str] = (
@@ -6119,9 +3557,13 @@ class SetJsonPathCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register set-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("jsonpath", help="dot path, e.g. WorkItems or Body.raw")
-        parser.add_argument("--file", help="read the JSON value from this file (default: stdin)")
+        parser.add_argument(
+            "--file", help="read the JSON value from this file (default: stdin)"
+        )
         parser.add_argument(
             "--stay",
             action="store_true",
@@ -6146,7 +3588,9 @@ class SetJsonPathCommand(TodoFieldCommand):
         else:
             text = sys.stdin.read()
         if not text.strip():
-            raise TodoError("no JSON value provided (use --file or pipe a value via stdin)")
+            raise TodoError(
+                "no JSON value provided (use --file or pipe a value via stdin)"
+            )
         try:
             value = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -6165,6 +3609,8 @@ class SetJsonPathCommand(TodoFieldCommand):
 
 
 class MergeSubtodoCommand(SubtodoMergeCommand):
+    """The `merge-subtodo` subcommand: record child merge."""
+
     command_names = ("merge-subtodo",)
     doc_short: ClassVar[str] = "Record child merge"
     doc_long: ClassVar[str] = (
@@ -6196,6 +3642,8 @@ class MergeSubtodoCommand(SubtodoMergeCommand):
 
 
 class WaitForCommand(SubtodoWaitCommand):
+    """The `wait-for` subcommand: wait for todo state."""
+
     command_names = ("wait-for",)
     doc_short: ClassVar[str] = "Wait for todo state"
     doc_long: ClassVar[str] = (
@@ -6208,9 +3656,15 @@ class WaitForCommand(SubtodoWaitCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-for arguments."""
         parser.add_argument("selectors", nargs="+", help="todo selectors to wait on")
-        parser.add_argument("--state", default="done", choices=sorted(VALID_STATES), help="target state")
-        parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
-        parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
+        parser.add_argument(
+            "--state", default="done", choices=sorted(VALID_STATES), help="target state"
+        )
+        parser.add_argument(
+            "--timeout", type=float, default=300.0, help="seconds before failing"
+        )
+        parser.add_argument(
+            "--interval", type=float, default=5.0, help="seconds between polls"
+        )
 
     def do(self) -> int:
         """Wait for selected todos to reach a state."""
@@ -6227,6 +3681,8 @@ class WaitForCommand(SubtodoWaitCommand):
 
 
 class WaitAndMergeCommand(SubtodoWaitCommand):
+    """The `wait-and-merge` subcommand: wait and merge children."""
+
     command_names = ("wait-and-merge",)
     doc_short: ClassVar[str] = "Wait and merge children"
     doc_long: ClassVar[str] = (
@@ -6237,9 +3693,15 @@ class WaitAndMergeCommand(SubtodoWaitCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-and-merge arguments."""
-        parser.add_argument("child_ids", nargs="+", help="child todo selectors to merge")
-        parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
-        parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
+        parser.add_argument(
+            "child_ids", nargs="+", help="child todo selectors to merge"
+        )
+        parser.add_argument(
+            "--timeout", type=float, default=300.0, help="seconds before failing"
+        )
+        parser.add_argument(
+            "--interval", type=float, default=5.0, help="seconds between polls"
+        )
         parser.add_argument("--merged-into", help="parent branch name")
         parser.add_argument("--last-commit", help="optional merge commit message")
 
@@ -6264,276 +3726,6 @@ class WaitAndMergeCommand(SubtodoWaitCommand):
         ]
         print(json.dumps({"merged": results}, indent=2))
         return 0
-
-
-def _recompute_auto_tags(todo: JsonDict) -> int:
-    """Recompute AUTOMATIC Tag elements for *todo* in place; return how many were set.
-
-    DORMANT as shipped: there is no cheap embedder registered any more (the
-    lexical ``hash`` backend that used to fill that slot was removed precisely
-    because it made these tags collision noise rather than topics), so
-    ``cheap_embedders()`` is empty and this returns 0 without touching *todo*.
-    It re-arms by itself once a cheap SEMANTIC backend is registered -- the
-    successor work is ticket 91e28fd0's domain-tuned importance pipeline, which
-    should also settle the hubness correction and word-level (rather than
-    sentence-level) candidates before this is trusted again.
-
-    When armed: trusts any AUTOMATIC (``manual: False``) elements already
-    present and does nothing (a cheap no-op) -- the same
-    trust-existing/backfill-empty policy used elsewhere for embeddings, so a
-    normal doctor run stays cheap. MANUAL elements are always kept. Otherwise
-    mines the tag candidate domain from the whole corpus (``_load_corpus`` +
-    ``_mine_tag_candidates``) and scores it against this todo's Summary+Body
-    text (``compute_auto_tags``) using the first cheap embedder. Tolerates a
-    missing/failing embedder, an empty corpus, or an embedder error by doing
-    nothing, so a broken embedder never crashes doctor.
-    """
-    existing = todo.get("Tag")
-    elements = existing if isinstance(existing, list) else []
-    if any(isinstance(e, dict) and e.get("manual") is False for e in elements):
-        return 0
-    text = " ".join(
-        raw for raw in (_raw_of(todo, "Summary"), _raw_of(todo, "Body")) if raw
-    )
-    if not text:
-        return 0
-    try:
-        embedders = todo_embed.cheap_embedders()
-        if not embedders:
-            return 0
-        store = todo_store.get_store()
-        _tickets, raws = _load_corpus(store)
-        candidates = _mine_tag_candidates(raws)
-        if not candidates:
-            return 0
-        auto = compute_auto_tags(text, candidates, embedders[0], _AUTO_TAG_K)
-    except (ValueError, RuntimeError):
-        return 0
-    if not auto:
-        return 0
-    manual = [e for e in elements if isinstance(e, dict) and e.get("manual") is True]
-    todo["Tag"] = manual + auto
-    return len(auto)
-
-
-# --- gh / pull-request reconciliation ---------------------------------------
-#
-# Pushing a PR hands this branch's contents off to another entity, which is the
-# same thing `merged` already means for a subtodo absorbed by its parent -- so a
-# ROOT todo whose branch went to a PR is `merged {"pr": N}`. The PR's fate then
-# refines that: a merged PR records its merge commit, a closed-unmerged PR becomes
-# `rejected`. Doctor reconciles in both directions, so a PR opened by hand in the
-# GitHub UI (which this CLI never saw) is still discovered and filled in.
-#
-# gh is attempted ONCE per process. The first ENVIRONMENTAL failure (missing
-# binary, no auth, no network, rate limit) disables it for the rest of the run and
-# records the reason plus its remediation, so a `doctor ALL` sweep reports one
-# actionable line instead of repeating the same failure per todo. A per-repo
-# failure (unknown repo, no access) skips only that todo -- it says nothing about
-# whether gh works.
-_GH_GATE: Dict[str, Optional[str]] = {"disabled": None}
-
-# owner/repo out of a git remote URL: git@host:owner/repo.git,
-# https://host/owner/repo.git, ssh://git@host/owner/repo
-_GH_SLUG_RE = re.compile(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?/?$")
-
-# States whose disposition a PR can still refine. `done` is included because a
-# PR may have been opened by hand after the todo was closed out.
-_PR_RECONCILABLE = frozenset({"done", "merged", "rejected"})
-
-
-def gh_reset_gate() -> None:
-    """Re-arm the once-per-run gh gate (test seam; a fresh process starts armed)."""
-    _GH_GATE["disabled"] = None
-
-
-def gh_gate_reason() -> Optional[str]:
-    """Return why gh is disabled for this run, or None while it is still armed."""
-    return _GH_GATE["disabled"]
-
-
-def gh_repo_slug(todo: JsonDict, root: Path) -> Optional[str]:
-    """Best-effort ``owner/repo`` for ``gh -R``, or None when it is not GitHub.
-
-    Prefers the todo's own ``Scope.git_url`` so a cross-repo store still resolves
-    the right repo, and falls back to the current repo's origin.
-    """
-    scope = todo.get("Scope")
-    url = scope.get("git_url") if isinstance(scope, dict) else None
-    if not isinstance(url, str) or not url:
-        url = git_url_for_repo(root)
-    if not isinstance(url, str) or "github" not in url.lower():
-        return None
-    match = _GH_SLUG_RE.search(url.strip())
-    return match.group(1) if match else None
-
-
-def run_gh(*args: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    """Run a gh command, turning a missing binary or timeout into a failed result."""
-    try:
-        return subprocess.run(
-            ["gh", *args], capture_output=True, text=True, check=False, timeout=timeout
-        )
-    except FileNotFoundError as exc:
-        return subprocess.CompletedProcess(["gh", *args], returncode=127, stdout="", stderr=str(exc))
-    except OSError as exc:
-        return subprocess.CompletedProcess(["gh", *args], returncode=1, stdout="", stderr=str(exc))
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            ["gh", *args], returncode=124, stdout="", stderr=f"gh timed out after {timeout}s"
-        )
-
-
-def _gh_classify(result: subprocess.CompletedProcess[str]) -> tuple[str, str, bool]:
-    """Map a failed gh run to ``(reason, remediation, environmental)``.
-
-    *environmental* True means the failure is about this machine or session rather
-    than one repo, so it disables gh for the rest of the run.
-    """
-    stderr = (result.stderr or "").strip()
-    low = stderr.lower()
-    if result.returncode == 127 or "no such file" in low:
-        return ("gh is not installed", "install the GitHub CLI: brew install gh", True)
-    if result.returncode == 124:
-        return (stderr or "gh timed out", "check network/VPN, then re-run doctor", True)
-    if "auth login" in low or "authentication" in low or "not logged in" in low:
-        return ("gh is not authenticated", "run: gh auth login", True)
-    if "rate limit" in low:
-        return ("GitHub API rate limit reached", "wait for the reset, or check: gh auth status", True)
-    for token in ("could not resolve host", "dial tcp", "connection refused", "network is unreachable"):
-        if token in low:
-            return ("cannot reach GitHub", "check network/VPN, then re-run doctor", True)
-    if "could not resolve to a repository" in low or "not found" in low:
-        return ("repo not found or no access", "check the repo slug and: gh auth status", False)
-    first = stderr.splitlines()[0] if stderr else f"gh exited {result.returncode}"
-    return (f"gh failed: {first}", "run the gh command by hand to see the full error", False)
-
-
-def _gh_json(*args: str) -> tuple[Any, Optional[str]]:
-    """Run a gh command expecting JSON on stdout; return ``(payload, skip_reason)``.
-
-    An environmental failure trips the once-per-run gate; every later call short
-    circuits on that recorded reason instead of retrying.
-    """
-    disabled = _GH_GATE["disabled"]
-    if disabled:
-        return (None, f"gh disabled this run ({disabled})")
-    result = run_gh(*args)
-    if result.returncode != 0:
-        reason, remediation, environmental = _gh_classify(result)
-        message = f"{reason} -- {remediation}"
-        if environmental:
-            _GH_GATE["disabled"] = message
-        return (None, message)
-    try:
-        return (json.loads(result.stdout or "null"), None)
-    except json.JSONDecodeError:
-        return (None, "gh returned unparseable JSON -- run the gh command by hand")
-
-
-def recorded_pr(todo: JsonDict) -> Optional[int]:
-    """The PR number this todo's State already records, or None.
-
-    Distinguishes a PR handoff (`merged {"pr": N}`) from a plain branch handoff
-    (`merged {"merged_into": "some-branch"}`), which records no PR at all.
-    """
-    state = todo.get("State")
-    if not isinstance(state, dict):
-        return None
-    value = next(iter(state.values()), None)
-    if isinstance(value, dict) and isinstance(value.get("pr"), int):
-        return value["pr"]
-    return None
-
-
-def gh_pr_for_todo(todo: JsonDict, root: Path) -> tuple[Optional[JsonDict], Optional[str]]:
-    """Return ``(pr, skip_reason)`` for this todo's branch or recorded PR number.
-
-    Looks the PR up by its recorded number when the State carries one (so a
-    renamed or deleted branch still reconciles), else discovers one from the
-    branch head -- which is how a hand-opened PR gets noticed.
-    """
-    slug = gh_repo_slug(todo, root)
-    if not slug:
-        return (None, "no GitHub remote for this todo")
-    fields = "number,state,mergeCommit,baseRefName,url"
-    recorded = recorded_pr(todo)
-    if recorded is not None:
-        payload, skip = _gh_json("pr", "view", str(recorded), "-R", slug, "--json", fields)
-        if skip:
-            return (None, skip)
-        return (payload if isinstance(payload, dict) else None, None)
-    branch = todo.get("Branch")
-    if not isinstance(branch, str) or not branch:
-        return (None, "todo has no Branch to search for a PR")
-    payload, skip = _gh_json(
-        "pr", "list", "-R", slug, "--head", branch, "--state", "all",
-        "--json", fields, "--limit", "1",
-    )
-    if skip:
-        return (None, skip)
-    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
-        return (payload[0], None)
-    return (None, None)  # no PR exists yet; not an error
-
-
-def reconcile_pr_state(root: Path, todo: JsonDict, *, dry_run: bool) -> JsonDict:
-    """Reconcile a todo's terminal disposition against its PR's fate on GitHub.
-
-    Skipped only for a genuinely TRACKED subtodo (created via `add-subtodo`):
-    its ``merged`` records absorption into its parent's branch via
-    `merge-subtodo`, which has nothing to do with a PR and must never be
-    overwritten here. A todo whose `Parent` is only an informational back-link
-    (`set --parent`) is NOT a tracked subtodo and is reconciled normally --
-    having *any* `Parent` entry is not by itself grounds to skip; see
-    `child_is_tracked_subtodo`. Returns a summary dict; ``changed`` is True
-    only when State moved (and was written, unless *dry_run*).
-    """
-    out: JsonDict = {"checked": False, "changed": False}
-    name = current_state_name(todo)
-    if name not in _PR_RECONCILABLE:
-        return out
-    if child_is_tracked_subtodo(root, todo):
-        out["skipped"] = "subtodo: `merged` here means parent-absorbed, not a PR"
-        return out
-    pr, skip = gh_pr_for_todo(todo, root)
-    if skip:
-        out["skipped"] = skip
-        return out
-    out["checked"] = True
-    if pr is None:
-        # Only a state that actually names a PR is suspicious when gh cannot find
-        # it. `merged {merged_into: <branch>}` on a root todo is a plain branch
-        # handoff (a direct merge or cherry-pick) and needs no PR at all.
-        missing = recorded_pr(todo)
-        if missing is not None:
-            out["warning"] = f"State records pr #{missing} that gh cannot find"
-        return out
-    number = pr.get("number")
-    gh_state = str(pr.get("state") or "").upper()
-    out["pr"] = number
-    out["gh_state"] = gh_state
-    out["from"] = name
-    commit = pr.get("mergeCommit")
-    sha = commit.get("oid") if isinstance(commit, dict) else None
-    if gh_state == "MERGED":
-        target, kwargs = "merged", {"pr": number, "merge_commit": sha, "merged_into": pr.get("baseRefName")}
-    elif gh_state == "CLOSED":
-        target, kwargs = "rejected", {"pr": number, "note": f"PR #{number} closed without merging"}
-    else:  # OPEN (or DRAFT): the handoff happened, its fate is undecided
-        target, kwargs = "merged", {"pr": number}
-    before = json.dumps(todo.get("State"), sort_keys=True)
-    candidate = dict(todo)
-    set_state(candidate, target, **kwargs)
-    out["to"] = target
-    if json.dumps(candidate["State"], sort_keys=True) == before:
-        return out
-    out["changed"] = True
-    if not dry_run:
-        todo["State"] = candidate["State"]
-        todo["update_dt"] = utc_now()
-        write_todo_worktree(root, todo)
-    return out
 
 
 def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
@@ -6602,6 +3794,8 @@ def _doctor_one(root: Path, selector: str, *, dry_run: bool) -> JsonDict:
 
 
 class DoctorCommand(StoreMaintenanceCommand):
+    """The `doctor` subcommand: audit and repair todo health."""
+
     command_names = ("doctor",)
     doc_short: ClassVar[str] = "Audit and repair todo health"
     doc_long: ClassVar[str] = (
@@ -6610,20 +3804,28 @@ class DoctorCommand(StoreMaintenanceCommand):
         "todo's --parent references it re-establishes a follow-only INFO back-link in the parent's "
         "Subtodos (best-effort, same-repo, store only). Repair also removes a leftover linked "
         "worktree when State is done or merged. Repair runs by default; pass --dry-run to "
-        "audit and report intended repairs without writing. Repair also clears every stale per-TODO "
-        "lock left by a crashed writer (reported as 'unlocked'). It also brings the store's records "
-        "up to the latest schema opportunistically (the migrate-to-latest sweep -- a cheap no-op when "
-        "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag elements for an "
+        "audit and report intended repairs without writing. Repair also clears every "
+        "stale per-TODO "
+        "lock left by a crashed writer (reported as 'unlocked'). It also brings the "
+        "store's records "
+        "up to the latest schema opportunistically (the migrate-to-latest sweep -- a "
+        "cheap no-op when "
+        "already current), reported as 'migrated'. It also recomputes AUTOMATIC Tag "
+        "elements for an "
         "audited todo that has none yet (trusting any already present, so a normal run is cheap), "
         "reported as 'auto_tags'. It reconciles derived relto 'mention' entries against each "
         "relto-bearing node's own editable prose -- Body.raw, a note's raw, a work item's "
         "summary -- adding one for a target the prose names and dropping one for a target it no "
         "longer names, while never touching an entry of any other type; reported as 'mentions'. "
-        "A work item's git-copied message is not scanned. For a ROOT todo in a terminal state it reconciles the PR "
-        "disposition via gh (reported as 'pr'): a done todo with a PR becomes merged {pr}, a merged "
+        "A work item's git-copied message is not scanned. For a ROOT todo in a terminal "
+        "state it reconciles the PR "
+        "disposition via gh (reported as 'pr'): a done todo with a PR becomes merged "
+        "{pr}, a merged "
         "PR records its merge_commit, a closed-unmerged PR becomes rejected. gh is attempted once "
-        "per run -- the first environmental failure disables it for the rest of the run and reports "
-        "the reason plus its remediation under 'gh'. Pass the ALL sentinel as the selector to sweep "
+        "per run -- the first environmental failure disables it for the rest of the run "
+        "and reports "
+        "the reason plus its remediation under 'gh'. Pass the ALL sentinel as the "
+        "selector to sweep "
         "the whole corpus instead of a single selector. Exit 1 when any hard finding is present."
     )
 
@@ -6632,7 +3834,10 @@ class DoctorCommand(StoreMaintenanceCommand):
         """Register doctor arguments."""
         parser.add_argument(
             "selector",
-            help="todo selector (Id prefix or full digest) to audit, or ALL to sweep the whole corpus",
+            help=(
+                "todo selector (Id prefix or full digest) to audit, or ALL to sweep the whole "
+                "corpus"
+            ),
         )
         parser.add_argument(
             "--dry-run",
@@ -6662,7 +3867,9 @@ class DoctorCommand(StoreMaintenanceCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             ids = [str(t.get("Id", "")) for t in todo_store.get_store().list_all()]
-            results = [_doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid]
+            results = [
+                _doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid
+            ]
             ok = all(r["ok"] for r in results)
             print(
                 json.dumps(
@@ -6673,7 +3880,9 @@ class DoctorCommand(StoreMaintenanceCommand):
                         "migrated": migrated,
                         "auto_tags": sum(r["auto_tags"] for r in results),
                         "mentions": sum(r["mentions"] for r in results),
-                        "pr_reconciled": sum(1 for r in results if r["pr"].get("changed")),
+                        "pr_reconciled": sum(
+                            1 for r in results if r["pr"].get("changed")
+                        ),
                         "gh": gh_gate_reason() or "ok",
                         "audited": len(results),
                         "results": results,
@@ -6702,12 +3911,6 @@ class DoctorCommand(StoreMaintenanceCommand):
             )
         )
         return 0 if result["ok"] else 1
-
-
-def _summary_snippet(text: str, limit: int = 60) -> str:
-    """Collapse whitespace and truncate to a one-line commit subject."""
-    s = " ".join(str(text).split())
-    return s if len(s) <= limit else s[: limit - 3] + "..."
 
 
 def _short_dt(value: str) -> str:
@@ -6739,7 +3942,8 @@ def _entry_as_ticket(entry: JsonDict) -> JsonDict:
 
 def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
     """Load a full child ticket via the Subtodos entry's Branch (O(1), no ref scan); fall back
-    to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot)."""
+    to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot).
+    """
     branch = str(entry.get("Branch", ""))
     if branch:
         todo = read_todo_at_ref(repo, branch)
@@ -6747,12 +3951,16 @@ def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
             return todo
     cid = str(entry.get("Id", ""))
     if len(cid) >= 4 and use_store():
-        for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(cid[:8]):
+        for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(
+            cid[:8]
+        ):
             return todo
     return None
 
 
-def _ticket_commits(repo: Path, ticket: JsonDict, timestamps: bool = False) -> List[str]:
+def _ticket_commits(
+    repo: Path, ticket: JsonDict, timestamps: bool = False
+) -> List[str]:
     """Commit one-liners on a ticket's branch (its frequentcommit trail), newest first.
 
     Base = the Parent's branch for a subtodo, else the first of dev/main/master that
@@ -6788,6 +3996,7 @@ def _ticket_commits(repo: Path, ticket: JsonDict, timestamps: bool = False) -> L
     return result.stdout.splitlines()
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals,too-many-positional-arguments
 def render_ticket_graph(
     repo: Path,
     ticket: JsonDict,
@@ -6820,44 +4029,14 @@ def render_ticket_graph(
     for index, entry in enumerate(subs):
         is_last: bool = index == len(subs) - 1
         child = _load_child_ticket(repo, entry) or _entry_as_ticket(entry)
-        render_ticket_graph(repo, child, rails + [not is_last], lines, seen, verbose, timestamps)
-
-
-def discover_all_tickets(root: Path) -> Dict[str, JsonDict]:
-    """Map Id -> ticket for every discoverable ticket in the store or git refs."""
-    tickets: Dict[str, JsonDict] = {}
-    if use_store():
-        repo = repo_key(root)
-        for repo_path, _branch, parsed in todo_store.get_store().list_located():
-            if repo_path and repo_path != repo:
-                continue
-            tid = str(parsed.get("Id", ""))
-            if tid:
-                tickets[tid] = normalize_todo_schema(parsed)
-        if tickets:
-            return tickets
-    worktree = read_todo_worktree(root)
-    if worktree is not None and worktree.get("Id"):
-        tickets[str(worktree["Id"])] = worktree
-    for ref in list_branch_refs(root):
-        ticket = read_todo_at_ref(root, ref)
-        if ticket is None:
-            continue
-        tid = str(ticket.get("Id", ""))
-        if tid and tid not in tickets:
-            tickets[tid] = ticket
-    return tickets
-
-
-def forest_roots(root: Path) -> List[JsonDict]:
-    """Discoverable tickets with no Parent (graph roots), ordered by create_dt."""
-    tickets = discover_all_tickets(root)
-    roots = [t for t in tickets.values() if not t.get("Parent")]
-    roots.sort(key=lambda t: str(t.get("create_dt", "")))
-    return roots
+        render_ticket_graph(
+            repo, child, rails + [not is_last], lines, seen, verbose, timestamps
+        )
 
 
 class LogCommand(CorpusQueryCommand):
+    """The `log` subcommand: show todo graph (oneline, from TODO.json)."""
+
     command_names = ("log",)
     doc_short: ClassVar[str] = "Show todo graph (oneline, from TODO.json)"
     doc_long: ClassVar[str] = (
@@ -6916,204 +4095,26 @@ class LogCommand(CorpusQueryCommand):
             lines = lines[: self.max_count]
         # Truncate to terminal width on a TTY to avoid wrapping; leave full lines when
         # piped/redirected so downstream tools (grep, etc.) get complete output.
-        width = shutil.get_terminal_size((80, 24)).columns if sys.stdout.isatty() else None
+        width = (
+            shutil.get_terminal_size((80, 24)).columns if sys.stdout.isatty() else None
+        )
         if width and width > 3:
-            lines = [ln if len(ln) <= width else ln[: width - 3] + "..." for ln in lines]
+            lines = [
+                ln if len(ln) <= width else ln[: width - 3] + "..." for ln in lines
+            ]
         print("\n".join(lines))
         return 0
 
 
-# Built-in defaults of `web`; config.json "web" and the command line override them.
+# The options `web` hands on to todoweb.py; todoweb defines what they mean.
+WEB_LEVELS = ("none", "read", "write")
 WEB_DEFAULT_PORT = 8765
-WEB_DEFAULT_LOOPBACK = "read"
-WEB_DEFAULT_PUBLIC = "none"
-WEB_CONFIG_KEY = "web"
-
-
-def web_config(todo_dir: Path) -> Dict[str, Any]:
-    """The validated ``web`` object of *todo_dir*'s config.json; ``{}`` when absent.
-
-    Keys are ``loopback`` and ``public`` (each one of ``todo_web.LEVELS``),
-    ``host`` (a non-empty string) and ``port`` (an integer 0-65535). Anything
-    else raises TodoError naming the key, so a typo fails at startup instead of
-    silently leaving a default in force.
-    """
-    raw = todo_store.config_value_raw(todo_dir, WEB_CONFIG_KEY)
-    if raw is None:
-        return {}
-    where = f'config.json "{WEB_CONFIG_KEY}"'
-    if not isinstance(raw, dict):
-        raise TodoError(f"{where} must be an object, not {type(raw).__name__}")
-    known = ("loopback", "public", "host", "port")
-    unknown = sorted(key for key in raw if key not in known)
-    if unknown:
-        raise TodoError(
-            f"{where} has unknown key(s) {', '.join(unknown)}; known: {', '.join(known)}"
-        )
-    for key in ("loopback", "public"):
-        if key in raw and raw[key] not in todo_web.LEVELS:
-            raise TodoError(
-                f"{where} {key} must be one of {', '.join(todo_web.LEVELS)}, not {raw[key]!r}"
-            )
-    if "host" in raw and not (isinstance(raw["host"], str) and raw["host"].strip()):
-        raise TodoError(f"{where} host must be a non-empty string, not {raw['host']!r}")
-    if "port" in raw:
-        port = raw["port"]
-        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
-            raise TodoError(f"{where} port must be an integer 0-65535, not {port!r}")
-    return dict(raw)
-
-
-@dataclass(frozen=True)
-class WebOp:
-    """One web edit: the CLI argv that applies it."""
-
-    argv: Callable[[str, str, str], List[str]]  # (todo_id, target, value)
-
-
-def _web_set_op(flag: str) -> WebOp:
-    """A `set --<flag>=<value>` edit of a text field."""
-    return WebOp(argv=lambda tid, _target, value: ["set", f"--{flag}={value}", "--", tid])
-
-
-# The CLI's update surface and nothing else: no op creates, deletes or closes
-# anything. Every positional follows "--", flags before it, so no request field
-# can be parsed as a flag (the "--" must precede ALL positionals: argparse
-# fills an optional positional with nothing before a later "--").
-WEB_OPS: Dict[str, WebOp] = {
-    "set-summary": _web_set_op("summary"),
-    "set-body": _web_set_op("body"),
-    "set-ac": _web_set_op("ac"),
-    "set-long-summary": _web_set_op("long-summary"),
-    "set-actual-summary": _web_set_op("actual-summary"),
-    "note-replace": WebOp(
-        argv=lambda tid, target, value: ["note-replace", f"--raw={value}", "--", tid, target],
-    ),
-    "work-item-replace": WebOp(
-        argv=lambda tid, target, value: [
-            "work-item-replace", f"--summary={value}", "--", tid, target
-        ],
-    ),
-    # value is the destination index, as work-item-reorder's DST.
-    "work-item-reorder": WebOp(
-        argv=lambda tid, target, value: ["work-item-reorder", "--", tid, target, value],
-    ),
-}
-
-
-def _cli_error_text(stderr: str) -> str:
-    """The CLI's own error text from captured stderr, minus the ``todo.py:`` prefix."""
-    prefix = "todo.py: "
-    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    return "\n".join(line[len(prefix) :] if line.startswith(prefix) else line for line in lines)
-
-
-class _ThreadStream:
-    """A sys.stdout/sys.stderr stand-in that diverts one thread's writes to a buffer.
-
-    A thread that set a buffer (``capture``) writes there; every other thread
-    writes to the stream that was in place when this was installed.
-    """
-
-    def __init__(self, real: Any) -> None:
-        self._real = real
-        self._local = threading.local()
-
-    def _target(self) -> Any:
-        return getattr(self._local, "buffer", None) or self._real
-
-    def write(self, text: str) -> int:
-        return int(self._target().write(text))
-
-    def flush(self) -> None:
-        self._target().flush()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
-
-    @contextlib.contextmanager
-    def capture(self, buffer: io.StringIO) -> Iterator[None]:
-        """Divert the calling thread's writes to *buffer* for the block."""
-        previous = getattr(self._local, "buffer", None)
-        self._local.buffer = buffer
-        try:
-            yield
-        finally:
-            self._local.buffer = previous
-
-
-_STREAM_INSTALL_LOCK = threading.Lock()
-
-
-def _thread_stream(name: str) -> _ThreadStream:
-    """The ``sys.<name>`` proxy, installed over the current stream on first use."""
-    with _STREAM_INSTALL_LOCK:
-        current = getattr(sys, name)
-        if not isinstance(current, _ThreadStream):
-            current = _ThreadStream(current)
-            setattr(sys, name, current)
-        return current
-
-
-class WebUpdater:
-    """The write side `web` injects into todo_web.serve (todo_web.Updater) for a write class.
-
-    Each update runs the CLI's own command through ``main`` in this process, so
-    its validation and refusals are the CLI's, verbatim. A save is last-write-wins:
-    it applies whatever the page sent, whether or not the todo changed since the
-    page loaded. Updates are serialized in-process; ``main``'s stdout/stderr are
-    captured for the updating thread only, so other request threads keep writing
-    to the real streams.
-    """
-
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self._serial = threading.Lock()
-
-    def update(self, request: JsonDict) -> JsonDict:
-        """Apply one ``{id, op, target, value}`` request; return ``{}``.
-
-        Raises ``todo_web.UpdateRefused`` with the CLI's error text when the
-        request or the command is refused.
-        """
-        op_name = request.get("op")
-        op = WEB_OPS.get(op_name) if isinstance(op_name, str) else None
-        if op is None:
-            raise todo_web.UpdateRefused(
-                f"unknown web op {op_name!r}; known: {', '.join(sorted(WEB_OPS))}"
-            )
-        fields = {name: request.get(name) for name in ("id", "target", "value")}
-        for name, value in fields.items():
-            if not isinstance(value, str):
-                raise todo_web.UpdateRefused(f"{op_name}: {name} must be a string")
-        if not use_store():
-            raise todo_web.UpdateRefused("web edits need the todo store, not legacy TODO.json mode")
-        with self._serial:
-            todo_id = str(self._read(fields["id"])["Id"])
-            self._run(op.argv(todo_id, fields["target"], fields["value"]))
-            return {}
-
-    def _read(self, selector: str) -> JsonDict:
-        try:
-            return resolve_ticket_by_id(self.root, selector)[1]
-        except TodoError as exc:
-            raise todo_web.UpdateRefused(str(exc)) from exc
-
-    def _run(self, argv: List[str]) -> None:
-        """Run ``todo.py <argv>`` in-process; raise UpdateRefused with its stderr on failure."""
-        out, err = io.StringIO(), io.StringIO()
-        with _thread_stream("stdout").capture(out), _thread_stream("stderr").capture(err):
-            try:
-                code = main(argv)
-            except SystemExit as exc:  # argparse usage errors
-                code = exc.code if isinstance(exc.code, int) else 2
-        if code == 0:
-            return
-        text = _cli_error_text(err.getvalue()) or f"todo.py {argv[0]} exited {code}"
-        raise todo_web.UpdateRefused(text, status=503 if code == 75 else 400)
+TODOWEB_PY = Path(__file__).resolve().with_name("todoweb.py")
 
 
 class WebCommand(EnvironmentCommand):
+    """The `web` subcommand: serve todo viewer."""
+
     command_names = ("web",)
     doc_short: ClassVar[str] = "Serve todo viewer"
     doc_long: ClassVar[str] = (
@@ -7137,7 +4138,7 @@ class WebCommand(EnvironmentCommand):
         "deleted. Saves are last-write-wins: a save lands even when the todo changed since the "
         "page loaded. Both none refuses to start. The default bind is localhost when public is "
         "none and '::' (every interface) otherwise; --host overrides. Every web option "
-        "defaults from the \"web\" object of the todo dir's config.json (CLI beats config "
+        'defaults from the "web" object of the todo dir\'s config.json (CLI beats config '
         "beats built-in). Writes are refused unless the request's Origin, content type and "
         "(from loopback clients) Host are this viewer's own (see IMPLEMENTATION.md, 'Web edits')."
     )
@@ -7154,21 +4155,24 @@ class WebCommand(EnvironmentCommand):
         parser.add_argument(
             "--host",
             default=None,
-            help=f"bind host (default {todo_web.LOOPBACK_HOST!r} when --public is none, else "
-            f"{todo_web.ALL_HOST!r}, which serves IPv4 and IPv6)",
+            help="bind host (default 'localhost' when --public is none, else "
+            "'::', which serves IPv4 and IPv6)",
         )
         parser.add_argument(
-            "--port", type=int, default=None, help=f"bind port (default {WEB_DEFAULT_PORT})"
+            "--port",
+            type=int,
+            default=None,
+            help=f"bind port (default {WEB_DEFAULT_PORT})",
         )
         parser.add_argument(
             "--loopback",
-            choices=todo_web.LEVELS,
+            choices=WEB_LEVELS,
             default=None,
             help="access for loopback clients (default read; config.json web.loopback)",
         )
         parser.add_argument(
             "--public",
-            choices=todo_web.LEVELS,
+            choices=WEB_LEVELS,
             default=None,
             help="access for every other client (default none; config.json web.public)",
         )
@@ -7178,137 +4182,46 @@ class WebCommand(EnvironmentCommand):
             help="print the rendered HTML and exit instead of starting a server",
         )
 
-    def settings(self) -> Dict[str, Any]:
-        """The effective ``loopback``, ``public``, ``host`` and ``port``.
-
-        Precedence per key: the command line, then the ``web`` object of the todo
-        dir's config.json, then the built-in default. ``host`` is None when none
-        of them names one; ``bind_host`` then derives it from ``public``. A
-        malformed ``web`` object raises TodoError.
-        """
-        cli = {
-            "loopback": self.loopback,
-            "public": self.public,
-            "host": self.host,
-            "port": self.port,
-        }
-        configured = web_config(self.todo_dir)
-        built_in: Dict[str, Any] = {
-            "loopback": WEB_DEFAULT_LOOPBACK,
-            "public": WEB_DEFAULT_PUBLIC,
-            "host": None,
-            "port": WEB_DEFAULT_PORT,
-        }
-        merged: Dict[str, Any] = {}
-        for key, default in built_in.items():
-            if cli[key] is not None:
-                merged[key] = cli[key]
-            else:
-                merged[key] = configured.get(key, default)
-        return merged
-
-    @staticmethod
-    def bind_host(settings: Mapping[str, Any]) -> str:
-        """The host to bind: the explicit one, else loopback unless public clients are served."""
-        if settings["host"] is not None:
-            return str(settings["host"])
-        return todo_web.default_bind_host(settings["public"])
+    def todoweb_argv(self) -> List[str]:
+        """The todoweb.py arguments that carry this command's own options."""
+        argv: List[str] = []
+        for flag, value in (
+            ("--host", self.host),
+            ("--port", self.port),
+            ("--loopback", self.loopback),
+            ("--public", self.public),
+        ):
+            if value is not None:
+                argv += [flag, str(value)]
+        if self.dump_html:
+            argv.append("--dump-html")
+        if self.selector is not None:
+            argv += ["--", self.selector]
+        return argv
 
     def do(self) -> int:
-        """Serve or print the todo web viewer."""
-        settings = self.settings()
-        levels = (settings["loopback"], settings["public"])
-        if not self.dump_html and settings["loopback"] == "none" and settings["public"] == "none":
-            raise TodoError(
-                "web: loopback and public are both none, so no client could connect; "
-                "set at least one to read or write"
-            )
-        root = self.root()
-        # Header label: the storage anchor (same value `todo basedir` prints),
-        # not the current worktree gitroot. The store is shared across all
-        # worktrees, so labelling the page with this worktree misrepresents it.
-        # `root` still drives git ops (diffs/selectors) below -- only the label moves.
-        basedir = self.todo_dir
+        """Run todoweb.py with these options; its exit status is this command's.
 
-        def resolve_todo(selector: str) -> tuple[Path, JsonDict]:
-            """Resolve an ?id= selector to (repo_root, todo) for the viewer.
-
-            The concrete repo is always the CWD; git failures for a todo whose
-            commits are not present here render as 'diff unavailable'.
-            """
+        Ctrl-C reaches todoweb too, which stops serving and exits; this waits
+        for that exit rather than dying on the interrupt itself.
+        """
+        with subprocess.Popen(
+            [sys.executable, str(TODOWEB_PY), *self.todoweb_argv()]
+        ) as child:
             try:
-                ticket = resolve_ticket_by_id(root, selector)[1]
-            except TodoError as exc:
-                raise todo_web.TodoWebError(str(exc)) from exc
-            return root, ticket
-
-        def list_todos() -> List[JsonDict]:
-            """Every todo in the store -- no repo scoping, no filtering."""
-            if not use_store():
-                return list(discover_all_tickets(root).values())
-            return [normalize_todo_schema(t) for t in todo_store.get_store().list_all()]
-
-        def search_rows(query: str) -> List[JsonDict]:
-            """Structured rows for the viewer's search box.
-
-            A non-empty query runs the same lexical search as `todo search`
-            (rank order preserved); an empty query lists every todo. The box has
-            no shell, so it is split with ``shlex`` -- a quoted phrase becomes one
-            term, mirroring the CLI (unbalanced quotes fall back to whitespace
-            splitting). Rows carry state/update-time so the page can render the
-            -tu/-s columns.
-            """
-            if query.strip():
-                try:
-                    terms = shlex.split(query)
-                except ValueError:
-                    terms = query.split()
-                if terms:
-                    try:
-                        rows, _hidden = run_search(terms)
-                        return rows
-                    except TodoError as exc:
-                        raise todo_web.TodoWebError(str(exc)) from exc
-            return [todo_row(todo) for todo in list_todos()]
-
-        initial_id: Optional[str] = None
-        if self.selector is not None:
-            _, ticket = resolve_ticket_by_id(root, self.selector)
-            initial_id = str(ticket.get("Id") or "") or None
-
-        try:
-            if self.dump_html:
-                if initial_id is not None:
-                    todo_root, ticket = resolve_todo(initial_id)
-                    print(
-                        todo_web.render_todo_page(
-                            todo_root, ticket, write=settings["loopback"] == "write"
-                        )
-                    )
-                else:
-                    print(todo_web.render_search_page(basedir, search_rows("")))
-            else:
-                todo_web.serve(
-                    basedir,
-                    host=self.bind_host(settings),
-                    port=settings["port"],
-                    initial_id=initial_id,
-                    resolver=resolve_todo,
-                    searcher=search_rows,
-                    loopback=settings["loopback"],
-                    public=settings["public"],
-                    updater=WebUpdater(root) if "write" in levels else None,
-                )
-        except todo_web.TodoWebError as exc:
-            raise TodoError(str(exc)) from exc
-        return 0
+                return child.wait()
+            except KeyboardInterrupt:
+                return child.wait()
 
 
 class ImportJsonCommand(StoreMaintenanceCommand):
+    """The `import-json` subcommand: import legacy TODO.json into the store."""
+
     command_names = ("import-json",)
     doc_short: ClassVar[str] = "Import legacy TODO.json into the store"
     doc_long: ClassVar[str] = (
-        "Import-json loads todo JSON into the resolved todo sqlite db. Use --from-json for one file "
+        "Import-json loads todo JSON into the resolved todo sqlite db. Use --from-json "
+        "for one file "
         "or --scan-refs to import every TODO.json on git refs in the current repo."
     )
 
@@ -7334,7 +4247,11 @@ class ImportJsonCommand(StoreMaintenanceCommand):
             raise TodoError("--from-json or --scan-refs is required")
         ticket = load_json_file(Path(self.from_json))
         imported = import_json_ticket(root, ticket, branch=self.branch)
-        print(json.dumps({"Id": imported.get("Id"), "Branch": imported.get("Branch")}, indent=2))
+        print(
+            json.dumps(
+                {"Id": imported.get("Id"), "Branch": imported.get("Branch")}, indent=2
+            )
+        )
         return 0
 
 
@@ -7360,61 +4277,38 @@ def _add_column_args(parser: argparse.ArgumentParser) -> None:
     null-query case of search).
     """
     parser.add_argument(
-        "-s", dest="columns", const="state", nargs=0, action=_ColumnAction,
+        "-s",
+        dest="columns",
+        const="state",
+        nargs=0,
+        action=_ColumnAction,
         help="show State column (and, without --states, reveal all states incl. done/merged)",
     )
     parser.add_argument(
-        "-t", "-tc", dest="columns", const="ctime", nargs=0, action=_ColumnAction,
+        "-t",
+        "-tc",
+        dest="columns",
+        const="ctime",
+        nargs=0,
+        action=_ColumnAction,
         help="show create-time column",
     )
     parser.add_argument(
-        "-tu", dest="columns", const="utime", nargs=0, action=_ColumnAction,
+        "-tu",
+        dest="columns",
+        const="utime",
+        nargs=0,
+        action=_ColumnAction,
         help="show update-time column",
     )
     parser.add_argument(
-        "-g", dest="columns", const="tags", nargs=0, action=_ColumnAction,
+        "-g",
+        dest="columns",
+        const="tags",
+        nargs=0,
+        action=_ColumnAction,
         help="show Tags column (comma-joined)",
     )
-
-
-def _column_value(todo: JsonDict, key: str) -> str:
-    """String value for a display-column *key* on *todo*."""
-    if key == "state":
-        return current_state_name(todo) or ""
-    if key == "ctime":
-        return str(todo.get("create_dt", "") or "")
-    if key == "utime":
-        return str(todo.get("update_dt", "") or "")
-    if key == "tags":
-        tag = todo.get("Tag")
-        if isinstance(tag, list):
-            return ",".join(
-                e["raw"] for e in tag
-                if isinstance(e, dict) and isinstance(e.get("raw"), str)
-            )
-        return ""
-    return ""
-
-
-def todo_row(todo: JsonDict) -> JsonDict:
-    """Structured, JSON-serializable summary of a todo for ls/search/web.
-
-    The single place list-style field extraction happens; callers (CLI line
-    formatting, the web viewer's templates) render from these named fields
-    rather than re-reading the raw todo, so there is one source of truth.
-    """
-    full = str(todo.get("Id", ""))
-    summary = todo.get("Summary")
-    summary = summary.get("raw", "") if isinstance(summary, dict) else str(summary or "")
-    return {
-        "id": full,
-        "short": full[:8],
-        "summary": summary,
-        "state": _column_value(todo, "state"),
-        "ctime": _column_value(todo, "ctime"),
-        "utime": _column_value(todo, "utime"),
-        "tags": _column_value(todo, "tags"),
-    }
 
 
 def _format_rows(rows: Sequence[JsonDict], columns: Sequence[str]) -> List[str]:
@@ -7438,34 +4332,9 @@ def _format_rows(rows: Sequence[JsonDict], columns: Sequence[str]) -> List[str]:
     return lines
 
 
-def run_search(
-    terms: Sequence[str],
-    *,
-    limit: int = 20,
-    embedder_names: Optional[Sequence[str]] = None,
-    dry_run: bool = False,
-    states: Optional[frozenset] = None,
-    tags: Optional[frozenset] = None,
-) -> tuple[List[JsonDict], int]:
-    """Ranked search as structured rows (relevance-rank order preserved).
-
-    Shared by the 'search' subcommand and the web viewer so both go through the
-    same vector-search backend without duplicating it. ``terms`` is the list of
-    google-style search terms (see ``search_tickets``). Returns ``(rows,
-    hidden_by_status)``.
-    """
-    result = search_tickets(
-        terms,
-        limit=limit,
-        embedder_names=embedder_names,
-        dry_run=dry_run,
-        states=states,
-        tags=tags,
-    )
-    return [todo_row(todo) for todo in result.hits], result.hidden_by_status
-
-
 class SearchCommand(CorpusQueryCommand):
+    """The `search` subcommand: search todos (lexical IDF)."""
+
     command_names = ("search",)
     doc_short: ClassVar[str] = "Search todos (lexical IDF)"
     doc_long: ClassVar[str] = (
@@ -7546,7 +4415,9 @@ class SearchCommand(CorpusQueryCommand):
         columns = self.columns or []
         states = resolve_state_filter(self.states, "state" in columns)
         tags = (
-            frozenset(part.strip().lower() for part in self.tag.split(",") if part.strip())
+            frozenset(
+                part.strip().lower() for part in self.tag.split(",") if part.strip()
+            )
             if self.tag
             else None
         )
@@ -7566,6 +4437,8 @@ class SearchCommand(CorpusQueryCommand):
 
 
 class EmbeddersCommand(CorpusQueryCommand):
+    """The `embedders` subcommand: list selectable embedders."""
+
     command_names = ("embedders",)
     doc_short: ClassVar[str] = "List selectable embedders"
     doc_long: ClassVar[str] = (
@@ -7590,6 +4463,8 @@ class EmbeddersCommand(CorpusQueryCommand):
 
 
 class PromptCommand(CorpusQueryCommand):
+    """The `prompt` subcommand: print a todo + its parent chain as one startup prompt."""
+
     command_names = ("prompt",)
     doc_short: ClassVar[str] = "Print a todo + its parent chain as one startup prompt"
     doc_long: ClassVar[str] = (
@@ -7623,6 +4498,8 @@ class PromptCommand(CorpusQueryCommand):
 
 
 class LsCommand(CorpusQueryCommand):
+    """The `ls` subcommand: list known todo ids and summaries."""
+
     command_names = ("ls",)
     doc_short: ClassVar[str] = "List known todo ids and summaries"
     doc_long: ClassVar[str] = (
@@ -7678,6 +4555,8 @@ class LsCommand(CorpusQueryCommand):
 
 
 class BaseDirCommand(EnvironmentCommand):
+    """The `basedir` subcommand: print the todo base directory."""
+
     command_names = ("basedir",)
     doc_short: ClassVar[str] = "Print the todo base directory"
     doc_long: ClassVar[str] = (
@@ -7703,6 +4582,8 @@ class BaseDirCommand(EnvironmentCommand):
 
 
 class RepoDirCommand(EnvironmentCommand):
+    """The `repodir` subcommand: print the repo directory a todo lives in."""
+
     command_names = ("repodir",)
     doc_short: ClassVar[str] = "Print the repo directory a todo lives in"
     doc_long: ClassVar[str] = (
@@ -7723,12 +4604,16 @@ class RepoDirCommand(EnvironmentCommand):
     def do(self) -> int:
         """Print the repo's main checkout root for the selected todo."""
         root = self.root()
-        resolve_ticket_by_id(root, self.selector)  # validates id; warns on repo mismatch
+        resolve_ticket_by_id(
+            root, self.selector
+        )  # validates id; warns on repo mismatch
         print(todo_db.main_checkout_root() or root)
         return 0
 
 
 class ExportToFileCommand(StoreMaintenanceCommand):
+    """The `export-to-file` subcommand: export todos to <basedir>/storage/<id>.json."""
+
     command_names = ("export-to-file",)
     doc_short: ClassVar[str] = "Export todos to <basedir>/storage/<id>.json"
     doc_long: ClassVar[str] = (
@@ -7747,7 +4632,9 @@ class ExportToFileCommand(StoreMaintenanceCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register export-to-file arguments."""
         parser.add_argument(
-            "ids", nargs="+", help="4+ hex Id prefixes, or the meta id ALL for every todo"
+            "ids",
+            nargs="+",
+            help="4+ hex Id prefixes, or the meta id ALL for every todo",
         )
         parser.add_argument(
             "--basedir",
@@ -7759,7 +4646,10 @@ class ExportToFileCommand(StoreMaintenanceCommand):
             const="soft",
             choices=("soft", "hard"),
             default=None,
-            help="remove each todo from the store after export: soft (default) tombstones, hard deletes",
+            help=(
+                "remove each todo from the store after export: soft (default) tombstones, hard "
+                "deletes"
+            ),
         )
 
     @staticmethod
@@ -7792,11 +4682,13 @@ class ExportToFileCommand(StoreMaintenanceCommand):
                 raise TodoError("todo missing Id; cannot export")
             path = out_dir / f"{tid}.json"
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            tmp.write_text(
+                json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             tmp.replace(path)
             note = ""
             if self.remove is not None:
-                removed = store.delete(todo, hard=(self.remove == "hard"))
+                removed = store.delete(todo, hard=self.remove == "hard")
                 note = f"  (removed: {self.remove})" if removed else "  (not in store)"
             print(f"{tid[:8]}  {path}{note}")
             exported += 1
@@ -7805,6 +4697,8 @@ class ExportToFileCommand(StoreMaintenanceCommand):
 
 
 class MigrateToLatestCommand(StoreMaintenanceCommand):
+    """The `migrate-to-latest` subcommand: sweep the store's records to the latest schema."""
+
     command_names = ("migrate-to-latest",)
     doc_short: ClassVar[str] = "Sweep the store's records to the latest schema"
     doc_long: ClassVar[str] = (
@@ -7998,7 +4892,9 @@ def detect_caller() -> "tuple[str, JsonDict]":
     agent_env: JsonDict = {
         name: _redacted_env_value(name, value)
         for name, value in os.environ.items()
-        if any(name.startswith(marker) or name == marker for marker in _AGENT_ENV_MARKERS)
+        if any(
+            name.startswith(marker) or name == marker for marker in _AGENT_ENV_MARKERS
+        )
     }
     parent: str = _parent_comm()
     agent_parent: bool = any(tok in parent.lower() for tok in _AGENT_PARENT_TOKENS)
@@ -8032,7 +4928,8 @@ def _invocation_logger() -> Optional[logging.Logger]:
     Best-effort: if the log directory or file cannot be opened, returns None so
     that auditing never causes a todo command to fail.
     """
-    global _INVOCATION_LOGGER  # noqa: PLW0603 - process-lifetime singleton
+    # A process-lifetime singleton: one rotating handler per process.
+    global _INVOCATION_LOGGER  # pylint: disable=global-statement
     if _INVOCATION_LOGGER is not None:
         return _INVOCATION_LOGGER
     try:
@@ -8054,7 +4951,9 @@ def _invocation_logger() -> Optional[logging.Logger]:
     return logger
 
 
-def log_invocation(command: str, argv: Sequence[str], exit_code: int, dur_ms: int) -> None:
+def log_invocation(
+    command: str, argv: Sequence[str], exit_code: int, dur_ms: int
+) -> None:
     """Append one JSON-lines record for this invocation. Never raises."""
     logger: Optional[logging.Logger] = _invocation_logger()
     if logger is None:
@@ -8173,13 +5072,17 @@ def _warn_if_skills_buried() -> None:
             or os.environ.get("CURSOR_TRACE_ID")
             or ""
         )
-        marker: Path = Path(tempfile.gettempdir()) / f".todo-skills-doctor.{framework}.{session}"
+        marker: Path = (
+            Path(tempfile.gettempdir()) / f".todo-skills-doctor.{framework}.{session}"
+        )
         if session and marker.exists():
             return
         if framework == "claude":
             for complaint in _buried_claude_skills():
                 print(f"todo.py: skills-doctor: {complaint}", file=sys.stderr)
         elif framework == "cursor":
+            # Open question kept visible in the source, not a lint defect:
+            # pylint: disable-next=fixme
             # FIXME: cursor -- discovery root + scan depth not yet known.
             print(
                 "todo.py: skills-doctor: FIXME: cursor, how do you like your SKILLs "
@@ -8187,6 +5090,7 @@ def _warn_if_skills_buried() -> None:
                 file=sys.stderr,
             )
         elif framework in ("codex", "chatgpt", "openai"):
+            # pylint: disable-next=fixme
             # FIXME: chatgpt/codex -- discovery root + scan depth not yet known.
             print(
                 "todo.py: skills-doctor: FIXME: chatgpt/codex, where do you read SKILLs "
@@ -8249,104 +5153,11 @@ def command_class_selected(command_cls: type, names: Sequence[str]) -> bool:
     return False
 
 
-def _ticket_ids_in_paths(paths: Sequence[Path]) -> List[str]:
-    """Short ids of ticket files among *paths*, in first-seen order."""
-    ids: List[str] = []
-    seen: set[str] = set()
-    for path in paths:
-        name = path.name
-        if name.endswith(".json"):
-            ident = name[: -len(".json")]
-        elif name.endswith(".deleted"):
-            ident = name[: -len(".deleted")]
-        else:
-            continue
-        if len(ident) < 8 or any(ch not in "0123456789abcdef" for ch in ident):
-            continue
-        short = ident[:8]
-        if short not in seen:
-            seen.add(short)
-            ids.append(short)
-    return ids
-
-
 def _autocommit_message(command: TodoSubCommand, paths: Sequence[Path]) -> str:
     """One-line commit subject: the CLI name plus the short ids that changed."""
     name = command.command_names[0] if command.command_names else type(command).__name__
     ids = _ticket_ids_in_paths(paths)
     return f"todo: {name}" + (f" {' '.join(ids)}" if ids else "")
-
-
-def _git_with_index(
-    root: Path, index: str, *args: str
-) -> subprocess.CompletedProcess[str]:
-    """Run git against *index* instead of the repository's real index."""
-    env = os.environ.copy()
-    env["GIT_INDEX_FILE"] = index
-    return git_command.get_git().run(root, *args, env=env)
-
-
-def _commit_store_paths(root: Path, paths: Sequence[Path], message: str) -> None:
-    """Commit *paths* in *root*, including deletions, and leave every other change alone.
-
-    ``git commit -- paths`` is ``--only``: it takes the working-tree content of
-    paths that still exist and drops a deletion ``git add -A`` had staged. A
-    temporary index started from HEAD records the removed ticket and its
-    tombstone in one commit, without sweeping unrelated staged files.
-    """
-    root_res = root.resolve()
-    rels: List[str] = []
-    for path in paths:
-        try:
-            rels.append(str(path.resolve().relative_to(root_res)))
-        except ValueError as exc:
-            raise TodoError(f"autocommit: {path} is outside git repository {root}") from exc
-    handle = tempfile.NamedTemporaryFile(prefix="todo-autocommit-", delete=False)
-    handle.close()
-    index = handle.name
-    try:
-        head = run_git(root, "rev-parse", "--verify", "HEAD", check=False)
-        base = ["read-tree", "HEAD"] if head.returncode == 0 else ["read-tree", "--empty"]
-        seeded = _git_with_index(root, index, *base)
-        if seeded.returncode != 0:
-            detail = (seeded.stderr or seeded.stdout or "").strip()
-            raise TodoError(f"autocommit failed: {detail}")
-        added = _git_with_index(root, index, "add", "-A", "--", *rels)
-        if added.returncode != 0:
-            detail = (added.stderr or added.stdout or "").strip()
-            raise TodoError(f"autocommit failed: {detail}")
-        diff = _git_with_index(root, index, "diff", "--cached", "--quiet")
-        if diff.returncode == 0:
-            return
-        if diff.returncode != 1:
-            detail = (diff.stderr or diff.stdout or "").strip()
-            raise TodoError(f"autocommit failed: {detail}")
-        committed = _git_with_index(root, index, "commit", "-m", message)
-        if committed.returncode != 0:
-            detail = (committed.stderr or committed.stdout or "").strip()
-            if "nothing to commit" in detail or "no changes added to commit" in detail:
-                return
-            raise TodoError(f"autocommit failed: {detail}")
-    finally:
-        try:
-            os.unlink(index)
-        except OSError:
-            pass
-    # The side index updated HEAD only. Refresh the real index for these paths
-    # so a clean commit does not show up as unstaged, and leave other staged
-    # paths untouched.
-    refreshed = run_git(root, "add", "-A", "--", *rels, check=False)
-    if refreshed.returncode != 0:
-        detail = (refreshed.stderr or refreshed.stdout or "").strip()
-        raise TodoError(f"autocommit failed: {detail}")
-
-
-def _autopush(root: Path) -> None:
-    """Push the store repo with its configured upstream."""
-    pushed = run_git(root, "push", check=False)
-    if pushed.returncode != 0:
-        detail = (pushed.stderr or pushed.stdout or "").strip()
-        raise TodoError(f"autopush failed: {detail}")
 
 
 def sync_file_store_git(command: TodoSubCommand) -> None:
@@ -8416,7 +5227,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         exit_code = 1
         return 1
     finally:
-        log_invocation(command_name, logged_argv, exit_code, int((time.monotonic() - start) * 1000))
+        log_invocation(
+            command_name, logged_argv, exit_code, int((time.monotonic() - start) * 1000)
+        )
 
 
 if __name__ == "__main__":

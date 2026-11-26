@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for the viewer's permalink route: /<todoid>/<path...> -> anchored page."""
 
+# Test names state the intent.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from __future__ import annotations
 
 import contextlib
@@ -14,7 +17,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import todo_url
-import todo_web
+import todoweb
 
 TID = "557ab9d3" + "0" * 56
 
@@ -48,7 +51,7 @@ class ResolveFocusTest(unittest.TestCase):
     """resolve_focus picks the object the page should open focused on."""
 
     def focus(self, *segments: str) -> str:
-        return todo_web.resolve_focus(Path("."), dict(TODO), list(segments))
+        return todoweb.resolve_focus(dict(TODO), list(segments))
 
     def test_object_path_focuses_that_object(self) -> None:
         self.assertEqual("0003", self.focus("workitem", "1"))
@@ -105,7 +108,7 @@ class RenderFocusTest(unittest.TestCase):
     """
 
     def render(self, **kwargs: str) -> str:
-        return todo_web.render_todo_page(Path("."), dict(TODO), **kwargs)
+        return todoweb.render_todo_page(Path("."), dict(TODO), **kwargs)
 
     def test_focus_objid_is_embedded(self) -> None:
         page = self.render(focus_objid="0003")
@@ -132,7 +135,7 @@ class PermalinkRouteTest(unittest.TestCase):
 
         def resolver(selector: str) -> Tuple[Path, dict]:
             if not TID.startswith(selector):
-                raise todo_web.TodoWebError(f"no todo matches {selector!r}")
+                raise todoweb.TodoWebError(f"no todo matches {selector!r}")
             return Path("."), TODO
 
         def searcher(_query: str) -> List[dict]:
@@ -142,9 +145,7 @@ class PermalinkRouteTest(unittest.TestCase):
 
         def run() -> None:
             with contextlib.redirect_stdout(printed):
-                todo_web.serve(
-                    Path("."), port=0, resolver=resolver, searcher=searcher
-                )
+                todoweb.serve(Path("."), port=0, resolver=resolver, searcher=searcher)
 
         # Daemon: serve_forever() never returns, and the socket dies with the
         # test process. One server serves every case in this class.
@@ -152,7 +153,9 @@ class PermalinkRouteTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if printed.getvalue().strip():
-                cls.base = printed.getvalue().split("todo web: ", 1)[1].split()[0].rstrip("/")
+                cls.base = (
+                    printed.getvalue().split("todo web: ", 1)[1].split()[0].rstrip("/")
+                )
                 return
             time.sleep(0.01)
         raise AssertionError("viewer did not print its URL")
@@ -164,14 +167,18 @@ class PermalinkRouteTest(unittest.TestCase):
             def redirect_request(self, *_args, **_kwargs):  # noqa: D102
                 return None
 
-        return urllib.request.build_opener(NoRedirect).open(self.base + path, timeout=10)
+        return urllib.request.build_opener(NoRedirect).open(
+            self.base + path, timeout=10
+        )
 
     def test_permalink_renders_the_focused_page_in_place(self) -> None:
         resp = self._get("/557ab9d3/workitem/1")
         self.assertEqual(200, resp.status)
         page = resp.read().decode("utf-8")
         self.assertIn('const FOCUS = "0003";', page)
-        self.assertIn("routing and agent choice", page)  # the WHOLE todo, not a fragment
+        self.assertIn(
+            "routing and agent choice", page
+        )  # the WHOLE todo, not a fragment
         self.assertIn('data-obj="0003"', page)
 
     def test_short_selector_and_scalar_path(self) -> None:

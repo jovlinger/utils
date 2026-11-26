@@ -269,7 +269,7 @@ default. `host` spellings: [Notes and relto](#notes-and-relto).
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
-| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Serve viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-web) |
+| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Runs `todoweb.py` with the same options and returns its exit status: serves the viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-todoweb) |
 
 ### STUB (not automation)
 
@@ -642,7 +642,7 @@ Emit objid links, not positional prose:
 http://localhost:8765/<todoid>/objid/<objid>
 ```
 
-Path grammar (served by `todo.py web`; CLI: `resolveurl`):
+Path grammar (served by `todoweb.py`; CLI: `resolveurl`):
 
 | Form | Means |
 |------|-------|
@@ -670,7 +670,7 @@ content -- `work-item-insert`, `-delete`, and `-reorder` all shift later items,
 so `/workitem/1` silently comes to mean a different item, while an objid keeps
 naming the same one ([addressing](#addressing-one-work-item)).
 
-`todo.py web` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
+`todoweb.py` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
 the whole todo, scrolled to and focused on the resolved object. No redirect --
 the path IS the resource. Resolution is entirely server-side, which is why the
 grammar can use prefixes. Degrading is deliberate rather than fatal:
@@ -698,7 +698,11 @@ the same page.
 Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
 (`replaceState`), so whatever is on screen is already a copyable permalink.
 
-### Web access and edits (`web`)
+### Web access and edits (`todoweb`)
+
+The viewer is `todoweb.py`, its own executable; `todo.py web` takes the same
+options and runs it. Every read and every save goes through `todo.py` run as a
+child process (see [todoweb store access](#todoweb-store-access)).
 
 Two settings decide who may do what. Each is `none`, `read` or `write`:
 
@@ -714,8 +718,8 @@ Two settings decide who may do what. Each is `none`, `read` or `write`:
 | `write` | served | accepted | rendered |
 
 The class is the TCP peer address of each request, never the `Host` header.
-Both settings `none` leaves nothing to serve, so the command exits nonzero
-before binding a socket. The default bind host is `localhost` when public is
+Both settings `none` leaves nothing to serve, so todoweb exits 1 before
+binding a socket. The default bind host is `localhost` when public is
 `none` and `::` otherwise; an explicit `--host` (or config `host`) wins, and a
 non-loopback host under `public=none` still refuses non-loopback clients. Start
 prints one line, `todo web: <url>  loopback=<level>  public=<level>`.
@@ -764,8 +768,8 @@ Every edit is `POST /update` with a JSON body:
 | `work-item-replace` | `objid:<hex>` | the item's new summary |
 | `work-item-reorder` | `objid:<hex>` | the destination index |
 
-The server runs the matching CLI command in-process, so its validation and
-refusals are the CLI's own. Saves are last-write-wins: a save applies whatever
+The server runs the matching `todo.py` command as a child process, so its
+validation, refusals and autocommit are the CLI's own. Saves are last-write-wins: a save applies whatever
 the page sent, even when the todo changed since the page loaded.
 
 | Status | Means | Body |
@@ -868,6 +872,309 @@ byte, and bumps no `update_dt` on a second consecutive run. A dangling LOCAL
 target is a hard finding; an unresolvable CROSS-TODO target is a soft warning
 only, since the store is per-repo and a target naming a todo in another
 repo's store is legitimately unresolvable here.
+
+## Code layout: layers and front ends
+
+Every front end is built as an onion of four layers. A layer calls only inward
+(the layer directly inside it, or deeper), never outward and never sideways into
+another front end's layers.
+
+| # | Layer | Holds | Rules |
+|---|-------|-------|-------|
+| 1 | Arg parse | argparse, output formatting, terminal I/O | front end only |
+| 2 | Policy | validation, refusals, permission and state checks, the user-facing error text and exit codes | front end only |
+| 3 | Local core | mechanism used by one front end | no argparse, no stdout, no `sys.exit`; raises |
+| 4 | Common core | mechanism shared by front ends | imports nothing above it |
+
+Modules per layer:
+
+| Layer | `todo` (the CLI the skill calls) | `todoweb` (viewer and permalink server) |
+|-------|------|------|
+| Arg parse + policy | `todo.py` | `todoweb.py` |
+| Local core | `todo_ops.py` | `todoweb_core.py` |
+| Common core | `todo_common.py`, `todo_store`, `todo_db`, `todo_objid`, `todo_ref`, `todo_url`, `todo_search`, `todo_embed`, `todo_embed_apple`, `git_command` | `todo_objid`, `todo_ref`, `todo_url` only |
+
+- In `todo.py` both outer layers share the file: a command's `configure_parser`
+  is arg parse and its `do` is policy; `main` parses, dispatches, and turns a
+  raised `TodoError` into stderr text and an exit code.
+- `todo.py` imports the inner names it uses explicitly (`from todo_common import
+  (...)`, `from todo_ops import (...)`), so command bodies keep calling them
+  unqualified.
+- Local and common core raise `TodoError` with the message the CLI prints; the
+  refusals that are checks in their own right (doctor findings, state-filter
+  parsing, `require_open_workitem`, `resolve_edit_target`) are policy and stay in
+  `todo.py`. A mechanism keeps the precondition guard of its own operation
+  (`merge_subtodo` refuses a child that is not done).
+- Common core may write a diagnostic to stderr. Three sites do
+  (`git_fetch_if_remote`, `resolve_ticket_by_id`'s other-repo notice,
+  `search_tickets`' backfill progress) and they stay, so no command's output
+  changes.
+- `todoweb` reaches the store through one route only: it runs `todo.py` as a
+  child process for every read and every save (table below). It imports no
+  `todo.py` layer and no store module (`todo_store`, `todo_db`, `todo_common`,
+  `todo_ops`); the common core it uses is the pure permalink and objid grammar.
+  It runs `git` itself for commit messages, diffs and the origin URL, which are
+  repository reads, not store reads.
+- `todo.py web` keeps its parser and help unchanged and runs `todoweb.py` as a
+  child process with the same options rebuilt from the parsed arguments,
+  returning its exit code; `main`'s invocation logging still records it.
+  todoweb's own refusals print `todoweb: <text>`.
+
+Dependency notes that shape the move:
+
+- The embedding and tag-vector helpers that `write_todo_worktree` and
+  `search_tickets` call (`_embed_targets`, `_strip_vectors_at`,
+  `_drop_stale_automatic_tags`, ...) are common core with them, and so are
+  `current_state_name` and `_column_value`.
+- `merge_subtodo` calls `_summary_snippet`, so that helper is local core although
+  its other callers are in `log`.
+- The store-file autocommit is split: the trigger (`sync_file_store_git`,
+  `command_class_selected`, `_autocommit_message`) is policy because it is keyed
+  on CLI command classes; the git mechanics (`_commit_store_paths`,
+  `_git_with_index`, `_autopush`, `_ticket_ids_in_paths`) are local core.
+- `todoweb_core.py` keeps its own `run_git`, `normalize_todo` and
+  `current_state_name`, which differ from the common ones (`TodoWebError`, debug
+  tracing, a string `State` accepted).
+- A test patches a function on the module that makes the call. Today's patch
+  targets on `todo` move with their functions: `repo_root` and
+  `write_todo_worktree` to `todo_common`, `run_gh` to `todo_ops`; `_run_editor`
+  stays in `todo.py`.
+
+### Placement of `todo.py`
+
+Every top-level function and class, in file order, with its line in `todo.py`
+at the time of the split. Arg parse and policy stay in `todo.py`, local core
+moves to `todo_ops.py`, common core to `todo_common.py`, todoweb to `todoweb.py`
+(`WebCommand` stays in `todo.py` as the forwarder).
+
+- policy: `parse_state_filter` 116, `default_state_filter` 149, `resolve_state_filter` 156
+- common core: `TodoError` 172
+- arg parse: `EditNotInteractive` 176, `_stdio_is_interactive` 180,
+  `strip_leading_html_comments` 188, `_run_editor` 206, `edit_text_via_editor` 211
+- common core: `repo_root` 247, `utc_now` 256, `run_git` 261, `git_fetch_if_remote` 270,
+  `list_branch_refs` 282, `branch_exists` 301, `normalize_todo_schema` 307, `migrate_store`
+  332, `use_store` 361, `repo_key` 380, `read_todo_at_ref` 399, `read_todo_worktree` 418
+- local core: `_split_phrases` 461, `_nphrase_windows` 470
+- common core: `_is_flat_vector` 485, `_is_vector` 494, `_raw_of` 504, `_tag_field_path`
+  516, `_embed_targets` 521, `_raw_map` 549, `_container_at` 556, `_changed_raw_fields` 580,
+  `_strip_vectors_at` 598, `_json_embeddings_present` 606
+- common core: `_merge_stored_embeddings` 629
+- common core: `_cheap_embedding_rows` 650, `_drop_stale_automatic_tags` 687,
+  `write_todo_worktree` 717, `commit_todo` 785, `head_sha` 800, `sha_matches` 808,
+  `current_branch` 819, `is_all_selector` 826, `id_matches` 835, `branch_name_hint` 844,
+  `candidate_refs` 850
+- local core: `kebab_branch_name` 859
+- common core: `current_state_name` 868
+- local core: `_as_flag` 890, `set_state` 895, `linked_worktrees_by_branch` 963,
+  `worktree_path_for_branch` 985, `intended_worktree_path` 992, `resolve_ticket_branch` 997,
+  `promote_groom_todo` 1005, `maybe_init_todo_branch` 1035, `ensure_todo_worktree` 1060,
+  `assert_todo_worktree_removable` 1092, `remove_todo_worktree_for_branch` 1110,
+  `teardown_worktree_for_terminal_state` 1126, `apply_set_fields` 1136, `_tag_elements` 1194,
+  `apply_tag_add` 1200, `apply_tag_remove` 1222, `apply_tag_clear` 1249
+- policy: `tag_findings` 1273
+- local core: `_load_corpus` 1302, `_mine_tag_candidates` 1334, `compute_auto_tags` 1355
+- arg parse: `add_state_set_arguments` 1383
+- common core: `git_url_for_repo` 1424
+- local core: `build_ticket_skeleton` 1432, `workitem_kind` 1562, `workitem_is_done` 1570,
+  `cursor_index` 1577, `cursor_summary` 1586, `is_done` 1595, `_index_by_objid` 1639,
+  `_workitem_index_by_objid` 1676, `_index_by_number` 1681, `_workitem_index_by_number` 1704,
+  `resolve_workitem_index` 1709, `resolve_note_index` 1739, `resolve_relto_host` 1764
+- policy: `require_open_workitem` 1804
+- local core: `next_action` 1821, `last_sha` 1858, `code_workitem` 1872,
+  `start_subtodo_workitem` 1884, `merge_subtodo_workitem` 1894, `mark_cursor_done` 1905,
+  `close_workitem` 1936, `closed_workitem_payload` 1978
+- common core: `find_todos_by_id` 1994, `resolve_ticket_by_id` 2033, `mint_id` 2055,
+  `import_json_ticket` 2064, `import_all_json_refs` 2085, `read_todo_at_ref_legacy` 2097,
+  `SearchTimeFilters` 2124, `_normalize_search_date` 2142, `_parse_search_timestamp` 2149,
+  `parse_search_query` 2170, `_ticket_matches_time_filters` 2213, `SearchTicketsResult` 2235,
+  `_ticket_matches_tag_filter` 2242, `_partition_search_candidates` 2255,
+  `_text_search_match_ids` 2284, `_rrf_fuse` 2321, `resolve_embedder_names` 2331,
+  `resolve_stopwords` 2367, `_solo_term_id_prefix_hit` 2397, `search_tickets` 2415
+- arg parse: `_prompt_notes` 2632, `_prompt_section` 2680, `build_prompt_chain` 2702
+- local core: `load_json_file` 2743, `parse_jsonpath` 2754, `format_jsonpath` 2774,
+  `available_path_options` 2781, `no_such_path_error` 2790, `resolve_path_segment` 2798,
+  `get_at_path` 2819
+- arg parse: `print_json_value` 2829
+- local core: `set_at_path` 2841, `subtodo_entry_from_child` 2887, `info_backlink_entry`
+  2897, `upsert_info_backlink` 2913, `remove_info_backlink` 2941, `resolve_parent_refs` 2964,
+  `apply_parent_links` 2985, `reestablish_backlinks` 3037, `child_is_tracked_subtodo` 3079,
+  `upsert_subtodo` 3120, `update_subtodo_state` 3133, `apply_ticket_path` 3147,
+  `merge_subtodo` 3177, `wait_for_state` 3250
+- common core: `commit_exists` 3307
+- policy: `workitem_findings` 3312, `unmerged_subtodos` 3394, `notes_findings` 3419,
+  `relto_findings` 3454
+- local core: `_prose_targets` 3513, `sync_mentions` 3526
+- policy: `objid_findings` 3576, `doctor_findings` 3617, `doctor_warnings` 3694,
+  `wait_graph_findings` 3764, `wait_targets_for_todo` 3804, `wait_cycle_findings` 3823
+- arg parse + policy: `TodoSubCommand` 3852
+- arg parse + policy: `CommandGroup` 3928
+- arg parse + policy: `ManagementCommand` 3938, `StoreMaintenanceCommand` 3944,
+  `CorpusQueryCommand` 3948, `EnvironmentCommand` 3952, `TodoCrudCommand` 3956,
+  `TodoCreateCommand` 3962, `TodoFieldCommand` 3966, `TagCommand` 3970, `WorkItemCommand`
+  3974, `WorkItemEditCommand` 3980, `WorkItemProgressCommand` 3984, `NoteCommand` 3988,
+  `SubtodoCommand` 3994, `SubtodoMergeCommand` 4000, `SubtodoWaitCommand` 4004
+- arg parse: `_command_leaves` 4018
+- arg parse + policy: `MintCommand` 4029
+- arg parse: `_ordered_subdict` 4066, `order_ticket_fields` 4076, `elide_embedding_vectors`
+  4096
+- arg parse + policy: `ReadCommand` 4116, `GetJsonPathCommand` 4156, `ResolveUrlCommand`
+  4178, `GetCommand` 4230, `InitCommand` 4276, `EnsureWorktreeCommand` 4425,
+  `AddSubtodoCommand` 4483, `SetCommand` 4586
+- policy: `resolve_edit_target` 4706
+- arg parse + policy: `EditCommand` 4740, `RmCommand` 4804, `TagAddCommand` 4842,
+  `TagRmCommand` 4870, `TagClearCommand` 4899, `ClearSearchDataCommand` 4975,
+  `WorkItemAddCommand` 5061, `WorkItemDoneCommand` 5091, `WorkItemReadCommand` 5207
+- local core: `_build_relto_element` 5257
+- arg parse: `_parse_relto_arg` 5284
+- arg parse + policy: `NoteAddCommand` 5305, `NoteReadCommand` 5358, `NoteReplaceCommand`
+  5390, `NoteDeleteCommand` 5431
+- arg parse: `_relto_read_all` 5473
+- arg parse + policy: `RelToAddCommand` 5501, `RelToRemoveCommand` 5554, `RelToReadCommand`
+  5605, `WorkItemInsertCommand` 5638, `WorkItemReplaceCommand` 5685, `WorkItemDeleteCommand`
+  5728, `WorkItemReorderCommand` 5767, `WorkItemCheckpointCommand` 5859,
+  `WorkItemBlockedCommand` 5930, `WorkItemObsoleteCommand` 5991, `IsDoneCommand` 6051,
+  `LastShaCommand` 6075, `SetJsonPathCommand` 6100, `MergeSubtodoCommand` 6161,
+  `WaitForCommand` 6192, `WaitAndMergeCommand` 6223
+- local core: `_recompute_auto_tags` 6263, `gh_reset_gate` 6339, `gh_gate_reason` 6344,
+  `gh_repo_slug` 6349, `run_gh` 6365, `_gh_classify` 6381, `_gh_json` 6406, `recorded_pr`
+  6428, `gh_pr_for_todo` 6443, `reconcile_pr_state` 6474
+- policy: `_doctor_one` 6533
+- arg parse + policy: `DoctorCommand` 6598
+- local core: `_summary_snippet` 6701
+- arg parse: `_short_dt` 6707, `_ticket_oneline` 6712, `_entry_as_ticket` 6724,
+  `_load_child_ticket` 6734, `_ticket_commits` 6749, `render_ticket_graph` 6785
+- common core: `discover_all_tickets` 6820, `forest_roots` 6846
+- arg parse + policy: `LogCommand` 6854
+- todoweb: `web_config` 6927, `WebOp` 6962, `_web_set_op` 6968, `_cli_error_text` 6998,
+  `_ThreadStream` 7005, `_thread_stream` 7042, `WebUpdater` 7052, `WebCommand` 7110
+- arg parse + policy: `ImportJsonCommand` 7301
+- arg parse: `_ColumnAction` 7335, `_add_column_args` 7348
+- common core: `_column_value` 7374, `todo_row` 7393
+- arg parse: `_format_rows` 7414
+- common core: `run_search` 7435
+- arg parse + policy: `SearchCommand` 7462, `EmbeddersCommand` 7561, `PromptCommand` 7585,
+  `LsCommand` 7618, `BaseDirCommand` 7673, `RepoDirCommand` 7698, `ExportToFileCommand` 7724,
+  `MigrateToLatestCommand` 7800
+- arg parse: `grouped_command_listing` 7835, `build_parser` 7882
+- policy: `_redacted_env_value` 7952, `_parent_comm` 7963, `detect_caller` 7979,
+  `_invocation_logger` 8022, `log_invocation` 8050, `_detect_agent_framework` 8078,
+  `_buried_claude_skills` 8102, `_warn_if_skills_buried` 8146, `_warn_if_store_behind` 8205,
+  `command_class_selected` 8228
+- local core: `_ticket_ids_in_paths` 8245
+- policy: `_autocommit_message` 8266
+- local core: `_git_with_index` 8273, `_commit_store_paths` 8282, `_autopush` 8337
+- policy: `sync_file_store_git` 8345
+- arg parse + policy: `main` 8376
+
+Module-level constants follow their users. Common core: `JsonDict`,
+`LEGACY_JSON_ENV`, `FETCH_ENABLED`, the `SEARCH_*` keys,
+`DEFAULT_STOPWORD_MIN_IDF`, `repo_identity_from_url`, `_REPO_KEY_CACHE`,
+`_EMBED_FIELDS`, `_FIELD_NAME_BY_PATH` and the search tables (`_RRF_K`,
+`_SEARCH_TIME_OPERATORS`, the `_RFC3339_*` patterns). Local core:
+`VALID_STATES`, `STOPWORDS`, `STATE_MACROS`, `DEFAULT_STATE_FILTER`,
+`ALLOWED_TOP_LEVEL_FIELDS`, `REQUIRED_TOP_LEVEL_FIELDS`, the `WORKITEM_*` kinds,
+`SUBTODO_STATE_INFO`, `TERMINAL_PARENT_STATES`, `WORKTREE_TEARDOWN_STATES`,
+`_STATE_METADATA`, `_AUTO_TAG_K`, `_MAX_NPHRASE`, `_PHRASE_SPLIT_RE`,
+`_RELTO_HOST_RE`, `_MENTION_PROSE_FIELDS` and the `_GH_*`/`_PR_*` tables.
+`todo.py`: `AUTOCOMMIT_KEY`, `AUTOPUSH_KEY`, `COMMAND_CLASSES`,
+`COMMAND_GROUPS`, the `LOG_*` settings, the `*_HELP` strings, `TOP_LEVEL_EPILOG`
+and the read/get field tables. `todoweb.py`: `WEB_CONFIG_KEY`,
+`WEB_DEFAULT_*`, `WEB_OPS`.
+
+### Placement of `todo_web.py`
+
+The file moves (`git mv`) to `todoweb_core.py`; the policy part moves on to
+`todoweb.py`. The web glue from `todo.py` lands in `todoweb.py`: `web_config`,
+the settings and bind-host logic of `WebCommand`, `WEB_OPS` (as `todo.py`
+argv), `_cli_error_text` and `WebUpdater`. `WebOp`/`_web_set_op` go with
+`WEB_OPS`; `_ThreadStream` and `_thread_stream` are deleted, since nothing runs
+`todo.main` in-process any more.
+
+- local core (`todoweb_core.py`): `_debug_enabled` 60, `_debug` 65, `TodoWebError` 75,
+  `run_git` 79, `normalize_todo` 100, `current_state_name` 109
+- removed, replaced by `todo.py read`: `read_todo_at_ref` 119
+- local core (`todoweb_core.py`): `github_repo_url` 134, `repo_origin` 150,
+  `load_child_ticket` 158, `commit_message` 176, `diff_unified` 184, `_raw_field` 197,
+  `_summary_text` 205, `_body_text` 209, `_state_text` 213, `_state_meta` 217,
+  `_workitems_view` 227, `_notes_view` 268, `_subtodos_view` 291, `_objids_within` 315,
+  `_first_objid` 330, `_objid_badge` 338, `_holds` 351, `_section_attrs` 364, `_clamped` 388,
+  `_local_relto_objid` 405, `_relto_view` 422, `_relto_chips_html` 467, `_box_attrs` 499,
+  `_tile_controls` 518, `_wi_box` 524, `_note_box` 583, `_st_box` 606, `_parents_view` 629,
+  `_parent_box` 659, `_parents_html` 684, `_size_hint` 718, `_section` 723, `_edit_registry`
+  786, `_move_key` 835, `_move_button` 839, `_note_edit_key` 850, `_item_edit_key` 854,
+  `_edit_button` 858, `_md_field_html` 865, `_meta_html` 900, `_state_section_html` 947,
+  `_sections_html` 995, `_static_repr_html` 1126, `_page_data` 1140, `_embed_json` 1218,
+  `render_todo_page` 1731, `render_search_page` 1820, `_focusable_objids` 1851,
+  `resolve_focus` 1874
+- policy (`todoweb.py`): `default_bind_host` 1904, `is_loopback_client` 1909,
+  `UpdateRefused` 1925, `Updater` 1933, `request_refusal` 1943, `handle_update` 1968
+- local core (`todoweb_core.py`): `_DualStackServer` 2003
+- policy (`todoweb.py`): `serve` 2020
+- local core (`todoweb_core.py`), new: `TodoCli`, the `todo.py` child-process
+  client every read and save goes through (`run`, `check`, `read`, `basedir`,
+  `records`, `ls_rows`, `search_rows`, `reader`), `todo_row`, `listed_ids`,
+  `cli_error_text`, `git_toplevel` and `read_config_key`. The rendering
+  functions take an optional `reader` for the subtodo and parent boxes instead
+  of reading branch `TODO.json` through git.
+
+### todoweb store access
+
+Every todoweb read and save, and the `todo.py` command it runs (child process,
+same cwd and environment, `sys.executable` on the sibling `todo.py`):
+
+| todoweb needs | `todo.py` command | notes |
+|---|---|---|
+| Header label (the store directory) | `basedir` | |
+| `web` settings from `config.json` | `basedir`, then read `<basedir>/config.json` | the viewer's own settings key, not a record |
+| Initial todo for `todoweb <selector>` | `read -- <selector>` | the record's `Id` |
+| Todo page and permalink `/<id>[/path]` | `read -- <id>` | refusal text becomes the page error |
+| Subtodo and parent boxes | `read -- <Id>` per entry, once per page | the `Subtodos`/`Parent` snapshot when the read is refused |
+| Search page, empty query (every todo) | `ls --states=ALL`, then `export-to-file --basedir <tmp> ALL` | `ls` gives the order, the export the full records; the export goes to a temp dir that is removed |
+| Search page, a query | `search -- <terms>`, then `export-to-file --basedir <tmp> ALL` | the CLI's ranking and default state filter |
+| Save: resolve the todo | `read -- <id>` | refusal text verbatim |
+| Save: `set-summary`, `set-body`, `set-ac`, `set-long-summary`, `set-actual-summary` | `set --<field>=<value> -- <id>` | |
+| Save: `note-replace` | `note-replace --raw=<value> -- <id> <target>` | |
+| Save: `work-item-replace` | `work-item-replace --summary=<value> -- <id> <target>` | |
+| Save: `work-item-reorder` | `work-item-reorder -- <id> <target> <dst>` | |
+
+A save that exits 75 answers 503 (retryable); any other non-zero exit answers
+400 with the command's stderr minus its `todo.py: ` prefix; a child that
+cannot be started at all answers 500. Saves are serialized in the todoweb
+process. Saves are refused in legacy `TODO_USE_JSON=1` mode, read from the
+environment. Autocommit and autopush are the CLI's own, since the save is a
+`todo.py` command. todoweb's own refusals print `todoweb: <text>` and exit 1.
+
+### Test-suite layout
+
+Test files stay flat in this directory. `run-tests.py --suite NAME` (`core`,
+`todo`, `todoweb`, repeatable) runs one suite, `--list` shows which suite and
+surface each file is in, and no `--suite` runs all three. Each suite runs alone
+and passes alone.
+
+- **core** (common core): `test_todo_db.py`, `test_todo_migrate.py`,
+  `test_todo_objid.py`, `test_todo_ref.py`, `test_todo_url.py`,
+  `test_todo_embed.py`, `test_todo_embed_apple.py`, `test_git_command.py`,
+  `test_todo_tiering.py`, `test_todo_common.py` (the unit tests that call the
+  common core directly), and `test_import_graph.py`, which pins the layer
+  graph: no common-core module imports a front end or a local core; a local
+  core imports no front end and not the other local core, and has no argparse,
+  print to stdout or `sys.exit`; neither front end reaches the other; and
+  nothing `todoweb.py` imports, at any depth, is `todo`, `todo_ops`,
+  `todo_common`, `todo_store` or `todo_db`.
+- **todo** (policy and local core): `test_todo.py`, `test_todo_all_sentinel.py`,
+  `test_todo_search.py`, `test_todo_search_idf.py`, `test_todo_tag.py`,
+  `test_todo_tag_impl.py`. `WebViewerTests` in `test_todo.py` covers `todo.py
+  web --dump-html`, which now runs todoweb.
+- **todoweb**: `test_todo_web_render.py`, `test_todo_web_permalink.py`,
+  `test_todo_web_bind.py`, `test_todo_web_write.py`, and `test_todoweb_e2e.py`,
+  which starts `todoweb.py` on a free port, fetches a todo page and a
+  permalink, saves one edit, and checks the record and the autocommit against
+  the same `todo.py` command.
+
+`TodoCase` and `TodoIntegrationCase` are CLI harnesses and stay with the todo
+suite. Todoweb tests that need a store use `todoweb_harness.WebStoreCase` (not
+collected): a temp git repo and store per test, seeded by running `todo.py` as
+a child process, and the `TodoCli` todoweb itself would use.
 
 ---
 
