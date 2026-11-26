@@ -16,7 +16,7 @@ Contract this pins (what the implementor must build):
     marker of how far the store's RECORDS have been swept (0 when unset). This
     is distinct from the sqlite table schema_version (which auto-applies on
     connect); it is the O(1) startup-check signal.
-  * todo.migrate_store(store, *, dry_run=False) -> {"scanned": int,
+  * todo_common.migrate_store(store, *, dry_run=False) -> {"scanned": int,
     "migrated": int} -- table migrations (via the store), then sweep every
     record (list_located), migrate_record each, put back the changed ones, and
     set_data_version(SCHEMA_VERSION). dry_run reports counts and writes nothing.
@@ -29,7 +29,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import todo
+import todo_common
 import todo_db
 import todo_store
 import pytest
@@ -84,12 +84,12 @@ class MigrateToLatestEndTest(unittest.TestCase):
     def _run_backend(self, store) -> None:
         self.assertEqual(store.get_data_version(), 0, "fresh store is unversioned")
         self._seed(store)
-        first = todo.migrate_store(store)
+        first = todo_common.migrate_store(store)
         self.assertEqual(first["scanned"], 1)
         self.assertEqual(first["migrated"], 1)
         self._assert_migrated(store)
         # Idempotent: a second sweep migrates nothing.
-        second = todo.migrate_store(store)
+        second = todo_common.migrate_store(store)
         self.assertEqual(second["scanned"], 1)
         self.assertEqual(second["migrated"], 0)
         self._assert_migrated(store)
@@ -106,7 +106,7 @@ class MigrateToLatestEndTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             store = todo_store.JsonDirTodoStore(Path(d) / "storage")
             self._seed(store)
-            report = todo.migrate_store(store, dry_run=True)
+            report = todo_common.migrate_store(store, dry_run=True)
             self.assertEqual(report["migrated"], 1)  # would migrate one
             rec = self._only_record(store)
             self.assertIn("Chunks", rec)  # but the store is untouched

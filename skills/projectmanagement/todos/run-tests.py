@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Timeboxed pytest driver for the todos CLI, selectable by tier and by surface.
+"""Timeboxed pytest driver for the todo tools, selectable by tier, suite and surface.
 
 Plain ``./run-tests.py`` is the fast suite: every test except the ``e2e`` tier,
 which is the only tier that starts a fresh CLI and a fresh store per test.
@@ -9,6 +9,7 @@ which is the only tier that starts a fresh CLI and a fresh store per test.
   ./run-tests.py                     fast: unit + integration, all surfaces
   ./run-tests.py --all               everything, including e2e
   ./run-tests.py --tier e2e          one tier
+  ./run-tests.py --suite core        one suite: core, todo or todoweb (see --list)
   ./run-tests.py --surface web       one surface (see --list)
   ./run-tests.py --surface store -k redirect -vv   unknown args go to pytest
 
@@ -42,9 +43,9 @@ HERE = Path(__file__).resolve().parent
 # Surface area, an axis orthogonal to tier: which part of the tool a file covers.
 SURFACES: dict[str, tuple[str, ...]] = {
     "store": ("test_todo_db.py", "test_todo_migrate.py"),
-    "objid": ("test_todo_objid.py", "test_todo_ref.py"),
+    "objid": ("test_todo_objid.py", "test_todo_ref.py", "test_todo_url.py"),
+    "common": ("test_todo_common.py",),
     "web": (
-        "test_todo_url.py",
         "test_todo_web_bind.py",
         "test_todo_web_permalink.py",
         "test_todo_web_render.py",
@@ -56,6 +57,15 @@ SURFACES: dict[str, tuple[str, ...]] = {
     "cli": ("test_todo.py", "test_todo_all_sentinel.py"),
     "git": ("test_git_command.py",),
     "meta": ("test_todo_tiering.py", "test_import_graph.py"),
+}
+
+# One suite per piece of the layered tool (IMPLEMENTATION.md, "Code layout"),
+# each a set of surfaces: the common core, the todo CLI (its policy and local
+# core), and the todoweb viewer.
+SUITES: dict[str, tuple[str, ...]] = {
+    "core": ("store", "objid", "common", "embed", "git", "meta"),
+    "todo": ("cli", "search", "tag"),
+    "todoweb": ("web",),
 }
 
 FAST_TIMEOUT = 60.0
@@ -154,6 +164,18 @@ def _files_by_surface() -> dict[str, str]:
     return by_file
 
 
+def _suite_surfaces(suites: list[str]) -> list[str]:
+    """The surfaces of *suites*, refusing to run if a surface is in no suite or in two."""
+    owners: dict[str, list[str]] = {surface: [] for surface in SURFACES}
+    for suite, surfaces in SUITES.items():
+        for surface in surfaces:
+            owners.setdefault(surface, []).append(suite)
+    wrong = sorted(s for s, o in owners.items() if len(o) != 1 or s not in SURFACES)
+    if wrong:
+        sys.exit("run-tests: each surface must be in exactly one SUITES entry: " + ", ".join(wrong))
+    return [surface for suite in suites for surface in SUITES[suite]]
+
+
 def _surface_files(surfaces: list[str]) -> list[str]:
     by_file = _files_by_surface()
     if not surfaces:
@@ -195,21 +217,29 @@ def main() -> int:
         "--surface", action="append", default=[], metavar="NAME",
         help=f"run one surface only (repeatable): {', '.join(sorted(SURFACES))}",
     )
-    parser.add_argument("--list", action="store_true", help="print the surface map and exit")
+    parser.add_argument(
+        "--suite", action="append", default=[], metavar="NAME", choices=sorted(SUITES),
+        help=f"run one suite only (repeatable): {', '.join(sorted(SUITES))}",
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="print the suite and surface map and exit"
+    )
     parser.add_argument(
         "--no-ramdisk", action="store_true",
         help="keep $TMPDIR on disk instead of a memory-backed directory",
     )
     args, pytest_args = parser.parse_known_args()
 
+    suite_of = {s: suite for suite, surfaces in SUITES.items() for s in surfaces}
     if args.list:
         for surface in sorted(SURFACES):
             for name in SURFACES[surface]:
-                print(f"{surface:8} {name}")
+                print(f"{suite_of.get(surface, '?'):8} {surface:8} {name}")
         return 0
 
     _files_by_surface()  # fail fast on an unclassified file, whatever the selection
-    files = _surface_files(args.surface)
+    surfaces = _suite_surfaces(args.suite) + args.surface
+    files = _surface_files(surfaces)
     expression = _marker_expression(args.tier, args.all)
     selection = ["-m", expression] if expression else []
 
