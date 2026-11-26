@@ -27,6 +27,8 @@ todoweb.py's.
 """
 
 # pylint: disable=too-many-lines
+# todo_row mirrors todo_common.todo_row, which todoweb may not import.
+# pylint: disable=duplicate-code
 
 from __future__ import annotations
 

@@ -16,6 +16,8 @@ Run with:
 
 # Test names state the intent, and the private helpers are the units under test.
 # pylint: disable=missing-function-docstring,protected-access
+# Fixtures repeat test_todo.py's on purpose, so each file reads on its own.
+# pylint: disable=duplicate-code
 
 from __future__ import annotations
 
