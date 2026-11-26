@@ -269,7 +269,7 @@ default. `host` spellings: [Notes and relto](#notes-and-relto).
 | `clear-search-data <selector>\|ALL` | Drop derived search data: embedding vectors (index + stamped JSON) and, on `ALL`, the discovered stopword list. Re-derived lazily by the next `search`. See [Search ranking](#search-ranking) |
 | `import-json --from-json PATH \| --scan-refs` | Import legacy JSON into the store |
 | `export-to-file <ids...>\|ALL [--remove[{=soft\|hard}]]` | Export round-trippable JSON under `<basedir>/storage/` |
-| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Serve viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-web) |
+| `web [selector] [--loopback L] [--public P] [--host] [--port] [--dump-html]` | Runs `todoweb.py` with the same options and returns its exit status: serves the viewer + permalinks on port 8765. `--loopback` (default `read`) and `--public` (default `none`) each take `none`, `read` or `write` for loopback and for all other clients; both `none` refuses to start. Binds `localhost` when public is `none`, else `::` (every interface, IPv4 and IPv6); `--host` overrides. Every option defaults from the `web` object of `config.json`. See [Web access and edits](#web-access-and-edits-todoweb) |
 
 ### STUB (not automation)
 
@@ -642,7 +642,7 @@ Emit objid links, not positional prose:
 http://localhost:8765/<todoid>/objid/<objid>
 ```
 
-Path grammar (served by `todo.py web`; CLI: `resolveurl`):
+Path grammar (served by `todoweb.py`; CLI: `resolveurl`):
 
 | Form | Means |
 |------|-------|
@@ -670,7 +670,7 @@ content -- `work-item-insert`, `-delete`, and `-reorder` all shift later items,
 so `/workitem/1` silently comes to mean a different item, while an objid keeps
 naming the same one ([addressing](#addressing-one-work-item)).
 
-`todo.py web` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
+`todoweb.py` serves a permalink **in place**: `GET /<todoid>/<path...>` renders
 the whole todo, scrolled to and focused on the resolved object. No redirect --
 the path IS the resource. Resolution is entirely server-side, which is why the
 grammar can use prefixes. Degrading is deliberate rather than fatal:
@@ -698,7 +698,11 @@ the same page.
 Clicking a box rewrites the address bar to `/<todoid>/objid/<objid>`
 (`replaceState`), so whatever is on screen is already a copyable permalink.
 
-### Web access and edits (`web`)
+### Web access and edits (`todoweb`)
+
+The viewer is `todoweb.py`, its own executable; `todo.py web` takes the same
+options and runs it. Every read and every save goes through `todo.py` run as a
+child process (see [todoweb store access](#todoweb-store-access)).
 
 Two settings decide who may do what. Each is `none`, `read` or `write`:
 
@@ -714,8 +718,8 @@ Two settings decide who may do what. Each is `none`, `read` or `write`:
 | `write` | served | accepted | rendered |
 
 The class is the TCP peer address of each request, never the `Host` header.
-Both settings `none` leaves nothing to serve, so the command exits nonzero
-before binding a socket. The default bind host is `localhost` when public is
+Both settings `none` leaves nothing to serve, so todoweb exits 1 before
+binding a socket. The default bind host is `localhost` when public is
 `none` and `::` otherwise; an explicit `--host` (or config `host`) wins, and a
 non-loopback host under `public=none` still refuses non-loopback clients. Start
 prints one line, `todo web: <url>  loopback=<level>  public=<level>`.
@@ -764,8 +768,8 @@ Every edit is `POST /update` with a JSON body:
 | `work-item-replace` | `objid:<hex>` | the item's new summary |
 | `work-item-reorder` | `objid:<hex>` | the destination index |
 
-The server runs the matching CLI command in-process, so its validation and
-refusals are the CLI's own. Saves are last-write-wins: a save applies whatever
+The server runs the matching `todo.py` command as a child process, so its
+validation, refusals and autocommit are the CLI's own. Saves are last-write-wins: a save applies whatever
 the page sent, even when the todo changed since the page loaded.
 
 | Status | Means | Body |
@@ -914,6 +918,7 @@ Modules per layer:
 - `todo.py web` keeps its parser and help unchanged and runs `todoweb.py` as a
   child process with the same options rebuilt from the parsed arguments,
   returning its exit code; `main`'s invocation logging still records it.
+  todoweb's own refusals print `todoweb: <text>`.
 
 Dependency notes that shape the move:
 
@@ -1106,8 +1111,11 @@ argv), `_cli_error_text` and `WebUpdater`. `WebOp`/`_web_set_op` go with
 - local core (`todoweb_core.py`): `_DualStackServer` 2003
 - policy (`todoweb.py`): `serve` 2020
 - local core (`todoweb_core.py`), new: `TodoCli`, the `todo.py` child-process
-  client every read and save goes through (`read`, `basedir`, `ls_rows`,
-  `search_rows`, `run`).
+  client every read and save goes through (`run`, `check`, `read`, `basedir`,
+  `records`, `ls_rows`, `search_rows`, `reader`), `todo_row`, `listed_ids`,
+  `cli_error_text`, `git_toplevel` and `read_config_key`. The rendering
+  functions take an optional `reader` for the subtodo and parent boxes instead
+  of reading branch `TODO.json` through git.
 
 ### todoweb store access
 
@@ -1118,51 +1126,55 @@ same cwd and environment, `sys.executable` on the sibling `todo.py`):
 |---|---|---|
 | Header label (the store directory) | `basedir` | |
 | `web` settings from `config.json` | `basedir`, then read `<basedir>/config.json` | the viewer's own settings key, not a record |
-| Initial todo for `todoweb <selector>` | `read <selector>` | the record's `Id` |
-| Todo page and permalink `/<id>[/path]` | `read <id>` | refusal text becomes the page error |
-| Subtodo and parent boxes | `read <Id>` per entry | the `Subtodos`/`Parent` snapshot when the read is refused |
-| Search page, empty query (every todo) | `ls -tu -s` | all states; rows sort by update time; a row links by its 8-char id |
-| Search page, a query | `search -tu <terms>`, state joined from `ls -tu -s` | the CLI's ranking and default state filter |
-| Save: resolve the todo | `read <id>` | refusal text verbatim |
+| Initial todo for `todoweb <selector>` | `read -- <selector>` | the record's `Id` |
+| Todo page and permalink `/<id>[/path]` | `read -- <id>` | refusal text becomes the page error |
+| Subtodo and parent boxes | `read -- <Id>` per entry, once per page | the `Subtodos`/`Parent` snapshot when the read is refused |
+| Search page, empty query (every todo) | `ls --states=ALL`, then `export-to-file --basedir <tmp> ALL` | `ls` gives the order, the export the full records; the export goes to a temp dir that is removed |
+| Search page, a query | `search -- <terms>`, then `export-to-file --basedir <tmp> ALL` | the CLI's ranking and default state filter |
+| Save: resolve the todo | `read -- <id>` | refusal text verbatim |
 | Save: `set-summary`, `set-body`, `set-ac`, `set-long-summary`, `set-actual-summary` | `set --<field>=<value> -- <id>` | |
 | Save: `note-replace` | `note-replace --raw=<value> -- <id> <target>` | |
 | Save: `work-item-replace` | `work-item-replace --summary=<value> -- <id> <target>` | |
 | Save: `work-item-reorder` | `work-item-reorder -- <id> <target> <dst>` | |
 
 A save that exits 75 answers 503 (retryable); any other non-zero exit answers
-400 with the command's stderr minus its `todo.py: ` prefix. Saves are
-serialized in the todoweb process. Saves are refused in legacy `TODO_USE_JSON=1`
-mode, read from the environment. Autocommit and autopush are the CLI's own,
-since the save is a `todo.py` command.
+400 with the command's stderr minus its `todo.py: ` prefix; a child that
+cannot be started at all answers 500. Saves are serialized in the todoweb
+process. Saves are refused in legacy `TODO_USE_JSON=1` mode, read from the
+environment. Autocommit and autopush are the CLI's own, since the save is a
+`todo.py` command. todoweb's own refusals print `todoweb: <text>` and exit 1.
 
 ### Test-suite layout
 
-Test files stay flat in this directory. `run-tests.py` gains `--suite`
-(`core`, `todo`, `todoweb`, repeatable) alongside `--surface`; no `--suite`
-runs all three. Each suite runs alone and passes alone.
+Test files stay flat in this directory. `run-tests.py --suite NAME` (`core`,
+`todo`, `todoweb`, repeatable) runs one suite, `--list` shows which suite and
+surface each file is in, and no `--suite` runs all three. Each suite runs alone
+and passes alone.
 
 - **core** (common core): `test_todo_db.py`, `test_todo_migrate.py`,
   `test_todo_objid.py`, `test_todo_ref.py`, `test_todo_url.py`,
   `test_todo_embed.py`, `test_todo_embed_apple.py`, `test_git_command.py`,
-  `test_todo_tiering.py`, a new `test_todo_common.py` holding the classes of
-  `test_todo.py` and `test_todo_tag_impl.py` that call common-core functions
-  directly, and a new `test_import_graph.py` asserting the layer graph: no
-  common-core module imports `todo`, `todo_ops` or a todoweb module;
-  `todo_ops` imports neither `todo` nor a todoweb module and has no argparse,
-  print to stdout or `sys.exit`; `todoweb.py` and `todoweb_core.py` import
-  none of `todo`, `todo_ops`, `todo_common`, `todo_store`, `todo_db`.
+  `test_todo_tiering.py`, `test_todo_common.py` (the unit tests that call the
+  common core directly), and `test_import_graph.py`, which pins the layer
+  graph: no common-core module imports a front end or a local core; a local
+  core imports no front end and not the other local core, and has no argparse,
+  print to stdout or `sys.exit`; neither front end reaches the other; and
+  nothing `todoweb.py` imports, at any depth, is `todo`, `todo_ops`,
+  `todo_common`, `todo_store` or `todo_db`.
 - **todo** (policy and local core): `test_todo.py`, `test_todo_all_sentinel.py`,
   `test_todo_search.py`, `test_todo_search_idf.py`, `test_todo_tag.py`,
-  `test_todo_tag_impl.py`.
+  `test_todo_tag_impl.py`. `WebViewerTests` in `test_todo.py` covers `todo.py
+  web --dump-html`, which now runs todoweb.
 - **todoweb**: `test_todo_web_render.py`, `test_todo_web_permalink.py`,
-  `test_todo_web_bind.py`, `test_todo_web_write.py`, `WebViewerTests` moved out
-  of `test_todo.py`, and a new `test_todoweb_e2e.py` that starts `todoweb.py` on
-  a free port, fetches a todo page and a permalink, saves one edit, and checks
-  the record and the autocommit against the same `todo.py` command.
+  `test_todo_web_bind.py`, `test_todo_web_write.py`, and `test_todoweb_e2e.py`,
+  which starts `todoweb.py` on a free port, fetches a todo page and a
+  permalink, saves one edit, and checks the record and the autocommit against
+  the same `todo.py` command.
 
 `TodoCase` and `TodoIntegrationCase` are CLI harnesses and stay with the todo
-suite. Todoweb tests get their own fixture (`todoweb_harness.py`, not collected):
-a temp git repo and store, seeded by running `todo.py` as a child process.
+suite. Todoweb tests that need a store use `todoweb_harness.WebStoreCase` (not
+collected): a temp git repo and store per test, seeded by running `todo.py` as
+a child process, and the `TodoCli` todoweb itself would use.
 
 ---
 

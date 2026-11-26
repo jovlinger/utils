@@ -96,6 +96,22 @@ Authoritative finish, child integration, and worktree teardown:
 [`WORKING.md`](WORKING.md). Full command table:
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md#cli-implemented-commands).
 
+## Code layout (compact)
+
+Two front ends over one common core, each built as layers that call only
+inward (arg parse -> policy -> local core -> common core):
+
+- `todo.py` -- the CLI this skill calls (arg parse + policy), over its local
+  core `todo_ops.py`.
+- `todoweb.py` -- the viewer and permalink server (arg parse + policy), over its
+  local core `todoweb_core.py`. It reads and saves only by running `todo.py` as
+  a child process. Start it directly (`todoweb.py [selector] --loopback write`)
+  or through `todo.py web`, which takes the same options and runs it.
+- Common core: `todo_common.py` plus `todo_store`, `todo_db`, `todo_objid`,
+  `todo_ref`, `todo_url`, `todo_search`, `todo_embed`, `git_command`.
+
+Details: [`IMPLEMENTATION.md`](IMPLEMENTATION.md#code-layout-layers-and-front-ends).
+
 ## Domain model (compact)
 
 - **`gitroot`:** current working tree (`git rev-parse --show-toplevel`) -- git ops.
