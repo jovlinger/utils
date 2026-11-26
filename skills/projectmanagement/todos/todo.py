@@ -136,7 +136,6 @@ from todo_ops import (
     worktree_path_for_branch,
 )
 
-
 # Uppercase macros usable in a --states expression (see parse_state_filter). They
 # expand to state sets, so a token is unambiguously a macro (UPPERCASE) or a state
 # name (lowercase). FINAL is the terminated set hidden by default.
@@ -269,7 +268,11 @@ def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[
     body = initial if not initial or initial.endswith("\n") else initial + "\n"
     written = header.rstrip("\n") + "\n\n" + body
     handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".todoedit", prefix=f"{prefix}-", delete=False, encoding="utf-8"
+        mode="w",
+        suffix=".todoedit",
+        prefix=f"{prefix}-",
+        delete=False,
+        encoding="utf-8",
     )
     try:
         handle.write(written)
@@ -279,7 +282,9 @@ def edit_text_via_editor(initial: str, *, prefix: str, header: str) -> Optional[
         except OSError as exc:
             raise TodoError(f"could not run editor {editor!r}: {exc}") from exc
         if status != 0:
-            raise TodoError(f"editor {editor!r} exited with status {status}; nothing written")
+            raise TodoError(
+                f"editor {editor!r} exited with status {status}; nothing written"
+            )
         with open(handle.name, encoding="utf-8") as fh:
             edited = fh.read()
         return None if edited == written else strip_leading_html_comments(edited)
@@ -609,7 +614,9 @@ def workitem_findings(todo: JsonDict) -> List[str]:
             # For both of these the reason is the item's whole content: without
             # it the trail says a step stopped and nothing about why, which is
             # what deleting it would have said.
-            if not (isinstance(item.get("message"), str) and item.get("message").strip()):
+            if not (
+                isinstance(item.get("message"), str) and item.get("message").strip()
+            ):
                 findings.append(
                     f"WorkItems.{index} {k} item is missing a message; why a step was "
                     "closed without a commit IS the record"
@@ -737,7 +744,9 @@ def relto_findings(todo: JsonDict) -> List[str]:
                 findings.append(f"{label} has unexpected fields: {', '.join(extra)}")
             rel_type = element.get("type")
             if rel_type not in todo_ref.RELATION_TYPES:
-                findings.append(f"{label}.type {rel_type!r} is not a known relation type")
+                findings.append(
+                    f"{label}.type {rel_type!r} is not a known relation type"
+                )
             try:
                 parsed = todo_ref.parse_target(element.get("target"))
             except todo_ref.TodoRefError as exc:
@@ -824,7 +833,8 @@ def doctor_findings(root: Path, selector: str) -> List[str]:
     # that disagrees with its Body is not a defect the tool can judge.
     long_summary = todo.get("LongSummary")
     if long_summary is not None and (
-        not isinstance(long_summary, dict) or not isinstance(long_summary.get("raw"), str)
+        not isinstance(long_summary, dict)
+        or not isinstance(long_summary.get("raw"), str)
     ):
         findings.append("LongSummary.raw must be a string")
     tags = todo.get("Tags")
@@ -892,7 +902,9 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                 try:
                     resolve_ticket_by_id(root, child_id[:8])
                 except TodoError:
-                    warnings.append(f"Subtodos.{index}.Id {child_id[:8]} not discoverable here")
+                    warnings.append(
+                        f"Subtodos.{index}.Id {child_id[:8]} not discoverable here"
+                    )
     for path, node in todo_objid.iter_objects(todo):
         if not _RELTO_HOST_RE.match(path):
             continue
@@ -913,7 +925,9 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
                 continue
             if parsed.is_remote:
                 try:
-                    todo_ref.resolve_local(other, todo_ref.OBJID_SCHEME + parsed.objid_prefix)
+                    todo_ref.resolve_local(
+                        other, todo_ref.OBJID_SCHEME + parsed.objid_prefix
+                    )
                 except todo_ref.TodoRefError as exc:
                     warnings.append(f"{label}: {exc}")
     items = todo.get("WorkItems") or []
@@ -925,16 +939,21 @@ def doctor_warnings(root: Path, selector: str) -> List[str]:
             if (
                 isinstance(sha, str)
                 and sha
-                and sha != WORKITEM_NULL_SHA  # explicit no-change sentinel, never resolvable
+                and sha
+                != WORKITEM_NULL_SHA  # explicit no-change sentinel, never resolvable
                 and not commit_exists(root, sha)
             ):
-                warnings.append(f"WorkItems.{index}.sha {sha[:8]} not found in this repo")
+                warnings.append(
+                    f"WorkItems.{index}.sha {sha[:8]} not found in this repo"
+                )
             sub = item.get("subtodo_id")
             if isinstance(sub, str) and sub:
                 try:
                     resolve_ticket_by_id(root, sub[:8])
                 except TodoError:
-                    warnings.append(f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here")
+                    warnings.append(
+                        f"WorkItems.{index}.subtodo_id {sub[:8]} not discoverable here"
+                    )
     # Surface unmerged subtodos while the parent is still open; once the parent
     # is done/merged this escalates to a hard finding (see doctor_findings).
     if current_state_name(todo) not in TERMINAL_PARENT_STATES:
@@ -968,7 +987,9 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
             continue
         for child_selector in wait_for:
             if not isinstance(child_selector, str):
-                findings.append(f"WorkItems.{index}.execution.wait_for entries must be strings")
+                findings.append(
+                    f"WorkItems.{index}.execution.wait_for entries must be strings"
+                )
                 continue
             if ticket_id and id_matches(ticket_id, child_selector):
                 findings.append(f"WorkItems.{index} waits on itself")
@@ -976,7 +997,9 @@ def wait_graph_findings(root: Path, todo: JsonDict) -> List[str]:
             try:
                 resolve_ticket_by_id(root, child_selector)
             except TodoError as exc:
-                findings.append(f"WorkItems.{index} wait target not discoverable: {exc}")
+                findings.append(
+                    f"WorkItems.{index} wait target not discoverable: {exc}"
+                )
                 continue
             wait_targets.append(child_selector)
     findings.extend(wait_cycle_findings(root, ticket_id, wait_targets))
@@ -1018,7 +1041,9 @@ def wait_cycle_findings(root: Path, root_id: str, targets: Sequence[str]) -> Lis
         child_id = str(child.get("Id") or selector)
         if child_id in stack:
             cycle = stack[stack.index(child_id) :] + [child_id]
-            findings.append("wait dependency cycle: " + " -> ".join(item[:8] for item in cycle))
+            findings.append(
+                "wait dependency cycle: " + " -> ".join(item[:8] for item in cycle)
+            )
             return
         if child_id in visited:
             return
@@ -1312,7 +1337,9 @@ class ReadCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "-v",
             "--verbose",
@@ -1346,8 +1373,12 @@ class GetJsonPathCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
+        parser.add_argument(
+            "jsonpath", help="dot path, e.g. Body.raw or WorkItems.0.summary"
+        )
 
     def do(self) -> int:
         """Print a selected path value."""
@@ -1425,17 +1456,23 @@ class GetCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register get arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--summary", action="store_true", help="print Summary.raw")
         parser.add_argument("--body", action="store_true", help="print Body.raw")
         parser.add_argument("--ac", action="store_true", help="print AC")
         parser.add_argument("--state", action="store_true", help="print State")
         parser.add_argument(
-            "--actual-summary", dest="actual_summary", action="store_true",
+            "--actual-summary",
+            dest="actual_summary",
+            action="store_true",
             help="print ActualSummary",
         )
         parser.add_argument(
-            "--long-summary", dest="long_summary", action="store_true",
+            "--long-summary",
+            dest="long_summary",
+            action="store_true",
             help="print LongSummary.raw",
         )
         parser.add_argument("--parent", action="store_true", help="print Parent")
@@ -1488,8 +1525,13 @@ class InitCommand(TodoCreateCommand):
         )
         parser.add_argument("--branch", help="override Branch name")
         parser.add_argument("--path-from-root", help="Scope.path_from_root")
-        parser.add_argument("--agent-type", help="agent type that created this todo (e.g. claude, cursor)")
-        parser.add_argument("--session-id", help="agent session id that created this todo")
+        parser.add_argument(
+            "--agent-type",
+            help="agent type that created this todo (e.g. claude, cursor)",
+        )
+        parser.add_argument(
+            "--session-id", help="agent session id that created this todo"
+        )
         parser.add_argument("--no-commit", action="store_true", help="skip git commit")
         parser.add_argument(
             "--stay-on-parent",
@@ -1507,7 +1549,9 @@ class InitCommand(TodoCreateCommand):
         """
         root = self.root()
         if read_todo_worktree(root) is not None:
-            raise TodoError("todo already exists on current branch; resume it instead of init")
+            raise TodoError(
+                "todo already exists on current branch; resume it instead of init"
+            )
 
         # PROMOTE mode: --id names an existing (groom) record -> give it a
         # branch and move it to `init`, reusing the Branch `set` finalized.
@@ -1516,7 +1560,9 @@ class InitCommand(TodoCreateCommand):
             if existing:
                 if len(existing) > 1:
                     locations = ", ".join(loc for loc, _ in existing)
-                    raise TodoError(f"ambiguous id {self.id!r}; matches on: {locations}")
+                    raise TodoError(
+                        f"ambiguous id {self.id!r}; matches on: {locations}"
+                    )
                 return self._promote(root, existing[0][1])
 
         return self._create_fresh(root)
@@ -1621,7 +1667,9 @@ class EnsureWorktreeCommand(SubtodoCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register ensure_worktree arguments."""
-        parser.add_argument("todoid", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "todoid", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "--init",
             action="store_true",
@@ -1637,7 +1685,9 @@ class EnsureWorktreeCommand(SubtodoCommand):
         """Create or reuse the linked worktree for the todo's branch."""
         root = self.root()
         if self.init and read_todo_worktree(root) is not None:
-            raise TodoError("todo already exists on current branch; resume it instead of init")
+            raise TodoError(
+                "todo already exists on current branch; resume it instead of init"
+            )
         _loc, todo = resolve_ticket_by_id(root, self.todoid)
         inited = False
         if self.init:
@@ -1676,7 +1726,9 @@ class AddSubtodoCommand(SubtodoMergeCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register add-subtodo arguments."""
-        parser.add_argument("parent", help="parent todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "parent", help="parent todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--from-json", help="seed todo JSON (Id, Branch, fields)")
         parser.add_argument("--summary", help="Summary.raw when not using --from-json")
         parser.add_argument("--body", default="", help="Body.raw")
@@ -1721,7 +1773,9 @@ class AddSubtodoCommand(SubtodoMergeCommand):
         if not child_id:
             raise TodoError("child ticket must include Id")
         raw_summary = child_spec.get("Summary", {}).get("raw", "child")
-        child_branch = str(child_spec.get("Branch") or kebab_branch_name(child_id, raw_summary))
+        child_branch = str(
+            child_spec.get("Branch") or kebab_branch_name(child_id, raw_summary)
+        )
         child_spec["Branch"] = child_branch
         child_spec["Parent"] = [{"Id": parent["Id"], "Branch": parent_branch}]
         scope = dict(child_spec.get("Scope") or {})
@@ -1756,12 +1810,17 @@ class AddSubtodoCommand(SubtodoMergeCommand):
         # start_subtodo done item and advances the cursor (invariants #1, #3).
         index = mark_cursor_done(parent, start_subtodo_workitem(child_id, summary=""))
         if not parent["WorkItems"][index].get("summary"):
-            parent["WorkItems"][index]["summary"] = (
-                f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
-            )
+            parent["WorkItems"][index][
+                "summary"
+            ] = f"start subtodo {child_id[:8]}: {_summary_snippet(raw_summary)}"
         write_todo_worktree(root, parent)
 
-        print(json.dumps({"Id": child_id, "Branch": child_branch, "Parent": parent_branch}, indent=2))
+        print(
+            json.dumps(
+                {"Id": child_id, "Branch": child_branch, "Parent": parent_branch},
+                indent=2,
+            )
+        )
         return 0
 
 
@@ -1873,7 +1932,11 @@ class SetCommand(TodoFieldCommand):
             assert_todo_worktree_removable(root, str(todo.get("Branch") or ""))
         write_todo_worktree(root, todo, no_clear=self.no_clear)
         if not self.no_commit:
-            message = f"chore(todo): state -> {state}" if state else "chore(todo): update ticket fields"
+            message = (
+                f"chore(todo): state -> {state}"
+                if state
+                else "chore(todo): update ticket fields"
+            )
             commit_todo(root, message)
         teardown_worktree_for_terminal_state(root, todo, state=state)
         if state:
@@ -1943,7 +2006,9 @@ class EditCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register edit arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "target",
             help="dot path (e.g. Body, Summary, AC, Notes.0) or objid:<hex> of a note or "
@@ -1957,7 +2022,9 @@ class EditCommand(TodoFieldCommand):
         _, todo = resolve_ticket_by_id(root, self.selector)
         path = resolve_edit_target(todo, self.target)
         if not _stdio_is_interactive():
-            raise EditNotInteractive("edit requires an interactive terminal; nothing written")
+            raise EditNotInteractive(
+                "edit requires an interactive terminal; nothing written"
+            )
         current: str = get_at_path(todo, path)
         short_id = str(todo.get("Id", ""))[:8]
         what = path if self.target == path else f"{self.target} ({path})"
@@ -2034,7 +2101,9 @@ class TagAddCommand(TagCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tag-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to add")
         parser.add_argument("--no-commit", action="store_true")
 
@@ -2063,7 +2132,9 @@ class TagRmCommand(TagCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register tag-rm arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("tags", nargs="+", metavar="TAG", help="tag(s) to remove")
         parser.add_argument("--no-commit", action="store_true")
 
@@ -2118,7 +2189,8 @@ class TagClearCommand(TagCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             targets = [
-                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                (repo, t)
+                for repo, _branch, t in todo_store.get_store().list_located()
                 if t.get("Id")
             ]
         else:
@@ -2193,7 +2265,8 @@ class ClearSearchDataCommand(StoreMaintenanceCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             targets = [
-                (repo, t) for repo, _branch, t in todo_store.get_store().list_located()
+                (repo, t)
+                for repo, _branch, t in todo_store.get_store().list_located()
                 if t.get("Id")
             ]
         else:
@@ -2253,7 +2326,9 @@ class WorkItemAddCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -2262,11 +2337,15 @@ class WorkItemAddCommand(WorkItemEditCommand):
         root = self.root()
         _, todo = resolve_ticket_by_id(root, self.selector)
         work_items: List[JsonDict] = list(todo.get("WorkItems") or [])
-        work_items.append({"kind": WORKITEM_TASK, "summary": self.summary, "done": False})
+        work_items.append(
+            {"kind": WORKITEM_TASK, "summary": self.summary, "done": False}
+        )
         todo["WorkItems"] = work_items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): add work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root, f"chore(todo): add work item: {_summary_snippet(self.summary)}"
+            )
         return 0
 
 
@@ -2293,10 +2372,21 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-done arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
-        parser.add_argument("-m", "--message", help="commit message for a dirty tree (defaults to the work item summary)")
-        parser.add_argument("--sha", help="commit sha (full, or a 4+ char prefix) for a clean tree; must name HEAD")
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
+        parser.add_argument(
+            "-m",
+            "--message",
+            help="commit message for a dirty tree (defaults to the work item summary)",
+        )
+        parser.add_argument(
+            "--sha",
+            help="commit sha (full, or a 4+ char prefix) for a clean tree; must name HEAD",
+        )
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         # Migration stubs. Both moved to commands of their own, because a
         # disposition that records no commit has no business being a flag on
         # the command whose whole job is recording one. Kept registered, and
@@ -2341,8 +2431,12 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
         dirty = bool(run_git(root, "status", "--porcelain", check=False).stdout.strip())
         if dirty:
             if self.sha:
-                raise TodoError("--sha is not allowed with a dirty tree; a new commit will be made")
-            message = self.message or self.summary or cursor_summary(todo) or "work-item-done"
+                raise TodoError(
+                    "--sha is not allowed with a dirty tree; a new commit will be made"
+                )
+            message = (
+                self.message or self.summary or cursor_summary(todo) or "work-item-done"
+            )
             run_git(root, "add", "-A")
             run_git(root, "commit", "-m", message)
             sha = head_sha(root)
@@ -2372,14 +2466,24 @@ class WorkItemDoneCommand(WorkItemProgressCommand):
             sha = head
         # Capture the full commit message recorded at `sha` so the WorkItem node itself
         # says what changed (e.g. which test files were added), not just the task summary.
-        commit_message = run_git(root, "log", "-1", "--format=%B", str(sha), check=False).stdout.strip()
-        item = code_workitem(str(sha), summary=self.summary or "", message=commit_message)
+        commit_message = run_git(
+            root, "log", "-1", "--format=%B", str(sha), check=False
+        ).stdout.strip()
+        item = code_workitem(
+            str(sha), summary=self.summary or "", message=commit_message
+        )
         index = mark_cursor_done(todo, item)
         write_todo_worktree(root, todo)
         summary = todo["WorkItems"][index].get("summary", "")
         print(
             json.dumps(
-                {"index": index, "kind": WORKITEM_CODE, "sha": sha, "summary": summary, "message": commit_message},
+                {
+                    "index": index,
+                    "kind": WORKITEM_CODE,
+                    "sha": sha,
+                    "summary": summary,
+                    "message": commit_message,
+                },
                 indent=2,
             )
         )
@@ -2405,7 +2509,9 @@ class WorkItemReadCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
 
     def do(self) -> int:
@@ -2448,7 +2554,9 @@ def _parse_relto_arg(value: str) -> JsonDict:
     does the split.
     """
     if not value:
-        raise TodoError("--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates")
+        raise TodoError(
+            "--relto needs a value, e.g. --relto=objid:0034 or objid:0034:relates"
+        )
     head, sep, suffix = value.rpartition(":")
     if sep and suffix in todo_ref.RELATION_TYPES:
         target, rel_type = head, suffix
@@ -2479,7 +2587,9 @@ class NoteAddCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("--raw", required=True, help="the fact or finding")
         parser.add_argument(
             "--relto",
@@ -2526,7 +2636,9 @@ class NoteReadCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=NOTE_TARGET_HELP)
 
     def do(self) -> int:
@@ -2559,9 +2671,13 @@ class NoteReplaceCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-replace arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
-        parser.add_argument("--raw", required=True, help="the replacement fact or finding")
+        parser.add_argument(
+            "--raw", required=True, help="the replacement fact or finding"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -2578,7 +2694,9 @@ class NoteReplaceCommand(NoteCommand):
         todo["Notes"] = notes
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): replace note: {_summary_snippet(self.raw)}")
+            commit_todo(
+                root, f"chore(todo): replace note: {_summary_snippet(self.raw)}"
+            )
         print(json.dumps({"index": index, "raw": self.raw}, indent=2))
         return 0
 
@@ -2601,7 +2719,9 @@ class NoteDeleteCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register note-delete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", help=NOTE_REQUIRED_TARGET_HELP)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -2619,9 +2739,14 @@ class NoteDeleteCommand(NoteCommand):
         write_todo_worktree(root, todo)
         if not self.no_commit:
             commit_todo(
-                root, f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}"
+                root,
+                f"chore(todo): delete note: {_summary_snippet(removed.get('raw', ''))}",
             )
-        print(json.dumps({"deleted_index": index, "raw": removed.get("raw", "")}, indent=2))
+        print(
+            json.dumps(
+                {"deleted_index": index, "raw": removed.get("raw", "")}, indent=2
+            )
+        )
         return 0
 
 
@@ -2677,9 +2802,13 @@ class RelToAddCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-add arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", help=RELTO_HOST_HELP)
-        parser.add_argument("--target", required=True, help="qualified target, e.g. objid:0034")
+        parser.add_argument(
+            "--target", required=True, help="qualified target, e.g. objid:0034"
+        )
         parser.add_argument(
             "--type",
             default=todo_ref.TYPE_RELATES,
@@ -2723,9 +2852,13 @@ class RelToRemoveCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-remove arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", help=RELTO_HOST_HELP)
-        parser.add_argument("--target", required=True, help="the exact stored target to remove")
+        parser.add_argument(
+            "--target", required=True, help="the exact stored target to remove"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -2736,7 +2869,12 @@ class RelToRemoveCommand(NoteCommand):
         node = get_at_path(todo, path)
         relto: List[JsonDict] = list(node.get("relto") or [])
         index = next(
-            (i for i, element in enumerate(relto) if element.get("target") == self.target), None
+            (
+                i
+                for i, element in enumerate(relto)
+                if element.get("target") == self.target
+            ),
+            None,
         )
         if index is None:
             raise TodoError(f"{path} has no relto entry targeting {self.target!r}")
@@ -2752,14 +2890,18 @@ class RelToRemoveCommand(NoteCommand):
             node.pop("relto", None)
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): relto-remove {path} -> {removed['target']}")
+            commit_todo(
+                root, f"chore(todo): relto-remove {path} -> {removed['target']}"
+            )
         print(json.dumps(removed, indent=2))
         return 0
 
 
 class RelToReadCommand(NoteCommand):
     command_names = ("relto-read",)
-    doc_short: ClassVar[str] = "Read one host's relations, or every relation in the record"
+    doc_short: ClassVar[str] = (
+        "Read one host's relations, or every relation in the record"
+    )
     doc_long: ClassVar[str] = (
         "Relto-read prints the addressed HOST's relto list as JSON when HOST is given, or "
         "every relation anywhere in the record as a JSON list when HOST is omitted. HOST takes "
@@ -2774,7 +2916,9 @@ class RelToReadCommand(NoteCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register relto-read arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("host", nargs="?", help=RELTO_HOST_HELP)
 
     def do(self) -> int:
@@ -2805,7 +2949,9 @@ class WorkItemInsertCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-insert arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
@@ -2832,7 +2978,9 @@ class WorkItemInsertCommand(WorkItemEditCommand):
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): insert work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root, f"chore(todo): insert work item: {_summary_snippet(self.summary)}"
+            )
         print(json.dumps({"index": index, "summary": self.summary}, indent=2))
         return 0
 
@@ -2851,7 +2999,9 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-replace arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--summary", required=True)
         parser.add_argument("--no-commit", action="store_true")
@@ -2875,7 +3025,10 @@ class WorkItemReplaceCommand(WorkItemEditCommand):
         todo["WorkItems"] = items
         write_todo_worktree(root, todo)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): replace work item: {_summary_snippet(self.summary)}")
+            commit_todo(
+                root,
+                f"chore(todo): replace work item: {_summary_snippet(self.summary)}",
+            )
         print(json.dumps({"index": index, "summary": self.summary}, indent=2))
         return 0
 
@@ -2896,7 +3049,9 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-delete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument("--no-commit", action="store_true")
 
@@ -2915,7 +3070,12 @@ class WorkItemDeleteCommand(WorkItemEditCommand):
                 root,
                 f"chore(todo): delete work item: {_summary_snippet(removed.get('summary', ''))}",
             )
-        print(json.dumps({"deleted_index": index, "summary": removed.get("summary", "")}, indent=2))
+        print(
+            json.dumps(
+                {"deleted_index": index, "summary": removed.get("summary", "")},
+                indent=2,
+            )
+        )
         return 0
 
 
@@ -2942,7 +3102,9 @@ class WorkItemReorderCommand(WorkItemEditCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-reorder arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument(
             "src",
             help=(
@@ -2996,7 +3158,9 @@ class WorkItemReorderCommand(WorkItemEditCommand):
         node = todo["WorkItems"][dst]
         summary = str(node.get("summary", ""))
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): reorder work item: {_summary_snippet(summary)}")
+            commit_todo(
+                root, f"chore(todo): reorder work item: {_summary_snippet(summary)}"
+            )
         print(
             json.dumps(
                 {
@@ -3031,14 +3195,18 @@ class WorkItemCheckpointCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-checkpoint arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
             "--message",
             help="what the no-commit step did; defaults to an explicit no-op marker",
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -3077,7 +3245,10 @@ class WorkItemCheckpointCommand(WorkItemProgressCommand):
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): checkpoint work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): checkpoint work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
@@ -3106,7 +3277,9 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-blocked arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
@@ -3117,7 +3290,9 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
                 "and the options"
             ),
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -3133,12 +3308,19 @@ class WorkItemBlockedCommand(WorkItemProgressCommand):
         index = resolve_workitem_index(todo, self.target, what="mark blocked")
         require_open_workitem(todo, index)
         landed = close_workitem(
-            todo, index, WORKITEM_BLOCKED, message=self.message, summary=self.summary or ""
+            todo,
+            index,
+            WORKITEM_BLOCKED,
+            message=self.message,
+            summary=self.summary or "",
         )
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): blocked work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): blocked work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
@@ -3166,7 +3348,9 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register work-item-obsolete arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("target", nargs="?", help=WORKITEM_TARGET_HELP)
         parser.add_argument(
             "-m",
@@ -3177,7 +3361,9 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
                 "which other step subsumed it"
             ),
         )
-        parser.add_argument("--summary", help="override the work item's high-level description")
+        parser.add_argument(
+            "--summary", help="override the work item's high-level description"
+        )
         parser.add_argument("--no-commit", action="store_true")
 
     def do(self) -> int:
@@ -3193,12 +3379,19 @@ class WorkItemObsoleteCommand(WorkItemProgressCommand):
         index = resolve_workitem_index(todo, self.target, what="mark obsolete")
         require_open_workitem(todo, index)
         landed = close_workitem(
-            todo, index, WORKITEM_OBSOLETE, message=self.message, summary=self.summary or ""
+            todo,
+            index,
+            WORKITEM_OBSOLETE,
+            message=self.message,
+            summary=self.summary or "",
         )
         write_todo_worktree(root, todo)
         payload = closed_workitem_payload(todo, landed, from_index=index)
         if not self.no_commit:
-            commit_todo(root, f"chore(todo): obsolete work item: {_summary_snippet(payload['summary'])}")
+            commit_todo(
+                root,
+                f"chore(todo): obsolete work item: {_summary_snippet(payload['summary'])}",
+            )
         print(json.dumps(payload, indent=2))
         return 0
 
@@ -3215,7 +3408,9 @@ class IsDoneCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register is-done arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
 
     def do(self) -> int:
         """Print and return the todo's done state."""
@@ -3223,7 +3418,9 @@ class IsDoneCommand(WorkItemProgressCommand):
         _, todo = resolve_ticket_by_id(root, self.selector)
         normalize_todo_schema(todo)
         done = is_done(todo)
-        print(json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2))
+        print(
+            json.dumps({"id": str(todo.get("Id", ""))[:8], "is_done": done}, indent=2)
+        )
         return 0 if done else 1
 
 
@@ -3238,7 +3435,9 @@ class LastShaCommand(WorkItemProgressCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register last-sha arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
 
     def do(self) -> int:
         """Print the last work item's sha."""
@@ -3268,9 +3467,13 @@ class SetJsonPathCommand(TodoFieldCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register set-json-path arguments."""
-        parser.add_argument("selector", help="todo selector: Id prefix (4+ hex) or full digest")
+        parser.add_argument(
+            "selector", help="todo selector: Id prefix (4+ hex) or full digest"
+        )
         parser.add_argument("jsonpath", help="dot path, e.g. WorkItems or Body.raw")
-        parser.add_argument("--file", help="read the JSON value from this file (default: stdin)")
+        parser.add_argument(
+            "--file", help="read the JSON value from this file (default: stdin)"
+        )
         parser.add_argument(
             "--stay",
             action="store_true",
@@ -3295,7 +3498,9 @@ class SetJsonPathCommand(TodoFieldCommand):
         else:
             text = sys.stdin.read()
         if not text.strip():
-            raise TodoError("no JSON value provided (use --file or pipe a value via stdin)")
+            raise TodoError(
+                "no JSON value provided (use --file or pipe a value via stdin)"
+            )
         try:
             value = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -3357,9 +3562,15 @@ class WaitForCommand(SubtodoWaitCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-for arguments."""
         parser.add_argument("selectors", nargs="+", help="todo selectors to wait on")
-        parser.add_argument("--state", default="done", choices=sorted(VALID_STATES), help="target state")
-        parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
-        parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
+        parser.add_argument(
+            "--state", default="done", choices=sorted(VALID_STATES), help="target state"
+        )
+        parser.add_argument(
+            "--timeout", type=float, default=300.0, help="seconds before failing"
+        )
+        parser.add_argument(
+            "--interval", type=float, default=5.0, help="seconds between polls"
+        )
 
     def do(self) -> int:
         """Wait for selected todos to reach a state."""
@@ -3386,9 +3597,15 @@ class WaitAndMergeCommand(SubtodoWaitCommand):
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register wait-and-merge arguments."""
-        parser.add_argument("child_ids", nargs="+", help="child todo selectors to merge")
-        parser.add_argument("--timeout", type=float, default=300.0, help="seconds before failing")
-        parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
+        parser.add_argument(
+            "child_ids", nargs="+", help="child todo selectors to merge"
+        )
+        parser.add_argument(
+            "--timeout", type=float, default=300.0, help="seconds before failing"
+        )
+        parser.add_argument(
+            "--interval", type=float, default=5.0, help="seconds between polls"
+        )
         parser.add_argument("--merged-into", help="parent branch name")
         parser.add_argument("--last-commit", help="optional merge commit message")
 
@@ -3541,7 +3758,9 @@ class DoctorCommand(StoreMaintenanceCommand):
             if not use_store():
                 raise TodoError("ALL requires the db store (unset TODO_USE_JSON)")
             ids = [str(t.get("Id", "")) for t in todo_store.get_store().list_all()]
-            results = [_doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid]
+            results = [
+                _doctor_one(root, tid, dry_run=self.dry_run) for tid in ids if tid
+            ]
             ok = all(r["ok"] for r in results)
             print(
                 json.dumps(
@@ -3552,7 +3771,9 @@ class DoctorCommand(StoreMaintenanceCommand):
                         "migrated": migrated,
                         "auto_tags": sum(r["auto_tags"] for r in results),
                         "mentions": sum(r["mentions"] for r in results),
-                        "pr_reconciled": sum(1 for r in results if r["pr"].get("changed")),
+                        "pr_reconciled": sum(
+                            1 for r in results if r["pr"].get("changed")
+                        ),
                         "gh": gh_gate_reason() or "ok",
                         "audited": len(results),
                         "results": results,
@@ -3612,7 +3833,8 @@ def _entry_as_ticket(entry: JsonDict) -> JsonDict:
 
 def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
     """Load a full child ticket via the Subtodos entry's Branch (O(1), no ref scan); fall back
-    to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot)."""
+    to a sqlite id-prefix lookup. None if neither resolves (caller uses the entry snapshot).
+    """
     branch = str(entry.get("Branch", ""))
     if branch:
         todo = read_todo_at_ref(repo, branch)
@@ -3620,12 +3842,16 @@ def _load_child_ticket(repo: Path, entry: JsonDict) -> Optional[JsonDict]:
             return todo
     cid = str(entry.get("Id", ""))
     if len(cid) >= 4 and use_store():
-        for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(cid[:8]):
+        for _repo_path, _branch, todo in todo_store.get_store().find_by_id_prefix(
+            cid[:8]
+        ):
             return todo
     return None
 
 
-def _ticket_commits(repo: Path, ticket: JsonDict, timestamps: bool = False) -> List[str]:
+def _ticket_commits(
+    repo: Path, ticket: JsonDict, timestamps: bool = False
+) -> List[str]:
     """Commit one-liners on a ticket's branch (its frequentcommit trail), newest first.
 
     Base = the Parent's branch for a subtodo, else the first of dev/main/master that
@@ -3693,7 +3919,9 @@ def render_ticket_graph(
     for index, entry in enumerate(subs):
         is_last: bool = index == len(subs) - 1
         child = _load_child_ticket(repo, entry) or _entry_as_ticket(entry)
-        render_ticket_graph(repo, child, rails + [not is_last], lines, seen, verbose, timestamps)
+        render_ticket_graph(
+            repo, child, rails + [not is_last], lines, seen, verbose, timestamps
+        )
 
 
 class LogCommand(CorpusQueryCommand):
@@ -3755,9 +3983,13 @@ class LogCommand(CorpusQueryCommand):
             lines = lines[: self.max_count]
         # Truncate to terminal width on a TTY to avoid wrapping; leave full lines when
         # piped/redirected so downstream tools (grep, etc.) get complete output.
-        width = shutil.get_terminal_size((80, 24)).columns if sys.stdout.isatty() else None
+        width = (
+            shutil.get_terminal_size((80, 24)).columns if sys.stdout.isatty() else None
+        )
         if width and width > 3:
-            lines = [ln if len(ln) <= width else ln[: width - 3] + "..." for ln in lines]
+            lines = [
+                ln if len(ln) <= width else ln[: width - 3] + "..." for ln in lines
+            ]
         print("\n".join(lines))
         return 0
 
@@ -3792,7 +4024,7 @@ class WebCommand(EnvironmentCommand):
         "deleted. Saves are last-write-wins: a save lands even when the todo changed since the "
         "page loaded. Both none refuses to start. The default bind is localhost when public is "
         "none and '::' (every interface) otherwise; --host overrides. Every web option "
-        "defaults from the \"web\" object of the todo dir's config.json (CLI beats config "
+        'defaults from the "web" object of the todo dir\'s config.json (CLI beats config '
         "beats built-in). Writes are refused unless the request's Origin, content type and "
         "(from loopback clients) Host are this viewer's own (see IMPLEMENTATION.md, 'Web edits')."
     )
@@ -3813,7 +4045,10 @@ class WebCommand(EnvironmentCommand):
             "'::', which serves IPv4 and IPv6)",
         )
         parser.add_argument(
-            "--port", type=int, default=None, help=f"bind port (default {WEB_DEFAULT_PORT})"
+            "--port",
+            type=int,
+            default=None,
+            help=f"bind port (default {WEB_DEFAULT_PORT})",
         )
         parser.add_argument(
             "--loopback",
@@ -3856,7 +4091,9 @@ class WebCommand(EnvironmentCommand):
         Ctrl-C reaches todoweb too, which stops serving and exits; this waits
         for that exit rather than dying on the interrupt itself.
         """
-        with subprocess.Popen([sys.executable, str(TODOWEB_PY), *self.todoweb_argv()]) as child:
+        with subprocess.Popen(
+            [sys.executable, str(TODOWEB_PY), *self.todoweb_argv()]
+        ) as child:
             try:
                 return child.wait()
             except KeyboardInterrupt:
@@ -3893,7 +4130,11 @@ class ImportJsonCommand(StoreMaintenanceCommand):
             raise TodoError("--from-json or --scan-refs is required")
         ticket = load_json_file(Path(self.from_json))
         imported = import_json_ticket(root, ticket, branch=self.branch)
-        print(json.dumps({"Id": imported.get("Id"), "Branch": imported.get("Branch")}, indent=2))
+        print(
+            json.dumps(
+                {"Id": imported.get("Id"), "Branch": imported.get("Branch")}, indent=2
+            )
+        )
         return 0
 
 
@@ -3919,19 +4160,36 @@ def _add_column_args(parser: argparse.ArgumentParser) -> None:
     null-query case of search).
     """
     parser.add_argument(
-        "-s", dest="columns", const="state", nargs=0, action=_ColumnAction,
+        "-s",
+        dest="columns",
+        const="state",
+        nargs=0,
+        action=_ColumnAction,
         help="show State column (and, without --states, reveal all states incl. done/merged)",
     )
     parser.add_argument(
-        "-t", "-tc", dest="columns", const="ctime", nargs=0, action=_ColumnAction,
+        "-t",
+        "-tc",
+        dest="columns",
+        const="ctime",
+        nargs=0,
+        action=_ColumnAction,
         help="show create-time column",
     )
     parser.add_argument(
-        "-tu", dest="columns", const="utime", nargs=0, action=_ColumnAction,
+        "-tu",
+        dest="columns",
+        const="utime",
+        nargs=0,
+        action=_ColumnAction,
         help="show update-time column",
     )
     parser.add_argument(
-        "-g", dest="columns", const="tags", nargs=0, action=_ColumnAction,
+        "-g",
+        dest="columns",
+        const="tags",
+        nargs=0,
+        action=_ColumnAction,
         help="show Tags column (comma-joined)",
     )
 
@@ -4037,7 +4295,9 @@ class SearchCommand(CorpusQueryCommand):
         columns = self.columns or []
         states = resolve_state_filter(self.states, "state" in columns)
         tags = (
-            frozenset(part.strip().lower() for part in self.tag.split(",") if part.strip())
+            frozenset(
+                part.strip().lower() for part in self.tag.split(",") if part.strip()
+            )
             if self.tag
             else None
         )
@@ -4214,7 +4474,9 @@ class RepoDirCommand(EnvironmentCommand):
     def do(self) -> int:
         """Print the repo's main checkout root for the selected todo."""
         root = self.root()
-        resolve_ticket_by_id(root, self.selector)  # validates id; warns on repo mismatch
+        resolve_ticket_by_id(
+            root, self.selector
+        )  # validates id; warns on repo mismatch
         print(todo_db.main_checkout_root() or root)
         return 0
 
@@ -4238,7 +4500,9 @@ class ExportToFileCommand(StoreMaintenanceCommand):
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         """Register export-to-file arguments."""
         parser.add_argument(
-            "ids", nargs="+", help="4+ hex Id prefixes, or the meta id ALL for every todo"
+            "ids",
+            nargs="+",
+            help="4+ hex Id prefixes, or the meta id ALL for every todo",
         )
         parser.add_argument(
             "--basedir",
@@ -4283,7 +4547,9 @@ class ExportToFileCommand(StoreMaintenanceCommand):
                 raise TodoError("todo missing Id; cannot export")
             path = out_dir / f"{tid}.json"
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            tmp.write_text(
+                json.dumps(todo, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             tmp.replace(path)
             note = ""
             if self.remove is not None:
@@ -4489,7 +4755,9 @@ def detect_caller() -> "tuple[str, JsonDict]":
     agent_env: JsonDict = {
         name: _redacted_env_value(name, value)
         for name, value in os.environ.items()
-        if any(name.startswith(marker) or name == marker for marker in _AGENT_ENV_MARKERS)
+        if any(
+            name.startswith(marker) or name == marker for marker in _AGENT_ENV_MARKERS
+        )
     }
     parent: str = _parent_comm()
     agent_parent: bool = any(tok in parent.lower() for tok in _AGENT_PARENT_TOKENS)
@@ -4545,7 +4813,9 @@ def _invocation_logger() -> Optional[logging.Logger]:
     return logger
 
 
-def log_invocation(command: str, argv: Sequence[str], exit_code: int, dur_ms: int) -> None:
+def log_invocation(
+    command: str, argv: Sequence[str], exit_code: int, dur_ms: int
+) -> None:
     """Append one JSON-lines record for this invocation. Never raises."""
     logger: Optional[logging.Logger] = _invocation_logger()
     if logger is None:
@@ -4664,7 +4934,9 @@ def _warn_if_skills_buried() -> None:
             or os.environ.get("CURSOR_TRACE_ID")
             or ""
         )
-        marker: Path = Path(tempfile.gettempdir()) / f".todo-skills-doctor.{framework}.{session}"
+        marker: Path = (
+            Path(tempfile.gettempdir()) / f".todo-skills-doctor.{framework}.{session}"
+        )
         if session and marker.exists():
             return
         if framework == "claude":
@@ -4814,7 +5086,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         exit_code = 1
         return 1
     finally:
-        log_invocation(command_name, logged_argv, exit_code, int((time.monotonic() - start) * 1000))
+        log_invocation(
+            command_name, logged_argv, exit_code, int((time.monotonic() - start) * 1000)
+        )
 
 
 if __name__ == "__main__":
