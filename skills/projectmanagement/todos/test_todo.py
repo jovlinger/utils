@@ -746,12 +746,12 @@ class EditTargetUnitTests(unittest.TestCase):
         self.assertEqual("Notes.1.raw", self.resolve("objid:4"))
         self.assertEqual("Notes.1.raw", self.resolve("objid:0004"))
 
-    def test_an_open_work_item_objid_is_its_summary(self) -> None:
+    def test_a_work_item_objid_is_its_summary_done_or_not(self) -> None:
         self.assertEqual("WorkItems.1.summary", self.resolve("objid:0006"))
+        self.assertEqual("WorkItems.0.summary", self.resolve("objid:5"))
 
     def test_refusals_name_the_problem(self) -> None:
         cases = {
-            "objid:5": "is done",
             "objid:1": "not a note or work item",
             "objid:fff0": "fff0",
             "objid:XY": "not lowercase hex",
@@ -827,6 +827,12 @@ class EditCommandUnitTests(unittest.TestCase):
         expected = {**_edit_fixture_todo()["WorkItems"][1], "summary": "edited text"}
         self.assertEqual(expected, self.record["WorkItems"][1])
 
+    def test_a_done_work_item_edit_rewrites_its_summary_and_keeps_it_done(self) -> None:
+        self.assertEqual(0, self.run_edit("objid:5"))
+        expected = {**_edit_fixture_todo()["WorkItems"][0], "summary": "edited text"}
+        self.assertEqual(expected, self.record["WorkItems"][0])
+        self.mocks["write_todo_worktree"].assert_called_once()
+
     def test_no_commit_writes_but_does_not_commit(self) -> None:
         self.run_edit("AC", no_commit=True)
         self.assertEqual("edited text", self.record["AC"])
@@ -852,7 +858,7 @@ class EditCommandUnitTests(unittest.TestCase):
 
     def test_a_refused_target_never_opens_the_editor(self) -> None:
         with self.assertRaises(todo.TodoError):
-            self.run_edit("objid:5")
+            self.run_edit("objid:1")
         self.mocks["edit_text_via_editor"].assert_not_called()
         self.assert_nothing_written()
 

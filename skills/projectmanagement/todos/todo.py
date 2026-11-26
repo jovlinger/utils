@@ -4699,7 +4699,6 @@ class SetCommand(TodoFieldCommand):
         return 0
 
 
-_NOTE_PATH_RE = re.compile(r"\ANotes\.(\d+)\Z")
 _WORKITEM_PATH_RE = re.compile(r"\AWorkItems\.(\d+)\Z")
 _NOTE_RAW_PATH_RE = re.compile(r"\ANotes\.\d+\.raw\Z")
 
@@ -4708,8 +4707,7 @@ def resolve_edit_target(todo: JsonDict, target: str) -> str:
     """Return the dot path of the free-text string *target* names in *todo*.
 
     ``objid:<hex>`` (leading zeros optional) must name a note, edited at its
-    ``raw``, or a not-done work item, edited at its ``summary`` -- the fields
-    note-replace and work-item-replace rewrite. Anything else is a dot path in
+    ``raw``, or a work item, done or not, edited at its ``summary``. Anything else is a dot path in
     the get-json-path grammar: a string is edited as is, and an object whose
     ``raw`` is a string (Summary, Body, LongSummary, a note) is edited at its
     ``raw``. Every other target raises TodoError.
@@ -4724,12 +4722,9 @@ def resolve_edit_target(todo: JsonDict, target: str) -> str:
             )
         except todo_ref.TodoRefError as exc:
             raise TodoError(str(exc)) from exc
-        note = _NOTE_PATH_RE.match(path)
-        if note:
+        if _NOTE_PATH_RE.match(path):
             return f"{path}.raw"
-        item = _WORKITEM_PATH_RE.match(path)
-        if item:
-            require_open_workitem(todo, int(item.group(1)))
+        if _WORKITEM_PATH_RE.match(path):
             return f"{path}.summary"
         raise TodoError(
             f"{target} names {path}, not a note or work item; address it by dot path instead"
@@ -4756,8 +4751,8 @@ class EditCommand(TodoFieldCommand):
         "non-empty. TARGET is either a dot path in the get-json-path grammar (Summary, Body, "
         "AC, LongSummary, ActualSummary, Notes.0, ...) -- naming a string, or an object whose "
         "raw is a string, which is then edited at its raw -- or objid:<hex> (leading zeros "
-        "optional) naming a note, edited like note-replace (its objid and relto survive), or a "
-        "not-done work item, edited like work-item-replace (a done item is refused). Refused "
+        "optional) naming a note, edited at its raw (its objid and relto survive), or a work "
+        "item, done or not, edited at its summary (its objid and status survive). Refused "
         "with exit 1 and nothing written: stdin/stdout not a terminal, a target that is not "
         "free text, a leading <!-- that is never closed, an empty note, and an editor that "
         "fails or exits nonzero. The write is store-only."
@@ -4770,7 +4765,7 @@ class EditCommand(TodoFieldCommand):
         parser.add_argument(
             "target",
             help="dot path (e.g. Body, Summary, AC, Notes.0) or objid:<hex> of a note or "
-            "not-done work item",
+            "work item",
         )
         parser.add_argument("--no-commit", action="store_true")
 
