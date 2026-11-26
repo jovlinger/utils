@@ -37,6 +37,8 @@ import io  # noqa: E402
 import fake_nlce  # noqa: E402  (bag-of-words mock of the apple sidecar)
 import git_command  # noqa: E402  (the seam an integration test fakes)
 import todo  # noqa: E402  (direct import for unit-level regression tests)
+import todo_common  # noqa: E402  (direct import for unit-level regression tests)
+import todo_ops  # noqa: E402  (direct import for unit-level regression tests)
 import todo_db  # noqa: E402  (cache resets between in-process invocations)
 import todo_store  # noqa: E402  (cache resets between in-process invocations)
 import todo_objid  # noqa: E402  (objid stamping, asserted at unit level)
@@ -309,8 +311,8 @@ class TodoIntegrationCase(TodoHelpers, unittest.TestCase):
         argv = [str(a) for a in args]
         todo_store.reset_store()
         todo_db.reset_todo_dir()
-        todo._REPO_KEY_CACHE.clear()
-        todo._GH_GATE["disabled"] = None
+        todo_common._REPO_KEY_CACHE.clear()
+        todo_ops._GH_GATE["disabled"] = None
         out, err = io.StringIO(), io.StringIO()
         with unittest.mock.patch.dict(os.environ, self._env, clear=True):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -3143,21 +3145,21 @@ class RepoIdentityUnitTests(unittest.TestCase):
 
     def test_url_shapes_canonicalize_to_same_identity(self) -> None:
         want = "github.com/jovlinger/utils"
-        self.assertEqual(todo.repo_identity_from_url("https://github.com/jovlinger/utils.git"), want)
-        self.assertEqual(todo.repo_identity_from_url("https://github.com/jovlinger/utils"), want)
-        self.assertEqual(todo.repo_identity_from_url("git@github.com:jovlinger/utils.git"), want)
-        self.assertEqual(todo.repo_identity_from_url("ssh://git@github.com/jovlinger/utils.git"), want)
+        self.assertEqual(todo_common.repo_identity_from_url("https://github.com/jovlinger/utils.git"), want)
+        self.assertEqual(todo_common.repo_identity_from_url("https://github.com/jovlinger/utils"), want)
+        self.assertEqual(todo_common.repo_identity_from_url("git@github.com:jovlinger/utils.git"), want)
+        self.assertEqual(todo_common.repo_identity_from_url("ssh://git@github.com/jovlinger/utils.git"), want)
 
     def test_host_is_lowercased_and_owner_preserved(self) -> None:
         self.assertEqual(
-            todo.repo_identity_from_url("git@GitHub.com:easternlabs/opportunity.git"),
+            todo_common.repo_identity_from_url("git@GitHub.com:easternlabs/opportunity.git"),
             "github.com/easternlabs/opportunity",
         )
 
     def test_unidentifiable_urls_return_none(self) -> None:
-        self.assertIsNone(todo.repo_identity_from_url(""))
-        self.assertIsNone(todo.repo_identity_from_url("   "))
-        self.assertIsNone(todo.repo_identity_from_url("not a url"))
+        self.assertIsNone(todo_common.repo_identity_from_url(""))
+        self.assertIsNone(todo_common.repo_identity_from_url("   "))
+        self.assertIsNone(todo_common.repo_identity_from_url("not a url"))
 
 
 class JsonPathUnitTests(unittest.TestCase):
@@ -3317,7 +3319,7 @@ class WorkItemModelUnitTests(unittest.TestCase):
 
     def test_mark_cursor_done_appends_when_no_open_item(self) -> None:
         t = {"WorkItems": [{"kind": "code", "done": True, "sha": "a"}]}
-        self.assertEqual(todo.mark_cursor_done(t, todo.merge_subtodo_workitem("sub", "s2", "m")), 1)
+        self.assertEqual(todo.mark_cursor_done(t, todo_ops.merge_subtodo_workitem("sub", "s2", "m")), 1)
         self.assertEqual(t["WorkItems"][1]["kind"], "merge_subtodo")
 
     def test_workitem_findings_catch_invariant_violations(self) -> None:
@@ -3410,24 +3412,24 @@ class BacklinkUnitTests(unittest.TestCase):
         return {"Id": "c" * 64, "Branch": "cccccccc-child", "Summary": {"raw": "do it"}}
 
     def test_info_backlink_entry_is_marked_info(self) -> None:
-        entry = todo.info_backlink_entry(self._child())
+        entry = todo_ops.info_backlink_entry(self._child())
         self.assertEqual(entry["State"], "INFO")
         self.assertEqual(entry["Summary"], "do it")
         self.assertEqual(entry["Id"], "c" * 64)
 
     def test_upsert_appends_then_refreshes_but_keeps_real_entry(self) -> None:
         parent: Dict[str, Any] = {"Subtodos": []}
-        self.assertTrue(todo.upsert_info_backlink(parent, self._child()))
+        self.assertTrue(todo_ops.upsert_info_backlink(parent, self._child()))
         self.assertEqual(parent["Subtodos"][0]["State"], "INFO")
         # idempotent: same child, no change
-        self.assertFalse(todo.upsert_info_backlink(parent, self._child()))
+        self.assertFalse(todo_ops.upsert_info_backlink(parent, self._child()))
         # refreshes the best-effort summary on an existing INFO entry
         moved = {"Id": "c" * 64, "Branch": "new-branch", "Summary": {"raw": "renamed"}}
-        self.assertTrue(todo.upsert_info_backlink(parent, moved))
+        self.assertTrue(todo_ops.upsert_info_backlink(parent, moved))
         self.assertEqual(parent["Subtodos"][0]["Summary"], "renamed")
         # never downgrades a real tracked subtodo entry to INFO
         real: Dict[str, Any] = {"Subtodos": [{"Id": "c" * 64, "State": "working", "Summary": "x"}]}
-        self.assertFalse(todo.upsert_info_backlink(real, self._child()))
+        self.assertFalse(todo_ops.upsert_info_backlink(real, self._child()))
         self.assertEqual(real["Subtodos"][0]["State"], "working")
 
     def test_remove_info_backlink_only_drops_info(self) -> None:
@@ -3437,14 +3439,14 @@ class BacklinkUnitTests(unittest.TestCase):
                 {"Id": "d" * 64, "State": "working", "Summary": "y"},
             ]
         }
-        self.assertTrue(todo.remove_info_backlink(parent, "c" * 64))
+        self.assertTrue(todo_ops.remove_info_backlink(parent, "c" * 64))
         self.assertEqual(len(parent["Subtodos"]), 1)
         self.assertEqual(parent["Subtodos"][0]["Id"], "d" * 64)
         # tracked entry for the same id is left alone
         tracked: Dict[str, Any] = {
             "Subtodos": [{"Id": "c" * 64, "State": "working", "Summary": "x"}]
         }
-        self.assertFalse(todo.remove_info_backlink(tracked, "c" * 64))
+        self.assertFalse(todo_ops.remove_info_backlink(tracked, "c" * 64))
         self.assertEqual(tracked["Subtodos"][0]["State"], "working")
 
     def test_unmerged_subtodos_skips_info(self) -> None:
@@ -3967,18 +3969,18 @@ class WorkItemAddressUnitTests(unittest.TestCase):
         return [{"kind": "task", "summary": o, "done": False, "objid": o} for o in objids]
 
     def test_a_padded_prefix_finds_the_short_spelling(self) -> None:
-        self.assertEqual(1, todo._workitem_index_by_objid(self._items("0003", "0004"), "4"))
+        self.assertEqual(1, todo_ops._workitem_index_by_objid(self._items("0003", "0004"), "4"))
 
     def test_an_ambiguous_prefix_names_the_candidates(self) -> None:
         # Ids widen past four hex only above 65536 objects in one todo, which
         # is the one way a padded prefix can still hit two items.
         with self.assertRaises(todo.TodoError) as caught:
-            todo._workitem_index_by_objid(self._items("10001", "10002"), "1000")
+            todo_ops._workitem_index_by_objid(self._items("10001", "10002"), "1000")
         self.assertIn("ambiguous", str(caught.exception))
         self.assertIn("0, 1", str(caught.exception))
 
     def test_a_wide_id_still_resolves_exactly(self) -> None:
-        self.assertEqual(1, todo._workitem_index_by_objid(self._items("10001", "10002"), "10002"))
+        self.assertEqual(1, todo_ops._workitem_index_by_objid(self._items("10001", "10002"), "10002"))
 
     def test_an_index_is_bounds_checked_against_both_ends(self) -> None:
         items = self._items("0003", "0004")
@@ -4373,8 +4375,8 @@ class StateMetadataUnitTests(unittest.TestCase):
 
     def test_metadata_map_does_not_drift_from_valid_states(self) -> None:
         """Guard: a new state must be added to _STATE_METADATA deliberately."""
-        self.assertTrue(set(todo._STATE_METADATA) <= set(todo.VALID_STATES))
-        declared = {flag for flags in todo._STATE_METADATA.values() for flag in flags}
+        self.assertTrue(set(todo_ops._STATE_METADATA) <= set(todo.VALID_STATES))
+        declared = {flag for flags in todo_ops._STATE_METADATA.values() for flag in flags}
         self.assertEqual(
             declared,
             {"owner", "note", "last_commit", "merged_into", "pr", "merge_commit"},
@@ -4389,36 +4391,36 @@ class StateMetadataUnitTests(unittest.TestCase):
 
 
 class GhSlugUnitTests(unittest.TestCase):
-    """todo.gh_repo_slug: owner/repo out of the remote URL forms we actually see."""
+    """todo_ops.gh_repo_slug: owner/repo out of the remote URL forms we actually see."""
 
     def _todo(self, url: str) -> Dict[str, Any]:
         return {"Scope": {"git_url": url}}
 
     def test_ssh_scp_form(self) -> None:
-        slug = todo.gh_repo_slug(self._todo("git@github.com:easternlabs/opportunity.git"), Path("/"))
+        slug = todo_ops.gh_repo_slug(self._todo("git@github.com:easternlabs/opportunity.git"), Path("/"))
         self.assertEqual(slug, "easternlabs/opportunity")
 
     def test_https_form(self) -> None:
-        slug = todo.gh_repo_slug(self._todo("https://github.com/acme/widget.git"), Path("/"))
+        slug = todo_ops.gh_repo_slug(self._todo("https://github.com/acme/widget.git"), Path("/"))
         self.assertEqual(slug, "acme/widget")
 
     def test_ssh_url_form_without_dot_git(self) -> None:
-        slug = todo.gh_repo_slug(self._todo("ssh://git@github.com/acme/widget"), Path("/"))
+        slug = todo_ops.gh_repo_slug(self._todo("ssh://git@github.com/acme/widget"), Path("/"))
         self.assertEqual(slug, "acme/widget")
 
     def test_non_github_remote_is_none(self) -> None:
         """gh only speaks GitHub, so a gitlab remote must skip rather than shell out."""
-        self.assertIsNone(todo.gh_repo_slug(self._todo("git@gitlab.com:acme/widget.git"), Path("/")))
+        self.assertIsNone(todo_ops.gh_repo_slug(self._todo("git@gitlab.com:acme/widget.git"), Path("/")))
 
 
 class GhGateUnitTests(unittest.TestCase):
     """gh is attempted once per run: an environmental failure disables it with a remedy."""
 
     def setUp(self) -> None:
-        todo.gh_reset_gate()
+        todo_ops.gh_reset_gate()
 
     def tearDown(self) -> None:
-        todo.gh_reset_gate()
+        todo_ops.gh_reset_gate()
 
     def test_classify_environmental_failures_carry_remediation(self) -> None:
         cases = [
@@ -4428,26 +4430,26 @@ class GhGateUnitTests(unittest.TestCase):
             (_gh_proc(1, stderr="dial tcp: lookup api.github.com"), "cannot reach GitHub", "network"),
         ]
         for proc, reason_part, remedy_part in cases:
-            reason, remediation, environmental = todo._gh_classify(proc)
+            reason, remediation, environmental = todo_ops._gh_classify(proc)
             self.assertIn(reason_part, reason)
             self.assertIn(remedy_part, remediation)
             self.assertTrue(environmental, reason)
 
     def test_repo_not_found_is_not_environmental(self) -> None:
         """One inaccessible repo says nothing about gh, so it must not gate the run."""
-        _reason, _remedy, environmental = todo._gh_classify(
+        _reason, _remedy, environmental = todo_ops._gh_classify(
             _gh_proc(1, stderr="Could not resolve to a Repository with the name 'x'")
         )
         self.assertFalse(environmental)
 
     def test_first_failure_disables_and_second_call_does_not_reinvoke_gh(self) -> None:
         with unittest.mock.patch.object(
-            todo, "run_gh", return_value=_gh_proc(127, stderr="No such file")
+            todo_ops, "run_gh", return_value=_gh_proc(127, stderr="No such file")
         ) as run:
-            first, skip1 = todo._gh_json("pr", "list")
+            first, skip1 = todo_ops._gh_json("pr", "list")
             self.assertIsNone(first)
             self.assertIn("brew install gh", skip1 or "")
-            second, skip2 = todo._gh_json("pr", "list")
+            second, skip2 = todo_ops._gh_json("pr", "list")
             self.assertIsNone(second)
             self.assertIn("gh disabled this run", skip2 or "")
         self.assertEqual(run.call_count, 1, "gh must be attempted only once per run")
@@ -4458,10 +4460,10 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
     """reconcile_pr_state: a PR's fate refines a root todo's terminal disposition."""
 
     def setUp(self) -> None:
-        todo.gh_reset_gate()
+        todo_ops.gh_reset_gate()
 
     def tearDown(self) -> None:
-        todo.gh_reset_gate()
+        todo_ops.gh_reset_gate()
 
     def _todo(self, state: Dict[str, Any], **extra: Any) -> Dict[str, Any]:
         base = {
@@ -4481,8 +4483,8 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
         mutated in memory (which is what the assertions check), but no real store
         is ever touched. self.write records whether a write was attempted.
         """
-        with unittest.mock.patch.object(todo, "run_gh", side_effect=_gh_returning(pr)):
-            with unittest.mock.patch.object(todo, "write_todo_worktree") as write:
+        with unittest.mock.patch.object(todo_ops, "run_gh", side_effect=_gh_returning(pr)):
+            with unittest.mock.patch.object(todo_ops, "write_todo_worktree") as write:
                 self.write = write
                 return todo.reconcile_pr_state(Path("/"), item, dry_run=dry_run)
 
@@ -4527,7 +4529,7 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
             "Subtodos": [{"Id": item["Id"], "State": "working"}],
         }
         with unittest.mock.patch.object(
-            todo, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
+            todo_ops, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
         ):
             out = self._reconcile(item, MERGED_PR)
         self.assertFalse(out["checked"])
@@ -4551,7 +4553,7 @@ class ReconcilePrStateUnitTests(unittest.TestCase):
             "Subtodos": [{"Id": item["Id"], "State": todo.SUBTODO_STATE_INFO}],
         }
         with unittest.mock.patch.object(
-            todo, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
+            todo_ops, "resolve_ticket_by_id", return_value=("bbbbbbbb-parent", parent)
         ):
             out = self._reconcile(item, MERGED_PR, dry_run=False)
         self.assertTrue(out["checked"])

@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import todo  # noqa: E402  (direct import: unit coverage for _solo_term_id_prefix_hit)
+import todo_common  # noqa: E402  (direct import: unit coverage for _solo_term_id_prefix_hit)
 import todo_search  # noqa: E402
 from test_todo import TodoCase  # noqa: E402  (temp-repo + subprocess harness)
 
@@ -24,7 +25,7 @@ class ParseSearchQueryTest(unittest.TestCase):
     """Colon-based time operators are stripped; text terms pass through."""
 
     def test_strips_time_operators_and_keeps_text(self) -> None:
-        terms, filters = todo.parse_search_query(
+        terms, filters = todo_common.parse_search_query(
             [
                 "alpha",
                 "tc_after:2026-01-01T00:00:00Z",
@@ -37,7 +38,7 @@ class ParseSearchQueryTest(unittest.TestCase):
         self.assertEqual(filters.create_before, "2026-12-31T23:59:59Z")
 
     def test_update_operators(self) -> None:
-        _terms, filters = todo.parse_search_query(
+        _terms, filters = todo_common.parse_search_query(
             [
                 "tu_after:2026-06-01T12:00:00Z",
                 "tu_before:2026-06-30T12:00:00Z",
@@ -47,11 +48,11 @@ class ParseSearchQueryTest(unittest.TestCase):
         self.assertEqual(filters.update_before, "2026-06-30T12:00:00Z")
 
     def test_unknown_colon_token_is_a_text_term(self) -> None:
-        terms, _filters = todo.parse_search_query(["foo:bar"])
+        terms, _filters = todo_common.parse_search_query(["foo:bar"])
         self.assertEqual(terms, ["foo:bar"])
 
     def test_date_only_expands_to_day_bounds(self) -> None:
-        _terms, filters = todo.parse_search_query(
+        _terms, filters = todo_common.parse_search_query(
             [
                 "tc_after:2026-08-25",
                 "tc_before:2026-08-31",
@@ -61,16 +62,16 @@ class ParseSearchQueryTest(unittest.TestCase):
         self.assertEqual(filters.create_before, "2026-08-31T23:59:59Z")
 
     def test_slash_dates_normalize_to_hyphens(self) -> None:
-        _terms, filters = todo.parse_search_query(["tc_after:2026/08/26"])
+        _terms, filters = todo_common.parse_search_query(["tc_after:2026/08/26"])
         self.assertEqual(filters.create_after, "2026-08-26T00:00:00Z")
 
     def test_invalid_timestamp_errors(self) -> None:
         with self.assertRaises(todo.TodoError):
-            todo.parse_search_query(["tc_after:not-a-date"])
+            todo_common.parse_search_query(["tc_after:not-a-date"])
 
     def test_empty_operator_value_errors(self) -> None:
         with self.assertRaises(todo.TodoError):
-            todo.parse_search_query(["tc_after:"])
+            todo_common.parse_search_query(["tc_after:"])
 
 
 class SearchTimeFilterTest(TodoCase):
@@ -392,31 +393,31 @@ class SoloTermIdPrefixHitTest(unittest.TestCase):
     IDS = {"cafefeed" + "0" * 56: {}, "deadbeef" + "0" * 56: {}}
 
     def test_unique_prefix_match_is_returned(self) -> None:
-        hit = todo._solo_term_id_prefix_hit(["cafefeed"], self.IDS)
+        hit = todo_common._solo_term_id_prefix_hit(["cafefeed"], self.IDS)
         self.assertEqual("cafefeed" + "0" * 56, hit)
 
     def test_full_id_also_matches(self) -> None:
         full = "cafefeed" + "0" * 56
-        self.assertEqual(full, todo._solo_term_id_prefix_hit([full], self.IDS))
+        self.assertEqual(full, todo_common._solo_term_id_prefix_hit([full], self.IDS))
 
     def test_no_match_returns_none(self) -> None:
-        self.assertIsNone(todo._solo_term_id_prefix_hit(["ffffffff"], self.IDS))
+        self.assertIsNone(todo_common._solo_term_id_prefix_hit(["ffffffff"], self.IDS))
 
     def test_ambiguous_match_returns_none(self) -> None:
         ids = {"aaaa1111" + "0" * 56: {}, "aaaa2222" + "0" * 56: {}}
-        self.assertIsNone(todo._solo_term_id_prefix_hit(["aaaa"], ids))
+        self.assertIsNone(todo_common._solo_term_id_prefix_hit(["aaaa"], ids))
 
     def test_multiple_terms_never_engage_the_prefix_path(self) -> None:
         # A second term would otherwise win uniquely -- proving it is the term
         # COUNT, not the match, that disqualifies this query.
-        self.assertIsNone(todo._solo_term_id_prefix_hit(["cafefeed", "widget"], self.IDS))
+        self.assertIsNone(todo_common._solo_term_id_prefix_hit(["cafefeed", "widget"], self.IDS))
 
     def test_short_term_is_not_attempted(self) -> None:
         # Below the 4-hex-char selector convention -- too easy to collide by chance.
-        self.assertIsNone(todo._solo_term_id_prefix_hit(["caf"], self.IDS))
+        self.assertIsNone(todo_common._solo_term_id_prefix_hit(["caf"], self.IDS))
 
     def test_non_hex_term_is_not_attempted(self) -> None:
-        self.assertIsNone(todo._solo_term_id_prefix_hit(["quokka"], self.IDS))
+        self.assertIsNone(todo_common._solo_term_id_prefix_hit(["quokka"], self.IDS))
 
 
 class SoloTermIdPrefixSearchTest(TodoCase):

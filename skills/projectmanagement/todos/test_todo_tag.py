@@ -18,7 +18,7 @@ doctor's recompute wiring -- is proven by the implementor's own tests + review):
     only removes MANUAL elements (automatic tags are doctor's to manage).
   * todo.tag_findings(todo) -> list[str]: empty for a well-formed Tag, non-empty
     for a malformed one (wired into doctor).
-  * todo.compute_auto_tags(text, candidates, embedder, k) -> list of AUTOMATIC
+  * todo_ops.compute_auto_tags(text, candidates, embedder, k) -> list of AUTOMATIC
     elements ({raw in candidates, manual: False}), the top-k candidates by cosine
     similarity to text -- the ported ef4ad78d scoring, adapted to emit elements.
 """
@@ -31,6 +31,7 @@ import unittest
 import fake_nlce
 import todo
 import todo_db
+import todo_ops
 
 
 def _raws(todo_dict) -> list:
@@ -95,7 +96,7 @@ class PluralTagEndTest(unittest.TestCase):
         embedder = fake_nlce.BowEmbedder()
         candidates = ["alpha beta", "gamma", "delta epsilon", "zeta"]
         text = "alpha beta gamma"
-        elems = todo.compute_auto_tags(text, candidates, embedder, 2)
+        elems = todo_ops.compute_auto_tags(text, candidates, embedder, 2)
         self.assertEqual(len(elems), 2)
         self.assertTrue(all(e["manual"] is False for e in elems))
         self.assertTrue(all(e["raw"] in candidates for e in elems))
