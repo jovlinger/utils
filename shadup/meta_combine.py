@@ -28,11 +28,28 @@ SCAN_PROVIDERS = ("musicbrainz", "discogs", "lastfm")
 # Included in combine when the sidecar exists (hand-edited; not musicscan).
 EXTRA_COMBINE_PROVIDERS = ("johan",)
 
+# Cue / folder titles often append disc labels; those must not become album tags.
+_DISC_ALBUM_TAIL = re.compile(
+    r"""(?ix)
+    [\s\-_/]*
+    [\(\[{]?
+    \s*(?:disc|disk|cd|digital\s*media)\s*[-_.\s]*[a-z0-9]+
+    [\)\]}]?
+    \s*$
+    """
+)
+
 
 def slug(s: str) -> str:
     s = s.lower().replace("&", " and ")
     s = re.sub(r"[^a-z0-9]+", "", s)
     return s or "empty"
+
+
+def normalize_album_title(album: str) -> str:
+    """Strip trailing disc/CD labels so ``101 (Disc A)`` tags as ``album;101``."""
+    cleaned = _DISC_ALBUM_TAIL.sub("", album).strip(" -._")
+    return cleaned or album.strip()
 
 
 def is_vfat_safe(tag: str) -> bool:
@@ -138,7 +155,7 @@ def tags_from_provider_sidecar(
         add(f"artist;{slug(artist)}")
     album = md.get("album")
     if isinstance(album, str) and album.strip():
-        add(f"album;{slug(album)}")
+        add(f"album;{slug(normalize_album_title(album))}")
     year = _year_token(md.get("year"))
     if year:
         add(f"year;{slug(year)}" if not year.isdigit() else f"year;{year}")

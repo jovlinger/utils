@@ -13,6 +13,7 @@ scan/union. Rebuilds combined when inputs are newer (or ``--force``).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -137,6 +138,47 @@ def validate_providers(providers: Sequence[str]) -> list[str]:
     return out
 
 
+<<<<<<< Updated upstream
+=======
+def ensure_local_providers(providers: Sequence[str]) -> list[str]:
+    """Append cue/txt when missing so combine never skips on-disk local sidecars."""
+    out = list(providers)
+    seen = set(out)
+    for provider in LOCAL_PROVIDERS:
+        if provider not in seen:
+            out.append(provider)
+            seen.add(provider)
+    return out
+
+
+def unmatched_network_providers(album: Path, providers: Sequence[str]) -> list[str]:
+    """Network providers whose sidecar is missing or ``matched: false``.
+
+    Stale unmatched MusicBrainz/Discogs/Last.fm sidecars must be refetched when
+    a later local cue match or parent-dirname walk-up can seed the query. Skipping
+    them leaves major-catalog albums with cue-only artist/album tags.
+    """
+    network = set(NETWORK_PROVIDERS)
+    need: list[str] = []
+    for provider in providers:
+        if provider not in network:
+            continue
+        path = album / f".meta.{provider}.json"
+        if not path.is_file():
+            need.append(provider)
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            need.append(provider)
+            continue
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict) or not metadata.get("matched"):
+            need.append(provider)
+    return need
+
+
+>>>>>>> Stashed changes
 def has_audio(path: Path) -> bool:
     try:
         for child in path.iterdir():
@@ -353,6 +395,7 @@ def process_audio_album(
     stale = force or combine.combined_is_stale(
         album, audio_exts=AUDIO_EXTS, child_dirs=child_audio
     )
+<<<<<<< Updated upstream
     if not stale and not force:
         # Still ensure provider sidecars exist for assert-all-working.
         missing = [
@@ -365,10 +408,42 @@ def process_audio_album(
         not (album / f".meta.{p}.json").is_file() for p in providers
     )
     if scan_needed or force:
+=======
+    missing = [p for p in providers if not (album / f".meta.{p}.json").is_file()]
+    unmatched = unmatched_network_providers(album, providers)
+    if (
+        not stale
+        and not force_retag
+        and not missing
+        and not force_provider
+        and not unmatched
+    ):
+        return False
+
+    # Network scan: missing sidecars, unmatched network sidecars, or --force_provider.
+    # Unmatched network must use musicscan --force so existing empties are rewritten.
+    # --force_retag alone still rebuilds combined from sidecars already on disk.
+    scan_needed = force_provider or bool(missing) or bool(unmatched)
+    if scan_needed:
+        if force_provider:
+            scan_providers = list(providers)
+        else:
+            # Refetch only what is missing/unmatched, but keep local cue/txt in the
+            # same pass so fixpoint can lock artist/album from cue when dirname is thin.
+            scan_set = set(missing) | set(unmatched) | set(LOCAL_PROVIDERS)
+            scan_providers = [p for p in providers if p in scan_set]
+            if not scan_providers:
+                scan_providers = list(providers)
+>>>>>>> Stashed changes
         scan_cmd = [str(MUSICSCAN)]
-        for provider in providers:
+        for provider in scan_providers:
             scan_cmd.extend(["--provider", provider])
+<<<<<<< Updated upstream
         if force:
+=======
+        # Always --force when rewriting unmatched network sidecars.
+        if force_provider or unmatched:
+>>>>>>> Stashed changes
             scan_cmd.append("--force")
         if include_raw:
             scan_cmd.append("--include-raw")
@@ -378,7 +453,7 @@ def process_audio_album(
             scan_cmd.append("--dry-run")
         scan_cmd.append(str(album))
         if dry_run:
-            log(f"would scan: {album}")
+            log(f"would scan: {album} providers={','.join(scan_providers)}")
         else:
             try:
                 run(scan_cmd)

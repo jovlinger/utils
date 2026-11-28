@@ -63,6 +63,32 @@ def test_combine_maps_genres_and_fields(tmp_path: Path) -> None:
     assert mc.is_vfat_safe(doc["tags"][0])
 
 
+def test_normalize_album_title_strips_disc_labels() -> None:
+    assert mc.normalize_album_title("101 (Disc A)") == "101"
+    assert mc.normalize_album_title("101 (Disc B)") == "101"
+    assert mc.normalize_album_title("Avalon") == "Avalon"
+    assert mc.normalize_album_title("Hits CD1") == "Hits"
+
+
+def test_disc_qualified_album_does_not_pollute_album_tag(tmp_path: Path) -> None:
+    album = tmp_path / "a"
+    album.mkdir()
+    syn = tmp_path / "syn"
+    syn.mkdir()
+    _write_provider(
+        album,
+        "cue",
+        genres=["Synthpop"],
+        artist="Depeche Mode",
+        album_name="101 (Disc A)",
+        year=None,
+    )
+    doc = mc.combine_from_providers(album, synonyms_dir=syn, providers=["cue"])
+    assert "album;101" in doc["tags"]
+    assert "album;101disca" not in doc["tags"]
+    assert "genre;synthpop" in doc["tags"]
+
+
 def test_union_children_keeps_both(tmp_path: Path) -> None:
     box = tmp_path / "box"
     cd1 = box / "CD1"
