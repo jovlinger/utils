@@ -12,8 +12,10 @@ static const uint32_t kEncMinHighUs = 2000;
  * pin is 0x2 (GPIO8, +1) or 0x1 (GPIO7, -1), or 0 before the first click.
  * high_us is when that pin was last seen high after a count, or 0 while it
  * is still low. lock_us is the deadline for ignoring the other pin.
- * The first change after the lock (rise or fall) is a click. A later fall
- * of the same pin, after it has been high for kEncMinHighUs, is another. */
+ * Outside the lock a click is a falling edge. A rise is the contact
+ * releasing, including after the lock expired while that pin was still low.
+ * Inside the lock, a later fall of the same pin, once it has been high for
+ * kEncMinHighUs, is another click. */
 static inline void encoder_on_edge(uint8_t prev, uint8_t cur, uint32_t now,
                                    volatile uint8_t *pin,
                                    volatile uint32_t *lock_us,
@@ -63,11 +65,17 @@ static inline void encoder_on_edge(uint8_t prev, uint8_t cur, uint32_t now,
   const bool b_changed = (changed & 0x1) != 0;
   uint8_t next_pin = 0;
   if (a_changed && !b_changed) {
-    next_pin = 0x2;
-    *step = 1;
+    const bool fell = (prev & 0x2) != 0 && (cur & 0x2) == 0;
+    if (fell) {
+      next_pin = 0x2;
+      *step = 1;
+    }
   } else if (b_changed && !a_changed) {
-    next_pin = 0x1;
-    *step = -1;
+    const bool fell = (prev & 0x1) != 0 && (cur & 0x1) == 0;
+    if (fell) {
+      next_pin = 0x1;
+      *step = -1;
+    }
   } else if (a_changed && b_changed) {
     const bool a_fell = (prev & 0x2) != 0 && (cur & 0x2) == 0;
     const bool b_fell = (prev & 0x1) != 0 && (cur & 0x1) == 0;

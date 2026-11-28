@@ -11,6 +11,9 @@ void panel_cmd(uint8_t cmd, const uint8_t *data, size_t len);
 void panel_fill_screen(uint16_t color565);
 void panel_fill_rect(int x, int y, int w, int h, uint16_t color565);
 void panel_text(int x, int y, const char *s, int scale, uint16_t color565);
+/* Draw glyphs over existing pixels. ink_scale is 0..255 of the glyph alpha. */
+void panel_text_over(int x, int y, const char *s, int scale, uint16_t color565,
+                     int ink_scale);
 /* Width includes one pixel after every character. */
 int panel_text_width(const char *s);
 /* Ink and paper for the glyph span only. Does not paint the rest of the row. */

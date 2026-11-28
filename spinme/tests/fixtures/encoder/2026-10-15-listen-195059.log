@@ -1,0 +1,823 @@
+--- listen 19:50:59 ---
+encoder-debug
+ab=(A<<1)|B A=GPIO8=+1 B=GPIO7=-1 lock=200ms
+enc init ab=3
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+rot 0
+enc us=73559055 prev=3 cur=1 step=1 rot=1
+enc us=73738515 prev=1 cur=1 step=0 rot=1
+enc us=73738768 prev=1 cur=3 step=0 rot=1
+enc us=73738770 prev=3 cur=3 step=0 rot=1
+enc us=73738776 prev=3 cur=3 step=0 rot=1
+rot 1
+enc us=74686933 prev=3 cur=1 step=1 rot=2
+enc us=74686963 prev=1 cur=1 step=0 rot=2
+enc us=74785830 prev=1 cur=3 step=0 rot=2
+enc us=74786084 prev=3 cur=3 step=0 rot=2
+enc us=74786089 prev=3 cur=3 step=0 rot=2
+enc us=74786092 prev=3 cur=3 step=0 rot=2
+enc us=74786098 prev=3 cur=3 step=0 rot=2
+rot 2
+enc us=75812000 prev=3 cur=1 step=1 rot=3
+enc us=75812019 prev=1 cur=1 step=0 rot=3
+enc us=75944263 prev=1 cur=3 step=0 rot=3
+enc us=75944507 prev=3 cur=3 step=0 rot=3
+enc us=75944512 prev=3 cur=3 step=0 rot=3
+enc us=75944523 prev=3 cur=3 step=0 rot=3
+enc us=75944528 prev=3 cur=2 step=0 rot=3
+rot 3
+enc us=76997800 prev=2 cur=1 step=1 rot=4
+rot 4
+enc us=77171462 prev=1 cur=3 step=0 rot=4
+enc us=77171682 prev=3 cur=2 step=0 rot=4
+enc us=77171690 prev=2 cur=3 step=0 rot=4
+enc us=77171703 prev=3 cur=3 step=0 rot=4
+enc us=77171719 prev=3 cur=3 step=0 rot=4
+enc us=77171724 prev=3 cur=2 step=0 rot=4
+rot 4
+enc us=78192514 prev=2 cur=1 step=1 rot=5
+enc us=78192597 prev=1 cur=1 step=0 rot=5
+enc us=78324669 prev=1 cur=3 step=0 rot=5
+enc us=78324877 prev=3 cur=2 step=0 rot=5
+enc us=78324885 prev=2 cur=3 step=0 rot=5
+enc us=78324903 prev=3 cur=3 step=0 rot=5
+enc us=78324908 prev=3 cur=3 step=0 rot=5
+enc us=78324914 prev=3 cur=3 step=0 rot=5
+enc us=78324918 prev=3 cur=2 step=0 rot=5
+enc us=78324922 prev=2 cur=3 step=0 rot=5
+enc us=78324926 prev=3 cur=3 step=0 rot=5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+rot 5
+enc us=102968917 prev=3 cur=2 step=-1 rot=4
+rot 4
+enc us=103081457 prev=2 cur=3 step=0 rot=4
+enc us=103081607 prev=3 cur=1 step=0 rot=4
+enc us=103081611 prev=1 cur=1 step=0 rot=4
+enc us=103081616 prev=1 cur=3 step=0 rot=4
+enc us=103081675 prev=3 cur=1 step=0 rot=4
+enc us=103081683 prev=1 cur=3 step=0 rot=4
+--- listen resume 19:52:55 ---
+enc us=105618564 prev=1 cur=1 step=0 rot=2
+enc us=105618575 prev=1 cur=1 step=0 rot=2
+enc us=105618581 prev=1 cur=3 step=0 rot=2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+rot 2
+enc us=299821529 prev=3 cur=1 step=1 rot=3
+enc us=299821561 prev=1 cur=3 step=0 rot=3
+enc us=299821570 prev=3 cur=1 step=0 rot=3
+enc us=299821625 prev=1 cur=3 step=0 rot=3
+enc us=299821631 prev=3 cur=1 step=0 rot=3
+enc us=299821867 prev=1 cur=1 step=0 rot=3
+enc us=299899915 prev=1 cur=3 step=0 rot=3
+enc us=299900159 prev=3 cur=3 step=0 rot=3
+enc us=299900165 prev=3 cur=3 step=0 rot=3
+enc us=299900176 prev=3 cur=3 step=0 rot=3
+enc us=299900182 prev=3 cur=3 step=0 rot=3
+rot 3
+enc us=300682773 prev=3 cur=1 step=1 rot=4
+enc us=300762401 prev=1 cur=3 step=0 rot=4
+enc us=300762614 prev=3 cur=2 step=0 rot=4
+enc us=300762620 prev=2 cur=3 step=0 rot=4
+enc us=300762624 prev=3 cur=2 step=0 rot=4
+enc us=300762627 prev=2 cur=3 step=0 rot=4
+enc us=300762638 prev=3 cur=3 step=0 rot=4
+enc us=300762642 prev=3 cur=3 step=0 rot=4
+enc us=300762652 prev=3 cur=3 step=0 rot=4
+enc us=300762657 prev=3 cur=2 step=0 rot=4
+rot 4
+enc us=301747055 prev=2 cur=2 step=0 rot=4
+enc us=301821066 prev=2 cur=3 step=0 rot=4
+enc us=301821287 prev=3 cur=1 step=1 rot=5
+enc us=301821293 prev=1 cur=3 step=0 rot=5
+enc us=301821301 prev=3 cur=1 step=0 rot=5
+enc us=301821307 prev=1 cur=1 step=0 rot=5
+enc us=301821314 prev=1 cur=3 step=0 rot=5
+enc us=301821318 prev=3 cur=3 step=0 rot=5
+rot 5
+enc us=302649776 prev=3 cur=3 step=0 rot=5
+enc us=302649932 prev=3 cur=2 step=-1 rot=4
+enc us=302650054 prev=2 cur=2 step=0 rot=4
+enc us=302650484 prev=2 cur=2 step=0 rot=4
+enc us=302745990 prev=2 cur=2 step=0 rot=4
+enc us=302746150 prev=2 cur=3 step=0 rot=4
+enc us=302746154 prev=3 cur=3 step=0 rot=4
+enc us=302746217 prev=3 cur=1 step=0 rot=4
+enc us=302746221 prev=1 cur=1 step=0 rot=4
+enc us=302746228 prev=1 cur=1 step=0 rot=4
+enc us=302746233 prev=1 cur=1 step=0 rot=4
+enc us=302746237 prev=1 cur=1 step=0 rot=4
+enc us=302746242 prev=1 cur=1 step=0 rot=4
+rot 4
+enc us=303542735 prev=1 cur=2 step=-1 rot=3
+enc us=303617112 prev=2 cur=3 step=0 rot=3
+enc us=303617276 prev=3 cur=3 step=0 rot=3
+enc us=303617279 prev=3 cur=1 step=0 rot=3
+enc us=303617342 prev=1 cur=3 step=0 rot=3
+enc us=303617349 prev=3 cur=3 step=0 rot=3
+enc us=303617352 prev=3 cur=3 step=0 rot=3
+enc us=303617360 prev=3 cur=1 step=0 rot=3
+enc us=303617364 prev=1 cur=1 step=0 rot=3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+rot 3
+--- stop ---

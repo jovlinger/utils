@@ -197,14 +197,15 @@ static const int kTextCap = 96;
 static void paint_rgba(uint16_t *base, int stride, int origin_x, int origin_y,
                        int glyph_w, int glyph_h, const uint8_t *rgba,
                        int clip_x, int clip_y, int clip_w, int clip_h,
-                       uint16_t ink565) {
+                       uint16_t ink565, int ink_scale) {
   const int clip_r = clip_x + clip_w;
   const int clip_b = clip_y + clip_h;
   for (int row = 0; row < glyph_h; ++row) {
     const int py = origin_y + row;
     for (int col = 0; col < glyph_w; ++col) {
       const int px = origin_x + col;
-      const uint8_t alpha = rgba[(size_t)(row * glyph_w + col) * 4 + 3];
+      int alpha = rgba[(size_t)(row * glyph_w + col) * 4 + 3];
+      alpha = alpha * ink_scale / 255;
       if (alpha == 0 || px < clip_x || px >= clip_r || py < clip_y ||
           py >= clip_b) {
         continue;
@@ -382,14 +383,14 @@ static void paint_line(uint16_t *base, int stride, int origin_x, int origin_y,
                        int local_x, int local_y, const LayBox *boxes,
                        const uint8_t **rgba, const LayAt *placed, int n,
                        int clip_x, int clip_y, int clip_w, int clip_h,
-                       uint16_t ink565) {
+                       uint16_t ink565, int ink_scale) {
   for (int i = 0; i < n; ++i) {
     if (rgba[i] == nullptr) {
       continue;
     }
     paint_rgba(base, stride, origin_x + lay_left(&placed[i]) - local_x,
                origin_y + lay_top(&placed[i]) - local_y, boxes[i].w, boxes[i].h,
-               rgba[i], clip_x, clip_y, clip_w, clip_h, ink565);
+               rgba[i], clip_x, clip_y, clip_w, clip_h, ink565, ink_scale);
   }
 }
 
@@ -410,7 +411,7 @@ void panel_text(int x, int y, const char *s, int scale, uint16_t color565) {
   if (gBack != nullptr) {
     buf_fill_rect(0, y, LCD_WIDTH, row_h, 0x0000);
     paint_line(gBack, LCD_WIDTH, x, y, line.x, line.y, boxes, rgba, placed, n, 0,
-               y, LCD_WIDTH, row_h, color565);
+               y, LCD_WIDTH, row_h, color565, 255);
     return;
   }
   if (row_h > kBandRows) {
@@ -420,7 +421,7 @@ void panel_text(int x, int y, const char *s, int scale, uint16_t color565) {
     gBand[i] = 0x0000;
   }
   paint_line(gBand, LCD_WIDTH, x, 0, line.x, line.y, boxes, rgba, placed, n, 0, 0,
-             LCD_WIDTH, row_h, color565);
+             LCD_WIDTH, row_h, color565, 255);
   for (int i = 0; i < LCD_WIDTH * row_h; ++i) {
     gBand[i] = swap16(gBand[i]);
   }
@@ -450,7 +451,7 @@ void panel_text_on(int x, int y, const char *s, int scale, uint16_t ink565,
   if (gBack != nullptr) {
     buf_fill_rect(x, y, row_w, row_h, paper565);
     paint_line(gBack, LCD_WIDTH, x, y, line.x, line.y, boxes, rgba, placed, n, x, y,
-               row_w, row_h, ink565);
+               row_w, row_h, ink565, 255);
     return;
   }
   if (row_h > kBandRows) {
@@ -460,10 +461,35 @@ void panel_text_on(int x, int y, const char *s, int scale, uint16_t ink565,
     gBand[i] = paper565;
   }
   paint_line(gBand, row_w, 0, 0, line.x, line.y, boxes, rgba, placed, n, 0, 0,
-             row_w, row_h, ink565);
+             row_w, row_h, ink565, 255);
   for (int i = 0; i < row_w * row_h; ++i) {
     gBand[i] = swap16(gBand[i]);
   }
   set_window(x, y, row_w, row_h);
   write_pixels(gBand, (size_t)row_w * row_h);
+}
+
+void panel_text_over(int x, int y, const char *s, int scale, uint16_t color565,
+                     int ink_scale) {
+  (void)scale;
+  if (s == nullptr || s[0] == '\0' || gBack == nullptr) {
+    return;
+  }
+  if (ink_scale < 0) {
+    ink_scale = 0;
+  }
+  if (ink_scale > 255) {
+    ink_scale = 255;
+  }
+  LayBox boxes[kTextCap];
+  const uint8_t *rgba[kTextCap];
+  LayAt placed[kTextCap];
+  LayUnion line;
+  const int n = layout_text(s, boxes, rgba, placed, &line);
+  const int row_h = line.h;
+  if (n <= 0 || row_h <= 0 || y < 0 || y + row_h > LCD_HEIGHT) {
+    return;
+  }
+  paint_line(gBack, LCD_WIDTH, x, y, line.x, line.y, boxes, rgba, placed, n, 0, y,
+             LCD_WIDTH, row_h, color565, ink_scale);
 }

@@ -30,6 +30,7 @@ def rgb565(red: int, green: int, blue: int) -> Rgb:
 
 YELLOW: Rgb = rgb565(255, 255, 0)
 WHITE: Rgb = rgb565(255, 255, 255)
+DESIRED: Rgb = rgb565(0, 255, 255)
 BEZEL: Rgb = (32, 32, 36)
 
 
@@ -80,7 +81,9 @@ class Canvas:
                 if 0 <= px < self.image.width:
                     self._px[px, py] = color
 
-    def text(self, s: str, x: int, y: int, size: int, color: Rgb) -> None:
+    def text(
+        self, s: str, x: int, y: int, size: int, color: Rgb, ink_scale: int = 255
+    ) -> None:
         del size
         items = text_items(s)
         if not items:
@@ -94,7 +97,7 @@ class Canvas:
             for row in range(glyph.h):
                 py = top + row
                 for col in range(glyph.w):
-                    alpha = glyph.rgba[(row * glyph.w + col) * 4 + 3]
+                    alpha = glyph.rgba[(row * glyph.w + col) * 4 + 3] * ink_scale // 255
                     if alpha == 0:
                         continue
                     px = left + col

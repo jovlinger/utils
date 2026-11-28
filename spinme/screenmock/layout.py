@@ -16,6 +16,7 @@ from PIL import Image
 
 from screenmock.canvas import (
     BLACK,
+    DESIRED,
     HEIGHT,
     WHITE,
     WIDTH,
@@ -41,6 +42,7 @@ class Status:
     artist: str = ""
     title: str = "miniDSP-SHD.local"
     volume: int = 59
+    desired: int | None = None
     activity: str = ""
 
 
@@ -117,24 +119,32 @@ def _screen_rect(child: Placed) -> tuple[int, int, int, int]:
 
 
 def fit_block(texts: list[str], sections: list[int] | None = None) -> list[str]:
-    """Drop trailing characters until every left-aligned line is in the circle."""
+    """Shorten the widest line until every left-aligned line is in the circle.
+
+    A wide title sets the shared left edge. Chopping that line pulls the
+    edge back in. Chopping a short line that merely shares the edge would
+    erase spinme, the player, or the volume.
+    """
     fitted = list(texts)
     groups = list(sections) if sections is not None else [0] * len(fitted)
     while True:
         _union, live, lines = _block(fitted, groups)
         if not live:
             return fitted
-        worst = -1
-        worst_w = -1
+        widest = -1
+        widest_w = -1
+        outside = False
         produced = [i for i, text in enumerate(fitted) if line_box(text) is not None]
         for src, child in zip(produced, lines):
             left, top, width, height = _screen_rect(child)
-            if not box_inside_circle(left, top, width, height) and width > worst_w:
-                worst = src
-                worst_w = width
-        if worst < 0:
+            if width > widest_w:
+                widest = src
+                widest_w = width
+            if not box_inside_circle(left, top, width, height):
+                outside = True
+        if not outside or widest < 0:
             return fitted
-        fitted[worst] = fitted[worst][:-1]
+        fitted[widest] = fitted[widest][:-1]
 
 
 def fitted_line_boxes(
@@ -159,9 +169,18 @@ def render_square(status: Status | None = None) -> Image.Image:
         if line_box(text) is not None
     ]
     _union, _live, lines = _block(fitted, groups)
+    desire = ""
+    if (
+        shown.desired is not None
+        and shown.volume >= 0
+        and shown.desired != shown.volume
+    ):
+        desire = "vol {0}".format(shown.desired)
     for child, (text, color) in zip(lines, paired):
         left, top, _width, _height = _screen_rect(child)
         canvas.text(text, left, top, TEXT_SIZE, color)
+        if desire and text.startswith("vol "):
+            canvas.text(desire, left, top, TEXT_SIZE, DESIRED, 128)
     _draw_transport(canvas, shown)
     return canvas.image
 

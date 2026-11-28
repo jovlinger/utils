@@ -1,0 +1,34 @@
+# Serial capture 2026-10-15, encoder-debug, /dev/cu.usbmodem1101.
+# Three negative detents, played after the positive set on a counter
+# that had returned to 0. The firmware finished at rot 2. Human count
+# for this stretch, from a zeroed decoder, is -3.
+enc us=435395420 prev=3 cur=2 step=-1 rot=-1
+enc us=435502816 prev=2 cur=3 step=1 rot=0
+enc us=435502975 prev=3 cur=1 step=1 rot=1
+enc us=435502981 prev=1 cur=1 step=0 rot=1
+enc us=435503040 prev=1 cur=1 step=0 rot=1
+enc us=435503047 prev=1 cur=3 step=-1 rot=0
+enc us=435503052 prev=3 cur=1 step=1 rot=1
+enc us=435503057 prev=1 cur=1 step=0 rot=1
+enc us=435503061 prev=1 cur=1 step=0 rot=1
+enc us=435503064 prev=1 cur=1 step=0 rot=1
+enc us=435503068 prev=1 cur=1 step=0 rot=1
+enc us=436451809 prev=1 cur=2 step=0 rot=1
+enc us=436573313 prev=2 cur=3 step=1 rot=2
+enc us=436573543 prev=3 cur=1 step=1 rot=3
+enc us=436573546 prev=1 cur=1 step=0 rot=3
+enc us=436573550 prev=1 cur=3 step=-1 rot=2
+enc us=436573554 prev=3 cur=3 step=0 rot=2
+enc us=436573557 prev=3 cur=1 step=1 rot=3
+enc us=436573564 prev=1 cur=3 step=-1 rot=2
+enc us=436573569 prev=3 cur=3 step=0 rot=2
+enc us=437597665 prev=3 cur=2 step=-1 rot=1
+enc us=437709704 prev=2 cur=3 step=1 rot=2
+enc us=437709877 prev=3 cur=3 step=0 rot=2
+enc us=437709943 prev=3 cur=1 step=1 rot=3
+enc us=437709946 prev=1 cur=1 step=0 rot=3
+enc us=437709950 prev=1 cur=3 step=-1 rot=2
+enc us=437709954 prev=3 cur=3 step=0 rot=2
+enc us=437709957 prev=3 cur=1 step=1 rot=3
+enc us=437709961 prev=1 cur=3 step=-1 rot=2
+enc us=437709964 prev=3 cur=3 step=0 rot=2

@@ -4,6 +4,8 @@
 #include <Wire.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,23 +25,46 @@ static const uint16_t kVolumioPort = 3000;
 static const uint32_t kIdleSleepMs = 30000;
 static const uint16_t kYellow = 0xFFE0;
 static const uint16_t kWhite = 0xFFFF;
+/* Second ink for the knob target, drawn at half alpha over the polled volume. */
+static const uint16_t kDesiredInk = 0x07FF;
+static const int kDesiredAlpha = 128;
+static const uint32_t kPollMs = 1000;
 
 static bool gDisplayOk = false;
 static bool gAwake = true;
 static uint32_t gLastActivityMs = 0;
-static char gStatus[24] = "boot";
-static char gArtist[48] = "";
-static char gTitle[48] = VOLUMIO_HOST;
 static char gActivity[32] = "";
-static int gVolume = -1;
-/* Steps not yet acknowledged by Volumio. The glass shows gVolume + gUnsent
- * immediately. HTTP goes out at about 2 Hz as one absolute volume. */
-static int gUnsent = 0;
 static int gTakenRot = 0;
-static uint32_t gLastVolSendMs = 0;
-static uint32_t gVolArmMs = 0;
-static const uint32_t kVolSendGapMs = 500;
-static const uint32_t kVolGatherMs = 100;
+/* Last good player fields. volume is what Volumio last reported.
+ * desired is the knob target. They differ until a later poll catches up. */
+struct Snap {
+  char status[24];
+  char artist[48];
+  char title[48];
+  char link[16];
+  int volume;
+  bool have_player;
+};
+static Snap gWorkerSnap = {"", "", "", "boot", -1, false};
+static Snap gPublished = {"", "", "", "boot", -1, false};
+static portMUX_TYPE gSnapMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t gSnapSeq = 0;
+struct Mail {
+  bool poll;
+  bool toggle;
+  bool has_volume;
+  int volume;
+};
+static Mail gMail = {false, false, false, 0};
+static portMUX_TYPE gMailMux = portMUX_INITIALIZER_UNLOCKED;
+static TaskHandle_t gWorker = nullptr;
+static int gDesired = -1;
+static bool gDesiredHeld = false;
+static int gUnapplied = 0;
+static int gPaintedDesired = -999;
+static uint32_t gLastPollPost = 0;
+static bool gWakePoll = true;
+static uint32_t gSeenSeq = 0;
 /* First pin to change after the chatter lock is the click.
  * GPIO8 = +1, GPIO7 = -1. The same pin can repeat during a fast spin. */
 static volatile int gRotation = 0;
@@ -63,12 +88,10 @@ static volatile uint16_t gEncLogW = 0;
 static volatile uint16_t gEncLogR = 0;
 static volatile uint16_t gEncDrop = 0;
 static uint16_t gTouchCount = 0;
-static uint32_t gLastPollMs = 0;
 static uint32_t gLastInputMs = 0;
 static bool gUiDirty = false;
-static bool gPlayerRefresh = false;
-/* Paint and the volume write wait this long after the last knob or
- * touch edge. The encoder's other-pin lock stays 200 ms. */
+/* Paint waits this long after the last knob or touch edge. The encoder's
+ * other-pin lock stays 200 ms. Volumio work is not on this core. */
 static const uint32_t kUiQuietMs = 100;
 static bool gStatusBtnValid = false;
 static int gStatusBtnX = 0;
@@ -90,6 +113,83 @@ static void copy_text(char *dest, size_t dest_len, const char *src) {
     i++;
   }
   dest[i] = '\0';
+}
+
+static void publish_snap(void) {
+  portENTER_CRITICAL(&gSnapMux);
+  gPublished = gWorkerSnap;
+  gSnapSeq++;
+  portEXIT_CRITICAL(&gSnapMux);
+}
+
+static Snap read_snap(void) {
+  Snap snap;
+  portENTER_CRITICAL(&gSnapMux);
+  snap = gPublished;
+  portEXIT_CRITICAL(&gSnapMux);
+  return snap;
+}
+
+static void wake_worker(void) {
+  if (gWorker != nullptr) {
+    xTaskNotifyGive(gWorker);
+  }
+}
+
+static void post_mail_poll(void) {
+  portENTER_CRITICAL(&gMailMux);
+  gMail.poll = true;
+  portEXIT_CRITICAL(&gMailMux);
+  wake_worker();
+}
+
+static void post_mail_toggle(void) {
+  portENTER_CRITICAL(&gMailMux);
+  gMail.toggle = true;
+  portEXIT_CRITICAL(&gMailMux);
+  wake_worker();
+}
+
+static void post_mail_volume(int volume) {
+  portENTER_CRITICAL(&gMailMux);
+  gMail.has_volume = true;
+  gMail.volume = volume;
+  portEXIT_CRITICAL(&gMailMux);
+  wake_worker();
+}
+
+static int clamp_volume(int volume) {
+  if (volume < 0) {
+    return 0;
+  }
+  if (volume > 100) {
+    return 100;
+  }
+  return volume;
+}
+
+/* No outstanding turn: desired tracks the poll. A held target stays until
+ * the polled volume equals it. Steps from before the first poll apply once. */
+static void adopt_snap(const Snap &snap) {
+  if (snap.volume < 0 || !snap.have_player) {
+    return;
+  }
+  if (!gDesiredHeld) {
+    if (gUnapplied != 0) {
+      gDesired = clamp_volume(snap.volume + gUnapplied);
+      gUnapplied = 0;
+      gDesiredHeld = gDesired != snap.volume;
+      if (gDesiredHeld) {
+        post_mail_volume(gDesired);
+      }
+    } else {
+      gDesired = snap.volume;
+    }
+    return;
+  }
+  if (snap.volume == gDesired) {
+    gDesiredHeld = false;
+  }
 }
 
 /* Round glass over a square 360 framebuffer. Keep this in step with
@@ -164,8 +264,10 @@ static void compose_block(char lines[][kLineChars], const int *sections,
   lay_t2b(parts, n, HAlign_left, placed, block);
 }
 
-/* Drop trailing characters until every left-aligned line is in the circle.
- * The block stays vertically centered. */
+/* Shorten the widest line until every left-aligned line is in the circle.
+ * A wide title sets the shared left edge. Chopping that line pulls the
+ * edge back in. Chopping a short line that merely shares the edge would
+ * erase spinme, the player, or the volume. */
 static int fit_block(char lines[][kLineChars], uint16_t *colors, int *sections,
                      int count) {
   while (count > 0) {
@@ -175,42 +277,47 @@ static int fit_block(char lines[][kLineChars], uint16_t *colors, int *sections,
     compose_block(lines, sections, count, placed, &block, slot);
     const int ax = LCD_WIDTH / 2;
     const int ay = LCD_HEIGHT / 2;
-    int worst = -1;
-    int worst_w = -1;
+    int widest = -1;
+    int widest_w = -1;
+    bool outside = false;
     for (int i = 0; i < count; ++i) {
       if (slot[i] < 0) {
-        worst = i;
-        worst_w = 100000;
+        widest = i;
+        widest_w = 100000;
+        outside = true;
         break;
       }
       const LayAt *at = &placed[slot[i]];
+      if (at->w > widest_w) {
+        widest = i;
+        widest_w = at->w;
+      }
       const int left = ax + lay_left(at);
       const int top = ay + lay_top(at);
-      if (!box_inside_circle(left, top, at->w, at->h) && at->w > worst_w) {
-        worst = i;
-        worst_w = at->w;
+      if (!box_inside_circle(left, top, at->w, at->h)) {
+        outside = true;
       }
     }
-    if (worst < 0) {
+    if (!outside || widest < 0) {
       return count;
     }
-    const size_t n = strlen(lines[worst]);
-    if (n == 0 || slot[worst] < 0) {
-      drop_line(lines, colors, sections, count, worst);
+    const size_t n = strlen(lines[widest]);
+    if (n == 0 || slot[widest] < 0) {
+      drop_line(lines, colors, sections, count, widest);
       count--;
       continue;
     }
-    lines[worst][n - 1] = '\0';
-    if (lines[worst][0] == '\0') {
-      drop_line(lines, colors, sections, count, worst);
+    lines[widest][n - 1] = '\0';
+    if (lines[widest][0] == '\0') {
+      drop_line(lines, colors, sections, count, widest);
       count--;
     }
   }
   return count;
 }
 
-static const char *transport_label(void) {
-  if (strcmp(gStatus, "play") == 0) {
+static const char *transport_label(const char *status) {
+  if (status != nullptr && strcmp(status, "play") == 0) {
     return "stop";
   }
   return "play";
@@ -240,22 +347,8 @@ static void place_transport_button(void) {
   gStatusBtnValid = true;
 }
 
-static int optimistic_volume(void) {
-  if (gVolume < 0) {
-    return gVolume;
-  }
-  int volume = gVolume + gUnsent;
-  if (volume < 0) {
-    return 0;
-  }
-  if (volume > 100) {
-    return 100;
-  }
-  return volume;
-}
-
-static void paint_transport_button(void) {
-  const char *label = transport_label();
+static void paint_transport_button(const char *status) {
+  const char *label = transport_label(status);
   panel_fill_rect(gStatusBtnX, gStatusBtnY, gStatusBtnW, gStatusBtnH, kWhite);
   const int tw = panel_text_width(label);
   const int inner = gStatusBtnW - kTransportPadX * 2;
@@ -269,16 +362,26 @@ static void draw_status(void) {
   if (!gDisplayOk) {
     return;
   }
+  const Snap snap = read_snap();
+  adopt_snap(snap);
+  const char *player = snap.have_player ? snap.status : snap.link;
   place_transport_button();
-  const char *label = transport_label();
-  char volume[16];
-  const int rot = gRotation;
-  snprintf(volume, sizeof(volume), "vol %d", optimistic_volume());
+  const char *label = transport_label(player);
+  char volume[16] = "";
+  char desire[16] = "";
+  const bool overlay =
+      gDesiredHeld && snap.volume >= 0 && gDesired != snap.volume;
+  if (snap.volume >= 0) {
+    snprintf(volume, sizeof(volume), "vol %d", snap.volume);
+  }
+  if (overlay) {
+    snprintf(desire, sizeof(desire), "vol %d", gDesired);
+  }
   const char *texts[kLineCount] = {
       gAwake ? "spinme" : "asleep",
-      gStatus,
-      gArtist,
-      gTitle,
+      player,
+      snap.artist,
+      snap.title,
       volume,
       gActivity,
   };
@@ -297,8 +400,9 @@ static void draw_status(void) {
     shown_section[count] = kLineSection[i];
     count++;
   }
+  const int painted_desire = overlay ? gDesired : -1;
   const bool label_same = strcmp(gPaintedLabel, label) == 0;
-  bool lines_same = gPaintedCount == count;
+  bool lines_same = gPaintedCount == count && gPaintedDesired == painted_desire;
   if (lines_same) {
     for (int i = 0; i < count; ++i) {
       if (strcmp(gPaintedLine[i], shown[i]) != 0) {
@@ -307,7 +411,7 @@ static void draw_status(void) {
       }
     }
   }
-  gDrawnRotation = rot;
+  gDrawnRotation = gRotation;
   if (label_same && lines_same) {
     return;
   }
@@ -335,15 +439,20 @@ static void draw_status(void) {
         continue;
       }
       const LayAt *at = &placed[slot[i]];
-      panel_text(ax + lay_left(at), ay + lay_top(at), fitted[i], kTextSize,
-                 fitted_colors[i]);
+      const int left = ax + lay_left(at);
+      const int top = ay + lay_top(at);
+      panel_text(left, top, fitted[i], kTextSize, fitted_colors[i]);
+      if (overlay && strncmp(fitted[i], "vol ", 4) == 0) {
+        panel_text_over(left, top, desire, kTextSize, kDesiredInk, kDesiredAlpha);
+      }
     }
   }
-  paint_transport_button();
+  paint_transport_button(player);
   for (int i = 0; i < count; ++i) {
     copy_text(gPaintedLine[i], sizeof(gPaintedLine[i]), shown[i]);
   }
   gPaintedCount = count;
+  gPaintedDesired = painted_desire;
   panel_present();
 }
 
@@ -456,34 +565,30 @@ static bool volumio_get(const String &path, String *body,
 static bool refresh_player(void) {
   String body;
   if (!volumio_get("/api/v1/getState", &body)) {
-    copy_text(gStatus, sizeof(gStatus), "player ?");
     return false;
   }
-  json_string_field(body, "status", gStatus, sizeof(gStatus));
-  json_string_field(body, "artist", gArtist, sizeof(gArtist));
-  json_string_field(body, "title", gTitle, sizeof(gTitle));
-  const int polled = json_int_field(body, "volume", gVolume);
-  const bool hold = gUnsent != 0 || (gLastVolSendMs != 0 &&
-                                     millis() - gLastVolSendMs < 1000);
-  if (!hold) {
-    gVolume = polled;
-  }
-  Serial.printf("state %s vol %d\n", gStatus, gVolume);
+  json_string_field(body, "status", gWorkerSnap.status, sizeof(gWorkerSnap.status));
+  json_string_field(body, "artist", gWorkerSnap.artist, sizeof(gWorkerSnap.artist));
+  json_string_field(body, "title", gWorkerSnap.title, sizeof(gWorkerSnap.title));
+  gWorkerSnap.volume = json_int_field(body, "volume", gWorkerSnap.volume);
+  gWorkerSnap.have_player = true;
+  Serial.printf("state %s vol %d\n", gWorkerSnap.status, gWorkerSnap.volume);
+  publish_snap();
   return true;
 }
 
 /* CORRECTED 2026-10-15: the 2s poll was gated on gAwake, and
  * wake_display() only drove the backlight pin. A rising edge (or a
  * lit pin while gAwake is still false) is the wake event. */
-/* Wake only marks state. The frame and the player refresh wait until the
- * knob has been quiet. The frame is drawn before any Volumio call. */
+/* Wake marks the glass. The UI core posts one poll, then the one-second
+ * loop, until the backlight is off again. */
 static void issue_wake(void) {
   gAwake = true;
   gLastActivityMs = millis();
   if (!pin_backlit()) {
     digitalWrite(PIN_LCD_BL, HIGH);
   }
-  gPlayerRefresh = true;
+  gWakePoll = true;
   gUiDirty = true;
 }
 
@@ -496,24 +601,26 @@ static void service_backlight(void) {
   was_lit = pin_backlit();
 }
 
-static void volumio_toggle(void) {
+static bool send_volume(int target) {
+  char path[72];
+  snprintf(path, sizeof(path), "/api/v1/commands/?cmd=volume&volume=%d", target);
   String body;
-  if (!volumio_get("/api/v1/commands/?cmd=toggle", &body)) {
-    note_activity("toggle ?");
-    return;
+  if (!volumio_get(path, &body, 800)) {
+    Serial.printf("vol send fail %d\n", target);
+    return false;
   }
-  refresh_player();
-  gUiDirty = true;
+  Serial.printf("vol send %d\n", target);
+  return true;
 }
 
 static void connect_wifi(void) {
   if (SPINME_WIFI_SSID[0] == '\0') {
-    copy_text(gStatus, sizeof(gStatus), "wifi unset");
-    draw_status();
+    copy_text(gWorkerSnap.link, sizeof(gWorkerSnap.link), "wifi unset");
+    publish_snap();
     return;
   }
-  copy_text(gStatus, sizeof(gStatus), "wifi ...");
-  draw_status();
+  copy_text(gWorkerSnap.link, sizeof(gWorkerSnap.link), "wifi ...");
+  publish_snap();
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.begin(SPINME_WIFI_SSID, SPINME_WIFI_PASS);
@@ -523,13 +630,44 @@ static void connect_wifi(void) {
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
-    copy_text(gStatus, sizeof(gStatus), "wifi ok");
+    copy_text(gWorkerSnap.link, sizeof(gWorkerSnap.link), "wifi ok");
+    publish_snap();
     refresh_player();
   } else {
     Serial.println("wifi fail");
-    copy_text(gStatus, sizeof(gStatus), "wifi fail");
+    copy_text(gWorkerSnap.link, sizeof(gWorkerSnap.link), "wifi fail");
+    publish_snap();
   }
-  draw_status();
+}
+
+static void worker_task(void *arg) {
+  (void)arg;
+  connect_wifi();
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
+    Mail mail;
+    portENTER_CRITICAL(&gMailMux);
+    mail = gMail;
+    gMail.poll = false;
+    gMail.toggle = false;
+    portEXIT_CRITICAL(&gMailMux);
+    if (mail.toggle) {
+      String body;
+      volumio_get("/api/v1/commands/?cmd=toggle", &body);
+      refresh_player();
+    }
+    if (mail.has_volume) {
+      const bool ok = send_volume(mail.volume);
+      portENTER_CRITICAL(&gMailMux);
+      if (ok && gMail.volume == mail.volume) {
+        gMail.has_volume = false;
+      }
+      portEXIT_CRITICAL(&gMailMux);
+    }
+    if (mail.poll) {
+      refresh_player();
+    }
+  }
 }
 
 static void touch_init(void) {
@@ -581,10 +719,12 @@ static bool touch_pressed(uint16_t *x, uint16_t *y) {
 }
 
 static void reply_query(void) {
-  char player[sizeof(gStatus)];
+  const Snap snap = read_snap();
+  const char *shown = snap.have_player ? snap.status : snap.link;
+  char player[sizeof(snap.status)];
   size_t i = 0;
-  for (; gStatus[i] != '\0' && i + 1 < sizeof(player); ++i) {
-    player[i] = (gStatus[i] == ' ') ? '_' : gStatus[i];
+  for (; shown[i] != '\0' && i + 1 < sizeof(player); ++i) {
+    player[i] = (shown[i] == ' ') ? '_' : shown[i];
   }
   player[i] = '\0';
   const int backlight = digitalRead(PIN_LCD_BL) == HIGH ? 1 : 0;
@@ -598,7 +738,7 @@ static void reply_query(void) {
       "power_w=unavailable\n",
       backlight, gAwake ? 1 : 0, static_cast<unsigned long>(idle_ms),
       gAwake ? 0 : 1, WiFi.status() == WL_CONNECTED ? "connected" : "down",
-      player, gVolume, (int)gRotation);
+      player, snap.volume, (int)gRotation);
 }
 
 static void service_query(void) {
@@ -632,52 +772,22 @@ static void take_rotation(void) {
   if (delta == 0) {
     return;
   }
-  if (gUnsent == 0) {
-    gVolArmMs = millis();
+  const Snap snap = read_snap();
+  if (!snap.have_player || snap.volume < 0) {
+    gUnapplied += delta;
+  } else {
+    if (!gDesiredHeld) {
+      gDesired = snap.volume;
+    }
+    gDesired = clamp_volume(gDesired + delta);
+    gDesiredHeld = gDesired != snap.volume;
+    if (gDesiredHeld) {
+      post_mail_volume(gDesired);
+    }
   }
-  gUnsent += delta;
   gLastInputMs = millis();
   gUiDirty = true;
   wake_display();
-}
-
-/* One absolute volume write. A short gather folds a flick into the first
- * request, then further sends wait kVolSendGapMs so a fast spin does not
- * become one HTTP call per detent. */
-static void flush_volume(void) {
-  if (gUnsent == 0 || gVolume < 0 || WiFi.status() != WL_CONNECTED) {
-    return;
-  }
-  const uint32_t now = millis();
-  if (now - gVolArmMs < kVolGatherMs) {
-    return;
-  }
-  if (gLastVolSendMs != 0 && now - gLastVolSendMs < kVolSendGapMs) {
-    return;
-  }
-  int target = gVolume + gUnsent;
-  if (target < 0) {
-    target = 0;
-  }
-  if (target > 100) {
-    target = 100;
-  }
-  const int snap = gUnsent;
-  if (target == gVolume) {
-    gUnsent -= snap;
-    return;
-  }
-  char path[72];
-  snprintf(path, sizeof(path), "/api/v1/commands/?cmd=volume&volume=%d", target);
-  String body;
-  gLastVolSendMs = now;
-  if (!volumio_get(path, &body, 800)) {
-    Serial.printf("vol send fail %d\n", target);
-    return;
-  }
-  Serial.printf("vol send %d (%+d)\n", target, snap);
-  gVolume = target;
-  gUnsent -= snap;
 }
 
 static void IRAM_ATTR on_encoder(void) {
@@ -752,47 +862,33 @@ void setup() {
 
   touch_init();
   encoder_begin();
-  connect_wifi();
+  xTaskCreatePinnedToCore(worker_task, "volumio", 16384, nullptr, 1, &gWorker, 0);
 }
 
 static bool ui_busy(void) {
   return millis() - gLastInputMs < kUiQuietMs;
 }
 
-static void paint_if_dirty(void) {
-  if (!gUiDirty || !pin_backlit()) {
-    return;
-  }
-  const int rot = gRotation;
-  const int unsent = gUnsent;
-  draw_status();
-  if ((int)gRotation == rot && gUnsent == unsent && gDrawnRotation == rot) {
-    gUiDirty = false;
-  }
-}
-
-/* Slow work waits until the knob and touch have been quiet. Paint the
- * accumulated volume before Volumio HTTP, so a slow getState cannot hide
- * a turn that already happened. */
 static void service_deferred(void) {
   if (ui_busy()) {
     return;
   }
   drain_enc_log();
-  paint_if_dirty();
-  if (pin_backlit() && WiFi.status() == WL_CONNECTED &&
-      (gPlayerRefresh || millis() - gLastPollMs > 2000)) {
-    gLastPollMs = millis();
-    gPlayerRefresh = false;
-    refresh_player();
+  if (gSnapSeq != gSeenSeq) {
+    gSeenSeq = gSnapSeq;
     gUiDirty = true;
   }
-  const int unsent_before = gUnsent;
-  flush_volume();
-  if (gUnsent != unsent_before) {
-    gUiDirty = true;
+  if (!gUiDirty || !pin_backlit()) {
+    return;
   }
-  paint_if_dirty();
+  const int rot = gRotation;
+  const bool held = gDesiredHeld;
+  const int desired = gDesired;
+  draw_status();
+  if ((int)gRotation == rot && gDesiredHeld == held && gDesired == desired &&
+      gDrawnRotation == rot) {
+    gUiDirty = false;
+  }
 }
 
 void loop() {
@@ -810,10 +906,9 @@ void loop() {
     const bool on_button = !was_asleep && status_button_hit(x, y);
     note_activity("touch");
     if (on_button) {
-      volumio_toggle();
-    } else if (!was_asleep && WiFi.status() == WL_CONNECTED) {
-      gPlayerRefresh = true;
-      gUiDirty = true;
+      post_mail_toggle();
+    } else if (!was_asleep) {
+      post_mail_poll();
     }
   }
   was_touch = pressed;
@@ -837,6 +932,11 @@ void loop() {
   }
 
   service_backlight();
+  if (pin_backlit() && (gWakePoll || millis() - gLastPollPost >= kPollMs)) {
+    gWakePoll = false;
+    gLastPollPost = millis();
+    post_mail_poll();
+  }
   service_deferred();
   delay(10);
 }
