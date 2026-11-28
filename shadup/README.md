@@ -1,6 +1,3 @@
-<<<<<<< Updated upstream
-a content addressed file organizer for flac or photos. Integrated with musicbrains and other music DBs for tagging.
-=======
 Content-addressed organizer for FLAC (and photos). MusicBrainz and other
 providers via musicology sidecars / postingest.
 
@@ -80,4 +77,3 @@ Refresh rebuilds:
 Cycles between `_meta` and `_tags` are intentional so tag browse and album meta
 share one folder. MPD may store symlink path aliases; Volumio browse should use
 aggregate MPD list commands so Node does not buffer every path.
->>>>>>> Stashed changes

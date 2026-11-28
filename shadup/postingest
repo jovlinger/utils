@@ -138,8 +138,6 @@ def validate_providers(providers: Sequence[str]) -> list[str]:
     return out
 
 
-<<<<<<< Updated upstream
-=======
 def ensure_local_providers(providers: Sequence[str]) -> list[str]:
     """Append cue/txt when missing so combine never skips on-disk local sidecars."""
     out = list(providers)
@@ -178,7 +176,6 @@ def unmatched_network_providers(album: Path, providers: Sequence[str]) -> list[s
     return need
 
 
->>>>>>> Stashed changes
 def has_audio(path: Path) -> bool:
     try:
         for child in path.iterdir():
@@ -395,20 +392,6 @@ def process_audio_album(
     stale = force or combine.combined_is_stale(
         album, audio_exts=AUDIO_EXTS, child_dirs=child_audio
     )
-<<<<<<< Updated upstream
-    if not stale and not force:
-        # Still ensure provider sidecars exist for assert-all-working.
-        missing = [
-            p for p in providers if not (album / f".meta.{p}.json").is_file()
-        ]
-        if not missing:
-            return False
-
-    scan_needed = force or any(
-        not (album / f".meta.{p}.json").is_file() for p in providers
-    )
-    if scan_needed or force:
-=======
     missing = [p for p in providers if not (album / f".meta.{p}.json").is_file()]
     unmatched = unmatched_network_providers(album, providers)
     if (
@@ -434,16 +417,11 @@ def process_audio_album(
             scan_providers = [p for p in providers if p in scan_set]
             if not scan_providers:
                 scan_providers = list(providers)
->>>>>>> Stashed changes
         scan_cmd = [str(MUSICSCAN)]
         for provider in scan_providers:
             scan_cmd.extend(["--provider", provider])
-<<<<<<< Updated upstream
-        if force:
-=======
         # Always --force when rewriting unmatched network sidecars.
         if force_provider or unmatched:
->>>>>>> Stashed changes
             scan_cmd.append("--force")
         if include_raw:
             scan_cmd.append("--include-raw")
