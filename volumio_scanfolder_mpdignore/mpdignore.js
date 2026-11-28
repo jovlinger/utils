@@ -118,9 +118,55 @@ function patternsForDir(absDir, parentPatterns) {
   return parent.concat(readPatterns(absDir));
 }
 
+/**
+ * Collect .mpdignore patterns from ancestors of absPath (not absPath itself).
+ *
+ * Volumio explodeUri often starts scanFolder at an album directory under
+ * /mnt/..., so files/.mpdignore would never be seen unless we walk upward.
+ * Stop at /mnt (inclusive) or filesystem root.
+ *
+ * @param {string} absPath
+ * @return {string[]}
+ */
+function collectAncestorPatterns(absPath) {
+  var patterns = [];
+  var cur = path.resolve(absPath);
+  var parent = path.dirname(cur);
+  var chain = [];
+  while (parent && parent !== cur) {
+    chain.push(parent);
+    if (parent === '/mnt' || parent === '/') {
+      break;
+    }
+    cur = parent;
+    parent = path.dirname(cur);
+  }
+  chain.reverse();
+  for (var i = 0; i < chain.length; i++) {
+    patterns = patterns.concat(readPatterns(chain[i]));
+  }
+  return patterns;
+}
+
+/**
+ * Seed exclude list for a scanFolder entry point.
+ * If caller already passed patterns (recursive), keep them; otherwise load ancestors.
+ * @param {string} absDir
+ * @param {string[]} [excludePatterns]
+ * @return {string[]}
+ */
+function seedExcludePatterns(absDir, excludePatterns) {
+  if (excludePatterns && excludePatterns.length) {
+    return excludePatterns;
+  }
+  return collectAncestorPatterns(absDir);
+}
+
 module.exports = {
   readPatterns: readPatterns,
   fnmatch: fnmatch,
   nameMatches: nameMatches,
-  patternsForDir: patternsForDir
+  patternsForDir: patternsForDir,
+  collectAncestorPatterns: collectAncestorPatterns,
+  seedExcludePatterns: seedExcludePatterns
 };

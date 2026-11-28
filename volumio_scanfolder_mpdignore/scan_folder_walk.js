@@ -32,7 +32,8 @@ function walk(rootAbs, opts) {
 
   function rec(absDir, exclude) {
     visitedDirs.push(absDir);
-    var patterns = honor ? mpdignore.patternsForDir(absDir, exclude) : (exclude || []);
+    var seeded = honor ? mpdignore.seedExcludePatterns(absDir, exclude) : (exclude || []);
+    var patterns = honor ? mpdignore.patternsForDir(absDir, seeded) : seeded;
     var names;
     try {
       names = fs.readdirSync(absDir);

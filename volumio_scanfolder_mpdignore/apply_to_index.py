@@ -26,6 +26,24 @@ OLD_LOOP = """\
 
 NEW_LOOP = """\
     try {
+      excludePatterns = mpdignoreUtil.seedExcludePatterns(uri, excludePatterns);
+      var files = libFsExtra.readdirSync(uri);
+      var patterns = mpdignoreUtil.patternsForDir(uri, excludePatterns);
+      for (var i = 0; i < files.length; i++) {
+        var name = files[i];
+        if (mpdignoreUtil.nameMatches(name, patterns)) {
+          continue;
+        }
+        uris = uris.concat(self.scanFolder(uri + '/' + name, patterns));
+      }
+    } catch (e) {
+      self.logger.error("Failed to stat '" + uri + "'");
+    }
+"""
+
+# Prior patch used a weaker seed (empty array only); upgrade in place.
+OLD_SEEDED_LOOP = """\
+    try {
       excludePatterns = excludePatterns || [];
       var files = libFsExtra.readdirSync(uri);
       var patterns = mpdignoreUtil.patternsForDir(uri, excludePatterns);
@@ -43,10 +61,14 @@ NEW_LOOP = """\
 
 
 def patch(text: str) -> str:
-    if "mpdignoreUtil" in text and "patternsForDir" in text:
-        return text  # already patched
+    if "seedExcludePatterns" in text and "mpdignoreUtil" in text:
+        return text  # already fully patched
     if "var fs = require('fs');" not in text:
         raise SystemExit("expected fs require in index.js")
+
+    if "mpdignoreUtil" in text and OLD_SEEDED_LOOP in text:
+        return text.replace(OLD_SEEDED_LOOP, NEW_LOOP, 1)
+
     if OLD_SIG not in text:
         raise SystemExit("scanFolder signature not found")
     if OLD_LOOP not in text:
