@@ -2,7 +2,7 @@
 
 Normative layouts for binary (packed little-endian body), text, C literals,
 and flat application/x-www-form-urlencoded. C headers under host/ mirror these
-fields; see EXPOSITION.md section 1.
+fields; see docs/events-and-plumbing.md.
 """
 
 from .base import (

@@ -648,7 +648,7 @@ class KvGet(TaskEvent):
 
 @dataclass
 class KvSet(TaskEvent):
-    """KvConfig: store typed value. type is TA_KV_VTYPE_*; value is form text."""
+    """KvConfig: store typed value (type + value up to TA_KV_VAL_MAX)."""
 
     key: str = ""
     type: int = 0

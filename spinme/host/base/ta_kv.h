@@ -18,9 +18,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define TA_KV_KEY_MAX 32
-#define TA_KV_VAL_MAX 1024
+/* Packed field widths (normative). */
+#define TA_KV_KEYLEN_BITS 8u
+#define TA_KV_VALLEN_BITS 20u
+#define TA_KV_TYPE_BITS 4u
+#define TA_KV_KEYLEN_MAX ((1u << TA_KV_KEYLEN_BITS) - 1u)   /* 255 */
+#define TA_KV_VALLEN_MAX ((1u << TA_KV_VALLEN_BITS) - 1u) /* 1048575 */
+
+/* C buffer for a key string: keylen bytes + NUL. */
+#define TA_KV_KEY_MAX (TA_KV_KEYLEN_MAX + 1u)
+/* Per-item value clamp == packed vallen max. */
+#define TA_KV_VAL_MAX TA_KV_VALLEN_MAX
 #define TA_KV_SLOTS 32
+
+/* Fixed image arena (not slots*VAL_MAX). Device: prefer PSRAM. */
+#define TA_KV_IMAGE_CAP (1024u * 1024u)
 
 #define TA_KV_IMAGE_HEAD_SIZE 4u
 /* packed u32 + next u32 (key and value follow). */

@@ -211,7 +211,7 @@ typedef struct {
 typedef struct {
     char key[32];
     uint8_t type;
-    char value[96];
+    char value[1024];
 } ta_kv_set_t;
 
 /* KvDelete type_id=0x703 */

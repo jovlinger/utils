@@ -88,7 +88,9 @@ TA_EV_KV_SET: int = 0x701
 TA_EV_KV_LIST: int = 0x702
 TA_EV_KV_DELETE: int = 0x703
 TA_KV_KEY_MAX: int = 32
-TA_KV_FORM_VAL_MAX: int = 96
+# Store / form-set clamp; on-disk packed vallen is 20 bits (room to raise later).
+TA_KV_VAL_MAX: int = 1024
+TA_KV_FORM_VAL_MAX: int = TA_KV_VAL_MAX
 
 TA_PLAYING_STOP: int = 0
 TA_PLAYING_PLAY: int = 1

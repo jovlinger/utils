@@ -1,6 +1,8 @@
 #include "ta_net_http_event.h"
 
+#include "ta_kv.h"
 #include "ta_net_events.h"
+#include "ta_net_kv_http.h"
 #include "ta_registry.h"
 
 #include <stdio.h>
@@ -13,7 +15,8 @@
 
 #define TA_NET_HTTP_FORM_MAX 16
 #define TA_NET_HTTP_KEY_MAX 32
-#define TA_NET_HTTP_VAL_MAX 96
+/* Must cover KvSet value (TA_KV_FORM_VAL_MAX == TA_KV_VAL_MAX). */
+#define TA_NET_HTTP_VAL_MAX TA_KV_VAL_MAX
 
 typedef struct {
     char key[TA_NET_HTTP_KEY_MAX];
@@ -485,23 +488,38 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     const char *sp;
     char actor[TA_NAME_MAX];
     char event_name[48];
-    ta_net_http_kv_t flat[TA_NET_HTTP_FORM_MAX];
+    ta_net_http_kv_t *flat;
+    ta_event_envelope_t *env;
+    ta_event_envelope_t *reply;
     size_t nflat;
     size_t i;
     size_t body_len;
     const char *body;
-    ta_event_envelope_t env;
-    ta_event_envelope_t reply;
     ta_session_id_t sid;
     ta_net_http_wait_fn waitfn;
     int rc;
+    int ret;
 
+    flat = NULL;
+    env = NULL;
+    reply = NULL;
+    ret = 0;
     if (req == NULL || out == NULL || len < 16) {
         return -1;
     }
     /* Caller may pass an uninitialized stack resp; do not free garbage. */
     out->blob = NULL;
     out->blob_len = 0;
+    /* Heap: KvSet value is TA_KV_VAL_MAX; flat[16]*1024 must not live on stack. */
+    flat = (ta_net_http_kv_t *)calloc((size_t)TA_NET_HTTP_FORM_MAX,
+                                      sizeof(ta_net_http_kv_t));
+    env = (ta_event_envelope_t *)calloc(1u, sizeof(*env));
+    reply = (ta_event_envelope_t *)calloc(1u, sizeof(*reply));
+    if (flat == NULL || env == NULL || reply == NULL) {
+        fill_response(out, 500, "oom", 3);
+        ret = 0;
+        goto done;
+    }
     text = (const char *)req;
     line_end = NULL;
     for (i = 0; i + 1 < len; i++) {
@@ -510,9 +528,29 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
             break;
         }
     }
-    if (line_end == NULL || strncmp(text, "POST /event/", 12) != 0) {
+    if (line_end == NULL) {
         fill_response(out, 400, "bad request", 11);
-        return 0;
+        goto done;
+    }
+    /* TaskActor / config blobs: PUT /kv/<key> (OTA path). */
+    if (strncmp(text, "PUT /kv/", 8) == 0) {
+        ta_kv_status_t st;
+
+        st = ta_net_kv_http_put(req, len);
+        if (st == TA_KV_OK) {
+            fill_response(out, 200, "ok", 2);
+        } else if (st == TA_KV_FULL) {
+            fill_response(out, 507, "full", 4);
+        } else if (st == TA_KV_BAD_ARG) {
+            fill_response(out, 400, "bad kv", 6);
+        } else {
+            fill_response(out, 500, "kv fail", 7);
+        }
+        goto done;
+    }
+    if (strncmp(text, "POST /event/", 12) != 0) {
+        fill_response(out, 400, "bad request", 11);
+        goto done;
     }
     path = text + 12;
     sp = path;
@@ -521,7 +559,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     }
     if (sp >= line_end) {
         fill_response(out, 400, "bad request", 11);
-        return 0;
+        goto done;
     }
     {
         const char *slash;
@@ -537,12 +575,12 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
         }
         if (slash == NULL) {
             fill_response(out, 400, "bad path", 8);
-            return 0;
+            goto done;
         }
         alen = (size_t)(slash - path);
         if (alen == 0 || alen >= sizeof(actor)) {
             fill_response(out, 400, "bad actor", 9);
-            return 0;
+            goto done;
         }
         memcpy(actor, path, alen);
         actor[alen] = '\0';
@@ -561,7 +599,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
         }
         if (elen == 0 || elen >= sizeof(event_name)) {
             fill_response(out, 400, "bad event", 9);
-            return 0;
+            goto done;
         }
         memcpy(event_name, slash + 1, elen);
         event_name[elen] = '\0';
@@ -578,7 +616,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
     }
     if (hdr_end == NULL) {
         fill_response(out, 400, "bad headers", 11);
-        return 0;
+        goto done;
     }
 
     nflat = 0;
@@ -586,7 +624,7 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
         if (parse_form(flat, &nflat, qmark + 1, (size_t)(sp - (qmark + 1))) !=
             0) {
             fill_response(out, 400, "bad query", 9);
-            return 0;
+            goto done;
         }
     }
 
@@ -614,12 +652,12 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
             }
             if ((size_t)(body - (const char *)req) + body_len > len) {
                 fill_response(out, 400, "short body", 10);
-                return 0;
+                goto done;
             }
             if (body_len > 0) {
                 if (parse_form(flat, &nflat, body, body_len) != 0) {
                     fill_response(out, 400, "bad body", 8);
-                    return 0;
+                    goto done;
                 }
             }
         }
@@ -627,51 +665,55 @@ int ta_net_http_handle_request(const uint8_t *req, size_t len,
 
     if (ta_registry_lookup(actor) == NULL) {
         fill_response(out, 404, "actor not found", 15);
-        return 0;
+        goto done;
     }
 
-    ta_env_clear(&env);
-    (void)ta_env_set_src(&env, "Net");
+    ta_env_clear(env);
+    (void)ta_env_set_src(env, "Net");
     sid = g_sid_gen++;
     if (g_sid_gen == 0) {
         g_sid_gen = 1;
     }
-    env.session_id = sid;
-    if (build_event_from_form(event_name, flat, nflat, &env.event) != 0) {
+    env->session_id = sid;
+    if (build_event_from_form(event_name, flat, nflat, &env->event) != 0) {
         fill_response(out, 400, "unknown event", 13);
-        return 0;
+        goto done;
     }
 
     g_want_sid = sid;
     g_have_offer = 0;
-    if (ta_registry_post(actor, &env) != 0) {
+    if (ta_registry_post(actor, env) != 0) {
         g_want_sid = 0;
         fill_response(out, 500, "enqueue failed", 14);
-        return 0;
+        goto done;
     }
 
     waitfn = g_wait != NULL ? g_wait : default_wait;
-    rc = waitfn(sid, &reply, TA_NET_HTTP_TIMEOUT_MS);
+    rc = waitfn(sid, reply, TA_NET_HTTP_TIMEOUT_MS);
     g_want_sid = 0;
     if (g_have_blob && g_blob_sid == sid) {
         fill_response_blob(out, (int)g_blob_status, g_blob, g_blob_len);
         g_blob = NULL;
         g_blob_len = 0;
         g_have_blob = 0;
-        return 0;
+        goto done;
     }
     if (rc != 0) {
         fill_response(out, 201, "accepted", 8);
-        return 0;
+        goto done;
     }
-    if (reply.event.type != TA_EV_NET_HTTP_REPLY) {
+    if (reply->event.type != TA_EV_NET_HTTP_REPLY) {
         fill_response(out, 502, "bad reply", 9);
-        return 0;
+        goto done;
     }
-    fill_response(out, (int)reply.event.u.net_http_reply.http_status,
-                  reply.event.u.net_http_reply.bytes,
-                  (size_t)reply.event.u.net_http_reply.n);
-    return 0;
+    fill_response(out, (int)reply->event.u.net_http_reply.http_status,
+                  reply->event.u.net_http_reply.bytes,
+                  (size_t)reply->event.u.net_http_reply.n);
+done:
+    free(flat);
+    free(env);
+    free(reply);
+    return ret;
 }
 
 void ta_net_mdns_reset(void) {

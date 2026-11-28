@@ -4,11 +4,6 @@
 
 #include <string.h>
 
-#define TA_KV_IMAGE_CAP                                                        \
-    (TA_KV_IMAGE_HEAD_SIZE +                                                   \
-     (TA_KV_SLOTS * (TA_KV_REC_PREFIX_SIZE + (TA_KV_KEY_MAX - 1) +              \
-                     TA_KV_VAL_MAX)))
-
 static uint8_t g_img[TA_KV_IMAGE_CAP];
 static size_t g_hw;
 
